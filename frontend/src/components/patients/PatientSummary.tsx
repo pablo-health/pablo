@@ -5,6 +5,7 @@
 import { Users, Calendar, Phone, Mail } from "lucide-react"
 import { EligibilityBadge } from "@/components/insurance/EligibilityBadge"
 import { AiConsentLine } from "@/components/patients/AiConsentLine"
+import { ChartFacts } from "@/components/patients/ChartFacts"
 import { usePatientCoverage } from "@/hooks/useCoverage"
 import { usePatientBalance } from "@/hooks/usePayments"
 import { formatBalanceLine } from "@/lib/paymentDisplay"
@@ -116,12 +117,7 @@ export function PatientSummary({ patient }: PatientSummaryProps) {
               <Calendar className="w-4 h-4" />
               <span>Total Sessions: {patient.session_count}</span>
             </div>
-            {patient.diagnosis && (
-              <div className="flex items-center gap-2 col-span-2">
-                <span className="font-semibold">Diagnosis:</span>
-                <span>{patient.diagnosis}</span>
-              </div>
-            )}
+            <ChartFacts patient={patient} />
             {patient.last_session_date && (
               <div className="flex items-center gap-2">
                 <Calendar className="w-4 h-4" />

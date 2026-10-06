@@ -474,6 +474,7 @@ CREATE TABLE __TENANT_SCHEMA__.diagnostic_assessments (
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     deleted_at timestamp with time zone,
+    problem_id uuid,
     CONSTRAINT ck_diagnostic_assessments_source CHECK (((source)::text = ANY ((ARRAY['patient_self_report'::character varying, 'clinician_administered_verbal'::character varying, 'manual'::character varying, 'inferred'::character varying])::text[])))
 );
 
@@ -1078,6 +1079,25 @@ CREATE TABLE __TENANT_SCHEMA__.patient_payment_methods (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.patient_problems (
+    id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    label character varying(255) NOT NULL,
+    icd10_code character varying(10),
+    status character varying(16) NOT NULL,
+    onset_date date,
+    "position" integer NOT NULL,
+    source_note_id uuid,
+    added_by uuid,
+    added_at timestamp with time zone NOT NULL,
+    resolved_at timestamp with time zone,
+    updated_at timestamp with time zone NOT NULL,
+    deleted_at timestamp with time zone,
+    CONSTRAINT ck_patient_problems_status CHECK (((status)::text = ANY ((ARRAY['active'::character varying, 'rule_out'::character varying, 'resolved'::character varying])::text[])))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.patient_source_mappings (
     doc_id text NOT NULL,
     user_id uuid NOT NULL,
@@ -1129,6 +1149,10 @@ CREATE TABLE __TENANT_SCHEMA__.patients (
     postal_code character varying(10),
     sex character varying(1),
     preferred_name character varying(255),
+    allergy_status character varying(16) DEFAULT 'not_recorded'::character varying NOT NULL,
+    allergies jsonb DEFAULT '[]'::jsonb NOT NULL,
+    CONSTRAINT ck_patients_allergies_match_status CHECK ((((allergy_status)::text = 'recorded'::text) = (jsonb_array_length(allergies) > 0))),
+    CONSTRAINT ck_patients_allergy_status CHECK (((allergy_status)::text = ANY ((ARRAY['not_recorded'::character varying, 'nkda'::character varying, 'recorded'::character varying])::text[]))),
     CONSTRAINT ck_patients_sex CHECK (((sex)::text = ANY ((ARRAY['M'::character varying, 'F'::character varying, 'U'::character varying])::text[])))
 );
 
@@ -1769,6 +1793,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_payment_methods
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_problems
+    ADD CONSTRAINT patient_problems_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_source_mappings
     ADD CONSTRAINT patient_source_mappings_pkey PRIMARY KEY (doc_id);
 
@@ -2324,6 +2353,10 @@ CREATE INDEX ix_patient_messages_thread_created ON __TENANT_SCHEMA__.patient_mes
 
 
 
+CREATE INDEX ix_patient_problems_patient_id ON __TENANT_SCHEMA__.patient_problems USING btree (patient_id);
+
+
+
 CREATE INDEX ix_patient_source_mappings_user_id ON __TENANT_SCHEMA__.patient_source_mappings USING btree (user_id);
 
 
@@ -2593,6 +2626,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.diagnostic_assessments
 
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.diagnostic_assessments
+    ADD CONSTRAINT diagnostic_assessments_problem_id_fkey FOREIGN KEY (problem_id) REFERENCES __TENANT_SCHEMA__.patient_problems(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.diagnostic_assessments
     ADD CONSTRAINT diagnostic_assessments_session_id_fkey FOREIGN KEY (session_id) REFERENCES __TENANT_SCHEMA__.therapy_sessions(id) ON DELETE SET NULL;
 
 
@@ -2809,6 +2847,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_medications
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_threads
     ADD CONSTRAINT patient_message_threads_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_problems
+    ADD CONSTRAINT patient_problems_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_problems
+    ADD CONSTRAINT patient_problems_source_note_id_fkey FOREIGN KEY (source_note_id) REFERENCES __TENANT_SCHEMA__.notes(id) ON DELETE SET NULL;
 
 
 

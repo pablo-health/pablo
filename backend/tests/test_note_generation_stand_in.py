@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from app.models import Patient, Transcript
 from app.notes import NoteTypeRegistry, register_builtin_note_types
+from app.notes.chart_context import ChartContext, ChartProblem
 from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
 from app.routes.notes import get_note_generation_service
 from app.services import http_structured_llm_gateway
@@ -78,6 +79,50 @@ def test_a_practice_type_gets_a_draft_in_its_own_shape(stand_in: list[str]) -> N
         "log_row": {"channels": ["Stand-in draft for log_row.channels."]},
     }
     assert stand_in == [f"{BASE_URL}/v1/structured"]
+
+
+def test_a_draft_echoes_the_chart_it_was_written_against(stand_in: list[str]) -> None:
+    """The stand-in reads the chart block the backend really renders, not a copy of it."""
+    spec = PracticeNoteTypeSpec.model_validate(
+        {
+            "label": "Follow-up",
+            "sections": [
+                {
+                    "key": "assessment",
+                    "label": "Assessment",
+                    "fields": [
+                        {"key": "diagnoses", "label": "Diagnoses"},
+                        {"key": "allergies", "label": "Allergies"},
+                    ],
+                }
+            ],
+        }
+    )
+    definition = to_definition("custom.follow_up", 1, spec)
+    chart = ChartContext(
+        problems=(
+            ChartProblem("Generalized anxiety disorder", "F41.1", "active"),
+            ChartProblem("Insomnia", None, "active"),
+        ),
+        allergy_status="nkda",
+    )
+
+    generated = _service().generate_note(
+        definition.key, TRANSCRIPT, PATIENT, NOW, definition=definition, chart=chart
+    )
+
+    assert generated.content == {
+        "assessment": {
+            "diagnoses": (
+                "Stand-in draft for assessment.diagnoses. Problem list: "
+                "F41.1 Generalized anxiety disorder; Insomnia (no code recorded)."
+            ),
+            "allergies": (
+                "Stand-in draft for assessment.allergies. "
+                "Allergies: No known drug allergies (NKDA)."
+            ),
+        }
+    }
 
 
 def test_a_soap_draft_survives_its_second_call(stand_in: list[str]) -> None:

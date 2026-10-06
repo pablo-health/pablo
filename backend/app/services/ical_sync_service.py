@@ -688,11 +688,13 @@ class ICalSyncService:
             return file_content.decode("utf-8")
         return None
 
+    # No "Diagnosis": on an existing chart the diagnosis is derived from the
+    # problem list, so a re-import does not write it. A new chart's diagnosis
+    # starts its problem list (``PatientRepository.create``).
     _CSV_FIELD_MAP: ClassVar[dict[str, str]] = {
         "Email": "email",
         "Phone Number": "phone",
         "Birth Date": "date_of_birth",
-        "Diagnosis": "diagnosis",
     }
 
     def _update_patient_from_csv(self, patient: Any, row: dict[str, str]) -> bool:

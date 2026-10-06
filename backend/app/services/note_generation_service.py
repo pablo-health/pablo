@@ -33,8 +33,10 @@ from ..models import (
     Transcript,
 )
 from ..notes import NoteTypeDefinition, NoteTypeRegistry, get_default_registry
-from ..notes.practice_types import render_user_prompt
+from ..notes.chart_context import ChartContext, render_chart_block
+from ..notes.practice_types import PromptBlocks, render_user_prompt
 from ..notes.prompts.soap import SOAP_SYSTEM_PROMPT
+from ..notes.registry import is_practice_key
 from ..settings import get_settings
 from .source_attribution_service import (
     build_attribution_prompt,
@@ -171,6 +173,7 @@ class NoteGenerationService(ABC):
         session_date: datetime,
         inputs: Mapping[str, str] | None = None,
         definition: NoteTypeDefinition | None = None,
+        chart: ChartContext | None = None,
     ) -> GeneratedNote:
         """Generate a note of ``note_type`` from ``transcript``.
 
@@ -178,7 +181,9 @@ class NoteGenerationService(ABC):
         ``definition`` is the type already resolved by a caller that is
         about to release its database connection: a practice type is read
         from the database, and resolving it here would reopen a connection
-        and hold it across the model call.
+        and hold it across the model call. ``chart`` is the client's problem
+        list and allergy record, read by the caller for the same reason;
+        ``None`` drafts without them (a preview has no client).
 
         Raises:
             KeyError: If ``note_type`` is not registered.
@@ -227,11 +232,12 @@ class RegistryNoteGenerationService(NoteGenerationService):
         session_date: datetime,
         inputs: Mapping[str, str] | None = None,
         definition: NoteTypeDefinition | None = None,
+        chart: ChartContext | None = None,
     ) -> GeneratedNote:
         definition = definition or self.registry.get(note_type)
         _refuse_restricted(definition)
         content = self._generate_via_registry(
-            definition, transcript, patient, session_date, inputs or {}
+            definition, transcript, patient, session_date, inputs or {}, chart
         )
         if note_type == SOAP_KEY:
             soap_note = _coerce_content_to_soap_note(content)
@@ -252,6 +258,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
         patient: Patient,
         session_date: datetime,
         inputs: Mapping[str, str],
+        chart: ChartContext | None,
     ) -> dict[str, Any]:
         if definition.system_prompt is not None:
             system_prompt = definition.system_prompt
@@ -260,14 +267,31 @@ class RegistryNoteGenerationService(NoteGenerationService):
         else:
             system_prompt = _DEFAULT_GENERATION_PROMPT_SYSTEM
 
+        # Allergies go to the types a practice defines for itself — the
+        # prescriber's notes, which must state them — and not to the built-in
+        # therapy formats, which have no place to put them.
+        chart_block = (
+            render_chart_block(chart, include_allergies=is_practice_key(definition.key))
+            if chart is not None and definition.reads_chart
+            else None
+        )
         if definition.prompt_builder is not None:
             user_prompt = definition.prompt_builder(definition, transcript, patient, session_date)
+            # A hand-tuned prompt has no place for the chart; it goes first.
+            if chart_block:
+                user_prompt = f"{chart_block}\n\n{user_prompt}"
         elif definition.user_template is not None or definition.inputs:
             user_prompt = render_user_prompt(
-                definition, transcript, session_date, inputs, _fields_block(definition)
+                definition,
+                transcript,
+                session_date,
+                inputs,
+                PromptBlocks(fields=_fields_block(definition), chart=chart_block),
             )
         else:
-            user_prompt = _build_registry_user_prompt(definition, transcript, patient, session_date)
+            user_prompt = _build_registry_user_prompt(
+                definition, transcript, session_date, chart_block
+            )
 
         schema = _build_registry_response_schema(definition)
         completion = self._complete_structured_with_retry(
@@ -463,6 +487,7 @@ class MockNoteGenerationService(NoteGenerationService):
         session_date: datetime,  # noqa: ARG002  # deterministic mock ignores date
         inputs: Mapping[str, str] | None = None,  # noqa: ARG002  # mock ignores inputs
         definition: NoteTypeDefinition | None = None,
+        chart: ChartContext | None = None,  # noqa: ARG002  # mock ignores the chart
     ) -> GeneratedNote:
         definition = definition or self.registry.get(note_type)
         _refuse_restricted(definition)
@@ -579,8 +604,8 @@ def _mock_registry_content(definition: NoteTypeDefinition, patient: Patient) -> 
 def _build_registry_user_prompt(
     definition: NoteTypeDefinition,
     transcript: Transcript,
-    patient: Patient,
     session_date: datetime,
+    chart_block: str | None,
 ) -> str:
     """Compose a prompt describing the registry shape and each field's ``ai_hint``.
 
@@ -599,8 +624,8 @@ def _build_registry_user_prompt(
             f"Session date: {session_date.isoformat().split('T', 1)[0]}",
         ]
     )
-    if patient.diagnosis:
-        lines.append(f"Working diagnosis: {patient.diagnosis}")
+    if chart_block:
+        lines.extend(["", chart_block])
     lines.extend(["", "Transcript:", transcript.content])
     return "\n".join(lines)
 

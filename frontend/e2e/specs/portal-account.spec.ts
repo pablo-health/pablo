@@ -200,9 +200,11 @@ test("the profile carries the patient's own details and no staff notes @portal",
   request,
 }) => {
   const { email, phone } = contactDetails()
-  const patient = await givePatient(api, { email, phone })
-  const diagnosis = "F41.1 seeded for the portal profile e2e"
-  await api.patch(`/api/patients/${patient.id}`, { diagnosis, sliding_scale_note: "60 a session" })
+  // The diagnosis starts the chart's problem list; the line the chart shows
+  // is derived from it, so the check below looks for the label itself.
+  const diagnosis = "seeded for the portal profile e2e"
+  const patient = await givePatient(api, { email, phone, diagnosis: `F41.1 ${diagnosis}` })
+  await api.patch(`/api/patients/${patient.id}`, { sliding_scale_note: "60 a session" })
 
   const { slug } = await api.post<{ slug: string }>("/api/portal/practice-slug")
   expect(slug).toBeTruthy()

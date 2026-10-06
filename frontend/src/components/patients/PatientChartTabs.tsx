@@ -8,6 +8,7 @@ import {
   ClipboardList,
   CreditCard,
   FileText,
+  ListChecks,
   Folder,
   Pill,
   ShieldCheck,
@@ -21,6 +22,7 @@ import { OnlyYouBadge } from "@/components/notes/OnlyYouBadge"
 import { PatientDocuments } from "@/components/patients/PatientDocuments"
 import { OutcomeMeasuresTab } from "@/components/outcomeMeasures/OutcomeMeasuresTab"
 import { DiagnosesTab } from "@/components/diagnoses/DiagnosesTab"
+import { ProblemListTab } from "@/components/problems/ProblemListTab"
 import { MedicationsTab } from "@/components/medications/MedicationsTab"
 import { PaymentsTab } from "@/components/payments/PaymentsTab"
 import { BalanceTab } from "@/components/payments/BalanceTab"
@@ -32,6 +34,7 @@ import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { usePatientDocuments } from "@/hooks/usePatientDocuments"
 import { usePatientOutcomeMeasures } from "@/hooks/useOutcomeMeasures"
 import { usePatientDiagnoses } from "@/hooks/useDiagnoses"
+import { usePatientProblems } from "@/hooks/useProblems"
 import { usePatientMedications } from "@/hooks/useMedications"
 import { usePatientCharges } from "@/hooks/usePayments"
 import { formatNoteDateTime, noteHref, noteStatus } from "@/lib/noteDisplay"
@@ -49,6 +52,7 @@ const TABS = [
   "intake",
   "documents",
   "measures",
+  "problems",
   "diagnoses",
   "medications",
   "payments",
@@ -154,6 +158,7 @@ export function PatientChartTabs({ patientId, initialTab }: PatientChartTabsProp
   const { data: notes } = usePatientNotes(patientId)
   const { data: documents } = usePatientDocuments(patientId)
   const { data: measures } = usePatientOutcomeMeasures(patientId)
+  const { data: problems } = usePatientProblems(patientId)
   const { data: diagnoses } = usePatientDiagnoses(patientId)
   const { data: medications } = usePatientMedications(patientId)
   const { data: charges } = usePatientCharges(patientId)
@@ -161,6 +166,7 @@ export function PatientChartTabs({ patientId, initialTab }: PatientChartTabsProp
   const noteCount = notes?.total ?? 0
   const documentCount = documents?.total ?? 0
   const measureCount = measures?.total ?? 0
+  const problemCount = problems?.data.filter((p) => p.status === "active").length ?? 0
   const diagnosisCount = diagnoses?.total ?? 0
   const medicationCount =
     medications?.data.filter((m) => m.status === "active").length ?? 0
@@ -191,6 +197,11 @@ export function PatientChartTabs({ patientId, initialTab }: PatientChartTabsProp
             <Activity className="h-4 w-4" />
             Measures
             <CountBadge count={measureCount} />
+          </TabsTrigger>
+          <TabsTrigger value="problems">
+            <ListChecks className="h-4 w-4" />
+            Problems
+            <CountBadge count={problemCount} />
           </TabsTrigger>
           <TabsTrigger value="diagnoses">
             <Stethoscope className="h-4 w-4" />
@@ -227,6 +238,9 @@ export function PatientChartTabs({ patientId, initialTab }: PatientChartTabsProp
         </TabsContent>
         <TabsContent value="measures" className="pt-4">
           <OutcomeMeasuresTab patientId={patientId} />
+        </TabsContent>
+        <TabsContent value="problems" className="pt-4">
+          <ProblemListTab patientId={patientId} />
         </TabsContent>
         <TabsContent value="diagnoses" className="pt-4">
           <DiagnosesTab patientId={patientId} />

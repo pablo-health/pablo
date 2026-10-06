@@ -28,6 +28,7 @@ from ...models.enums import ClinicianRole
 from ...models.patient_facing import PATIENT_SELF_WRITABLE_COLUMNS, PatientFacingPatient
 from ...utcnow import utc_now
 from ..patient import PatientRepository, PracticeClient
+from .patient_problem import seed_problem_from_free_text
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -381,6 +382,11 @@ class PostgresPatientRepository(PatientRepository):
         )
         self._session.add(grant)
         self._session.flush([grant])
+
+        # A diagnosis that arrives with a new chart starts its problem list;
+        # the diagnosis line is then whatever the list derives.
+        seed_problem_from_free_text(self._session, patient.id, patient.diagnosis, user_id)
+        patient.diagnosis = row.diagnosis
         return patient
         return patient
 
@@ -584,6 +590,8 @@ def _row_to_patient(row: PatientRow) -> Patient:
         # DB column is native DATE; the API model carries an ISO string.
         date_of_birth=row.date_of_birth.isoformat() if row.date_of_birth else None,
         diagnosis=row.diagnosis,
+        allergy_status=row.allergy_status,
+        allergies=list(row.allergies or []),
         last_session_date=row.last_session_date,
         next_session_date=row.next_session_date,
         chart_closed_at=row.chart_closed_at,
@@ -611,7 +619,10 @@ def _patient_to_row(patient: Patient, row: PatientRow) -> None:
     row.status = patient.status
     # ISO string (or "" / None) from the API -> native DATE (or NULL).
     row.date_of_birth = date.fromisoformat(patient.date_of_birth) if patient.date_of_birth else None
-    row.diagnosis = patient.diagnosis
+    # ``diagnosis`` is not written here: it is derived from the problem list
+    # (``PatientProblemRepository.sync_patient_diagnosis``).
+    row.allergy_status = patient.allergy_status
+    row.allergies = patient.allergies
     row.session_count = patient.session_count
     row.last_session_date = patient.last_session_date
     row.next_session_date = patient.next_session_date

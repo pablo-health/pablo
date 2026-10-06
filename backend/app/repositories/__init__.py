@@ -126,6 +126,10 @@ from .patient_message import (
     PatientMessageAccessDeniedError,
     PatientMessageRepository,
 )
+from .patient_problem import (
+    InMemoryPatientProblemRepository,
+    PatientProblemRepository,
+)
 from .practice_note_type import (
     InMemoryPracticeNoteTypeRepository,
     PracticeNoteTypeRepository,
@@ -480,6 +484,12 @@ def get_medication_repository() -> MedicationRepository:
     return PostgresMedicationRepository(_get_pg_session())
 
 
+def get_patient_problem_repository() -> PatientProblemRepository:
+    from .postgres.patient_problem import PostgresPatientProblemRepository
+
+    return PostgresPatientProblemRepository(_get_pg_session())
+
+
 def get_inbox_item_state_repository() -> InboxItemStateRepository:
     """Get the Inbox item state repository instance."""
     from .postgres.inbox_item_state import PostgresInboxItemStateRepository
@@ -526,6 +536,7 @@ __all__ = [
     "InMemoryPatientIntakeSignatureRepository",
     "InMemoryPatientIntakeSubmissionRepository",
     "InMemoryPatientMessageRepository",
+    "InMemoryPatientProblemRepository",
     "InMemoryPatientRepository",
     "InMemoryPracticeNoteTypeRepository",
     "InMemoryRefillRequestRepository",
@@ -546,6 +557,7 @@ __all__ = [
     "PatientIntakeSubmissionRepository",
     "PatientMessageAccessDeniedError",
     "PatientMessageRepository",
+    "PatientProblemRepository",
     "PatientRepository",
     "PracticeNoteTypeRepository",
     "RefillRequestRepository",
@@ -590,6 +602,7 @@ __all__ = [
     "get_patient_intake_submission_repository",
     "get_patient_message_repository",
     "get_patient_payment_repository",
+    "get_patient_problem_repository",
     "get_patient_repository",
     "get_patient_source_mapping_repository",
     "get_payer_repository",

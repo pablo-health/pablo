@@ -88,6 +88,7 @@ from .routes import (
     notes,
     outside_sessions,
     passkey,
+    patient_allergies,
     patient_appointments,
     patient_booking,
     patient_chat,
@@ -98,6 +99,7 @@ from .routes import (
     patient_intake_review,
     patient_messages,
     patient_payments,
+    patient_problems,
     patient_profile,
     patient_statements,
     patient_write_offs,
@@ -278,6 +280,8 @@ app.include_router(users.router)
 app.include_router(people_term.router)
 app.include_router(practice_ai_notes_consent.router)
 app.include_router(patients.router)
+app.include_router(patient_allergies.router)
+app.include_router(patient_problems.router)
 app.include_router(practice_billing.router)
 app.include_router(practice_domains.router)
 # The practice's website: managed in Settings > Website, served to its hosts.

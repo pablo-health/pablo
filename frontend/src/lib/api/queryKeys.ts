@@ -349,6 +349,13 @@ const baseQueryKeys = {
       ] as const,
   },
 
+  // A client's problem list (diagnoses)
+  problems: {
+    all: ["problems"] as const,
+    byPatient: (patientId: string) =>
+      [...baseQueryKeys.problems.all, "byPatient", patientId] as const,
+  },
+
   // Availability rule query keys
   availabilityRules: {
     all: ["availabilityRules"] as const,

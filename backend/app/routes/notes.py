@@ -15,7 +15,7 @@ authors without an associated recorded session.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
@@ -57,13 +57,24 @@ from ..notes import (
     get_default_registry,
     get_note_type_authorizer,
 )
+from ..notes.chart_context import chart_context_for
 from ..notes.practice_types import validate_note_inputs
-from ..repositories import NotesRepository, PatientRepository, UserRepository, get_user_repository
+from ..problems.dependencies import get_problem_service
+from ..repositories import (
+    NotesRepository,
+    PatientProblemRepository,
+    PatientRepository,
+    UserRepository,
+    get_user_repository,
+)
 from ..repositories import (
     get_appointment_repository as _appt_repo_factory,
 )
 from ..repositories import (
     get_notes_repository as _notes_repo_factory,
+)
+from ..repositories import (
+    get_patient_problem_repository as _problem_repo_factory,
 )
 from ..repositories import (
     get_patient_repository as _patient_repo_factory,
@@ -87,6 +98,7 @@ from ..settings import get_settings
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
+    from ..problems.service import ProblemService
     from ..scheduling_engine.models.appointment import Appointment
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
 
@@ -180,6 +192,11 @@ def get_worker_note_service() -> NoteService:
 def get_worker_patient_repository() -> PatientRepository:
     """PatientRepository for the off-request Cloud Tasks worker (see get_worker_note_service)."""
     return _patient_repo_factory()
+
+
+def get_worker_problem_repository() -> PatientProblemRepository:
+    """The problem list, for the same worker: the chart a draft is written against."""
+    return _problem_repo_factory()
 
 
 @router.get("/{note_id}")
@@ -471,6 +488,7 @@ def create_standalone_note(
     registry: NoteTypeRegistry = Depends(get_registry),
     authorizer: NoteTypeAuthorizer = Depends(get_note_type_authorizer),
     scheduling_service: SchedulingService = Depends(get_scheduling_service),
+    problems: ProblemService = Depends(get_problem_service),
     audit: AuditService = Depends(get_audit_service),
 ) -> NoteResponse:
     """Create a patient-owned note with no associated recording session.
@@ -488,7 +506,8 @@ def create_standalone_note(
     also where a clinician codes the visit — the primary coding surface,
     since the session duration and clinical picture are both on screen
     here. The codes are written to the appointment, not the note; omitting
-    them leaves the visit's codes exactly as they were.
+    them leaves the visit's codes exactly as they were, except that a visit
+    with no diagnosis codes yet takes the active problems' codes.
     """
     if not registry.has(request.note_type):
         raise BadRequestError(
@@ -588,16 +607,7 @@ def create_standalone_note(
         http_response.status_code = status.HTTP_202_ACCEPTED
 
     if appointment is not None:
-        visit_codes = request.model_dump(
-            include={
-                "service_code",
-                "modifiers",
-                "unit_count",
-                "place_of_service",
-                "diagnosis_codes",
-            },
-            exclude_none=True,
-        )
+        visit_codes = _visit_codes(request, appointment, problems)
         if visit_codes:
             scheduling_service.update_appointment(appointment.id, user.id, **visit_codes)
             audit.log_appointment_action(
@@ -610,6 +620,31 @@ def create_standalone_note(
             )
 
     return NoteResponse.from_note(note)
+
+
+def _visit_codes(
+    request: CreateStandaloneNoteRequest, appointment: Appointment, problems: ProblemService
+) -> dict[str, Any]:
+    """The billing-code fields to write to the visit this note documents.
+
+    A visit with no diagnosis codes yet starts from the active problems;
+    codes already on the visit, or sent with the note, are the visit's own.
+    """
+    visit_codes = request.model_dump(
+        include={
+            "service_code",
+            "modifiers",
+            "unit_count",
+            "place_of_service",
+            "diagnosis_codes",
+        },
+        exclude_none=True,
+    )
+    if "diagnosis_codes" not in visit_codes and not appointment.diagnosis_codes:
+        prefill = problems.visit_codes(appointment.patient_id or "")
+        if prefill:
+            visit_codes["diagnosis_codes"] = prefill
+    return visit_codes
 
 
 class GenerateStandaloneNoteJob(BaseModel):
@@ -650,6 +685,7 @@ def generate_standalone_note_job(
     _invoker: None = Depends(require_cloud_tasks_invoker),
     note_service: NoteService = Depends(get_worker_note_service),
     patient_repo: PatientRepository = Depends(get_worker_patient_repository),
+    problem_repo: PatientProblemRepository = Depends(get_worker_problem_repository),
     note_generation_service: NoteGenerationService = Depends(get_note_generation_service),
     user_repo: UserRepository = Depends(get_user_repository),
     audit: AuditService = Depends(get_audit_service),
@@ -710,6 +746,7 @@ def generate_standalone_note_job(
         definition: NoteTypeDefinition | None = registry.get(payload.note_type)
     except KeyError:
         definition = None
+    chart = chart_context_for(patient, problem_repo.list_by_patient(patient.id))
     # Release the pooled connection before the multi-second LLM call — same
     # seam ``upload_session`` and the old inline dictation path used.
     release_db_connection()
@@ -721,6 +758,7 @@ def generate_standalone_note_job(
             utc_now(),
             inputs=note.note_inputs,
             definition=definition,
+            chart=chart,
         )
     except TransientNoteGenerationError:
         if not _is_final_note_generation_attempt(http_request):
