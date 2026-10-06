@@ -168,6 +168,21 @@ Key points:
 
 ---
 
+## Starting note templates
+
+`note_templates/` drafts each starting note-type template's own sample
+visits with the real model and grades the drafts with deterministic checks:
+codes, times and the monitoring-program check only as dictated, risk fields
+quoted or "Not stated.", an empty psychotherapy section when there was no
+therapy, and the rest. See `note_templates/README.md` for how to run it and
+what each check protects.
+
+```bash
+scripts/run-note-template-eval.sh --runs 3
+```
+
+---
+
 ## Repeat sampling
 
 `run_note_generation.py` drives the real SOAP pipeline once per case by
