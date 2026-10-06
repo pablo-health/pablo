@@ -2,9 +2,11 @@
 
 import { describe, expect, it } from "vitest"
 
+import { peopleWords } from "@/lib/peopleTerm"
 import { clientPresentLineText } from "../ClientPresentLine"
 
 const TZ = "America/New_York"
+const CLIENTS = peopleWords("clients")
 
 describe("clientPresentLineText", () => {
   it("shows when the client left and how long the clinician dictated after", () => {
@@ -16,6 +18,7 @@ describe("clientPresentLineText", () => {
           clinician_addendum_seconds: 185.6,
         },
         TZ,
+        CLIENTS,
       ),
     ).toBe("Client present until 10:35 AM · Your dictated addendum: 3 min")
   })
@@ -25,8 +28,19 @@ describe("clientPresentLineText", () => {
       clientPresentLineText(
         { started_at: null, client_present_end_seconds: 2158.4, clinician_addendum_seconds: 30 },
         TZ,
+        CLIENTS,
       ),
     ).toBe("Client present for 35 min")
+  })
+
+  it("uses the practice's word for the people it sees", () => {
+    expect(
+      clientPresentLineText(
+        { started_at: null, client_present_end_seconds: 2158.4, clinician_addendum_seconds: 0 },
+        TZ,
+        peopleWords("patients"),
+      ),
+    ).toBe("Patient present for 35 min")
   })
 
   it("calls a recording with no client a dictation", () => {
@@ -38,13 +52,14 @@ describe("clientPresentLineText", () => {
           clinician_addendum_seconds: 130,
         },
         TZ,
+        CLIENTS,
       ),
     ).toBe("Dictation only, 2 min")
   })
 
   it("says nothing when the boundary is unknown", () => {
     expect(
-      clientPresentLineText({ started_at: "2026-10-06T14:00:00Z", client_present_end_seconds: null }, TZ),
+      clientPresentLineText({ started_at: "2026-10-06T14:00:00Z", client_present_end_seconds: null }, TZ, CLIENTS),
     ).toBeNull()
   })
 })

@@ -2,7 +2,9 @@
 
 "use client"
 
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { useUserTimeZone } from "@/hooks/usePreferences"
+import type { PeopleWords } from "@/lib/peopleTerm"
 
 export interface ClientPresentTiming {
   started_at: string | null
@@ -25,7 +27,11 @@ function wholeMinutes(seconds: number): number {
  * because they feed time-based codes. Nothing when the boundary is unknown —
  * an in-person recording, or one made before it was measured.
  */
-export function clientPresentLineText(timing: ClientPresentTiming, timeZone: string): string | null {
+export function clientPresentLineText(
+  timing: ClientPresentTiming,
+  timeZone: string,
+  people: PeopleWords,
+): string | null {
   const boundary = timing.client_present_end_seconds
   if (boundary === null || boundary === undefined) return null
   const addendum = wholeMinutes(timing.clinician_addendum_seconds ?? 0)
@@ -33,16 +39,17 @@ export function clientPresentLineText(timing: ClientPresentTiming, timeZone: str
     return addendum > 0 ? `Dictation only, ${addendum} min` : "Dictation only"
   }
   const present = timing.started_at
-    ? `Client present until ${new Date(
+    ? `${people.One} present until ${new Date(
         new Date(timing.started_at).getTime() + boundary * 1000,
       ).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone })}`
-    : `Client present for ${wholeMinutes(boundary)} min`
+    : `${people.One} present for ${wholeMinutes(boundary)} min`
   return addendum > 0 ? `${present} · Your dictated addendum: ${addendum} min` : present
 }
 
 export function ClientPresentLine({ timing }: { timing: ClientPresentTiming }) {
   const timeZone = useUserTimeZone()
-  const text = clientPresentLineText(timing, timeZone)
+  const people = usePeopleTerm()
+  const text = clientPresentLineText(timing, timeZone, people)
   if (!text) return null
   return (
     <p data-testid="client-present-line" className="mb-3 text-sm text-neutral-600">
