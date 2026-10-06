@@ -4,8 +4,10 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
@@ -25,6 +27,7 @@ from app.notes.visit_times import (
     StartCandidate,
     apply_confirmed_window,
     disagrees,
+    drafted_time,
     parse_transcript_time,
     resolve_start_candidates,
     snap_to_turn,
@@ -50,6 +53,12 @@ if TYPE_CHECKING:
     from app.repositories import InMemoryTherapySessionRepository
     from app.scheduling_engine.models.appointment import Appointment
     from fastapi.testclient import TestClient
+
+# A psychiatric follow-up drafted by the model, redrafted after a dictation,
+# and the window its clinician confirmed (synthetic visit).
+_CAPTURED = json.loads(
+    (Path(__file__).parent / "fixtures" / "notes" / "psychiatric_follow_up_drafts.json").read_text()
+)
 
 _STARTED = datetime(2026, 10, 6, 15, 0, tzinfo=UTC)
 _EASTERN = ZoneInfo("America/New_York")
@@ -172,6 +181,48 @@ class TestWindow:
         assert filled is not None
         assert filled["psychotherapy"]["psychotherapy_time"] == "52 minutes"
         assert apply_confirmed_window(dictated, window) is dictated
+
+    @pytest.mark.parametrize("draft", ["drafted", "redrafted"])
+    def test_the_window_completes_a_draft_that_states_only_the_minutes(self, draft: str) -> None:
+        # Drafted by the model: "Start time: Not stated. End time: Not stated. Minutes: 18."
+        content = _CAPTURED[draft]
+        confirmed = _CAPTURED["confirmed"]
+
+        filled = apply_confirmed_window(content, {"confirmed": confirmed})
+
+        assert not disagrees(drafted_time(content), confirmed)
+        assert filled is not None
+        assert filled["psychotherapy"]["psychotherapy_time"] == "3:08 PM to 3:26 PM, 18 minutes"
+
+    def test_a_draft_whose_every_part_is_not_stated_holds_no_time(self) -> None:
+        compound = "Start time: Not stated. End time: Not stated. Minutes: Not stated."
+        assert drafted_time({"psychotherapy": {"psychotherapy_time": compound}}) is None
+        assert drafted_time({"psychotherapy": {"psychotherapy_time": "Not stated."}}) is None
+
+    @pytest.mark.parametrize(
+        "dictated",
+        [
+            "Start time: 3:10 PM. End time: Not stated. Minutes: 18.",
+            "3 pm to 3:18, 18 minutes",
+            "Minutes: 25.",
+            "about half an hour",
+        ],
+    )
+    def test_a_dictated_time_the_window_would_change_is_kept(self, dictated: str) -> None:
+        window = {"confirmed": _CAPTURED["confirmed"]}
+        content = {"psychotherapy": {"psychotherapy_time": dictated}}
+        assert apply_confirmed_window(content, window) is content
+
+    def test_matching_minutes_the_clinician_chose_to_keep_stay(self) -> None:
+        content = {"psychotherapy": {"psychotherapy_time": "Minutes: 18."}}
+        window = {"confirmed": {**_CAPTURED["confirmed"], "keep_dictated": True}}
+        assert apply_confirmed_window(content, window) is content
+
+    @pytest.mark.parametrize("stated", ["Minutes: 18.", "18 minutes", "18 min", "minutes 18"])
+    def test_minutes_agree_whichever_way_round_they_are_written(self, stated: str) -> None:
+        confirmed = {"window_text": "3:08 PM to 3:26 PM, 18 minutes", "minutes": 18}
+        assert not disagrees(stated, confirmed)
+        assert disagrees(stated.replace("18", "25"), confirmed)
 
 
 def _dictation(session: TherapySession, status: str, seconds: int | None) -> SessionDictation:
@@ -343,6 +394,31 @@ class TestConfirm:
         resolved = build_visit_times(session, chosen, None).psychotherapy
         assert resolved is not None
         assert not resolved.disagrees
+
+    def test_dictated_minutes_that_match_are_completed_on_confirm_and_on_redraft(
+        self, notes: InMemoryNotesRepository
+    ) -> None:
+        session = _session()
+        stated = "Start time: Not stated. End time: Not stated. Minutes: 52 minutes."
+        note = notes.add(_note(session, time_field=stated))
+
+        saved = _confirm(session, note, notes, start_seconds=750.0)
+        window = "11:12 AM to 12:04 PM, 52 minutes"
+        assert saved.content_edited is not None
+        assert saved.content_edited["psychotherapy"]["psychotherapy_time"] == window
+        shown = build_visit_times(session, saved, None).psychotherapy
+        assert shown is not None
+        assert not shown.disagrees
+
+        redrafted = NoteService(notes).complete_redraft(
+            saved,
+            content={"psychotherapy": {"psychotherapy_time": stated.replace(" minutes.", ".")}},
+            content_edited=None,
+            note_type_version=None,
+            user_id="u1",
+        )
+        assert redrafted.content is not None
+        assert redrafted.content["psychotherapy"]["psychotherapy_time"] == window
 
     def test_keeping_the_dictated_time_settles_the_disagreement(
         self, notes: InMemoryNotesRepository
