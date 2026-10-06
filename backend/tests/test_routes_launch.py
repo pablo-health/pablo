@@ -129,7 +129,8 @@ def launch_client(
     appointment = _make_appointment()
     patient = _make_patient()
 
-    appt_repo = _FakeAppointmentRepo({appointment.id: appointment})
+    in_office = _make_appointment(appt_id="appt-office", video_link=None)
+    appt_repo = _FakeAppointmentRepo({appointment.id: appointment, in_office.id: in_office})
     patient_repo = _FakePatientRepo({patient.id: patient})
 
     monkeypatch.setattr(launch, "create_launch_intent", store.create)
@@ -228,6 +229,7 @@ def test_redeem_happy_path_returns_appointment_and_audits(launch_client: TestCli
     assert body["video_url"] == "https://zoom.us/j/123"
     assert body["session_id"] is None
     assert body["ai_consent_prompted"] is False
+    assert body["telehealth"] is True
 
     # One record-level audit event; no PHI in the changes payload.
     audit: _FakeAudit = launch_client.fake_audit  # type: ignore[attr-defined]
@@ -240,6 +242,13 @@ def test_redeem_happy_path_returns_appointment_and_audits(launch_client: TestCli
     assert "intent_id" not in changes
     # The patient association rides the patient= argument, not changes.
     assert call.get("patient") is not None
+
+
+def test_redeem_says_an_office_visit_is_not_telehealth(launch_client: TestClient) -> None:
+    """The companion offers "Record anyway" only for a client in the room."""
+    issued = launch_client.post("/api/launch/intent", json={"appointment_id": "appt-office"}).json()
+    body = launch_client.post("/api/launch/redeem", json={"intent_id": issued["intent_id"]}).json()
+    assert body["telehealth"] is False
 
 
 def test_redeem_carries_record_anyway_from_the_web(launch_client: TestClient) -> None:

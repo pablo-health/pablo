@@ -841,13 +841,21 @@ def schedule_session(
     """Create a scheduled session (pre-recording).
 
     Refused with ``CLIENT_DECLINED_AI_NOTES`` when the client declined
-    AI-assisted notes, before the trial counter is spent on a session that
-    cannot be recorded.
+    AI-assisted notes, and with ``CLIENT_AI_CONSENT_NEEDED`` for a session with
+    a video link and no answer on file unless ``asking_consent_on_recording``,
+    before the trial counter is spent on a session that cannot be recorded.
     """
     patient = session_service.patient_repo.get(request.patient_id, user.id)
     if patient is None:
         raise NotFoundError("Patient not found", code="PATIENT_NOT_FOUND")
-    consent_gate.refuse_if_declined(patient, user, http_request, audit)
+    consent_gate.refuse_unless_recordable(
+        patient,
+        user,
+        http_request,
+        audit,
+        telehealth=request.video_link is not None,
+        asking_on_recording=request.asking_consent_on_recording,
+    )
     _gate_trial_session(user.email)
     # Authorize an explicitly requested note type — same gate as
     # /api/appointments/{id}/start-session; falling back to the default

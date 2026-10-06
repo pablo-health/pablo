@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
 from ..models import UserPreferences
+from ..models.scheduling import is_telehealth
 from ..models.export import (
     Communication,
     Condition,
@@ -45,9 +46,6 @@ if TYPE_CHECKING:
     from ..repositories.user import UserRepository
     from ..scheduling_engine.models.appointment import Appointment
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
-
-#: Place-of-service codes for a visit held by video or phone.
-_TELEHEALTH_PLACES = frozenset({"02", "10"})
 
 
 @dataclass(frozen=True)
@@ -185,10 +183,10 @@ def _appointment(
         appointment_type=appointment.session_type,
         status=appointment.status,
         clinician_name=clinician_name,
-        telehealth=bool(
-            appointment.provider
-            or appointment.video_link
-            or appointment.place_of_service in _TELEHEALTH_PLACES
+        telehealth=is_telehealth(
+            provider=appointment.provider,
+            video_link=appointment.video_link,
+            place_of_service=appointment.place_of_service,
         ),
         place_of_service=appointment.place_of_service,
         note_type=appointment.note_type,

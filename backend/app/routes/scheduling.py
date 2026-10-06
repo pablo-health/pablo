@@ -82,6 +82,7 @@ from ..models.scheduling import (
     SetEventTitlingResponse,
     StartSessionFromAppointmentRequest,
     TimeSlotResponse,
+    is_telehealth,
     UpdateAppointmentRequest,
     UpdateAppointmentTypeRequest,
     UpdateAvailabilityRuleRequest,
@@ -1081,8 +1082,11 @@ def start_session_from_appointment(
     appointment was booked (SOAP if none was set).
 
     A recorded session (the default) for a client who declined AI-assisted
-    notes is refused with ``CLIENT_DECLINED_AI_NOTES``. ``recording: false``
-    starts one whose note is written by hand, which a decline does not stop.
+    notes is refused with ``CLIENT_DECLINED_AI_NOTES``. A recorded telehealth
+    session for a client with no answer on file is refused with
+    ``CLIENT_AI_CONSENT_NEEDED`` unless ``asking_consent_on_recording`` says the
+    clinician asks once recording starts. ``recording: false`` starts one whose
+    note is written by hand, which neither stops.
     """
     # 1. Fetch appointment
     try:
@@ -1107,7 +1111,18 @@ def start_session_from_appointment(
         patient = session_service.patient_repo.get(appt.patient_id, user.id)
         if patient is None:
             raise NotFoundError("Patient not found for this appointment.")
-        consent_gate.refuse_if_declined(patient, user, http_request, audit)
+        consent_gate.refuse_unless_recordable(
+            patient,
+            user,
+            http_request,
+            audit,
+            telehealth=is_telehealth(
+                provider=appt.provider,
+                video_link=appt.video_link,
+                place_of_service=appt.place_of_service,
+            ),
+            asking_on_recording=body is not None and body.asking_consent_on_recording,
+        )
 
     # 4. Authorize the effective note type — an explicit override, or else
     #    the one seeded on the appointment at booking time.
