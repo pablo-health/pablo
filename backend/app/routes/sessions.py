@@ -98,6 +98,7 @@ from ..services import (
 )
 from ..services.file_storage import FileTooLargeError, UploadTarget
 from ..services.note_import_service import (
+    MAX_IMPORT_DOC_BYTES,
     DocumentTextExtractionError,
     NoteImportService,
     UnsupportedDocumentTypeError,
@@ -484,7 +485,7 @@ def _run_draft_job(
 
 # Generous guardrail for an uploaded note document. A single SOAP note is
 # tiny; this only guards against accidental large uploads.
-_MAX_IMPORT_DOC_BYTES = 15 * 1024 * 1024
+_MAX_IMPORT_DOC_BYTES = MAX_IMPORT_DOC_BYTES
 
 
 def _resolve_import_session_date(override: str | None, extracted: datetime | None) -> datetime:
