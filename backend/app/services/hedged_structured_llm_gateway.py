@@ -8,7 +8,8 @@ usable one first: the requested model, then each configured fallback, then
 the requested model once more. Each leg goes to the gateway for its own
 model's provider with a single attempt, so the provider's own retry never
 runs: a failure hands over to the next leg at once, and a leg still running
-at the stall threshold (4 s unless configured) gets the next leg beside it.
+at the stall threshold (4 s unless configured, for every interactive call
+or per feature) gets the next leg beside it.
 The same model is asked at most twice, and not again once it has refused
 the request outright.
 
@@ -167,11 +168,12 @@ class HedgedStructuredLLMGateway(StructuredLLMGateway):
         resolve: Callable[[str], StructuredLLMGateway] = resolve_structured_llm_gateway,
         feature: str = AIFeature.AVAILABILITY_PARSE,
     ) -> HedgedStructuredLLMGateway:
-        """An interactive gateway with ``feature``'s fallbacks, if it has any."""
+        """An interactive gateway with ``feature``'s fallbacks, if it has any,
+        and its stall threshold, if one is configured."""
         settings = get_settings()
         return cls(
             fallbacks=settings.fallbacks_for(feature),
-            stall_after=settings.ai_hedge_after_seconds or INTERACTIVE_STALL_AFTER,
+            stall_after=settings.hedge_after_for(feature) or INTERACTIVE_STALL_AFTER,
             resolve=resolve,
         )
 

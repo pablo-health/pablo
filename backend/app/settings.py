@@ -17,7 +17,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import Field, PositiveInt, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Matches -prod, -production, -prod<N> at end of project id. The
@@ -1638,6 +1638,27 @@ class Settings(BaseSettings):
             "regardless. Unset (default) uses 4 seconds."
         ),
     )
+    ai_hedge_delays_ms: dict[str, PositiveInt] = Field(
+        default_factory=dict,
+        description=(
+            "The stall threshold per AI feature, in milliseconds, as a JSON "
+            "object from feature key (the keys listed on ai_fallbacks) to a "
+            'whole number, e.g. ``{"availability_parse": 7000}``. A feature '
+            "named here uses it in place of ai_hedge_after_seconds, so a "
+            "primary model that is slower than the default threshold but "
+            "healthy is not given a second, discarded call on most requests: "
+            "set it above that model's usual worst answer time (its p95). "
+            "Read only by interactive calls (availability_parse); long calls "
+            "never run models side by side. The value is not clamped: the "
+            "next leg starts only if the threshold falls inside the call's "
+            "25 s budget, and it gets its normal attempt timeout or what is "
+            "left of the budget, whichever is less. A threshold at or past "
+            "the primary's own attempt timeout (15 s for availability_parse) "
+            "means a stall is waited out to that timeout before the next leg "
+            "starts. Empty (default) leaves every feature on "
+            "ai_hedge_after_seconds."
+        ),
+    )
 
     # Amazon Bedrock, for ``bedrock:``-prefixed models (most usefully as an
     # entry in ai_model_flash_fallbacks or ai_fallbacks, a second provider
@@ -1691,6 +1712,16 @@ class Settings(BaseSettings):
         if feature == "availability_parse":
             return self.flash_fallback_models
         return ()
+
+    def hedge_after_for(self, feature: str) -> float | None:
+        """``feature``'s stall threshold in seconds, if one is configured.
+
+        Its ``ai_hedge_delays_ms`` entry, else ``ai_hedge_after_seconds``;
+        ``None`` when neither is set, for the caller's own default.
+        """
+        if feature in self.ai_hedge_delays_ms:
+            return self.ai_hedge_delays_ms[feature] / 1000
+        return self.ai_hedge_after_seconds
 
     note_max_output_tokens: int = Field(
         default=16384,
