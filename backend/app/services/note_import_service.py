@@ -52,6 +52,9 @@ _SCANNED_PDF_TEXT_THRESHOLD = 100
 # expand to gigabytes in memory when python-docx reads the package.
 _MAX_DOCX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
 
+# Largest document accepted for import, before any text is extracted.
+MAX_IMPORT_DOC_BYTES = 15 * 1024 * 1024
+
 # Cap the extracted text fed to the parser. A single SOAP note is a few KB;
 # anything past this is either not one note or an attempt to run up LLM cost.
 _MAX_EXTRACTED_CHARS = 1_000_000
@@ -69,12 +72,7 @@ _SESSION_TIME_KEY = "session_time"
 # matching but keeps every word). Below this, the field is flagged for review.
 GROUNDING_OVERLAP_THRESHOLD = 0.9
 
-EXTRACT_SYSTEM_PROMPT = (
-    "You are a clinical documentation assistant. You are given the full text "
-    "of an existing, already-written therapy progress note in SOAP format "
-    "(often exported from another records system). Your job is to RELOCATE "
-    "that note's existing text into the named fields below — not to rewrite "
-    "it.\n\n"
+_VERBATIM_RULES = (
     "Rules:\n"
     "- Quote the source text VERBATIM. Copy the clinician's exact words into "
     "each field. Do not rephrase, summarize, paraphrase, reorder words, "
@@ -82,11 +80,34 @@ EXTRACT_SYSTEM_PROMPT = (
     "slightly.\n"
     "- Do NOT invent, infer, or add any content that is not present in the "
     "source text.\n"
-    "- When the source files a detail under a heading we do not have, place "
-    "it under the field whose meaning fits best, but keep the source's exact "
-    "wording (including any sub-labels) intact.\n"
+)
+
+_EMPTY_FIELD_RULE = (
     "- If the source has no content for a field, return an empty string (or "
     "an empty list for list fields). Never fabricate text to fill a field."
+)
+
+EXTRACT_SYSTEM_PROMPT = (
+    "You are a clinical documentation assistant. You are given the full text "
+    "of an existing, already-written therapy progress note in SOAP format "
+    "(often exported from another records system). Your job is to RELOCATE "
+    "that note's existing text into the named fields below — not to rewrite "
+    "it.\n\n" + _VERBATIM_RULES + "- When the source files a detail under a heading we do not "
+    "have, place it under the field whose meaning fits best, but keep the "
+    "source's exact wording (including any sub-labels) intact.\n" + _EMPTY_FIELD_RULE
+)
+
+# An import must keep every word of the note, so a detail with no matching
+# field goes to the nearest one. Extracting into a note type to see whether
+# it fits is the opposite: a detail no field is meant for has to stay out,
+# or the check could never find a gap.
+EXTRACT_INTO_SYSTEM_PROMPT = (
+    "You are a clinical documentation assistant. You are given the full text "
+    "of an existing, already-written clinical note. Your job is to RELOCATE "
+    "that note's existing text into the named fields below — not to rewrite "
+    "it.\n\n" + _VERBATIM_RULES + "- Place text only in a field whose label and description say "
+    "it belongs there. Text that no field is meant for is left out, not "
+    "forced into the closest field.\n" + _EMPTY_FIELD_RULE
 )
 
 
@@ -314,8 +335,7 @@ def extract_document_text(
 # ---------------------------------------------------------------------------
 
 
-def _build_extract_prompt(definition: NoteTypeDefinition, source_text: str) -> str:
-    """Render the field guide + source note into the extraction user prompt."""
+def _field_guide(definition: NoteTypeDefinition) -> str:
     lines: list[str] = []
     for section in definition.sections:
         lines.append(f"## {section.key} — {section.label}")
@@ -323,7 +343,12 @@ def _build_extract_prompt(definition: NoteTypeDefinition, source_text: str) -> s
             kind = "list of strings" if fld.kind == "list" else "text"
             hint = f" — {fld.ai_hint}" if fld.ai_hint else ""
             lines.append(f"- {fld.key} ({kind}): {fld.label}{hint}")
-    field_guide = "\n".join(lines)
+    return "\n".join(lines)
+
+
+def _build_extract_prompt(definition: NoteTypeDefinition, source_text: str) -> str:
+    """Render the field guide + source note into the extraction user prompt."""
+    field_guide = _field_guide(definition)
 
     return f"""# Source note
 The following is the complete text of an existing SOAP note. Reorganize its
@@ -344,6 +369,20 @@ Also report when *this* documented session took place:
 Use the date/time of the session this note documents (usually labeled "Date"
 or "Session Date" near the top). Do NOT use the date of the next appointment
 or any future follow-up mentioned in the plan.
+"""
+
+
+def _build_extract_into_prompt(definition: NoteTypeDefinition, source_text: str) -> str:
+    return f"""# Source note
+The following is the complete text of an existing clinical note. Reorganize
+its content into the fields described below.
+
+\"\"\"
+{source_text}
+\"\"\"
+
+# Output fields
+{_field_guide(definition)}
 """
 
 
@@ -484,6 +523,20 @@ class NoteImportService:
                 logger.exception("Imported-note parse failed")
                 raise ValueError(f"Note import parse failed: {exc}") from exc
         raise ValueError(f"Note import parse failed: {last_truncation}") from last_truncation
+
+    def extract_into(self, definition: NoteTypeDefinition, source_text: str) -> dict[str, Any]:
+        """Relocate a note's text into any note type's fields, without inventing.
+
+        Returns the registry-shaped content (strings and lists). Text the
+        note has no field for is left out, which is what lets a caller see
+        whether a definition fits the note.
+        """
+        completion = self._complete_with_retry(
+            system_prompt=EXTRACT_INTO_SYSTEM_PROMPT,
+            user_prompt=_build_extract_into_prompt(definition, source_text),
+            response_schema=_build_registry_response_schema(definition),
+        )
+        return _coerce_registry_response(definition, completion.data)
 
     def parse_soap_note(self, source_text: str) -> ParsedImportedNote:
         """Parse the extracted text of a SOAP note into structured content."""

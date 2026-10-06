@@ -144,6 +144,19 @@ export class ApiClient {
     return (await response.json()) as T
   }
 
+  /** POST a multipart form; fetch sets the boundary from the FormData. */
+  async postForm<T>(path: string, form: FormData): Promise<T> {
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${this.token}` },
+      body: form,
+    })
+    if (!response.ok) {
+      throw new ApiError(response.status, "POST", path, await response.text())
+    }
+    return (await response.json()) as T
+  }
+
   get<T>(path: string): Promise<T> {
     return this.request<T>("GET", path)
   }

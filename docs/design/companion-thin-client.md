@@ -250,7 +250,12 @@ the appointment ID. The browser prompt is the only safety net.
    `POST /launch/redeem {intent_id}` with its existing access token.
 5. Backend verifies: token belongs to same user the intent was issued
    to, intent unused, not expired. Marks intent consumed. Returns
-   `{appointment_id, patient_name, video_url, session_id}`.
+   `{appointment_id, patient_name, video_url, session_id,
+   ai_consent_prompted}`. `ai_consent_prompted` is true only when the web
+   already asked "No consent on file" and the clinician chose to record
+   anyway (`POST /launch/intent {..., ai_consent_prompted: true}`), so the
+   companion does not ask the same question again. A client who declined
+   is still refused.
 6. Companion opens an ephemeral session window with
    **"Start session with [Patient Name]?"** + a single `Start
    Recording` button. Mic does not arm until the therapist taps it.

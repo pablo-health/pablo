@@ -17,7 +17,8 @@ fallback scheme — the handoff is indirected through a single-use
    {intent_id}`` with its existing Firebase bearer token. The backend
    atomically consumes the intent, verifies the redeeming token belongs
    to the same user, and returns the appointment's
-   ``{appointment_id, patient_name, video_url, session_id}``.
+   ``{appointment_id, patient_name, video_url, session_id,
+   ai_consent_prompted}``.
 
 Both endpoints are mounted only when ``ENABLE_LAUNCH_INTENT`` is true;
 otherwise the router is not registered and the paths return 404.
@@ -68,6 +69,10 @@ def get_patient_repository(
 
 class CreateLaunchIntentRequest(BaseModel):
     appointment_id: str = Field(min_length=1)
+    # The web already asked "No consent on file" and the clinician chose to
+    # record anyway. Carried to the companion so it does not ask again; it
+    # still refuses a client who declined.
+    ai_consent_prompted: bool = False
 
 
 class CreateLaunchIntentResponse(BaseModel):
@@ -85,6 +90,7 @@ class RedeemLaunchIntentResponse(BaseModel):
     patient_name: str | None
     video_url: str | None
     session_id: str | None
+    ai_consent_prompted: bool
 
 
 @router.post(
@@ -110,7 +116,11 @@ def create_intent(
             detail="Appointment not found.",
         )
 
-    intent_id = create_launch_intent(user_id=user.id, appointment_id=appointment.id)
+    intent_id = create_launch_intent(
+        user_id=user.id,
+        appointment_id=appointment.id,
+        ai_consent_prompted=request.ai_consent_prompted,
+    )
     settings = get_settings()
     # A browser follows a link to the host it is already on as ordinary
     # navigation, so a handoff link on app_url never reaches the desktop app
@@ -193,4 +203,5 @@ def redeem_intent(
         patient_name=patient_name,
         video_url=appointment.video_link,
         session_id=appointment.session_id,
+        ai_consent_prompted=redeemed.ai_consent_prompted,
     )

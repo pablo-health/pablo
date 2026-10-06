@@ -227,6 +227,7 @@ def test_redeem_happy_path_returns_appointment_and_audits(launch_client: TestCli
     assert body["patient_name"] == "Jane Roe"
     assert body["video_url"] == "https://zoom.us/j/123"
     assert body["session_id"] is None
+    assert body["ai_consent_prompted"] is False
 
     # One record-level audit event; no PHI in the changes payload.
     audit: _FakeAudit = launch_client.fake_audit  # type: ignore[attr-defined]
@@ -239,6 +240,27 @@ def test_redeem_happy_path_returns_appointment_and_audits(launch_client: TestCli
     assert "intent_id" not in changes
     # The patient association rides the patient= argument, not changes.
     assert call.get("patient") is not None
+
+
+def test_redeem_carries_record_anyway_from_the_web(launch_client: TestClient) -> None:
+    """An intent minted after "Record anyway" tells the companion it was asked."""
+    issued = launch_client.post(
+        "/api/launch/intent",
+        json={"appointment_id": "appt-1", "ai_consent_prompted": True},
+    ).json()
+    body = launch_client.post("/api/launch/redeem", json={"intent_id": issued["intent_id"]}).json()
+    assert body["ai_consent_prompted"] is True
+
+
+def test_record_anyway_flag_stays_with_its_own_intent(launch_client: TestClient) -> None:
+    """A plain intent minted beside a prompted one still redeems unprompted."""
+    plain = launch_client.post("/api/launch/intent", json={"appointment_id": "appt-1"}).json()
+    launch_client.post(
+        "/api/launch/intent",
+        json={"appointment_id": "appt-1", "ai_consent_prompted": True},
+    )
+    body = launch_client.post("/api/launch/redeem", json={"intent_id": plain["intent_id"]}).json()
+    assert body["ai_consent_prompted"] is False
 
 
 def test_redeem_is_single_use(launch_client: TestClient) -> None:

@@ -8,21 +8,24 @@
  *   the session start the desktop app would make is refused by the server
  *   with CLIENT_DECLINED_AI_NOTES.
  * - Not asked yet: "Start session" asks first. "Client agreed today" puts a
- *   dated answer on the chart and then hands off to the desktop app.
+ *   dated answer on the chart and then hands off to the desktop app. "Record
+ *   anyway" hands off an intent that tells the desktop app it was asked, so
+ *   the app does not ask again.
  *
  * The desktop app is the one thing the stack cannot run. Two of its edges
  * are stood in for in the browser, and nothing else: the list of enrolled
  * installs (enrolling one takes the app's own sign-in) and the launch intent,
  * whose handoff link is pointed at a page that only records it was reached.
- * The consent record, the setting, the chart and the server's refusal are all
- * the real stack.
+ * The "Record anyway" test lets the intent through to the real server and
+ * redeems it the way the app does. The consent record, the setting, the chart
+ * and the server's refusal are all the real stack.
  *
  * In a practice of its own (fixtures/freshPractice.ts): the answer only
  * counts while the practice asks, and the spec about that setting turns it
  * off in the shared practice for a while.
  */
 
-import type { Page } from "@playwright/test"
+import type { Page, Route } from "@playwright/test"
 import { ApiError, type ApiClient } from "../fixtures/api"
 import { test, expect } from "../fixtures/auth"
 import { BROWSER_TIME_ZONE } from "../fixtures/clock"
@@ -187,6 +190,63 @@ test("with nothing on file, 'Client agreed today' records it and starts", async 
       `AI notes: agreed ${shown(new Date())}`,
     )
   } finally {
+    await api.delete(`/api/appointments/${appointment.id}`)
+  }
+})
+
+interface Redeemed {
+  appointment_id: string
+  ai_consent_prompted: boolean
+}
+
+test("with nothing on file, 'Record anyway' tells the desktop app it was asked", async () => {
+  const { page, api } = practice
+  const patient = await givePatient(api)
+  const appointment = await giveSessionToday(api, patient, 20)
+
+  // The real server issues the intents; only the link is pointed at the stand-in page.
+  const issued: { intentId: string; prompted: boolean }[] = []
+  const issueForReal = async (route: Route) => {
+    const response = await route.fetch()
+    const body = (await response.json()) as { intent_id: string }
+    issued.push({
+      intentId: body.intent_id,
+      prompted: route.request().postDataJSON().ai_consent_prompted === true,
+    })
+    await route.fulfill({
+      response,
+      json: { ...body, launch_url: new URL(HANDOFF_PATH, page.url()).toString() },
+    })
+  }
+  await page.route("**/api/launch/intent", issueForReal)
+  try {
+    await startSessionFor(page, patient)
+
+    const dialog = page.getByRole("dialog", { name: "No consent on file" })
+    await dialog.getByRole("button", { name: "Record anyway" }).click()
+    await expect(page).toHaveURL(new RegExp(HANDOFF_PATH))
+
+    // Redeemed as the desktop app does when the link opens it.
+    const prompted = issued.find((intent) => intent.prompted)
+    expect(prompted).toBeDefined()
+    const handedOff = await api.post<Redeemed>("/api/launch/redeem", {
+      intent_id: prompted?.intentId,
+    })
+    expect(handedOff).toMatchObject({ appointment_id: appointment.id, ai_consent_prompted: true })
+
+    // The intent a plain start would have handed off does not say so.
+    const plain = issued.find((intent) => !intent.prompted)
+    expect(plain).toBeDefined()
+    const unprompted = await api.post<Redeemed>("/api/launch/redeem", {
+      intent_id: plain?.intentId,
+    })
+    expect(unprompted.ai_consent_prompted).toBe(false)
+
+    // Nothing was put on the chart.
+    const record = await api.get<{ current: unknown }>(`/api/patients/${patient.id}/ai-consent`)
+    expect(record.current).toBeNull()
+  } finally {
+    await page.unroute("**/api/launch/intent", issueForReal)
     await api.delete(`/api/appointments/${appointment.id}`)
   }
 })

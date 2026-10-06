@@ -83,6 +83,7 @@ from .routes import (
     internal_transcription,
     launch,
     migration,
+    note_type_derive,
     note_types,
     notes,
     outside_sessions,
@@ -413,6 +414,7 @@ app.include_router(calendar_import.router)
 app.include_router(outside_sessions.router)
 app.include_router(migration.router)
 app.include_router(note_types.router)
+app.include_router(note_type_derive.router)
 app.include_router(compliance.router)
 app.include_router(supervision.router)
 app.include_router(credentialing.router)
