@@ -66,7 +66,8 @@ export function consentDetails(entry: AiConsentEntry, people: PeopleWords): stri
   return parts.join(" · ")
 }
 
-function giverWord(giver: AiConsentGiver, people: PeopleWords): string {
+/** Who answered, as a person reads it: the people term for the client. */
+export function giverWord(giver: AiConsentGiver, people: PeopleWords): string {
   return giver === "client" ? people.One : giver === "parent" ? "Parent" : "Guardian"
 }
 

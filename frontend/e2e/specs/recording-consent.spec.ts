@@ -214,6 +214,11 @@ test("with nothing on file, 'Client agreed today' records it and starts", async 
     await expect(page.getByTestId("ai-consent-line")).toHaveText(
       `AI notes: agreed ${shown(new Date())}`,
     )
+    // The record says how it was given: in person, by the client.
+    const record = await api.get<{ current: { modality: string; consented_by: string } }>(
+      `/api/patients/${patient.id}/ai-consent`,
+    )
+    expect(record.current).toMatchObject({ modality: "in_person", consented_by: "client" })
   } finally {
     await api.delete(`/api/appointments/${appointment.id}`)
   }

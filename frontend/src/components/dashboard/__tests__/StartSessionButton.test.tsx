@@ -268,9 +268,32 @@ describe("StartSessionButton and the client's answer about AI-assisted notes", (
 
     await waitFor(() => expect(clickThroughAnchor).toHaveBeenCalledWith(LAUNCH_URL))
     expect(recordAiConsent).toHaveBeenCalledTimes(1)
-    // No date: the server records the clinician's own today.
-    expect(recordAiConsent).toHaveBeenCalledWith("patient-1", { decision: "consented" }, undefined)
+    // No date: the server records the clinician's own today. In person, by the client.
+    expect(recordAiConsent).toHaveBeenCalledWith(
+      "patient-1",
+      { decision: "consented", modality: "in_person", consented_by: "client" },
+      undefined,
+    )
     expect(armNoHandoffFallback).toHaveBeenCalledTimes(1)
+  })
+
+  it("records who answered when a parent agreed", async () => {
+    practiceAsks(true)
+    answerOnFile(null)
+    recordAiConsent.mockResolvedValue({ current: null, history: [] })
+
+    const user = await clickStart()
+    const dialog = await screen.findByRole("dialog", { name: "No consent on file" })
+    await user.selectOptions(within(dialog).getByLabelText("Answered by"), "parent")
+    await user.click(within(dialog).getByRole("button", { name: "Parent agreed today" }))
+
+    await waitFor(() =>
+      expect(recordAiConsent).toHaveBeenCalledWith(
+        "patient-1",
+        { decision: "consented", modality: "in_person", consented_by: "parent" },
+        undefined,
+      ),
+    )
   })
 
   const PROMPTED_URL = "https://app.pablo.health/launch/intent-prompted"
