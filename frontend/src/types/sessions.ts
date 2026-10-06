@@ -29,6 +29,7 @@ export type SessionStatus =
   | "recording_complete"
   | "cancelled"
   | "queued"
+  | "transcribing"
   | "processing"
   | "pending_review"
   | "finalized"

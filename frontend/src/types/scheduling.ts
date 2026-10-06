@@ -6,6 +6,8 @@
  * Type definitions for appointment scheduling, matching backend API models.
  */
 
+import type { SessionStatus } from "@/types/sessions"
+
 export type AppointmentStatus = "confirmed" | "cancelled" | "no_show" | "completed"
 
 export type RecurrenceFrequency = "weekly" | "biweekly" | "monthly"
@@ -55,6 +57,8 @@ export interface AppointmentResponse {
   outside_source?: string | null
   outside_event_id?: string | null
   session_id: string | null
+  /** Status of the linked session, when there is one the caller can see. */
+  session_status?: SessionStatus | null
   created_at: string
   updated_at: string | null
 }

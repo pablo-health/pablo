@@ -156,6 +156,17 @@ describe("TodayPanel", () => {
     expect(open).toHaveAttribute("href", "/dashboard/sessions/sess-99")
   })
 
+  it("shows a started visit by its session, not as Scheduled", () => {
+    mockSummary([
+      makeAppointment({ session_id: "sess-5", session_status: "pending_review" }),
+    ])
+
+    renderPanel()
+
+    expect(screen.getByText("To review")).toBeInTheDocument()
+    expect(screen.queryByText("Scheduled")).not.toBeInTheDocument()
+  })
+
   it("surfaces last-visit hint when the summary resolves it", () => {
     mockSummary(
       [makeAppointment({ patient_id: "patient-7" })],
