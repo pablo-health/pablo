@@ -3,7 +3,8 @@
 /**
  * The psychiatric initial evaluation template, end to end: start from it in
  * Settings > Note types, try a draft on its sample visit, save it, then draft
- * a session with it and read the stated diagnoses on the note.
+ * a session with it, read the stated diagnoses on the note, and add one to
+ * the client's problem list.
  *
  * The stack drafts through its stand-in (NOTE_GENERATION_BASE_URL): every
  * text field reads "Stand-in draft for <section>.<field>.", and a diagnoses
@@ -15,9 +16,15 @@ import { test, expect } from "../fixtures/auth"
 import { givePatient } from "../fixtures/scenarios"
 
 const TEMPLATE_LABEL = "Psychiatric initial evaluation"
-const STATED_DIAGNOSIS = "Stand-in diagnosis for assessment.diagnoses (F00.0)"
+const STATED_LABEL = "Stand-in diagnosis for assessment.diagnoses"
+const STATED_DIAGNOSIS = `${STATED_LABEL} (F00.0)`
 
-type Session = { id: string; status: string; note: { note_type: string; content: unknown } | null }
+type Session = {
+  id: string
+  status: string
+  note: { id: string; note_type: string; content: unknown } | null
+}
+type Problem = { label: string; icd10_code: string | null; status: string; source_note_id: string | null }
 
 test("a practice starts the initial evaluation from its template and its notes keep diagnoses as stated", async ({
   signedInPage: page,
@@ -75,7 +82,30 @@ test("a practice starts the initial evaluation from its template and its notes k
 
     await page.goto(`/dashboard/sessions/${session.id}`)
     await expect(page.getByRole("heading", { name: "Assessment and diagnoses" })).toBeVisible()
-    await expect(page.getByRole("listitem").filter({ hasText: STATED_DIAGNOSIS })).toBeVisible()
+    const stated = page.getByRole("listitem").filter({ hasText: STATED_DIAGNOSIS })
+    await expect(stated).toBeVisible()
+
+    // Carry it onto the chart's problem list, as stated: its code, and the
+    // note it came from.
+    const added = page.waitForResponse(
+      (r) => new URL(r.url()).pathname === `/api/patients/${patient.id}/problems` && r.request().method() === "POST",
+    )
+    await stated.getByRole("button", { name: `Add ${STATED_LABEL} to problem list` }).click()
+    expect((await added).status()).toBe(201)
+    await expect(stated.getByText("On problem list")).toBeVisible()
+
+    const noteId = (await api.get<Session>(`/api/sessions/${session.id}`)).note?.id
+    const problems = await api.get<{ data: Problem[] }>(`/api/patients/${patient.id}/problems`)
+    expect(problems.data).toEqual([
+      expect.objectContaining({ label: STATED_LABEL, icd10_code: "F00.0", status: "active", source_note_id: noteId }),
+    ])
+
+    // The chart shows it, and the note still offers nothing more to add.
+    await page.goto(`/dashboard/patients/${patient.id}?tab=problems`)
+    await expect(page.getByTestId("problem-row").filter({ hasText: STATED_LABEL })).toBeVisible()
+    await page.goto(`/dashboard/sessions/${session.id}`)
+    await expect(stated.getByText("On problem list")).toBeVisible()
+    await expect(stated.getByRole("button", { name: /to problem list/ })).toHaveCount(0)
   } finally {
     if (slug) await api.request("DELETE", `/api/note-types/custom/${slug}`)
   }
