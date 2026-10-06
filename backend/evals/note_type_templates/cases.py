@@ -166,7 +166,8 @@ _MED_CHECK_THEN_THERAPY = "\n".join(
         "[00:11:40] Client: Okay. Can we use the rest of the time to talk about my brother? "
         "It's been really hard.",
         "[00:12:05] Therapist: Of course. Tell me what happened this week with him.",
-        "[00:12:20] Client: He moved back in, and every evening turns into an argument about money.",
+        "[00:12:20] Client: He moved back in, and every evening turns into an argument "
+        "about money.",
         "[00:18:45] Therapist: When the argument starts, what goes through your mind?",
         "[00:19:02] Client: That he's taking advantage of me, and that I can't say no.",
         "[00:27:30] Therapist: Let's look at the evidence for 'I can't say no'. When did you "
