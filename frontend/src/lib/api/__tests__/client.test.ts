@@ -345,6 +345,24 @@ describe("apiClient error messages", () => {
     })
   })
 
+  it("carries a request-validation failure's per-field messages on details", async () => {
+    const client = await freshClient()
+    const detail = [
+      { type: "string_too_long", loc: ["body", "label"], msg: "String should have at most 80 characters", input: "x" },
+    ]
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ detail }), { status: 422, headers: { "content-type": "application/json" } }),
+      ),
+    )
+
+    await expect(client.put("/api/x", {})).rejects.toMatchObject({
+      status: 422,
+      details: { validation: [{ loc: ["body", "label"], msg: "String should have at most 80 characters" }] },
+    })
+  })
+
   it("falls back to the status when the body says nothing", async () => {
     const client = await freshClient()
     vi.stubGlobal(

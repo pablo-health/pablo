@@ -201,6 +201,29 @@ function plainDetailFrom(data: unknown): string | null {
   return typeof detail === "string" && detail !== "" ? detail : null
 }
 
+/** One entry of a request-validation failure: where in the body, and why. */
+export interface ValidationIssue {
+  loc: (string | number)[]
+  msg: string
+}
+
+/**
+ * The per-field problems of a request the API refused as invalid (a 422 from
+ * request validation), which arrive as `{"detail": [{loc, msg, ...}]}` with no
+ * envelope. Carried on `ApiError.details.validation` so a form can put each
+ * message beside the field it names.
+ */
+function validationIssuesFrom(data: unknown): ValidationIssue[] | null {
+  if (typeof data !== "object" || data === null) return null
+  const detail = (data as Record<string, unknown>).detail
+  if (!Array.isArray(detail)) return null
+  const issues = detail.filter(
+    (d): d is ValidationIssue =>
+      typeof d === "object" && d !== null && Array.isArray(d.loc) && typeof d.msg === "string",
+  )
+  return issues.length > 0 ? issues.map(({ loc, msg }) => ({ loc, msg })) : null
+}
+
 export class ApiError extends Error {
   /**
    * Set by a registered error interceptor to mean: an explanation has
@@ -395,7 +418,8 @@ export async function apiClient<T>(
       errorData?.error?.message ||
       plainDetailFrom(errorBody) ||
       `API request failed with status ${response.status}`
-    const errorDetails = errorData?.error?.details
+    const validation = validationIssuesFrom(errorBody)
+    const errorDetails = errorData?.error?.details ?? (validation ? { validation } : undefined)
 
     // An unrecoverable 401 boots the user to /login instead of stranding them
     // on a logged-in-looking page that throws on every action. IDLE_TIMEOUT

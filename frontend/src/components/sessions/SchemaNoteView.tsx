@@ -149,11 +149,11 @@ function isEmptyValue(value: unknown): boolean {
   return false
 }
 
-interface SchemaNoteBodyProps extends Omit<SchemaNoteViewProps, "noteTypeKey" | "version"> {
+export interface SchemaNoteBodyProps extends Omit<SchemaNoteViewProps, "noteTypeKey" | "version"> {
   definition: NoteTypeSchema
 }
 
-function SchemaNoteBody({
+export function SchemaNoteBody({
   definition,
   note,
   noteEdited,
