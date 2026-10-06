@@ -25,6 +25,7 @@ stack builds it from ``scripts/e2e/fake-llm.Dockerfile``.
 from __future__ import annotations
 
 import asyncio
+import re
 from collections import Counter
 from typing import Any
 
@@ -244,7 +245,26 @@ async def draft_note(call: NoteCall) -> dict[str, Any]:
     note = _source_note(call.user_prompt)
     if note is not None:
         return {"data": _extracted(call.response_schema, note), "finish_reason": "stop"}
-    return {"data": _stand_in(call.response_schema, ""), "finish_reason": "stop"}
+    data = _stand_in(call.response_schema, "")
+    if "psychotherapy_start" in call.response_schema.get("properties", {}):
+        data["psychotherapy_start"] = _therapy_start(call.user_prompt)
+    return {"data": data, "finish_reason": "stop"}
+
+
+#: The clinician's spoken cue the stand-in recognizes as the therapy portion starting.
+THERAPY_CUE = re.compile(
+    r"^\[(\d+(?::\d{2}){1,2})\][^\n]*let's get into", re.IGNORECASE | re.MULTILINE
+)
+
+
+def _therapy_start(user_prompt: str) -> dict[str, Any]:
+    """Where the therapy portion began: the turn with the clinician's cue, if any."""
+    cue = THERAPY_CUE.search(user_prompt)
+    return {
+        "transcript_time": cue.group(1) if cue else "",
+        "cued_by_clinician": cue is not None,
+        "stated_clock_time": "",
+    }
 
 
 @app.get("/_fake/health")

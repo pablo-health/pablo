@@ -266,6 +266,7 @@ class SessionService:
             content=result.content,
             user_id=user_id,
             note_type_version=result.note_type_version,
+            psychotherapy_start=result.psychotherapy_start,
         )
 
     def create_session_for_generation(
