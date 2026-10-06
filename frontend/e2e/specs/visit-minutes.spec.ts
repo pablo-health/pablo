@@ -116,7 +116,7 @@ test.describe("visit minutes", () => {
       // Typing more minutes than the client was present is refused.
       await page.getByRole("radio", { name: "Type the minutes" }).check()
       await page.getByLabel("Psychotherapy minutes").fill("51")
-      await expect(page.getByRole("alert")).toContainText("the 50 minutes the client was present")
+      await expect(times.getByRole("alert")).toContainText("the 50 minutes the client was present")
       await expect(page.getByRole("button", { name: "Confirm" })).toBeDisabled()
 
       await page.getByRole("radio", { name: /\(you said so here\)/ }).check()
@@ -127,7 +127,7 @@ test.describe("visit minutes", () => {
       await expect(page.getByTestId("add-on-band")).toHaveText("16–37 minutes")
 
       // The draft already holds a stated time; the clinician picks the window.
-      const conflict = page.getByRole("alert")
+      const conflict = times.getByRole("alert")
       await expect(conflict).toContainText("You said “Stand-in draft for psychotherapy.psychotherapy_time.”")
       await conflict.getByRole("button", { name: "Use 37 minutes" }).click()
       await expect(conflict).toHaveCount(0)

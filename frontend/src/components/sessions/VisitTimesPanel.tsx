@@ -2,6 +2,7 @@
 
 "use client"
 
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { useVisitTimes } from "@/hooks/useVisitTimes"
 import { useUserTimeZone } from "@/hooks/usePreferences"
 import { clientPresentLineText, clockTime } from "@/lib/visitTimes"
@@ -33,6 +34,7 @@ export function VisitTimesPanel({
   readonly?: boolean
 }) {
   const timeZone = useUserTimeZone()
+  const people = usePeopleTerm()
   const { data: times } = useVisitTimes(sessionId)
   if (!times) return null
 
@@ -40,6 +42,7 @@ export function VisitTimesPanel({
   const present = clientPresentLineText(
     { ...times, started_at: times.recording_started_at },
     timeZone,
+    people,
   )
   const psychotherapy = times.psychotherapy
   if (!visit && !present && !psychotherapy?.offered && times.total_with_documentation_minutes === null) {

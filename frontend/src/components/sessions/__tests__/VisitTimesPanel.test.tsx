@@ -4,10 +4,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 
 import { VisitTimesPanel } from "../VisitTimesPanel"
+import { peopleWords } from "@/lib/peopleTerm"
 import type { VisitTimes } from "@/types/visitTimes"
 
 const mockTimes = vi.fn()
 
+vi.mock("@/hooks/usePeopleTerm", () => ({ usePeopleTerm: () => peopleWords("clients") }))
 vi.mock("@/hooks/useVisitTimes", () => ({
   useVisitTimes: () => ({ data: mockTimes() }),
   useConfirmPsychotherapyWindow: () => ({ mutate: vi.fn(), isPending: false, isError: false }),

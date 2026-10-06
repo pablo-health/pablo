@@ -7,6 +7,8 @@
  * is decided elsewhere. Minutes are whole minutes, rounded down.
  */
 
+import type { PeopleWords } from "./peopleTerm"
+
 export const ADD_ON_MINIMUM_MINUTES = 16
 const FIRST_BAND_LAST_MINUTE = 37
 const SECOND_BAND_LAST_MINUTE = 52
@@ -77,7 +79,11 @@ export interface ClientPresentTiming {
  * recording's two channels (app.notes.client_present). Nothing when it is
  * unknown: an in-person recording, or one made before it was measured.
  */
-export function clientPresentLineText(timing: ClientPresentTiming, timeZone: string): string | null {
+export function clientPresentLineText(
+  timing: ClientPresentTiming,
+  timeZone: string,
+  people: PeopleWords,
+): string | null {
   const boundary = timing.client_present_end_seconds
   if (boundary === null) return null
   const addendum = wholeMinutes(timing.clinician_addendum_seconds ?? 0)
@@ -85,8 +91,8 @@ export function clientPresentLineText(timing: ClientPresentTiming, timeZone: str
     return addendum > 0 ? `Dictation only, ${addendum} min` : "Dictation only"
   }
   const present = timing.started_at
-    ? `Client present until ${pointInRecording(boundary, timing.started_at, timeZone)}`
-    : `Client present for ${wholeMinutes(boundary)} min`
+    ? `${people.One} present until ${pointInRecording(boundary, timing.started_at, timeZone)}`
+    : `${people.One} present for ${wholeMinutes(boundary)} min`
   return addendum > 0 ? `${present} · Your dictated addendum: ${addendum} min` : present
 }
 

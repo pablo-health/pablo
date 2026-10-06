@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from "vitest"
 
+import { peopleWords } from "../peopleTerm"
 import {
   addOnBand,
   clientPresentLineText,
@@ -10,6 +11,7 @@ import {
 } from "../visitTimes"
 
 const TZ = "America/New_York"
+const CLIENTS = peopleWords("clients")
 // 10:00 AM in New York.
 const STARTED = "2026-10-06T14:00:00Z"
 
@@ -39,6 +41,7 @@ describe("clientPresentLineText", () => {
       clientPresentLineText(
         { started_at: STARTED, client_present_end_seconds: 2158.4, clinician_addendum_seconds: 185.6 },
         TZ,
+        CLIENTS,
       ),
     ).toBe("Client present until 10:35 AM · Your dictated addendum: 3 min")
   })
@@ -48,6 +51,7 @@ describe("clientPresentLineText", () => {
       clientPresentLineText(
         { started_at: null, client_present_end_seconds: 2158.4, clinician_addendum_seconds: 30 },
         TZ,
+        CLIENTS,
       ),
     ).toBe("Client present for 35 min")
   })
@@ -57,6 +61,7 @@ describe("clientPresentLineText", () => {
       clientPresentLineText(
         { started_at: STARTED, client_present_end_seconds: 0, clinician_addendum_seconds: 130 },
         TZ,
+        CLIENTS,
       ),
     ).toBe("Dictation only, 2 min")
   })
@@ -66,6 +71,7 @@ describe("clientPresentLineText", () => {
       clientPresentLineText(
         { started_at: STARTED, client_present_end_seconds: null, clinician_addendum_seconds: null },
         TZ,
+        CLIENTS,
       ),
     ).toBeNull()
   })

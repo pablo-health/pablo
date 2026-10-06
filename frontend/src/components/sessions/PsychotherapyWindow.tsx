@@ -4,6 +4,7 @@
 
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { useConfirmPsychotherapyWindow } from "@/hooks/useVisitTimes"
 import {
   addOnBand,
@@ -56,6 +57,7 @@ export function PsychotherapyWindow({
   readonly,
 }: PsychotherapyWindowProps) {
   const confirm = useConfirmPsychotherapyWindow(sessionId)
+  const people = usePeopleTerm()
   const confirmed = window.confirmed_minutes !== null
   const [editing, setEditing] = useState(!confirmed)
   const end = window.end_seconds ?? 0
@@ -194,7 +196,7 @@ export function PsychotherapyWindow({
 
           {tooLong ? (
             <p role="alert" className="text-red-600">
-              Can&apos;t be more than the {maxMinutes} minutes the client was present.
+              Can&apos;t be more than the {maxMinutes} minutes the {people.one} was present.
             </p>
           ) : (
             minutes !== null &&

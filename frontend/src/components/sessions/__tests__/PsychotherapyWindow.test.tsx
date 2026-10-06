@@ -10,10 +10,12 @@ import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 
 import { PsychotherapyWindow } from "../PsychotherapyWindow"
+import { peopleWords } from "@/lib/peopleTerm"
 import type { PsychotherapyWindow as Window } from "@/types/visitTimes"
 
 const mutate = vi.fn()
 
+vi.mock("@/hooks/usePeopleTerm", () => ({ usePeopleTerm: () => peopleWords("clients") }))
 vi.mock("@/hooks/useVisitTimes", () => ({
   useConfirmPsychotherapyWindow: () => ({ mutate, isPending: false, isError: false }),
 }))
