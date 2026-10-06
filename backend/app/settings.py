@@ -562,6 +562,12 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "NOTE_GENERATION_BASE_URL must not be set outside ENVIRONMENT=development"
                 )
+            if self.dictation_transcription_base_url:
+                # And here it is the clinician's recorded voice.
+                raise ValueError(
+                    "DICTATION_TRANSCRIPTION_BASE_URL must not be set outside "
+                    "ENVIRONMENT=development"
+                )
         return self
 
     # Firebase Blocking Function OIDC Verification
@@ -1809,6 +1815,16 @@ class Settings(BaseSettings):
             "stand-in, which returns a fixed draft shaped by the note type. "
             "The draft is validated as a model's would be. Unset (the "
             "ordinary case) means the model."
+        ),
+    )
+
+    dictation_transcription_base_url: str | None = Field(
+        default=None,
+        description=(
+            "Origin that transcribes a clinician's dictated clip instead of "
+            "the transcription provider — the end-to-end harness's stand-in, "
+            "which answers every clip with the same words. Unset (the "
+            "ordinary case) means the configured provider."
         ),
     )
 

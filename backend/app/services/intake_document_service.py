@@ -202,7 +202,12 @@ class IntakeDocumentService:
         published in one go: a form cannot go live naming an unpublished
         document, and the copy is edited afterwards like any other — a new
         version, then publish.
+
+        Raises :class:`ValueError` for a starter that is questions alone:
+        there is no document to copy.
         """
+        if starter.body_markdown is None:
+            raise ValueError(f"{starter.key} has no document")
         for row in self._repo.latest_per_key():
             if row["title"] != starter.title:
                 continue

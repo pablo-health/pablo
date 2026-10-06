@@ -106,6 +106,16 @@ def test_audio_objects_for_patient_parses_single_and_stereo_paths() -> None:
     ]
 
 
+def test_audio_objects_for_patient_include_dictated_clips() -> None:
+    """A dictation's audio sits beside the session's and is purged with it."""
+    mock_conn = MagicMock()
+    mock_conn.execute.return_value.fetchall.return_value = [("dictations/sess-a/d-1",)]
+    objects = hard_purge_cron._audio_objects_for_patient(mock_conn, "practice", "pt-1")
+    query = str(mock_conn.execute.call_args_list[-1].args[0])
+    assert "FROM session_dictations WHERE patient_id = :pid" in query
+    assert objects == ["dictations/sess-a/d-1"]
+
+
 def test_delete_audio_blobs_noop_when_empty() -> None:
     with patch("app.jobs.hard_purge_cron._resolve_audio_storage") as resolver:
         hard_purge_cron._delete_audio_blobs([])

@@ -64,7 +64,11 @@ export function useAddNoteAddendum(token?: string) {
     { noteId: string; data: CreateNoteAddendumRequest }
   >({
     mutationFn: ({ noteId, data }) => addNoteAddendum(noteId, data, token),
-    invalidateKeys: ({ noteId }) => [queryKeys.notes.signing(noteId)],
+    invalidateKeys: ({ noteId, data }) => [
+      queryKeys.notes.signing(noteId),
+      // A signed draft from a dictation stops being offered.
+      ...(data.dictation_id ? [queryKeys.sessions.allDictations()] : []),
+    ],
   })
 }
 

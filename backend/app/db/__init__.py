@@ -1087,9 +1087,12 @@ _CORE_NOT_ROW_SCOPED: frozenset[str] = frozenset(
 )
 
 #: Tables whose rows belong to one note and are readable exactly when that
-#: note is — its signed versions and its addenda. ``enable_rls_on_schema``
-#: gives them the ``rls_note_child_access`` policy, keyed on ``note_id``.
-NOTE_CHILD_TABLES: frozenset[str] = frozenset({"note_signatures", "note_addenda"})
+#: note is — its signed versions, its addenda and what was dictated for it.
+#: ``enable_rls_on_schema`` gives them the ``rls_note_child_access`` policy,
+#: keyed on ``note_id``.
+NOTE_CHILD_TABLES: frozenset[str] = frozenset(
+    {"note_signatures", "note_addenda", "session_dictations"}
+)
 
 
 def not_row_scoped_tenant_tables() -> set[str]:

@@ -38,6 +38,8 @@ export interface NoteSignaturePanelProps {
    * its own signing step (a session awaiting review, a new standalone note).
    */
   canSign?: boolean
+  /** An addendum drafted from a dictation, offered for review and signing. */
+  draftAddendum?: { dictationId: string; text: string }
 }
 
 function SignatureLines({
@@ -106,14 +108,18 @@ function VersionRow({
   )
 }
 
-export function NoteSignaturePanel({ note, canSign = false }: NoteSignaturePanelProps) {
+export function NoteSignaturePanel({
+  note,
+  canSign = false,
+  draftAddendum,
+}: NoteSignaturePanelProps) {
   const { data: record } = useNoteSigning(note.id)
   const timeZone = useUserTimeZone()
   const { readOnly } = useReadOnlyMode()
   const sign = useSignNote()
   const unlock = useUnlockNote()
   const addAddendum = useAddNoteAddendum()
-  const [dialog, setDialog] = useState<"sign" | "unlock" | "addendum" | null>(null)
+  const [dialog, setDialog] = useState<"sign" | "unlock" | "addendum" | "draft" | null>(null)
 
   if (!record) return null
 
@@ -127,6 +133,7 @@ export function NoteSignaturePanel({ note, canSign = false }: NoteSignaturePanel
       : canSign
         ? ["sign"]
         : []
+  const draft = locked && !readOnly ? draftAddendum : undefined
   const nothingToShow =
     !locked && record.addenda.length === 0 && !hasHistory && actions.length === 0
   if (nothingToShow) return null
@@ -169,6 +176,23 @@ export function NoteSignaturePanel({ note, canSign = false }: NoteSignaturePanel
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {draft && (
+        <div
+          data-testid="draft-addendum"
+          className="space-y-2 rounded-md border border-dashed border-neutral-300 p-3"
+        >
+          <h4 className="text-sm font-semibold text-neutral-900">
+            Draft addendum from your dictation
+          </h4>
+          <p className="whitespace-pre-wrap text-sm text-neutral-800">{draft.text}</p>
+          <div className="flex justify-end">
+            <Button size="sm" onClick={() => setDialog("draft")}>
+              Review and sign
+            </Button>
+          </div>
         </div>
       )}
 
@@ -220,6 +244,20 @@ export function NoteSignaturePanel({ note, canSign = false }: NoteSignaturePanel
           addAddendum.mutateAsync({ noteId: note.id, data: { text, ...signer } })
         }
       />
+      {draft && (
+        <AddAddendumDialog
+          key={draft.dictationId}
+          open={dialog === "draft"}
+          onOpenChange={close}
+          initialText={draft.text}
+          onAdd={(text, signer) =>
+            addAddendum.mutateAsync({
+              noteId: note.id,
+              data: { text, ...signer, dictation_id: draft.dictationId },
+            })
+          }
+        />
+      )}
       <UnlockNoteDialog
         open={dialog === "unlock"}
         onOpenChange={close}

@@ -1412,6 +1412,27 @@ ALTER SEQUENCE __TENANT_SCHEMA__.scheduling_policy_id_seq OWNED BY __TENANT_SCHE
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.session_dictations (
+    id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    note_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    author_user_id uuid NOT NULL,
+    audio_path text NOT NULL,
+    content_type character varying(100) NOT NULL,
+    duration_seconds integer,
+    status character varying(20) NOT NULL,
+    transcript text,
+    used_as character varying(20),
+    addendum_id uuid,
+    created_at timestamp with time zone NOT NULL,
+    transcribed_at timestamp with time zone,
+    CONSTRAINT ck_session_dictations_status CHECK (((status)::text = ANY ((ARRAY['transcribing'::character varying, 'transcribed'::character varying, 'failed'::character varying])::text[]))),
+    CONSTRAINT ck_session_dictations_used_as CHECK (((used_as IS NULL) OR ((used_as)::text = ANY ((ARRAY['redraft'::character varying, 'addendum'::character varying])::text[]))))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.supervision_hours (
     id uuid NOT NULL,
     supervision_relationship_id uuid NOT NULL,
@@ -1842,6 +1863,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.remittance_holds
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.scheduling_policy
     ADD CONSTRAINT scheduling_policy_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.session_dictations
+    ADD CONSTRAINT session_dictations_pkey PRIMARY KEY (id);
 
 
 
@@ -2409,6 +2435,18 @@ CREATE INDEX ix_remittance_holds_patient_id ON __TENANT_SCHEMA__.remittance_hold
 
 
 
+CREATE INDEX ix_session_dictations_note_id ON __TENANT_SCHEMA__.session_dictations USING btree (note_id);
+
+
+
+CREATE INDEX ix_session_dictations_patient_id ON __TENANT_SCHEMA__.session_dictations USING btree (patient_id);
+
+
+
+CREATE INDEX ix_session_dictations_session_id ON __TENANT_SCHEMA__.session_dictations USING btree (session_id);
+
+
+
 CREATE INDEX ix_supervision_hours_supervision_relationship_id ON __TENANT_SCHEMA__.supervision_hours USING btree (supervision_relationship_id);
 
 
@@ -2870,6 +2908,26 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.remittance_holds
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.remittance_holds
     ADD CONSTRAINT remittance_holds_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.session_dictations
+    ADD CONSTRAINT session_dictations_addendum_id_fkey FOREIGN KEY (addendum_id) REFERENCES __TENANT_SCHEMA__.note_addenda(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.session_dictations
+    ADD CONSTRAINT session_dictations_note_id_fkey FOREIGN KEY (note_id) REFERENCES __TENANT_SCHEMA__.notes(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.session_dictations
+    ADD CONSTRAINT session_dictations_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.session_dictations
+    ADD CONSTRAINT session_dictations_session_id_fkey FOREIGN KEY (session_id) REFERENCES __TENANT_SCHEMA__.therapy_sessions(id) ON DELETE CASCADE;
 
 
 
