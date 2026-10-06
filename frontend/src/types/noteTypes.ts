@@ -155,8 +155,8 @@ export interface DeriveCoverage {
   passages: number
   /** Passages no proposed field took, verbatim. */
   unplaced: string[]
-  /** Lines that are not note content (signatures, headings); absent from older servers. */
-  excluded?: string[]
+  /** How many lines were left out as not note content (signatures, header facts); absent from older servers. */
+  excluded?: number
   /** False when the sample could not be checked; `unplaced` is then empty. */
   checked: boolean
 }

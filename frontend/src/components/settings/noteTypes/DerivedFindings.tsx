@@ -33,7 +33,7 @@ export function DerivedFindings({ derived, onAddField, onAddSection }: DerivedFi
   const { coverage, suggestions, reference, guard } = derived
   const withUnplaced = coverage.filter((c) => c.unplaced.length > 0)
   const unchecked = coverage.filter((c) => !c.checked)
-  const excluded = coverage.flatMap((c) => c.excluded ?? [])
+  const withExcluded = coverage.filter((c) => (c.excluded ?? 0) > 0)
   const allPlaced = coverage.length > 0 && unchecked.length === 0 && withUnplaced.length === 0
   const openSuggestions = suggestions.filter((s) => handled[s.label] !== "ignored")
 
@@ -87,20 +87,12 @@ export function DerivedFindings({ derived, onAddField, onAddSection }: DerivedFi
           </p>
         ))}
 
-        {excluded.length > 0 && (
-          <details>
-            <summary className="cursor-pointer text-[12.5px] text-muted-foreground">
-              Lines that aren&apos;t note content, such as signatures ({excluded.length})
-            </summary>
-            <ul className="mt-2 space-y-1 border-l-2 border-border pl-3">
-              {excluded.map((line, i) => (
-                <li key={i} className="whitespace-pre-wrap text-[12.5px] text-muted-foreground">
-                  {line}
-                </li>
-              ))}
-            </ul>
-          </details>
-        )}
+        {withExcluded.map((c) => (
+          <p key={c.sample} data-testid="excluded-lines" className="text-[12.5px] text-muted-foreground">
+            {c.excluded === 1 ? "1 line" : `${c.excluded} lines`}
+            {coverage.length > 1 ? ` of note ${c.sample + 1}` : ""} left out as not part of the note.
+          </p>
+        ))}
 
         {guard.length > 0 && (
           <p className="text-[12.5px] text-muted-foreground">Wording that repeated your notes was replaced.</p>

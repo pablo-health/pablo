@@ -371,19 +371,26 @@ describe("NoteTypesPage from your notes", () => {
     ])
   })
 
-  it("lists lines that are not note content quietly, and tolerates their absence", async () => {
+  it("counts lines left out as not note content in one quiet line", async () => {
+    mockDerive.mockResolvedValue({ ...DERIVED, coverage: [{ ...DERIVED.coverage[0], excluded: 16 }] })
+    const user = userEvent.setup()
+    renderWithProviders(<NoteTypesPage />)
+    await proposeFromPastedSample(user)
+
+    expect(screen.getByTestId("excluded-lines")).toHaveTextContent("16 lines left out as not part of the note.")
+    expect(screen.getAllByTestId("unplaced-passage")).toHaveLength(1)
+  })
+
+  it("says nothing about left-out lines when there are none or the count is absent", async () => {
     mockDerive.mockResolvedValue({
       ...DERIVED,
-      coverage: [{ ...DERIVED.coverage[0], excluded: ["Signed electronically", "PLAN"] }],
+      coverage: [{ ...DERIVED.coverage[0], excluded: 0 }, { sample: 1, passages: 2, unplaced: [], checked: true }],
     })
     const user = userEvent.setup()
     renderWithProviders(<NoteTypesPage />)
     await proposeFromPastedSample(user)
 
-    const summary = screen.getByText(/Lines that aren't note content/)
-    expect(summary).toHaveTextContent("(2)")
-    expect(summary.closest("details")).not.toHaveAttribute("open")
-    expect(screen.getAllByTestId("unplaced-passage")).toHaveLength(1)
+    expect(screen.queryByTestId("excluded-lines")).not.toBeInTheDocument()
   })
 
   it("says so when everything found a field", async () => {
