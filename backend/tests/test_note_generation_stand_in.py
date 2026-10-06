@@ -80,6 +80,44 @@ def test_a_practice_type_gets_a_draft_in_its_own_shape(stand_in: list[str]) -> N
     assert stand_in == [f"{BASE_URL}/v1/structured"]
 
 
+def test_a_field_named_after_an_input_is_drafted_as_its_value(stand_in: list[str]) -> None:
+    """So a spec can see which value reached the prompt."""
+    spec = PracticeNoteTypeSpec.model_validate(
+        {
+            "label": "Visit",
+            "sections": [
+                {
+                    "key": "billing",
+                    "label": "Billing",
+                    "fields": [
+                        {"key": "visit_code", "label": "Visit code"},
+                        {"key": "summary", "label": "Summary"},
+                    ],
+                }
+            ],
+            "inputs": [
+                {"key": "visit_code", "label": "Visit code"},
+                {"key": "program", "label": "Program"},
+            ],
+        }
+    )
+    definition = to_definition("custom.visit", 1, spec)
+
+    generated = _service().generate_note(
+        definition.key,
+        TRANSCRIPT,
+        PATIENT,
+        NOW,
+        inputs={"visit_code": "99214"},
+        definition=definition,
+    )
+
+    assert generated.content == {
+        "billing": {"visit_code": "99214", "summary": "Stand-in draft for billing.summary."}
+    }
+    assert len(stand_in) == 1
+
+
 def test_a_diagnoses_field_gets_one_coded_diagnosis(stand_in: list[str]) -> None:
     spec = PracticeNoteTypeSpec.model_validate(
         {

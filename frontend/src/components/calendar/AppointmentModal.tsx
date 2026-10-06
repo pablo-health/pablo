@@ -38,6 +38,7 @@ import type { PatientResponse } from "@/types/patients"
 import type { UserPreferences } from "@/lib/api/users"
 import { DEFAULT_NOTE_TYPE, type NoteInputSchema } from "@/types/noteTypes"
 import { ApiError } from "@/lib/api/client"
+import { filledInputs } from "@/lib/noteInputs"
 import type { EditorialTheme } from "./editorial/EditorialSidebar"
 import "./editorial/editorial.css"
 
@@ -337,19 +338,6 @@ function NoteInputFields({
       ))}
     </>
   )
-}
-
-/** The declared inputs' non-blank values, trimmed — the shape the API takes. */
-function filledInputs(
-  inputs: NoteInputSchema[],
-  values: Record<string, string>,
-): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const input of inputs) {
-    const value = values[input.key]?.trim()
-    if (value) out[input.key] = value
-  }
-  return out
 }
 
 function AppointmentForm({

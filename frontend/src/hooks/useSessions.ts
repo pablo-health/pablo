@@ -12,10 +12,12 @@ import type {
   UpdateSessionRatingRequest,
   UploadSessionRequest,
 } from "@/types/sessions"
+import type { Note, RedraftNoteRequest } from "@/types/notes"
 import {
   finalizeSession,
   getSession,
   listSessions,
+  redraftSessionNote,
   updateSessionMetadata,
   updateSessionRating,
   uploadSession,
@@ -193,6 +195,22 @@ export function useFinalizeSession(token?: string) {
             }
           : previous.note,
       }),
+    },
+  })
+}
+
+/**
+ * Draft a session's note again. The returned note is `processing`; it is
+ * written into the cached session so the page starts polling straight away.
+ */
+export function useRedraftSessionNote(token?: string) {
+  return useAuthMutation<Note, { sessionId: string; data: RedraftNoteRequest }>({
+    mutationFn: ({ sessionId, data }) => redraftSessionNote(sessionId, data, token),
+    onSuccess: (note, { sessionId }, queryClient) => {
+      queryClient.setQueryData<SessionResponse>(
+        queryKeys.sessions.detail(sessionId),
+        (previous) => (previous ? { ...previous, note } : previous),
+      )
     },
   })
 }

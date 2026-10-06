@@ -14,6 +14,7 @@ import type {
   UpdateSessionRatingRequest,
   UploadSessionRequest,
 } from "@/types/sessions"
+import type { Note, RedraftNoteRequest } from "@/types/notes"
 import { apiClient, get, patch, post } from "./client"
 
 /**
@@ -196,4 +197,19 @@ export async function updateSessionMetadata(
   token?: string
 ): Promise<SessionResponse> {
   return patch<SessionResponse>(`/api/sessions/${sessionId}`, data, token)
+}
+
+/**
+ * Draft a session's note again, optionally with new inputs.
+ *
+ * Answers at once with the note marked `processing`; the new draft is
+ * written off the request, so poll the session until the note's status
+ * leaves `processing` (`complete`, or `failed` with the note unchanged).
+ */
+export async function redraftSessionNote(
+  sessionId: string,
+  data: RedraftNoteRequest,
+  token?: string
+): Promise<Note> {
+  return post<Note>(`/api/sessions/${sessionId}/note/redraft`, data, token)
 }
