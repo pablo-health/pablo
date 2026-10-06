@@ -110,6 +110,14 @@ class ScheduleSessionRequest(BaseModel):
         default=None,
         description="Values for the note type's declared inputs.",
     )
+    asking_consent_on_recording: bool = Field(
+        default=False,
+        description=(
+            "The clinician asks the client about AI-assisted notes once recording "
+            "starts, so the answer is on the recording. Required to record a "
+            "session with a video link for a client with no answer on file."
+        ),
+    )
 
 
 class UpdateSessionStatusRequest(BaseModel):
