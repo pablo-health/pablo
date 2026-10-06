@@ -377,7 +377,7 @@ class TestGenerationReceivesTheAddendum:
             "Clinician addendum:", 1
         )
         assert "PDMP checked" not in transcript_part
-        assert "PDMP checked today, no concerns." in addendum_part
+        assert f"{DICTATED_HEADING}\n{dictated}" in addendum_part
         assert "Client denies suicidal ideation" in addendum_part
 
     def test_an_unknown_boundary_leaves_the_prompt_as_it_was(self, patient: Patient) -> None:
