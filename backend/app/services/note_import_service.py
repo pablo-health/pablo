@@ -30,6 +30,8 @@ from ..settings import get_settings
 # These helpers build/validate the registry-shaped JSON for a note type.
 # They are imported (not reimplemented) so an imported note is exactly the
 # same shape as a generated one; see CLAUDE.md "Don't duplicate OSS".
+from .ai_features import AIFeature
+from .hedged_structured_llm_gateway import generation_gateway
 from .note_generation_service import (
     SOAP_KEY,
     _build_registry_response_schema,
@@ -40,7 +42,6 @@ from .structured_llm_gateway import (
     StructuredCompletion,
     StructuredLLMGateway,
     StructuredOutputTruncatedError,
-    get_default_structured_llm_gateway,
 )
 
 logger = logging.getLogger(__name__)
@@ -472,7 +473,7 @@ class NoteImportService:
         registry: NoteTypeRegistry | None = None,
         model: str | None = None,
     ) -> None:
-        self._llm_gateway = llm_gateway or get_default_structured_llm_gateway()
+        self._llm_gateway = llm_gateway or generation_gateway(AIFeature.NOTE_IMPORT)
         self._registry = registry or get_default_registry()
         self._model = model
 
@@ -482,7 +483,9 @@ class NoteImportService:
         # far faster than the pro/thinking default. Falls back to ai_model
         # when no flash model is configured.
         settings = get_settings()
-        return self._model or settings.ai_model_flash or settings.ai_model
+        return self._model or settings.model_for(
+            AIFeature.NOTE_IMPORT, settings.ai_model_flash or settings.ai_model
+        )
 
     def _complete_with_retry(
         self,

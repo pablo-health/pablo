@@ -159,7 +159,9 @@ def _grade_diagnoses(case: TemplateCase, content: dict[str, Any]) -> list[str]:
     return failures
 
 
-def draft(gateway: StructuredLLMGateway, case: TemplateCase) -> GeneratedNote:
+def draft(
+    gateway: StructuredLLMGateway, case: TemplateCase, model: str | None = None
+) -> GeneratedNote:
     spec = PracticeNoteTypeSpec.model_validate(load_template(case.template)["spec"])
     definition = to_definition("custom.preview", 0, spec)
     now = datetime.now(UTC)
@@ -173,7 +175,9 @@ def draft(gateway: StructuredLLMGateway, case: TemplateCase) -> GeneratedNote:
         if case.recorded_call
         else None
     )
-    generated = RegistryNoteGenerationService(llm_gateway=gateway).generate_note(
+    # The model is named here too: without it the generator asks the gateway
+    # for the configured default, which a Bedrock gateway cannot serve.
+    generated = RegistryNoteGenerationService(llm_gateway=gateway, model=model).generate_note(
         definition.key,
         transcript,
         patient,
@@ -204,7 +208,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     results = []
     for case in cases:
-        generated = draft(gateway, case)
+        generated = draft(gateway, case, args.model)
         if args.out:
             out = Path(args.out)
             out.mkdir(parents=True, exist_ok=True)

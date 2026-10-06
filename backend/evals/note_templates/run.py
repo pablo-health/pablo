@@ -31,7 +31,10 @@ from typing import Any
 from app.models import Patient, Transcript
 from app.notes.practice_types import practice_key, to_definition, validate_note_inputs
 from app.services.note_generation_service import RegistryNoteGenerationService
-from app.services.structured_llm_gateway import resolve_structured_llm_gateway
+from app.services.structured_llm_gateway import (
+    get_default_structured_llm_gateway,
+    resolve_structured_llm_gateway,
+)
 
 from evals.note_templates.cases import ALL_CASES, TemplateCase
 from evals.note_templates.scorers import Draft, grade
@@ -43,8 +46,13 @@ def draft(case: TemplateCase, model: str | None) -> Draft:
     now = datetime.now(UTC)
     # A preview's stand-in client: practice types never read the patient.
     patient = Patient(id="preview", first_name="", last_name="", created_at=now, updated_at=now)
+    # One model alone, with no fallback behind it, so two providers can be
+    # compared on the same cases.
     generator = RegistryNoteGenerationService(
-        llm_gateway=resolve_structured_llm_gateway(model) if model else None, model=model
+        llm_gateway=(
+            resolve_structured_llm_gateway(model) if model else get_default_structured_llm_gateway()
+        ),
+        model=model,
     )
     generated = generator.generate_note(
         definition.key,

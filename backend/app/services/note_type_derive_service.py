@@ -37,6 +37,8 @@ from pydantic import ValidationError
 from ..notes.practice_types import PracticeNoteTypeSpec, to_definition
 from ..notes.references import missing_elements
 from ..settings import get_settings
+from .ai_features import AIFeature
+from .hedged_structured_llm_gateway import generation_gateway
 from .note_type_derive_checks import (
     SampleText,
     copied_paths,
@@ -48,7 +50,6 @@ from .note_type_derive_shape import drop_rationale_sections, ensure_encounter, s
 from .structured_llm_gateway import (
     StructuredLLMGateway,
     StructuredOutputTruncatedError,
-    get_default_structured_llm_gateway,
 )
 
 if TYPE_CHECKING:
@@ -402,7 +403,7 @@ class NoteTypeDeriveService:
         model: str | None = None,
     ) -> None:
         self._import = import_service
-        self._llm_gateway = llm_gateway or get_default_structured_llm_gateway()
+        self._llm_gateway = llm_gateway or generation_gateway(AIFeature.NOTE_TYPE_DERIVE)
         self._model = model
 
     def derive(
@@ -446,7 +447,8 @@ class NoteTypeDeriveService:
         for budget in (base, base * 2):
             try:
                 return self._llm_gateway.complete_structured(
-                    model=self._model or settings.ai_model,
+                    model=self._model
+                    or settings.model_for(AIFeature.NOTE_TYPE_DERIVE, settings.ai_model),
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
                     response_schema=schema,

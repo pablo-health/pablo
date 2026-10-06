@@ -13,7 +13,9 @@ the same schema the Gemini path uses.
 Selected for ``bedrock:``-prefixed model ids (for example
 ``bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0``) by
 :func:`~app.services.structured_llm_gateway.resolve_structured_llm_gateway`,
-so it can be named as a fallback in ``AI_MODEL_FLASH_FALLBACKS``.
+so it can be named as a fallback in ``AI_MODEL_FLASH_FALLBACKS`` (short,
+interactive calls) or ``AI_MODEL_FALLBACKS`` (drafting, importing and
+deriving notes).
 
 Bounds. Each attempt is bounded by the botocore read timeout, and
 botocore's own retries are off: attempts belong to the caller's retry
@@ -205,6 +207,14 @@ class BedrockStructuredLLMGateway(StructuredLLMGateway):
         self._clients: dict[float, Any] = {}
         self._lock = threading.Lock()
 
+    def client(self, timeout_seconds: float) -> Any:
+        """A bedrock-runtime client bounded by ``timeout_seconds``, shared by bound.
+
+        Also what the streaming chat gateway calls through, so both share
+        one credential session.
+        """
+        return self._client(timeout_seconds)
+
     def _client(self, timeout_seconds: float) -> Any:
         bound = math.ceil(timeout_seconds / _TIMEOUT_STEP_SECONDS) * _TIMEOUT_STEP_SECONDS
         with self._lock:
@@ -283,7 +293,13 @@ class BedrockStructuredLLMGateway(StructuredLLMGateway):
         started = time.monotonic()
 
         def attempt() -> dict[str, Any]:
-            attempt_bound = _attempt_timeout(bound, started, policy)
+            # As on the Gemini path, only a caller's own bound is cut to the
+            # policy's deadline. With none given, each attempt keeps the full
+            # default: a note drafted on this model as the primary takes far
+            # longer than the request preset's 25 s.
+            attempt_bound = (
+                bound if timeout_seconds is None else _attempt_timeout(bound, started, policy)
+            )
             try:
                 response: dict[str, Any] = self._client(attempt_bound).converse(**request)
             except Exception as exc:
