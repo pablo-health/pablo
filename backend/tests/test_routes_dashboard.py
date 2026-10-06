@@ -202,3 +202,30 @@ def test_audits_only_disclosed_sessions_and_no_patient_views(
         assert call.args[0] == AuditAction.SESSION_VIEWED
     # The blind patient-list read is gone — no patient_viewed rows.
     audit_spy.log_patient_action.assert_not_called()
+
+
+def test_today_appointment_carries_its_linked_session_status(
+    seeded_client,
+    mock_session_repo: InMemoryTherapySessionRepository,
+    mock_user_id: str,
+) -> None:
+    """A started visit reads as its session, not as the still-confirmed appointment."""
+    session = _session(mock_user_id, P1, 99, SessionStatus.PENDING_REVIEW)
+    mock_session_repo.create(session)
+    started = _appt(
+        mock_user_id, P1, "2026-06-15T16:00:00+00:00", status=AppointmentStatus.CONFIRMED
+    )
+    started.session_id = session.id
+    appt_repo = InMemoryAppointmentRepository()
+    not_started = _appt(
+        mock_user_id, P1, "2026-06-15T14:00:00+00:00", status=AppointmentStatus.CONFIRMED
+    )
+    appt_repo.create(not_started)
+    appt_repo.create(started)
+    app.dependency_overrides[get_scheduling_service] = lambda: SchedulingService(appt_repo)
+
+    rows = {a["id"]: a for a in _get_summary(seeded_client)["today_appointments"]}
+
+    assert rows[started.id]["status"] == "confirmed"
+    assert rows[started.id]["session_status"] == "pending_review"
+    assert rows[not_started.id]["session_status"] is None

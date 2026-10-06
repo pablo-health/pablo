@@ -10,19 +10,13 @@ import { Button } from "@/components/ui/button"
 import { useCompanionDevices } from "@/hooks/useCompanionDevices"
 import { useDashboardSummary } from "@/hooks/useDashboard"
 import { useUserTimeZone } from "@/hooks/usePreferences"
+import { appointmentBadge } from "@/lib/appointmentBadge"
 import { isCompanionAvailable } from "@/lib/companion"
 import { useCompanionAccess } from "@/lib/companion.extensions"
 import { isTelehealth } from "@/lib/telehealth"
 import type { AppointmentResponse } from "@/types/scheduling"
 import { CompanionGetDialog } from "./CompanionGetDialog"
 import { StartSessionButton } from "./StartSessionButton"
-
-const STATUS_BADGES: Record<string, { label: string; cls: string }> = {
-  confirmed: { label: "Scheduled", cls: "bg-secondary-50 text-secondary-700" },
-  completed: { label: "Done", cls: "bg-neutral-100 text-neutral-600" },
-  cancelled: { label: "Cancelled", cls: "bg-neutral-100 text-neutral-500" },
-  no_show: { label: "No-show", cls: "bg-red-50 text-red-700" },
-}
 
 export function TodayPanel() {
   const timeZone = useUserTimeZone()
@@ -137,7 +131,7 @@ function AppointmentRow({
     minute: "2-digit",
     timeZone,
   })
-  const badge = STATUS_BADGES[appointment.status]
+  const badge = appointmentBadge(appointment)
   // Only confirmed, not-yet-recorded appointments are launchable.
   const launchable =
     appointment.status === "confirmed" && !appointment.session_id

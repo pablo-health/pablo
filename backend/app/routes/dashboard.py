@@ -29,7 +29,12 @@ from ..models.scheduling import AppointmentResponse
 from ..repositories import NotesRepository, PatientRepository, TherapySessionRepository
 from ..scheduling_engine.services.scheduling import SchedulingService
 from ..services import AuditService, get_audit_service
-from .scheduling import _to_response, get_owner_timezone, get_scheduling_service
+from .scheduling import (
+    _session_status_map,
+    _to_response,
+    get_owner_timezone,
+    get_scheduling_service,
+)
 from .sessions import (
     get_notes_repository,
     get_patient_repository,
@@ -88,6 +93,8 @@ def get_dashboard_summary(
     # Today's appointments + last-visit dates for exactly those patients —
     # no blind patient-list page (and so none of its patient_viewed rows).
     today_appts = scheduling.list_appointments(user.id, today_start, today_end, tz=tz)
+    # A started visit's appointment stays confirmed; its session says where it is.
+    statuses = _session_status_map(session_repo, user.id, today_appts)
     today_patient_ids = list({a.patient_id for a in today_appts})
     today_patients = patient_repo.get_multiple(today_patient_ids, user.id)
     last_visit_by_patient = {
@@ -130,7 +137,10 @@ def get_dashboard_summary(
         audit.log_session_action(AuditAction.SESSION_VIEWED, user, request, s, patient)
 
     return DashboardSummaryResponse(
-        today_appointments=[_to_response(a) for a in today_appts],
+        today_appointments=[
+            _to_response(a, session_status=statuses.get(a.session_id) if a.session_id else None)
+            for a in today_appts
+        ],
         last_visit_by_patient=last_visit_by_patient,
         week_confirmed_count=week_confirmed_count,
         notes_pending_count=notes_pending_count,
