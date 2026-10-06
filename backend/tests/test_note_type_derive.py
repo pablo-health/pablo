@@ -27,6 +27,7 @@ from app.repositories.audit import InMemoryAuditRepository
 from app.routes.note_type_derive import get_note_type_derive_service
 from app.routes.note_types import get_registry
 from app.services.audit_service import AuditService, get_audit_service
+from app.services.document_ai_ocr import OcrResult, get_document_ocr_client
 from app.services.note_import_service import NoteImportService
 from app.services.note_type_derive_checks import SampleText, copied_paths
 from app.services.note_type_derive_service import (
@@ -39,6 +40,8 @@ from app.services.structured_llm_gateway import (
     StructuredCompletion,
 )
 from fastapi.testclient import TestClient
+
+from tests.scanned_pdf_fakes import SCANNED_PDF, FakeOcrClient
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -445,6 +448,35 @@ def test_bad_requests_are_refused_before_any_model_call(
     client: TestClient, gateway: FakeStructuredLLMGateway, form: dict[str, Any], status_code: int
 ) -> None:
     assert _derive(client, **form).status_code == status_code
+    assert gateway.calls == []
+
+
+def test_a_scanned_sample_is_read_with_ocr(
+    client: TestClient, gateway: FakeStructuredLLMGateway
+) -> None:
+    ocr = FakeOcrClient(result=OcrResult(text=SAMPLE, page_count=3, avg_confidence=0.97))
+    app.dependency_overrides[get_document_ocr_client] = lambda: ocr
+    gateway.responses = [_reply(PROPOSAL), _reply(EXTRACTED)]
+    try:
+        response = _derive(client, files={"files": ("scan.pdf", SCANNED_PDF, "application/pdf")})
+    finally:
+        app.dependency_overrides.pop(get_document_ocr_client, None)
+
+    assert response.status_code == 200, response.text
+    assert len(ocr.calls) == 1
+    assert SAMPLE.strip() in gateway.calls[1]["user_prompt"]
+
+
+def test_a_scanned_sample_with_ocr_off_is_refused(
+    client: TestClient, gateway: FakeStructuredLLMGateway
+) -> None:
+    app.dependency_overrides[get_document_ocr_client] = lambda: FakeOcrClient(is_configured=False)
+    try:
+        response = _derive(client, files={"files": ("scan.pdf", SCANNED_PDF, "application/pdf")})
+    finally:
+        app.dependency_overrides.pop(get_document_ocr_client, None)
+
+    assert response.status_code == 422
     assert gateway.calls == []
 
 

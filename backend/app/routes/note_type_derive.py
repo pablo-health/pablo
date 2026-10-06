@@ -21,7 +21,12 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from ..api_errors import BadRequestError, NotFoundError, UnprocessableEntityError
+from ..api_errors import (
+    BadRequestError,
+    NotFoundError,
+    ServiceUnavailableError,
+    UnprocessableEntityError,
+)
 from ..auth.route_access import subscription_exempt
 from ..auth.service import get_current_user, require_baa_acceptance
 from ..db import release_db_connection
@@ -35,14 +40,16 @@ from ..notes.references import (
 )
 from ..services.ai_features import AIFeature
 from ..services.audit_service import AuditService, get_audit_service
+from ..services.document_ai_ocr import DocumentAiOcrClient, get_document_ocr_client
 from ..services.hedged_structured_llm_gateway import generation_gateway
 from ..services.http_structured_llm_gateway import HttpStructuredLLMGateway
 from ..services.note_import_service import (
     MAX_IMPORT_DOC_BYTES,
+    DocumentReadTimeoutError,
     DocumentTextExtractionError,
     NoteImportService,
     UnsupportedDocumentTypeError,
-    extract_document_text,
+    read_document_text,
 )
 from ..services.note_type_derive_service import (
     MAX_DESCRIPTION_CHARS,
@@ -168,7 +175,9 @@ def _resolve_reference(key: str | None, registry: NoteTypeRegistry) -> NoteTypeR
         raise NotFoundError(f"Reference {key!r} not found") from exc
 
 
-async def _sample_texts(pasted: list[str], files: list[UploadFile]) -> list[str]:
+async def _sample_texts(
+    pasted: list[str], files: list[UploadFile], ocr: DocumentAiOcrClient
+) -> list[str]:
     """Each sample's text, pasted ones first; PDF and Word read like an import."""
     texts = [text.strip() for text in pasted if text.strip()]
     for upload in files:
@@ -180,8 +189,8 @@ async def _sample_texts(pasted: list[str], files: list[UploadFile]) -> list[str]
             )
         try:
             texts.append(
-                extract_document_text(
-                    data, content_type=upload.content_type, filename=upload.filename
+                await read_document_text(
+                    data, content_type=upload.content_type, filename=upload.filename, ocr=ocr
                 )
             )
         except UnsupportedDocumentTypeError as exc:
@@ -190,6 +199,8 @@ async def _sample_texts(pasted: list[str], files: list[UploadFile]) -> list[str]
             ) from exc
         except DocumentTextExtractionError as exc:
             raise UnprocessableEntityError(str(exc)) from exc
+        except DocumentReadTimeoutError as exc:
+            raise ServiceUnavailableError(str(exc), code="DOCUMENT_READ_TIMEOUT") from exc
     if len(texts) > MAX_SAMPLES:
         raise BadRequestError(f"Send at most {MAX_SAMPLES} sample notes.")
     if any(len(text) > MAX_SAMPLE_CHARS for text in texts):
@@ -209,6 +220,7 @@ async def derive_note_type(
     user: User = Depends(require_baa_acceptance),
     registry: NoteTypeRegistry = Depends(get_registry),
     deriver: NoteTypeDeriveService = Depends(get_note_type_derive_service),
+    ocr: DocumentAiOcrClient = Depends(get_document_ocr_client),
     audit: AuditService = Depends(get_audit_service),
 ) -> DeriveNoteTypeResponse:
     """Propose a note type from up to three sample notes and/or a description.
@@ -218,7 +230,11 @@ async def derive_note_type(
     out, in plain words) and ``reference`` (a note type or reference key to
     compare against). Send at least one sample or a description.
     """
-    texts = await _sample_texts(samples or [], files or [])
+    if files:
+        # Reading a scanned sample is an OCR call; hold no pooled connection
+        # through it. The audit write below checks out a fresh one.
+        release_db_connection()
+    texts = await _sample_texts(samples or [], files or [], ocr)
     if not texts and not (description and description.strip()):
         raise BadRequestError("Send a sample note or a description.")
     chosen = _resolve_reference(reference, registry)
