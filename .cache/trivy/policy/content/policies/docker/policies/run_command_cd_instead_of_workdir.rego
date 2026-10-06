@@ -1,0 +1,44 @@
+# METADATA
+# title: "'RUN cd ...' to change directory"
+# description: "Use WORKDIR instead of proliferating instructions like 'RUN cd … && do-something', which are hard to read, troubleshoot, and maintain."
+# scope: package
+# schemas:
+# - input: schema["dockerfile"]
+# related_resources:
+# - https://docs.docker.com/develop/develop-images/dockerfile_best-practices/#workdir
+# custom:
+#   id: DS-0013
+#   long_id: docker-use-workdir-over-cd
+#   aliases:
+#     - AVD-DS-0013
+#     - DS013
+#     - use-workdir-over-cd
+#     - docker-use-workdir-over-cd
+#   severity: MEDIUM
+#   recommended_action: "Use WORKDIR to change directory"
+#   input:
+#     selector:
+#     - type: dockerfile
+#   examples: checks/docker/run_command_cd_instead_of_workdir.yaml
+package builtin.dockerfile.DS013
+
+import rego.v1
+
+import data.lib.docker
+
+get_cd contains output if {
+	run := docker.run[_]
+	parts = regex.split(`\s*&&\s*`, run.Value[_])
+	startswith(parts[_], "cd ")
+	args := concat(" ", run.Value)
+	output := {
+		"args": args,
+		"cmd": run,
+	}
+}
+
+deny contains res if {
+	output := get_cd[_]
+	msg := sprintf("RUN should not be used to change directory: '%s'. Use 'WORKDIR' statement instead.", [output.args])
+	res := result.new(msg, output.cmd)
+}
