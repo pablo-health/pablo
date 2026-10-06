@@ -20,7 +20,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
 from ..models import UserPreferences
-from ..models.scheduling import is_telehealth
 from ..models.export import (
     Communication,
     Condition,
@@ -31,6 +30,7 @@ from ..models.export import (
     Observation,
     OutcomeMeasureSource,
 )
+from ..models.scheduling import is_telehealth
 from ..outcome_measures.instruments import get_instrument
 from ..outcome_measures.service import OutcomeMeasureService
 

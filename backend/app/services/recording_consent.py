@@ -61,7 +61,7 @@ class RecordingConsentGate:
         self.asks_clients = asks_clients
         self._consents = consents
 
-    def refuse_unless_recordable(  # noqa: PLR0913 — the two facts about this start are keyword-only
+    def refuse_unless_recordable(
         self,
         patient: Patient,
         user: User,

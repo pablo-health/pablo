@@ -244,6 +244,21 @@ def test_redeem_happy_path_returns_appointment_and_audits(launch_client: TestCli
     assert call.get("patient") is not None
 
 
+def test_redeem_carries_ask_now_from_the_web(launch_client: TestClient) -> None:
+    """An intent minted after "Ask now" tells the companion to ask on the recording."""
+    issued = launch_client.post(
+        "/api/launch/intent",
+        json={"appointment_id": "appt-1", "ask_consent_on_recording": True},
+    ).json()
+    body = launch_client.post("/api/launch/redeem", json={"intent_id": issued["intent_id"]}).json()
+    assert body["ask_consent_on_recording"] is True
+    assert body["ai_consent_prompted"] is False
+
+    plain = launch_client.post("/api/launch/intent", json={"appointment_id": "appt-1"}).json()
+    body = launch_client.post("/api/launch/redeem", json={"intent_id": plain["intent_id"]}).json()
+    assert body["ask_consent_on_recording"] is False
+
+
 def test_redeem_says_an_office_visit_is_not_telehealth(launch_client: TestClient) -> None:
     """The companion offers "Record anyway" only for a client in the room."""
     issued = launch_client.post("/api/launch/intent", json={"appointment_id": "appt-office"}).json()

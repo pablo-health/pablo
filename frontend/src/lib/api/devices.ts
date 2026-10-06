@@ -56,15 +56,25 @@ export async function listCompanionDevices(
  *
  * `aiConsentPrompted`: the clinician was just asked "No consent on file" and
  * chose to record anyway, so the companion does not ask the same question.
+ * `askConsentOnRecording`: for a telehealth visit with nothing on file, the
+ * clinician chose to ask once recording starts, so the answer is on the
+ * recording.
  */
 export async function createLaunchIntent(
   appointmentId: string,
-  { aiConsentPrompted = false }: { aiConsentPrompted?: boolean } = {},
+  {
+    aiConsentPrompted = false,
+    askConsentOnRecording = false,
+  }: { aiConsentPrompted?: boolean; askConsentOnRecording?: boolean } = {},
   token?: string,
 ): Promise<LaunchIntentResponse> {
   return post<LaunchIntentResponse>(
     "/api/launch/intent",
-    { appointment_id: appointmentId, ai_consent_prompted: aiConsentPrompted },
+    {
+      appointment_id: appointmentId,
+      ai_consent_prompted: aiConsentPrompted,
+      ask_consent_on_recording: askConsentOnRecording,
+    },
     token,
   )
 }

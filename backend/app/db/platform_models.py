@@ -1064,6 +1064,12 @@ class LaunchIntentRow(PlatformBase):
     ai_consent_prompted: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
+    # True when the web asked "No consent on file" for a telehealth visit and
+    # the clinician chose to ask once recording starts, so the companion starts
+    # the session saying so (app.services.recording_consent).
+    ask_consent_on_recording: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
 
 
 class PlatformAuditLogRow(PlatformBase):

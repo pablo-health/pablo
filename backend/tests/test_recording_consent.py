@@ -30,6 +30,7 @@ import pytest
 from app.main import app
 from app.models import Patient, SessionStatus
 from app.models.audit import AuditAction
+from app.models.scheduling import is_telehealth
 from app.models.session import TherapySession, Transcript
 from app.repositories import get_client_ai_consent_repository, get_patient_repository
 from app.repositories.audit import InMemoryAuditRepository
@@ -41,7 +42,6 @@ from app.routes.scheduling import (
 )
 from app.services import AuditService, get_audit_service
 from app.services.client_ai_consent import record_ai_consent
-from app.models.scheduling import is_telehealth
 from app.services.recording_consent import (
     CLIENT_AI_CONSENT_NEEDED,
     CLIENT_DECLINED_AI_NOTES,

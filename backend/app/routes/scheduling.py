@@ -82,11 +82,11 @@ from ..models.scheduling import (
     SetEventTitlingResponse,
     StartSessionFromAppointmentRequest,
     TimeSlotResponse,
-    is_telehealth,
     UpdateAppointmentRequest,
     UpdateAppointmentTypeRequest,
     UpdateAvailabilityRuleRequest,
     UpdateSchedulingPolicyRequest,
+    is_telehealth,
 )
 from ..notes import NoteTypeAuthorizer, get_default_registry, get_note_type_authorizer
 from ..notes.practice_types import validate_note_inputs
