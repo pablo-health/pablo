@@ -121,7 +121,7 @@ def service(documents: InMemoryIntakeDocumentRepository) -> IntakeDocumentServic
 def practice_values() -> dict[str, str]:
     """The practice's settings as a document reads them. Mutable, so a test
     can change a setting between two reads."""
-    return {"audio_retention_days": "90"}
+    return {"audio_retention": "90 days after your session", "audio_retention_days": "90"}
 
 
 @pytest.fixture
@@ -441,8 +441,8 @@ class TestStarters:
         document = response.json()["document"]
         assert document["title"] == "Consent for the use of AI tools"
         assert document["published_at"] is not None
-        assert "{{audio_retention_days}}" in document["body_markdown"]
-        assert "keeps session audio for 90 days" in document["rendered_html"]
+        assert "{{audio_retention}}" in document["body_markdown"]
+        assert "Session audio is deleted 90 days after your session." in document["rendered_html"]
         listed = [d["id"] for d in practice.get(BASE).json()]
         assert document["id"] in listed
 

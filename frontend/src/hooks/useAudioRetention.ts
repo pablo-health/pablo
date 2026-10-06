@@ -3,29 +3,35 @@
 "use client"
 
 import {
+  getAudioRetention,
   updateAudioRetention,
   type AudioRetentionResponse,
 } from "@/lib/api/practices"
-import { useAuthMutation } from "./useAuthQuery"
+import { queryKeys } from "@/lib/api/queryKeys"
+import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
+
+/** The practice's audio retention setting (practice owner only). */
+export function useAudioRetentionSetting(token?: string) {
+  return useAuthQuery<AudioRetentionResponse>({
+    queryKey: queryKeys.audioRetention.all,
+    queryFn: () => getAudioRetention(token),
+  })
+}
 
 interface UpdateAudioRetentionVariables {
-  practiceId: string
   days: number
 }
 
 /**
- * Mutation hook for updating per-practice audio retention.
+ * Mutation hook for updating the practice's audio retention.
  *
- * Wraps the per-practice audio-retention PUT endpoint. The backend
- * response is the canonical persisted value; the parent component is
- * responsible for surfacing success/error UI.
+ * The backend response is the canonical persisted value; the parent component
+ * is responsible for surfacing success/error UI. The read-aloud consent script
+ * reads the same setting, so its query is refreshed too.
  */
 export function useAudioRetention(token?: string) {
-  return useAuthMutation<
-    AudioRetentionResponse,
-    UpdateAudioRetentionVariables
-  >({
-    mutationFn: ({ practiceId, days }) =>
-      updateAudioRetention(practiceId, days, token),
+  return useAuthMutation<AudioRetentionResponse, UpdateAudioRetentionVariables>({
+    mutationFn: ({ days }) => updateAudioRetention(days, token),
+    invalidateKeys: [queryKeys.audioRetention.all, queryKeys.aiConsent.practiceSetting()],
   })
 }

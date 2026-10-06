@@ -265,9 +265,10 @@ class UpdateProfessionalInfoRequest(BaseModel):
     taxonomy_code: str | None = Field(None, min_length=1, max_length=10)
 
 
-# Keep in sync with the DB CHECK constraint added by
-# d7a3f1c8e2b4_practices_retention_offboard_columns.py.
-AUDIO_RETENTION_MIN_DAYS = 30
+# Keep in sync with the DB CHECK constraint ``ck_practices_audio_retention_days_range``
+# (platform revision b8e3f5a1c724). 0 means "delete when the note is signed";
+# see app.services.audio_retention.
+AUDIO_RETENTION_MIN_DAYS = 0
 AUDIO_RETENTION_MAX_DAYS = 2555
 
 

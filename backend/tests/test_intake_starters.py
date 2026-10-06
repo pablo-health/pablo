@@ -34,6 +34,7 @@ from app.intake.starters import (
     register_intake_starter,
     starter,
 )
+from app.services.audio_retention import retention_phrase
 from app.services.intake_form_ai_consent import signed_on, transcription_answer
 
 if TYPE_CHECKING:
@@ -42,10 +43,10 @@ if TYPE_CHECKING:
 #: The digest of each starter's words. A change here is a change to what
 #: clients are asked to agree to, so it is made on purpose or not at all.
 _PINNED_DIGESTS = {
-    "ai_tools_consent": "bc6a0ce5144f208bb1c0baca2cd9d9bf5610489ffaea62b48b54dd93879b4028",
+    "ai_tools_consent": "74cb25d38d5ec6b64aa3d07cbe8cc3dcd3ffce7ce897014495e8e7714336a40b",
 }
 
-_VALUES = {"audio_retention_days": "365"}
+_VALUES = {"audio_retention": retention_phrase(365), "audio_retention_days": "365"}
 
 _AI_TOOLS_BODY = AI_TOOLS_CONSENT.body_markdown or ""
 
@@ -207,14 +208,22 @@ class TestTheAiToolsConsent:
         assert len(self._words()) < 250
 
     def test_no_number_is_written_into_it(self) -> None:
-        """The retention period comes from the practice's setting."""
+        """When audio is deleted comes from the practice's setting."""
         assert not re.search(r"\d", _AI_TOOLS_BODY)
-        assert "{{audio_retention_days}}" in _AI_TOOLS_BODY
+        assert "{{audio_retention}}" in _AI_TOOLS_BODY
 
-    def test_the_practices_retention_period_is_shown(self) -> None:
-        for days in ("30", "365"):
-            html = render_html(fill_practice_values(_AI_TOOLS_BODY, {"audio_retention_days": days}))
-            assert f"keeps session audio for {days} days" in html
+    @pytest.mark.parametrize(
+        ("days", "sentence"),
+        [
+            (0, "Session audio is deleted once your note is signed."),
+            (1, "Session audio is deleted 1 day after your session."),
+            (30, "Session audio is deleted 30 days after your session."),
+            (2555, "Session audio is deleted 2555 days after your session."),
+        ],
+    )
+    def test_the_practices_setting_finishes_the_sentence(self, days: int, sentence: str) -> None:
+        values = {"audio_retention": retention_phrase(days)}
+        assert sentence in render_html(fill_practice_values(_AI_TOOLS_BODY, values))
 
     def test_it_uses_no_gendered_pronouns(self) -> None:
         gendered = {"he", "him", "his", "she", "her", "hers", "himself", "herself"}

@@ -295,10 +295,15 @@ def _normalise(text: str) -> str:
 
 
 #: The practice settings a document may name in double braces —
-#: ``{{audio_retention_days}}`` — to have the practice's current value shown
-#: in its place. An allowlist: any other name in braces stays the literal
-#: text it is, so a document cannot reach a setting nobody meant to publish.
-PRACTICE_VALUES: tuple[str, ...] = ("audio_retention_days",)
+#: ``{{audio_retention}}`` — to have the practice's current value shown in its
+#: place. An allowlist: any other name in braces stays the literal text it is,
+#: so a document cannot reach a setting nobody meant to publish.
+#:
+#: ``audio_retention`` is when session audio is deleted, worded to finish
+#: "Session audio is deleted …" for every setting ("once your note is signed",
+#: "365 days after your session"). ``audio_retention_days`` is the bare number,
+#: kept for documents written before a practice could delete on signing.
+PRACTICE_VALUES: tuple[str, ...] = ("audio_retention", "audio_retention_days")
 
 _PLACEHOLDER = re.compile(r"\{\{\s*([a-z_]+)\s*\}\}")
 

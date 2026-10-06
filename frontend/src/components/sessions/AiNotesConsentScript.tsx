@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog"
 import { useAiNotesConsentSetting } from "@/hooks/useAiConsent"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
+import { AUDIO_RETENTION_ON_SIGNING } from "@/lib/api/practices"
 
 /** A retention window as someone would say it: "1 year", "2 years", "90 days". */
 export function formatRetention(days: number): string {
@@ -28,16 +29,19 @@ export function formatRetention(days: number): string {
  *
  * Four things and nothing else: what is recorded, that AI drafts the note and
  * the clinician reviews it, how long the audio is kept (the practice's stored
- * window, whether or not its control is shown in Settings), and that the
+ * setting, whether or not its control is shown in Settings), and that the
  * client can say no at any time.
  */
 export function consentScript(retentionDays: number): string[] {
   return [
     "I'd like to record our session today.",
     "The recording is turned into a written transcript, and an AI tool uses it to draft my notes. I read and correct every note myself.",
-    // The practice's chosen window, and no more: whether deletion runs at the
-    // end of it is the deployment's, so the script does not promise it.
-    `The audio is kept for up to ${formatRetention(retentionDays)}.`,
+    // The practice's setting, and no more. 0 is enforced by signing itself,
+    // so the script can say it plainly; for a number of days, whether deletion
+    // runs at the end is the deployment's, so the script does not promise it.
+    retentionDays === AUDIO_RETENTION_ON_SIGNING
+      ? "The audio is deleted once your note is signed."
+      : `The audio is kept for up to ${formatRetention(retentionDays)}.`,
     "You can say no, now or at any time.",
     "Is that all right with you?",
   ]

@@ -65,7 +65,9 @@ class PracticeRow(PlatformBase):
         Boolean, nullable=False, default=False, server_default="false"
     )
     # Per-practice audio retention window (days). DB CHECK enforces
-    # 30..2555 (≈7y). Default 365 matches privacy-policy commitment.
+    # 0..2555 (≈7y); 0 deletes a session's audio once its note is signed
+    # (app.services.audio_retention). Default 365 matches privacy-policy
+    # commitment.
     audio_retention_days: Mapped[int] = mapped_column(
         Integer, nullable=False, default=365, server_default="365"
     )
@@ -156,9 +158,10 @@ class PracticeRow(PlatformBase):
             "provisioning_status IN ('in_progress', 'ready', 'failed')",
             name="practices_provisioning_status_chk",
         ),
-        # Added by ``d7a3f1c8e2b4``. Thirty days to seven years.
+        # Added by ``d7a3f1c8e2b4``; ``b8e3f5a1c724`` lowered the floor from
+        # thirty days to 0, "delete when the note is signed".
         CheckConstraint(
-            "audio_retention_days >= 30 AND audio_retention_days <= 2555",
+            "audio_retention_days >= 0 AND audio_retention_days <= 2555",
             name="ck_practices_audio_retention_days_range",
         ),
         # Added by ``f1c8d4a92b65`` alongside the immutability trigger on

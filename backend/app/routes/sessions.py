@@ -96,6 +96,7 @@ from ..services import (
     TransientSOAPGenerationError,
     get_audit_service,
 )
+from ..services.audio_retention import AudioOnSigning
 from ..services.file_storage import FileTooLargeError, UploadTarget
 from ..services.note_import_service import (
     MAX_IMPORT_DOC_BYTES,
@@ -116,7 +117,7 @@ from ..services.transcription_queue_service import (
 )
 from ..settings import get_settings
 from ..utcnow import utc_now
-from .notes import get_note_generation_service
+from .notes import get_audio_on_signing, get_note_generation_service
 
 # Optional subscription extension point. When a billing overlay is
 # installed it registers ``app.routes.subscription``; otherwise the
@@ -733,6 +734,7 @@ def finalize_session(
     user: User = Depends(require_baa_acceptance),
     session_service: SessionService = Depends(get_session_service),
     audit: AuditService = Depends(get_audit_service),
+    audio_on_signing: AudioOnSigning = Depends(get_audio_on_signing),
 ) -> SessionResponse:
     """
     Finalize a session after therapist review.
@@ -775,6 +777,7 @@ def finalize_session(
             patient_id=note.patient_id,
             session_id=note.session_id,
         )
+    audio_on_signing.after_signing(note, user, http_request, audit)
 
     return SessionResponse.from_session(session, patient_name, _embed_note(note))
 

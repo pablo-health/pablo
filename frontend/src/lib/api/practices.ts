@@ -3,15 +3,15 @@
 /**
  * Practice API Functions
  *
- * API functions for per-practice administrative endpoints. The
- * `audio-retention` route is mounted by an optional backend overlay;
- * from the frontend's perspective it's just a route on the same API
- * origin.
+ * The caller's own practice's audio retention setting. Owner-only on the
+ * backend: anyone else gets a 403.
  */
 
-import { put } from "./client"
+import { get, put } from "./client"
 
-export const AUDIO_RETENTION_MIN_DAYS = 30
+/** "Delete when the note is signed" rather than a number of days. */
+export const AUDIO_RETENTION_ON_SIGNING = 0
+export const AUDIO_RETENTION_MIN_DAYS = 1
 export const AUDIO_RETENTION_MAX_DAYS = 2555 // ~7 years
 export const AUDIO_RETENTION_DEFAULT_DAYS = 365
 
@@ -20,22 +20,25 @@ export interface AudioRetentionResponse {
   audio_retention_days: number
 }
 
+const AUDIO_RETENTION_PATH = "/api/users/me/practice/audio-retention"
+
+/** The practice's audio retention setting. */
+export async function getAudioRetention(token?: string): Promise<AudioRetentionResponse> {
+  return get<AudioRetentionResponse>(AUDIO_RETENTION_PATH, token)
+}
+
 /**
- * Update the per-practice audio retention window (days).
+ * Set the practice's audio retention.
  *
- * @param practiceId - The practice id whose retention window is being set.
- * @param days - New retention window. Must be within [30, 2555]; the
- *   backend enforces this with a 422 response (and a DB CHECK).
+ * @param days - `AUDIO_RETENTION_ON_SIGNING` (0) to delete a session's audio
+ *   once its note is signed, or a number of days within
+ *   [AUDIO_RETENTION_MIN_DAYS, AUDIO_RETENTION_MAX_DAYS]. The backend enforces
+ *   the range with a 422 response (and a DB CHECK).
  * @param token - Optional auth token for server-side calls.
  */
 export async function updateAudioRetention(
-  practiceId: string,
   days: number,
   token?: string,
 ): Promise<AudioRetentionResponse> {
-  return put<AudioRetentionResponse>(
-    `/api/saas/practices/${practiceId}/audio-retention`,
-    { days },
-    token,
-  )
+  return put<AudioRetentionResponse>(AUDIO_RETENTION_PATH, { audio_retention_days: days }, token)
 }

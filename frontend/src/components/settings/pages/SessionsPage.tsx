@@ -10,7 +10,7 @@ import { TranscriptionSettings } from "../TranscriptionSettings"
 import { SessionsRecordingCard } from "../settingsSlots.extensions"
 import { SettingsCard } from "../ui"
 import { isEnabled } from "@/lib/featureFlags"
-import { useSettingsPreferences, useSettingsUserStatus } from "../useSettingsPreferences"
+import { useSettingsPreferences } from "../useSettingsPreferences"
 
 /**
  * Practice > Sessions & recording.
@@ -21,8 +21,6 @@ import { useSettingsPreferences, useSettingsUserStatus } from "../useSettingsPre
  */
 export function SessionsPage() {
   const { preferences, save, isSaving } = useSettingsPreferences()
-  const { data: userStatus } = useSettingsUserStatus()
-  const practiceId = userStatus?.practice_id
 
   return (
     <>
@@ -48,12 +46,9 @@ export function SessionsPage() {
               </SettingsCard>
             )}
 
-            {isEnabled("audio_retention") && practiceId && (
-              <SettingsCard
-                title="Audio retention"
-                description="How long session audio is kept before nightly automatic deletion."
-              >
-                <AudioRetentionSettings practiceId={practiceId} />
+            {isEnabled("audio_retention") && (
+              <SettingsCard title="Audio retention" description="When session audio is deleted.">
+                <AudioRetentionSettings />
               </SettingsCard>
             )}
           </>
