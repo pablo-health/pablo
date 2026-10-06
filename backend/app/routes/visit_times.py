@@ -14,10 +14,12 @@ from ..repositories import (
     PatientRepository,
     TherapySessionRepository,
 )
+from ..repositories.session_dictation import SessionDictationRepository
 from ..scheduling_engine.repositories.appointment import AppointmentRepository
 from ..services import AuditService, NoteService, get_audit_service
 from ..services.visit_times_service import build_visit_times, confirm_psychotherapy_window
 from .notes import get_appointment_repository
+from .session_dictations import get_dictation_repository
 from .sessions import (
     get_note_service,
     get_notes_repository,
@@ -37,6 +39,7 @@ def get_visit_times(
     patient_repo: PatientRepository = Depends(get_patient_repository),
     notes_repo: NotesRepository = Depends(get_notes_repository),
     appointment_repo: AppointmentRepository = Depends(get_appointment_repository),
+    dictation_repo: SessionDictationRepository = Depends(get_dictation_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> VisitTimesResponse:
     """Start, end and minutes of a recorded visit, and its psychotherapy window."""
@@ -47,7 +50,9 @@ def get_visit_times(
     appointment = appointment_repo.get_by_session_ids([session.id], user.id).get(session.id)
     patient = patient_repo.get(session.patient_id, user.id)
     audit.log_session_action(AuditAction.SESSION_VIEWED, user, request, session, patient)
-    return build_visit_times(session, note, appointment)
+    return build_visit_times(
+        session, note, appointment, dictation_repo.list_for_session(session.id)
+    )
 
 
 @router.put("/api/sessions/{session_id}/psychotherapy-window")
@@ -61,6 +66,7 @@ def put_psychotherapy_window(
     notes_repo: NotesRepository = Depends(get_notes_repository),
     appointment_repo: AppointmentRepository = Depends(get_appointment_repository),
     note_service: NoteService = Depends(get_note_service),
+    dictation_repo: SessionDictationRepository = Depends(get_dictation_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> VisitTimesResponse:
     """Confirm where the therapy portion started, or type its minutes."""
@@ -80,4 +86,6 @@ def put_psychotherapy_window(
         changes={"psychotherapy_window": "confirmed"},
     )
     appointment = appointment_repo.get_by_session_ids([session.id], user.id).get(session.id)
-    return build_visit_times(session, note, appointment)
+    return build_visit_times(
+        session, note, appointment, dictation_repo.list_for_session(session.id)
+    )
