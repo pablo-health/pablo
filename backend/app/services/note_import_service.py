@@ -107,7 +107,9 @@ EXTRACT_INTO_SYSTEM_PROMPT = (
     "that note's existing text into the named fields below — not to rewrite "
     "it.\n\n" + _VERBATIM_RULES + "- Place text only in a field whose label and description say "
     "it belongs there. Text that no field is meant for is left out, not "
-    "forced into the closest field.\n" + _EMPTY_FIELD_RULE
+    "forced into the closest field.\n"
+    '- One line may hold several labelled facts ("Date: ... Codes: ..."). '
+    "Place each fact in the field it belongs to; a line is not one unit.\n" + _EMPTY_FIELD_RULE
 )
 
 

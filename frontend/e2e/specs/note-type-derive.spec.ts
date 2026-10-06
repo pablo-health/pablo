@@ -14,11 +14,11 @@ import { test, expect } from "../fixtures/auth"
 type Spec = {
   label: string
   sections: Array<{ key: string; label: string; fields: Array<{ key: string; kind: string; ai_hint: string }> }>
-  inputs: unknown[]
+  inputs: Array<{ key: string }>
 }
 type Derived = {
   spec: Spec
-  coverage: Array<{ sample: number; passages: number; unplaced: string[]; checked: boolean }>
+  coverage: Array<{ sample: number; passages: number; unplaced: string[]; checked: boolean; excluded: number }>
   guard: Array<{ path: string; outcome: string }>
   reference: { key: string; label: string } | null
   suggestions: Array<{ label: string; description: string }>
@@ -50,7 +50,7 @@ test.describe("deriving a note type from a sample note", () => {
 
     expect(derived.spec.sections.map((s) => s.key)).toEqual(["interval", "plan"])
     expect(derived.guard).toEqual([])
-    expect(derived.coverage).toEqual([{ sample: 0, passages: 4, unplaced: [STRAY], checked: true }])
+    expect(derived.coverage).toEqual([{ sample: 0, passages: 4, unplaced: [STRAY], checked: true, excluded: 0 }])
     // Proposing saves nothing.
     const after = await api.get<NoteTypeList>("/api/note-types")
     expect(after.note_types.map((t) => t.key)).toEqual(before.note_types.map((t) => t.key))
@@ -75,6 +75,33 @@ test.describe("deriving a note type from a sample note", () => {
     expect(derived.coverage[0].unplaced).toEqual([STRAY])
     expect(derived.reference).toEqual({ key: "soap", label: "SOAP" })
     expect(derived.suggestions.map((s) => s.label)).toEqual(["Subjective", "Objective", "Assessment"])
+  })
+
+  test("visit facts get an Encounter section and a rationale block is left out", async ({ api }) => {
+    const sample = [
+      "Date of Service: 03/04/2026",
+      "Place of Service: 10 (Telehealth)",
+      "Client Location: home    Provider Location: office",
+      "Client consented to telehealth by video.",
+      "",
+      SAMPLE,
+      "",
+      "How the Codes Were Selected (not part of your note)",
+      "Two chronic conditions were reviewed, which set the level of the visit.",
+    ].join("\n")
+
+    const derived = await api.postForm<Derived>("/api/note-types/derive", form({ samples: sample }))
+
+    const encounter = derived.spec.sections[0]
+    expect(encounter.label).toBe("Encounter")
+    expect(encounter.fields.map((f) => f.key)).toEqual(
+      expect.arrayContaining(["date_of_service", "place_of_service", "telehealth_attestation"]),
+    )
+    expect(derived.spec.inputs).toEqual(
+      expect.arrayContaining([expect.objectContaining({ key: "place_of_service" })]),
+    )
+    expect(derived.coverage[0].excluded).toBe(2)
+    expect(derived.coverage[0].unplaced.join(" ")).not.toContain("chronic conditions")
   })
 
   test("a description alone is enough", async ({ api }) => {
