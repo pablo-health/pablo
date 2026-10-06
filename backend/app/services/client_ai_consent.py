@@ -31,7 +31,12 @@ from ..utcnow import utc_now
 if TYPE_CHECKING:
     from datetime import date
 
-    from ..models.client_ai_consent import AiConsentDecision, AiConsentSource
+    from ..models.client_ai_consent import (
+        AiConsentDecision,
+        AiConsentGiver,
+        AiConsentModality,
+        AiConsentSource,
+    )
     from ..repositories.client_ai_consent import ClientAiConsentRepository
 
 
@@ -47,6 +52,9 @@ def record_ai_consent(
     recorded_by: str | None,
     intake_submission_id: str | None = None,
     *,
+    modality: AiConsentModality | None = None,
+    client_stated_location: str | None = None,
+    consented_by: AiConsentGiver | None = None,
     today: date | None = None,
     repo: ClientAiConsentRepository | None = None,
 ) -> AiConsentEvent:
@@ -64,6 +72,9 @@ def record_ai_consent(
     intake-form entry names the submission it came from
     (``intake_submission_id``) and may have nobody behind ``recorded_by``.
     Anything else is a programming error and raises ``ValueError``.
+
+    ``modality``, ``client_stated_location`` and ``consented_by`` say how the
+    answer was given, when the caller knows; each may be left out.
 
     ``repo`` defaults to the request's tenant-scoped repository.
     """
@@ -83,6 +94,9 @@ def record_ai_consent(
         recorded_by=recorded_by,
         recorded_at=utc_now(),
         intake_submission_id=intake_submission_id,
+        modality=modality,
+        client_stated_location=client_stated_location,
+        consented_by=consented_by,
     )
     return (repo or get_client_ai_consent_repository()).append(event)
 

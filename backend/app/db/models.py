@@ -1700,11 +1700,26 @@ class ClientAiConsentEventRow(Base):
     recorded_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     intake_submission_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    # How the answer was given, when the clinician said: in the room or over
+    # telehealth, where the client said they were (telehealth), and who gave
+    # it — the client, or a parent or guardian for them. NULL on answers
+    # recorded before these existed, and whenever nobody said.
+    modality: Mapped[str | None] = mapped_column(String(16))
+    client_stated_location: Mapped[str | None] = mapped_column(Text)
+    consented_by: Mapped[str | None] = mapped_column(String(16))
 
     __table_args__ = (
         CheckConstraint(
             "decision IN ('consented', 'declined')",
             name="ck_client_ai_consent_events_decision",
+        ),
+        CheckConstraint(
+            "modality IS NULL OR modality IN ('in_person', 'telehealth')",
+            name="ck_client_ai_consent_events_modality",
+        ),
+        CheckConstraint(
+            "consented_by IS NULL OR consented_by IN ('client', 'parent', 'guardian')",
+            name="ck_client_ai_consent_events_consented_by",
         ),
         CheckConstraint(
             "source IN ('clinician', 'intake_form')",

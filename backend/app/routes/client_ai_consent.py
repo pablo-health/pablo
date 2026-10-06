@@ -100,6 +100,9 @@ def post_ai_consent(
             payload.effective_on or today,
             "clinician",
             user.id,
+            modality=payload.modality,
+            client_stated_location=payload.client_stated_location,
+            consented_by=payload.consented_by,
             today=today,
             repo=consents,
         )
@@ -118,6 +121,10 @@ def post_ai_consent(
             "decision": event.decision,
             "effective_on": event.effective_on.isoformat(),
             "source": event.source,
+            "modality": event.modality,
+            "consented_by": event.consented_by,
+            # Whether a place was given, never the place: the record holds it.
+            "client_stated_location": event.client_stated_location is not None,
         },
     )
     return ai_consent_record(patient_id, repo=consents)
