@@ -195,6 +195,8 @@ PATIENT_COLUMN_DECISIONS: Final[Mapping[str, str | None]] = {
     "status": "Chart workflow state, an operational label rather than a fact about the person.",
     "date_of_birth": SHOWN,
     "diagnosis": "The clinician's working impression, written for the record and not as news.",
+    "allergy_status": "The allergy record as the clinician entered it; intake asks the patient.",
+    "allergies": "The allergy record as the clinician entered it; intake asks the patient.",
     "session_count": "Caseload bookkeeping.",
     "last_session_date": "A denormalised scheduling summary; the calendar routes answer this.",
     "next_session_date": "A denormalised scheduling summary; the calendar routes answer this.",

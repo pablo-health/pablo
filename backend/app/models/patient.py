@@ -4,13 +4,44 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal, Self, cast
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .validators import validate_email, validate_iso_date, validate_phone, validate_status
+
+AllergyStatus = Literal["not_recorded", "nkda", "recorded"]
+
+
+class AllergyEntry(BaseModel):
+    """One recorded allergy."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    substance: str = Field(min_length=1, max_length=120)
+    reaction: str | None = Field(None, max_length=200)
+    severity: Literal["mild", "moderate", "severe"] | None = None
+
+
+class UpdateAllergiesRequest(BaseModel):
+    """Body for ``PUT /api/patients/{id}/allergies``: the whole allergy record.
+
+    ``recorded`` needs at least one entry; ``nkda`` and ``not_recorded`` take
+    none, so an empty list never stands in for "no known drug allergies".
+    """
+
+    status: AllergyStatus
+    allergies: list[AllergyEntry] = Field(default_factory=list, max_length=50)
+
+    @model_validator(mode="after")
+    def _entries_match_status(self) -> Self:
+        if self.status == "recorded" and not self.allergies:
+            raise ValueError("recorded allergies need at least one entry")
+        if self.status != "recorded" and self.allergies:
+            raise ValueError(f"{self.status} takes no allergy entries")
+        return self
 
 
 class CreatePatientRequest(BaseModel):
@@ -121,7 +152,11 @@ class PatientResponse(BaseModel):
     phone: str | None = None
     status: str
     date_of_birth: str | None = None
-    diagnosis: str | None = None
+    diagnosis: str | None = Field(
+        default=None, description="The active problems as one line, derived from the problem list"
+    )
+    allergy_status: AllergyStatus = "not_recorded"
+    allergies: list[AllergyEntry] = Field(default_factory=list)
     rate_cents: int | None = None
     sliding_scale_note: str | None = None
     session_count: int
@@ -168,6 +203,8 @@ class PatientResponse(BaseModel):
             status=patient.status,
             date_of_birth=patient.date_of_birth,
             diagnosis=patient.diagnosis,
+            allergy_status=cast("AllergyStatus", patient.allergy_status),
+            allergies=[AllergyEntry.model_validate(a) for a in patient.allergies],
             rate_cents=patient.rate_cents,
             sliding_scale_note=patient.sliding_scale_note,
             session_count=patient.session_count,
@@ -260,7 +297,10 @@ class Patient:
     phone: str | None = None
     status: str = "active"
     date_of_birth: str | None = None
+    #: Derived from the problem list; see ``PatientRow.diagnosis``.
     diagnosis: str | None = None
+    allergy_status: str = "not_recorded"
+    allergies: list[dict[str, str]] = field(default_factory=list)
     last_session_date: datetime | None = None
     next_session_date: datetime | None = None
     chart_closed_at: datetime | None = None
@@ -321,6 +361,8 @@ class Patient:
             status=data.get("status", "active"),
             date_of_birth=data.get("date_of_birth"),
             diagnosis=data.get("diagnosis"),
+            allergy_status=data.get("allergy_status", "not_recorded"),
+            allergies=list(data.get("allergies") or []),
             last_session_date=data.get("last_session_date"),
             next_session_date=data.get("next_session_date"),
             chart_closed_at=data.get("chart_closed_at"),

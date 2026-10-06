@@ -112,7 +112,21 @@ class PatientRow(Base):
     # Civil date (no time/tz). DB type is native DATE; the API speaks ISO
     # date strings, so the repository converts at the row boundary.
     date_of_birth: Mapped[date | None] = mapped_column(Date)
+    # Derived, never written directly: the active problems on
+    # ``patient_problems`` as one display line, rewritten whenever that list
+    # changes. The problem list is the record (see ``PatientProblemRow``).
     diagnosis: Mapped[str | None] = mapped_column(Text)
+    # Allergies as the clinician recorded them. Three states, because a note
+    # has to be able to say "no known drug allergies" and an empty list
+    # cannot: ``not_recorded`` (nobody has entered anything), ``nkda``, or
+    # ``recorded`` with at least one ``{substance, reaction?, severity?}``
+    # entry in ``allergies``.
+    allergy_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="not_recorded", server_default="not_recorded"
+    )
+    allergies: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
     session_count: Mapped[int] = mapped_column(Integer, default=0)
     last_session_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     next_session_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -178,6 +192,14 @@ class PatientRow(Base):
             postgresql_where=text("deleted_at IS NULL"),
         ),
         CheckConstraint("sex IN ('M', 'F', 'U')", name="ck_patients_sex"),
+        CheckConstraint(
+            "allergy_status IN ('not_recorded', 'nkda', 'recorded')",
+            name="ck_patients_allergy_status",
+        ),
+        CheckConstraint(
+            "(allergy_status = 'recorded') = (jsonb_array_length(allergies) > 0)",
+            name="ck_patients_allergies_match_status",
+        ),
     )
 
 
@@ -1780,6 +1802,56 @@ class PatientMedicationRow(Base):
     )
 
 
+class PatientProblemRow(Base):
+    """One entry on a client's problem list: the record of their diagnoses.
+
+    The list is the source of truth. ``patients.diagnosis`` is a display line
+    derived from the active rows here; a diagnostic assessment
+    (``diagnostic_assessments``) is the criteria worksheet that may support a
+    row, linked from its side; an appointment's ``diagnosis_codes`` are what a
+    single visit billed, pre-filled from the active rows and edited per visit.
+
+    ``icd10_code`` is optional — a problem can be named before it is coded —
+    and checked for shape, not against a catalog, when present. ``position``
+    orders the list; the first active row is the primary diagnosis.
+    ``source_note_id`` is the note a problem was added from, when it was.
+    ``added_by`` is NULL only for rows carried over from the free-text
+    diagnosis field when the list was introduced.
+
+    Access is governed by ``has_patient_access``, like ``patient_medications``.
+    """
+
+    __tablename__ = "patient_problems"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    label: Mapped[str] = mapped_column(String(255), nullable=False)
+    icd10_code: Mapped[str | None] = mapped_column(String(10))
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    onset_date: Mapped[date | None] = mapped_column(Date)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_note_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("notes.id", ondelete="SET NULL")
+    )
+    added_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active', 'rule_out', 'resolved')",
+            name="ck_patient_problems_status",
+        ),
+    )
+
+
 class RefillRequestRow(Base):
     """A patient's request, from the portal, to have a medication refilled.
 
@@ -1948,6 +2020,10 @@ class DiagnosticAssessmentRow(Base):
     # icd10_codes catalog at write time. Null until confirmed.
     determined_icd10: Mapped[str | None] = mapped_column(String(10))
     diagnosis_label: Mapped[str | None] = mapped_column(String(120))
+    # The problem-list entry this worksheet supports, once there is one.
+    problem_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("patient_problems.id", ondelete="SET NULL")
+    )
     # Per-criterion provenance (which source supports each criterion).
     # Unused at launch.
     criterion_citations: Mapped[dict | None] = mapped_column(JSONB)

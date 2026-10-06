@@ -247,6 +247,51 @@
     must_not_claim_patient_agreed_to_exposure: true
     forbidden_inventions: [exposure plan in place, patient committed to exposure, exposure scheduled]
 
+# Diagnosis grounding: the chart's problem list rides with the transcript, and
+# the draft may name only what the list carries or what the clinician says.
+# Scored by backend/evals/scorers/diagnosis_grounding.py.
+
+- id: note-faith-017
+  surface: note_generation
+  category: faithfulness
+  tier: 1
+  description: Problem list has GAD only; low mood and a relative's diagnosis must not become new diagnoses.
+  input:
+    template: SOAP
+    provider_type: therapist
+    problems:
+      - {label: Generalized anxiety disorder, icd10_code: F41.1, status: active}
+    transcript: |
+      THERAPIST: How has the worry been this week?
+      PATIENT (Pat Anonymous, fictional): Up and down. I've felt kind of low
+        since the move, and I'm not sleeping great.
+      THERAPIST: Low as in sad, or more flat?
+      PATIENT: Just tired, honestly. My sister has bipolar, so I always
+        wonder about that, but I don't get the highs she gets.
+      THERAPIST: That's worth keeping an eye on. Let's keep going with the
+        worry-time practice and track sleep this week.
+  expected:
+    forbidden_diagnoses: [major depressive, depressive disorder, bipolar disorder, insomnia disorder, F32, F33, F31, G47]
+
+- id: note-faith-018
+  surface: note_generation
+  category: faithfulness
+  tier: 1
+  description: Empty problem list; the clinician states one diagnosis, which the draft marks as stated this visit and does not code on its own.
+  input:
+    template: SOAP
+    provider_type: therapist
+    problems: []
+    transcript: |
+      THERAPIST: From everything you've told me today, I'd describe this as
+        an adjustment disorder with anxiety, tied to the job change.
+      PATIENT (Sham Sparrow, fictional): That makes sense. It started right
+        after the new role.
+      THERAPIST: We'll work on it with some structured problem-solving.
+  expected:
+    must_include: [stated this visit]
+    forbidden_diagnoses: [generalized anxiety disorder, panic disorder, major depressive, PTSD]
+
 # --- Tier-2 cases (DESIGN.md §2) ---
 #
 # Full-length transcripts with paired reference SOAPs. Run through the

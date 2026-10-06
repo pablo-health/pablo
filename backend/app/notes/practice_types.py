@@ -22,6 +22,7 @@ Two rules keep a stored definition from weakening generation:
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Self
 
 from pydantic import BaseModel, Field, model_validator
@@ -68,7 +69,7 @@ _DEFAULT_SYSTEM_PROMPT = (
     "structure from the supplied transcript."
 )
 
-_PLACEHOLDER = re.compile(r"\{(transcript|session_date|fields|inputs\.[a-z][a-z0-9_]*)\}")
+_PLACEHOLDER = re.compile(r"\{(transcript|session_date|fields|chart|inputs\.[a-z][a-z0-9_]*)\}")
 
 
 class PracticeFieldSpec(BaseModel):
@@ -206,22 +207,39 @@ def validate_note_inputs(
     return kept
 
 
+@dataclass(frozen=True)
+class PromptBlocks:
+    """Prompt text the generation service composes for a template to place.
+
+    ``fields`` enumerates the type's sections and fields; ``chart`` is the
+    client's problem list and allergies, ``None`` when there is no client.
+    """
+
+    fields: str
+    chart: str | None = None
+
+
 def render_user_prompt(
     definition: NoteTypeDefinition,
     transcript: Transcript,
     session_date: datetime,
     inputs: Mapping[str, str],
-    fields_block: str,
+    blocks: PromptBlocks,
 ) -> str:
     """Render the type's template, or a default layout when it has none.
 
     Only the known placeholders are substituted, so any other braces a
-    practice writes (a JSON example, say) pass through untouched.
+    practice writes (a JSON example, say) pass through untouched. The chart
+    goes where a template puts ``{chart}``; a template written before there
+    was a chart to place gets it ahead of everything else, so no type drafts
+    without it.
     """
     date = session_date.isoformat().split("T", 1)[0]
     if definition.user_template is None:
-        lines = [f"Produce a {definition.label} note.", "", fields_block, ""]
+        lines = [f"Produce a {definition.label} note.", "", blocks.fields, ""]
         lines.extend(_inputs_lines(definition, inputs))
+        if blocks.chart:
+            lines.extend([blocks.chart, ""])
         lines.extend([f"Session date: {date}", "", "Transcript:", transcript.content])
         return "\n".join(lines)
 
@@ -232,10 +250,15 @@ def render_user_prompt(
         if name == "session_date":
             return date
         if name == "fields":
-            return fields_block
+            return blocks.fields
+        if name == "chart":
+            return blocks.chart or "Chart: not available."
         return inputs.get(name.removeprefix("inputs."), "not provided")
 
-    return _PLACEHOLDER.sub(substitute, definition.user_template)
+    rendered = _PLACEHOLDER.sub(substitute, definition.user_template)
+    if blocks.chart and "{chart}" not in definition.user_template:
+        return f"{blocks.chart}\n\n{rendered}"
+    return rendered
 
 
 def _inputs_lines(definition: NoteTypeDefinition, inputs: Mapping[str, str]) -> list[str]:

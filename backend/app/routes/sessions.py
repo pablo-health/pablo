@@ -78,6 +78,9 @@ from ..repositories import (
     get_notes_repository as _notes_repo_factory,
 )
 from ..repositories import (
+    get_patient_problem_repository as _problem_repo_factory,
+)
+from ..repositories import (
     get_patient_repository as _patient_repo_factory,
 )
 from ..repositories import (
@@ -286,6 +289,7 @@ def get_worker_session_service(
         _patient_repo_factory(),
         note_generation_service,
         NoteService(_notes_repo_factory()),
+        _problem_repo_factory(),
     )
 
 

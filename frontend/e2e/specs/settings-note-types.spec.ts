@@ -96,7 +96,7 @@ test("a practice starts a note type from a template, tries it, saves it and book
     await page.getByRole("option", { name: TEMPLATE_LABEL }).click()
     await page.getByRole("combobox", { name: "Place of service" }).click()
     await page.getByRole("option", { name: "Telehealth" }).click()
-    await page.getByLabel("Allergies (or NKDA)").fill("NKDA")
+    await page.getByLabel("Your location (telehealth)").fill("Office")
 
     const created = page.waitForResponse(
       (r) => new URL(r.url()).pathname === "/api/appointments" && r.request().method() === "POST",
@@ -107,7 +107,10 @@ test("a practice starts a note type from a template, tries it, saves it and book
     const appointment = (await createdResponse.json()) as Appointment
     appointmentId = appointment.id
     expect(appointment.note_type).toBe(savedType.key)
-    expect(appointment.note_inputs).toEqual({ place_of_service: "Telehealth", allergies: "NKDA" })
+    expect(appointment.note_inputs).toEqual({
+      place_of_service: "Telehealth",
+      provider_location: "Office",
+    })
 
     // The session it starts carries the type onto its note.
     const started = await api.post<{ id: string }>(`/api/appointments/${appointment.id}/start-session`)

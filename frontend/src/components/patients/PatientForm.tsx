@@ -106,7 +106,7 @@ export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormPr
         phone: patient.phone || "",
         status: (patient.status as "active" | "inactive" | "on_hold") || "active",
         date_of_birth: patient.date_of_birth || "",
-        diagnosis: patient.diagnosis || "",
+        diagnosis: "",
         address_line1: patient.address_line1 || "",
         address_line2: patient.address_line2 || "",
         city: patient.city || "",
@@ -141,7 +141,7 @@ export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormPr
         phone: data.phone || undefined,
         status: data.status,
         date_of_birth: data.date_of_birth || undefined,
-        diagnosis: data.diagnosis || undefined,
+        diagnosis: mode === "create" ? data.diagnosis || undefined : undefined,
         address_line1: data.address_line1 || undefined,
         address_line2: data.address_line2 || undefined,
         city: data.city || undefined,
@@ -319,18 +319,21 @@ export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormPr
             )}
           </div>
 
-          {/* Diagnosis */}
-          <div className="form-group">
-            <Label htmlFor="diagnosis">Diagnosis</Label>
-            <Input
-              id="diagnosis"
-              {...register("diagnosis")}
-              className={errors.diagnosis ? "border-red-500" : ""}
-            />
-            {errors.diagnosis && (
-              <p className="text-sm text-red-500 mt-1">{errors.diagnosis.message}</p>
-            )}
-          </div>
+          {/* Diagnosis: a new chart's typed diagnosis starts its problem
+              list. After that, diagnoses are kept on the Problems tab. */}
+          {mode === "create" && (
+            <div className="form-group">
+              <Label htmlFor="diagnosis">Diagnosis</Label>
+              <Input
+                id="diagnosis"
+                {...register("diagnosis")}
+                className={errors.diagnosis ? "border-red-500" : ""}
+              />
+              {errors.diagnosis && (
+                <p className="text-sm text-red-500 mt-1">{errors.diagnosis.message}</p>
+              )}
+            </div>
+          )}
 
           {/* Address */}
           <div className="form-group">

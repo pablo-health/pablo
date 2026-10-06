@@ -201,6 +201,51 @@ DERIVED_PROPOSAL: dict[str, Any] = {
 }
 
 
+def _chart(user_prompt: str) -> tuple[list[str], str | None] | None:
+    """The chart block a draft prompt carries: its problem lines and allergies line.
+
+    ``None`` when the prompt has no chart (a preview, a meeting).
+    """
+    if "- Problem list:" not in user_prompt:
+        return None
+    problems: list[str] = []
+    allergies: str | None = None
+    listing = False
+    for line in user_prompt.splitlines():
+        if line.startswith("- Problem list:"):
+            rest = line.removeprefix("- Problem list:").strip()
+            problems.extend([rest] if rest else [])
+            listing = not rest
+        elif listing and line.startswith("  - "):
+            problems.append(line.removeprefix("  - "))
+        else:
+            listing = False
+            if line.startswith("- Allergies: "):
+                allergies = line.removeprefix("- Allergies: ")
+    return problems, allergies
+
+
+def _with_chart(content: dict[str, Any], chart: tuple[list[str], str | None]) -> dict[str, Any]:
+    """Echo the chart into the fields a model would put it in.
+
+    A diagnosis field (or SOAP's clinical impression) names the listed
+    problems; an allergies field states the chart's allergies. So a spec can
+    see that a draft was written against the chart it was handed.
+    """
+    problems, allergies = chart
+    for section in content.values():
+        if not isinstance(section, dict):
+            continue
+        for key, value in section.items():
+            if not isinstance(value, str):
+                continue
+            if "diagnos" in key or key == "clinical_impression":
+                section[key] = f"{value} Problem list: {'; '.join(problems)}."
+            elif "allerg" in key and allergies is not None:
+                section[key] = f"{value} Allergies: {allergies}."
+    return content
+
+
 def _source_note(user_prompt: str) -> str | None:
     """The note an extraction call quotes, or None for any other call."""
     if not user_prompt.startswith("# Source note"):
@@ -258,6 +303,9 @@ async def draft_note(call: NoteCall) -> dict[str, Any]:
     draft = _stand_in(call.response_schema, "")
     _fill_named(draft, _supplied_inputs(call.user_prompt))
     _fill_named(draft, _dictated(call.user_prompt))
+    chart = _chart(call.user_prompt)
+    if chart is not None:
+        draft = _with_chart(draft, chart)
     if "psychotherapy_start" in call.response_schema.get("properties", {}):
         draft["psychotherapy_start"] = _therapy_start(call.user_prompt)
     return {"data": draft, "finish_reason": "stop"}

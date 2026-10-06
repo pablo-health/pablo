@@ -5,7 +5,7 @@
     "label": "Psychiatric follow-up (E/M + psychotherapy)",
     "description": "Medication-management follow-up, with a psychotherapy section for visits that include therapy.",
     "system_prompt": "You are a documentation assistant for a psychiatric nurse practitioner. You draft a medication-management follow-up note from the transcript of the visit and from values the clinician entered. The note has two portions that must stay separate: the evaluation-and-management portion (history, risk, mental status, assessment, medical decision making, plan) and, only when therapy took place, a psychotherapy portion.\n\nThe transcript has two speakers. Therapist is the clinician; Client is the client. The clinician sometimes keeps recording after the client has left and dictates observations: everything the Therapist says after the Client's last line is the clinician's dictated addendum. Treat the addendum as the clinician's own statements; it is the preferred source for risk, mental status, the monitoring-program check, consent and the clinician's decisions.\n\nWrite in the clinical register of a coded progress note: concise, third person, past tense, the client referred to as \"the client\". Prefer the clinician's own wording for findings. Never assign a level, score or code that the clinician did not state or enter. When a field was not covered in the visit or the addendum, write \"Not stated.\" rather than leaving it out.",
-    "user_template": "Draft the note with these sections and fields:\n\n{fields}\n\nValues the clinician entered before the visit (\"not provided\" means blank):\n- Date of service: {session_date}\n- Place of service: {inputs.place_of_service}\n- Client location (telehealth): {inputs.client_location}\n- Provider location (telehealth): {inputs.provider_location}\n- Allergies: {inputs.allergies}\n- Diagnoses with codes: {inputs.diagnoses}\n\nRules:\n- Copy entered values exactly. Allergies and diagnoses may also come from what the clinician said when not entered.\n- Billing codes, psychotherapy start and end times, and the prescription monitoring check come ONLY from the clinician's own words, usually the dictated addendum. Never infer a code, a time or a check that the clinician did not state; write \"Not stated.\" instead.\n- If no psychotherapy took place, leave every field of the Psychotherapy section empty.\n\nTranscript:\n{transcript}",
+    "user_template": "Draft the note with these sections and fields:\n\n{fields}\n\nValues the clinician entered before the visit (\"not provided\" means blank):\n- Date of service: {session_date}\n- Place of service: {inputs.place_of_service}\n- Client location (telehealth): {inputs.client_location}\n- Provider location (telehealth): {inputs.provider_location}\n\n{chart}\n\nRules:\n- Copy entered values exactly.\n- Billing codes, psychotherapy start and end times, and the prescription monitoring check come ONLY from the clinician's own words, usually the dictated addendum. Never infer a code, a time or a check that the clinician did not state; write \"Not stated.\" instead.\n- If no psychotherapy took place, leave every field of the Psychotherapy section empty.\n\nTranscript:\n{transcript}",
     "sections": [
       {
         "key": "encounter",
@@ -105,7 +105,7 @@
             "key": "allergies",
             "label": "Allergies",
             "kind": "text",
-            "ai_hint": "The entered allergies value; if not provided, what the client or clinician said; otherwise \"Not stated.\""
+            "ai_hint": "The chart's allergies exactly as recorded (a list, or NKDA). Only when the chart says not recorded: what the client or clinician said, followed by \"(stated this visit)\"; otherwise \"Not recorded.\""
           }
         ]
       },
@@ -219,7 +219,7 @@
             "key": "diagnoses",
             "label": "Diagnoses",
             "kind": "diagnoses",
-            "ai_hint": "The entered diagnoses, each with its code exactly as entered. If not provided, only diagnoses the clinician named in the visit, with a code only when the clinician gave one."
+            "ai_hint": "The chart's active problems, each with its code exactly as listed. Add a diagnosis the clinician named in the visit that is not on the list, with the status \"stated this visit\" and a code only when the clinician gave one. If the list is empty and none was named, leave this empty."
           },
           {
             "key": "formulation",
@@ -377,20 +377,6 @@
       {
         "key": "provider_location",
         "label": "Your location (telehealth)",
-        "kind": "text",
-        "options": [],
-        "required": false
-      },
-      {
-        "key": "allergies",
-        "label": "Allergies (or NKDA)",
-        "kind": "text",
-        "options": [],
-        "required": false
-      },
-      {
-        "key": "diagnoses",
-        "label": "Diagnoses with codes",
         "kind": "text",
         "options": [],
         "required": false

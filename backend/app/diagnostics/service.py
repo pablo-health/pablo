@@ -202,6 +202,7 @@ class DiagnosticService:
             meets_criteria=(None if (mc := row.get("meets_criteria")) is None else bool(mc)),
             determined_icd10=determined,
             diagnosis_label=label,
+            problem_id=str(row["problem_id"]) if row.get("problem_id") else None,
             source=str(row["source"]),
             confirmed_at=row.get("confirmed_at"),  # type: ignore[arg-type]
             assessed_at=row["assessed_at"],  # type: ignore[arg-type]

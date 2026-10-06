@@ -26,7 +26,7 @@ Any problem from any check fails the case.
 | `pdmp_line` | when the check was dictated: the line says "today", carries no calendar date, carries a date other than the date of service, or leaves out the dictated finding; when it was not: the line claims a check | a monitoring-program review is dated, and never claimed when not dictated |
 | `telehealth_attestation` | a telehealth visit's attestation leaves out "telehealth" or either entered location; an office visit is not "in-office" or mentions telehealth | the place-of-service attestation names both locations as entered |
 | `substances` | a substance never asked about does not read "Not asked"; one asked about has no answer | a question never asked is not recorded as a denial |
-| `diagnoses_only_stated` | the diagnosis list is empty, or names a diagnosis the clinician did not enter or name; anywhere in the note, a diagnosis code that was not entered | no diagnosis or code is invented |
+| `diagnoses_only_stated` | the diagnosis list is empty, or names a diagnosis neither on the chart's problem list nor named by the clinician; anywhere in the note, a diagnosis code from neither | no diagnosis or code is invented |
 | `measures_undated` | the measures field carries a calendar date (the visit says "on Friday") | a weekday is never converted into a date |
 
 The checks are unit-tested on hand-made drafts, passing and failing, in
@@ -39,7 +39,7 @@ entered before the visit are invented in `cases.py`.
 
 | Case | Sample | Entered | The draft must carry |
 |---|---|---|---|
-| `follow-up-with-therapy` | `with_therapy` | telehealth, both locations, two diagnoses with codes | 99214 and 90836, 10:14 to 10:55 and 41 minutes, the PDMP check dated 2026-03-12 (the clinician said "today") with its finding, both locations, a psychotherapy section |
+| `follow-up-with-therapy` | `with_therapy` | telehealth, both locations, two coded problems on the chart | 99214 and 90836, 10:14 to 10:55 and 41 minutes, the PDMP check dated 2026-03-12 (the clinician said "today") with its finding, both locations, a psychotherapy section |
 | `follow-up-medication-only` | `medication_only` | in office | no code, time, minutes or PDMP claim; an empty psychotherapy section; "Not asked" for tobacco and cannabis; only the depression the clinician named, with no code |
 
 In the medication-only sample the clinician asks "Any alcohol or anything

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from app.models import Patient, Transcript
 from app.notes import NoteTypeRegistry, register_builtin_note_types
+from app.notes.chart_context import ChartContext, ChartProblem
 from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
 from app.routes.notes import get_note_generation_service
 from app.services import dictation_transcription, http_structured_llm_gateway
@@ -246,3 +247,47 @@ def test_with_the_first_model_down_the_fallback_drafts(
     assert generated.soap_note.subjective.chief_complaint.text.startswith("Stand-in draft")
     # The draft and its sentence links: each the first model's 503, then the fallback.
     assert len(stand_in) == 4
+
+
+def test_a_draft_echoes_the_chart_it_was_written_against(stand_in: list[str]) -> None:
+    """The stand-in reads the chart block the backend really renders, not a copy of it."""
+    spec = PracticeNoteTypeSpec.model_validate(
+        {
+            "label": "Follow-up",
+            "sections": [
+                {
+                    "key": "assessment",
+                    "label": "Assessment",
+                    "fields": [
+                        {"key": "diagnosis_summary", "label": "Diagnosis summary"},
+                        {"key": "allergies", "label": "Allergies"},
+                    ],
+                }
+            ],
+        }
+    )
+    definition = to_definition("custom.follow_up", 1, spec)
+    chart = ChartContext(
+        problems=(
+            ChartProblem("Generalized anxiety disorder", "F41.1", "active"),
+            ChartProblem("Insomnia", None, "active"),
+        ),
+        allergy_status="nkda",
+    )
+
+    generated = _service().generate_note(
+        definition.key, TRANSCRIPT, PATIENT, NOW, definition=definition, chart=chart
+    )
+
+    assert generated.content == {
+        "assessment": {
+            "diagnosis_summary": (
+                "Stand-in draft for assessment.diagnosis_summary. Problem list: "
+                "F41.1 Generalized anxiety disorder; Insomnia (no code recorded)."
+            ),
+            "allergies": (
+                "Stand-in draft for assessment.allergies. "
+                "Allergies: No known drug allergies (NKDA)."
+            ),
+        }
+    }

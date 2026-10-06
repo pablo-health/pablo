@@ -5,8 +5,8 @@
 Each case drafts one of a starting template's own sample visits, the same
 transcripts Settings offers under "Try it", so the eval grades exactly what
 a clinician sees there. The samples are synthetic: written for the
-template, about no one. The values entered before the visit (locations,
-diagnoses) are invented here, in the same spirit.
+template, about no one. The values entered before the visit (locations)
+and the chart's problem list are invented here, in the same spirit.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
+from app.notes.chart_context import ChartContext, ChartProblem
 from app.notes.practice_types import PracticeNoteTypeSpec
 
 TEMPLATES_DIR = (
@@ -72,6 +73,12 @@ class TemplateCase:
     session_date: date
     expected: Expected
     inputs: dict[str, str] = field(default_factory=dict)
+    problems: tuple[ChartProblem, ...] = ()
+    """The chart's problem list the visit is drafted against."""
+
+    @property
+    def chart(self) -> ChartContext:
+        return ChartContext(problems=self.problems)
 
     @property
     def spec(self) -> PracticeNoteTypeSpec:
@@ -98,11 +105,15 @@ FOLLOW_UP_WITH_THERAPY = TemplateCase(
         "place_of_service": "Telehealth",
         "client_location": "Client's home in Faketown, AA",
         "provider_location": "Clinic office at 123 Test St, Faketown, AA",
-        "diagnoses": (
-            "F41.1 Generalized anxiety disorder; "
-            "F90.0 Attention-deficit hyperactivity disorder, predominantly inattentive type"
-        ),
     },
+    problems=(
+        ChartProblem("Generalized anxiety disorder", "F41.1", "active"),
+        ChartProblem(
+            "Attention-deficit hyperactivity disorder, predominantly inattentive type",
+            "F90.0",
+            "active",
+        ),
+    ),
     expected=Expected(
         therapy=True,
         codes=("99214", "90836"),

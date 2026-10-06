@@ -32,6 +32,14 @@ vi.mock("@/hooks/usePayments", () => ({
   usePatientBalance: (...args: unknown[]) => mockUsePatientBalance(...args),
 }))
 
+// The diagnoses and allergies lines have tests of their own (ChartFacts.test.tsx).
+vi.mock("@/hooks/usePatients", () => ({
+  useUpdateAllergies: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}))
+vi.mock("@/components/ui/Toast", () => ({
+  useToast: () => ({ showToast: vi.fn() }),
+}))
+
 // The AI-notes line has tests of its own (AiConsentLine.test.tsx); here it
 // only has to be in the header.
 vi.mock("@/hooks/useAiConsent", () => ({

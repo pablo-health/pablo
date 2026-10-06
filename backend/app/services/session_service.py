@@ -32,9 +32,10 @@ from ..models import (
     UploadTranscriptToSessionRequest,
 )
 from ..notes import NoteTypeDefinition, get_default_registry
+from ..notes.chart_context import ChartContext, chart_context_for
 from ..notes.client_present import client_present_end, is_call, segments_from_transcript
 from ..notes.practice_types import validate_note_inputs
-from ..repositories import PatientRepository, TherapySessionRepository
+from ..repositories import PatientProblemRepository, PatientRepository, TherapySessionRepository
 from ..utcnow import utc_now
 from .note_generation_service import (
     NoteGenerationService,
@@ -217,11 +218,19 @@ class SessionService:
         patient_repo: PatientRepository,
         note_generation_service: NoteGenerationService,
         note_service: NoteService,
+        problem_repo: PatientProblemRepository | None = None,
     ) -> None:
         self.session_repo = session_repo
         self.patient_repo = patient_repo
         self.note_generation_service = note_generation_service
         self.note_service = note_service
+        self.problem_repo = problem_repo
+
+    def _chart_for(self, patient: Patient) -> ChartContext | None:
+        """The chart a draft is written against; ``None`` when this service can't read it."""
+        if self.problem_repo is None:
+            return None
+        return chart_context_for(patient, self.problem_repo.list_by_patient(patient.id))
 
     def _get_patient_or_raise(self, patient_id: str, user_id: str) -> Patient:
         patient = self.patient_repo.get(patient_id, user_id)
@@ -249,6 +258,7 @@ class SessionService:
         user_id: str,
         note_inputs: dict[str, str] | None = None,
         definition: NoteTypeDefinition | None = None,
+        chart: ChartContext | None = None,
     ) -> Note:
         result = self.note_generation_service.generate_note(
             note_type,
@@ -257,6 +267,7 @@ class SessionService:
             session.session_date,
             inputs=note_inputs,
             definition=definition,
+            chart=chart,
             client_present_end_seconds=session.client_present_end_seconds,
         )
         return self.note_service.create_or_update_for_session(
@@ -372,6 +383,7 @@ class SessionService:
             definition: NoteTypeDefinition | None = get_default_registry().get(note_type)
         except KeyError:
             definition = None
+        chart = self._chart_for(patient)
 
         # Release the pooled connection before the multi-second model call. The
         # SELECTs above (session, patient, existing note) opened a read
@@ -395,6 +407,7 @@ class SessionService:
                 user_id,
                 note_inputs=existing_note.note_inputs if existing_note is not None else None,
                 definition=definition,
+                chart=chart,
             )
             logger.info("Note generation completed for session %s", session.id)
 

@@ -118,14 +118,14 @@ def test_update_patient_success(client: TestClient, sample_patient_data: dict[st
     original_updated_at = create_response.json()["updated_at"]
 
     # Update patient
-    update_data = {"first_name": "Jonathan", "diagnosis": "Generalized anxiety disorder"}
+    update_data = {"first_name": "Jonathan", "city": "Faketown"}
     response = client.patch(f"/api/patients/{patient_id}", json=update_data)
 
     assert response.status_code == status.HTTP_200_OK
     data = response.json()
     assert data["first_name"] == "Jonathan"
     assert data["last_name"] == "Doe"  # Unchanged
-    assert data["diagnosis"] == "Generalized anxiety disorder"
+    assert data["city"] == "Faketown"
     assert data["updated_at"] != original_updated_at  # Should be updated
 
 

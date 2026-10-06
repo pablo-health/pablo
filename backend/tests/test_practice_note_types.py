@@ -22,6 +22,7 @@ from app.notes import NoteTypeRegistry, register_builtin_note_types
 from app.notes.practice_types import (
     GENERATION_FLOOR,
     PracticeNoteTypeSpec,
+    PromptBlocks,
     RepositoryPracticeNoteTypeSource,
     render_user_prompt,
     to_definition,
@@ -173,7 +174,7 @@ def test_template_substitutes_only_known_placeholders() -> None:
         Transcript(format="txt", content="[00:01] Kurt: Hello"),
         NOW,
         {"segment": "Starter"},
-        "Fields: ...",
+        PromptBlocks(fields="Fields: ..."),
     )
 
     assert "Segment: Starter" in prompt

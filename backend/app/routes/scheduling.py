@@ -90,6 +90,7 @@ from ..models.scheduling import (
 )
 from ..notes import NoteTypeAuthorizer, get_default_registry, get_note_type_authorizer
 from ..notes.practice_types import validate_note_inputs
+from ..problems.dependencies import get_problem_service
 from ..rate_limit import get_availability_parse_limiter
 from ..repositories import (
     NotesRepository,
@@ -181,6 +182,7 @@ _is_valid_gcal_redirect_uri = is_allowed_oauth_redirect_uri
 
 
 if TYPE_CHECKING:
+    from ..problems.service import ProblemService
     from ..repositories.external_calendar_event import ExternalCalendarEventRepository
     from ..scheduling_engine.models.appointment import Appointment
     from ..scheduling_engine.models.busy import BusyTimeSource
@@ -1069,6 +1071,7 @@ def start_session_from_appointment(
     audit: AuditService = Depends(get_audit_service),
     authorizer: NoteTypeAuthorizer = Depends(get_note_type_authorizer),
     consent_gate: RecordingConsentGate = Depends(get_recording_consent_gate),
+    problems: ProblemService = Depends(get_problem_service),
 ) -> SessionResponse:
     """Create a therapy session linked to a calendar appointment.
 
@@ -1156,11 +1159,25 @@ def start_session_from_appointment(
     except PatientNotFoundError as e:
         raise NotFoundError("Patient not found for this appointment.") from e
 
-    # 6. Link appointment → session
-    service.update_appointment(appointment_id, user.id, session_id=session.id)
+    # 6. Link appointment → session. A visit with no diagnosis codes yet
+    #    starts from the active problems; the clinician edits them per visit.
+    prefill = [] if appt.diagnosis_codes else problems.visit_codes(appt.patient_id)
+    link: dict[str, Any] = {"session_id": session.id}
+    if prefill:
+        link["diagnosis_codes"] = prefill
+    service.update_appointment(appointment_id, user.id, **link)
 
     # 7. Audit
     audit.log_session_action(AuditAction.SESSION_CREATED, user, http_request, session, patient)
+    if prefill:
+        audit.log_appointment_action(
+            AuditAction.APPOINTMENT_UPDATED,
+            user,
+            http_request,
+            appointment_id,
+            patient_id=appt.patient_id,
+            changes={"changed_fields": ["diagnosis_codes"]},
+        )
 
     return SessionResponse.from_session(session, patient.display_name)
 

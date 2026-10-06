@@ -77,6 +77,7 @@ from app.models import User  # noqa: E402
 from app.portal import module_gate as portal_module_gate  # noqa: E402
 from app.portal import practice_hosts as portal_practice_hosts  # noqa: E402
 from app.portal.portal_settings import NOT_OFFERED  # noqa: E402
+from app.problems.dependencies import get_problem_repository  # noqa: E402
 from app.repositories import (  # noqa: E402
     InMemoryAllowlistRepository,
     InMemoryChatRepository,
@@ -86,6 +87,7 @@ from app.repositories import (  # noqa: E402
     InMemoryIdentityRepository,
     InMemoryLlmUsageRepository,
     InMemoryNotesRepository,
+    InMemoryPatientProblemRepository,
     InMemoryPatientRepository,
     InMemoryTherapySessionRepository,
     InMemoryUserRepository,
@@ -234,6 +236,12 @@ def mock_repo(mock_session_repo: InMemoryTherapySessionRepository) -> InMemoryPa
 def mock_mapping_repo() -> InMemoryPatientSourceMappingRepository:
     """Remembered source identifiers, fresh for each test."""
     return InMemoryPatientSourceMappingRepository()
+
+
+@pytest.fixture
+def mock_problem_repo() -> InMemoryPatientProblemRepository:
+    """Fresh in-memory problem list for each test."""
+    return InMemoryPatientProblemRepository()
 
 
 @pytest.fixture
@@ -415,11 +423,13 @@ def client(
     mock_ehr_prompt_repo: InMemoryEhrPromptRepository,
     mock_ehr_navigation_service: MockEhrNavigationService,
     mock_mapping_repo: InMemoryPatientSourceMappingRepository,
+    mock_problem_repo: InMemoryPatientProblemRepository,
     mock_dictation_repo: InMemorySessionDictationRepository,
 ) -> Any:
     """Create a TestClient with mocked dependencies."""
     # Override dependencies
     app.dependency_overrides[get_patient_repository] = lambda: mock_repo
+    app.dependency_overrides[get_problem_repository] = lambda: mock_problem_repo
     app.dependency_overrides[get_sessions_patient_repository] = lambda: mock_repo
     app.dependency_overrides[get_therapy_session_repository] = lambda: mock_session_repo
     app.dependency_overrides[get_session_repository] = lambda: mock_session_repo

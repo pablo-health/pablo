@@ -273,6 +273,9 @@ ignore = [
     "TC001",    # enums imported from sibling modules used at runtime by Pydantic
     "TC003",    # datetime import needed at runtime for Pydantic field validation
 ]
+"backend/app/problems/**/*.py" = [
+    "TC003",    # datetime import needed at runtime for Pydantic field validation
+]
 "backend/app/portal/adapters.py" = [
     "ARG002",   # the console gateway drops the recipient on purpose and still
                 # has to take it: the protocol's keyword names are the contract

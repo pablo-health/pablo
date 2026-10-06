@@ -83,6 +83,7 @@ MEETING_SUMMARY_DEFINITION = NoteTypeDefinition(
     key="meeting_summary",
     prompt_builder=build_meeting_summary_prompt,
     system_prompt=MEETING_SUMMARY_SYSTEM_PROMPT,
+    reads_chart=False,
     label="Meeting Summary",
     description=(
         "Professional minutes for a recorded business meeting — attendees, "

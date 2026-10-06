@@ -44,7 +44,7 @@ def draft(case: TemplateCase, model: str | None) -> Draft:
     definition = to_definition(practice_key(case.template), 0, case.spec)
     inputs = validate_note_inputs(definition, case.inputs)
     now = datetime.now(UTC)
-    # A preview's stand-in client: practice types never read the patient.
+    # A stand-in client; what the chart says comes from the case.
     patient = Patient(id="preview", first_name="", last_name="", created_at=now, updated_at=now)
     # One model alone, with no fallback behind it, so two providers can be
     # compared on the same cases.
@@ -61,6 +61,7 @@ def draft(case: TemplateCase, model: str | None) -> Draft:
         datetime.combine(case.session_date, clock(15), tzinfo=UTC),
         inputs=inputs,
         definition=definition,
+        chart=case.chart,
     )
     return generated.content
 

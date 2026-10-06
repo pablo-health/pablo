@@ -7,6 +7,7 @@ import type {
   CreatePatientRequest,
   PatientListParams,
   PatientResponse,
+  UpdateAllergiesRequest,
   UpdatePatientRequest,
 } from "@/types/patients"
 import {
@@ -15,6 +16,7 @@ import {
   getPatient,
   listPatients,
   restorePatient,
+  updateAllergies,
   updatePatient,
 } from "@/lib/api/patients"
 import { queryKeys } from "@/lib/api/queryKeys"
@@ -63,6 +65,13 @@ export function useUpdatePatient(token?: string) {
       queryKey: ({ patientId }) => queryKeys.patients.detail(patientId),
       updater: (previous, { data }) => ({ ...previous, ...data }),
     },
+  })
+}
+
+export function useUpdateAllergies() {
+  return useAuthMutation<PatientResponse, { patientId: string; data: UpdateAllergiesRequest }>({
+    mutationFn: ({ patientId, data }) => updateAllergies(patientId, data),
+    invalidateKeys: ({ patientId }) => [queryKeys.patients.detail(patientId)],
   })
 }
 

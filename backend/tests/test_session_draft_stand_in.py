@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
-from app.models import Patient
+from app.models import Patient, SessionStatus
 from app.routes import notes as notes_routes
 from app.routes import sessions as sessions_routes
 from app.routes.sessions import GenerateSoapJob, _draft_in_process
@@ -25,9 +25,10 @@ from app.services.note_generation_service import RegistryNoteGenerationService
 from app.settings import Settings
 
 from .test_note_generation_stand_in import BASE_URL
+from .test_routes_sessions import _seed_session
 
 if TYPE_CHECKING:
-    from app.repositories import InMemoryPatientRepository
+    from app.repositories import InMemoryPatientRepository, InMemoryTherapySessionRepository
     from fastapi.testclient import TestClient
 
 
@@ -89,6 +90,35 @@ def test_an_upload_drafts_in_process_only_where_the_stand_in_is_configured(
     assert jobs == (expected if drafted else [])
 
 
+@pytest.mark.parametrize(("base_url", "drafted"), [(BASE_URL, True), (None, False)])
+def test_a_transcript_added_to_a_session_drafts_in_process_too(
+    client: TestClient,
+    mock_session_repo: InMemoryTherapySessionRepository,
+    mock_user_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+    base_url: str | None,
+    *,
+    drafted: bool,
+) -> None:
+    """The session a scheduled visit started is drafted the same way an upload is."""
+    jobs: list[GenerateSoapJob] = []
+    monkeypatch.setattr(sessions_routes, "get_settings", lambda: _settings(base_url=base_url))
+    monkeypatch.setattr(sessions_routes, "enqueue", lambda *_a, **_k: None)
+    monkeypatch.setattr(sessions_routes, "_draft_in_process", lambda job, *_rest: jobs.append(job))
+    session = _seed_session(
+        mock_session_repo, owner=mock_user_id, status=SessionStatus.RECORDING_COMPLETE
+    )
+
+    response = client.post(
+        f"/api/sessions/{session.id}/transcript",
+        json={"format": "txt", "content": "[00:00] Hello."},
+    )
+
+    assert response.status_code == 202, response.text
+    expected = [GenerateSoapJob(session_id=session.id, user_id=mock_user_id)]
+    assert jobs == (expected if drafted else [])
+
+
 def test_the_in_process_draft_runs_the_worker_job_in_the_tenant(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -111,6 +141,7 @@ def test_the_in_process_draft_runs_the_worker_job_in_the_tenant(
     monkeypatch.setattr(sessions_routes, "_session_repo_factory", MagicMock)
     monkeypatch.setattr(sessions_routes, "_patient_repo_factory", MagicMock)
     monkeypatch.setattr(sessions_routes, "_notes_repo_factory", MagicMock)
+    monkeypatch.setattr(sessions_routes, "_problem_repo_factory", MagicMock)
     monkeypatch.setattr(sessions_routes, "get_user_repository", MagicMock)
     monkeypatch.setattr(sessions_routes, "get_audit_service", MagicMock)
     job = GenerateSoapJob(session_id="s-1", user_id="u-1")

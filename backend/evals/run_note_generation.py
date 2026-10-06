@@ -49,6 +49,7 @@ from typing import Any
 
 from backend.evals.harness import load_yaml_dataset
 from backend.evals.sampling import CaseAggregate, SampleResult, aggregate_sample_verdicts
+from backend.evals.scorers.diagnosis_grounding import diagnosis_grounding_scorer
 from backend.evals.scorers.llm_judge_faithfulness import JudgeVerdict, score
 
 logger = logging.getLogger(__name__)
@@ -98,6 +99,7 @@ def _generate_soap(case: dict[str, Any], model: str | None) -> str:
         get_default_registry,
         register_builtin_note_types,
     )
+    from backend.app.notes.chart_context import ChartContext, ChartProblem  # noqa: PLC0415
     from backend.app.services.note_generation_service import (  # noqa: PLC0415
         RegistryNoteGenerationService,
     )
@@ -119,18 +121,22 @@ def _generate_soap(case: dict[str, Any], model: str | None) -> str:
         format=inputs.get("transcript_format", _DEFAULT_TRANSCRIPT_FORMAT),
         content=transcript_text,
     )
-    # Synthetic patient. diagnosis is intentionally None: intake cases must be
-    # documented as a differential, so the pipeline gets no confirmed dx to lean
-    # on (a case that supplies one can set input.diagnosis).
+    # Synthetic patient. A case with no input.problems is drafted with no chart
+    # at all, as intake cases must be: documented as a differential, with no
+    # confirmed dx to lean on. A case that carries a problem list (even an
+    # empty one) is drafted against it, the way the product drafts.
     now = _DEFAULT_SESSION_DATE
     patient = Patient(
-        id="eval-patient",
-        first_name="Eval",
-        last_name="Client",
-        created_at=now,
-        updated_at=now,
-        diagnosis=inputs.get("diagnosis"),
+        id="eval-patient", first_name="Eval", last_name="Client", created_at=now, updated_at=now
     )
+    chart = None
+    if "problems" in inputs:
+        chart = ChartContext(
+            problems=tuple(
+                ChartProblem(p["label"], p.get("icd10_code"), p.get("status", "active"))
+                for p in inputs["problems"]
+            )
+        )
 
     # One model alone, with no fallback behind it, and the gateway for its
     # provider: a ``bedrock:`` model is graded on Bedrock, not sent to Vertex.
@@ -140,7 +146,7 @@ def _generate_soap(case: dict[str, Any], model: str | None) -> str:
         ),
         model=model,
     )
-    note = service.generate_note("soap", transcript, patient, _DEFAULT_SESSION_DATE)
+    note = service.generate_note("soap", transcript, patient, _DEFAULT_SESSION_DATE, chart=chart)
     return json.dumps(note.content, indent=2)
 
 
@@ -166,6 +172,21 @@ def _hard_failures(verdict: JudgeVerdict) -> list[str]:
         label = "ASSESSMENT hallucination" if where == "assessment" else f"hallucination ({where})"
         failures.append(f"{label}: {str(h.get('claim', ''))[:120]}")
     return failures
+
+
+def _ungrounded_diagnoses(case: dict[str, Any], generated_soap: str) -> list[str]:
+    """A diagnosis neither on the chart nor in the transcript: gated like a hallucination."""
+    result = diagnosis_grounding_scorer(
+        output=generated_soap, expected=case.get("expected"), input=case.get("input", {})
+    )
+    if result["score"] != 0.0:
+        return []
+    meta = result["metadata"]
+    return (
+        [f"ungrounded diagnosis code: {code}" for code in meta["ungrounded_codes"]]
+        + [f"forbidden diagnosis named: {name}" for name in meta["forbidden_diagnoses_named"]]
+        + [f"missing required wording: {phrase}" for phrase in meta["missing_phrases"]]
+    )
 
 
 def _advisory_omissions(verdict: JudgeVerdict) -> list[str]:
@@ -200,7 +221,7 @@ def _run_sample(
         directives=directives,
         model=judge_model,
     )
-    hard = _hard_failures(verdict)
+    hard = _hard_failures(verdict) + _ungrounded_diagnoses(case, generated_soap)
     advisory = _advisory_omissions(verdict)
     sample_passed = not hard  # gate on fabrication; omissions are advisory only
 

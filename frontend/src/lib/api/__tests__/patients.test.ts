@@ -218,14 +218,14 @@ describe("Patient API Functions", () => {
   describe("updatePatient", () => {
     it("calls patch with correct endpoint and data", async () => {
       const mockPatient = createMockPatient({
-        diagnosis: "Generalized Anxiety Disorder",
+        phone: "555-0100",
         created_at: "2024-01-01T00:00:00Z",
         updated_at: "2024-01-02T00:00:00Z",
       })
 
       vi.mocked(client.patch).mockResolvedValue(mockPatient)
 
-      const updateData = { diagnosis: "Generalized Anxiety Disorder" }
+      const updateData = { phone: "555-0100" }
       const result = await updatePatient("patient-123", updateData)
 
       expect(client.patch).toHaveBeenCalledWith(
@@ -240,7 +240,7 @@ describe("Patient API Functions", () => {
       const mockPatient = createMockPatient({
         last_name: "Smith",
         date_of_birth: "1985-03-15",
-        diagnosis: "GAD",
+        phone: "555-0100",
         created_at: "2024-01-01T00:00:00Z",
         updated_at: "2024-01-02T00:00:00Z",
       })
@@ -250,7 +250,7 @@ describe("Patient API Functions", () => {
       const updateData = {
         last_name: "Smith",
         date_of_birth: "1985-03-15",
-        diagnosis: "GAD",
+        phone: "555-0100",
       }
 
       await updatePatient("patient-123", updateData)
@@ -270,11 +270,11 @@ describe("Patient API Functions", () => {
 
       vi.mocked(client.patch).mockResolvedValue(mockPatient)
 
-      await updatePatient("patient-123", { diagnosis: "GAD" }, "test-token")
+      await updatePatient("patient-123", { phone: "555-0100" }, "test-token")
 
       expect(client.patch).toHaveBeenCalledWith(
         "/api/patients/patient-123",
-        { diagnosis: "GAD" },
+        { phone: "555-0100" },
         "test-token"
       )
     })

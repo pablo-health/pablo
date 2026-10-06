@@ -43,6 +43,7 @@ def _row_to_dict(row: DiagnosticAssessmentRow) -> dict[str, object]:
         "meets_criteria": row.meets_criteria,
         "determined_icd10": row.determined_icd10,
         "diagnosis_label": row.diagnosis_label,
+        "problem_id": row.problem_id,
         "criterion_citations": row.criterion_citations,
         "source": row.source,
         "confirmed_at": row.confirmed_at,
@@ -140,6 +141,7 @@ class PostgresDiagnosticAssessmentRepository(DiagnosticAssessmentRepository):
             return self.add(row, user_id)
         orm_row.determined_icd10 = row.get("determined_icd10")  # type: ignore[assignment]
         orm_row.diagnosis_label = row.get("diagnosis_label")  # type: ignore[assignment]
+        orm_row.problem_id = row.get("problem_id")  # type: ignore[assignment]
         orm_row.confirmed_at = row.get("confirmed_at")  # type: ignore[assignment]
         orm_row.updated_at = row["updated_at"]  # type: ignore[assignment]
         orm_row.deleted_at = row.get("deleted_at")  # type: ignore[assignment]

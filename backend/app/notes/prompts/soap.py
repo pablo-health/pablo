@@ -43,13 +43,15 @@ SOAP_SYSTEM_PROMPT = (
 def build_soap_prompt(
     _definition: NoteTypeDefinition,
     transcript: Transcript,
-    patient: Patient,
+    _patient: Patient,
     session_date: datetime,
 ) -> str:
     """Return the legacy SOAP user prompt with the transcript embedded.
 
     The system-prompt half is :data:`SOAP_SYSTEM_PROMPT`; callers pass it
-    to the structured gateway alongside this user prompt.
+    to the structured gateway alongside this user prompt. The client's
+    diagnoses are not here: the generation service puts the chart ahead of
+    this prompt (``app.notes.chart_context``).
     """
     # Local imports — these two modules transitively pull in
     # ``app.services``, which pulls in ``app.notes.builtin`` (which
@@ -66,12 +68,10 @@ def build_soap_prompt(
     canonical = normalize_transcript_to_canonical_lines(transcript.content, transcript.format)
     indexed = format_transcript_with_segment_ids(canonical)
     session_date_str = session_date.isoformat().split("T", maxsplit=1)[0]
-    diagnosis_line = f"- Diagnosis: {patient.diagnosis}" if patient.diagnosis else ""
 
     return f"""# Session Information
 - Client: the client
 - Date: {session_date_str}
-{diagnosis_line}
 
 IMPORTANT - HIPAA COMPLIANCE:
 - Do NOT include specific identifying details (full names, addresses, phone numbers, etc.)

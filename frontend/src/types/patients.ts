@@ -25,7 +25,10 @@ export interface PatientResponse {
   phone: string | null
   status: string
   date_of_birth: string | null
+  /** The active problems as one line, derived from the problem list. */
   diagnosis: string | null
+  allergy_status?: AllergyStatus
+  allergies?: AllergyEntry[]
   session_count: number
   last_session_date: string | null
   next_session_date: string | null
@@ -43,6 +46,23 @@ export interface PatientResponse {
   /** The chart has no first or no last name yet — for one added from a
    * calendar event with the name left blank. Adding the name clears it. */
   needs_name?: boolean
+}
+
+/**
+ * The allergy record. "nkda" (no known drug allergies) is its own state,
+ * distinct from "not_recorded"; "recorded" always has at least one entry.
+ */
+export type AllergyStatus = "not_recorded" | "nkda" | "recorded"
+
+export interface AllergyEntry {
+  substance: string
+  reaction?: string | null
+  severity?: "mild" | "moderate" | "severe" | null
+}
+
+export interface UpdateAllergiesRequest {
+  status: AllergyStatus
+  allergies: AllergyEntry[]
 }
 
 /**
@@ -86,7 +106,6 @@ export interface UpdatePatientRequest {
   phone?: string
   status?: string
   date_of_birth?: string
-  diagnosis?: string
   address_line1?: string
   address_line2?: string
   city?: string

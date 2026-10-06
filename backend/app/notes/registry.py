@@ -153,6 +153,12 @@ class NoteTypeDefinition:
     """
     version: int | None = None
     """Definition version. ``None`` for built-in types, which change only by deploy."""
+    reads_chart: bool = field(default=True, compare=False)
+    """Whether a draft is written against the client's chart (problem list, allergies).
+
+    Off for a format with no client in it, such as meeting minutes, so a
+    chart is never handed to a draft that has no business reading it.
+    """
 
     def section_keys(self) -> list[str]:
         return [s.key for s in self.sections]
