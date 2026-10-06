@@ -348,7 +348,8 @@ CREATE TABLE platform.launch_intents (
     appointment_id character varying(128) NOT NULL,
     created_at timestamp with time zone NOT NULL,
     expires_at timestamp with time zone NOT NULL,
-    consumed_at timestamp with time zone
+    consumed_at timestamp with time zone,
+    ai_consent_prompted boolean DEFAULT false NOT NULL
 );
 
 CREATE TABLE platform.panel_applications (

@@ -93,6 +93,15 @@ def test_redeem_happy_path_returns_binding(pg_session: Session) -> None:
     assert redeemed is not None
     assert redeemed.user_id == user_id
     assert redeemed.appointment_id == "appt-9"
+    assert redeemed.ai_consent_prompted is False
+
+
+def test_redeem_returns_the_consent_prompted_flag(pg_session: Session) -> None:
+    store = PostgresLaunchIntentStore(pg_session)
+    intent_id = store.create(user_id=_user_id(), appointment_id="appt-p", ai_consent_prompted=True)
+    redeemed = store.redeem(intent_id)
+    assert redeemed is not None
+    assert redeemed.ai_consent_prompted is True
 
 
 def test_redeem_is_single_use_atomic(pg_session: Session) -> None:

@@ -72,8 +72,10 @@ interface RecordingConsentDialogProps {
   /** What to ask about; `null` or `clear` keeps the dialog closed. */
   consent: RecordingConsent | null
   onCancel: () => void
-  /** Go ahead and record. Called after "agreed today" is saved, or on "Record anyway". */
+  /** Go ahead and record, after "agreed today" is saved. */
   onStart: () => void
+  /** Go ahead and record with nothing on file. */
+  onRecordAnyway: () => void
 }
 
 /**
@@ -86,6 +88,7 @@ export function RecordingConsentDialog({
   consent,
   onCancel,
   onStart,
+  onRecordAnyway,
 }: RecordingConsentDialogProps) {
   const people = usePeopleTerm()
   const record = useRecordAiConsent()
@@ -141,7 +144,7 @@ export function RecordingConsentDialog({
               <Button variant="ghost" onClick={close}>
                 Cancel
               </Button>
-              <Button variant="outline" onClick={onStart} disabled={record.isPending}>
+              <Button variant="outline" onClick={onRecordAnyway} disabled={record.isPending}>
                 Record anyway
               </Button>
               <Button onClick={() => void agreedToday()} disabled={record.isPending}>
