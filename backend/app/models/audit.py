@@ -45,6 +45,13 @@ class AuditAction(StrEnum):
     # worker, not on the upload request — so the note's creation is audited
     # there, at the point the PHI actually comes into existence.
     SESSION_NOTE_GENERATED = "session_note_generated"
+    # Signing and locking a note, adding to it after, and unlocking it to
+    # correct an error. ``changes`` names the version or addendum by id; the
+    # unlock reason is the clinician's words about the note and lives on the
+    # signed version it superseded, never in the audit row.
+    NOTE_SIGNED = "note_signed"
+    NOTE_ADDENDUM_ADDED = "note_addendum_added"
+    NOTE_UNLOCKED = "note_unlocked"
     # Recorded session audio deleted by the per-practice audio retention
     # cron (THERAPY-ab7). The action value is defined here so audit-log
     # readers and dashboards render it consistently regardless of which

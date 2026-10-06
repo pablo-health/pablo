@@ -1086,6 +1086,11 @@ _CORE_NOT_ROW_SCOPED: frozenset[str] = frozenset(
     }
 )
 
+#: Tables whose rows belong to one note and are readable exactly when that
+#: note is — its signed versions and its addenda. ``enable_rls_on_schema``
+#: gives them the ``rls_note_child_access`` policy, keyed on ``note_id``.
+NOTE_CHILD_TABLES: frozenset[str] = frozenset({"note_signatures", "note_addenda"})
+
 
 def not_row_scoped_tenant_tables() -> set[str]:
     """Every tenant table row-level security is deliberately left OFF for.
@@ -1856,6 +1861,7 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
         session.execute(text(f"DROP POLICY IF EXISTS rls_patient_access ON {qualified}"))
         session.execute(text(f"DROP POLICY IF EXISTS rls_patient_doc_access ON {qualified}"))
         session.execute(text(f"DROP POLICY IF EXISTS rls_note_access ON {qualified}"))
+        session.execute(text(f"DROP POLICY IF EXISTS rls_note_child_access ON {qualified}"))
         # Per-command policies on ``patients`` (split out from the
         # legacy single ALL policy to fix the INSERT chicken-and-egg).
         # Idempotent for tables that don't have these policies.
@@ -1946,6 +1952,25 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
                 "RLS (note_access: shared=patient_access, restricted=author) enabled on %s",
                 qualified,
             )
+            continue
+        if table_name in NOTE_CHILD_TABLES:
+            # A note's signed versions and addenda carry its body and the
+            # clinician's words about it, so they are readable exactly when
+            # the note is. The subquery reads ``notes`` under its own row
+            # policy, so a restricted note's children stay its author's and
+            # an ordinary note's follow patient access, with no second copy
+            # of either predicate to drift. ``qualified`` and ``schema_name``
+            # are validated identifiers; nothing here is caller input.
+            session.execute(
+                text(
+                    f"CREATE POLICY rls_note_child_access ON {qualified} "  # noqa: S608
+                    f"USING (EXISTS ("
+                    f"  SELECT 1 FROM {schema_name}.notes n "
+                    f"  WHERE n.id = {qualified}.note_id"
+                    f"))"
+                )
+            )
+            logger.info("RLS (note_child_access: follows the parent note) enabled on %s", qualified)
             continue
         if table_name == "patient_source_mappings" and "scope" in columns:
             # A calendar's answers are shared by every armed clinician, a

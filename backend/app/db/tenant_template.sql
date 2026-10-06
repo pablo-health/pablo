@@ -726,6 +726,43 @@ CREATE TABLE __TENANT_SCHEMA__.llm_usage (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.note_addenda (
+    id uuid NOT NULL,
+    note_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    text text NOT NULL,
+    signer_name text NOT NULL,
+    signer_credentials text,
+    digest character varying(64) NOT NULL,
+    prev_digest character varying(64),
+    created_by uuid NOT NULL,
+    created_at timestamp with time zone NOT NULL
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.note_signatures (
+    id uuid NOT NULL,
+    note_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    version integer NOT NULL,
+    note_type character varying(30) NOT NULL,
+    note_type_version integer,
+    content jsonb,
+    content_edited jsonb,
+    digest character varying(64) NOT NULL,
+    signed_by uuid NOT NULL,
+    signer_name text NOT NULL,
+    signer_credentials text,
+    signed_at timestamp with time zone NOT NULL,
+    unlocked_at timestamp with time zone,
+    unlocked_by uuid,
+    unlock_reason text,
+    CONSTRAINT ck_note_signatures_unlock_reason CHECK (((unlocked_at IS NULL) = (unlock_reason IS NULL)))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.notes (
     id uuid NOT NULL,
     patient_id uuid NOT NULL,
@@ -1632,6 +1669,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.intake_packet_versions
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_addenda
+    ADD CONSTRAINT note_addenda_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_signatures
+    ADD CONSTRAINT note_signatures_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.notes
     ADD CONSTRAINT notes_pkey PRIMARY KEY (id);
 
@@ -1844,6 +1891,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.intake_item_definitions
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.intake_packet_versions
     ADD CONSTRAINT uq_intake_packet_versions_number UNIQUE (template_id, version);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_signatures
+    ADD CONSTRAINT uq_note_signatures_note_version UNIQUE (note_id, version);
 
 
 
@@ -2137,6 +2189,22 @@ CREATE INDEX ix_llm_usage_feature_period ON __TENANT_SCHEMA__.llm_usage USING bt
 
 
 CREATE INDEX ix_llm_usage_period ON __TENANT_SCHEMA__.llm_usage USING btree (period_yyyymm);
+
+
+
+CREATE INDEX ix_note_addenda_note_id ON __TENANT_SCHEMA__.note_addenda USING btree (note_id);
+
+
+
+CREATE INDEX ix_note_addenda_patient_id ON __TENANT_SCHEMA__.note_addenda USING btree (patient_id);
+
+
+
+CREATE INDEX ix_note_signatures_note_id ON __TENANT_SCHEMA__.note_signatures USING btree (note_id);
+
+
+
+CREATE INDEX ix_note_signatures_patient_id ON __TENANT_SCHEMA__.note_signatures USING btree (patient_id);
 
 
 
@@ -2676,6 +2744,26 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.payer_enrollments
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.payers
     ADD CONSTRAINT fk_payers_carveout_of_payers FOREIGN KEY (carveout_of) REFERENCES __TENANT_SCHEMA__.payers(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_addenda
+    ADD CONSTRAINT note_addenda_note_id_fkey FOREIGN KEY (note_id) REFERENCES __TENANT_SCHEMA__.notes(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_addenda
+    ADD CONSTRAINT note_addenda_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_signatures
+    ADD CONSTRAINT note_signatures_note_id_fkey FOREIGN KEY (note_id) REFERENCES __TENANT_SCHEMA__.notes(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_signatures
+    ADD CONSTRAINT note_signatures_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
 
 
 

@@ -230,6 +230,8 @@ export interface FinalizeSessionRequest {
   quality_rating_reason?: string
   quality_rating_sections?: string[]
   soap_note_edited?: SOAPNoteModel
+  /** Signs and locks the note in the same request. */
+  signature?: { signer_name: string; signer_credentials?: string | null }
 }
 
 export interface UpdateSessionRatingRequest {

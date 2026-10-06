@@ -51,6 +51,8 @@ export interface UserStatusBase {
   is_platform_admin: boolean
   name: string
   email: string
+  /** Credentials as the clinician profile displays them, e.g. "PhD, LMFT". */
+  credentials?: string | null
   /** Version of the security & privacy guide the user last acknowledged. */
   security_guide_version: string | null
   security_guide_acknowledged_at: string | null

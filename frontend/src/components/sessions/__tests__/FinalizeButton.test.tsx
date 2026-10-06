@@ -1,18 +1,24 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
- * Tests for FinalizeButton component
+ * Tests for FinalizeButton: sign and lock a session's note after review.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { FinalizeButton } from "../FinalizeButton"
 import type { SessionStatus, SOAPNoteModel } from "@/types/sessions"
 import * as useSessions from "@/hooks/useSessions"
 
-// Create wrapper with React Query provider
+vi.mock("@/hooks/useNoteSigning", () => ({
+  useSignerDefaults: () => ({ name: "Sam Ortiz", credentials: "LMFT" }),
+}))
+vi.mock("@/hooks/usePreferences", () => ({
+  useUserTimeZone: () => "America/New_York",
+}))
+
 function createWrapper() {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -42,8 +48,9 @@ describe("FinalizeButton", () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockUseFinalizeSession.isPending = false
     vi.spyOn(useSessions, "useFinalizeSession").mockReturnValue(
-      mockUseFinalizeSession as any
+      mockUseFinalizeSession as never,
     )
   })
 
@@ -53,301 +60,148 @@ describe("FinalizeButton", () => {
     qualityRating: 4,
   }
 
-  describe("Rendering - Pending Review State", () => {
-    it("renders finalize button for pending review session", () => {
+  async function signThroughDialog(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole("button", { name: /sign and lock/i }))
+    const dialog = screen.getByRole("dialog")
+    await user.click(within(dialog).getByRole("button", { name: "Sign and lock" }))
+  }
+
+  describe("Rendering", () => {
+    it("offers Sign and lock for a session under review", () => {
       render(<FinalizeButton {...defaultProps} />, { wrapper: createWrapper() })
-
-      expect(screen.getByRole("button", { name: /finalize session/i })).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: /sign and lock/i })).not.toBeDisabled()
     })
 
-    it("button is enabled when status is pending_review and rating is set", () => {
-      render(<FinalizeButton {...defaultProps} />, { wrapper: createWrapper() })
-
-      const button = screen.getByRole("button", { name: /finalize session/i })
-      expect(button).not.toBeDisabled()
-    })
-
-    it("renders check icon", () => {
-      const { container } = render(<FinalizeButton {...defaultProps} />, {
-        wrapper: createWrapper(),
-      })
-
-      const icon = container.querySelector("svg")
-      expect(icon).toBeInTheDocument()
-    })
-  })
-
-  describe("Rendering - Finalized State", () => {
-    it("renders finalized badge when session is finalized", () => {
-      render(<FinalizeButton {...defaultProps} status="finalized" />, {
-        wrapper: createWrapper(),
-      })
-
-      expect(screen.getByRole("button", { name: /finalized/i })).toBeInTheDocument()
-    })
-
-    it("finalized badge is disabled", () => {
-      render(<FinalizeButton {...defaultProps} status="finalized" />, {
-        wrapper: createWrapper(),
-      })
-
-      const button = screen.getByRole("button", { name: /finalized/i })
-      expect(button).toBeDisabled()
-    })
-  })
-
-  describe("Disabled States", () => {
-    it("is enabled when quality rating is null (rating is optional)", () => {
+    it("is enabled with no rating (rating is optional)", () => {
       render(<FinalizeButton {...defaultProps} qualityRating={null} />, {
         wrapper: createWrapper(),
       })
-
-      const button = screen.getByRole("button", { name: /finalize session/i })
-      expect(button).not.toBeDisabled()
+      expect(screen.getByRole("button", { name: /sign and lock/i })).not.toBeDisabled()
     })
 
-    it("is disabled when status is queued", () => {
-      render(<FinalizeButton {...defaultProps} status="queued" />, {
-        wrapper: createWrapper(),
-      })
+    it.each(["queued", "processing", "failed"] as SessionStatus[])(
+      "is disabled when status is %s",
+      (status) => {
+        render(<FinalizeButton {...defaultProps} status={status} />, {
+          wrapper: createWrapper(),
+        })
+        expect(screen.getByRole("button", { name: /sign and lock/i })).toBeDisabled()
+      },
+    )
 
-      const button = screen.getByRole("button", { name: /finalize session/i })
-      expect(button).toBeDisabled()
-    })
-
-    it("is disabled when status is processing", () => {
-      render(<FinalizeButton {...defaultProps} status="processing" />, {
-        wrapper: createWrapper(),
-      })
-
-      const button = screen.getByRole("button", { name: /finalize session/i })
-      expect(button).toBeDisabled()
-    })
-
-    it("is disabled when status is failed", () => {
-      render(<FinalizeButton {...defaultProps} status="failed" />, {
-        wrapper: createWrapper(),
-      })
-
-      const button = screen.getByRole("button", { name: /finalize session/i })
-      expect(button).toBeDisabled()
-    })
-
-    it("is disabled when mutation is pending", () => {
-      vi.spyOn(useSessions, "useFinalizeSession").mockReturnValue({
-        ...mockUseFinalizeSession,
-        isPending: true,
-      } as any)
-
+    it("is disabled while the request is in flight", () => {
+      mockUseFinalizeSession.isPending = true
       render(<FinalizeButton {...defaultProps} />, { wrapper: createWrapper() })
+      expect(screen.getByRole("button", { name: /sign and lock/i })).toBeDisabled()
+    })
 
-      const button = screen.getByRole("button", { name: /finalizing/i })
-      expect(button).toBeDisabled()
+    it("renders a disabled Finalized badge once finalized", () => {
+      render(<FinalizeButton {...defaultProps} status="finalized" />, {
+        wrapper: createWrapper(),
+      })
+      expect(screen.getByRole("button", { name: /finalized/i })).toBeDisabled()
     })
   })
 
-  describe("Loading State", () => {
-    it("shows loading text when mutation is pending", () => {
-      vi.spyOn(useSessions, "useFinalizeSession").mockReturnValue({
-        ...mockUseFinalizeSession,
-        isPending: true,
-      } as any)
-
+  describe("Signing", () => {
+    it("prefills the profile and previews the block", async () => {
+      const user = userEvent.setup()
       render(<FinalizeButton {...defaultProps} />, { wrapper: createWrapper() })
+      await user.click(screen.getByRole("button", { name: /sign and lock/i }))
 
-      expect(screen.getByRole("button", { name: /finalizing/i })).toBeInTheDocument()
+      expect(screen.getByLabelText("Your name")).toHaveValue("Sam Ortiz")
+      expect(screen.getByLabelText("Credentials")).toHaveValue("LMFT")
+      const preview = screen.getByTestId("signature-preview")
+      expect(preview).toHaveTextContent("Electronically signed by Sam Ortiz, LMFT")
+      expect(preview).toHaveTextContent(/E[SD]T/)
+
+      await user.clear(screen.getByLabelText("Credentials"))
+      await user.type(screen.getByLabelText("Credentials"), "LMFT, LPCC")
+      expect(preview).toHaveTextContent("Electronically signed by Sam Ortiz, LMFT, LPCC")
     })
 
-    it("shows spinner icon when pending", () => {
-      vi.spyOn(useSessions, "useFinalizeSession").mockReturnValue({
-        ...mockUseFinalizeSession,
-        isPending: true,
-      } as any)
-
-      render(<FinalizeButton {...defaultProps} />, { wrapper: createWrapper() })
-
-      const button = screen.getByRole("button", { name: /finalizing/i })
-      expect(button).toHaveTextContent("⏳")
-    })
-  })
-
-  describe("Click Behavior", () => {
-    it("calls finalize mutation with quality rating only", async () => {
+    it("signs with the entered name and credentials, the rating and edited SOAP", async () => {
       const user = userEvent.setup()
       mockMutateAsync.mockResolvedValue({})
-
-      render(<FinalizeButton {...defaultProps} />, { wrapper: createWrapper() })
-
-      const button = screen.getByRole("button", { name: /finalize session/i })
-      await user.click(button)
-
-      expect(mockMutateAsync).toHaveBeenCalledWith({
-        sessionId: "session-123",
-        data: {
-          quality_rating: 4,
-        },
-      })
-    })
-
-    it("calls finalize mutation with quality rating and edited SOAP", async () => {
-      const user = userEvent.setup()
-      mockMutateAsync.mockResolvedValue({})
-
-      const editedSOAP: SOAPNoteModel = {
-        subjective: "Edited subjective",
-        objective: "Edited objective",
-        assessment: "Edited assessment",
-        plan: "Edited plan",
+      const edited: SOAPNoteModel = {
+        subjective: "S",
+        objective: "O",
+        assessment: "A",
+        plan: "P",
       }
-
-      render(<FinalizeButton {...defaultProps} soapNoteEdited={editedSOAP} />, {
-        wrapper: createWrapper(),
-      })
-
-      const button = screen.getByRole("button", { name: /finalize session/i })
-      await user.click(button)
+      render(
+        <FinalizeButton
+          {...defaultProps}
+          qualityRatingReason="Clear"
+          qualityRatingSections={["plan"]}
+          soapNoteEdited={edited}
+        />,
+        { wrapper: createWrapper() },
+      )
+      await user.click(screen.getByRole("button", { name: /sign and lock/i }))
+      await user.clear(screen.getByLabelText("Credentials"))
+      await user.type(screen.getByLabelText("Credentials"), "PhD")
+      await user.click(
+        within(screen.getByRole("dialog")).getByRole("button", { name: "Sign and lock" }),
+      )
 
       expect(mockMutateAsync).toHaveBeenCalledWith({
         sessionId: "session-123",
         data: {
           quality_rating: 4,
-          soap_note_edited: editedSOAP,
+          quality_rating_reason: "Clear",
+          quality_rating_sections: ["plan"],
+          soap_note_edited: edited,
+          signature: { signer_name: "Sam Ortiz", signer_credentials: "PhD" },
         },
       })
     })
 
-    it("finalizes without a rating when quality rating is null", async () => {
+    it("signs without a rating when none was given", async () => {
       const user = userEvent.setup()
       mockMutateAsync.mockResolvedValue({})
-
       render(<FinalizeButton {...defaultProps} qualityRating={null} />, {
         wrapper: createWrapper(),
       })
-
-      const button = screen.getByRole("button", { name: /finalize session/i })
-      await user.click(button)
-
+      await signThroughDialog(user)
       expect(mockMutateAsync).toHaveBeenCalledWith({
         sessionId: "session-123",
-        data: {},
+        data: { signature: { signer_name: "Sam Ortiz", signer_credentials: "LMFT" } },
       })
     })
 
-    it("does not call mutation when status is not pending_review", async () => {
+    it("refuses a blank name", async () => {
       const user = userEvent.setup()
-
-      render(<FinalizeButton {...defaultProps} status="queued" />, {
-        wrapper: createWrapper(),
-      })
-
-      const button = screen.getByRole("button", { name: /finalize session/i })
-      await user.click(button)
-
-      expect(mockMutateAsync).not.toHaveBeenCalled()
+      render(<FinalizeButton {...defaultProps} />, { wrapper: createWrapper() })
+      await user.click(screen.getByRole("button", { name: /sign and lock/i }))
+      await user.clear(screen.getByLabelText("Your name"))
+      expect(
+        within(screen.getByRole("dialog")).getByRole("button", { name: "Sign and lock" }),
+      ).toBeDisabled()
     })
 
-    it("calls onSuccess callback after successful finalization", async () => {
+    it("calls onSuccess after signing", async () => {
       const user = userEvent.setup()
       const onSuccess = vi.fn()
       mockMutateAsync.mockResolvedValue({})
-
       render(<FinalizeButton {...defaultProps} onSuccess={onSuccess} />, {
         wrapper: createWrapper(),
       })
-
-      const button = screen.getByRole("button", { name: /finalize session/i })
-      await user.click(button)
-
-      await vi.waitFor(() => {
-        expect(onSuccess).toHaveBeenCalled()
-      })
+      await signThroughDialog(user)
+      expect(onSuccess).toHaveBeenCalledTimes(1)
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
     })
 
-    it("handles mutation error gracefully", async () => {
+    it("keeps the dialog open and says so when signing fails", async () => {
       const user = userEvent.setup()
-      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
-      mockMutateAsync.mockRejectedValue(new Error("Network error"))
-
-      render(<FinalizeButton {...defaultProps} />, { wrapper: createWrapper() })
-
-      const button = screen.getByRole("button", { name: /finalize session/i })
-      await user.click(button)
-
-      await vi.waitFor(() => {
-        expect(consoleErrorSpy).toHaveBeenCalledWith(
-          "Failed to finalize session"
-        )
-      })
-
-      consoleErrorSpy.mockRestore()
-    })
-  })
-
-  describe("Quality Rating Values", () => {
-    it("accepts rating of 1", async () => {
-      const user = userEvent.setup()
-      mockMutateAsync.mockResolvedValue({})
-
-      render(<FinalizeButton {...defaultProps} qualityRating={1} />, {
+      const onSuccess = vi.fn()
+      mockMutateAsync.mockRejectedValue(new Error("Note is already signed"))
+      render(<FinalizeButton {...defaultProps} onSuccess={onSuccess} />, {
         wrapper: createWrapper(),
       })
-
-      const button = screen.getByRole("button", { name: /finalize session/i })
-      await user.click(button)
-
-      expect(mockMutateAsync).toHaveBeenCalledWith({
-        sessionId: "session-123",
-        data: { quality_rating: 1 },
-      })
-    })
-
-    it("accepts rating of 5", async () => {
-      const user = userEvent.setup()
-      mockMutateAsync.mockResolvedValue({})
-
-      render(<FinalizeButton {...defaultProps} qualityRating={5} />, {
-        wrapper: createWrapper(),
-      })
-
-      const button = screen.getByRole("button", { name: /finalize session/i })
-      await user.click(button)
-
-      expect(mockMutateAsync).toHaveBeenCalledWith({
-        sessionId: "session-123",
-        data: { quality_rating: 5 },
-      })
-    })
-  })
-
-  describe("Multiple Clicks", () => {
-    it("prevents multiple submissions when pending", async () => {
-      const user = userEvent.setup()
-      mockMutateAsync.mockImplementation(
-        () => new Promise((resolve) => setTimeout(resolve, 100))
-      )
-
-      vi.spyOn(useSessions, "useFinalizeSession").mockReturnValue({
-        ...mockUseFinalizeSession,
-        isPending: false,
-      } as any)
-
-      const { rerender } = render(<FinalizeButton {...defaultProps} />, {
-        wrapper: createWrapper(),
-      })
-
-      const button = screen.getByRole("button", { name: /finalize session/i })
-      await user.click(button)
-
-      // Simulate isPending becoming true
-      vi.spyOn(useSessions, "useFinalizeSession").mockReturnValue({
-        ...mockUseFinalizeSession,
-        isPending: true,
-      } as any)
-
-      rerender(<FinalizeButton {...defaultProps} />)
-
-      const pendingButton = screen.getByRole("button", { name: /finalizing/i })
-      expect(pendingButton).toBeDisabled()
+      await signThroughDialog(user)
+      expect(onSuccess).not.toHaveBeenCalled()
+      expect(screen.getByRole("alert")).toHaveTextContent("Note is already signed")
     })
   })
 
@@ -356,32 +210,18 @@ describe("FinalizeButton", () => {
       vi.unstubAllEnvs()
     })
 
-    it("hides the Finalize Session button for a pending-review session when read-only", () => {
+    it("hides the action for a session under review", () => {
       vi.stubEnv("NEXT_PUBLIC_READ_ONLY", "true")
       render(<FinalizeButton {...defaultProps} />, { wrapper: createWrapper() })
-
-      expect(
-        screen.queryByRole("button", { name: /finalize session/i }),
-      ).not.toBeInTheDocument()
+      expect(screen.queryByRole("button", { name: /sign and lock/i })).not.toBeInTheDocument()
     })
 
-    it("still shows the disabled Finalized status badge when read-only", () => {
+    it("still shows the disabled Finalized status badge", () => {
       vi.stubEnv("NEXT_PUBLIC_READ_ONLY", "true")
       render(<FinalizeButton {...defaultProps} status="finalized" />, {
         wrapper: createWrapper(),
       })
-
-      const button = screen.getByRole("button", { name: /finalized/i })
-      expect(button).toBeInTheDocument()
-      expect(button).toBeDisabled()
-    })
-
-    it("shows the Finalize Session button when the flag is unset", () => {
-      render(<FinalizeButton {...defaultProps} />, { wrapper: createWrapper() })
-
-      expect(
-        screen.getByRole("button", { name: /finalize session/i }),
-      ).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: /finalized/i })).toBeDisabled()
     })
   })
 })

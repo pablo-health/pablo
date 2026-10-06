@@ -312,4 +312,56 @@ describe("exportSOAPToPDF", () => {
       expect.any(Number)
     )
   })
+
+  describe("signature block", () => {
+    const printed = () => mockText.mock.calls.map((call) => call[0] as string)
+
+    it("prints the block, the amendment line, then each addendum with its signature", () => {
+      exportSOAPToPDF(
+        {
+          ...mockSession,
+          signature: {
+            lines: ["Electronically signed by Sam Ortiz, LMFT", "Oct 5, 2026, 3:04 PM EDT"],
+            amendments: ["Amended Oct 6, 2026: Wrong date of service"],
+            addenda: [
+              {
+                text: "Called after the session.",
+                lines: ["Electronically signed by Sam Ortiz, LMFT", "Oct 7, 2026, 9:00 AM EDT"],
+              },
+            ],
+          },
+        },
+        mockSOAPNote,
+        peopleWords("patients"),
+      )
+      const text = printed()
+      const at = (s: string) => text.indexOf(s)
+      expect(at("Electronically signed by Sam Ortiz, LMFT")).toBeGreaterThan(at("Plan"))
+      expect(at("Amended Oct 6, 2026: Wrong date of service")).toBeGreaterThan(
+        at("Oct 5, 2026, 3:04 PM EDT"),
+      )
+      expect(at("Addendum")).toBeGreaterThan(at("Amended Oct 6, 2026: Wrong date of service"))
+      expect(at("Called after the session.")).toBeGreaterThan(at("Addendum"))
+      expect(text).toContain("Oct 7, 2026, 9:00 AM EDT")
+    })
+
+    it("prints no signature block for a note never signed", () => {
+      exportSOAPToPDF(mockSession, mockSOAPNote, peopleWords("patients"))
+      expect(printed().some((t) => t.startsWith("Electronically signed"))).toBe(false)
+      expect(printed()).not.toContain("Addendum")
+    })
+
+    it("prints Finalized and no signature line for a note finalized before signatures", () => {
+      exportSOAPToPDF(
+        {
+          ...mockSession,
+          signature: { lines: ["Finalized Jan 15, 2024"], amendments: [], addenda: [] },
+        },
+        mockSOAPNote,
+        peopleWords("patients"),
+      )
+      expect(printed()).toContain("Finalized Jan 15, 2024")
+      expect(printed().some((t) => t.startsWith("Electronically signed"))).toBe(false)
+    })
+  })
 })

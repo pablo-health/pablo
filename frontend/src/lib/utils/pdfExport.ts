@@ -16,6 +16,17 @@ export interface PDFExportMetadata {
   patient_name: string
   session_number?: number
   session_date: string
+  /** The signature block under the note; omitted for a note never signed. */
+  signature?: PDFSignatureBlock
+}
+
+/** A signature block, already worded (see `lib/utils/signatureBlock`). */
+export interface PDFSignatureBlock {
+  /** "Electronically signed by …" and its date, or "Finalized <date>". */
+  lines: string[]
+  /** "Amended <date>: <reason>", one per time the note was unlocked. */
+  amendments: string[]
+  addenda: Array<{ text: string; lines: string[] }>
 }
 
 const LEFT_MARGIN = 20
@@ -69,6 +80,37 @@ function renderContentBlock(
     }
   }
 
+  return y
+}
+
+/**
+ * The signature block, any amendment lines under it, then each addendum with
+ * its own signature. Returns the y position after the last line.
+ */
+function renderSignatureBlock(
+  doc: jsPDF,
+  block: PDFSignatureBlock,
+  yPosition: number,
+  pageHeight: number,
+): number {
+  let y = yPosition
+  doc.setFontSize(11)
+  doc.setFont("helvetica", "normal")
+  y = renderContentBlock(doc, [...block.lines, ...block.amendments].join("\n"), y, pageHeight)
+
+  for (const addendum of block.addenda) {
+    y += 6
+    if (y > pageHeight - MARGIN_BOTTOM) {
+      doc.addPage()
+      y = 20
+    }
+    doc.setFont("helvetica", "bold")
+    doc.text("Addendum", LEFT_MARGIN, y)
+    y += LINE_HEIGHT
+    doc.setFont("helvetica", "normal")
+    y = renderContentBlock(doc, addendum.text, y, pageHeight)
+    y = renderContentBlock(doc, addendum.lines.join("\n"), y, pageHeight)
+  }
   return y
 }
 
@@ -155,6 +197,10 @@ export function exportSOAPToPDF(
 
     yPosition += SECTION_GAP
   })
+
+  if (meta.signature) {
+    renderSignatureBlock(doc, meta.signature, yPosition, pageHeight)
+  }
 
   const safeName = meta.patient_name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()
   const filename = `soap-note-${safeName}-${meta.session_date.slice(0, 10)}.pdf`

@@ -545,18 +545,31 @@ class SessionService:
             )
 
         finalized_at = _now()
-        note = self.note_service.finalize_note(
-            note.id,
-            quality_rating=request.quality_rating,
-            quality_rating_reason=request.quality_rating_reason,
-            quality_rating_sections=(
-                [s.value for s in request.quality_rating_sections]
-                if request.quality_rating_sections
-                else None
-            ),
-            finalized_at=finalized_at,
-            user_id=user_id,
+        rating_sections = (
+            [s.value for s in request.quality_rating_sections]
+            if request.quality_rating_sections
+            else None
         )
+        if request.signature is not None:
+            note, _ = self.note_service.sign_note(
+                note.id,
+                signer_name=request.signature.signer_name,
+                signer_credentials=request.signature.signer_credentials,
+                quality_rating=request.quality_rating,
+                quality_rating_reason=request.quality_rating_reason,
+                quality_rating_sections=rating_sections,
+                now=finalized_at,
+                user_id=user_id,
+            )
+        else:
+            note = self.note_service.finalize_note(
+                note.id,
+                quality_rating=request.quality_rating,
+                quality_rating_reason=request.quality_rating_reason,
+                quality_rating_sections=rating_sections,
+                finalized_at=finalized_at,
+                user_id=user_id,
+            )
 
         session.status = SessionStatus.FINALIZED
         session = self.session_repo.update(session)
