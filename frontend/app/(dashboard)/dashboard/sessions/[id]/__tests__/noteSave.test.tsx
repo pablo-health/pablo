@@ -47,6 +47,7 @@ vi.mock("@/hooks/useNoteTypes", () => ({
 
 // Reads the practice setting and the client's consent record; not under test here.
 vi.mock("@/components/sessions/NoteConsentLine", () => ({ NoteConsentLine: () => null }))
+vi.mock("@/components/sessions/ClientPresentLine", () => ({ ClientPresentLine: () => null }))
 
 // Stand-in details panel: one button that redrafts with a fixed value.
 vi.mock("@/components/sessions/NoteInputsPanel", () => ({
