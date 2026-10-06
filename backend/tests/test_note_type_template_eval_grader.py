@@ -108,7 +108,7 @@ def _addendum_draft(ideation: str, self_harm: str) -> dict[str, Any]:
         },
         "mse": {
             "mood_affect": 'Clinician stated: "Mood better, affect brighter than last visit."',
-            "thought_content": "Not stated.",
+            "orientation": "Not stated.",
             "cognition": "Not stated.",
             "speech": "",
         },
