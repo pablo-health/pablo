@@ -783,7 +783,8 @@ CREATE TABLE __TENANT_SCHEMA__.notes (
     note_type_version integer,
     note_inputs jsonb,
     author_user_id uuid,
-    restricted boolean DEFAULT false NOT NULL
+    restricted boolean DEFAULT false NOT NULL,
+    psychotherapy_window jsonb
 );
 
 

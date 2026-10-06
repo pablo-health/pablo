@@ -307,5 +307,6 @@ class NoteRedraftService:
             content_edited=kept,
             note_type_version=generated.note_type_version,
             user_id=user_id,
+            psychotherapy_start=generated.psychotherapy_start,
         )
         return session, patient, note

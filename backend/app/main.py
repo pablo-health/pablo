@@ -119,6 +119,7 @@ from .routes import (
     telehealth,
     telehealth_webhooks,
     users,
+    visit_times,
 )
 from .settings import get_settings, log_startup_posture
 from .sites import public_routes as site_public_routes
@@ -378,6 +379,7 @@ app.include_router(
     patient_booking.router, dependencies=[Depends(require_portal_module("appointments"))]
 )
 app.include_router(sessions.router)
+app.include_router(visit_times.router)
 app.include_router(internal_transcription.router)
 app.include_router(dashboard.router)
 app.include_router(notes.router)

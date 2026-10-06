@@ -248,6 +248,8 @@ async def draft_note(call: NoteCall) -> dict[str, Any]:
     draft = _stand_in(call.response_schema, "")
     _fill_named(draft, _supplied_inputs(call.user_prompt))
     _fill_named(draft, _dictated(call.user_prompt))
+    if "psychotherapy_start" in call.response_schema.get("properties", {}):
+        draft["psychotherapy_start"] = _therapy_start(call.user_prompt)
     return {"data": draft, "finish_reason": "stop"}
 
 
@@ -309,6 +311,22 @@ def _fill_named(draft: dict[str, Any], values: dict[str, str]) -> None:
         for key, current in section.items():
             if key in values and isinstance(current, str):
                 section[key] = values[key]
+
+
+#: The clinician's spoken cue the stand-in recognizes as the therapy portion starting.
+THERAPY_CUE = re.compile(
+    r"^\[(\d+(?::\d{2}){1,2})\][^\n]*let's get into", re.IGNORECASE | re.MULTILINE
+)
+
+
+def _therapy_start(user_prompt: str) -> dict[str, Any]:
+    """Where the therapy portion began: the turn with the clinician's cue, if any."""
+    cue = THERAPY_CUE.search(user_prompt)
+    return {
+        "transcript_time": cue.group(1) if cue else "",
+        "cued_by_clinician": cue is not None,
+        "stated_clock_time": "",
+    }
 
 
 @app.get("/_fake/health")

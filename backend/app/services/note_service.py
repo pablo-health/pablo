@@ -24,6 +24,7 @@ from ..api_errors import APIError, BadRequestError, ConflictError, NotFoundError
 from ..models import Note
 from ..models.note_signing import NoteAddendum, NoteSignature
 from ..notes import get_default_registry, is_practice_key
+from ..notes.visit_times import apply_confirmed_window, clear_drafted_time, drafted_time
 from ..repositories import NotesRepository  # noqa: TC001 — runtime DI type
 from ..repositories.note import PatientAccessDeniedError
 from ..utcnow import utc_now
@@ -121,6 +122,7 @@ class NoteService:
         user_id: str,
         note_type_version: int | None = None,
         note_inputs: dict[str, str] | None = None,
+        psychotherapy_start: dict[str, Any] | None = None,
     ) -> Note:
         """Persist a note tied to a session.
 
@@ -138,6 +140,10 @@ class NoteService:
 
         A restricted type is refused outright: the session's one note is
         the progress note, and a psychotherapy note is never bound to one.
+
+        New content replaces the proposed psychotherapy start with
+        ``psychotherapy_start`` and keeps any window the clinician confirmed,
+        writing it into the new content (see ``app.notes.visit_times``).
         """
         if is_restricted_note_type(note_type):
             raise RestrictedNoteTypeError(
@@ -152,7 +158,9 @@ class NoteService:
             if note_inputs is not None:
                 existing.note_inputs = note_inputs
             if content is not None:
-                existing.content = content
+                window = {**(existing.psychotherapy_window or {}), "proposal": psychotherapy_start}
+                existing.psychotherapy_window = window
+                existing.content = apply_confirmed_window(content, window)
                 existing.content_edited = None
             existing.updated_at = now
             return self._notes.update(existing, user_id)
@@ -164,6 +172,7 @@ class NoteService:
             note_type=note_type,
             note_type_version=note_type_version,
             note_inputs=note_inputs,
+            psychotherapy_window={"proposal": psychotherapy_start} if psychotherapy_start else None,
             content=content,
             author_user_id=user_id,
             created_at=now,
@@ -275,10 +284,17 @@ class NoteService:
         content_edited: dict[str, Any] | None,
         note_type_version: int | None,
         user_id: str,
+        psychotherapy_start: dict[str, Any] | None = None,
     ) -> Note:
-        """Write the new draft, with whatever edits the redraft kept."""
-        note.content = content
-        note.content_edited = content_edited
+        """Write the new draft, with whatever edits the redraft kept.
+
+        As with any new draft, the proposed psychotherapy start is replaced
+        and a confirmed window is kept and written back into it.
+        """
+        window = {**(note.psychotherapy_window or {}), "proposal": psychotherapy_start}
+        note.psychotherapy_window = window
+        note.content = apply_confirmed_window(content, window)
+        note.content_edited = apply_confirmed_window(content_edited, window)
         note.note_type_version = note_type_version
         note.status = "complete"
         note.updated_at = utc_now()
@@ -305,6 +321,35 @@ class NoteService:
                 {"note_id": note_id},
             )
         note.content_edited = content_edited
+        note.updated_at = utc_now()
+        return self._notes.update(note, user_id)
+
+    def confirm_psychotherapy_window(
+        self,
+        note_id: str,
+        confirmed: dict[str, Any],
+        user_id: str,
+        *,
+        replace_dictated: bool = False,
+    ) -> Note:
+        """Record the psychotherapy window the clinician confirmed.
+
+        The window is written into the note's psychotherapy time field unless
+        that field holds a time the clinician dictated; ``replace_dictated``
+        is the clinician choosing the confirmed window over it. Refused on a
+        locked note.
+        """
+        note = self.get_note(note_id, user_id)
+        if note.finalized_at is not None:
+            raise NoteLockedError(f"Note {note_id} is signed and locked", {"note_id": note_id})
+        window = {**(note.psychotherapy_window or {}), "confirmed": confirmed}
+        note.psychotherapy_window = window
+        current = note.content_edited or note.content
+        if current is not None and replace_dictated and drafted_time(current) is not None:
+            current = clear_drafted_time(current)
+        filled = apply_confirmed_window(current, window)
+        if filled is not current:
+            note.content_edited = filled
         note.updated_at = utc_now()
         return self._notes.update(note, user_id)
 

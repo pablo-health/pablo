@@ -37,7 +37,7 @@ from app.models import Patient, Transcript
 from app.notes.client_present import client_present_end, segments_from_transcript
 from app.notes.diagnoses import diagnosis_text
 from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
-from app.services.note_generation_service import RegistryNoteGenerationService
+from app.services.note_generation_service import GeneratedNote, RegistryNoteGenerationService
 from app.services.structured_llm_gateway import (
     StructuredLLMGateway,
     get_default_structured_llm_gateway,
@@ -69,8 +69,13 @@ def _text(value: Any) -> str:
     return str(value or "")
 
 
-def grade(case: TemplateCase, content: dict[str, Any]) -> dict[str, Any]:
-    """Every hard failure in ``content``, a draft of ``case``'s sample."""
+def grade(
+    case: TemplateCase, content: dict[str, Any], start: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Every hard failure in ``content``, a draft of ``case``'s sample.
+
+    ``start`` is the draft's proposed psychotherapy start.
+    """
     failures: list[str] = []
     for section, fields in content.items():
         for key, value in fields.items():
@@ -90,9 +95,28 @@ def grade(case: TemplateCase, content: dict[str, Any]) -> dict[str, Any]:
             elif case.fill_unnamed and path not in case.may_be_empty and _is_empty(value):
                 failures.append(f"{path} is empty")
     failures.extend(_grade_quoted(case, content))
+    failures.extend(_grade_start(case, start))
     if case.diagnoses_field:
         failures.extend(_grade_diagnoses(case, content))
     return {"case": case.name, "passed": not failures, "failures": failures}
+
+
+def _grade_start(case: TemplateCase, start: dict[str, Any] | None) -> list[str]:
+    """Every proposed therapy start is after the medication portion; the first is at the turn."""
+    if case.therapy_starts_between is None:
+        return []
+    low, high = case.therapy_starts_between
+    candidates = [c["seconds"] for c in (start or {}).get("candidates", [])]
+    if not candidates:
+        return ["no psychotherapy start was proposed"]
+    failures = [
+        f"proposed therapy start {seconds:.0f}s is before {low:.0f}s"
+        for seconds in candidates
+        if seconds < low
+    ]
+    if candidates[0] > high:
+        failures.append(f"first proposed therapy start {candidates[0]:.0f}s is after {high:.0f}s")
+    return failures
 
 
 _QUOTE_MARKS = ('"', "\u201c", "\u201d")
@@ -135,7 +159,7 @@ def _grade_diagnoses(case: TemplateCase, content: dict[str, Any]) -> list[str]:
     return failures
 
 
-def draft(gateway: StructuredLLMGateway, case: TemplateCase) -> dict[str, Any]:
+def draft(gateway: StructuredLLMGateway, case: TemplateCase) -> GeneratedNote:
     spec = PracticeNoteTypeSpec.model_validate(load_template(case.template)["spec"])
     definition = to_definition("custom.preview", 0, spec)
     now = datetime.now(UTC)
@@ -158,7 +182,7 @@ def draft(gateway: StructuredLLMGateway, case: TemplateCase) -> dict[str, Any]:
         definition=definition,
         client_present_end_seconds=boundary,
     )
-    return generated.content
+    return generated
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -180,12 +204,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     results = []
     for case in cases:
-        content = draft(gateway, case)
+        generated = draft(gateway, case)
         if args.out:
             out = Path(args.out)
             out.mkdir(parents=True, exist_ok=True)
-            (out / f"{case.name}.json").write_text(json.dumps(content, indent=2) + "\n")
-        results.append(grade(case, content))
+            kept = {**generated.content, "psychotherapy_start": generated.psychotherapy_start}
+            (out / f"{case.name}.json").write_text(json.dumps(kept, indent=2) + "\n")
+        results.append(grade(case, generated.content, generated.psychotherapy_start))
 
     if args.json:
         print(json.dumps(results, indent=2))
