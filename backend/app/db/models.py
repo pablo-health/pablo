@@ -392,6 +392,72 @@ class NoteAddendumRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class SessionDictationRow(Base):
+    """A clip the clinician dictated about a session after its recording stopped.
+
+    Kept apart from the session's own transcript and timing: dictation is
+    documentation time, never face-to-face or psychotherapy time, so nothing
+    here moves ``therapy_sessions`` timing and a reader of minutes adds
+    ``duration_seconds`` only where documentation time is wanted.
+
+    Append-only — no ``updated_at`` / ``deleted_at``. The transcription
+    worker fills ``transcript`` and ``used_as`` once (``transcribing`` →
+    ``transcribed`` or ``failed``); signing the draft addendum it became
+    records ``addendum_id``. Nothing rewrites what was said.
+
+    ``used_as`` is ``redraft`` when the note was unsigned and the dictation
+    went into its redraft, ``addendum`` when the note was signed and the
+    dictation became a draft addendum for the clinician to review and sign.
+
+    Readable exactly when its note is (the note-child policy).
+    """
+
+    __tablename__ = "session_dictations"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    session_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("therapy_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    note_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("notes.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    author_user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    audio_path: Mapped[str] = mapped_column(Text, nullable=False)
+    content_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    duration_seconds: Mapped[int | None] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    transcript: Mapped[str | None] = mapped_column(Text)
+    used_as: Mapped[str | None] = mapped_column(String(20))
+    addendum_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("note_addenda.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    transcribed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('transcribing', 'transcribed', 'failed')",
+            name="ck_session_dictations_status",
+        ),
+        CheckConstraint(
+            "used_as IS NULL OR used_as IN ('redraft', 'addendum')",
+            name="ck_session_dictations_used_as",
+        ),
+    )
+
+
 class PatientClinicianRow(Base):
     """Explicit per-(patient, clinician) access grants.
 

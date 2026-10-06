@@ -112,6 +112,7 @@ from .routes import (
     public_booking,
     refill_requests,
     scheduling,
+    session_dictations,
     sessions,
     superbills,
     supervision,
@@ -383,6 +384,7 @@ app.include_router(notes.router)
 app.include_router(notes.patient_notes_router)
 app.include_router(notes.internal_jobs_router)
 app.include_router(note_redraft.router)
+app.include_router(session_dictations.router)
 app.include_router(patient_documents.patient_documents_router)
 app.include_router(patient_documents.documents_router)
 app.include_router(patient_documents.internal_jobs_router)

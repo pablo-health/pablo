@@ -32,7 +32,11 @@ from ..repositories import (
 )
 from ..repositories import get_notes_repository as _notes_repo_factory
 from ..repositories import get_patient_repository as _patient_repo_factory
+from ..repositories import get_session_dictation_repository as _dictation_repo_factory
 from ..repositories import get_session_repository as _session_repo_factory
+from ..repositories.session_dictation import (  # noqa: TC001 — runtime annotation
+    SessionDictationRepository,
+)
 from ..services import (
     AuditService,
     NoteGenerationService,
@@ -46,6 +50,7 @@ from ..services.note_redraft import NoteRedraftService, RedraftNotPendingError
 from ..services.session_generation_worker import resolve_tenant_schema_for_user
 from ..settings import get_settings
 from .notes import get_note_generation_service
+from .session_dictations import get_dictation_repository
 from .sessions import (
     get_notes_repository,
     get_patient_repository,
@@ -63,10 +68,15 @@ def get_note_redraft_service(
     session_repo: TherapySessionRepository = Depends(get_session_repository),
     patient_repo: PatientRepository = Depends(get_patient_repository),
     notes_repo: NotesRepository = Depends(get_notes_repository),
+    dictation_repo: SessionDictationRepository = Depends(get_dictation_repository),
     note_generation_service: NoteGenerationService = Depends(get_note_generation_service),
 ) -> NoteRedraftService:
     return NoteRedraftService(
-        session_repo, patient_repo, NoteService(notes_repo), note_generation_service
+        session_repo,
+        patient_repo,
+        NoteService(notes_repo),
+        note_generation_service,
+        dictation_repo,
     )
 
 
@@ -79,6 +89,7 @@ def get_worker_note_redraft_service(
         _patient_repo_factory(),
         NoteService(_notes_repo_factory()),
         note_generation_service,
+        _dictation_repo_factory(),
     )
 
 

@@ -58,7 +58,13 @@ from ..notes import (
     get_note_type_authorizer,
 )
 from ..notes.practice_types import validate_note_inputs
-from ..repositories import NotesRepository, PatientRepository, UserRepository, get_user_repository
+from ..repositories import (
+    NotesRepository,
+    PatientRepository,
+    UserRepository,
+    get_session_dictation_repository,
+    get_user_repository,
+)
 from ..repositories import (
     get_appointment_repository as _appt_repo_factory,
 )
@@ -82,6 +88,7 @@ from ..services import (
 from ..services.http_structured_llm_gateway import HttpStructuredLLMGateway
 from ..services.note_generation_service import TransientNoteGenerationError
 from ..services.note_signing import current_signature
+from ..services.session_dictation_service import awaiting_addendum
 from ..services.session_generation_worker import resolve_tenant_schema_for_user
 from ..settings import get_settings
 from ..utcnow import utc_now
@@ -392,7 +399,14 @@ def add_note_addendum(
     note_service: NoteService = Depends(get_note_service),
     audit: AuditService = Depends(get_audit_service),
 ) -> NoteAddendumResponse:
-    """Add a signed addendum to a locked note."""
+    """Add a signed addendum to a locked note.
+
+    ``dictation_id`` names the dictation the addendum was drafted from; the
+    dictation then stops offering its draft.
+    """
+    dictation_repo = get_session_dictation_repository() if request.dictation_id else None
+    if dictation_repo is not None and request.dictation_id is not None:
+        awaiting_addendum(dictation_repo, request.dictation_id, note_id)
     note, addendum = note_service.add_addendum(
         note_id,
         text=request.text,
@@ -400,6 +414,8 @@ def add_note_addendum(
         signer_credentials=request.signer_credentials,
         user_id=user.id,
     )
+    if dictation_repo is not None and request.dictation_id is not None:
+        dictation_repo.link_addendum(request.dictation_id, addendum.id)
     audit.log_note_action(
         action=AuditAction.NOTE_ADDENDUM_ADDED,
         user=user,
@@ -407,7 +423,11 @@ def add_note_addendum(
         note_id=note.id,
         patient_id=note.patient_id,
         session_id=note.session_id,
-        changes={"addendum_id": addendum.id, **_restricted_change(note)},
+        changes={
+            "addendum_id": addendum.id,
+            **({"dictation_id": request.dictation_id} if request.dictation_id else {}),
+            **_restricted_change(note),
+        },
     )
     return NoteAddendumResponse.from_addendum(addendum)
 

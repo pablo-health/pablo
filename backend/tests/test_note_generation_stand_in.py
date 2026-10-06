@@ -18,13 +18,15 @@ from app.models import Patient, Transcript
 from app.notes import NoteTypeRegistry, register_builtin_note_types
 from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
 from app.routes.notes import get_note_generation_service
-from app.services import http_structured_llm_gateway
+from app.services import dictation_transcription, http_structured_llm_gateway
+from app.services.dictation_transcription import HttpDictationTranscriber
 from app.services.http_structured_llm_gateway import HttpStructuredLLMGateway
 from app.services.note_generation_service import RegistryNoteGenerationService
+from app.services.note_redraft import DICTATED_HEADING
 from app.settings import Settings
 from fastapi.testclient import TestClient
 
-from scripts.fake_llm import REFUSES_DRAFT
+from scripts.fake_llm import DICTATION_TEXT, REFUSES_DRAFT
 from scripts.fake_llm import app as fake_llm_app
 
 from .test_practice_note_types import COACH_SPEC
@@ -148,6 +150,34 @@ def test_a_diagnoses_field_gets_one_coded_diagnosis(stand_in: list[str]) -> None
             ]
         }
     }
+
+
+def test_what_was_dictated_lands_in_the_field_it_names(stand_in: list[str]) -> None:
+    """A redraft with a dictation visibly gains it."""
+    transcript = Transcript(
+        format="txt",
+        content=f"{TRANSCRIPT.content}\n\n{DICTATED_HEADING}\n\n{DICTATION_TEXT}",
+    )
+
+    generated = _service().generate_note("soap", transcript, PATIENT, NOW)
+
+    assert generated.soap_note is not None
+    assert generated.soap_note.plan.next_session.text == "Two weeks from today, same time."
+    assert generated.soap_note.subjective.chief_complaint.text.startswith("Stand-in draft")
+
+
+def test_every_dictated_clip_is_heard_as_the_same_words(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(fake_llm_app)
+
+    def post(url: str, *, content: bytes, headers: dict[str, str], timeout: float) -> Any:
+        return client.post(
+            url.removeprefix("http://fake-llm:8083"), content=content, headers=headers
+        )
+
+    monkeypatch.setattr(dictation_transcription.httpx, "post", post)
+    transcriber = HttpDictationTranscriber("http://fake-llm:8083/transcription")
+
+    assert transcriber.transcribe(b"\x1a\x45\xdf\xa3", "audio/webm") == DICTATION_TEXT
 
 
 def test_a_soap_draft_survives_its_second_call(stand_in: list[str]) -> None:

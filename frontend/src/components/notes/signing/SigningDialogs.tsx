@@ -171,16 +171,21 @@ export function AddAddendumDialog({
   open,
   onOpenChange,
   onAdd,
-}: DialogProps & { onAdd: (text: string, signer: NoteSignerFields) => Promise<unknown> }) {
+  initialText = "",
+}: DialogProps & {
+  onAdd: (text: string, signer: NoteSignerFields) => Promise<unknown>
+  /** A draft to start from (a dictation's, say); the clinician edits it before signing. */
+  initialText?: string
+}) {
   const signer = useSignerState()
-  const [text, setText] = useState("")
+  const [text, setText] = useState(initialText)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   function handleOpenChange(next: boolean) {
     if (!next) {
       signer.reset()
-      setText("")
+      setText(initialText)
       setError(null)
     }
     onOpenChange(next)
