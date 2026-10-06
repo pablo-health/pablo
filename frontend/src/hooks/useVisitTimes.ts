@@ -4,6 +4,9 @@
 
 import { confirmPsychotherapyWindow, getVisitTimes } from "@/lib/api/visitTimes"
 import { queryKeys } from "@/lib/api/queryKeys"
+import { visitPdfLines } from "@/lib/notePdf"
+import { usePeopleTerm } from "./usePeopleTerm"
+import { useUserTimeZone } from "./usePreferences"
 import type { ConfirmPsychotherapyWindowRequest, VisitTimes } from "@/types/visitTimes"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
 
@@ -17,6 +20,14 @@ export function useVisitTimes(sessionId: string, enabled = true) {
     queryFn: () => getVisitTimes(sessionId),
     enabled,
   })
+}
+
+/** The visit's times as a note's PDF prints them; none for a note with no session. */
+export function useVisitPdfLines(sessionId: string | null | undefined): string[] {
+  const timeZone = useUserTimeZone()
+  const people = usePeopleTerm()
+  const { data } = useVisitTimes(sessionId ?? "", !!sessionId)
+  return data ? visitPdfLines(data, timeZone, people) : []
 }
 
 export function useConfirmPsychotherapyWindow(sessionId: string) {

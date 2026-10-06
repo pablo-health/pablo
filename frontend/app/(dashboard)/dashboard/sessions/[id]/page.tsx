@@ -44,6 +44,7 @@ import { useUpdateNoteEdits } from "@/hooks/useNotes"
 import { useAddSessionDictation, useSessionDictations } from "@/hooks/useDictations"
 import type { DictationClip } from "@/hooks/useDictationRecorder"
 import { useNoteSigning } from "@/hooks/useNoteSigning"
+import { useVisitPdfLines } from "@/hooks/useVisitTimes"
 import { useNoteTypeLabel } from "@/hooks/useNoteTypes"
 import { useUserTimeZone } from "@/hooks/usePreferences"
 import { pdfSignatureBlock } from "@/lib/utils/signatureBlock"
@@ -90,6 +91,7 @@ export default function SessionDetailPage({ params }: PageProps) {
   const noteTypeLabel = useNoteTypeLabel()
   const { data: signing } = useNoteSigning(session?.note?.id)
   const timeZone = useUserTimeZone()
+  const visitPdf = useVisitPdfLines(session?.id)
 
   // Source linking state
   const [highlightedSegments, setHighlightedSegments] = useState<number[]>([])
@@ -322,6 +324,7 @@ export default function SessionDetailPage({ params }: PageProps) {
                     patient_name: session.patient_name,
                     session_number: session.session_number,
                     session_date: session.session_date,
+                    visit: visitPdf,
                     signature: pdfSignatureBlock(signing, timeZone),
                   }}
                   groundingSource={

@@ -3,8 +3,10 @@
 /**
  * PDF Export Utility
  *
- * Generate and download PDF documents for SOAP notes with session metadata.
- * Renders structured **Label:** content patterns with proper formatting.
+ * One renderer for a note of any type: a title, the visit's details, the
+ * note's sections with each field's label in bold, then the signature block.
+ * What goes in each section comes from `lib/notePdf`, which builds it from
+ * the same values the note shows on screen.
  */
 
 import jsPDF from "jspdf"
@@ -16,8 +18,33 @@ export interface PDFExportMetadata {
   patient_name: string
   session_number?: number
   session_date: string
+  /**
+   * The visit's times and confirmed psychotherapy minutes, already worded
+   * (see `visitPdfLines`); omitted or empty when there are none.
+   */
+  visit?: string[]
   /** The signature block under the note; omitted for a note never signed. */
   signature?: PDFSignatureBlock
+}
+
+/** One field of a section: its label (null for a body without one) and its text. */
+export interface PDFBlock {
+  label: string | null
+  /** Lines starting with "- " print as bullets. */
+  content: string
+}
+
+export interface PDFSection {
+  /** The section's heading; empty for a note that is one body. */
+  title: string
+  blocks: PDFBlock[]
+}
+
+/** A note as its PDF prints it. */
+export interface PDFNote {
+  /** The heading, and the start of the file name. */
+  title: string
+  sections: PDFSection[]
 }
 
 /** A signature block, already worded (see `lib/utils/signatureBlock`). */
@@ -114,22 +141,37 @@ function renderSignatureBlock(
   return y
 }
 
-/**
- * Export SOAP note to PDF with session metadata.
- * Parses **Label:** content patterns and renders labels bold.
- */
+/** A SOAP note's sections, each sub-field split out from its **Label:** text. */
+export function soapNotePdf(soapNote: SOAPNoteModel): PDFNote {
+  return {
+    title: "SOAP Note",
+    sections: [
+      { title: "Subjective", content: soapNote.subjective },
+      { title: "Objective", content: soapNote.objective },
+      { title: "Assessment", content: soapNote.assessment },
+      { title: "Plan", content: soapNote.plan },
+    ].map(({ title, content }) => ({ title, blocks: parseNarrativeBlocks(content) })),
+  }
+}
+
+/** Export a SOAP note to PDF with session metadata. */
 export function exportSOAPToPDF(
   meta: PDFExportMetadata,
   soapNote: SOAPNoteModel,
   people: PeopleWords,
 ): void {
+  exportNoteToPDF(meta, soapNotePdf(soapNote), people)
+}
+
+/** Export a note of any type to PDF with its session metadata. */
+export function exportNoteToPDF(meta: PDFExportMetadata, note: PDFNote, people: PeopleWords): void {
   const doc = new jsPDF()
   let yPosition = 20
 
   // Title
   doc.setFontSize(18)
   doc.setFont("helvetica", "bold")
-  doc.text("SOAP Note", LEFT_MARGIN, yPosition)
+  doc.text(note.title, LEFT_MARGIN, yPosition)
   yPosition += 15
 
   // Session metadata
@@ -142,34 +184,33 @@ export function exportSOAPToPDF(
     yPosition += 7
   }
   doc.text(`Date: ${formatDate(meta.session_date)}`, LEFT_MARGIN, yPosition)
-  yPosition += 15
+  yPosition += 7
+  for (const line of meta.visit ?? []) {
+    for (const wrapped of doc.splitTextToSize(line, MAX_WIDTH) as string[]) {
+      doc.text(wrapped, LEFT_MARGIN, yPosition)
+      yPosition += 7
+    }
+  }
+  yPosition += 8
 
   const pageHeight = doc.internal.pageSize.height
 
-  const sections: Array<{ title: string; content: string }> = [
-    { title: "Subjective", content: soapNote.subjective },
-    { title: "Objective", content: soapNote.objective },
-    { title: "Assessment", content: soapNote.assessment },
-    { title: "Plan", content: soapNote.plan },
-  ]
-
-  sections.forEach((section) => {
+  note.sections.forEach((section) => {
     if (yPosition > pageHeight - MARGIN_BOTTOM) {
       doc.addPage()
       yPosition = 20
     }
 
-    // Section title
-    doc.setFontSize(14)
-    doc.setFont("helvetica", "bold")
-    doc.text(section.title, LEFT_MARGIN, yPosition)
-    yPosition += 7
+    // Section title; a note that is one body has none.
+    if (section.title) {
+      doc.setFontSize(14)
+      doc.setFont("helvetica", "bold")
+      doc.text(section.title, LEFT_MARGIN, yPosition)
+      yPosition += 7
+    }
 
-    // Parse sub-fields
     doc.setFontSize(11)
-    const blocks = parseNarrativeBlocks(section.content)
-
-    for (const block of blocks) {
+    for (const block of section.blocks) {
       if (yPosition > pageHeight - MARGIN_BOTTOM) {
         doc.addPage()
         yPosition = 20
@@ -203,7 +244,8 @@ export function exportSOAPToPDF(
   }
 
   const safeName = meta.patient_name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()
-  const filename = `soap-note-${safeName}-${meta.session_date.slice(0, 10)}.pdf`
+  const kind = note.title.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase()
+  const filename = `${kind}-${safeName}-${meta.session_date.slice(0, 10)}.pdf`
   const pdfBlob = doc.output("blob")
   // Force octet-stream MIME type so the browser downloads instead of opening inline
   const downloadBlob = new Blob([pdfBlob], { type: "application/octet-stream" })
