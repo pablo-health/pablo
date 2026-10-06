@@ -17,6 +17,8 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
+from starlette.concurrency import run_in_threadpool
+
 from ..models.ehr_route import GoalNavigationRequest, GoalNavigationResponse
 from ..reliability import LLM_REQUEST, Idempotency, call_with_retry
 from .llm_telemetry import LLMSpanRequest, llm_span, usage_tokens
@@ -215,7 +217,10 @@ class GeminiEhrNavigationService(EhrNavigationService):
 
             client = self._get_client()
             with llm_span(LLMSpanRequest(operation="ehr_navigation", model=self.model)) as span:
-                response = call_with_retry(
+                # A blocking client and a blocking retry: run on the event loop
+                # they would stall every other request until the model answered.
+                response = await run_in_threadpool(
+                    call_with_retry,
                     lambda: client.models.generate_content(
                         model=self.model,
                         contents=user_prompt,

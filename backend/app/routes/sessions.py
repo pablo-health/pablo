@@ -11,6 +11,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
+from anyio import fail_after, to_thread
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -32,6 +33,7 @@ from ..api_errors import (
     ConflictError,
     NotFoundError,
     ServerError,
+    ServiceUnavailableError,
     UnprocessableEntityError,
 )
 from ..auth.service import (
@@ -98,6 +100,7 @@ from ..services import (
 )
 from ..services.audio_retention import AudioOnSigning
 from ..services.file_storage import FileTooLargeError, UploadTarget
+from ..services.http_structured_llm_gateway import HttpStructuredLLMGateway
 from ..services.note_import_service import (
     MAX_IMPORT_DOC_BYTES,
     DocumentTextExtractionError,
@@ -231,7 +234,14 @@ def get_notes_repository(
 
 
 def get_note_import_service() -> NoteImportService:
-    """Get the imported-note parse service instance."""
+    """Get the imported-note parse service instance.
+
+    Under the end-to-end stack the parse goes to its stand-in; the setting
+    refuses to load outside development.
+    """
+    base_url = get_settings().note_generation_base_url
+    if base_url:
+        return NoteImportService(llm_gateway=HttpStructuredLLMGateway(base_url))
     return NoteImportService()
 
 
@@ -488,6 +498,11 @@ def _run_draft_job(
 # tiny; this only guards against accidental large uploads.
 _MAX_IMPORT_DOC_BYTES = MAX_IMPORT_DOC_BYTES
 
+# A normal parse takes about ten seconds. This leaves room for the truncation
+# retry and a slow model, and stops well short of the model client's own 180 s
+# timeout, so a stalled call comes back as "try again" rather than a 500.
+IMPORT_PARSE_TIMEOUT_SECONDS = 90.0
+
 
 def _resolve_import_session_date(override: str | None, extracted: datetime | None) -> datetime:
     """Pick the session date for an import: caller override > document > now.
@@ -546,7 +561,9 @@ async def import_session(
         )
 
     try:
-        text = extract_document_text(data, content_type=file.content_type, filename=file.filename)
+        text = await run_in_threadpool(
+            extract_document_text, data, content_type=file.content_type, filename=file.filename
+        )
     except UnsupportedDocumentTypeError as exc:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc)
@@ -564,8 +581,21 @@ async def import_session(
     # checkout -- same seam pattern as upload_session (THERAPY-da7t).
     release_db_connection()
 
+    # The parse is a blocking model call; run on the event loop it froze every
+    # other request on the instance until it returned. The worker thread carries
+    # this request's context. On timeout the thread is abandoned -- it ends at
+    # the model client's own timeout -- and the caller gets a retryable 503.
     try:
-        parsed = note_import_service.parse_soap_note(text)
+        with fail_after(IMPORT_PARSE_TIMEOUT_SECONDS):
+            parsed = await to_thread.run_sync(
+                note_import_service.parse_soap_note, text, abandon_on_cancel=True
+            )
+    except TimeoutError as exc:
+        logger.warning("Imported-note parse timed out after %.0fs", IMPORT_PARSE_TIMEOUT_SECONDS)
+        raise ServiceUnavailableError(
+            "Reading this note is taking longer than usual. Try again in a moment.",
+            code="IMPORT_PARSE_TIMEOUT",
+        ) from exc
     except ValueError as exc:
         logger.exception("Imported-note parse failed")
         raise ServerError("Could not read the SOAP note from this document.") from exc
