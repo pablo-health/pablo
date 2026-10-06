@@ -125,6 +125,9 @@ const baseQueryKeys = {
     // Patient-specific sessions (for future use)
     byPatient: (patientId: string) =>
       [...baseQueryKeys.sessions.all, "byPatient", patientId] as const,
+    allDictations: () => [...baseQueryKeys.sessions.all, "dictations"] as const,
+    dictations: (sessionId: string) =>
+      [...baseQueryKeys.sessions.allDictations(), sessionId] as const,
   },
 
   // Appointment query keys

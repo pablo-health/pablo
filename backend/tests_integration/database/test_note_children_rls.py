@@ -1,9 +1,10 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Real-Postgres isolation proof for a note's signed versions and addenda.
+"""Real-Postgres isolation proof for a note's signed versions, addenda and dictations.
 
-``note_signatures`` holds the body of a note as it was signed, and
-``note_addenda`` what a clinician added after; both are readable exactly when
+``note_signatures`` holds the body of a note as it was signed,
+``note_addenda`` what a clinician added after, and ``session_dictations`` what
+they dictated about the session afterwards; all are readable exactly when
 their note is (``rls_note_child_access``). So the same principals as the
 restricted-note proof, one chart:
 
@@ -47,7 +48,7 @@ pytestmark = pytest.mark.skipif(
     ),
 )
 
-_CHILDREN = ("note_signatures", "note_addenda")
+_CHILDREN = ("note_signatures", "note_addenda", "session_dictations")
 
 _AUTHOR = "1b7e4c2a-6d3f-5a80-9c21-7e4d2f8a6b13"
 _CO_TREATER = "8d2f6a19-3c5e-5b74-a0d8-2f9c4e7b1a65"
@@ -126,7 +127,12 @@ def patient(engine: Engine, tenant_schema: str) -> str:
 
 @pytest.fixture(scope="module")
 def notes(engine: Engine, tenant_schema: str, patient: str) -> dict[str, str]:
-    """A signed progress note and a signed psychotherapy note, each with an addendum."""
+    """A signed progress note and a signed psychotherapy note, each with an addendum.
+
+    Each also carries a dictation on a session of its own. A psychotherapy
+    note is never bound to a session in the product; the row is here only so
+    the policy is proven on the restricted side too.
+    """
     ids: dict[str, str] = {}
     now = datetime.now(UTC).replace(microsecond=0)
     conn = _connect(engine, tenant_schema, user_id=_AUTHOR)
@@ -180,6 +186,39 @@ def notes(engine: Engine, tenant_schema: str, patient: str) -> dict[str, str]:
                     "nid": note_id,
                     "pid": patient,
                     "d": "1" * 64,
+                    "a": _AUTHOR,
+                    "now": now,
+                },
+            )
+            session_id = str(uuid.uuid4())
+            conn.execute(
+                text(
+                    "INSERT INTO therapy_sessions (id, user_id, patient_id, session_date, "
+                    "session_number, status, transcript, created_at) "
+                    "VALUES (CAST(:id AS uuid), CAST(:a AS uuid), CAST(:pid AS uuid), :now, 1, "
+                    "'pending_review', CAST(:t AS jsonb), :now)"
+                ),
+                {
+                    "id": session_id,
+                    "a": _AUTHOR,
+                    "pid": patient,
+                    "t": '{"format": "txt", "content": "x"}',
+                    "now": now,
+                },
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO session_dictations (id, session_id, note_id, patient_id, "
+                    "author_user_id, audio_path, content_type, status, created_at) "
+                    "VALUES (CAST(:id AS uuid), CAST(:sid AS uuid), CAST(:nid AS uuid), "
+                    "CAST(:pid AS uuid), CAST(:a AS uuid), 'dictations/x', 'audio/webm', "
+                    "'transcribing', :now)"
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "sid": session_id,
+                    "nid": note_id,
+                    "pid": patient,
                     "a": _AUTHOR,
                     "now": now,
                 },

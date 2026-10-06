@@ -112,6 +112,8 @@ export interface UnlockNoteRequest {
 
 export interface CreateNoteAddendumRequest extends NoteSignerFields {
   text: string
+  /** The dictation the addendum was drafted from, when it was. */
+  dictation_id?: string
 }
 
 /** One signed version of a note. Mirrors `NoteSignatureResponse`. */
