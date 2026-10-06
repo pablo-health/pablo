@@ -68,6 +68,7 @@ import {
 import { parseNarrativeBlocks } from "@/lib/utils/narrativeParser"
 import { SourceBadge, SourceHighlight } from "./SourceBadge"
 import { SchemaNoteView } from "./SchemaNoteView"
+import { addToProblemListAction } from "./AddToProblemList"
 
 export interface NoteViewerProps {
   note: Note
@@ -130,6 +131,9 @@ export function NoteViewer({
         readonly={viewOnly}
         pdfMetadata={pdfMetadata}
         onSave={onSave}
+        // A signed note still offers it: the chart changes, not the note. An
+        // account in read-only mode changes nothing.
+        diagnosisAction={readOnly ? undefined : addToProblemListAction(note.patient_id, note.id)}
         className={className}
       />
     )
