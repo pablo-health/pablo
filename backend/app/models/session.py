@@ -24,6 +24,7 @@ from .enums import (
     TranscriptFormat,
     VideoPlatform,
 )
+from .notes import NoteSignerFields  # noqa: TC001 — runtime Pydantic field
 from .soap_note import (
     CONFIDENCE_THRESHOLDS,
     AssessmentNote,
@@ -69,12 +70,16 @@ class FinalizeSessionRequest(BaseModel):
 
     The quality rating is optional: a clinician can finalize a note
     without rating it. When a rating is supplied it must be 1-5.
+
+    ``signature`` signs and locks the note in the same transaction, with the
+    name and credentials as entered (see ``NoteService.sign_note``).
     """
 
     quality_rating: int | None = Field(default=None, ge=1, le=5)
     quality_rating_reason: str | None = None
     quality_rating_sections: list[SOAPSection] | None = None
     soap_note_edited: SOAPNoteModel | None = None
+    signature: NoteSignerFields | None = None
 
 
 class UpdateSessionRatingRequest(BaseModel):

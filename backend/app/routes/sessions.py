@@ -765,6 +765,15 @@ def finalize_session(
         patient,
         changes={"quality_rating": request.quality_rating},
     )
+    if request.signature is not None:
+        audit.log_note_action(
+            action=AuditAction.NOTE_SIGNED,
+            user=user,
+            request=http_request,
+            note_id=note.id,
+            patient_id=note.patient_id,
+            session_id=note.session_id,
+        )
 
     return SessionResponse.from_session(session, patient_name, _embed_note(note))
 

@@ -7,20 +7,24 @@
  * patient-owned without an associated recording session — created via the
  * "New note" entry on the patient detail page.
  *
- * Edits and finalize-with-quality-rating both flow through the /api/notes
- * surface, so this page does not depend on session state at all.
+ * Edits and sign-and-lock (with the draft's quality rating) both flow
+ * through the /api/notes surface, so this page does not depend on session
+ * state at all. Once signed, the signature panel under the note owns
+ * addenda and unlocking.
  */
 
 "use client"
 
 import { use, useState } from "react"
 import Link from "next/link"
-import { AlertCircle, ArrowLeft, Check } from "lucide-react"
+import { AlertCircle, ArrowLeft, Lock } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { NoteViewer } from "@/components/sessions/NoteViewer"
 import { NoteConsentLine } from "@/components/sessions/NoteConsentLine"
 import { OnlyYouBadge } from "@/components/notes/OnlyYouBadge"
+import { NoteSignaturePanel } from "@/components/notes/signing/NoteSignaturePanel"
+import { SignNoteDialog } from "@/components/notes/signing/SigningDialogs"
 import {
   QualityRatingWithFeedback,
   type RatingFeedback,
@@ -28,11 +32,11 @@ import {
 import { usePatient } from "@/hooks/usePatients"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { useNoteTypeLabel } from "@/hooks/useNoteTypes"
-import {
-  useFinalizeNote,
-  useNote,
-  useUpdateNoteEdits,
-} from "@/hooks/useNotes"
+import { useNote, useUpdateNoteEdits } from "@/hooks/useNotes"
+import { useNoteSigning, useSignNote } from "@/hooks/useNoteSigning"
+import { useUserTimeZone } from "@/hooks/usePreferences"
+import { pdfSignatureBlock } from "@/lib/utils/signatureBlock"
+import type { NoteSignerFields } from "@/types/notes"
 import type { NoteContent } from "@/types/sessions"
 import { noteContentToJson } from "@/types/sessions"
 
@@ -51,8 +55,11 @@ export default function StandaloneNotePage({ params }: PageProps) {
   })
   const updateEdits = useUpdateNoteEdits()
   const noteTypeLabel = useNoteTypeLabel()
-  const finalize = useFinalizeNote()
+  const sign = useSignNote()
+  const { data: signing } = useNoteSigning(note?.id)
+  const timeZone = useUserTimeZone()
   const people = usePeopleTerm()
+  const [signOpen, setSignOpen] = useState(false)
 
   const [feedback, setFeedback] = useState<RatingFeedback>({
     rating: null,
@@ -64,6 +71,9 @@ export default function StandaloneNotePage({ params }: PageProps) {
   // for the clinician to rate; the quality wizard only makes sense for
   // notes derived from a session transcript. Detect by session_id.
   const isManual = !!note && note.session_id === null
+  // A drafted note is rated when it is first signed; signing it again after
+  // an unlock keeps that rating.
+  const needsRating = !!note && !isManual && note.quality_rating === null
 
   const handleSave = async (edited: NoteContent) => {
     if (!note) return
@@ -73,12 +83,12 @@ export default function StandaloneNotePage({ params }: PageProps) {
     })
   }
 
-  const handleFinalize = async () => {
+  const handleSign = async (signer: NoteSignerFields) => {
     if (!note) return
-    if (!isManual && feedback.rating === null) return
-    await finalize.mutateAsync({
+    await sign.mutateAsync({
       noteId: note.id,
       data: {
+        ...signer,
         ...(isManual
           ? {}
           : {
@@ -147,14 +157,7 @@ export default function StandaloneNotePage({ params }: PageProps) {
             </span>
           )}
         </h1>
-        <p className="text-neutral-600">
-          {patientName}
-          {isFinalized && note.finalized_at && (
-            <span className="text-sm text-neutral-500 ml-2">
-              · Finalized {new Date(note.finalized_at).toLocaleDateString()}
-            </span>
-          )}
-        </p>
+        <p className="text-neutral-600">{patientName}</p>
       </div>
 
       {/* A note drafted from a recorded session carries the client's answer
@@ -178,23 +181,23 @@ export default function StandaloneNotePage({ params }: PageProps) {
           pdfMetadata={{
             patient_name: patientName,
             session_date: note.created_at,
+            signature: pdfSignatureBlock(signing, timeZone),
           }}
           onSave={isFinalized ? undefined : handleSave}
         />
       )}
 
+      {!isGenerating && !generationFailed && <NoteSignaturePanel note={note} />}
+
       {!isFinalized && !isGenerating && !generationFailed && (
         <div className="card space-y-6">
           <div>
             <h3 className="text-lg font-semibold text-neutral-900 mb-2">
-              Finalize note
+              Sign and lock
             </h3>
-            <p className="text-sm text-neutral-600">
-              Once finalized, the note becomes read-only and is recorded in the
-              audit log.
-            </p>
+            <p className="text-sm text-neutral-600">Signing locks the note.</p>
           </div>
-          {!isManual && (
+          {needsRating && (
             <QualityRatingWithFeedback
               value={feedback}
               onChange={setFeedback}
@@ -204,16 +207,15 @@ export default function StandaloneNotePage({ params }: PageProps) {
           <div className="flex justify-end">
             <Button
               size="lg"
-              onClick={handleFinalize}
-              disabled={
-                (!isManual && feedback.rating === null) || finalize.isPending
-              }
+              onClick={() => setSignOpen(true)}
+              disabled={(needsRating && feedback.rating === null) || sign.isPending}
               className="bg-secondary-600 hover:bg-secondary-700 text-white"
             >
-              <Check className="mr-2 h-4 w-4" />
-              {finalize.isPending ? "Finalizing…" : "Finalize note"}
+              <Lock className="mr-2 h-4 w-4" />
+              Sign and lock
             </Button>
           </div>
+          <SignNoteDialog open={signOpen} onOpenChange={setSignOpen} onSign={handleSign} />
         </div>
       )}
     </div>

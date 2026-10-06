@@ -16,12 +16,14 @@ exist yet (insert path) or may need to be loaded for access check.
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import TYPE_CHECKING
 
 from sqlalchemy import String, Uuid, bindparam, func, or_, select, text
 
-from ...db.models import NoteRow, PatientClinicianRow
+from ...db.models import NoteAddendumRow, NoteRow, NoteSignatureRow, PatientClinicianRow
 from ...models.note import Note
+from ...models.note_signing import NoteAddendum, NoteSignature
 from ...utcnow import utc_now
 from ..note import NotesRepository, PatientAccessDeniedError
 
@@ -259,6 +261,90 @@ class PostgresNotesRepository(NotesRepository):
         if row is not None:
             self._session.delete(row)
             self._session.flush()
+
+    # --- signed versions and addenda ---
+
+    def list_signatures(self, note: Note, user_id: str) -> list[NoteSignature]:
+        if not self._has_access(note.patient_id, user_id):
+            return []
+        rows = self._session.scalars(
+            select(NoteSignatureRow)
+            .where(NoteSignatureRow.note_id == note.id)
+            .order_by(NoteSignatureRow.version)
+        ).all()
+        return [_row_to_signature(r) for r in rows]
+
+    def add_signature(self, signature: NoteSignature, user_id: str) -> NoteSignature:
+        if not self._has_access(signature.patient_id, user_id):
+            raise PatientAccessDeniedError(signature.patient_id, user_id)
+        self._session.add(NoteSignatureRow(**asdict(signature)))
+        self._session.flush()
+        return signature
+
+    def record_unlock(self, signature: NoteSignature, user_id: str) -> NoteSignature:
+        if not self._has_access(signature.patient_id, user_id):
+            raise PatientAccessDeniedError(signature.patient_id, user_id)
+        row = self._session.get(NoteSignatureRow, signature.id)
+        if row is None:
+            raise PatientAccessDeniedError(signature.patient_id, user_id)
+        row.unlocked_at = signature.unlocked_at
+        row.unlocked_by = signature.unlocked_by
+        row.unlock_reason = signature.unlock_reason
+        self._session.flush()
+        return signature
+
+    def list_addenda(self, note: Note, user_id: str) -> list[NoteAddendum]:
+        if not self._has_access(note.patient_id, user_id):
+            return []
+        rows = self._session.scalars(
+            select(NoteAddendumRow)
+            .where(NoteAddendumRow.note_id == note.id)
+            .order_by(NoteAddendumRow.created_at, NoteAddendumRow.id)
+        ).all()
+        return [_row_to_addendum(r) for r in rows]
+
+    def add_addendum(self, addendum: NoteAddendum, user_id: str) -> NoteAddendum:
+        if not self._has_access(addendum.patient_id, user_id):
+            raise PatientAccessDeniedError(addendum.patient_id, user_id)
+        self._session.add(NoteAddendumRow(**asdict(addendum)))
+        self._session.flush()
+        return addendum
+
+
+def _row_to_signature(row: NoteSignatureRow) -> NoteSignature:
+    return NoteSignature(
+        id=row.id,
+        note_id=row.note_id,
+        patient_id=row.patient_id,
+        version=row.version,
+        note_type=row.note_type,
+        note_type_version=row.note_type_version,
+        content=row.content,
+        content_edited=row.content_edited,
+        digest=row.digest,
+        signed_by=row.signed_by,
+        signer_name=row.signer_name,
+        signer_credentials=row.signer_credentials,
+        signed_at=row.signed_at,
+        unlocked_at=row.unlocked_at,
+        unlocked_by=row.unlocked_by,
+        unlock_reason=row.unlock_reason,
+    )
+
+
+def _row_to_addendum(row: NoteAddendumRow) -> NoteAddendum:
+    return NoteAddendum(
+        id=row.id,
+        note_id=row.note_id,
+        patient_id=row.patient_id,
+        text=row.text,
+        signer_name=row.signer_name,
+        signer_credentials=row.signer_credentials,
+        digest=row.digest,
+        prev_digest=row.prev_digest,
+        created_by=row.created_by,
+        created_at=row.created_at,
+    )
 
 
 def _row_to_note(row: NoteRow) -> Note:

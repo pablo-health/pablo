@@ -130,11 +130,19 @@ export function NoteViewer({
     )
   }
 
+  // A drafted SOAP note is stored structured only, with no narrative beside
+  // it; the editor and the PDF both work from narrative, so derive it here.
+  const structured = structuredSoapFromNote(note)
+  const soapBase: SOAPNoteContent | null =
+    structured && !structured.narrative
+      ? { note_type: "soap", ...structuredToNarrative(structured) }
+      : asSOAP(baseContent)
+
   return (
     <SOAPNoteView
-      note={asSOAP(baseContent)}
+      note={soapBase}
       noteEdited={asSOAP(editedContent)}
-      structured={structuredSoapFromNote(note)}
+      structured={structured}
       readonly={viewOnly}
       pdfMetadata={pdfMetadata}
       onSave={onSave}

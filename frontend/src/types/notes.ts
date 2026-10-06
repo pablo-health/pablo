@@ -79,3 +79,63 @@ export interface CreateStandaloneNoteRequest {
   content_edited?: Record<string, unknown> | null
   dictation_transcript?: TranscriptModel | null
 }
+
+/** A signature as entered for one signing: prefilled from the profile, editable. */
+export interface NoteSignerFields {
+  signer_name: string
+  signer_credentials?: string | null
+}
+
+export interface SignNoteRequest extends NoteSignerFields {
+  quality_rating?: number
+  quality_rating_reason?: string
+  quality_rating_sections?: string[]
+}
+
+export interface UnlockNoteRequest {
+  reason: string
+}
+
+export interface CreateNoteAddendumRequest extends NoteSignerFields {
+  text: string
+}
+
+/** One signed version of a note. Mirrors `NoteSignatureResponse`. */
+export interface NoteSignature {
+  id: string
+  version: number
+  signed_by: string
+  signer_name: string
+  signer_credentials: string | null
+  signed_at: string
+  /** Set once the version was unlocked to correct an error. */
+  unlocked_at: string | null
+  unlocked_by: string | null
+  unlock_reason: string | null
+  note_type: NoteType
+  note_type_version: number | null
+  /** The body as it was signed. */
+  content: Record<string, unknown> | null
+  content_edited: Record<string, unknown> | null
+}
+
+/** Information added to a signed note, with its own signature. */
+export interface NoteAddendum {
+  id: string
+  text: string
+  signer_name: string
+  signer_credentials: string | null
+  created_by: string
+  created_at: string
+}
+
+/** Mirrors `NoteSigningRecordResponse` — what a signature block shows. */
+export interface NoteSigningRecord {
+  note_id: string
+  finalized_at: string | null
+  /** The version the note stands on now; null when unsigned, unlocked or finalized before signatures. */
+  signature: NoteSignature | null
+  /** Every signed version, oldest first. */
+  versions: NoteSignature[]
+  addenda: NoteAddendum[]
+}

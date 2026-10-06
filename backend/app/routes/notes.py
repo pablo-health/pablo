@@ -41,6 +41,15 @@ from ..models import (
     UpdateNoteEditsRequest,
     User,
 )
+from ..models.note_signing import NoteAddendum, NoteSignature  # noqa: TC001 — runtime annotation
+from ..models.notes import (
+    CreateNoteAddendumRequest,
+    NoteAddendumResponse,
+    NoteSignatureResponse,
+    NoteSigningRecordResponse,
+    SignNoteRequest,
+    UnlockNoteRequest,
+)
 from ..notes import (
     NoteTypeAuthorizer,
     NoteTypeDefinition,
@@ -72,6 +81,7 @@ from ..services import (
 )
 from ..services.http_structured_llm_gateway import HttpStructuredLLMGateway
 from ..services.note_generation_service import TransientNoteGenerationError
+from ..services.note_signing import current_signature
 from ..services.session_generation_worker import resolve_tenant_schema_for_user
 from ..settings import get_settings
 from ..utcnow import utc_now
@@ -266,6 +276,140 @@ def finalize_note(
         changes={"quality_rating": request.quality_rating},
     )
     return NoteResponse.from_note(note)
+
+
+def _signing_record(
+    note: Note, versions: list[NoteSignature], addenda: list[NoteAddendum]
+) -> NoteSigningRecordResponse:
+    current = current_signature(note, versions)
+    return NoteSigningRecordResponse(
+        note_id=note.id,
+        finalized_at=note.finalized_at,
+        signature=NoteSignatureResponse.from_signature(current) if current else None,
+        versions=[NoteSignatureResponse.from_signature(v) for v in versions],
+        addenda=[NoteAddendumResponse.from_addendum(a) for a in addenda],
+    )
+
+
+@router.get("/{note_id}/signing")
+def get_note_signing(
+    note_id: str,
+    http_request: Request,
+    user: User = Depends(require_baa_acceptance),
+    note_service: NoteService = Depends(get_note_service),
+    audit: AuditService = Depends(get_audit_service),
+) -> NoteSigningRecordResponse:
+    """The note's signature, its signed versions and its addenda."""
+    note, versions, addenda = note_service.get_signing_record(note_id, user.id)
+    audit.log_note_action(
+        action=AuditAction.SESSION_VIEWED,
+        user=user,
+        request=http_request,
+        note_id=note.id,
+        patient_id=note.patient_id,
+        session_id=note.session_id,
+        changes=_restricted_change(note) or None,
+    )
+    return _signing_record(note, versions, addenda)
+
+
+@router.post("/{note_id}/sign")
+def sign_note(
+    note_id: str,
+    http_request: Request,
+    request: SignNoteRequest,
+    user: User = Depends(require_baa_acceptance),
+    note_service: NoteService = Depends(get_note_service),
+    audit: AuditService = Depends(get_audit_service),
+) -> NoteResponse:
+    """Sign and lock a note with the name and credentials entered."""
+    note, signature = note_service.sign_note(
+        note_id,
+        signer_name=request.signer_name,
+        signer_credentials=request.signer_credentials,
+        quality_rating=request.quality_rating,
+        quality_rating_reason=request.quality_rating_reason,
+        quality_rating_sections=(
+            [s.value for s in request.quality_rating_sections]
+            if request.quality_rating_sections
+            else None
+        ),
+        user_id=user.id,
+    )
+    audit.log_note_action(
+        action=AuditAction.NOTE_SIGNED,
+        user=user,
+        request=http_request,
+        note_id=note.id,
+        patient_id=note.patient_id,
+        session_id=note.session_id,
+        changes={
+            "signature_id": signature.id,
+            "version": signature.version,
+            **_restricted_change(note),
+        },
+    )
+    return NoteResponse.from_note(note)
+
+
+@router.post("/{note_id}/unlock")
+def unlock_note(
+    note_id: str,
+    http_request: Request,
+    request: UnlockNoteRequest,
+    user: User = Depends(require_baa_acceptance),
+    note_service: NoteService = Depends(get_note_service),
+    audit: AuditService = Depends(get_audit_service),
+) -> NoteResponse:
+    """Unlock a signed note to correct an error; the reason is required.
+
+    The audit row names the superseded version; the reason itself is kept
+    on that version, not in the log.
+    """
+    note, superseded = note_service.unlock_note(note_id, reason=request.reason, user_id=user.id)
+    audit.log_note_action(
+        action=AuditAction.NOTE_UNLOCKED,
+        user=user,
+        request=http_request,
+        note_id=note.id,
+        patient_id=note.patient_id,
+        session_id=note.session_id,
+        changes={
+            "signature_id": superseded.id,
+            "version": superseded.version,
+            **_restricted_change(note),
+        },
+    )
+    return NoteResponse.from_note(note)
+
+
+@router.post("/{note_id}/addenda", status_code=status.HTTP_201_CREATED)
+def add_note_addendum(
+    note_id: str,
+    http_request: Request,
+    request: CreateNoteAddendumRequest,
+    user: User = Depends(require_baa_acceptance),
+    note_service: NoteService = Depends(get_note_service),
+    audit: AuditService = Depends(get_audit_service),
+) -> NoteAddendumResponse:
+    """Add a signed addendum to a locked note."""
+    note, addendum = note_service.add_addendum(
+        note_id,
+        text=request.text,
+        signer_name=request.signer_name,
+        signer_credentials=request.signer_credentials,
+        user_id=user.id,
+    )
+    audit.log_note_action(
+        action=AuditAction.NOTE_ADDENDUM_ADDED,
+        user=user,
+        request=http_request,
+        note_id=note.id,
+        patient_id=note.patient_id,
+        session_id=note.session_id,
+        changes={"addendum_id": addendum.id, **_restricted_change(note)},
+    )
+    return NoteAddendumResponse.from_addendum(addendum)
 
 
 @patient_notes_router.get(

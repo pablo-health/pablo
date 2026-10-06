@@ -904,3 +904,22 @@ describe("read-only deployment mode", () => {
     })
   })
 })
+
+describe("a drafted SOAP note stored structured only", () => {
+  // Generation stores the four structured sections and no narrative beside
+  // them, which is what the editor opens from.
+  function draftedNote(): Note {
+    const { narrative: _omitted, ...sections } = createMockStructuredSOAPNote()
+    return createMockNote({ content: sections as unknown as Record<string, unknown> })
+  }
+
+  it("opens in the editor with each field filled from the draft", () => {
+    const note = draftedNote()
+    render(<NoteViewer note={note} onSave={() => {}} />)
+    fireEvent.click(screen.getByText("Edit"))
+    expect(screen.getByLabelText("Chief Complaint")).toHaveValue(
+      (note.content as { subjective: { chief_complaint: { text: string } } }).subjective
+        .chief_complaint.text,
+    )
+  })
+})

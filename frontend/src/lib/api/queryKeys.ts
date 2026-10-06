@@ -175,6 +175,9 @@ const baseQueryKeys = {
       [...baseQueryKeys.notes.all, "detail", noteId] as const,
     byPatient: (patientId: string) =>
       [...baseQueryKeys.notes.all, "byPatient", patientId] as const,
+    // The note's signature, signed versions and addenda.
+    signing: (noteId: string) =>
+      [...baseQueryKeys.notes.all, "signing", noteId] as const,
   },
 
   // Outcome measure (scored instrument) query keys (PABLO-cwj)

@@ -93,6 +93,11 @@ vi.mock("@/components/sessions/FinalizeButton", () => ({
 vi.mock("@/components/payments/ChargeCardSection", () => ({
   ChargeCardSection: () => <div />,
 }))
+vi.mock("@/components/notes/signing/NoteSignaturePanel", () => ({
+  NoteSignaturePanel: () => null,
+}))
+vi.mock("@/hooks/useNoteSigning", () => ({ useNoteSigning: () => ({ data: undefined }) }))
+vi.mock("@/hooks/usePreferences", () => ({ useUserTimeZone: () => "UTC" }))
 
 // The page reads its params with use(), which suspends; the awaited act lets
 // that promise settle before the assertions run.
@@ -106,7 +111,10 @@ async function renderPage() {
   })
 }
 
-function givenSession(note: Note | null, status: "pending_review" | "processing" = "pending_review") {
+function givenSession(
+  note: Note | null,
+  status: "pending_review" | "processing" | "finalized" = "pending_review",
+) {
   mockUseSession.mockReturnValue({
     data: createMockSession({ status, note }),
     isLoading: false,
@@ -154,6 +162,32 @@ describe("session page note save", () => {
       assessment: "A",
       plan: "P",
     })
+  })
+
+  it("saves a SOAP edit straight to the note once an unlocked note has no finalize left", async () => {
+    givenSession(
+      createMockNote({ id: "note-3", note_type: "soap", content: {}, finalized_at: null }),
+      "finalized",
+    )
+    await renderPage()
+
+    expect(await screen.findByRole("heading", { name: "SOAP note" })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "save edit" }))
+
+    expect(mockUpdateEdits).toHaveBeenCalledTimes(1)
+    expect(mockUpdateEdits.mock.calls[0][0].noteId).toBe("note-3")
+  })
+
+  it("offers no save on a signed note", async () => {
+    givenSession(
+      createMockNote({ note_type: "soap", content: {}, finalized_at: "2026-10-01T12:00:00Z" }),
+      "finalized",
+    )
+    await renderPage()
+
+    expect(await screen.findByRole("heading", { name: "SOAP note" })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "save edit" }))
+    expect(mockUpdateEdits).not.toHaveBeenCalled()
   })
 
   it("names no note type while the note is still being generated", async () => {

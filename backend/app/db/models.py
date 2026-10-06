@@ -290,6 +290,108 @@ class NoteRow(Base):
     )
 
 
+class NoteSignatureRow(Base):
+    """One signed version of a note: what was signed, by whom, and when.
+
+    Signing a note writes a row here and stamps ``notes.finalized_at`` in the
+    same transaction. The row keeps the body exactly as it was signed, and the
+    name and credentials exactly as the clinician entered them, so neither a
+    later edit nor a later profile change can alter what the signature says.
+
+    Unlocking a note to correct an error never overwrites this row: it records
+    ``unlocked_at`` / ``unlocked_by`` and the clinician's reason, which turns
+    it into a superseded version. Signing again adds the next ``version``. The
+    current signature is the latest row with no ``unlocked_at`` on a note that
+    is finalized.
+
+    ``digest`` is the content digest of the signed snapshot (see
+    ``app.services.note_signing``), so an after-the-fact change to a signed
+    version is detectable.
+
+    Readable exactly when its note is: ``enable_rls_on_schema`` gives it the
+    note-child policy, so a restricted note's versions stay its author's.
+    """
+
+    __tablename__ = "note_signatures"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    note_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("notes.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    note_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    note_type_version: Mapped[int | None] = mapped_column(Integer)
+    content: Mapped[dict | None] = mapped_column(JSONB)
+    content_edited: Mapped[dict | None] = mapped_column(JSONB)
+    digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    signed_by: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    signer_name: Mapped[str] = mapped_column(Text, nullable=False)
+    signer_credentials: Mapped[str | None] = mapped_column(Text)
+    signed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    unlocked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    unlocked_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    unlock_reason: Mapped[str | None] = mapped_column(Text)
+
+    __table_args__ = (
+        UniqueConstraint("note_id", "version", name="uq_note_signatures_note_version"),
+        CheckConstraint(
+            "(unlocked_at IS NULL) = (unlock_reason IS NULL)",
+            name="ck_note_signatures_unlock_reason",
+        ),
+    )
+
+
+class NoteAddendumRow(Base):
+    """Information added to a signed note after signing, in the clinician's words.
+
+    An addendum adds; it never corrects (that is what unlocking is for) and it
+    never touches the note body. It belongs to the note rather than to one
+    signed version, so it stays in place across an unlock and a re-sign. Each
+    carries its own signature — the name and credentials entered when it was
+    written.
+
+    Append-only — no ``updated_at`` / ``deleted_at`` — and hash-chained the
+    way ``PrescribingEncounterAddendumRow`` is: ``digest`` chains this
+    addendum's content onto ``prev_digest``, the previous addendum's digest
+    (``NULL`` for the first), so removing or reordering one breaks every
+    digest after it. ``created_at`` is the server clock at writing.
+
+    Readable exactly when its note is (the note-child policy, as above).
+    """
+
+    __tablename__ = "note_addenda"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    note_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("notes.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    signer_name: Mapped[str] = mapped_column(Text, nullable=False)
+    signer_credentials: Mapped[str | None] = mapped_column(Text)
+    digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    prev_digest: Mapped[str | None] = mapped_column(String(64))
+    created_by: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class PatientClinicianRow(Base):
     """Explicit per-(patient, clinician) access grants.
 
