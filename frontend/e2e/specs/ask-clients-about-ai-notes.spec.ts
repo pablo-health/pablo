@@ -12,6 +12,7 @@
  * whatever happens.
  */
 
+import type { Page } from "@playwright/test"
 import { test, expect } from "../fixtures/auth"
 import { givePatient, giveTranscribedSession } from "../fixtures/scenarios"
 
@@ -22,9 +23,16 @@ interface Setting {
   audio_retention_days: number
 }
 
-/** Today as the consent line shows it, e.g. "Oct 6, 2026". */
-function todayShown(): string {
-  return new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+/**
+ * Today as the consent line shows it, e.g. "Oct 6, 2026", read from the
+ * browser. The consent is dated on the clinician's own calendar, which is the
+ * browser's, not the test runner's. Computed in the runner, the expectation
+ * was a day ahead every evening between UTC midnight and the browser's.
+ */
+function todayShown(page: Page): Promise<string> {
+  return page.evaluate(() =>
+    new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+  )
 }
 
 /** The retention window as the script says it. */
@@ -69,10 +77,10 @@ test("the practice asks clients about AI-assisted notes, and can stop asking", a
     await consentDialog.getByLabel("Client agreed").check()
     await consentDialog.getByRole("button", { name: "Save" }).click()
     await expect(consentDialog).toBeHidden()
-    await expect(line).toHaveText(`Client agreed to AI-assisted notes on ${todayShown()}`)
+    await expect(line).toHaveText(`Client agreed to AI-assisted notes on ${await todayShown(page)}`)
 
     await page.reload()
-    await expect(line).toHaveText(`Client agreed to AI-assisted notes on ${todayShown()}`)
+    await expect(line).toHaveText(`Client agreed to AI-assisted notes on ${await todayShown(page)}`)
 
     // Off, in Settings: the line and the script are gone.
     await page.goto("/dashboard/settings/sessions")
@@ -98,7 +106,7 @@ test("the practice asks clients about AI-assisted notes, and can stop asking", a
 
     // The answer itself is still on the chart.
     await page.goto(`/dashboard/patients/${patient.id}`)
-    await expect(page.getByTestId("ai-consent-line")).toHaveText(`AI notes: agreed ${todayShown()}`)
+    await expect(page.getByTestId("ai-consent-line")).toHaveText(`AI notes: agreed ${await todayShown(page)}`)
   } finally {
     await api.put<Setting>(SETTING, { ask_clients_about_ai_notes: true })
   }
