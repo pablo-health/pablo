@@ -315,6 +315,10 @@ async def draft_note(call: NoteCall) -> dict[str, Any]:
 #: (app.services.note_redraft.DICTATED_HEADING).
 DICTATED_HEADING = "Dictated by the clinician after the session"
 
+#: How the backend heads the note a redraft starts from
+#: (app.services.note_generation_service._CURRENT_NOTE_INSTRUCTIONS).
+CURRENT_NOTE_HEADING = "\n\nCurrent note:"
+
 #: Every dictated clip transcribes to this. Its line is relocated into the
 #: field it names, so a redraft with it visibly gains it.
 DICTATION_TEXT = "Next session: Two weeks from today, same time."
@@ -322,7 +326,9 @@ DICTATION_TEXT = "Next session: Two weeks from today, same time."
 
 def _dictated(user_prompt: str) -> dict[str, str]:
     """``Label: text`` lines dictated after the session, by label slug."""
-    _, found, rest = user_prompt.partition(DICTATED_HEADING)
+    # A redraft's prompt ends with the note as it stands, which is not dictation.
+    before_note = user_prompt.partition(CURRENT_NOTE_HEADING)[0]
+    _, found, rest = before_note.partition(DICTATED_HEADING)
     values: dict[str, str] = {}
     if not found:
         return values

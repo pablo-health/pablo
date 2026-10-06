@@ -36,6 +36,7 @@ from ..models import (
 from ..notes import NoteTypeDefinition, NoteTypeRegistry, get_default_registry
 from ..notes.chart_context import ChartContext, render_chart_block
 from ..notes.client_present import (
+    DICTATED_HEADING,
     TimedSegment,
     segments_from_transcript,
     split_at_boundary,
@@ -732,12 +733,15 @@ def _addendum_block(addendum_lines: str) -> str:
 # that adds to a field from one that corrects it. So the model gets the note
 # and is told what may change.
 _CURRENT_NOTE_INSTRUCTIONS = (
-    "Current note: the clinician already has this note, below, and this is a "
-    "redraft of it. Keep every fact it states, in its wording, unless the "
-    "transcript, the clinician's dictation or the entered values now say "
-    "otherwise. Add anything newly dictated to the field it belongs in, next "
-    "to what that field already says; change or remove a statement only where "
-    "the dictation corrects it. Never leave out a fact it states."
+    "Current note: the clinician already has this note, below; this is a "
+    "redraft of it, made because something changed since it was drafted. Two "
+    "rules. 1. Keep every fact the note states, in its wording, unless the "
+    "transcript, the addendum or the entered values now say otherwise; never "
+    'drop one. 2. Every line under "' + DICTATED_HEADING + '" must be in the '
+    "redraft: where the note does not already say it, add it to the field it "
+    "belongs in, next to what that field already says, and change a statement "
+    "only where such a line corrects it. A redraft identical to the note below "
+    "is wrong whenever such a line is missing from it."
 )
 
 

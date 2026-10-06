@@ -285,7 +285,7 @@
             "key": "labs",
             "label": "Labs",
             "kind": "text",
-            "ai_hint": "Labs ordered, requested from another provider, or reviewed, as stated. Leave empty if none."
+            "ai_hint": "Labs and home measurements (such as blood pressure readings) ordered, requested from another provider or the client, or reviewed, with the values as stated. Leave empty if none."
           },
           {
             "key": "referrals_coordination",

@@ -15,12 +15,13 @@ from app.notes.client_present import (
 from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
 from evals.note_type_templates.cases import (
     FOLLOW_UP_ADDENDUM,
+    FOLLOW_UP_REDRAFT,
     FOLLOW_UP_THERAPY_START,
     INTAKE_NEW_CLIENT,
     load_template,
     sample_transcript,
 )
-from evals.note_type_templates.run import grade
+from evals.note_type_templates.run import grade, grade_redraft
 
 CASE = INTAKE_NEW_CLIENT
 
@@ -165,4 +166,39 @@ def test_a_time_the_window_cannot_complete_fails() -> None:
     assert failures == [
         "psychotherapy.psychotherapy_time reads 'Minutes: 45.' after confirming "
         "'11:12 AM to 12:04 PM, 52 minutes'"
+    ]
+
+
+def _plan(labs: str, medications: str) -> dict[str, Any]:
+    return {"plan": {"labs": labs, "medications": [medications]}}
+
+
+def test_a_redraft_that_keeps_every_fact_and_adds_the_dictation_passes() -> None:
+    first = _plan("Home blood pressure 124/78.", "30 day supply sent to the usual pharmacy.")
+    redrafted = _plan(
+        "Home blood pressure 124/78. A home reading in two weeks.",
+        "30 day supply sent to the usual pharmacy.",
+    )
+
+    assert grade_redraft(FOLLOW_UP_REDRAFT, first, redrafted) == []
+
+
+def test_a_redraft_that_drops_a_fact_or_the_dictation_fails() -> None:
+    first = _plan("Home blood pressure 124 over 78.", "30-day supply to the pharmacy.")
+    redrafted = _plan("A home reading later.", "Continue methylphenidate.")
+
+    assert grade_redraft(FOLLOW_UP_REDRAFT, first, redrafted) == [
+        "the redraft dropped '124/78'",
+        "the redraft dropped '30 day'",
+        "the redraft dropped 'pharmacy'",
+        "the redraft lacks the dictated 'two weeks'",
+    ]
+
+
+def test_a_fact_the_first_draft_never_had_is_reported() -> None:
+    first = _plan("Not stated.", "30 day supply sent to the usual pharmacy.")
+    redrafted = _plan("A home reading in two weeks.", "30 day supply sent to the usual pharmacy.")
+
+    assert grade_redraft(FOLLOW_UP_REDRAFT, first, redrafted) == [
+        "the first draft lacks '124/78', so keeping it proves nothing"
     ]

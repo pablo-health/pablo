@@ -404,7 +404,7 @@ class TestRedraftPrompt:
 
         dictation, current = prompt.split("Current note:", 1)
         assert "send me a home. Blood pressure reading in two weeks" in dictation
-        assert "Never leave out a fact it states." in current
+        assert "never drop one" in current
         assert "Home blood pressure 124/78." in current
         assert "30 day supply sent to the usual pharmacy." in current
 
