@@ -267,6 +267,10 @@ class AuditAction(StrEnum):
     # real visit, so the processing goes on the record; the row names the
     # note type, never the transcript or the draft.
     NOTE_TYPE_DRAFT_PREVIEWED = "note_type_draft_previewed"
+    # A note type proposed from sample notes. The samples may be real
+    # clients' notes, so the processing goes on the record; the row counts
+    # the samples and names the reference compared against, never any text.
+    NOTE_TYPE_DERIVED = "note_type_derived"
     PATIENT_PORTAL_SESSION_REDEEMED = "patient_portal_session_redeemed"
 
     # A clinician's messages badge asked how many conversations have

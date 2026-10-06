@@ -147,11 +147,100 @@ def _stand_in(schema: dict[str, Any], path: str) -> Any:
     return f"Stand-in draft for {path}."
 
 
+#: The note type proposed for any derive call. Its labels and hints are the
+#: stand-in's own words, so nothing a spec sends as a sample is repeated in it.
+DERIVED_PROPOSAL: dict[str, Any] = {
+    "label": "Follow-up visit",
+    "description": "A short follow-up note in three parts.",
+    "system_prompt": "Write in brief clinical prose, third person, past tense.",
+    "sections": [
+        {
+            "key": "interval",
+            "label": "Interval",
+            "fields": [
+                {
+                    "key": "interval_history",
+                    "label": "Interval history",
+                    "kind": "text",
+                    "ai_hint": "Changes reported since the previous visit.",
+                },
+                {
+                    "key": "current_medications",
+                    "label": "Current medications",
+                    "kind": "list",
+                    "ai_hint": "Each medication as reviewed today.",
+                },
+            ],
+        },
+        {
+            "key": "plan",
+            "label": "Plan",
+            "fields": [
+                {
+                    "key": "follow_up",
+                    "label": "Follow up",
+                    "kind": "text",
+                    "ai_hint": "When the client returns, as agreed.",
+                }
+            ],
+        },
+    ],
+    "inputs": [],
+}
+
+
+def _source_note(user_prompt: str) -> str | None:
+    """The note an extraction call quotes, or None for any other call."""
+    if not user_prompt.startswith("# Source note"):
+        return None
+    _, _, rest = user_prompt.partition('"""\n')
+    body, _, _ = rest.partition('\n"""')
+    return body
+
+
+def _slug(text: str) -> str:
+    return "_".join("".join(c if c.isalnum() else " " for c in text.lower()).split())
+
+
+def _extracted(schema: dict[str, Any], note: str) -> dict[str, Any]:
+    """Relocate ``Label: text`` lines into the field whose key is the label.
+
+    The verbatim relocation a model does, for the one layout specs write;
+    a line with no such field lands nowhere, which is what a coverage
+    check looks for.
+    """
+    fields: dict[str, tuple[str, str, bool]] = {}
+    content: dict[str, Any] = {}
+    for section, sub in schema.get("properties", {}).items():
+        content[section] = {}
+        for key, spec in sub.get("properties", {}).items():
+            is_list = spec.get("type") == "array"
+            content[section][key] = [] if is_list else ""
+            fields[key] = (section, key, is_list)
+    for line in note.splitlines():
+        label, sep, text = line.partition(":")
+        target = fields.get(_slug(label)) if sep else None
+        if target is None or not text.strip():
+            continue
+        section, key, is_list = target
+        content[section][key] = [text.strip()] if is_list else text.strip()
+    return content
+
+
 @app.post("/notes/v1/structured")
 async def draft_note(call: NoteCall) -> dict[str, Any]:
-    """Note drafts: NOTE_GENERATION_BASE_URL points at ``/notes``."""
+    """Note drafts: NOTE_GENERATION_BASE_URL points at ``/notes``.
+
+    Also the note-type derive calls: the proposal (its schema is titled
+    with the spec it must validate as) and each sample's extraction into it.
+    """
     if REFUSES_DRAFT in call.user_prompt:
         raise HTTPException(status_code=422, detail="draft refused")
+    if call.response_schema.get("title") == "PracticeNoteTypeSpec":
+        return {"data": DERIVED_PROPOSAL, "finish_reason": "stop"}
+    note = _source_note(call.user_prompt)
+    if note is not None:
+        return {"data": _extracted(call.response_schema, note), "finish_reason": "stop"}
     return {"data": _stand_in(call.response_schema, ""), "finish_reason": "stop"}
 
 
