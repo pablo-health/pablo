@@ -25,6 +25,7 @@ from ..models import SessionStatus, SOAPNote, Transcript
 from ..models.enums import SessionSource
 from ..models.notes import RedraftEdits
 from ..notes import NoteTypeDefinition, get_default_registry
+from ..notes.client_present import DICTATED_HEADING
 from ..notes.practice_types import validate_note_inputs
 from .note_generation_service import SOAP_KEY, TransientNoteGenerationError
 from .note_service import NoteNotFoundError
@@ -47,11 +48,6 @@ if TYPE_CHECKING:
     from .note_service import NoteService
 
 logger = logging.getLogger(__name__)
-
-#: Heads what the clinician dictated after the session, below its transcript,
-#: so the draft treats it as the clinician's own addendum rather than as
-#: something said with the client in the room.
-DICTATED_HEADING = "Dictated by the clinician after the session (the client was not present):"
 
 # A session whose note was drafted from what it recorded: under review, or
 # finalized with its note unlocked again to correct an error.
@@ -278,6 +274,7 @@ class NoteRedraftService:
                 session.session_date,
                 inputs=note.note_inputs,
                 definition=definition,
+                client_present_end_seconds=session.client_present_end_seconds,
             )
         except TransientNoteGenerationError as exc:
             if not transient_is_terminal:

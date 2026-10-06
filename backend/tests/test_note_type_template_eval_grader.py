@@ -6,8 +6,19 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.models import Transcript
+from app.notes.client_present import (
+    client_present_end,
+    segments_from_transcript,
+    split_at_boundary,
+)
 from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
-from evals.note_type_templates.cases import INTAKE_NEW_CLIENT, load_template, sample_transcript
+from evals.note_type_templates.cases import (
+    FOLLOW_UP_ADDENDUM,
+    INTAKE_NEW_CLIENT,
+    load_template,
+    sample_transcript,
+)
 from evals.note_type_templates.run import grade
 
 CASE = INTAKE_NEW_CLIENT
@@ -86,3 +97,49 @@ def test_a_rule_out_must_be_marked() -> None:
     draft["assessment"]["diagnoses"][2]["status"] = None
 
     assert "F90.0 is a rule-out but its status is ''" in grade(CASE, draft)["failures"]
+
+
+def _addendum_draft(ideation: str, self_harm: str) -> dict[str, Any]:
+    return {
+        "risk": {
+            "suicidal_homicidal_ideation": ideation,
+            "self_harm_violence": self_harm,
+            "overall_risk": 'Clinician stated: "Overall risk is low."',
+        },
+        "mse": {
+            "mood_affect": 'Clinician stated: "Mood better, affect brighter than last visit."',
+            "orientation": "Not stated.",
+            "cognition": "Not stated.",
+            "speech": "",
+        },
+    }
+
+
+def test_the_addendum_case_risk_lives_only_in_the_dictated_tail() -> None:
+    transcript = FOLLOW_UP_ADDENDUM.transcript or ""
+    segments = segments_from_transcript(Transcript(format="txt", content=transcript))
+    boundary = client_present_end(segments, client_channel_expected=True)
+
+    assert boundary is not None
+    addendum = split_at_boundary(segments, boundary).addendum_lines
+    session = split_at_boundary(segments, boundary).session_lines
+    assert "denies suicidal ideation" in addendum
+    assert "suicid" not in session.lower()
+    assert "harm" not in transcript.lower()
+
+
+def test_a_quoted_addendum_statement_and_a_marked_gap_pass() -> None:
+    draft = _addendum_draft(
+        'Clinician stated: "Client denies suicidal ideation, intent or plan."', "Not stated."
+    )
+
+    assert grade(FOLLOW_UP_ADDENDUM, draft)["failures"] == []
+
+
+def test_an_unquoted_paraphrase_or_a_filled_gap_fails() -> None:
+    draft = _addendum_draft("The client denies suicidal ideation.", "No self-harm.")
+
+    failures = grade(FOLLOW_UP_ADDENDUM, draft)["failures"]
+
+    assert any("does not quote 'denies suicidal ideation'" in f for f in failures)
+    assert any("risk.self_harm_violence was not covered" in f for f in failures)

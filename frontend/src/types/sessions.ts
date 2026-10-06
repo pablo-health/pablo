@@ -197,6 +197,10 @@ export interface SessionResponse {
   notes: string | null
   started_at: string | null
   ended_at: string | null
+  /** Seconds into the recording the client was last present; 0 = dictation only. */
+  client_present_end_seconds?: number | null
+  /** How long the clinician dictated after the client left, in seconds. */
+  clinician_addendum_seconds?: number | null
   updated_at: string | null
   transcript_segments: TranscriptSegment[] | null
   processing_started_at: string | null

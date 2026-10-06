@@ -37,6 +37,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
@@ -205,6 +206,10 @@ class TherapySessionRow(Base):
     notes: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Seconds into the recording when the client was last present; what the
+    # clinician dictated after it is not face-to-face time. 0 for a
+    # dictation-only recording, NULL when unknown (see app.notes.client_present).
+    client_present_end_seconds: Mapped[float | None] = mapped_column(Float)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     audio_gcs_path: Mapped[str | None] = mapped_column(Text)
     processing_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

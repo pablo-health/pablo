@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from app.models import Patient, Transcript
+from app.notes.client_present import client_present_end, segments_from_transcript
 from app.notes.diagnoses import diagnosis_text
 from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
 from app.services.note_generation_service import RegistryNoteGenerationService
@@ -86,11 +87,29 @@ def grade(case: TemplateCase, content: dict[str, Any]) -> dict[str, Any]:
             elif path in case.not_covered:
                 if not _says_not_covered(value):
                     failures.append(f"{path} was not covered but reads {text[:80]!r}")
-            elif path not in case.may_be_empty and _is_empty(value):
+            elif case.fill_unnamed and path not in case.may_be_empty and _is_empty(value):
                 failures.append(f"{path} is empty")
+    failures.extend(_grade_quoted(case, content))
     if case.diagnoses_field:
         failures.extend(_grade_diagnoses(case, content))
     return {"case": case.name, "passed": not failures, "failures": failures}
+
+
+_QUOTE_MARKS = ('"', "\u201c", "\u201d")
+
+
+def _grade_quoted(case: TemplateCase, content: dict[str, Any]) -> list[str]:
+    """Each ``quoted`` field holds its phrase inside quotation marks."""
+    failures: list[str] = []
+    for path, phrase in case.quoted:
+        section, key = path.split(".")
+        text = _text(content.get(section, {}).get(key))
+        at = text.lower().find(phrase.lower())
+        opened = at >= 0 and any(mark in text[:at] for mark in _QUOTE_MARKS)
+        closed = at >= 0 and any(mark in text[at + len(phrase) :] for mark in _QUOTE_MARKS)
+        if not (opened and closed):
+            failures.append(f"{path} does not quote {phrase!r}: {text[:80]!r}")
+    return failures
 
 
 def _grade_diagnoses(case: TemplateCase, content: dict[str, Any]) -> list[str]:
@@ -122,13 +141,22 @@ def draft(gateway: StructuredLLMGateway, case: TemplateCase) -> dict[str, Any]:
     now = datetime.now(UTC)
     # The preview's stand-in client: practice types never read the patient.
     patient = Patient(id="preview", first_name="", last_name="", created_at=now, updated_at=now)
+    transcript = Transcript(
+        format="txt", content=case.transcript or sample_transcript(case.template, case.sample)
+    )
+    boundary = (
+        client_present_end(segments_from_transcript(transcript), client_channel_expected=True)
+        if case.recorded_call
+        else None
+    )
     generated = RegistryNoteGenerationService(llm_gateway=gateway).generate_note(
         definition.key,
-        Transcript(format="txt", content=sample_transcript(case.template, case.sample)),
+        transcript,
         patient,
         now,
         inputs=case.inputs,
         definition=definition,
+        client_present_end_seconds=boundary,
     )
     return generated.content
 

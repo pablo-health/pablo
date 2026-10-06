@@ -91,6 +91,7 @@ class Generator(NoteGenerationService):
         session_date: datetime,
         inputs: Mapping[str, str] | None = None,
         definition: NoteTypeDefinition | None = None,
+        client_present_end_seconds: float | None = None,
     ) -> GeneratedNote:
         self.transcripts.append(transcript.content)
         return GeneratedNote(note_type=note_type, content=self.next_content)

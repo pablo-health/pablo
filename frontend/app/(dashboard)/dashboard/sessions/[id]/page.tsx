@@ -26,6 +26,7 @@ import {
 } from "@/components/sessions/TranscriptViewer"
 import { NoteViewer } from "@/components/sessions/NoteViewer"
 import { NoteConsentLine } from "@/components/sessions/NoteConsentLine"
+import { ClientPresentLine } from "@/components/sessions/ClientPresentLine"
 import { NoteInputsPanel } from "@/components/sessions/NoteInputsPanel"
 import { DictateMore } from "@/components/sessions/DictateMore"
 import { RedraftStatus } from "@/components/sessions/RedraftStatus"
@@ -332,6 +333,7 @@ export default function SessionDetailPage({ params }: PageProps) {
             {/* Above the drafted sections and outside them: read from the
                 client's consent record, never part of the note. */}
             {note && <NoteConsentLine patientId={session.patient_id} />}
+            {note && <ClientPresentLine timing={session} />}
 
             {note && <RedraftStatus status={note.status} requestFailed={redraftNote.isError} />}
 

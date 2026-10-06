@@ -109,9 +109,15 @@ class RecordingGenerator(NoteGenerationService):
         session_date: datetime,
         inputs: Mapping[str, str] | None = None,
         definition: NoteTypeDefinition | None = None,
+        client_present_end_seconds: float | None = None,
     ) -> GeneratedNote:
         self.calls.append(
-            {"note_type": note_type, "transcript": transcript.content, "inputs": dict(inputs or {})}
+            {
+                "note_type": note_type,
+                "transcript": transcript.content,
+                "inputs": dict(inputs or {}),
+                "client_present_end_seconds": client_present_end_seconds,
+            }
         )
         if self.error is not None:
             raise self.error
@@ -370,10 +376,27 @@ class TestRun:
                 "note_type": VISIT.key,
                 "transcript": "[00:01] Therapist: Hello",
                 "inputs": {"visit_code": "99214"},
+                "client_present_end_seconds": None,
             }
         ]
         assert note.content == _visit("Redrafted.", code_note="Billed as 99214.")
         assert note.status == "complete"
+
+    def test_a_redraft_keeps_the_dictated_tail_out_of_session_time(
+        self,
+        service: NoteRedraftService,
+        generator: RecordingGenerator,
+        session_repo: InMemoryTherapySessionRepository,
+        drafted: tuple[TherapySession, str],
+    ) -> None:
+        session, _ = drafted
+        session.client_present_end_seconds = 2158.4
+        session_repo.update(session)
+        service.start(session.id, USER)
+
+        service.run(session.id, USER, keep_edits=False)
+
+        assert generator.calls[0]["client_present_end_seconds"] == 2158.4
 
     def test_kept_edits_survive_and_the_rest_is_redrafted(
         self,

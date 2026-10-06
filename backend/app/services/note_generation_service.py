@@ -14,6 +14,7 @@ A definition may opt out of the auto-built prompt by setting
 the hand-tuned clinical prompt migrated from the legacy plugin.
 """
 
+import dataclasses
 import json
 import logging
 from abc import ABC, abstractmethod
@@ -33,6 +34,7 @@ from ..models import (
     Transcript,
 )
 from ..notes import NoteTypeDefinition, NoteTypeRegistry, get_default_registry
+from ..notes.client_present import segments_from_transcript, split_at_boundary, split_dictated
 from ..notes.diagnoses import DIAGNOSES_KIND_LABEL, DIAGNOSES_SCHEMA, coerce_diagnoses
 from ..notes.practice_types import render_user_prompt
 from ..notes.prompts.soap import SOAP_SYSTEM_PROMPT
@@ -172,10 +174,14 @@ class NoteGenerationService(ABC):
         session_date: datetime,
         inputs: Mapping[str, str] | None = None,
         definition: NoteTypeDefinition | None = None,
+        client_present_end_seconds: float | None = None,
     ) -> GeneratedNote:
         """Generate a note of ``note_type`` from ``transcript``.
 
         ``inputs`` are the values supplied for the type's declared inputs.
+        ``client_present_end_seconds`` is where the client left the recording
+        (see :mod:`app.notes.client_present`); what the clinician said after
+        it reaches the model as a separate addendum.
         ``definition`` is the type already resolved by a caller that is
         about to release its database connection: a practice type is read
         from the database, and resolving it here would reopen a connection
@@ -228,11 +234,17 @@ class RegistryNoteGenerationService(NoteGenerationService):
         session_date: datetime,
         inputs: Mapping[str, str] | None = None,
         definition: NoteTypeDefinition | None = None,
+        client_present_end_seconds: float | None = None,
     ) -> GeneratedNote:
         definition = definition or self.registry.get(note_type)
         _refuse_restricted(definition)
         content = self._generate_via_registry(
-            definition, transcript, patient, session_date, inputs or {}
+            definition,
+            transcript,
+            patient,
+            session_date,
+            inputs or {},
+            client_present_end_seconds,
         )
         if note_type == SOAP_KEY:
             soap_note = _coerce_content_to_soap_note(content)
@@ -253,7 +265,25 @@ class RegistryNoteGenerationService(NoteGenerationService):
         patient: Patient,
         session_date: datetime,
         inputs: Mapping[str, str],
+        client_present_end_seconds: float | None = None,
     ) -> dict[str, Any]:
+        full_definition = definition
+        addendum = ""
+        if client_present_end_seconds is not None:
+            recording, dictated = split_dictated(transcript.content)
+            segments = segments_from_transcript(
+                Transcript(format=transcript.format, content=recording)
+            )
+            if segments:
+                split = split_at_boundary(segments, client_present_end_seconds)
+                transcript = Transcript(
+                    format="txt", content=split.session_lines or _NO_CLIENT_PRESENT
+                )
+                # Dictated later, after the recording: addendum too.
+                addendum = "\n\n".join(p for p in (split.addendum_lines, dictated) if p)
+                if client_present_end_seconds == 0:
+                    definition = _without_psychotherapy(definition)
+
         if definition.system_prompt is not None:
             system_prompt = definition.system_prompt
         elif definition.key == SOAP_KEY:
@@ -269,6 +299,8 @@ class RegistryNoteGenerationService(NoteGenerationService):
             )
         else:
             user_prompt = _build_registry_user_prompt(definition, transcript, patient, session_date)
+        if addendum:
+            user_prompt = f"{user_prompt}\n\n{_addendum_block(addendum)}"
 
         schema = _build_registry_response_schema(definition)
         completion = self._complete_structured_with_retry(
@@ -278,7 +310,10 @@ class RegistryNoteGenerationService(NoteGenerationService):
             response_schema=schema,
         )
 
-        return _coerce_registry_response(definition, completion.data)
+        # Coerced against what was asked for, then against the whole type, so
+        # a section left out of the request comes back present and empty.
+        asked = _coerce_registry_response(definition, completion.data)
+        return _coerce_registry_response(full_definition, asked)
 
     def _complete_structured_with_retry(
         self,
@@ -464,6 +499,7 @@ class MockNoteGenerationService(NoteGenerationService):
         session_date: datetime,  # noqa: ARG002  # deterministic mock ignores date
         inputs: Mapping[str, str] | None = None,  # noqa: ARG002  # mock ignores inputs
         definition: NoteTypeDefinition | None = None,
+        client_present_end_seconds: float | None = None,  # noqa: ARG002  # mock ignores it
     ) -> GeneratedNote:
         definition = definition or self.registry.get(note_type)
         _refuse_restricted(definition)
@@ -578,6 +614,32 @@ def _mock_registry_content(definition: NoteTypeDefinition, patient: Patient) -> 
 
 # --- Registry-driven prompt + schema composition ---
 
+PSYCHOTHERAPY_SECTION_KEY = "psychotherapy"
+"""The section a type carries for a visit's psychotherapy portion."""
+
+_NO_CLIENT_PRESENT = "(The client was not present in this recording.)"
+
+_ADDENDUM_INSTRUCTIONS = (
+    "Clinician addendum: dictated by the clinician after the session; the "
+    "client was not present. These are the clinician's own statements. Where "
+    "the addendum states risk, mental status, a prescription monitoring "
+    "check, consent, or a decision and its reasons, put it in the matching "
+    'field quoted and marked as the clinician\'s, e.g. Clinician stated: "...". '
+    "The addendum is not session time and is not something the client said. "
+    'An item covered by neither the session nor the addendum is "Not stated."; '
+    "never fill it in."
+)
+
+
+def _addendum_block(addendum_lines: str) -> str:
+    return f"{_ADDENDUM_INSTRUCTIONS}\n\n{addendum_lines}"
+
+
+def _without_psychotherapy(definition: NoteTypeDefinition) -> NoteTypeDefinition:
+    """The type minus its psychotherapy section: no client, no therapy time."""
+    sections = tuple(s for s in definition.sections if s.key != PSYCHOTHERAPY_SECTION_KEY)
+    return dataclasses.replace(definition, sections=sections)
+
 
 def _build_registry_user_prompt(
     definition: NoteTypeDefinition,
@@ -671,6 +733,7 @@ def _coerce_registry_response(
 
 
 __all__ = [
+    "PSYCHOTHERAPY_SECTION_KEY",
     "SOAP_KEY",
     "GeneratedNote",
     "MockNoteGenerationService",

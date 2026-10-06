@@ -349,6 +349,7 @@ def _row_to_session(row: TherapySessionRow) -> TherapySession:
         notes=row.notes,
         started_at=row.started_at,
         ended_at=row.ended_at,
+        client_present_end_seconds=row.client_present_end_seconds,
         updated_at=row.updated_at,
         audio_gcs_path=row.audio_gcs_path,
         transcription_job_metadata=row.transcription_job_metadata,
@@ -378,6 +379,7 @@ def _session_to_row(session: TherapySession, row: TherapySessionRow) -> None:
     row.notes = session.notes
     row.started_at = session.started_at
     row.ended_at = session.ended_at
+    row.client_present_end_seconds = session.client_present_end_seconds
     row.updated_at = session.updated_at
     row.audio_gcs_path = session.audio_gcs_path
     row.transcription_job_metadata = session.transcription_job_metadata
