@@ -21,7 +21,6 @@ import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import type { Download, Page, Response } from "@playwright/test"
 import Ajv2020 from "ajv/dist/2020.js"
-import addFormats from "ajv-formats"
 import JSZip from "jszip"
 import { expect, test } from "../fixtures/auth"
 import { parseCsv } from "../fixtures/csv"
@@ -34,6 +33,35 @@ import {
 } from "../fixtures/portal"
 import { giveTranscribedSession, givePatient, giveVisitReadyToBill } from "../fixtures/scenarios"
 import { fixtureFile, sha256, toInputFile } from "../fixtures/upload"
+
+// RFC 3339 full-date and date-time, the two JSON Schema formats the export
+// schema uses. Shape first, then a real calendar date: 2026-02-30 is shaped
+// right and is not a date.
+function isFullDate(value: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (!m) return false
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])]
+  const date = new Date(Date.UTC(y, mo - 1, d))
+  return date.getUTCFullYear() === y && date.getUTCMonth() === mo - 1 && date.getUTCDate() === d
+}
+
+function isDateTime(value: string): boolean {
+  const m = /^(\d{4}-\d{2}-\d{2})[Tt ]([01]\d|2[0-3]):[0-5]\d:([0-5]\d|60)(\.\d+)?([Zz]|[+-]([01]\d|2[0-3]):[0-5]\d)$/.exec(value)
+  return m !== null && isFullDate(m[1])
+}
+
+/**
+ * A validator for an export's own schema.json. Ajv checks a format only once
+ * it is registered, and in strict mode it refuses a schema naming one it
+ * doesn't know, so a format the schema adds later fails here instead of
+ * passing unchecked.
+ */
+function exportValidator(schema: object) {
+  const ajv = new Ajv2020({ allErrors: true })
+  ajv.addFormat("date", { validate: isFullDate })
+  ajv.addFormat("date-time", { validate: isDateTime })
+  return ajv.compile(schema)
+}
 
 interface ExportedSession {
   id: string
@@ -269,9 +297,7 @@ test.describe("patient export", () => {
 
     // patient.json against the schema.json shipped beside it.
     const schema = JSON.parse(read("schema.json").toString("utf8")) as object
-    const ajv = new Ajv2020({ allErrors: true })
-    addFormats(ajv)
-    const validate = ajv.compile(schema)
+    const validate = exportValidator(schema)
     const text = read("patient.json").toString("utf8")
     const document = JSON.parse(text) as {
       schema_version: string
@@ -396,9 +422,7 @@ test.describe("patient export", () => {
     const patientFile = files.get("patient.json")
     if (!schemaFile || !patientFile) throw new Error("the archive is missing its data files")
 
-    const ajv = new Ajv2020({ allErrors: true })
-    addFormats(ajv)
-    const validate = ajv.compile(JSON.parse(schemaFile.toString("utf8")) as object)
+    const validate = exportValidator(JSON.parse(schemaFile.toString("utf8")) as object)
     const document = JSON.parse(patientFile.toString("utf8")) as {
       schema_version: string
       outcome_measures: ExportedMeasure[]
@@ -450,9 +474,7 @@ test.describe("patient export billing", () => {
     const patientFile = files.get("patient.json")
     if (!schemaFile || !patientFile) throw new Error("the archive is missing its data files")
 
-    const ajv = new Ajv2020({ allErrors: true })
-    addFormats(ajv)
-    const validate = ajv.compile(JSON.parse(schemaFile.toString("utf8")) as object)
+    const validate = exportValidator(JSON.parse(schemaFile.toString("utf8")) as object)
     const document = JSON.parse(patientFile.toString("utf8")) as {
       charges: ExportedCharge[]
       coverage: unknown[]
