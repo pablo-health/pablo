@@ -460,8 +460,9 @@ _RESPONSE_SCHEMA["properties"]["readings"] = {
 #: readings of a whole week, takes 6-8 s and now and then 12, so this
 #: leaves it room. It is not how long a stall is waited out: the routing
 #: policy starts the retry (or a configured fallback) beside an attempt
-#: still running at 4 s, and at once after a failure, and the first answer
-#: wins. Nothing outlasts the 25 s budget.
+#: still running at the stall threshold (4 s unless configured), and at
+#: once after a failure, and the first answer wins. Nothing outlasts the
+#: 25 s budget.
 _ATTEMPT_TIMEOUT_SECONDS = 15.0
 
 

@@ -34,6 +34,8 @@ from app.services.structured_llm_gateway import (
     register_structured_llm_provider,
     resolve_structured_llm_gateway,
 )
+from app.settings import Settings
+from pydantic import ValidationError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -346,6 +348,171 @@ class TestInteractiveHandover:
         (line,) = [r.getMessage() for r in caplog.records]
         assert line.startswith("Structured call failed: attempts=2")
         assert "flash:ReadTimeout,flash:ReadTimeout" in line
+
+
+def _configure(monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> Settings:
+    configured = Settings(
+        database_url="postgresql://x:x@localhost:5432/x", environment="development", **overrides
+    )
+    monkeypatch.setattr(
+        "app.services.hedged_structured_llm_gateway.get_settings", lambda: configured
+    )
+    return configured
+
+
+class TestPerFeatureStallThreshold:
+    """A slow but healthy primary is not hedged at its median."""
+
+    def test_nothing_configured_keeps_the_default_threshold(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _configure(monkeypatch)
+        policy = HedgedStructuredLLMGateway.from_settings().policy_for("flash", 15.0)
+        assert policy.hedge_after == INTERACTIVE_STALL_AFTER
+
+    def test_the_global_threshold_applies_to_a_feature_not_named(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _configure(
+            monkeypatch, ai_hedge_after_seconds=3.0, ai_hedge_delays_ms={"other_feature": 9000}
+        )
+        policy = HedgedStructuredLLMGateway.from_settings().policy_for("flash", 15.0)
+        assert policy.hedge_after == 3.0
+
+    def test_a_features_own_threshold_wins_and_is_read_in_milliseconds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _configure(
+            monkeypatch,
+            ai_hedge_after_seconds=3.0,
+            ai_hedge_delays_ms={"availability_parse": 7000},
+        )
+        policy = HedgedStructuredLLMGateway.from_settings().policy_for("flash", 15.0)
+        assert policy.hedge_after == 7.0
+        assert policy.budget == 25.0
+
+    def test_it_is_read_from_the_environment_as_json(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AI_HEDGE_DELAYS_MS", '{"availability_parse": 7000}')
+        configured = Settings(
+            database_url="postgresql://x:x@localhost:5432/x", environment="development"
+        )
+        assert configured.hedge_after_for("availability_parse") == 7.0
+        assert configured.hedge_after_for("chat") is None
+
+    @pytest.mark.parametrize("delay", [0, -1])
+    def test_a_threshold_must_be_positive(self, delay: int) -> None:
+        with pytest.raises(ValidationError):
+            Settings(
+                database_url="postgresql://x:x@localhost:5432/x",
+                environment="development",
+                ai_hedge_delays_ms={"availability_parse": delay},
+            )
+
+    def test_a_primary_answering_inside_its_threshold_is_the_only_call(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Slower than the global threshold, inside its own: no second call."""
+        gateways = {
+            "flash": _Slow(0.3),
+            "other:model": FakeStructuredLLMGateway(default_response=_OK),
+        }
+        _configure(
+            monkeypatch,
+            ai_hedge_after_seconds=0.05,
+            ai_hedge_delays_ms={"availability_parse": 2000},
+            ai_fallbacks={"availability_parse": "other:model"},
+        )
+        hedged = HedgedStructuredLLMGateway.from_settings(resolve=gateways.__getitem__)
+        with caplog.at_level(logging.INFO, logger="app.services.hedged_structured_llm_gateway"):
+            assert _complete(hedged, timeout_seconds=15.0) == _OK
+        (line,) = [r.getMessage() for r in caplog.records]
+        assert "route=primary" in line
+        assert "attempts=1" in line
+        assert "failures=-" in line
+        assert gateways["other:model"].calls == []
+
+    def test_the_same_primary_under_the_global_threshold_starts_a_second_call(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The control: without its own threshold the fallback joins and is thrown away."""
+        release = threading.Event()
+        gateways = {
+            "flash": _Slow(0.3),
+            "other:model": _Stalls(release),
+        }
+        _configure(
+            monkeypatch,
+            ai_hedge_after_seconds=0.05,
+            ai_fallbacks={"availability_parse": "other:model"},
+        )
+        hedged = HedgedStructuredLLMGateway.from_settings(resolve=gateways.__getitem__)
+        try:
+            with caplog.at_level(logging.INFO, logger="app.services.hedged_structured_llm_gateway"):
+                assert _complete(hedged, timeout_seconds=15.0) == _OK
+        finally:
+            release.set()
+        (line,) = [r.getMessage() for r in caplog.records]
+        assert "attempts=2" in line
+        assert "failures=other:model:abandoned" in line
+
+    def test_a_primary_stalled_past_its_threshold_hands_over(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        release = threading.Event()
+        fallback_started: list[float] = []
+
+        class Fallback(FakeStructuredLLMGateway):
+            def complete_structured(self, **kwargs: Any) -> StructuredCompletion:
+                fallback_started.append(time.monotonic())
+                return super().complete_structured(**kwargs)
+
+        gateways: dict[str, FakeStructuredLLMGateway] = {
+            "flash": _Stalls(release),
+            "other:model": Fallback(default_response=_OK),
+        }
+        _configure(
+            monkeypatch,
+            ai_hedge_delays_ms={"availability_parse": 300},
+            ai_fallbacks={"availability_parse": "other:model"},
+        )
+        hedged = HedgedStructuredLLMGateway.from_settings(resolve=gateways.__getitem__)
+        started = time.monotonic()
+        try:
+            with caplog.at_level(logging.INFO, logger="app.services.hedged_structured_llm_gateway"):
+                assert _complete(hedged, timeout_seconds=15.0) == _OK
+        finally:
+            release.set()
+        assert 0.25 <= fallback_started[0] - started < 1.5
+        (line,) = [r.getMessage() for r in caplog.records]
+        assert "route=fallback" in line
+        assert "attempts=2" in line
+        assert "failures=flash:abandoned" in line
+
+
+class _Slow(FakeStructuredLLMGateway):
+    """Answers, after ``seconds``."""
+
+    def __init__(self, seconds: float) -> None:
+        super().__init__(default_response=_OK)
+        self._seconds = seconds
+
+    def complete_structured(self, **kwargs: Any) -> StructuredCompletion:
+        answer = super().complete_structured(**kwargs)
+        time.sleep(self._seconds)
+        return answer
+
+
+class _Stalls(FakeStructuredLLMGateway):
+    """Answers only once ``release`` is set, or after 5 s."""
+
+    def __init__(self, release: threading.Event) -> None:
+        super().__init__(default_response=_OK)
+        self._release = release
+
+    def complete_structured(self, **kwargs: Any) -> StructuredCompletion:
+        answer = super().complete_structured(**kwargs)
+        self._release.wait(5)
+        return answer
 
 
 class TestAvailabilityParser:
