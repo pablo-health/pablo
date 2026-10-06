@@ -36,6 +36,7 @@ Hard failures, any one of which fails the run:
 |---|---|---|
 | `psychiatric-evaluation-new-client` | `psychiatric_evaluation` | a new-client evaluation by video, with the clinician's dictated addendum; three diagnoses, one a rule-out; billed 90792 |
 | `psychiatric-follow-up-dictated-addendum` | `psychiatric_follow_up` | a short medication check by video, drafted as a two-channel call; risk and mental status are stated only in the addendum dictated after the client left, and must come back quoted; self-harm, orientation and cognition are covered nowhere and must read "Not stated." |
+| `psychiatric-follow-up-therapy-start` | `psychiatric_follow_up` | a medication check, then a long therapy block the client asks for; every proposed therapy start falls after the medication check. The clinician dictates the minutes but no clock times; once the start is confirmed, the psychotherapy time field must read the confirmed window |
 
 A case drafted as a recorded call splits its transcript where the client's
 last line ends: what the clinician says after it reaches the model as a

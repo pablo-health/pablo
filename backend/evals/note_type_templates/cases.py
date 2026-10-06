@@ -48,6 +48,9 @@ class TemplateCase:
     ``therapy_starts_between`` is ``(low, high)`` in seconds into the
     recording: every psychotherapy start the draft proposes is at or after
     ``low``, and the first one offered is no later than ``high``.
+    ``confirmed_start_seconds`` is the therapy start the clinician confirms:
+    once confirmed, the psychotherapy time field must read the window from
+    there to where the client left, as the visit-times panel writes it.
     """
 
     name: str
@@ -66,6 +69,7 @@ class TemplateCase:
     quoted: tuple[tuple[str, str], ...] = ()
     fill_unnamed: bool = True
     therapy_starts_between: tuple[float, float] | None = None
+    confirmed_start_seconds: float | None = None
 
 
 def load_template(template: str) -> dict[str, Any]:
@@ -182,6 +186,7 @@ _MED_CHECK_THEN_THERAPY = "\n".join(
         "[01:04:45] Client: I will. Thank you, this helped a lot. See you next month.",
         "[01:05:30] Therapist: Addendum for the note. Client denies suicidal ideation. "
         "Mood improved, affect brighter.",
+        "[01:05:44] Therapist: Psychotherapy was about 52 minutes.",
     ]
 )
 
@@ -194,6 +199,10 @@ FOLLOW_UP_THERAPY_START = TemplateCase(
     inputs={"place_of_service": "Telehealth", "client_location": "Home"},
     # From the client asking to talk (11:40) to the first therapy question (12:20).
     therapy_starts_between=(11 * 60 + 40, 12 * 60 + 20),
+    # The clinician confirms the turn where they took up the client's request
+    # (12:05). They dictated the minutes but no clock times, so the window
+    # supplies the times and agrees with the minutes.
+    confirmed_start_seconds=12 * 60 + 5,
     fill_unnamed=False,
 )
 
