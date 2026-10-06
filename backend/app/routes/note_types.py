@@ -33,6 +33,7 @@ from ..notes import (
     NoteTypeRegistry,
     get_default_registry,
     get_note_type_authorizer,
+    is_practice_key,
 )
 from ..notes.practice_types import (
     SLUG_PATTERN,
@@ -148,6 +149,15 @@ class NoteTypeSchema(BaseModel):
             "unavailable rather than as live picker options."
         ),
     )
+    spec: PracticeNoteTypeSpec | None = Field(
+        default=None,
+        description=(
+            "The stored definition of a practice-defined type, prompts "
+            "included, so it can be edited and saved again without losing "
+            "them. Returned only by the single-type read; null for built-in "
+            "types and in the list."
+        ),
+    )
 
     @classmethod
     def from_def(
@@ -233,18 +243,26 @@ def get_note_type(
     registry: NoteTypeRegistry = Depends(get_registry),
     user: User = Depends(get_current_user),
     authorizer: NoteTypeAuthorizer = Depends(get_note_type_authorizer),
+    repo: PracticeNoteTypeRepository = Depends(get_practice_note_type_repository),
     _: None = Depends(subscription_exempt),
 ) -> NoteTypeSchema:
     """Return a single note-type definition by key.
 
     A retired practice type is still returned here, so the notes written
-    with it keep rendering; it is only left out of the list above.
+    with it keep rendering; it is only left out of the list above. A
+    practice type also carries its stored ``spec``, which the definition
+    cannot give back: its system prompt has the generation floor appended.
     """
     try:
         definition = registry.get(key, version)
     except KeyError as exc:
         raise NotFoundError(f"Note type {key!r} not found") from exc
-    return NoteTypeSchema.from_def(definition, is_locked=not authorizer.is_allowed(user, key))
+    schema = NoteTypeSchema.from_def(definition, is_locked=not authorizer.is_allowed(user, key))
+    if is_practice_key(key):
+        stored = repo.get(key, definition.version)
+        if stored is not None:
+            schema.spec = PracticeNoteTypeSpec.model_validate(stored.definition)
+    return schema
 
 
 _SLUG = Path(pattern=SLUG_PATTERN, description="The part of the key after 'custom.'.")

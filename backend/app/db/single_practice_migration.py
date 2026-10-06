@@ -48,6 +48,7 @@ from . import (
     DEFAULT_PRACTICE_ID,
     DEFAULT_PRACTICE_OWN_SCHEMA,
     DEFAULT_PRACTICE_SCHEMA,
+    NOTE_CHILD_TABLES,
     PLATFORM_SCHEMA,
     _validate_schema_name,
     enable_rls_on_schema,
@@ -88,6 +89,9 @@ class Shape(Enum):
     #: ``notes`` once it carries ``restricted``: shared rows follow the grant,
     #: restricted rows are the author's alone (``rls_note_access``).
     NOTES = "note_access"
+    #: A note's signed versions and addenda: readable exactly when the parent
+    #: note is (``rls_note_child_access``).
+    NOTE_CHILD = "note_child_access"
     CHAT_MESSAGES = "chat_message_access"
     #: ``patient_source_mappings`` once it carries ``scope``
     #: (``rls_practice_answers``): a calendar's answers are any armed
@@ -147,6 +151,8 @@ def _classify(table_name: str, columns: set[str]) -> Shape:
     # patient_id shape below.
     if table_name == "notes" and "restricted" in columns:
         return Shape.NOTES
+    if table_name in NOTE_CHILD_TABLES:
+        return Shape.NOTE_CHILD
     # Mirrors the ``patient_source_mappings`` / ``scope`` branch the same way:
     # before the revision that adds the column, the table is plain user_id.
     if table_name == "patient_source_mappings" and "scope" in columns:
@@ -209,6 +215,19 @@ def _note(schema: str, table: str) -> str:
     return f"(NOT restricted AND {shared_unreachable}) OR (restricted AND author_user_id IS NULL)"
 
 
+def _note_child(schema: str, table: str) -> str:
+    """Mirrors ``rls_note_child_access``: reachable exactly when the parent note
+    is, so orphaned when the note is missing or is itself unreachable (the
+    ``_note`` predicate, read off the parent row)."""
+    shared_reachable = _LIVE_GRANT.format(schema=schema, ref="n.patient_id")
+    return (
+        f"NOT EXISTS (SELECT 1 FROM {schema}.notes n "  # noqa: S608 — schema/table are validated identifiers, never user input
+        f"WHERE n.id = {schema}.{table}.note_id AND ("
+        f"(NOT n.restricted AND {shared_reachable}) "
+        f"OR (n.restricted AND n.author_user_id IS NOT NULL)))"
+    )
+
+
 def _chat_message(schema: str, table: str) -> str:
     """Mirrors ``rls_chat_message_access``: reachable only through the parent
     conversation's patient. A message whose conversation is missing is
@@ -247,6 +266,7 @@ _ORPHAN_PREDICATE = {
     Shape.PATIENT_ACCESS_BY_PATIENT_ID: _patient_by_patient_id,
     Shape.PATIENT_DOCUMENTS: _patient_document,
     Shape.NOTES: _note,
+    Shape.NOTE_CHILD: _note_child,
     Shape.CHAT_MESSAGES: _chat_message,
     Shape.PRACTICE_ANSWERS: _practice_answer,
 }

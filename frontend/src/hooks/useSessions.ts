@@ -170,6 +170,8 @@ export function useFinalizeSession(token?: string) {
     invalidateKeys: ({ sessionId }) => [
       queryKeys.sessions.detail(sessionId),
       queryKeys.sessions.lists(),
+      // The note's signing record, which finalizing with a signature writes.
+      queryKeys.notes.all,
     ],
     optimistic: {
       queryKey: ({ sessionId }) => queryKeys.sessions.detail(sessionId),

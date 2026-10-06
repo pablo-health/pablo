@@ -3,22 +3,26 @@
 /**
  * FinalizeButton Component
  *
- * Button to finalize a session after review.
- * Uses the useFinalizeSession hook to transition from "pending_review" to "finalized".
+ * Signs and locks a session's note after review. Opens the signing dialog
+ * (name and credentials, prefilled and editable, with a live preview), then
+ * uses the useFinalizeSession hook to sign the note and move the session
+ * from "pending_review" to "finalized" in one request.
  *
  * Features:
  * - Disabled when not in "pending_review" status
- * - Shows loading spinner during mutation
- * - Quality rating is optional; finalizing is never gated on a rating
+ * - Quality rating is optional; signing is never gated on a rating
  * - Can include edited SOAP note
  */
 
 "use client"
 
-import { Check } from "lucide-react"
+import { useState } from "react"
+import { Check, Lock } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { SignNoteDialog } from "@/components/notes/signing/SigningDialogs"
 import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import { useFinalizeSession } from "@/hooks/useSessions"
+import type { NoteSignerFields } from "@/types/notes"
 import type { SessionStatus, SOAPNoteModel } from "@/types/sessions"
 
 export interface FinalizeButtonProps {
@@ -42,29 +46,27 @@ export function FinalizeButton({
 }: FinalizeButtonProps) {
   const finalizeMutation = useFinalizeSession()
   const { readOnly } = useReadOnlyMode()
+  const [dialogOpen, setDialogOpen] = useState(false)
 
   const isDisabled =
     status !== "pending_review" || finalizeMutation.isPending
 
-  const handleFinalize = async () => {
-    try {
-      await finalizeMutation.mutateAsync({
-        sessionId,
-        data: {
-          ...(qualityRating !== null && { quality_rating: qualityRating }),
-          ...(qualityRatingReason && { quality_rating_reason: qualityRatingReason }),
-          ...(qualityRatingSections &&
-            qualityRatingSections.length > 0 && {
-              quality_rating_sections: qualityRatingSections,
-            }),
-          ...(soapNoteEdited && { soap_note_edited: soapNoteEdited }),
-        },
-      })
-      onSuccess?.()
-    } catch {
-      // Error handling is done by React Query and can be shown via toast/notification
-      console.error("Failed to finalize session")
-    }
+  // Errors propagate so the dialog stays open and says what went wrong.
+  const handleSign = async (signature: NoteSignerFields) => {
+    await finalizeMutation.mutateAsync({
+      sessionId,
+      data: {
+        ...(qualityRating !== null && { quality_rating: qualityRating }),
+        ...(qualityRatingReason && { quality_rating_reason: qualityRatingReason }),
+        ...(qualityRatingSections &&
+          qualityRatingSections.length > 0 && {
+            quality_rating_sections: qualityRatingSections,
+          }),
+        ...(soapNoteEdited && { soap_note_edited: soapNoteEdited }),
+        signature,
+      },
+    })
+    onSuccess?.()
   }
 
   if (status === "finalized") {
@@ -81,23 +83,17 @@ export function FinalizeButton({
   if (readOnly) return null
 
   return (
-    <Button
-      onClick={handleFinalize}
-      disabled={isDisabled}
-      size="lg"
-      className="bg-secondary-600 hover:bg-secondary-700 text-white"
-    >
-      {finalizeMutation.isPending ? (
-        <>
-          <span className="mr-2 h-4 w-4 animate-spin">⏳</span>
-          Finalizing...
-        </>
-      ) : (
-        <>
-          <Check className="mr-2 h-4 w-4" />
-          Finalize Session
-        </>
-      )}
-    </Button>
+    <>
+      <Button
+        onClick={() => setDialogOpen(true)}
+        disabled={isDisabled}
+        size="lg"
+        className="bg-secondary-600 hover:bg-secondary-700 text-white"
+      >
+        <Lock className="mr-2 h-4 w-4" />
+        Sign and lock
+      </Button>
+      <SignNoteDialog open={dialogOpen} onOpenChange={setDialogOpen} onSign={handleSign} />
+    </>
   )
 }

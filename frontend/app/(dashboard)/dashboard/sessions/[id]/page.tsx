@@ -31,11 +31,15 @@ import {
   type RatingFeedback,
 } from "@/components/sessions/QualityRatingWithFeedback"
 import { FinalizeButton } from "@/components/sessions/FinalizeButton"
+import { NoteSignaturePanel } from "@/components/notes/signing/NoteSignaturePanel"
 import { ChargeCardSection } from "@/components/payments/ChargeCardSection"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AlertCircle } from "lucide-react"
 import { useUpdateNoteEdits } from "@/hooks/useNotes"
+import { useNoteSigning } from "@/hooks/useNoteSigning"
 import { useNoteTypeLabel } from "@/hooks/useNoteTypes"
+import { useUserTimeZone } from "@/hooks/usePreferences"
+import { pdfSignatureBlock } from "@/lib/utils/signatureBlock"
 import type { NoteContent, SOAPNoteModel } from "@/types/sessions"
 import { noteContentToJson } from "@/types/sessions"
 
@@ -71,6 +75,8 @@ export default function SessionDetailPage({ params }: PageProps) {
   const [localNoteEdited, setLocalNoteEdited] = useState<NoteContent | null>(null)
   const updateNoteEdits = useUpdateNoteEdits()
   const noteTypeLabel = useNoteTypeLabel()
+  const { data: signing } = useNoteSigning(session?.note?.id)
+  const timeZone = useUserTimeZone()
 
   // Source linking state
   const [highlightedSegments, setHighlightedSegments] = useState<number[]>([])
@@ -120,7 +126,10 @@ export default function SessionDetailPage({ params }: PageProps) {
   }
 
   const handleNoteSave = (edited: NoteContent) => {
-    if (edited.note_type === "soap") {
+    // A session under review holds SOAP edits for finalize to persist. A
+    // finalized session's note that was unlocked to correct an error has no
+    // finalize left, so every type saves straight to the note.
+    if (edited.note_type === "soap" && session?.status === "pending_review") {
       // SOAP edits are held here and persisted by finalize (soap_note_edited).
       const soap: SOAPNoteModel = {
         subjective: edited.subjective,
@@ -205,6 +214,12 @@ export default function SessionDetailPage({ params }: PageProps) {
   // Charging follows signing: the same column, the same place the finalize
   // action was, and only once the note actually carries a signature.
   const noteIsSigned = !!note?.finalized_at
+  // Editable while under review, or once a finalized session's note has been
+  // unlocked to correct an error.
+  const noteEditable =
+    !!note &&
+    !note.finalized_at &&
+    (session.status === "pending_review" || session.status === "finalized")
 
   return (
     <div className="space-y-6">
@@ -280,16 +295,15 @@ export default function SessionDetailPage({ params }: PageProps) {
                   patient_name: session.patient_name,
                   session_number: session.session_number,
                   session_date: session.session_date,
+                  signature: pdfSignatureBlock(signing, timeZone),
                 }}
                 groundingSource={
                   session.source === "imported"
                     ? session.transcript.content
                     : undefined
                 }
-                readonly={session.status !== "pending_review"}
-                onSave={
-                  session.status === "pending_review" ? handleNoteSave : undefined
-                }
+                readonly={!noteEditable}
+                onSave={noteEditable ? handleNoteSave : undefined}
                 onClaimClick={handleClaimClick}
               />
             ) : (
@@ -338,6 +352,10 @@ export default function SessionDetailPage({ params }: PageProps) {
                 </div>
               </div>
             </div>
+          )}
+
+          {note && session.status === "finalized" && (
+            <NoteSignaturePanel note={note} canSign />
           )}
 
           {noteIsSigned && (
