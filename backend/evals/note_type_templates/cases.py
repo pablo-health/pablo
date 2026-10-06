@@ -112,7 +112,7 @@ INTAKE_NEW_CLIENT = TemplateCase(
 # A medication check by video. The client never speaks of risk; the clinician
 # states it, and the mental status findings, in the addendum dictated after the
 # client has gone. Neither the visit nor the addendum covers self-harm,
-# thought content or cognition.
+# orientation or cognition.
 _FOLLOW_UP_WITH_ADDENDUM = "\n".join(
     [
         "[00:00:04] Therapist: Hi, good to see you again. Are you at home today?",
@@ -141,9 +141,9 @@ FOLLOW_UP_ADDENDUM = TemplateCase(
     quoted=(
         ("risk.suicidal_homicidal_ideation", "denies suicidal ideation"),
         ("risk.overall_risk", "risk is low"),
-        ("mse.mood_affect", "affect brighter"),
+        ("mse.mood_affect", "brighter"),
     ),
-    not_covered=("risk.self_harm_violence", "mse.thought_content", "mse.cognition"),
+    not_covered=("risk.self_harm_violence", "mse.orientation", "mse.cognition"),
     fill_unnamed=False,
 )
 

@@ -35,7 +35,7 @@ Hard failures, any one of which fails the run:
 | Case | Template | Sample |
 |---|---|---|
 | `psychiatric-evaluation-new-client` | `psychiatric_evaluation` | a new-client evaluation by video, with the clinician's dictated addendum; three diagnoses, one a rule-out; billed 90792 |
-| `psychiatric-follow-up-dictated-addendum` | `psychiatric_follow_up` | a short medication check by video, drafted as a two-channel call; risk and mental status are stated only in the addendum dictated after the client left, and must come back quoted; self-harm, thought content and cognition are covered nowhere and must read "Not stated." |
+| `psychiatric-follow-up-dictated-addendum` | `psychiatric_follow_up` | a short medication check by video, drafted as a two-channel call; risk and mental status are stated only in the addendum dictated after the client left, and must come back quoted; self-harm, orientation and cognition are covered nowhere and must read "Not stated." |
 
 A case drafted as a recorded call splits its transcript where the client's
 last line ends: what the clinician says after it reaches the model as a
