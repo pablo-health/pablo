@@ -45,6 +45,7 @@ from ..notes.practice_types import render_user_prompt
 from ..notes.prompts.soap import SOAP_SYSTEM_PROMPT
 from ..notes.visit_times import PSYCHOTHERAPY_SECTION_KEY, client_present_turns
 from ..settings import get_settings
+from .hedged_structured_llm_gateway import generation_gateway
 from .psychotherapy_start import (
     START_INSTRUCTIONS,
     START_KEY,
@@ -62,7 +63,6 @@ from .structured_llm_gateway import (
     StructuredCompletion,
     StructuredLLMGateway,
     StructuredOutputTruncatedError,
-    get_default_structured_llm_gateway,
 )
 
 logger = logging.getLogger(__name__)
@@ -240,7 +240,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
     ) -> None:
         self.therapist_name = therapist_name or "Therapist"
         self.registry = registry or get_default_registry()
-        self._llm_gateway = llm_gateway or get_default_structured_llm_gateway()
+        self._llm_gateway = llm_gateway or generation_gateway()
         self._model = model
 
     def _resolve_model(self) -> str:
@@ -387,6 +387,14 @@ class RegistryNoteGenerationService(NoteGenerationService):
         cap we retry once at twice the budget before giving up. Any other
         failure (or a second truncation) raises ``ValueError`` so the caller's
         SOAP-generation-failed path runs — preserving the existing log line.
+
+        With ``ai_model_fallbacks`` configured, each of the (at most two)
+        gateway calls below is itself a sequence: the primary, each fallback,
+        the primary again, one at a time, inside 300 s (see
+        :mod:`.hedged_structured_llm_gateway`). Truncation ends that sequence
+        at once so the larger budget is tried here, and a transient failure
+        that outlasts every leg still raises
+        :class:`TransientNoteGenerationError` for the job queue's retry.
         """
         settings = get_settings()
         base_budget = settings.note_max_output_tokens

@@ -88,6 +88,7 @@ from ..services import (
 )
 from ..services.audio_retention import AudioOnSigning
 from ..services.file_storage import file_storage_from_settings
+from ..services.hedged_structured_llm_gateway import generation_gateway
 from ..services.http_structured_llm_gateway import HttpStructuredLLMGateway
 from ..services.note_generation_service import TransientNoteGenerationError
 from ..services.note_signing import current_signature
@@ -133,11 +134,14 @@ def get_note_generation_service() -> NoteGenerationService:
 
     Also drafts note-type previews. Under the end-to-end stack the drafts
     come from its stand-in (the setting refuses to load outside
-    development), so a spec sees the same draft every run.
+    development), so a spec sees the same draft every run. The stand-in
+    answers every model, fallbacks included, so the fallback order runs
+    there as it does against real providers.
     """
     base_url = get_settings().note_generation_base_url
     if base_url:
-        return RegistryNoteGenerationService(llm_gateway=HttpStructuredLLMGateway(base_url))
+        stand_in = generation_gateway(HttpStructuredLLMGateway(base_url))
+        return RegistryNoteGenerationService(llm_gateway=stand_in)
     return RegistryNoteGenerationService()
 
 

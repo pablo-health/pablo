@@ -30,6 +30,7 @@ from ..settings import get_settings
 # These helpers build/validate the registry-shaped JSON for a note type.
 # They are imported (not reimplemented) so an imported note is exactly the
 # same shape as a generated one; see CLAUDE.md "Don't duplicate OSS".
+from .hedged_structured_llm_gateway import generation_gateway
 from .note_generation_service import (
     SOAP_KEY,
     _build_registry_response_schema,
@@ -40,7 +41,6 @@ from .structured_llm_gateway import (
     StructuredCompletion,
     StructuredLLMGateway,
     StructuredOutputTruncatedError,
-    get_default_structured_llm_gateway,
 )
 
 logger = logging.getLogger(__name__)
@@ -472,7 +472,7 @@ class NoteImportService:
         registry: NoteTypeRegistry | None = None,
         model: str | None = None,
     ) -> None:
-        self._llm_gateway = llm_gateway or get_default_structured_llm_gateway()
+        self._llm_gateway = llm_gateway or generation_gateway()
         self._registry = registry or get_default_registry()
         self._model = model
 

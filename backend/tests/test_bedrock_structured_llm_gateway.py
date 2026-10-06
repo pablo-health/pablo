@@ -320,6 +320,20 @@ class TestTimeouts:
         _call(gw)
         assert built == [15.0, 9.5, 180.0]
 
+    def test_with_no_bound_given_the_retry_deadline_does_not_cut_the_attempt(self) -> None:
+        """A long draft on Bedrock as the only model keeps the full default bound."""
+        built: list[float] = []
+        client = _StubClient(_response({"proposals": []}))
+
+        def factory(timeout: float) -> _StubClient:
+            built.append(timeout)
+            return client
+
+        gw = BedrockStructuredLLMGateway(client_factory=factory)
+        _call(gw, retry_policy=None)
+        _call(gw, retry_policy=None, timeout_seconds=40.0)
+        assert built == [180.0, 25.0]
+
     def test_a_real_client_carries_the_bound_and_no_retries_of_its_own(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

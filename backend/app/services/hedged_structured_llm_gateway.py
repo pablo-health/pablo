@@ -20,6 +20,21 @@ change to the policy.
 Every call ends within 25 s, the deadline of the ``LLM_REQUEST`` retry
 this replaces: a leg that starts late is given what is left of it.
 
+A long call (drafting, importing or deriving a note) uses the same legs
+with no stall threshold, built by :func:`generation_gateway` from
+``ai_model_fallbacks``. Attempts run one at a time, in this order:
+
+1. the requested model, for up to 180 s;
+2. each fallback once, in the configured order, each started only when the
+   leg before it failed transiently, gave an unusable answer, refused the
+   request, or ran out of time;
+3. the requested model once more.
+
+The whole sequence ends within 300 s, so a primary that stalls to its
+timeout still leaves the fallback two minutes. A truncated answer ends the
+sequence at once and reaches the caller, whose own retry at a larger output
+budget runs the sequence again; nothing else retries inside it.
+
 Each call logs one line: the route that answered (primary, retry or
 fallback), the legs started, the latency and the class of each failure.
 Model names and error classes only, never prompt or answer text.
@@ -53,6 +68,7 @@ from .structured_llm_gateway import (
     StructuredCompletion,
     StructuredLLMGateway,
     StructuredOutputTruncatedError,
+    get_default_structured_llm_gateway,
     resolve_structured_llm_gateway,
 )
 
@@ -67,6 +83,12 @@ logger = logging.getLogger(__name__)
 #: Every call, retries included, ends within this long: the deadline of the
 #: one-retry ``LLM_REQUEST`` preset these legs replace.
 _BUDGET_SECONDS = 25.0
+
+#: A long call's whole sequence of attempts ends within this long. Each
+#: attempt keeps the structured client's own 180 s bound, the time a
+#: reasoning model may need for a full note, so a fallback after a primary
+#: that stalled to its end still has two minutes.
+GENERATION_BUDGET_SECONDS = 300.0
 
 #: Workers shared by every hedged call in the process. An abandoned leg
 #: holds one until its own timeout, so this is sized for a few requests'
@@ -130,11 +152,13 @@ class HedgedStructuredLLMGateway(StructuredLLMGateway):
         stall_after: float | None = INTERACTIVE_STALL_AFTER,
         resolve: Callable[[str], StructuredLLMGateway] = resolve_structured_llm_gateway,
         executor: Executor | None = None,
+        budget: float = _BUDGET_SECONDS,
     ) -> None:
         self._fallbacks = tuple(fallbacks)
         self._stall_after = stall_after
         self._resolve = resolve
         self._executor = executor
+        self._budget = budget
 
     @classmethod
     def from_settings(
@@ -152,7 +176,7 @@ class HedgedStructuredLLMGateway(StructuredLLMGateway):
             model,
             self._fallbacks,
             attempt_timeout=timeout_seconds or _STRUCTURED_LLM_TIMEOUT_SECONDS,
-            budget=_BUDGET_SECONDS,
+            budget=self._budget,
             stall_after=self._stall_after,
         )
 
@@ -219,4 +243,30 @@ class HedgedStructuredLLMGateway(StructuredLLMGateway):
         return completion
 
 
-__all__ = ["HedgedStructuredLLMGateway", "classify_structured_failure"]
+def generation_gateway(single: StructuredLLMGateway | None = None) -> StructuredLLMGateway:
+    """The gateway a long structured call goes through.
+
+    With ``ai_model_fallbacks`` empty, that is ``single`` (the default
+    Gemini gateway unless given), unchanged: one model, its own retry. With
+    fallbacks configured, a hedged gateway that runs the attempts listed in
+    this module's docstring one at a time, never side by side. ``single``,
+    when given, answers every leg whatever its model, as the end-to-end
+    stand-in does.
+    """
+    fallbacks = get_settings().fallback_models
+    if not fallbacks:
+        return single or get_default_structured_llm_gateway()
+    return HedgedStructuredLLMGateway(
+        fallbacks=fallbacks,
+        stall_after=None,
+        resolve=resolve_structured_llm_gateway if single is None else (lambda _model: single),
+        budget=GENERATION_BUDGET_SECONDS,
+    )
+
+
+__all__ = [
+    "GENERATION_BUDGET_SECONDS",
+    "HedgedStructuredLLMGateway",
+    "classify_structured_failure",
+    "generation_gateway",
+]

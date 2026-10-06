@@ -20,13 +20,14 @@ from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
 from app.routes.notes import get_note_generation_service
 from app.services import dictation_transcription, http_structured_llm_gateway
 from app.services.dictation_transcription import HttpDictationTranscriber
+from app.services.hedged_structured_llm_gateway import generation_gateway
 from app.services.http_structured_llm_gateway import HttpStructuredLLMGateway
 from app.services.note_generation_service import RegistryNoteGenerationService
 from app.services.note_redraft import DICTATED_HEADING
-from app.settings import Settings
+from app.settings import Settings, get_settings
 from fastapi.testclient import TestClient
 
-from scripts.fake_llm import DICTATION_TEXT, REFUSES_DRAFT
+from scripts.fake_llm import DICTATION_TEXT, FALLBACK_MODEL, PRIMARY_DOWN, REFUSES_DRAFT
 from scripts.fake_llm import app as fake_llm_app
 
 from .test_practice_note_types import COACH_SPEC
@@ -219,3 +220,25 @@ def test_the_route_dependency_uses_the_stand_in_only_when_configured(
     service = get_note_generation_service()
     assert isinstance(service, RegistryNoteGenerationService)
     assert not isinstance(service._llm_gateway, HttpStructuredLLMGateway)
+
+
+def test_with_the_first_model_down_the_fallback_drafts(
+    stand_in: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """As the stack runs it: the stand-in answers only the named fallback."""
+    monkeypatch.setenv("AI_MODEL_FALLBACKS", FALLBACK_MODEL)
+    get_settings.cache_clear()
+    try:
+        service = RegistryNoteGenerationService(
+            registry=_service().registry,
+            llm_gateway=generation_gateway(HttpStructuredLLMGateway(BASE_URL)),
+        )
+        transcript = Transcript(format="txt", content=f"[00:01] Client: {PRIMARY_DOWN}")
+        generated = service.generate_note("soap", transcript, PATIENT, NOW)
+    finally:
+        get_settings.cache_clear()
+
+    assert generated.soap_note is not None
+    assert generated.soap_note.subjective.chief_complaint.text.startswith("Stand-in draft")
+    # The draft and its sentence links: each the first model's 503, then the fallback.
+    assert len(stand_in) == 4

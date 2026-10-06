@@ -1587,6 +1587,19 @@ class Settings(BaseSettings):
             "fallback."
         ),
     )
+    ai_model_fallbacks: str = Field(
+        default="",
+        description=(
+            "Comma-separated models a long structured call (drafting a note, "
+            "importing one, deriving a note type) moves on to, in order, when "
+            "ai_model fails transiently or gives no answer in time. Same "
+            "format as ai_model_flash_fallbacks, e.g. "
+            "``bedrock:us.anthropic.claude-sonnet-4-6``. Unlike the interactive "
+            "list, these are never started beside a slow primary: one call "
+            "runs at a time. Empty (default) keeps today's single model and "
+            "its own retry."
+        ),
+    )
     ai_hedge_after_seconds: float | None = Field(
         default=None,
         gt=0,
@@ -1600,7 +1613,8 @@ class Settings(BaseSettings):
     )
 
     # Amazon Bedrock, for ``bedrock:``-prefixed models (most usefully as an
-    # entry in ai_model_flash_fallbacks, a second provider on a second cloud).
+    # entry in ai_model_flash_fallbacks or ai_model_fallbacks, a second
+    # provider on a second cloud).
     aws_bedrock_region: str = Field(
         default="us-east-1",
         description=(
@@ -1633,6 +1647,11 @@ class Settings(BaseSettings):
     def flash_fallback_models(self) -> tuple[str, ...]:
         """``ai_model_flash_fallbacks`` split into model ids, in order."""
         return tuple(m.strip() for m in self.ai_model_flash_fallbacks.split(",") if m.strip())
+
+    @property
+    def fallback_models(self) -> tuple[str, ...]:
+        """``ai_model_fallbacks`` split into model ids, in order."""
+        return tuple(m.strip() for m in self.ai_model_fallbacks.split(",") if m.strip())
 
     note_max_output_tokens: int = Field(
         default=16384,
