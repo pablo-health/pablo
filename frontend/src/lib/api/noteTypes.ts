@@ -7,13 +7,16 @@
  */
 
 import type {
+  DeriveNoteTypeRequest,
+  DeriveNoteTypeResponse,
   NoteDraftPreviewRequest,
   NoteDraftPreviewResponse,
   NoteTypeListResponse,
+  NoteTypeReferenceListResponse,
   NoteTypeSchema,
   PracticeNoteTypeSpec,
 } from "@/types/noteTypes"
-import { del, get, post, put } from "./client"
+import { del, get, post, postForm, put } from "./client"
 
 export async function listNoteTypes(token?: string): Promise<NoteTypeListResponse> {
   return get<NoteTypeListResponse>("/api/note-types", token)
@@ -53,4 +56,25 @@ export async function previewNoteDraft(
   token?: string,
 ): Promise<NoteDraftPreviewResponse> {
   return post<NoteDraftPreviewResponse>("/api/note-types/preview", body, token)
+}
+
+/**
+ * Propose a note type from sample notes and/or a description. Nothing is
+ * saved; saving is `savePracticeNoteType` with the returned spec.
+ */
+export async function deriveNoteType(
+  request: DeriveNoteTypeRequest,
+  token?: string,
+): Promise<DeriveNoteTypeResponse> {
+  const form = new FormData()
+  for (const sample of request.samples) form.append("samples", sample)
+  for (const file of request.files) form.append("files", file, file.name)
+  if (request.description.trim()) form.append("description", request.description)
+  if (request.reference) form.append("reference", request.reference)
+  return postForm<DeriveNoteTypeResponse>("/api/note-types/derive", form, token)
+}
+
+/** References this deployment registered to compare a proposal against, besides the note types. */
+export async function listDeriveReferences(token?: string): Promise<NoteTypeReferenceListResponse> {
+  return get<NoteTypeReferenceListResponse>("/api/note-types/derive/references", token)
 }

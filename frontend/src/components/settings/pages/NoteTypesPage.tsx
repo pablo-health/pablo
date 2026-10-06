@@ -4,8 +4,9 @@
 
 import { useState } from "react"
 import { useNoteType, useNoteTypes } from "@/hooks/useNoteTypes"
-import { PRACTICE_KEY_PREFIX, type NoteTypeSchema } from "@/types/noteTypes"
+import { PRACTICE_KEY_PREFIX, type DeriveNoteTypeResponse, type NoteTypeSchema } from "@/types/noteTypes"
 import { SettingsCard } from "../ui"
+import { FromYourNotes } from "../noteTypes/FromYourNotes"
 import { NoteTypeEditor } from "../noteTypes/NoteTypeEditor"
 import { NoteTypeList } from "../noteTypes/NoteTypeList"
 import { StartOptions } from "../noteTypes/StartOptions"
@@ -15,7 +16,8 @@ import { NOTE_TYPE_TEMPLATES, type SampleVisit } from "../noteTypes/templates"
 type Mode =
   | { kind: "list" }
   | { kind: "edit"; key: string }
-  | { kind: "new"; draft: NoteTypeDraft; samples: SampleVisit[] }
+  | { kind: "derive" }
+  | { kind: "new"; draft: NoteTypeDraft; samples: SampleVisit[]; derived?: DeriveNoteTypeResponse }
 
 /** A type saved from a template keeps that template's sample visits for Try it. */
 function samplesForSlug(slug: string): SampleVisit[] {
@@ -25,7 +27,8 @@ function samplesForSlug(slug: string): SampleVisit[] {
 
 /**
  * Practice > Note types. The practice's own note types: list and retire them,
- * edit one, or start one blank, from a template, or from JSON.
+ * edit one, or start one blank, from a template, from the clinician's own
+ * notes, or from JSON.
  */
 export function NoteTypesPage() {
   const [mode, setMode] = useState<Mode>({ kind: "list" })
@@ -39,9 +42,9 @@ export function NoteTypesPage() {
     setMode({ kind: "list" })
   }
   const back = () => setMode({ kind: "list" })
-  const startNew = (draft: NoteTypeDraft, samples: SampleVisit[] = []) => {
+  const startNew = (draft: NoteTypeDraft, samples: SampleVisit[] = [], derived?: DeriveNoteTypeResponse) => {
     setSavedMessage(null)
-    setMode({ kind: "new", draft, samples })
+    setMode({ kind: "new", draft, samples, derived })
   }
 
   if (mode.kind === "new") {
@@ -51,6 +54,16 @@ export function NoteTypesPage() {
         samples={mode.samples}
         takenKeys={takenKeys}
         onSaved={onSaved}
+        onCancel={back}
+        derived={mode.derived}
+      />
+    )
+  }
+  if (mode.kind === "derive") {
+    return (
+      <FromYourNotes
+        noteTypes={noteTypes}
+        onDerived={(derived) => startNew(draftFromSpec(derived.spec, null), [], derived)}
         onCancel={back}
       />
     )
@@ -87,6 +100,10 @@ export function NoteTypesPage() {
       <StartOptions
         onBlank={() => startNew(blankDraft())}
         onTemplate={(t) => startNew(draftFromSpec(t.spec, null, t.slug), t.samples)}
+        onFromNotes={() => {
+          setSavedMessage(null)
+          setMode({ kind: "derive" })
+        }}
         onImport={(spec) => startNew(draftFromSpec(spec, null))}
       />
     </>
