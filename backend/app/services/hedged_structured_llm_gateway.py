@@ -70,7 +70,6 @@ from .structured_llm_gateway import (
     StructuredCompletion,
     StructuredLLMGateway,
     StructuredOutputTruncatedError,
-    get_default_structured_llm_gateway,
     resolve_structured_llm_gateway,
 )
 
@@ -248,21 +247,55 @@ class HedgedStructuredLLMGateway(StructuredLLMGateway):
         return completion
 
 
+class ProviderStructuredLLMGateway(StructuredLLMGateway):
+    """Send each call to the gateway for its model's provider, unchanged.
+
+    One model, that provider's own retry: what a feature with no fallbacks
+    gets. A bare model id goes to the default Gemini gateway, exactly as
+    before features were keyed; a prefixed one to its own provider.
+    """
+
+    def complete_structured(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        response_schema: dict[str, Any],
+        max_output_tokens: int,
+        temperature: float = 0.3,
+        thinking_budget: int | None = None,
+        timeout_seconds: float | None = None,
+        retry_policy: RetryPolicy | None = None,
+    ) -> StructuredCompletion:
+        return resolve_structured_llm_gateway(model).complete_structured(
+            model=model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            response_schema=response_schema,
+            max_output_tokens=max_output_tokens,
+            temperature=temperature,
+            thinking_budget=thinking_budget,
+            timeout_seconds=timeout_seconds,
+            retry_policy=retry_policy,
+        )
+
+
 def generation_gateway(
     feature: str, single: StructuredLLMGateway | None = None
 ) -> StructuredLLMGateway:
     """The gateway a long structured call for ``feature`` goes through.
 
-    With no fallbacks named for ``feature``, that is ``single`` (the default
-    Gemini gateway unless given), unchanged: one model, its own retry. With
-    fallbacks named, a hedged gateway that runs the attempts listed in this
-    module's docstring one at a time, never side by side. ``single``, when
-    given, answers every leg whatever its model, as the end-to-end stand-in
-    does.
+    With no fallbacks named for ``feature``, each call goes to its model's
+    own provider, unchanged: one model, its own retry (or to ``single``,
+    when given). With fallbacks named, a hedged gateway that runs the
+    attempts listed in this module's docstring one at a time, never side by
+    side. ``single``, when given, answers every leg whatever its model, as
+    the end-to-end stand-in does.
     """
     fallbacks = get_settings().fallbacks_for(feature)
     if not fallbacks:
-        return single or get_default_structured_llm_gateway()
+        return single or ProviderStructuredLLMGateway()
     return HedgedStructuredLLMGateway(
         fallbacks=fallbacks,
         stall_after=None,
@@ -274,6 +307,7 @@ def generation_gateway(
 __all__ = [
     "GENERATION_BUDGET_SECONDS",
     "HedgedStructuredLLMGateway",
+    "ProviderStructuredLLMGateway",
     "classify_structured_failure",
     "generation_gateway",
 ]

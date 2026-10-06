@@ -30,6 +30,7 @@ from app.services.ai_features import AIFeature
 from app.services.hedged_structured_llm_gateway import (
     GENERATION_BUDGET_SECONDS,
     HedgedStructuredLLMGateway,
+    ProviderStructuredLLMGateway,
     generation_gateway,
 )
 from app.services.http_structured_llm_gateway import HttpStructuredLLMGateway
@@ -44,7 +45,6 @@ from app.services.structured_llm_gateway import (
     StructuredCompletion,
     StructuredLLMGateway,
     StructuredOutputTruncatedError,
-    get_default_structured_llm_gateway,
     register_structured_llm_provider,
 )
 from app.settings import get_settings
@@ -209,12 +209,32 @@ _PSYCHOTHERAPY_SPEC = PracticeNoteTypeSpec.model_validate(
 
 class TestWiring:
     def test_with_nothing_configured_each_call_site_keeps_its_one_model(self) -> None:
-        default = get_default_structured_llm_gateway()
-        assert RegistryNoteGenerationService()._llm_gateway is default
-        assert NoteImportService()._llm_gateway is default
-        assert NoteTypeDeriveService(NoteImportService())._llm_gateway is default
+
+        assert isinstance(
+            RegistryNoteGenerationService()._llm_gateway, ProviderStructuredLLMGateway
+        )
+        assert isinstance(NoteImportService()._llm_gateway, ProviderStructuredLLMGateway)
+        derive = NoteTypeDeriveService(NoteImportService())
+        assert isinstance(derive._llm_gateway, ProviderStructuredLLMGateway)
         stand_in = HttpStructuredLLMGateway("http://stand-in.invalid")
         assert generation_gateway(AIFeature.NOTE_GENERATION, stand_in) is stand_in
+
+    def test_unnamed_a_call_goes_once_to_its_own_models_provider(
+        self, serve: Callable[[Provider], Provider]
+    ) -> None:
+        """A prefixed model is served by its provider, not the default gateway."""
+        provider = serve(Provider(primary=[_transient()]))
+        gateway = generation_gateway("an_extension_feature")
+
+        with pytest.raises(RuntimeError, match="503"):
+            gateway.complete_structured(
+                model=PRIMARY,
+                system_prompt="s",
+                user_prompt="u",
+                response_schema={"type": "object"},
+                max_output_tokens=64,
+            )
+        assert provider.models == [PRIMARY]
 
     def test_a_feature_not_named_has_no_fallback_whatever_else_is_set(
         self, monkeypatch: pytest.MonkeyPatch
@@ -229,8 +249,9 @@ class TestWiring:
             assert settings.fallbacks_for(AIFeature.CHAT) == ()
             assert settings.fallbacks_for(AIFeature.NOTE_IMPORT) == (FALLBACK,)
             assert settings.fallbacks_for(AIFeature.AVAILABILITY_PARSE) == ("test:interactive",)
-            default = get_default_structured_llm_gateway()
-            assert RegistryNoteGenerationService()._llm_gateway is default
+
+            gateway = RegistryNoteGenerationService()._llm_gateway
+            assert isinstance(gateway, ProviderStructuredLLMGateway)
             assert isinstance(NoteImportService()._llm_gateway, HedgedStructuredLLMGateway)
         finally:
             get_settings.cache_clear()
