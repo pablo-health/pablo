@@ -24,6 +24,7 @@ from datetime import date, datetime, time
 from typing import Any
 
 from ..notes import NoteTypeDefinition, NoteTypeRegistry, get_default_registry
+from ..notes.diagnoses import DIAGNOSES_KIND_LABEL
 from ..settings import get_settings
 
 # These helpers build/validate the registry-shaped JSON for a note type.
@@ -342,7 +343,9 @@ def _field_guide(definition: NoteTypeDefinition) -> str:
     for section in definition.sections:
         lines.append(f"## {section.key} — {section.label}")
         for fld in section.fields:
-            kind = "list of strings" if fld.kind == "list" else "text"
+            kind = {"list": "list of strings", "diagnoses": DIAGNOSES_KIND_LABEL}.get(
+                fld.kind, "text"
+            )
             hint = f" — {fld.ai_hint}" if fld.ai_hint else ""
             lines.append(f"- {fld.key} ({kind}): {fld.label}{hint}")
     return "\n".join(lines)

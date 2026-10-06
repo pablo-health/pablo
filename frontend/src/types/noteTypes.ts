@@ -10,7 +10,7 @@
 
 import type { TranscriptModel } from "./sessions"
 
-export type NoteFieldKind ="text" | "list" | "structured"
+export type NoteFieldKind = "text" | "list" | "diagnoses" | "structured"
 
 export type NoteTier = "core" | "extension"
 
@@ -91,10 +91,13 @@ export function isPracticeKey(key: string): boolean {
   return key.startsWith(PRACTICE_KEY_PREFIX)
 }
 
+/** The field shapes a practice can give its own types. */
+export type PracticeFieldKind = "text" | "list" | "diagnoses"
+
 export interface PracticeFieldSpec {
   key: string
   label: string
-  kind: "text" | "list"
+  kind: PracticeFieldKind
   ai_hint: string
 }
 

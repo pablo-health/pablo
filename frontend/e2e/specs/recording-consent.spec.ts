@@ -56,13 +56,33 @@ function isoDay(at: Date): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: BROWSER_TIME_ZONE }).format(at)
 }
 
-/** A session today, twenty minutes long, starting `minutesFromNow` from now. */
+/**
+ * `hour`:00 today on the browser's calendar, as an instant.
+ *
+ * Not "now plus a few minutes": Today lists the sessions on the clinician's
+ * calendar day, and for the hour around midnight in that zone an offset from
+ * now lands on yesterday or tomorrow and the row is not there to click.
+ */
+function todayAt(hour: number): Date {
+  const guess = new Date(`${isoDay(new Date())}T${String(hour).padStart(2, "0")}:00:00Z`)
+  const zonedHour = Number(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: BROWSER_TIME_ZONE,
+      hour: "numeric",
+      hourCycle: "h23",
+    }).format(guess),
+  )
+  const behindBy = (hour - zonedHour + 24) % 24
+  return new Date(guess.getTime() + behindBy * 60 * 60 * 1000)
+}
+
+/** A session today, twenty minutes long, starting at `hour`:00 on the browser's calendar. */
 async function giveSessionToday(
   api: ApiClient,
   patient: Patient,
-  minutesFromNow: number,
+  hour: number,
 ): Promise<Appointment> {
-  const start = new Date(Date.now() + minutesFromNow * 60 * 1000)
+  const start = todayAt(hour)
   const end = new Date(start.getTime() + 20 * 60 * 1000)
   return api.post<Appointment>("/api/appointments", {
     patient_id: patient.id,
@@ -143,7 +163,7 @@ test("a client who declined is not recorded, and the chart says when", async () 
     decision: "declined",
     effective_on: isoDay(declinedOn),
   })
-  const appointment = await giveSessionToday(api, patient, -40)
+  const appointment = await giveSessionToday(api, patient, 9)
   try {
     await startSessionFor(page, patient)
 
@@ -177,7 +197,7 @@ test("a client who declined is not recorded, and the chart says when", async () 
 test("with nothing on file, 'Client agreed today' records it and starts", async () => {
   const { page, api } = practice
   const patient = await givePatient(api)
-  const appointment = await giveSessionToday(api, patient, 20)
+  const appointment = await giveSessionToday(api, patient, 15)
   try {
     await startSessionFor(page, patient)
 
@@ -202,7 +222,7 @@ interface Redeemed {
 test("with nothing on file, 'Record anyway' tells the desktop app it was asked", async () => {
   const { page, api } = practice
   const patient = await givePatient(api)
-  const appointment = await giveSessionToday(api, patient, 20)
+  const appointment = await giveSessionToday(api, patient, 15)
 
   // The real server issues the intents; only the link is pointed at the stand-in page.
   const issued: { intentId: string; prompted: boolean }[] = []

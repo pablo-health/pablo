@@ -80,6 +80,38 @@ def test_a_practice_type_gets_a_draft_in_its_own_shape(stand_in: list[str]) -> N
     assert stand_in == [f"{BASE_URL}/v1/structured"]
 
 
+def test_a_diagnoses_field_gets_one_coded_diagnosis(stand_in: list[str]) -> None:
+    spec = PracticeNoteTypeSpec.model_validate(
+        {
+            "label": "Evaluation",
+            "sections": [
+                {
+                    "key": "assessment",
+                    "label": "Assessment",
+                    "fields": [{"key": "diagnoses", "label": "Diagnoses", "kind": "diagnoses"}],
+                }
+            ],
+        }
+    )
+    definition = to_definition("custom.eval", 1, spec)
+
+    generated = _service().generate_note(
+        definition.key, TRANSCRIPT, PATIENT, NOW, definition=definition
+    )
+
+    assert generated.content == {
+        "assessment": {
+            "diagnoses": [
+                {
+                    "label": "Stand-in diagnosis for assessment.diagnoses",
+                    "code": "F00.0",
+                    "status": None,
+                }
+            ]
+        }
+    }
+
+
 def test_a_soap_draft_survives_its_second_call(stand_in: list[str]) -> None:
     """SOAP asks again for sentence-to-transcript links; the stand-in answers none."""
     generated = _service().generate_note("soap", TRANSCRIPT, PATIENT, NOW)

@@ -218,8 +218,8 @@
           {
             "key": "diagnoses",
             "label": "Diagnoses",
-            "kind": "list",
-            "ai_hint": "The entered diagnoses with codes, one per item, exactly as entered. If not provided, only diagnoses the clinician named in the visit, without inventing codes."
+            "kind": "diagnoses",
+            "ai_hint": "The entered diagnoses, each with its code exactly as entered. If not provided, only diagnoses the clinician named in the visit, with a code only when the clinician gave one."
           },
           {
             "key": "formulation",

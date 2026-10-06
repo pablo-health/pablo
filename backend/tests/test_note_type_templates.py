@@ -51,3 +51,36 @@ def test_template_has_a_sample_visit(path: Path) -> None:
 
     assert samples
     assert all(sample["transcript"].strip() for sample in samples)
+
+
+@pytest.mark.parametrize("path", _FILES, ids=[p.stem for p in _FILES])
+def test_a_templates_diagnoses_are_kept_as_stated(path: Path) -> None:
+    """A field that records diagnoses uses the kind that keeps each code apart."""
+    spec = PracticeNoteTypeSpec.model_validate(json.loads(path.read_text())["spec"])
+
+    diagnoses = [f for s in spec.sections for f in s.fields if f.key == "diagnoses"]
+    assert diagnoses
+    assert all(f.kind == "diagnoses" for f in diagnoses)
+
+
+def _evaluation() -> PracticeNoteTypeSpec:
+    return PracticeNoteTypeSpec.model_validate(
+        json.loads((TEMPLATES / "psychiatric_evaluation.json").read_text())["spec"]
+    )
+
+
+def test_the_evaluation_offers_both_ways_to_bill_a_first_visit() -> None:
+    visit_code = next(i for i in _evaluation().inputs if i.key == "visit_code")
+
+    assert visit_code.kind == "choice"
+    assert any("90792" in option for option in visit_code.options)
+    assert any("99202-99205" in option for option in visit_code.options)
+
+
+def test_the_evaluation_keeps_psychotherapy_off_a_diagnostic_evaluation() -> None:
+    spec = _evaluation()
+
+    assert spec.sections[-1].key == "psychotherapy"
+    assert spec.user_template is not None
+    assert "For a psychiatric diagnostic evaluation" in spec.user_template
+    assert "leave every field of the Psychotherapy section empty" in spec.user_template
