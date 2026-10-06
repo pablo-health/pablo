@@ -2,9 +2,21 @@
 
 "use client"
 
-import { getNoteType, listNoteTypes } from "@/lib/api/noteTypes"
+import {
+  getNoteType,
+  listNoteTypes,
+  previewNoteDraft,
+  retirePracticeNoteType,
+  savePracticeNoteType,
+} from "@/lib/api/noteTypes"
 import { queryKeys } from "@/lib/api/queryKeys"
-import { useAuthQuery } from "./useAuthQuery"
+import type {
+  NoteDraftPreviewRequest,
+  NoteDraftPreviewResponse,
+  NoteTypeSchema,
+  PracticeNoteTypeSpec,
+} from "@/types/noteTypes"
+import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
 
 const CATALOG_STALE_MS = 5 * 60 * 1000
 
@@ -44,4 +56,27 @@ export function useNoteTypeLabel(): (key: string) => string {
   const { data } = useNoteTypes()
   const labels = new Map((data?.note_types ?? []).map((t) => [t.key, t.label]))
   return (key) => labels.get(key) ?? key
+}
+
+/** Save the next version of one of the practice's own types. */
+export function useSavePracticeNoteType(token?: string) {
+  return useAuthMutation<NoteTypeSchema, { slug: string; spec: PracticeNoteTypeSpec }>({
+    mutationFn: ({ slug, spec }) => savePracticeNoteType(slug, spec, token),
+    invalidateKeys: [queryKeys.noteTypes.all],
+  })
+}
+
+/** Retire one of the practice's own types. */
+export function useRetirePracticeNoteType(token?: string) {
+  return useAuthMutation<NoteTypeSchema, string>({
+    mutationFn: (slug) => retirePracticeNoteType(slug, token),
+    invalidateKeys: [queryKeys.noteTypes.all],
+  })
+}
+
+/** Draft a note from a transcript without saving it. Writes nothing, so invalidates nothing. */
+export function usePreviewNoteDraft(token?: string) {
+  return useAuthMutation<NoteDraftPreviewResponse, NoteDraftPreviewRequest>({
+    mutationFn: (body) => previewNoteDraft(body, token),
+  })
 }
