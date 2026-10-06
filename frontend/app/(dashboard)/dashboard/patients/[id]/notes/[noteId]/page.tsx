@@ -34,6 +34,7 @@ import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { useNoteTypeLabel } from "@/hooks/useNoteTypes"
 import { useNote, useUpdateNoteEdits } from "@/hooks/useNotes"
 import { useNoteSigning, useSignNote } from "@/hooks/useNoteSigning"
+import { useVisitPdfLines } from "@/hooks/useVisitTimes"
 import { useUserTimeZone } from "@/hooks/usePreferences"
 import { pdfSignatureBlock } from "@/lib/utils/signatureBlock"
 import type { NoteSignerFields } from "@/types/notes"
@@ -58,6 +59,7 @@ export default function StandaloneNotePage({ params }: PageProps) {
   const sign = useSignNote()
   const { data: signing } = useNoteSigning(note?.id)
   const timeZone = useUserTimeZone()
+  const visitPdf = useVisitPdfLines(note?.session_id)
   const people = usePeopleTerm()
   const [signOpen, setSignOpen] = useState(false)
 
@@ -183,6 +185,7 @@ export default function StandaloneNotePage({ params }: PageProps) {
           pdfMetadata={{
             patient_name: patientName,
             session_date: note.created_at,
+            visit: visitPdf,
             signature: pdfSignatureBlock(signing, timeZone),
           }}
           onSave={isFinalized ? undefined : handleSave}

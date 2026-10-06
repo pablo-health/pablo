@@ -83,7 +83,7 @@ async function answerAndHandIn(page: Page, signer: string, answer: string, days:
   // The practice's retention period, as the setting reads now.
   await expect(page.getByTestId("forms-consent-document")).toContainText(TEMPLATE)
   await expect(page.getByTestId("forms-consent-document")).toContainText(
-    `Your practice keeps session audio for ${days} days`,
+    `Session audio is deleted ${days} days after your session.`,
   )
   await page.getByTestId("forms-consent-affirm").check()
   await page.getByTestId("forms-consent-name").fill(signer)

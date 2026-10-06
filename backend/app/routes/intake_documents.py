@@ -58,6 +58,7 @@ from ..models.intake_document_api import (
     UpdateDocumentRequest,
 )
 from ..repositories import get_intake_document_repository
+from ..services.audio_retention import retention_phrase
 from ..services.audit_service import AuditService, get_audit_service
 from ..services.intake_document_service import (
     IntakeDocumentService,
@@ -121,7 +122,10 @@ def _practice_values() -> dict[str, str]:
     )
     if practice is None:
         return {}
-    return {"audio_retention_days": str(practice.audio_retention_days)}
+    return {
+        "audio_retention": retention_phrase(practice.audio_retention_days),
+        "audio_retention_days": str(practice.audio_retention_days),
+    }
 
 
 def get_document_values(

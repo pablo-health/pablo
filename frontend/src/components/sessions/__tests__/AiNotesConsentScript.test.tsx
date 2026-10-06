@@ -44,6 +44,12 @@ describe("consentScript", () => {
     expect(text).toContain("kept for up to 90 days")
     expect(text).toContain("You can say no, now or at any time")
   })
+
+  it("says the audio goes at signing when the practice deletes it then", () => {
+    const text = consentScript(0).join(" ")
+    expect(text).toContain("The audio is deleted once your note is signed.")
+    expect(text).not.toContain("kept for up to")
+  })
 })
 
 describe("AiNotesConsentScriptButton", () => {

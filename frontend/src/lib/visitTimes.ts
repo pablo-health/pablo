@@ -7,6 +7,7 @@
  * is decided elsewhere. Minutes are whole minutes, rounded down.
  */
 
+import type { VisitTimes } from "@/types/visitTimes"
 import type { PeopleWords } from "./peopleTerm"
 
 export const ADD_ON_MINIMUM_MINUTES = 16
@@ -64,6 +65,18 @@ function minutesOfDay(moment: Date, timeZone: string): number {
   }).formatToParts(moment)
   const value = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? 0)
   return value("hour") * MINUTES_PER_HOUR + value("minute")
+}
+
+/** "Started 11:00 AM · Ended 11:55 AM · 55 min", or nothing when either end is unknown. */
+export function visitLineText(
+  times: Pick<VisitTimes, "started_at" | "ended_at" | "total_minutes">,
+  timeZone: string,
+): string | null {
+  if (!times.started_at || !times.ended_at) return null
+  return `Started ${clockTime(times.started_at, timeZone)} · Ended ${clockTime(
+    times.ended_at,
+    timeZone,
+  )} · ${times.total_minutes} min`
 }
 
 export interface ClientPresentTiming {

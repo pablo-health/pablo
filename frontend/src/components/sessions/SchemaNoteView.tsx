@@ -20,7 +20,7 @@
 "use client"
 
 import { useState } from "react"
-import { Edit, Save, X } from "lucide-react"
+import { Download, Edit, Save, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import {
@@ -32,7 +32,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { useNoteType } from "@/hooks/useNoteTypes"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
+import { schemaNotePdf } from "@/lib/notePdf"
+import { isEmptyValue, listItems, textValue } from "@/lib/schemaNoteValues"
 import { statedDiagnoses, type StatedDiagnosis } from "@/lib/statedDiagnoses"
+import { exportNoteToPDF, type PDFExportMetadata } from "@/lib/utils/pdfExport"
 import type { NoteFieldSchema, NoteTypeSchema } from "@/types/noteTypes"
 import type {
   NoteContent,
@@ -51,6 +55,8 @@ export interface SchemaNoteViewProps {
   onSave?: (editedNote: NoteContent) => void
   /** Offered beside each stated diagnosis while the note is not being edited. */
   diagnosisAction?: DiagnosisAction
+  /** Header of the note's PDF. Export PDF is offered only when given. */
+  pdfMetadata?: PDFExportMetadata
   className?: string
 }
 
@@ -92,21 +98,6 @@ export function SchemaNoteView({
 type Drafts = Record<string, string>
 
 const draftKey = (sectionKey: string, fieldKey: string) => `${sectionKey}.${fieldKey}`
-
-/** A stored value as display lines for a `list` field. */
-function listItems(value: unknown): string[] {
-  if (Array.isArray(value)) return value.map((v) => String(v)).filter((v) => v.trim())
-  if (typeof value === "string") return value.split("\n").filter((v) => v.trim())
-  return []
-}
-
-/** A stored value as display text for a `text` field. */
-function textValue(value: unknown): string {
-  if (typeof value === "string") return value
-  if (Array.isArray(value)) return value.map((v) => String(v)).join("\n")
-  if (value == null) return ""
-  return JSON.stringify(value, null, 2)
-}
 
 function draftsFrom(
   definition: NoteTypeSchema,
@@ -158,14 +149,6 @@ function keptDiagnoses(draft: string): StatedDiagnosis[] {
   return statedDiagnoses(parsed)
 }
 
-function isEmptyValue(value: unknown): boolean {
-  if (value == null) return true
-  if (typeof value === "string") return !value.trim()
-  if (Array.isArray(value)) return listItems(value).length === 0
-  if (typeof value === "object") return Object.keys(value).length === 0
-  return false
-}
-
 export interface SchemaNoteBodyProps extends Omit<SchemaNoteViewProps, "noteTypeKey" | "version"> {
   definition: NoteTypeSchema
 }
@@ -177,8 +160,10 @@ export function SchemaNoteBody({
   readonly = false,
   onSave,
   diagnosisAction,
+  pdfMetadata,
   className,
 }: SchemaNoteBodyProps) {
+  const people = usePeopleTerm()
   // Same blank-note behaviour as the SOAP and Narrative views: a manually
   // created, empty note opens straight in the editor.
   const isBlank = !noteEdited && !note
@@ -228,6 +213,11 @@ export function SchemaNoteBody({
     setShowConfirmDialog(false)
   }
 
+  // What the screen shows is what the PDF prints: the edit over the draft.
+  const handlePDFExport = () => {
+    if (pdfMetadata) exportNoteToPDF(pdfMetadata, schemaNotePdf(definition, displaySections), people)
+  }
+
   if (!hasDisplay) {
     return (
       <div className={cn("card text-center py-12", className)}>
@@ -253,6 +243,12 @@ export function SchemaNoteBody({
         </div>
 
         <div className="flex gap-2">
+          {pdfMetadata && !isBlank && (
+            <Button variant="outline" size="sm" onClick={handlePDFExport}>
+              <Download className="w-4 h-4 mr-2" />
+              Export PDF
+            </Button>
+          )}
           {canEdit && !editMode && (
             <Button size="sm" onClick={enterEditMode}>
               <Edit className="w-4 h-4 mr-2" />

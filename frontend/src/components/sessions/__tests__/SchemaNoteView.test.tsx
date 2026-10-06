@@ -12,6 +12,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { ReactNode } from "react"
 import { NoteViewer } from "../NoteViewer"
 import { getNoteType } from "@/lib/api/noteTypes"
+import { exportNoteToPDF, type PDFExportMetadata } from "@/lib/utils/pdfExport"
 import { ApiError } from "@/lib/api/client"
 import { createMockNote } from "@/test/factories"
 import { noteContentToJson, type NoteContent } from "@/types/sessions"
@@ -22,7 +23,7 @@ vi.mock("@/lib/api/noteTypes", () => ({
   listNoteTypes: vi.fn(),
 }))
 
-vi.mock("@/lib/utils/pdfExport", () => ({ exportSOAPToPDF: vi.fn() }))
+vi.mock("@/lib/utils/pdfExport", () => ({ exportSOAPToPDF: vi.fn(), exportNoteToPDF: vi.fn() }))
 
 vi.mock("@/lib/config", () => ({
   useConfig: () => ({ showVerificationBadges: true }),
@@ -233,5 +234,80 @@ describe("catalog-driven note view", () => {
     expect(screen.getByText("Narrative Note")).toBeInTheDocument()
     expect(screen.getByText("Hello")).toBeInTheDocument()
     expect(getNoteType).not.toHaveBeenCalled()
+  })
+})
+
+describe("a note's PDF", () => {
+  const META: PDFExportMetadata = {
+    patient_name: "Rivera, Ana",
+    session_date: "2026-10-06T15:00:00Z",
+    visit: ["Started 11:00 AM · Ended 11:55 AM · 55 min"],
+    signature: { lines: ["Electronically signed by Sam Ortiz, LMFT"], amendments: [], addenda: [] },
+  }
+
+  it("exports what the note shows, edits included, in the type's order", async () => {
+    vi.mocked(getNoteType).mockResolvedValue(DAP)
+    render(
+      <NoteViewer
+        readonly
+        pdfMetadata={META}
+        note={createMockNote({
+          note_type: "dap",
+          content: DAP_CONTENT,
+          content_edited: { ...DAP_CONTENT, assessment: { impression: "Stable" } },
+        })}
+      />,
+      { wrapper },
+    )
+
+    fireEvent.click(await screen.findByRole("button", { name: "Export PDF" }))
+
+    expect(exportNoteToPDF).toHaveBeenCalledTimes(1)
+    const [meta, pdf] = vi.mocked(exportNoteToPDF).mock.calls[0]
+    expect(meta).toBe(META)
+    expect(pdf).toEqual({
+      title: "DAP",
+      sections: [
+        {
+          title: "Data",
+          blocks: [
+            { label: "Client report", content: "Reports sleeping better" },
+            { label: "Observations", content: "- Calm\n- Engaged" },
+          ],
+        },
+        { title: "Assessment", blocks: [{ label: "Clinical impression", content: "Stable" }] },
+        {
+          title: "Plan",
+          blocks: [
+            { label: "Next steps", content: "- Continue CBT" },
+            { label: "Measures", content: JSON.stringify({ phq9: 7 }, null, 2) },
+          ],
+        },
+      ],
+    })
+  })
+
+  it("offers no PDF where the page gives the note no header", async () => {
+    vi.mocked(getNoteType).mockResolvedValue(DAP)
+    render(<NoteViewer note={createMockNote({ note_type: "dap", content: DAP_CONTENT })} />, {
+      wrapper,
+    })
+    await screen.findByRole("heading", { name: "DAP" })
+    expect(screen.queryByRole("button", { name: "Export PDF" })).not.toBeInTheDocument()
+  })
+
+  it("exports a narrative note's body", () => {
+    render(
+      <NoteViewer
+        pdfMetadata={META}
+        note={createMockNote({ note_type: "narrative", content: { body: "Hello" } })}
+      />,
+      { wrapper },
+    )
+    fireEvent.click(screen.getByRole("button", { name: "Export PDF" }))
+    expect(vi.mocked(exportNoteToPDF).mock.calls[0][1]).toEqual({
+      title: "Narrative Note",
+      sections: [{ title: "", blocks: [{ label: null, content: "Hello" }] }],
+    })
   })
 })
