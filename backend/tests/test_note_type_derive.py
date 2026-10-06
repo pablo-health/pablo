@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -50,6 +51,9 @@ Interval history: Pat Anonymous reports sleeping seven hours since the dose chan
 Current medications: sertraline 50 mg each morning
 Plan: Return in four weeks for a medication check.
 """
+
+POSITIONAL = re.compile(r"^(?:field|section|input)_\d+$")
+"""What the guard once named a part it had to replace; never acceptable now."""
 
 STRAY = "Pat brought a watercolor of the lighthouse at Faketown harbor to share today."
 
@@ -203,7 +207,9 @@ def test_a_sample_yields_its_sections_in_order_and_full_coverage(
     assert response.status_code == 200, response.text
     body = response.json()
     assert [s["label"] for s in body["spec"]["sections"]] == ["Interval history", "Plan"]
-    assert body["coverage"] == [{"sample": 0, "passages": 3, "unplaced": [], "checked": True}]
+    assert body["coverage"] == [
+        {"sample": 0, "passages": 3, "unplaced": [], "checked": True, "excluded": 0}
+    ]
     extract_call = gateway.calls[1]
     assert extract_call["thinking_budget"] == 0
     assert SAMPLE.strip() in extract_call["user_prompt"]
@@ -287,7 +293,7 @@ def test_the_response_schema_is_the_spec_schema_inlined() -> None:
     assert "user_template" not in schema["properties"]
     section = schema["properties"]["sections"]["items"]
     field = section["properties"]["fields"]["items"]
-    assert field["properties"]["kind"]["enum"] == ["text", "list"]
+    assert field["properties"]["kind"]["enum"] == ["text", "list", "diagnoses"]
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +342,7 @@ def test_a_hint_still_copied_after_its_rewrite_is_neutralized(
     assert copied_paths(spec, SampleText([SAMPLE])) == []
 
 
-def test_copied_labels_keys_and_prompt_are_neutralized_when_the_rewrite_fails(
+def test_copied_labels_and_keys_lose_their_copied_words_when_the_rewrite_fails(
     client: TestClient, gateway: FakeStructuredLLMGateway
 ) -> None:
     proposal = {
@@ -356,17 +362,19 @@ def test_copied_labels_keys_and_prompt_are_neutralized_when_the_rewrite_fails(
     body = _derive(client, samples=[SAMPLE]).json()
 
     assert body["spec"]["system_prompt"] == ""
-    assert body["spec"]["sections"][0]["key"] == "section_1"
-    assert body["spec"]["sections"][0]["label"] == "Section 1"
+    section = body["spec"]["sections"][0]
+    assert not POSITIONAL.match(section["key"])
+    assert section["label"] == "Reports seven hours"
+    assert section["key"] == "reports_seven_hours"
     assert {g["outcome"] for g in body["guard"]} == {"neutralized"}
-    assert "Pat" not in repr(body["spec"])
+    assert "anonymous" not in repr(body["spec"]).lower()
 
 
 def test_a_sample_heading_used_as_a_label_is_structure_not_a_copy() -> None:
     index = SampleText(["CHIEF COMPLAINT AND REASON FOR VISIT\nClient said little."])
 
     assert not index.copied("Chief complaint and reason for visit", heading_allowed=True)
-    assert index.copied("Chief complaint and reason for visit")
+    assert not index.copied("Chief complaint and reason for visit")
 
 
 def test_a_name_copied_on_its_own_is_a_copy() -> None:

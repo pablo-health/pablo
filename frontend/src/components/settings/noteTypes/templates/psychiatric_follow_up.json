@@ -1,0 +1,412 @@
+{
+  "id": "psychiatric_follow_up",
+  "slug": "psychiatric_follow_up",
+  "spec": {
+    "label": "Psychiatric follow-up (E/M + psychotherapy)",
+    "description": "Medication-management follow-up, with a psychotherapy section for visits that include therapy.",
+    "system_prompt": "You are a documentation assistant for a psychiatric nurse practitioner. You draft a medication-management follow-up note from the transcript of the visit and from values the clinician entered. The note has two portions that must stay separate: the evaluation-and-management portion (history, risk, mental status, assessment, medical decision making, plan) and, only when therapy took place, a psychotherapy portion.\n\nThe transcript has two speakers. Therapist is the clinician; Client is the client. The clinician sometimes keeps recording after the client has left and dictates observations: everything the Therapist says after the Client's last line is the clinician's dictated addendum. Treat the addendum as the clinician's own statements; it is the preferred source for risk, mental status, the monitoring-program check, consent and the clinician's decisions.\n\nWrite in the clinical register of a coded progress note: concise, third person, past tense, the client referred to as \"the client\". Prefer the clinician's own wording for findings. Never assign a level, score or code that the clinician did not state or enter. When a field was not covered in the visit or the addendum, write \"Not stated.\" rather than leaving it out.",
+    "user_template": "Draft the note with these sections and fields:\n\n{fields}\n\nValues the clinician entered before the visit (\"not provided\" means blank):\n- Date of service: {session_date}\n- Place of service: {inputs.place_of_service}\n- Client location (telehealth): {inputs.client_location}\n- Provider location (telehealth): {inputs.provider_location}\n- Allergies: {inputs.allergies}\n- Diagnoses with codes: {inputs.diagnoses}\n\nRules:\n- Copy entered values exactly. Allergies and diagnoses may also come from what the clinician said when not entered.\n- Billing codes, psychotherapy start and end times, and the prescription monitoring check come ONLY from the clinician's own words, usually the dictated addendum. Never infer a code, a time or a check that the clinician did not state; write \"Not stated.\" instead.\n- If no psychotherapy took place, leave every field of the Psychotherapy section empty.\n\nTranscript:\n{transcript}",
+    "sections": [
+      {
+        "key": "encounter",
+        "label": "Encounter",
+        "fields": [
+          {
+            "key": "visit_details",
+            "label": "Visit details",
+            "kind": "text",
+            "ai_hint": "One line each: date of service; E/M code and psychotherapy add-on code exactly as the clinician stated them; psychotherapy start and end time and minutes exactly as stated. \"Not stated.\" for any the clinician did not say."
+          },
+          {
+            "key": "place_of_service",
+            "label": "Place of service",
+            "kind": "text",
+            "ai_hint": "If the place of service is telehealth, write: \"Visit conducted by synchronous audio and video telehealth on a HIPAA-compliant platform. The client was located at <client location>; the provider was located at <provider location>. The client consented to receive care by telehealth.\" using the entered locations (write \"location not entered\" for a missing one). If in office, write \"In-office visit.\" If not provided, write \"Not stated.\""
+          }
+        ]
+      },
+      {
+        "key": "subjective",
+        "label": "Subjective",
+        "fields": [
+          {
+            "key": "chief_complaint",
+            "label": "Chief complaint",
+            "kind": "text",
+            "ai_hint": "One or two sentences, ideally a short quotation of the client's own words about why they are here today."
+          },
+          {
+            "key": "interval_history",
+            "label": "Interval history",
+            "kind": "text",
+            "ai_hint": "What changed since the last visit: current symptoms, their course, frequency, what makes them better or worse, severity and effect on work, relationships and daily functioning, and relevant life context. Specific to this visit."
+          },
+          {
+            "key": "adherence",
+            "label": "Medication adherence",
+            "kind": "text",
+            "ai_hint": "Whether the client is taking medications as prescribed, missed doses, and reasons, as reported."
+          },
+          {
+            "key": "side_effects",
+            "label": "Side effects",
+            "kind": "text",
+            "ai_hint": "Side effects the client was asked about and the answers, by name (e.g. sleep, appetite, palpitations, sexual side effects). Record denials as denials."
+          },
+          {
+            "key": "psychiatric_ros",
+            "label": "Psychiatric review of systems",
+            "kind": "text",
+            "ai_hint": "Pertinent positives and negatives the clinician asked about: mood, mania or hypomania, anxiety, obsessions, trauma symptoms, psychosis, sleep, attention."
+          }
+        ]
+      },
+      {
+        "key": "substance_use",
+        "label": "Substance use",
+        "fields": [
+          {
+            "key": "alcohol",
+            "label": "Alcohol",
+            "kind": "text",
+            "ai_hint": "Use as reported (amount and frequency), or the denial. \"Not asked\" if it did not come up."
+          },
+          {
+            "key": "tobacco_nicotine",
+            "label": "Tobacco / nicotine",
+            "kind": "text",
+            "ai_hint": "Use as reported, or the denial. \"Not asked\" if it did not come up."
+          },
+          {
+            "key": "cannabis",
+            "label": "Cannabis",
+            "kind": "text",
+            "ai_hint": "Use as reported, or the denial. \"Not asked\" if it did not come up."
+          },
+          {
+            "key": "other_substances",
+            "label": "Other substances",
+            "kind": "text",
+            "ai_hint": "Other drugs, including stimulants, opioids or benzodiazepines not prescribed to the client, as reported or denied. \"Not asked\" if it did not come up."
+          }
+        ]
+      },
+      {
+        "key": "medications",
+        "label": "Medications and allergies",
+        "fields": [
+          {
+            "key": "current_medications",
+            "label": "Current medications",
+            "kind": "list",
+            "ai_hint": "Each medication the client takes, as named in the visit: name, dose, route, frequency and timing. One per item."
+          },
+          {
+            "key": "allergies",
+            "label": "Allergies",
+            "kind": "text",
+            "ai_hint": "The entered allergies value; if not provided, what the client or clinician said; otherwise \"Not stated.\""
+          }
+        ]
+      },
+      {
+        "key": "risk",
+        "label": "Risk assessment",
+        "fields": [
+          {
+            "key": "suicidal_homicidal_ideation",
+            "label": "Suicidal / homicidal ideation",
+            "kind": "text",
+            "ai_hint": "Quote what was said about suicidal or homicidal thoughts, intent, plan or means, from the visit or the clinician's addendum. Do not assess."
+          },
+          {
+            "key": "self_harm_violence",
+            "label": "Self-harm / violent behavior",
+            "kind": "text",
+            "ai_hint": "Quote what was said about self-harm or violence. Do not assess."
+          },
+          {
+            "key": "risk_protective_factors",
+            "label": "Risk and protective factors",
+            "kind": "text",
+            "ai_hint": "Risk factors and protective factors as the clinician or client named them (e.g. stable employment, support system, medication adherence)."
+          },
+          {
+            "key": "overall_risk",
+            "label": "Overall acute risk",
+            "kind": "text",
+            "ai_hint": "Only the clinician's own stated judgment of overall acute risk, quoted (e.g. \"overall risk is low\"). If the clinician did not state one, write \"Not stated.\""
+          },
+          {
+            "key": "safety_plan",
+            "label": "Safety plan",
+            "kind": "text",
+            "ai_hint": "Only if any ideation, self-harm or violence was reported: the safety planning the clinician described (warning signs, coping, supports, crisis contacts, means safety). Otherwise leave empty."
+          }
+        ]
+      },
+      {
+        "key": "mse",
+        "label": "Mental status exam",
+        "fields": [
+          {
+            "key": "appearance_behavior",
+            "label": "Appearance and behavior",
+            "kind": "text",
+            "ai_hint": "As observed or dictated by the clinician (grooming, eye contact, psychomotor activity)."
+          },
+          {
+            "key": "orientation",
+            "label": "Orientation",
+            "kind": "text",
+            "ai_hint": "As stated by the clinician (e.g. alert and oriented x4)."
+          },
+          {
+            "key": "speech",
+            "label": "Speech",
+            "kind": "text",
+            "ai_hint": "Rate, rhythm, volume and tone, as stated by the clinician."
+          },
+          {
+            "key": "mood_affect",
+            "label": "Mood and affect",
+            "kind": "text",
+            "ai_hint": "Mood in the client's words where available; affect as the clinician described it."
+          },
+          {
+            "key": "thought_process",
+            "label": "Thought process",
+            "kind": "text",
+            "ai_hint": "As described by the clinician (e.g. linear, goal-directed, tangential)."
+          },
+          {
+            "key": "thought_content",
+            "label": "Thought content and perception",
+            "kind": "text",
+            "ai_hint": "Hallucinations, delusions, preoccupations, and SI/HI as stated, from the clinician."
+          },
+          {
+            "key": "cognition",
+            "label": "Cognition",
+            "kind": "text",
+            "ai_hint": "Attention, memory and concentration as stated by the clinician."
+          },
+          {
+            "key": "insight_judgment",
+            "label": "Insight and judgment",
+            "kind": "text",
+            "ai_hint": "As stated by the clinician."
+          }
+        ]
+      },
+      {
+        "key": "measures",
+        "label": "Measures",
+        "fields": [
+          {
+            "key": "measures_reviewed",
+            "label": "Measures reviewed",
+            "kind": "text",
+            "ai_hint": "Instruments mentioned in the visit (e.g. PHQ-9, GAD-7) with the score, any prior score, and when it was completed in the words used (e.g. \"on Friday\"); never convert a weekday or relative time into a calendar date. Leave empty if none were mentioned."
+          }
+        ]
+      },
+      {
+        "key": "assessment",
+        "label": "Assessment",
+        "fields": [
+          {
+            "key": "diagnoses",
+            "label": "Diagnoses",
+            "kind": "diagnoses",
+            "ai_hint": "The entered diagnoses, each with its code exactly as entered. If not provided, only diagnoses the clinician named in the visit, with a code only when the clinician gave one."
+          },
+          {
+            "key": "formulation",
+            "label": "Clinical formulation",
+            "kind": "text",
+            "ai_hint": "The clinician's own synthesis of how today's history and observations relate to each diagnosis, including severity, course (stable, improving, worsening) and functional impact, as the clinician expressed it. Do not form a judgment the clinician did not express."
+          },
+          {
+            "key": "medical_necessity",
+            "label": "Medical necessity",
+            "kind": "text",
+            "ai_hint": "One sentence on why continued treatment is needed, drawn from what the clinician said about the condition and plan."
+          }
+        ]
+      },
+      {
+        "key": "mdm",
+        "label": "Medical decision making",
+        "fields": [
+          {
+            "key": "problems_addressed",
+            "label": "Problems addressed",
+            "kind": "text",
+            "ai_hint": "The conditions addressed at this visit and the status of each as the clinician described it (e.g. stable, exacerbated, new). State facts; do not name an MDM level."
+          },
+          {
+            "key": "data_reviewed",
+            "label": "Data reviewed",
+            "kind": "text",
+            "ai_hint": "What was reviewed or ordered: measures, labs, outside records, the PDMP report, and any history from someone other than the client. \"None\" if nothing was. Do not name a level."
+          },
+          {
+            "key": "management_risk",
+            "label": "Management",
+            "kind": "text",
+            "ai_hint": "What the management involved, factually: e.g. prescription drug management (which medications were continued, changed, started or stopped), a controlled substance, a decision about a higher level of care. Do not name a level."
+          }
+        ]
+      },
+      {
+        "key": "plan",
+        "label": "Plan",
+        "fields": [
+          {
+            "key": "medication_plan",
+            "label": "Medications",
+            "kind": "list",
+            "ai_hint": "For each medication: continue, change, start or stop, with dose and frequency, and the clinician's stated reason. Record only decisions the clinician stated; never suggest one."
+          },
+          {
+            "key": "pdmp",
+            "label": "PDMP",
+            "kind": "text",
+            "ai_hint": "If the clinician said the state prescription monitoring program (PDMP) was checked, write \"State prescription monitoring program (PDMP) reviewed on <date>: <finding as stated>.\" where <date> is the calendar date the clinician gave, or the date of service when the clinician said \"today\" or gave no date (never the word \"today\"). If a controlled substance was prescribed or continued and the clinician did not mention the check, write \"Not stated.\" If no controlled substance was involved, leave empty."
+          },
+          {
+            "key": "informed_consent",
+            "label": "Informed consent",
+            "kind": "text",
+            "ai_hint": "For any medication started, changed or continued where consent was discussed: which medication, and which elements the clinician said were covered (benefits, risks and side effects, alternatives, risk of misuse or dependence for controlled substances), and the client's agreement. Only what was said."
+          },
+          {
+            "key": "labs",
+            "label": "Labs",
+            "kind": "text",
+            "ai_hint": "Labs ordered, requested from another provider, or reviewed, as stated. Leave empty if none."
+          },
+          {
+            "key": "referrals_coordination",
+            "label": "Referrals and coordination",
+            "kind": "text",
+            "ai_hint": "Referrals made and coordination with other providers, as stated. Leave empty if none."
+          },
+          {
+            "key": "follow_up",
+            "label": "Follow-up",
+            "kind": "text",
+            "ai_hint": "Return interval as the clinician stated it."
+          },
+          {
+            "key": "emergency_instructions",
+            "label": "Emergency instructions",
+            "kind": "text",
+            "ai_hint": "Instructions the clinician gave for side effects or emergencies (e.g. call the office, 988, 911, nearest emergency room), as stated."
+          }
+        ]
+      },
+      {
+        "key": "psychotherapy",
+        "label": "Psychotherapy",
+        "fields": [
+          {
+            "key": "psychotherapy_time",
+            "label": "Psychotherapy time",
+            "kind": "text",
+            "ai_hint": "Start time, end time and minutes of the psychotherapy portion, exactly as the clinician stated them. Never compute or estimate from the transcript timestamps. \"Not stated.\" if the clinician did not say."
+          },
+          {
+            "key": "issues_addressed",
+            "label": "Issues addressed",
+            "kind": "text",
+            "ai_hint": "The behaviors, symptoms or problems worked on during the therapy portion."
+          },
+          {
+            "key": "modality_interventions",
+            "label": "Modality and interventions",
+            "kind": "text",
+            "ai_hint": "The therapy approach and the specific interventions the clinician used (e.g. CBT cognitive reframing, behavioral activation, supportive therapy, skills practice), described concretely."
+          },
+          {
+            "key": "response",
+            "label": "Response",
+            "kind": "text",
+            "ai_hint": "How the client engaged with and responded to the interventions."
+          },
+          {
+            "key": "goal_plan",
+            "label": "Goal and plan",
+            "kind": "text",
+            "ai_hint": "The psychotherapy goal being worked toward and any assignment or practice agreed for before the next visit."
+          },
+          {
+            "key": "progress",
+            "label": "Progress toward goal",
+            "kind": "text",
+            "ai_hint": "Progress toward the goal as described, with any concrete evidence the client gave."
+          },
+          {
+            "key": "therapy_cadence",
+            "label": "Therapy plan and cadence",
+            "kind": "text",
+            "ai_hint": "Ongoing psychotherapy needs and how often, as stated."
+          }
+        ]
+      }
+    ],
+    "inputs": [
+      {
+        "key": "place_of_service",
+        "label": "Place of service",
+        "kind": "choice",
+        "options": [
+          "Telehealth",
+          "In office"
+        ],
+        "required": true
+      },
+      {
+        "key": "client_location",
+        "label": "Client location (telehealth)",
+        "kind": "text",
+        "options": [],
+        "required": false
+      },
+      {
+        "key": "provider_location",
+        "label": "Your location (telehealth)",
+        "kind": "text",
+        "options": [],
+        "required": false
+      },
+      {
+        "key": "allergies",
+        "label": "Allergies (or NKDA)",
+        "kind": "text",
+        "options": [],
+        "required": false
+      },
+      {
+        "key": "diagnoses",
+        "label": "Diagnoses with codes",
+        "kind": "text",
+        "options": [],
+        "required": false
+      }
+    ]
+  },
+  "samples": [
+    {
+      "id": "with_therapy",
+      "label": "Medication check with a therapy portion",
+      "transcript": "[00:00:05] Therapist: Hi Jordan, good to see you. Before we start, are you at home today?\n[00:00:09] Client: Yeah, I'm at home.\n[00:00:12] Therapist: Great. So how have things been since we last met?\n[00:00:18] Client: Honestly, better on the focus side. The Adderall is working. I'm getting through my reports at work. But the worry has been bad the last couple of weeks. Like, lying in bed running through everything that could go wrong.\n[00:00:41] Therapist: Okay. Let's start with the medication and then spend most of our time on the worry. You're on the Adderall XR 20 milligrams in the morning and the sertraline 50, right?\n[00:00:50] Client: Yes, both in the morning.\n[00:00:53] Therapist: Any missed doses?\n[00:00:55] Client: Maybe one sertraline last week, I forgot it on the weekend.\n[00:01:01] Therapist: Okay. Any trouble falling asleep, appetite changes, heart racing, headaches?\n[00:01:07] Client: Appetite's a little lower at lunch but I eat a big dinner. Sleep is mostly the worrying, not the medication I think. No heart stuff.\n[00:01:19] Therapist: Any alcohol?\n[00:01:21] Client: A glass of wine on weekends, maybe two.\n[00:01:25] Therapist: Nicotine, cannabis, anything else?\n[00:01:27] Client: No, none of that.\n[00:01:30] Therapist: And I always ask: any thoughts of hurting yourself or anyone else, or that you'd be better off dead?\n[00:01:36] Client: No. Nothing like that.\n[00:01:39] Therapist: Okay. You did the GAD-7 on Friday and it came in at 13, up from 8 last time. That fits what you're describing.\n[00:01:48] Client: Yeah, that sounds right.\n[00:01:52] Therapist: Mood otherwise? Any periods where you're not sleeping and don't need it, racing, spending a lot?\n[00:01:58] Client: No, nothing like that. Mood is okay, just the worry.\n[00:02:04] Therapist: So here's what I'm thinking. The Adderall is doing its job, so we'll keep that the same. For the anxiety, I'd like to go up on the sertraline from 50 to 75 milligrams. Same timing. You might get some stomach upset or a bit of jitteriness the first week, and it can take a few weeks to see the change. The other option is staying put and leaning on therapy alone for a month. What do you think?\n[00:02:31] Client: I'd rather try the increase. The worry's getting in the way.\n[00:02:35] Therapist: Okay, we'll do 75. If you have anything like worsening mood or new thoughts of self-harm, call the office, and if it's urgent, 988 or 911. I'll see you back in four weeks.\n[00:02:47] Client: Sounds good.\n[00:02:50] Therapist: Alright. Let's spend the rest of our time on the worry. Tell me about last night.\n[00:02:56] Client: I got into bed at eleven and just started going over the quarterly review. What if my numbers are wrong, what if my manager thinks I'm not cut out for this. I looked at the clock and it was one thirty.\n[00:03:12] Therapist: When you notice the thought \"my manager thinks I'm not cut out for this,\" how strongly do you believe it right then, zero to a hundred?\n[00:03:20] Client: In the moment, like ninety.\n[00:03:23] Therapist: And what's the evidence for it?\n[00:03:27] Client: She asked me to redo a slide last month.\n[00:03:31] Therapist: And evidence against?\n[00:03:35] Client: She gave me the new account. She said my last report was clear.\n[00:03:41] Therapist: So if you put those side by side, what would be a more balanced thought?\n[00:03:47] Client: Maybe... she asks everybody to redo things, and she trusts me with the bigger account.\n[00:03:55] Therapist: How much do you believe the original thought now?\n[00:03:58] Client: Maybe forty.\n[00:04:02] Therapist: That's a real shift. Let's also set up a worry window: fifteen minutes at six in the evening where you write down every worry, and when one shows up at night you tell yourself it goes in tomorrow's window. Want to try it?\n[00:04:15] Client: I can try that. I did the time-blocking thing you suggested before and it worked most days.\n[00:04:21] Therapist: How many days did you use the time blocks?\n[00:04:24] Client: Four out of five workdays, most weeks.\n[00:04:28] Therapist: That's great follow-through. Let's add the worry window and the thought record twice this week, and we'll look at them next time. I'd like to keep doing this kind of work at each visit.\n[00:04:39] Client: Okay. Thanks, this helped.\n[00:04:42] Therapist: Take care, Jordan.\n[00:04:58] Therapist: Note for the record. Client alert and oriented times four, well groomed, good eye contact. Speech normal rate and volume. Mood anxious, affect congruent, mildly constricted. Thought process linear and goal directed. No hallucinations or delusions. Denies SI and HI. Cognition intact. Insight and judgment good. Protective factors: employed, supportive partner, engaged in treatment. Overall acute risk is low. Generalized anxiety worsening, ADHD stable. Sertraline increase discussed, benefits, side effects, and the alternative of no change; client agreed. Continue Adderall XR 20. PDMP checked today before the refill, no early fills, no other prescribers. No labs today. Psychotherapy from 10:14 to 10:55, 41 minutes. Billing 99214 plus 90836.\n"
+    },
+    {
+      "id": "medication_only",
+      "label": "Medication check only",
+      "transcript": "[00:00:04] Therapist: Hi Sam. How have things been since last month?\n[00:00:09] Client: Pretty steady. The bupropion is working, mood's been good.\n[00:00:15] Therapist: Taking it every morning?\n[00:00:17] Client: Every morning, haven't missed any.\n[00:00:20] Therapist: Any trouble sleeping, headaches, feeling jittery?\n[00:00:24] Client: No, none of that.\n[00:00:27] Therapist: Any alcohol or anything else?\n[00:00:30] Client: No, I don't drink.\n[00:00:33] Therapist: Any thoughts of hurting yourself or anyone else?\n[00:00:36] Client: No.\n[00:00:39] Therapist: Good. We'll keep the bupropion XL 150 the same and I'll see you in three months. Call if anything changes.\n[00:00:47] Client: Sounds good, thanks.\n[00:01:02] Therapist: Note. Client euthymic, affect full, speech normal, linear, denies SI and HI, insight and judgment good. Depression in remission. Continue bupropion XL 150.\n"
+    }
+  ]
+}

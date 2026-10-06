@@ -8,7 +8,9 @@
  * note types the user can pick when starting a session.
  */
 
-export type NoteFieldKind = "text" | "list" | "structured"
+import type { TranscriptModel } from "./sessions"
+
+export type NoteFieldKind = "text" | "list" | "diagnoses" | "structured"
 
 export type NoteTier = "core" | "extension"
 
@@ -71,10 +73,71 @@ export interface NoteTypeSchema {
    * options.
    */
   is_locked?: boolean
+  /**
+   * The stored definition of a practice-defined type, prompts included.
+   * Only the single-type read returns it; null for built-in types.
+   */
+  spec?: PracticeNoteTypeSpec | null
 }
 
 export interface NoteTypeListResponse {
   note_types: NoteTypeSchema[]
+}
+
+/** Key prefix of a practice's own note types (`custom.<slug>`). */
+export const PRACTICE_KEY_PREFIX = "custom."
+
+export function isPracticeKey(key: string): boolean {
+  return key.startsWith(PRACTICE_KEY_PREFIX)
+}
+
+/** The field shapes a practice can give its own types. */
+export type PracticeFieldKind = "text" | "list" | "diagnoses"
+
+export interface PracticeFieldSpec {
+  key: string
+  label: string
+  kind: PracticeFieldKind
+  ai_hint: string
+}
+
+export interface PracticeSectionSpec {
+  key: string
+  label: string
+  fields: PracticeFieldSpec[]
+}
+
+export interface PracticeInputSpec {
+  key: string
+  label: string
+  kind: NoteInputKind
+  options: string[]
+  required: boolean
+}
+
+/** The body `PUT /api/note-types/custom/{slug}` takes: a practice's own note type. */
+export interface PracticeNoteTypeSpec {
+  label: string
+  description: string
+  system_prompt: string
+  user_template: string | null
+  sections: PracticeSectionSpec[]
+  inputs: PracticeInputSpec[]
+}
+
+export interface NoteDraftPreviewRequest {
+  key?: string
+  version?: number
+  spec?: PracticeNoteTypeSpec
+  transcript: TranscriptModel
+  inputs?: Record<string, string>
+}
+
+/** A draft shaped like a generated note's content. Nothing is saved. */
+export interface NoteDraftPreviewResponse {
+  key: string
+  version: number | null
+  sections: Record<string, Record<string, unknown>>
 }
 
 export const DEFAULT_NOTE_TYPE = "soap"

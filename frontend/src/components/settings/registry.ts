@@ -9,6 +9,7 @@ import {
   Clock,
   FileArchive,
   FileInput,
+  FileText,
   Globe,
   Inbox,
   LayoutTemplate,
@@ -35,6 +36,7 @@ import { DomainsPage } from "./pages/DomainsPage"
 import { ImportPage } from "./pages/ImportPage"
 import { InboxPage } from "./pages/InboxPage"
 import { InsurancePage } from "./pages/InsurancePage"
+import { NoteTypesPage } from "./pages/NoteTypesPage"
 import { PatientPortalPage } from "./pages/PatientPortalPage"
 import { PracticeExportPage } from "./pages/PracticeExportPage"
 import { ProfilePage } from "./pages/ProfilePage"
@@ -172,6 +174,13 @@ const baseGroups: SettingsGroup[] = [
         icon: Mic,
         page: SessionsPage,
         desc: "Defaults for new appointments and how recordings are handled.",
+      },
+      {
+        id: "note-types",
+        label: "Note types",
+        icon: FileText,
+        page: NoteTypesPage,
+        desc: "Note types of your own: the sections and fields a draft fills in.",
       },
       {
         id: PATIENT_PORTAL_SETTINGS_ID,
