@@ -30,6 +30,8 @@ const mockUsePublishedDocuments = vi.fn()
 
 vi.mock("@/hooks/useIntakeDocuments", () => ({
   usePublishedIntakeDocuments: () => mockUsePublishedDocuments(),
+  useIntakeStarters: () => ({ data: [] }),
+  useAdoptIntakeStarter: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }))
 
 // The measure picker is built from the server's catalogue. Nothing on this

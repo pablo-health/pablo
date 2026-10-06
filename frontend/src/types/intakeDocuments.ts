@@ -13,6 +13,8 @@
  * a practice proofreads is exactly what a patient will be shown.
  */
 
+import type { IntakeItemInput } from "./intakePackets"
+
 /** Who a document asks to sign it. A guardian signs alongside, not instead. */
 export const SIGNER_ROLES = ["patient", "guardian"] as const
 
@@ -45,4 +47,20 @@ export interface CreateDocumentInput {
 export interface UpdateDocumentInput {
   title?: string
   body_markdown?: string
+}
+
+/** A built-in document a practice can start from. */
+export interface IntakeStarter {
+  key: string
+  title: string
+}
+
+/**
+ * What adopting a starter hands back: the practice's published copy, and the
+ * items that put it on a form — a consent item pointing at the copy, then
+ * the starter's own questions.
+ */
+export interface AdoptedStarter {
+  document: IntakeDocument
+  items: IntakeItemInput[]
 }

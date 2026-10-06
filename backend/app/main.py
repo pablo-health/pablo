@@ -66,6 +66,7 @@ from .routes import (
     claim_webhooks,
     claims,
     claims_export,
+    client_ai_consent,
     compliance,
     coverage,
     credentialing,
@@ -102,6 +103,7 @@ from .routes import (
     patients,
     payment_webhooks,
     people_term,
+    practice_ai_notes_consent,
     practice_balances,
     practice_billing,
     practice_domains,
@@ -273,6 +275,7 @@ app.include_router(admin.router)
 app.include_router(admin_pentest.router)
 app.include_router(users.router)
 app.include_router(people_term.router)
+app.include_router(practice_ai_notes_consent.router)
 app.include_router(patients.router)
 app.include_router(practice_billing.router)
 app.include_router(practice_domains.router)
@@ -399,6 +402,7 @@ register_builtin_sources()
 app.include_router(inbox.router)
 app.include_router(patient_payments.router)
 app.include_router(patient_write_offs.router)
+app.include_router(client_ai_consent.router)
 app.include_router(payment_webhooks.router)
 app.include_router(telehealth.router)
 app.include_router(telehealth_webhooks.router)
@@ -447,6 +451,8 @@ app.include_router(instrument_licenses.router)
 # clinician half is ordinary practice paperwork behind the ordinary door,
 # and the patient half answers 401 with no resolver registered.
 app.include_router(intake_documents.router)
+# The documents a practice can start from, behind the same door.
+app.include_router(intake_documents.starter_router)
 # The patient half is part of intake, so a practice that turns intake off
 # turns it off too; the same for the two patient routers below.
 app.include_router(

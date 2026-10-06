@@ -42,6 +42,10 @@ import hashlib
 import re
 from dataclasses import dataclass
 from html import escape
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 #: A heading: one to six hashes, a space, then the words.
 _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
@@ -290,6 +294,35 @@ def _normalise(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+#: The practice settings a document may name in double braces —
+#: ``{{audio_retention_days}}`` — to have the practice's current value shown
+#: in its place. An allowlist: any other name in braces stays the literal
+#: text it is, so a document cannot reach a setting nobody meant to publish.
+PRACTICE_VALUES: tuple[str, ...] = ("audio_retention_days",)
+
+_PLACEHOLDER = re.compile(r"\{\{\s*([a-z_]+)\s*\}\}")
+
+
+def fill_practice_values(markdown: str, values: Mapping[str, str]) -> str:
+    """The document with each named setting replaced by the practice's value.
+
+    Run on the source just before :func:`render_html`, every time the
+    document is shown, so a practice that changes a setting has the new
+    value in the next document anybody reads. The digest is NOT taken over
+    the filled text: it identifies the words the practice wrote, which do
+    not change when a setting does. A name with no value in ``values`` is
+    left as written rather than shown blank.
+    """
+
+    def value(match: re.Match[str]) -> str:
+        name = match.group(1)
+        if name not in PRACTICE_VALUES or name not in values:
+            return match.group(0)
+        return values[name]
+
+    return _PLACEHOLDER.sub(value, markdown)
+
+
 def content_digest(markdown: str) -> str:
     """The sha256 of the canonical text, lowercase hex.
 
@@ -300,4 +333,10 @@ def content_digest(markdown: str) -> str:
     return hashlib.sha256(canonical_text(markdown).encode("utf-8")).hexdigest()
 
 
-__all__ = ["canonical_text", "content_digest", "render_html"]
+__all__ = [
+    "PRACTICE_VALUES",
+    "canonical_text",
+    "content_digest",
+    "fill_practice_values",
+    "render_html",
+]

@@ -3,6 +3,11 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import {
+  RecordingConsentDialog,
+  useRecordingConsentCheck,
+  type RecordingConsent,
+} from "@/components/sessions/RecordingConsentDialog"
 import { Button } from "@/components/ui/button"
 import { createLaunchIntent } from "@/lib/api/devices"
 import {
@@ -13,6 +18,7 @@ import {
 
 interface StartSessionButtonProps {
   appointmentId: string
+  patientId: string
 }
 
 interface ReadyIntent {
@@ -42,15 +48,25 @@ interface ReadyIntent {
  *     with no prior focus event, or a slow round-trip), we fetch on click as a
  *     fallback. Safari may not route the Universal Link in that case, but the
  *     legacy no-handoff fallback still delivers the session.
+ *  4. The client's answer about AI-assisted notes is prefetched beside the
+ *     intent. A declined client, or one nobody has asked yet, opens
+ *     RecordingConsentDialog instead of handing off; the hand-off then runs
+ *     from the dialog's own button, through the same synthesized anchor as 3.
+ *     A failed read does not block: the server refuses a declined client's
+ *     recording itself.
  */
-export function StartSessionButton({ appointmentId }: StartSessionButtonProps) {
+export function StartSessionButton({ appointmentId, patientId }: StartSessionButtonProps) {
   // The prefetched intent, if any. `null` until the first hover/focus or click.
   const [intent, setIntent] = useState<ReadyIntent | null>(null)
+  const [consent, setConsent] = useState<RecordingConsent | null>(null)
+  // What the dialog is asking about; `null` while it is closed.
+  const [asking, setAsking] = useState<RecordingConsent | null>(null)
+  const checkConsent = useRecordingConsentCheck()
   // True from click until the no-handoff window settles, so a rapid second
   // click can't issue a second intent or orphan the first fallback timer.
   const [busy, setBusy] = useState(false)
 
-  const fetchingRef = useRef(false)
+  const fetchingRef = useRef<Promise<ReadyIntent | null> | null>(null)
   const cleanupRef = useRef<(() => void) | null>(null)
 
   // Cancel any in-flight no-handoff timer on unmount.
@@ -66,24 +82,43 @@ export function StartSessionButton({ appointmentId }: StartSessionButtonProps) {
   }, [])
 
   // Lazily issue the launch intent so the anchor has a real href at click
-  // time. Idempotent: only the first hover/focus actually POSTs.
-  const prefetchIntent = useCallback(async (): Promise<ReadyIntent | null> => {
-    if (intent) return intent
-    if (fetchingRef.current) return null
-    fetchingRef.current = true
-    try {
-      const { intent_id, launch_url } = await createLaunchIntent(appointmentId)
-      const ready = { intentId: intent_id, launchUrl: launch_url }
-      setIntent(ready)
-      return ready
-    } catch {
+  // time. Idempotent: only the first hover/focus actually POSTs, and a click
+  // landing while that POST is in flight waits for it rather than dropping.
+  const prefetchIntent = useCallback((): Promise<ReadyIntent | null> => {
+    if (intent) return Promise.resolve(intent)
+    if (fetchingRef.current) return fetchingRef.current
+    fetchingRef.current = createLaunchIntent(appointmentId)
+      .then(({ intent_id, launch_url }) => {
+        const ready = { intentId: intent_id, launchUrl: launch_url }
+        setIntent(ready)
+        return ready
+      })
       // Intent issuance failed (backend flag off, network, not-authorized).
       // Leave today's behavior — the anchor stays inert; no launch attempt.
-      return null
-    } finally {
-      fetchingRef.current = false
-    }
+      .catch(() => null)
+      .finally(() => {
+        fetchingRef.current = null
+      })
+    return fetchingRef.current
   }, [appointmentId, intent])
+
+  // Same shape as the intent: one read, shared by hover and click.
+  const consentRef = useRef<Promise<RecordingConsent> | null>(null)
+  const prefetchConsent = useCallback((): Promise<RecordingConsent> => {
+    if (consent) return Promise.resolve(consent)
+    consentRef.current ??= checkConsent(patientId)
+      .catch((): RecordingConsent => ({ kind: "clear" }))
+      .then((read) => {
+        setConsent(read)
+        return read
+      })
+    return consentRef.current
+  }, [checkConsent, consent, patientId])
+
+  const prefetch = () => {
+    void prefetchIntent()
+    void prefetchConsent()
+  }
 
   // Arm the no-handoff fallback for a given intent and hold `busy` for the
   // full window so the button can't be re-triggered mid-handoff.
@@ -105,20 +140,30 @@ export function StartSessionButton({ appointmentId }: StartSessionButtonProps) {
       e.preventDefault()
       return
     }
-    if (intent) {
+    if (intent && consent?.kind === "clear") {
       // Real, user-activated anchor click → Safari routes the Universal Link
       // via the default navigation. Don't preventDefault; just arm the timer.
       armFallback(intent.intentId)
       return
     }
-    // No prefetched intent yet — fetch on click as a fallback. This breaks the
-    // user-gesture chain for the verified link, but the legacy no-handoff
-    // fallback still delivers the session.
+    if (intent && consent) {
+      e.preventDefault()
+      setAsking(consent)
+      return
+    }
+    // No prefetched intent or answer yet — fetch on click as a fallback. This
+    // breaks the user-gesture chain for the verified link, but the legacy
+    // no-handoff fallback still delivers the session.
     e.preventDefault()
     setBusy(true)
-    void prefetchIntent().then((ready) => {
+    void Promise.all([prefetchIntent(), prefetchConsent()]).then(([ready, read]) => {
       if (!ready) {
         setBusy(false)
+        return
+      }
+      if (read.kind !== "clear") {
+        setBusy(false)
+        setAsking(read)
         return
       }
       clickThroughAnchor(ready.launchUrl)
@@ -126,21 +171,38 @@ export function StartSessionButton({ appointmentId }: StartSessionButtonProps) {
     })
   }
 
+  // From the dialog: asked once, so later clicks on this button hand off directly.
+  const startFromDialog = () => {
+    setAsking(null)
+    setConsent({ kind: "clear" })
+    if (!intent) return
+    clickThroughAnchor(intent.launchUrl)
+    armFallback(intent.intentId)
+  }
+
   return (
-    <Button
-      asChild
-      size="sm"
-      aria-disabled={busy || undefined}
-      onPointerEnter={() => void prefetchIntent()}
-      onFocus={() => void prefetchIntent()}
-    >
-      <a
-        href={intent?.launchUrl ?? "#"}
-        rel="noopener"
-        onClick={onClick}
+    <>
+      <Button
+        asChild
+        size="sm"
+        aria-disabled={busy || undefined}
+        onPointerEnter={prefetch}
+        onFocus={prefetch}
       >
-        Start session
-      </a>
-    </Button>
+        <a
+          href={intent?.launchUrl ?? "#"}
+          rel="noopener"
+          onClick={onClick}
+        >
+          Start session
+        </a>
+      </Button>
+      <RecordingConsentDialog
+        patientId={patientId}
+        consent={asking}
+        onCancel={() => setAsking(null)}
+        onStart={startFromDialog}
+      />
+    </>
   )
 }

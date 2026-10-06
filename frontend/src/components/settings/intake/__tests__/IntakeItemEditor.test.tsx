@@ -21,6 +21,8 @@ import {
   LABEL_FIELD_OVERRIDE,
   NO_QUESTIONS,
   PUBLISHED_NOTICE,
+  START_FROM_TEMPLATE,
+  TEMPLATE_ALREADY_ON_FORM,
   labelPlaceholder,
 } from "../intakeCopy"
 import { peopleWords } from "@/lib/peopleTerm"
@@ -348,5 +350,73 @@ describe("IntakeItemEditor", () => {
 
     expect(screen.getByRole("option", { name: "Consent to sign" })).toBeInTheDocument()
     expect(screen.getByRole("option", { name: "Measure" })).toBeInTheDocument()
+  })
+
+  describe("starting from a template", () => {
+    const starters = [{ key: "ai_tools_consent", title: "Consent for the use of AI tools" }]
+    const adopted = [
+      {
+        key: "ai_tools_consent",
+        item_type: "consent_document" as const,
+        required: true,
+        resign_on_new_version: false,
+        label: null,
+        help_text: null,
+        config: { document_key: "doc-key" },
+      },
+      {
+        key: "ai_transcription",
+        item_type: "single_choice" as const,
+        required: true,
+        resign_on_new_version: false,
+        label: "Session transcription",
+        help_text: null,
+        config: {
+          options: [
+            { key: "consent", label: "I consent" },
+            { key: "decline", label: "I do not consent" },
+          ],
+        },
+      },
+    ]
+
+    it("adds a template's items and saves the form in two clicks", async () => {
+      const user = userEvent.setup()
+      const onAdoptStarter = vi.fn().mockResolvedValue(adopted)
+      editor(version({ items: [item("reason", "reason")] }), { starters, onAdoptStarter })
+
+      await user.click(screen.getByRole("button", { name: START_FROM_TEMPLATE }))
+      await user.click(screen.getByRole("button", { name: "Consent for the use of AI tools" }))
+
+      expect(onAdoptStarter).toHaveBeenCalledWith("ai_tools_consent")
+      expect(onSave).toHaveBeenCalledWith([
+        expect.objectContaining({ key: "reason" }),
+        expect.objectContaining({ key: "ai_tools_consent", item_type: "consent_document" }),
+        expect.objectContaining({ key: "ai_transcription", item_type: "single_choice" }),
+      ])
+      expect(screen.getByText("Session transcription")).toBeInTheDocument()
+    })
+
+    it("adds nothing twice", async () => {
+      const user = userEvent.setup()
+      const onAdoptStarter = vi.fn().mockResolvedValue(adopted)
+      editor(
+        version({
+          items: [item("ai_tools_consent", "consent_document"), item("ai_transcription", "single_choice")],
+        }),
+        { starters, onAdoptStarter },
+      )
+
+      await user.click(screen.getByRole("button", { name: START_FROM_TEMPLATE }))
+      await user.click(screen.getByRole("button", { name: "Consent for the use of AI tools" }))
+
+      expect(onSave).not.toHaveBeenCalled()
+      expect(screen.getByText(TEMPLATE_ALREADY_ON_FORM)).toBeInTheDocument()
+    })
+
+    it("offers no templates on a published version", () => {
+      editor(version({ published_at: "2026-09-02T09:00:00Z" }), { starters })
+      expect(screen.queryByRole("button", { name: START_FROM_TEMPLATE })).not.toBeInTheDocument()
+    })
   })
 })

@@ -23,6 +23,7 @@ import {
 import { queryKeys } from "@/lib/api/queryKeys"
 import { useAuth } from "@/lib/auth-context"
 import { useConfig } from "@/lib/config"
+import { watchDraft } from "@/lib/draftWatch"
 import { useAuthMutation } from "./useAuthQuery"
 
 // Query hooks — mock-aware, so they use raw useQuery instead of useAuthQuery.
@@ -144,6 +145,9 @@ export function useUploadSession(token?: string) {
     { patientId: string; data: UploadSessionRequest }
   >({
     mutationFn: ({ patientId, data }) => uploadSession(patientId, data, token),
+    // Watched from the response, not the list: a fast draft can land before
+    // the list is next read, and would then never be seen mid-draft.
+    onSuccess: (session) => watchDraft(session.id),
     invalidateKeys: (_vars, data) =>
       data
         ? [

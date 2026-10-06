@@ -5,6 +5,7 @@
 import Image from "next/image"
 import Link from "next/link"
 import { useMemo, useState } from "react"
+import { AiNotesConsentScriptButton } from "@/components/sessions/AiNotesConsentScript"
 import { Button } from "@/components/ui/button"
 import { useCompanionDevices } from "@/hooks/useCompanionDevices"
 import { useDashboardSummary } from "@/hooks/useDashboard"
@@ -62,12 +63,17 @@ export function TodayPanel() {
             Sessions scheduled for {todayLabel(timeZone)}.
           </p>
         </div>
-        <Link
-          href="/dashboard/calendar"
-          className="text-sm text-primary-700 hover:underline"
-        >
-          Open calendar
-        </Link>
+        <div className="flex items-center gap-4">
+          {/* Before recording is where the script is needed, and Today is
+              where a session starts. Not for an account that cannot record. */}
+          {companionAccess && <AiNotesConsentScriptButton />}
+          <Link
+            href="/dashboard/calendar"
+            className="text-sm text-primary-700 hover:underline"
+          >
+            Open calendar
+          </Link>
+        </div>
       </div>
 
       {isLoading ? (
@@ -163,7 +169,7 @@ function AppointmentRow({
           </Link>
         </Button>
       ) : launchable && companionEnrolled ? (
-        <StartSessionButton appointmentId={appointment.id} />
+        <StartSessionButton appointmentId={appointment.id} patientId={appointment.patient_id} />
       ) : launchable && platformSupported ? (
         <Button size="sm" variant="outline" onClick={onGetApp}>
           Download Pablo Companion

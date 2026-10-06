@@ -262,6 +262,11 @@ class AuditAction(StrEnum):
     # address rendered into the practice's wording — shown to the clinician
     # before sending. A read of contact details, so it goes on the record.
     PATIENT_PORTAL_INVITE_PREVIEWED = "patient_portal_invite_previewed"
+    # A note drafted from a pasted transcript to show what a note type
+    # produces, and returned without being saved. The transcript may be a
+    # real visit, so the processing goes on the record; the row names the
+    # note type, never the transcript or the draft.
+    NOTE_TYPE_DRAFT_PREVIEWED = "note_type_draft_previewed"
     PATIENT_PORTAL_SESSION_REDEEMED = "patient_portal_session_redeemed"
 
     # A clinician's messages badge asked how many conversations have
@@ -423,6 +428,15 @@ class AuditAction(StrEnum):
     # signature itself, it lives on the row, and copying it here would put a
     # person's name in a second place for no question it helps answer.
     PATIENT_CONSENT_SIGNED = "patient_consent_signed"
+
+    # A client's answer about AI-assisted notes (recording, transcription and
+    # drafting), recorded on the chart and read back. Separate from
+    # PATIENT_CONSENT_SIGNED: there the patient signs a document themselves;
+    # here somebody puts an answer on the record. The `changes` payload
+    # carries the event id, the decision, the day it took effect and where it
+    # came from — never free text.
+    PATIENT_AI_CONSENT_RECORDED = "patient_ai_consent_recorded"
+    PATIENT_AI_CONSENT_VIEWED = "patient_ai_consent_viewed"
 
     # A patient attached a file to a question that asked for one — a photo
     # of an insurance card, a form the practice asked them to send back.
@@ -735,6 +749,7 @@ class ResourceType(StrEnum):
     INVITATION = "invitation"
     PRACTICE_PORTAL = "practice_portal"
     PRACTICE = "practice"
+    NOTE_TYPE = "note_type"
     CLAIM = "claim"
     CLAIM_EXPORT = "claim_export"
     BILLING_PERIOD_EXPORT = "billing_period_export"

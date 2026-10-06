@@ -556,6 +556,12 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "AVAILABILITY_PARSE_BASE_URL must not be set outside ENVIRONMENT=development"
                 )
+            if self.note_generation_base_url:
+                # Same again, and here what goes to that address is a
+                # transcript.
+                raise ValueError(
+                    "NOTE_GENERATION_BASE_URL must not be set outside ENVIRONMENT=development"
+                )
         return self
 
     # Firebase Blocking Function OIDC Verification
@@ -1792,6 +1798,17 @@ class Settings(BaseSettings):
             "reading for each sentence a spec types. The answer still goes "
             "through the same validation a model's does. Unset (the ordinary "
             "case) means the model."
+        ),
+    )
+
+    note_generation_base_url: str | None = Field(
+        default=None,
+        description=(
+            "Origin that drafts notes instead of the model for standalone "
+            "notes and note-type previews — the end-to-end harness's "
+            "stand-in, which returns a fixed draft shaped by the note type. "
+            "The draft is validated as a model's would be. Unset (the "
+            "ordinary case) means the model."
         ),
     )
 

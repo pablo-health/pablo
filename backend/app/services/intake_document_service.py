@@ -39,6 +39,7 @@ from ..intake.documents import content_digest
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
+    from ..intake.starters import Starter
     from ..repositories.intake_document import IntakeDocumentRepository
 
 #: Who a document can require a signature from. A guardian signs alongside
@@ -190,6 +191,27 @@ class IntakeDocumentService:
                 "created_at": utc_now(),
             }
         )
+
+    def adopt_starter(self, starter: Starter, published_by: str) -> tuple[dict[str, object], bool]:
+        """The practice's published copy of a starter, made now if it has none.
+
+        Returns the version and whether it was created now. A practice that
+        already published a document under the starter's title gets that one
+        back, so adding the starter to a second form points both forms at one
+        document rather than leaving two copies to keep in step. Made and
+        published in one go: a form cannot go live naming an unpublished
+        document, and the copy is edited afterwards like any other — a new
+        version, then publish.
+        """
+        for row in self._repo.latest_per_key():
+            if row["title"] != starter.title:
+                continue
+            published = self._repo.published_for_key(str(row["document_key"]))
+            if published is not None:
+                return published, False
+
+        created = self.create(title=starter.title, body_markdown=starter.body_markdown)
+        return self.publish(str(created["id"]), published_by), True
 
     def _require(self, document_id: str) -> dict[str, object]:
         row = self._repo.get(document_id)

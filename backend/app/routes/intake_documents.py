@@ -41,14 +41,20 @@ from ..api_errors import ConflictError, ForbiddenError, NotFoundError, Unprocess
 from ..auth.patient_context import AuthStrength, PatientContext, get_patient_context
 from ..auth.route_access import subscription_exempt
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
+from ..db import current_practice_schema, get_db_session
+from ..db.platform_models import PracticeRow
 from ..intake.consent_statement import CURRENT_CONSENT_STATEMENT_VERSION, consent_statement
-from ..intake.documents import render_html
+from ..intake.documents import fill_practice_values, render_html
+from ..intake.items import ItemDraft
+from ..intake.starters import STARTERS, starter
 from ..models import User  # noqa: TC001 — fastapi resolves the annotation at runtime
 from ..models.audit import AuditAction, ResourceType
 from ..models.intake_document_api import (
     CreateDocumentRequest,
     IntakeDocumentResponse,
     PatientDocumentResponse,
+    StarterAdoptedResponse,
+    StarterSummary,
     UpdateDocumentRequest,
 )
 from ..repositories import get_intake_document_repository
@@ -68,6 +74,10 @@ router = APIRouter(prefix="/api/intake/documents", tags=["intake-documents"])
 # surfaces share no dependency: this one is reached with a patient
 # principal, which the clinician door does not accept and should not.
 patient_router = APIRouter(prefix="/api/patient/intake/documents", tags=["intake-documents"])
+
+# Starters: documents a practice can begin from instead of a blank page. Its
+# own prefix so ``/starters`` can never be read as a document id.
+starter_router = APIRouter(prefix="/api/intake/starters", tags=["intake-documents"])
 
 CurrentPatient = Annotated[PatientContext, Depends(get_patient_context)]
 
@@ -95,10 +105,43 @@ def get_patient_intake_document_service() -> IntakeDocumentService:
     return IntakeDocumentService(get_intake_document_repository())
 
 
+def _practice_values() -> dict[str, str]:
+    """The settings a document may name, read off this session's practice.
+
+    Asked of the connection's schema rather than of a principal, so the
+    clinician and the portal read the same row the same way. Empty when no
+    practice owns the schema, which leaves every name in a document as
+    written rather than guessing a number.
+    """
+    session = get_db_session()
+    practice = (
+        session.query(PracticeRow)
+        .filter(PracticeRow.schema_name == current_practice_schema(session))
+        .one_or_none()
+    )
+    if practice is None:
+        return {}
+    return {"audio_retention_days": str(practice.audio_retention_days)}
+
+
+def get_document_values(
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> dict[str, str]:
+    """:func:`_practice_values` on the clinician's tenant-scoped session."""
+    return _practice_values()
+
+
+def get_patient_document_values(_patient: CurrentPatient) -> dict[str, str]:
+    """:func:`_practice_values` on the patient-armed session."""
+    return _practice_values()
+
+
 DocumentService = Annotated[IntakeDocumentService, Depends(get_intake_document_service)]
 PatientDocumentService = Annotated[
     IntakeDocumentService, Depends(get_patient_intake_document_service)
 ]
+DocumentValues = Annotated[dict[str, str], Depends(get_document_values)]
+PatientDocumentValues = Annotated[dict[str, str], Depends(get_patient_document_values)]
 
 
 def _require_stepped_up(patient: PatientContext) -> None:
@@ -125,14 +168,15 @@ def _signer_roles(value: object) -> list[str]:
     return [str(role) for role in value] if isinstance(value, list) else ["patient"]
 
 
-def _response(row: dict[str, object]) -> IntakeDocumentResponse:
+def _response(row: dict[str, object], values: dict[str, str]) -> IntakeDocumentResponse:
+    """The practice's view: its markdown as typed, rendered with its settings."""
     body = str(row["body_markdown"])
     return IntakeDocumentResponse(
         id=str(row["id"]),
         document_key=str(row["document_key"]),
         title=str(row["title"]),
         body_markdown=body,
-        rendered_html=render_html(body),
+        rendered_html=render_html(fill_practice_values(body, values)),
         version=int(row["version"]),  # type: ignore[call-overload]
         digest=str(row["digest"]),
         published_at=row["published_at"],  # type: ignore[arg-type]
@@ -152,6 +196,7 @@ def _require(service: IntakeDocumentService, document_id: str) -> dict[str, obje
 @router.get("", response_model=list[IntakeDocumentResponse])
 def list_documents(
     service: DocumentService,
+    values: DocumentValues,
     published_only: bool = False,
     _user: User = Depends(require_baa_acceptance),
 ) -> list[IntakeDocumentResponse]:
@@ -167,13 +212,14 @@ def list_documents(
     most likely to already be on a form.
     """
     rows = service.list_published() if published_only else service.list_documents()
-    return [_response(row) for row in rows]
+    return [_response(row, values) for row in rows]
 
 
 @router.post("", response_model=IntakeDocumentResponse, status_code=status.HTTP_201_CREATED)
 def create_document(
     body: CreateDocumentRequest,
     service: DocumentService,
+    values: DocumentValues,
     _user: User = Depends(require_baa_acceptance),
 ) -> IntakeDocumentResponse:
     """Start a document. It arrives as an unpublished version 1."""
@@ -186,17 +232,18 @@ def create_document(
         )
     except SignerRoleError as exc:
         raise UnprocessableEntityError(str(exc)) from exc
-    return _response(created)
+    return _response(created, values)
 
 
 @router.get("/{document_id}", response_model=IntakeDocumentResponse)
 def get_document(
     document_id: str,
     service: DocumentService,
+    values: DocumentValues,
     _user: User = Depends(require_baa_acceptance),
 ) -> IntakeDocumentResponse:
     """One version, with the HTML it renders to."""
-    return _response(_require(service, document_id))
+    return _response(_require(service, document_id), values)
 
 
 @router.put("/{document_id}", response_model=IntakeDocumentResponse)
@@ -204,6 +251,7 @@ def update_document(
     document_id: str,
     body: UpdateDocumentRequest,
     service: DocumentService,
+    values: DocumentValues,
     _user: User = Depends(require_baa_acceptance),
 ) -> IntakeDocumentResponse:
     """Save a draft's title or text.
@@ -221,7 +269,7 @@ def update_document(
             "This version is published. Start a new version to make changes.",
             {"document_id": document_id},
         ) from exc
-    return _response(updated)
+    return _response(updated, values)
 
 
 @router.post("/{document_id}/publish", response_model=IntakeDocumentResponse)
@@ -229,6 +277,7 @@ def publish_document(
     document_id: str,
     request: Request,
     service: DocumentService,
+    values: DocumentValues,
     user: User = Depends(require_baa_acceptance),
     audit: AuditService = Depends(get_audit_service),
 ) -> IntakeDocumentResponse:
@@ -257,7 +306,7 @@ def publish_document(
             "digest": str(published["digest"]),
         },
     )
-    return _response(published)
+    return _response(published, values)
 
 
 @router.post(
@@ -268,6 +317,7 @@ def publish_document(
 def new_version(
     document_id: str,
     service: DocumentService,
+    values: DocumentValues,
     _user: User = Depends(require_baa_acceptance),
 ) -> IntakeDocumentResponse:
     """Start a draft from this document's latest text.
@@ -277,7 +327,7 @@ def new_version(
     edited.
     """
     _require(service, document_id)
-    return _response(service.new_version(document_id))
+    return _response(service.new_version(document_id), values)
 
 
 @patient_router.get("/{document_id}", response_model=PatientDocumentResponse)
@@ -285,6 +335,7 @@ def read_document(
     document_id: str,
     patient: CurrentPatient,
     service: PatientDocumentService,
+    values: PatientDocumentValues,
     _: None = Depends(subscription_exempt),
 ) -> PatientDocumentResponse:
     """The document somebody is being asked to sign.
@@ -311,7 +362,9 @@ def read_document(
         id=str(row["id"]),
         document_key=str(row["document_key"]),
         title=str(row["title"]),
-        rendered_html=render_html(str(row["body_markdown"])),
+        # The practice's settings as they are now, so a changed setting
+        # reads correctly in the next document anybody opens.
+        rendered_html=render_html(fill_practice_values(str(row["body_markdown"]), values)),
         version=int(row["version"]),  # type: ignore[call-overload]
         digest=str(row["digest"]),
         requires_signature=bool(row["requires_signature"]),
@@ -324,4 +377,58 @@ def read_document(
     )
 
 
-__all__ = ["get_intake_document_service", "patient_router", "router"]
+@starter_router.get("", response_model=list[StarterSummary])
+def list_starters(
+    _ctx: TenantContext = Depends(get_tenant_context),
+    _user: User = Depends(require_baa_acceptance),
+) -> list[StarterSummary]:
+    """The documents a practice can start from, in the order to list them."""
+    return [StarterSummary(key=s.key, title=s.title) for s in STARTERS]
+
+
+@starter_router.post("/{starter_key}", response_model=StarterAdoptedResponse)
+def adopt_starter(
+    starter_key: str,
+    request: Request,
+    service: DocumentService,
+    values: DocumentValues,
+    user: User = Depends(require_baa_acceptance),
+    audit: AuditService = Depends(get_audit_service),
+) -> StarterAdoptedResponse:
+    """The practice's copy of a starter, and the items that put it on a form.
+
+    Publishes the copy the first time, which is audited the way any other
+    publish is: a signature will be read against that text.
+    """
+    chosen = starter(starter_key)
+    if chosen is None:
+        raise NotFoundError("Starter not found", {"starter_key": starter_key})
+
+    document, created = service.adopt_starter(chosen, user.id)
+    if created:
+        audit.log(
+            action=AuditAction.INTAKE_DOCUMENT_PUBLISHED,
+            user=user,
+            request=request,
+            resource_type=ResourceType.INTAKE_DOCUMENT,
+            resource_id=str(document["id"]),
+            changes={
+                "document_key": str(document["document_key"]),
+                "version": int(document["version"]),  # type: ignore[call-overload]
+                "digest": str(document["digest"]),
+            },
+        )
+
+    consent_item = ItemDraft(
+        key=chosen.document_item_key,
+        item_type="consent_document",
+        required=True,
+        config={"document_key": str(document["document_key"])},
+    )
+    return StarterAdoptedResponse(
+        document=_response(document, values),
+        items=[consent_item, *chosen.questions],
+    )
+
+
+__all__ = ["get_intake_document_service", "patient_router", "router", "starter_router"]

@@ -112,6 +112,14 @@ export const DRAFT_BADGE = "Draft"
 export const PUBLISHED_BADGE = "Published"
 export const PUBLISH_BUTTON = "Publish"
 export const ADD_QUESTION = "Add question"
+
+/**
+ * The built-in documents a practice can add to a form. Adding one also adds
+ * the practice's own copy of the document, which it edits like any other.
+ */
+export const START_FROM_TEMPLATE = "Start from a template"
+/** Shown when every item a template adds is already on the form. */
+export const TEMPLATE_ALREADY_ON_FORM = "This form already has it."
 export const NEW_VERSION_BUTTON = "Start a new version"
 export const NO_QUESTIONS = "Nothing on this form yet."
 

@@ -14,6 +14,7 @@ import { firstIncompleteRequiredStep } from "@/lib/onboarding/types"
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary"
 import { IdleTimeout } from "@/components/IdleTimeout"
 import { ThemeSync } from "@/components/theme/ThemeSync"
+import { DraftNotices } from "@/components/sessions/DraftNotices"
 import { errorCode } from "@/lib/errors/errorCode"
 import { PeopleTermProvider } from "@/hooks/usePeopleTerm"
 import type { PeopleTerm } from "@/lib/peopleTerm"
@@ -138,6 +139,7 @@ export default async function DashboardLayout({
         </div>
         <IdleTimeout />
         <ThemeSync />
+        <DraftNotices />
       </div>
     </PeopleTermProvider>
   )

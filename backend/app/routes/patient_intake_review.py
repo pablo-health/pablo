@@ -39,6 +39,7 @@ records that corrections were asked for and on which questions.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, Request
@@ -62,11 +63,13 @@ from ..portal.delivery import PortalNoticeDelivery  # noqa: TC001 — fastapi re
 from ..portal.factory import get_notice_delivery
 from ..portal.notices import send_portal_notice
 from ..repositories import (
+    get_client_ai_consent_repository,
     get_intake_packet_repository,
     get_patient_intake_assignment_repository,
     get_patient_intake_signature_repository,
 )
 from ..services.audit_service import AuditService, get_audit_service
+from ..services.intake_form_ai_consent import FormAiConsentRecorder
 from ..services.patient_intake_assignment_service import (
     IntakeAssignmentService,
     event_item_ids,
@@ -78,6 +81,7 @@ from ..services.patient_intake_review_service import (
     UnknownItemError,
 )
 from ..services.practice_billing_profile import load_billing_profile
+from ..utcnow import utc_now
 from .patient_intake import intake_form
 from .patient_intake_assignments import (
     assignment_response,
@@ -122,6 +126,16 @@ def get_clinician_signature_repository(
 ) -> PatientIntakeSignatureRepository:
     """The signature repository on a tenant-scoped session."""
     return get_patient_intake_signature_repository()
+
+
+def get_form_ai_consent_recorder(
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> FormAiConsentRecorder:
+    """What puts an accepted form's transcription answer on the chart."""
+    return FormAiConsentRecorder(
+        get_patient_intake_signature_repository(),
+        get_client_ai_consent_repository(),
+    )
 
 
 def get_practice_name(_ctx: TenantContext = Depends(get_tenant_context)) -> str | None:
@@ -308,6 +322,7 @@ def accept_intake_assignment(
     reviews: Reviews,
     user: User = Depends(require_baa_acceptance),
     patients: PatientRepository = Depends(get_clinician_patient_repository),
+    ai_consent: FormAiConsentRecorder = Depends(get_form_ai_consent_recorder),
     audit: AuditService = Depends(get_audit_service),
 ) -> IntakeAssignmentResponse:
     """Close a reviewed form off.
@@ -317,7 +332,9 @@ def accept_intake_assignment(
     rather than a second one.
 
     Accepting takes the form out of the live set, which is what lets the
-    same version be sent to the same patient again later.
+    same version be sent to the same patient again later. A form carrying
+    the AI-tools transcription question also puts the client's answer on
+    their AI-notes record.
     """
     patient = patients.get(patient_id, user.id)
     if patient is None:
@@ -340,6 +357,32 @@ def accept_intake_assignment(
         patient=patient,
         changes={"version_id": str(moved["version_id"])},
     )
+
+    # A transcription answer on the form becomes the client's AI-notes
+    # answer now that the practice has accepted what they handed in. Same
+    # transaction as the acceptance, so the two cannot disagree.
+    accepted_at = moved.get("accepted_at")
+    consent_event = ai_consent.record(
+        assignment=assignment,
+        items=assignments.items(str(assignment["version_id"])),
+        answers=assignments.answers_for_clinician(assignment_id, user.id),
+        accepted_by=user.id,
+        accepted_at=accepted_at if isinstance(accepted_at, datetime) else utc_now(),
+    )
+    if consent_event is not None:
+        audit.log_patient_action(
+            AuditAction.PATIENT_AI_CONSENT_RECORDED,
+            user,
+            request,
+            patient,
+            changes={
+                "event_id": consent_event.id,
+                "decision": consent_event.decision,
+                "effective_on": consent_event.effective_on.isoformat(),
+                "source": consent_event.source,
+                "intake_submission_id": assignment_id,
+            },
+        )
     return assignment_response(assignments, moved, patient_id)
 
 

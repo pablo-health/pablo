@@ -244,6 +244,7 @@ const baseQueryKeys = {
     all: ["intake-documents"] as const,
     list: () => [...baseQueryKeys.intakeDocuments.all, "list"] as const,
     published: () => [...baseQueryKeys.intakeDocuments.all, "published"] as const,
+    starters: () => [...baseQueryKeys.intakeDocuments.all, "starters"] as const,
   },
 
   // The instrument catalogue and what this practice is licensed to ask.
@@ -322,6 +323,15 @@ const baseQueryKeys = {
     users: () => [...baseQueryKeys.admin.all, "users"] as const,
     allowlist: () => [...baseQueryKeys.admin.all, "allowlist"] as const,
     tenants: () => [...baseQueryKeys.admin.all, "tenants"] as const,
+  },
+
+  // A client's answer about AI-assisted notes
+  aiConsent: {
+    all: ["aiConsent"] as const,
+    byPatient: (patientId: string) =>
+      [...baseQueryKeys.aiConsent.all, patientId] as const,
+    // Whether the practice asks clients about AI-assisted notes at all
+    practiceSetting: () => [...baseQueryKeys.aiConsent.all, "practice-setting"] as const,
   },
 
   // Medication list query keys

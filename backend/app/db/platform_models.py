@@ -69,6 +69,13 @@ class PracticeRow(PlatformBase):
     audio_retention_days: Mapped[int] = mapped_column(
         Integer, nullable=False, default=365, server_default="365"
     )
+    # Whether clinicians ask each client to agree to AI-assisted notes: a
+    # read-aloud script on the session surface and a consent line on session
+    # notes. On unless the practice turns it off. See
+    # app.routes.practice_ai_notes_consent.
+    ask_clients_about_ai_notes: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
     # Tenant offboarding schedule. NULL = active; non-NULL = scheduled
     # offboard at this instant. Cleared by NULL to cancel.
     offboard_scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
