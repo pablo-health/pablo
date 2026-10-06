@@ -20,6 +20,7 @@ import type {
   StructuredSOAPNoteModel,
 } from "@/types/sessions"
 import { noteContentToJson } from "@/types/sessions"
+import { displayedNote } from "@/lib/displayedNote"
 import type { Note, NoteType } from "@/types/notes"
 import {
   createMockNote,
@@ -921,5 +922,45 @@ describe("a drafted SOAP note stored structured only", () => {
       (note.content as { subjective: { chief_complaint: { text: string } } }).subjective
         .chief_complaint.text,
     )
+  })
+
+  it("shows the saved edit after a reload, not the draft", async () => {
+    const onSave = vi.fn()
+    const note = draftedNote()
+    const { unmount } = render(<NoteViewer note={note} onSave={onSave} />)
+    fireEvent.click(screen.getByText("Edit"))
+    fireEvent.change(screen.getByLabelText("Next Steps"), {
+      target: { value: "Practice paced breathing" },
+    })
+    fireEvent.click(screen.getByText("Save Changes"))
+    unmount()
+
+    // What the server returns on reload: the draft untouched, the edit beside it.
+    const saved = { ...note, content_edited: noteContentToJson(onSave.mock.calls[0][0]) }
+    render(<NoteViewer note={saved} onSave={onSave} />)
+
+    expect(screen.getByText("Edited")).toBeInTheDocument()
+    expect(screen.getByText(/Practice paced breathing/)).toBeInTheDocument()
+    expect(screen.queryByText("Review progress next session")).not.toBeInTheDocument()
+    // The draft's source references do not attach to the clinician's text.
+    expect(screen.queryByText("(unverified)")).not.toBeInTheDocument()
+  })
+
+  it("exports to PDF exactly what it shows", async () => {
+    const { exportSOAPToPDF } = await import("@/lib/utils/pdfExport")
+    const note = createMockNote({
+      ...draftedNote(),
+      content_edited: { ...createMockSOAPNote({ plan: "Practice paced breathing" }) },
+    })
+    render(<NoteViewer note={note} pdfMetadata={PDF_META} />)
+
+    fireEvent.click(screen.getByText("Export PDF"))
+
+    const { note_type: _type, ...shown } = displayedNote(note).content as NoteContent & {
+      note_type: "soap"
+    }
+    expect(exportSOAPToPDF).toHaveBeenCalledWith(PDF_META, shown, peopleWords("clients"))
+    expect(shown.plan).toBe("Practice paced breathing")
+    expect(screen.getByText(/Practice paced breathing/)).toBeInTheDocument()
   })
 })

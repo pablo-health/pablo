@@ -8,9 +8,9 @@
  * four-section document; Narrative renders a single free-form body; every
  * other type renders from its catalog definition (SchemaNoteView).
  *
- * Operates on a Note record from /api/notes (pa-0nx.4); the embedded
- * structured SOAP tree (with source references) is derived from
- * ``note.content`` when present.
+ * Operates on a Note record from /api/notes (pa-0nx.4). What a SOAP note
+ * shows, on screen and in its PDF, comes from ``displayedNote``: the
+ * clinician's edit when there is one, otherwise the draft.
  */
 
 "use client"
@@ -47,8 +47,8 @@ import type {
 import {
   noteContentFromNote,
   noteEditedContentFromNote,
-  structuredSoapFromNote,
 } from "@/types/sessions"
+import { displayedNote, type DisplayedNote } from "@/lib/displayedNote"
 import type { Note } from "@/types/notes"
 import {
   SubFieldEditor,
@@ -130,19 +130,9 @@ export function NoteViewer({
     )
   }
 
-  // A drafted SOAP note is stored structured only, with no narrative beside
-  // it; the editor and the PDF both work from narrative, so derive it here.
-  const structured = structuredSoapFromNote(note)
-  const soapBase: SOAPNoteContent | null =
-    structured && !structured.narrative
-      ? { note_type: "soap", ...structuredToNarrative(structured) }
-      : asSOAP(baseContent)
-
   return (
     <SOAPNoteView
-      note={soapBase}
-      noteEdited={asSOAP(editedContent)}
-      structured={structured}
+      displayed={displayedNote(note, pendingEdited)}
       readonly={viewOnly}
       pdfMetadata={pdfMetadata}
       onSave={onSave}
@@ -175,9 +165,7 @@ const SOAP_SECTIONS = [
 ] as const
 
 interface SOAPViewProps {
-  note: SOAPNoteContent | null
-  noteEdited: SOAPNoteContent | null
-  structured: StructuredSOAPNoteModel | null
+  displayed: DisplayedNote
   readonly?: boolean
   pdfMetadata?: PDFExportMetadata
   onSave?: (editedNote: NoteContent) => void
@@ -194,9 +182,7 @@ const EMPTY_SOAP_NARRATIVE: SOAPNoteModel = {
 }
 
 function SOAPNoteView({
-  note,
-  noteEdited,
-  structured,
+  displayed,
   readonly = false,
   pdfMetadata,
   onSave,
@@ -208,7 +194,8 @@ function SOAPNoteView({
   // (the standalone "New note" path creates an empty row), open directly
   // in edit mode so the clinician can type — otherwise we'd render a
   // dead-end "not yet generated" card with no way into the editor.
-  const isBlank = !noteEdited && !note
+  const shown = asSOAP(displayed.content)
+  const isBlank = !shown
   const canEdit = !readonly && !!onSave
   const startEmptyEditing = isBlank && canEdit
 
@@ -228,8 +215,11 @@ function SOAPNoteView({
   const people = usePeopleTerm()
 
   const displayNote: SOAPNoteModel | null =
-    noteEdited ?? note ?? (startEmptyEditing ? EMPTY_SOAP_NARRATIVE : null)
-  const isEdited = !!noteEdited
+    shown ?? (startEmptyEditing ? EMPTY_SOAP_NARRATIVE : null)
+  const isEdited = displayed.edited
+  // Source references point at the draft's sentences, so they show only
+  // while the draft is what shows.
+  const structured = displayed.draft
   const isManual = isBlank
 
   const hasUnsavedChanges = () => {
