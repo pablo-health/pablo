@@ -168,9 +168,12 @@ heading; they are not part of the recording and carry no recording times.
 
 
 def split_dictated(content: str) -> tuple[str, str]:
-    """The recording's transcript, and what was dictated for the note after it."""
-    recording, _, dictated = content.partition(DICTATED_HEADING)
-    return recording.rstrip(), dictated.strip()
+    """The recording's transcript, and what was dictated for the note after it.
+
+    The dictated part keeps its heading, so it still reads as dictated later.
+    """
+    recording, found, dictated = content.partition(DICTATED_HEADING)
+    return recording.rstrip(), f"{found}\n{dictated.strip()}" if found else ""
 
 
 def split_at_boundary(segments: Sequence[TimedSegment], boundary: float) -> TranscriptSplit:
