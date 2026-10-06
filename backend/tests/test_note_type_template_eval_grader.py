@@ -15,6 +15,7 @@ from app.notes.client_present import (
 from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
 from evals.note_type_templates.cases import (
     FOLLOW_UP_ADDENDUM,
+    FOLLOW_UP_THERAPY_START,
     INTAKE_NEW_CLIENT,
     load_template,
     sample_transcript,
@@ -22,6 +23,9 @@ from evals.note_type_templates.cases import (
 from evals.note_type_templates.run import grade
 
 CASE = INTAKE_NEW_CLIENT
+
+# A start inside the therapy-start case's bounds, so only the window is graded.
+_ANY_START = {"candidates": [{"seconds": 725.0, "source": "marked"}]}
 
 
 def _faithful_draft() -> dict[str, Any]:
@@ -143,3 +147,22 @@ def test_an_unquoted_paraphrase_or_a_filled_gap_fails() -> None:
 
     assert any("does not quote 'denies suicidal ideation'" in f for f in failures)
     assert any("risk.self_harm_violence was not covered" in f for f in failures)
+
+
+def test_the_confirmed_window_completes_a_time_that_states_only_its_minutes() -> None:
+    # The shape the model drafts when the clinician dictated only the minutes.
+    stated = "Start time: Not stated. End time: Not stated. Minutes: 52."
+    draft = {"psychotherapy": {"psychotherapy_time": stated}}
+
+    assert grade(FOLLOW_UP_THERAPY_START, draft, _ANY_START)["failures"] == []
+
+
+def test_a_time_the_window_cannot_complete_fails() -> None:
+    draft = {"psychotherapy": {"psychotherapy_time": "Minutes: 45."}}
+
+    failures = grade(FOLLOW_UP_THERAPY_START, draft, _ANY_START)["failures"]
+
+    assert failures == [
+        "psychotherapy.psychotherapy_time reads 'Minutes: 45.' after confirming "
+        "'11:12 AM to 12:04 PM, 52 minutes'"
+    ]

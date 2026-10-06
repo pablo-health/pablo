@@ -537,7 +537,7 @@
             "key": "psychotherapy_time",
             "label": "Psychotherapy time",
             "kind": "text",
-            "ai_hint": "Start time, end time and minutes of the psychotherapy portion, exactly as the clinician stated them. Never compute or estimate from the transcript timestamps. \"Not stated.\" if the clinician did not say."
+            "ai_hint": "Start time, end time and minutes of the psychotherapy portion, exactly as the clinician stated them, and only the ones they stated (e.g. \"18 minutes\"). Never compute or estimate from the transcript timestamps. \"Not stated.\" if the clinician stated none of them."
           },
           {
             "key": "modality_interventions",

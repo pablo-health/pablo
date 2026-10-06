@@ -14,7 +14,9 @@ the run:
     had none) was filled;
   - a diagnosis lacks a code, carries a code the clinician never said, or a
     stated code is missing; a rule-out was not marked as one;
-  - any value contains a forbidden string (a code or level never stated).
+  - any value contains a forbidden string (a code or level never stated);
+  - once the case's therapy start is confirmed, the psychotherapy time field
+    does not read the confirmed window.
 
 Exit code: 0 when there are no hard failures, 1 when there are, 2 on a
 setup problem.
@@ -29,14 +31,22 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.models import Patient, Transcript
 from app.notes.client_present import client_present_end, segments_from_transcript
 from app.notes.diagnoses import diagnosis_text
 from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
+from app.notes.visit_times import (
+    PSYCHOTHERAPY_SECTION_KEY,
+    PSYCHOTHERAPY_TIME_FIELD,
+    apply_confirmed_window,
+    window_minutes,
+    window_text,
+)
 from app.services.note_generation_service import GeneratedNote, RegistryNoteGenerationService
 from app.services.structured_llm_gateway import (
     StructuredLLMGateway,
@@ -51,6 +61,10 @@ from evals.note_type_templates.cases import (
     load_template,
     sample_transcript,
 )
+
+# When a case's visit began, and the clinician's zone, for the window's clock times.
+VISIT_STARTED = datetime(2026, 10, 6, 15, 0, tzinfo=UTC)
+CLINICIAN_ZONE = ZoneInfo("America/New_York")
 
 
 def _is_empty(value: Any) -> bool:
@@ -96,6 +110,7 @@ def grade(
                 failures.append(f"{path} is empty")
     failures.extend(_grade_quoted(case, content))
     failures.extend(_grade_start(case, start))
+    failures.extend(_grade_confirmed_window(case, content))
     if case.diagnoses_field:
         failures.extend(_grade_diagnoses(case, content))
     return {"case": case.name, "passed": not failures, "failures": failures}
@@ -117,6 +132,44 @@ def _grade_start(case: TemplateCase, start: dict[str, Any] | None) -> list[str]:
     if candidates[0] > high:
         failures.append(f"first proposed therapy start {candidates[0]:.0f}s is after {high:.0f}s")
     return failures
+
+
+def boundary(case: TemplateCase) -> float | None:
+    """Where the client left a case drafted as a recorded call; ``None`` otherwise."""
+    if not case.recorded_call:
+        return None
+    transcript = Transcript(
+        format="txt", content=case.transcript or sample_transcript(case.template, case.sample)
+    )
+    return client_present_end(segments_from_transcript(transcript), client_channel_expected=True)
+
+
+def confirmed_window(case: TemplateCase) -> dict[str, Any] | None:
+    """The window the clinician confirms for ``case``, as the visit-times panel records it."""
+    end = boundary(case)
+    if case.confirmed_start_seconds is None or end is None:
+        return None
+    minutes = window_minutes(case.confirmed_start_seconds, end)
+    text = window_text(
+        minutes,
+        start_at=VISIT_STARTED + timedelta(seconds=case.confirmed_start_seconds),
+        end_at=VISIT_STARTED + timedelta(seconds=end),
+        zone=CLINICIAN_ZONE,
+    )
+    return {"start_seconds": case.confirmed_start_seconds, "minutes": minutes, "window_text": text}
+
+
+def _grade_confirmed_window(case: TemplateCase, content: dict[str, Any]) -> list[str]:
+    """Once the clinician confirms the start, the time field reads the window."""
+    confirmed = confirmed_window(case)
+    if confirmed is None:
+        return []
+    filled = apply_confirmed_window(content, {"confirmed": confirmed}) or {}
+    stated = _text(filled.get(PSYCHOTHERAPY_SECTION_KEY, {}).get(PSYCHOTHERAPY_TIME_FIELD))
+    if stated == confirmed["window_text"]:
+        return []
+    field = f"{PSYCHOTHERAPY_SECTION_KEY}.{PSYCHOTHERAPY_TIME_FIELD}"
+    return [f"{field} reads {stated!r} after confirming {confirmed['window_text']!r}"]
 
 
 _QUOTE_MARKS = ('"', "\u201c", "\u201d")
@@ -170,11 +223,6 @@ def draft(
     transcript = Transcript(
         format="txt", content=case.transcript or sample_transcript(case.template, case.sample)
     )
-    boundary = (
-        client_present_end(segments_from_transcript(transcript), client_channel_expected=True)
-        if case.recorded_call
-        else None
-    )
     # The model is named here too: without it the generator asks the gateway
     # for the configured default, which a Bedrock gateway cannot serve.
     generated = RegistryNoteGenerationService(llm_gateway=gateway, model=model).generate_note(
@@ -184,7 +232,7 @@ def draft(
         now,
         inputs=case.inputs,
         definition=definition,
-        client_present_end_seconds=boundary,
+        client_present_end_seconds=boundary(case),
     )
     return generated
 

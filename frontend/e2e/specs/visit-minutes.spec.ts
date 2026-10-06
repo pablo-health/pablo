@@ -140,6 +140,42 @@ test.describe("visit minutes", () => {
     })
   })
 
+  test("a time that states only matching minutes takes the confirmed window without a conflict", async ({
+    api,
+    signedInPage: page,
+  }) => {
+    await withNoteType(api, withPsychotherapy, async (key) => {
+      const session = await recordedVisit(api, key)
+      // How a draft states a time the clinician gave only as minutes. The
+      // stand-in can't draft it, so it goes in as the note's text.
+      const { note } = await api.get<{ note: { id: string } }>(`/api/sessions/${session.id}`)
+      await api.patch(`/api/notes/${note.id}`, {
+        content_edited: {
+          plan: { follow_up: "Return in four weeks." },
+          psychotherapy: {
+            psychotherapy_time: "Start time: Not stated. End time: Not stated. Minutes: 37.",
+            modality_interventions: "Cognitive behavioral therapy.",
+          },
+        },
+      })
+      await page.goto(`/dashboard/sessions/${session.id}`)
+
+      const times = page.getByTestId("visit-times")
+      await expect(page.getByRole("radio", { name: /\(you said so here\)/ })).toBeChecked()
+      await page.getByRole("button", { name: "Confirm" }).click()
+      const confirmed = page.getByTestId("psychotherapy-confirmed")
+      await expect(confirmed).toHaveText(/^\d{1,2}:\d{2} [AP]M to \d{1,2}:\d{2} [AP]M, 37 minutes$/)
+
+      // The minutes agree, so there is nothing to pick: the window completes the time.
+      await expect(times.getByRole("alert")).toHaveCount(0)
+      const windowText = await confirmed.innerText()
+      const saved = await api.get<NoteOnSession>(`/api/sessions/${session.id}`)
+      expect(saved.note.content_edited?.psychotherapy?.psychotherapy_time).toBe(windowText)
+      await expect(page.getByText(windowText, { exact: true })).toHaveCount(2)
+      await expect(page.getByText(/Start time: Not stated/)).toHaveCount(0)
+    })
+  })
+
   test("a note without psychotherapy shows total time with documentation", async ({
     api,
     signedInPage: page,

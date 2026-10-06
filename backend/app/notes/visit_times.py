@@ -24,7 +24,10 @@ time zone, so the page does it.
 Once confirmed, the window is written into the note's psychotherapy time
 field as clock times and minutes. A time the clinician dictated wins: if the
 draft already holds a dictated time that disagrees, both are shown and the
-clinician picks.
+clinician picks. A draft that states only some parts ("Start time: Not
+stated. End time: Not stated. Minutes: 18.") holds a dictated time only in
+the parts it states; where those name no clock time and their minutes match
+the window, the window completes them.
 """
 
 from __future__ import annotations
@@ -54,8 +57,10 @@ StartSource = Literal["spoken_cue", "marked", "attributed"]
 
 _TRANSCRIPT_TIME = re.compile(r"^\[?(\d+(?::\d{2}){1,2})\]?$")
 _CLOCK_TIME = re.compile(r"\b\d{1,2}(?::\d{2})?\b")
-_MINUTES = re.compile(r"(\d+)\s*(?:min|minute)", re.IGNORECASE)
-_NOT_STATED = "not stated"
+_MINUTES = re.compile(r"(\d+)\s*min|minutes?\s*:?\s*(\d+)", re.IGNORECASE)
+_STATED_CLOCK_TIME = re.compile(r"\b\d{1,2}:\d{2}\b|\b\d{1,2}\s*[ap]\.?m\b|o'?clock", re.IGNORECASE)
+# A part's label ("End time:"), a "Not stated." in it, and what separates parts.
+_UNSTATED_PARTS = re.compile(r"[a-z][a-z ]*:|not (?:stated|asked)|[\s.,;]+", re.IGNORECASE)
 _SECONDS_PER_MINUTE = 60
 _NOON = 12
 
@@ -140,14 +145,33 @@ def window_text(
 
 
 def drafted_time(content: dict[str, Any] | None) -> str | None:
-    """What the note's psychotherapy time field holds, unless blank or "Not stated."."""
+    """What the note's psychotherapy time field holds, unless it states nothing.
+
+    A field states nothing when it is blank or every part of it reads "Not
+    stated." ("Start time: Not stated. End time: Not stated.").
+    """
     section = (content or {}).get(PSYCHOTHERAPY_SECTION_KEY)
     if not isinstance(section, dict):
         return None
     value = str(section.get(PSYCHOTHERAPY_TIME_FIELD) or "").strip()
-    if not value or value.rstrip(".").lower() == _NOT_STATED:
+    if not _UNSTATED_PARTS.sub("", value):
         return None
     return value
+
+
+def _stated_minutes(value: str) -> int | None:
+    """The minutes a time states, written either way round ("18 minutes", "Minutes: 18")."""
+    match = _MINUTES.search(value)
+    return int(match.group(1) or match.group(2)) if match else None
+
+
+def _window_completes(dictated: str, confirmed: dict[str, Any]) -> bool:
+    """Whether the window only adds to a dictated time: it names no clock time, same minutes."""
+    return (
+        not confirmed.get("keep_dictated")
+        and _STATED_CLOCK_TIME.search(dictated) is None
+        and _stated_minutes(dictated) == confirmed.get("minutes")
+    )
 
 
 def disagrees(dictated: str | None, confirmed: dict[str, Any] | None) -> bool:
@@ -163,8 +187,8 @@ def disagrees(dictated: str | None, confirmed: dict[str, Any] | None) -> bool:
         or dictated == confirmed.get("window_text")
     ):
         return False
-    stated = _MINUTES.search(dictated)
-    return stated is None or int(stated.group(1)) != confirmed.get("minutes")
+    stated = _stated_minutes(dictated)
+    return stated is None or stated != confirmed.get("minutes")
 
 
 def clear_drafted_time(content: dict[str, Any]) -> dict[str, Any]:
@@ -179,16 +203,19 @@ def apply_confirmed_window(
 ) -> dict[str, Any] | None:
     """``content`` with the confirmed window in its psychotherapy time field.
 
-    Fills the field only where it is blank or "Not stated."; a time the
-    clinician dictated stays, and :func:`disagrees` reports any conflict.
+    Fills the field where it states nothing, or states only minutes that
+    match the window; any other time the clinician dictated stays, and
+    :func:`disagrees` reports any conflict.
     """
     confirmed = (window or {}).get("confirmed")
     if (
         not confirmed
         or content is None
         or not isinstance(content.get(PSYCHOTHERAPY_SECTION_KEY), dict)
-        or drafted_time(content) is not None
     ):
+        return content
+    dictated = drafted_time(content)
+    if dictated is not None and not _window_completes(dictated, confirmed):
         return content
     filled = copy.deepcopy(content)
     filled[PSYCHOTHERAPY_SECTION_KEY][PSYCHOTHERAPY_TIME_FIELD] = confirmed["window_text"]
