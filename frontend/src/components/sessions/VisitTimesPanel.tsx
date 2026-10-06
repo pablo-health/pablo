@@ -5,17 +5,8 @@
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { useVisitTimes } from "@/hooks/useVisitTimes"
 import { useUserTimeZone } from "@/hooks/usePreferences"
-import { clientPresentLineText, clockTime } from "@/lib/visitTimes"
-import type { VisitTimes } from "@/types/visitTimes"
+import { clientPresentLineText, visitLineText } from "@/lib/visitTimes"
 import { PsychotherapyWindow } from "./PsychotherapyWindow"
-
-export function visitLineText(times: VisitTimes, timeZone: string): string | null {
-  if (!times.started_at || !times.ended_at) return null
-  return `Started ${clockTime(times.started_at, timeZone)} · Ended ${clockTime(
-    times.ended_at,
-    timeZone,
-  )} · ${times.total_minutes} min`
-}
 
 /**
  * A recorded visit's times, above its note: when it started and ended, how

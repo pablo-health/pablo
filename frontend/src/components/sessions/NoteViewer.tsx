@@ -10,7 +10,8 @@
  *
  * Operates on a Note record from /api/notes (pa-0nx.4). What a SOAP note
  * shows, on screen and in its PDF, comes from ``displayedNote``: the
- * clinician's edit when there is one, otherwise the draft.
+ * clinician's edit when there is one, otherwise the draft. Every type
+ * exports its PDF through the one renderer in ``lib/utils/pdfExport``.
  */
 
 "use client"
@@ -31,9 +32,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import {
+  exportNoteToPDF,
   exportSOAPToPDF,
   type PDFExportMetadata,
 } from "@/lib/utils/pdfExport"
+import { narrativeNotePdf } from "@/lib/notePdf"
 import type {
   NarrativeNoteContent,
   NoteContent,
@@ -71,7 +74,7 @@ export interface NoteViewerProps {
   /** Local override for unsaved edits — takes priority over note.content_edited. */
   pendingEdited?: NoteContent | null
   readonly?: boolean
-  /** Metadata used for the SOAP PDF export header. PDF button hidden when omitted. */
+  /** Metadata used for the PDF export header. PDF button hidden when omitted. */
   pdfMetadata?: PDFExportMetadata
   onSave?: (editedNote: NoteContent) => void
   onClaimClick?: (sourceSegmentIds: number[]) => void
@@ -110,6 +113,7 @@ export function NoteViewer({
         note={asNarrative(baseContent)}
         noteEdited={asNarrative(editedContent)}
         readonly={viewOnly}
+        pdfMetadata={pdfMetadata}
         onSave={onSave}
         className={className}
       />
@@ -124,6 +128,7 @@ export function NoteViewer({
         note={asSchema(baseContent)}
         noteEdited={asSchema(editedContent)}
         readonly={viewOnly}
+        pdfMetadata={pdfMetadata}
         onSave={onSave}
         className={className}
       />
@@ -608,6 +613,7 @@ interface NarrativeViewProps {
   note: NarrativeNoteContent | null
   noteEdited: NarrativeNoteContent | null
   readonly?: boolean
+  pdfMetadata?: PDFExportMetadata
   onSave?: (editedNote: NoteContent) => void
   className?: string
 }
@@ -616,9 +622,11 @@ function NarrativeNoteView({
   note,
   noteEdited,
   readonly = false,
+  pdfMetadata,
   onSave,
   className,
 }: NarrativeViewProps) {
+  const people = usePeopleTerm()
   // Mirror the SOAP empty-blank-editing behavior so manually-created
   // narrative notes open straight in the editor (see SOAPNoteView).
   const isBlank = !noteEdited && !note
@@ -662,6 +670,12 @@ function NarrativeNoteView({
     setShowConfirmDialog(false)
   }
 
+  const handlePDFExport = () => {
+    if (displayNote && pdfMetadata) {
+      exportNoteToPDF(pdfMetadata, narrativeNotePdf(displayNote.body), people)
+    }
+  }
+
   if (!displayNote) {
     return (
       <div className={cn("card text-center py-12", className)}>
@@ -687,6 +701,12 @@ function NarrativeNoteView({
         </div>
 
         <div className="flex gap-2">
+          {pdfMetadata && !isBlank && (
+            <Button variant="outline" size="sm" onClick={handlePDFExport}>
+              <Download className="w-4 h-4 mr-2" />
+              Export PDF
+            </Button>
+          )}
           {canEdit && !editMode && (
             <Button size="sm" onClick={enterEditMode}>
               <Edit className="w-4 h-4 mr-2" />
