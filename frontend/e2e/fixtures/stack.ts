@@ -40,5 +40,12 @@ export const DNS_URL = process.env.E2E_DNS_URL || `http://localhost:${port("E2E_
 export const GOOGLE_URL =
   process.env.E2E_GOOGLE_URL || `http://localhost:${port("E2E_GOOGLE_PORT", "8090")}`
 
+/**
+ * The stand-in object store (scripts/e2e/fake_gcs.py). Its listing answers
+ * without credentials, so a spec can see what the backend left behind.
+ */
+export const STORAGE_URL =
+  process.env.E2E_STORAGE_URL || `http://localhost:${port("E2E_STORAGE_PORT", "9000")}`
+
 /** The emulator-only project the stack is configured with. */
 export const FIREBASE_PROJECT_ID = "demo-pablo-e2e"

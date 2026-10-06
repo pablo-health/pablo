@@ -63,6 +63,7 @@ from ..repositories import (
     PatientRepository,
     UserRepository,
     get_session_dictation_repository,
+    get_session_repository,
     get_user_repository,
 )
 from ..repositories import (
@@ -85,6 +86,8 @@ from ..services import (
     RegistryNoteGenerationService,
     get_audit_service,
 )
+from ..services.audio_retention import AudioOnSigning
+from ..services.file_storage import file_storage_from_settings
 from ..services.http_structured_llm_gateway import HttpStructuredLLMGateway
 from ..services.note_generation_service import TransientNoteGenerationError
 from ..services.note_signing import current_signature
@@ -154,6 +157,21 @@ def get_scheduling_service(
     the same appointment record the standalone visit-edit surface writes to.
     """
     return SchedulingService(repo)
+
+
+def get_audio_on_signing(ctx: TenantContext = Depends(get_tenant_context)) -> AudioOnSigning:
+    """What signing does with the session's audio, by the practice's retention setting."""
+    from ..db.platform_models import PracticeRow
+
+    settings = get_settings()
+    practice = get_db_session().get(PracticeRow, ctx.practice_id) if ctx.practice_id else None
+    return AudioOnSigning(
+        retention_days=practice.audio_retention_days if practice else None,
+        session_repo=get_session_repository(),
+        dictation_repo=get_session_dictation_repository(),
+        storage=file_storage_from_settings(settings),
+        bucket=settings.transcription_audio_bucket,
+    )
 
 
 def get_registry() -> NoteTypeRegistry:
@@ -250,6 +268,7 @@ def finalize_note(
     user: User = Depends(require_baa_acceptance),
     note_service: NoteService = Depends(get_note_service),
     audit: AuditService = Depends(get_audit_service),
+    audio_on_signing: AudioOnSigning = Depends(get_audio_on_signing),
 ) -> NoteResponse:
     """Finalize a note — record quality rating + finalized_at."""
     try:
@@ -282,6 +301,7 @@ def finalize_note(
         session_id=note.session_id,
         changes={"quality_rating": request.quality_rating},
     )
+    audio_on_signing.after_signing(note, user, http_request, audit)
     return NoteResponse.from_note(note)
 
 
@@ -328,6 +348,7 @@ def sign_note(
     user: User = Depends(require_baa_acceptance),
     note_service: NoteService = Depends(get_note_service),
     audit: AuditService = Depends(get_audit_service),
+    audio_on_signing: AudioOnSigning = Depends(get_audio_on_signing),
 ) -> NoteResponse:
     """Sign and lock a note with the name and credentials entered."""
     note, signature = note_service.sign_note(
@@ -356,6 +377,7 @@ def sign_note(
             **_restricted_change(note),
         },
     )
+    audio_on_signing.after_signing(note, user, http_request, audit)
     return NoteResponse.from_note(note)
 
 
@@ -398,6 +420,7 @@ def add_note_addendum(
     user: User = Depends(require_baa_acceptance),
     note_service: NoteService = Depends(get_note_service),
     audit: AuditService = Depends(get_audit_service),
+    audio_on_signing: AudioOnSigning = Depends(get_audio_on_signing),
 ) -> NoteAddendumResponse:
     """Add a signed addendum to a locked note.
 
@@ -429,6 +452,8 @@ def add_note_addendum(
             **_restricted_change(note),
         },
     )
+    # A clip dictated after signing became this addendum; it goes now too.
+    audio_on_signing.after_signing(note, user, http_request, audit)
     return NoteAddendumResponse.from_addendum(addendum)
 
 

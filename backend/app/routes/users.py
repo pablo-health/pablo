@@ -767,7 +767,8 @@ def update_practice_audio_retention(
     """Set the caller's own practice's audio retention window (days).
 
     422 on an out-of-range value (Pydantic — mirrors the DB CHECK of
-    30..2555 days so a bad value never reaches the database). 403 if the
+    0..2555 days so a bad value never reaches the database; 0 deletes a
+    session's audio once its note is signed). 403 if the
     caller isn't the practice owner.
     """
     from ..db import get_db_session

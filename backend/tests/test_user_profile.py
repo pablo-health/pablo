@@ -1106,7 +1106,7 @@ class TestAudioRetentionSelfService:
         ):
             too_low = client.put(
                 "/api/users/me/practice/audio-retention",
-                json={"audio_retention_days": 29},
+                json={"audio_retention_days": -1},
             )
             too_high = client.put(
                 "/api/users/me/practice/audio-retention",
@@ -1116,6 +1116,29 @@ class TestAudioRetentionSelfService:
         assert too_high.status_code == 422
         # No DB write attempted for an out-of-range value.
         fake_session.flush.assert_not_called()
+
+    @pytest.mark.parametrize("days", [0, 1, 29, 2555])
+    def test_every_value_from_signing_to_seven_years_is_accepted(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository, days: int
+    ) -> None:
+        """0 is "delete when the note is signed"; 1 and up are days."""
+        mock_user_repo.update(mock_user)
+        practice = self._practice()
+        fake_session = MagicMock()
+        fake_session.get.return_value = practice
+        with (
+            patch(
+                "app.auth.service._resolve_practice_from_email",
+                return_value=("practice-1", "practice_1"),
+            ),
+            patch("app.db.get_db_session", return_value=fake_session),
+        ):
+            response = client.put(
+                "/api/users/me/practice/audio-retention",
+                json={"audio_retention_days": days},
+            )
+        assert response.status_code == 200
+        assert practice.audio_retention_days == days
 
     def test_no_practice_mapping_returns_404(
         self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository

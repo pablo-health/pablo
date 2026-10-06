@@ -181,6 +181,15 @@ FRESH_CONSENT = SeededPractice(
     email="e2e-fresh-consent@example.com",
     name="Fresh Practice Consent",
 )
+# Its own practice for the spec about when session audio is deleted: it sets
+# the practice to delete on signing, which every other spec's recordings would
+# feel.
+FRESH_RETENTION = SeededPractice(
+    id="e2e-fresh-retention",
+    schema="practice_e2e_fresh_retention",
+    email="e2e-fresh-retention@example.com",
+    name="Fresh Practice Retention",
+)
 SEEDED = (
     SECOND_PRACTICE,
     FRESH_YES,
@@ -192,6 +201,7 @@ SEEDED = (
     FRESH_RESERVED,
     FRESH_HOURS,
     FRESH_CONSENT,
+    FRESH_RETENTION,
 )
 
 # Kept for anything that still reads the second practice by its old names.

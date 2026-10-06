@@ -449,6 +449,8 @@ services:
       dockerfile: Dockerfile.production
       args:
         NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST: localhost:${E2E_AUTH_EMULATOR_PORT:-9099}
+        # Off by default; audio-retention.spec.ts drives the setting.
+        NEXT_PUBLIC_FF_AUDIO_RETENTION: "true"
     # One API_URL serves both the browser and the server-rendered pages, so
     # the frontend runs inside the backend's network namespace: from either
     # side, localhost:<backend port> is the backend. Service names on the

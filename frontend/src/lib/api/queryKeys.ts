@@ -341,6 +341,11 @@ const baseQueryKeys = {
     practiceSetting: () => [...baseQueryKeys.aiConsent.all, "practice-setting"] as const,
   },
 
+  // When the practice deletes session audio
+  audioRetention: {
+    all: ["audioRetention"] as const,
+  },
+
   // Medication list query keys
   medications: {
     all: ["medications"] as const,

@@ -75,9 +75,10 @@ class Starter:
 #   practice can offer the client an assistant between sessions, so that
 #   sentence would not be true everywhere this runs.
 # * Transcription gets its own section because it is the question being
-#   asked. The retention period is the practice's own setting, filled in each
-#   time the document is shown (see ``fill_practice_values``), never a
-#   number written here.
+#   asked. When the audio is deleted is the practice's own setting, filled in
+#   each time the document is shown (see ``fill_practice_values``), never
+#   written here — a practice that deletes on signing and one that keeps audio
+#   for a year both get a sentence that is true for them.
 # * "Protected the same way as the rest of your record" rather than a list of
 #   safeguards: it is true, and a list would introduce machinery.
 # * Changing the answer: the client tells the provider, who records it on
@@ -100,8 +101,7 @@ not make decisions about your care.
 ## Session transcription
 
 If you agree, the audio of your sessions is transcribed to help your provider \
-write the note. Your practice keeps session audio for {{audio_retention_days}} \
-days, then deletes it.
+write the note. Session audio is deleted {{audio_retention}}.
 
 ## Your information
 

@@ -23,6 +23,10 @@ COPY . .
 # other build leaves it empty, which the code treats as "not set".
 ARG NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST=""
 ENV NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST=${NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST}
+# The same stack shows the audio retention setting (src/lib/featureFlags.ts)
+# so its spec can drive it; empty leaves the flag's default.
+ARG NEXT_PUBLIC_FF_AUDIO_RETENTION=""
+ENV NEXT_PUBLIC_FF_AUDIO_RETENTION=${NEXT_PUBLIC_FF_AUDIO_RETENTION}
 
 # Build Next.js app (standalone mode for minimal output)
 # AUTH_COOKIE_SIGNATURE_KEY is required at build time because auth-config.ts
