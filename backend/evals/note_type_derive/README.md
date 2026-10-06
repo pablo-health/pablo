@@ -82,6 +82,27 @@ meaning fits best". That rule is right for import (keep every word) and
 wrong here (it hides every gap); the first DAP run caught it, and the
 coverage extraction now leaves such text out.
 
+## Private samples: the local runner
+
+Notes that must not be committed (a clinician's own, or samples shared
+privately) are run with `scripts/run-derive-local.sh` (`evals/run_derive.py`),
+which takes them **by path**:
+
+```bash
+scripts/run-derive-local.sh --samples ~/notes/a.pdf ~/notes/b.docx \
+    --reference-spec reference.json --transcript visit.txt --out /tmp/derive-run
+```
+
+It runs the same service the route does and writes to `--out` only (a new
+temporary directory by default): the proposal, a report scoring its
+structure against the reference spec (sections and fields matched by label,
+order agreement, missing and extra), the coverage report, the copied-text
+check on the final proposal (expected empty), and, with `--transcript`, the
+transcript drafted with the proposal and with the reference side by side.
+The console shows scores and counts, never sample text. Nothing is copied
+into the repository: keep the samples, and the output, outside it.
+`--stand-in` swaps the model for the end-to-end stack's stand-in.
+
 ## Running it
 
 ```bash
