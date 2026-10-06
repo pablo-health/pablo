@@ -1,24 +1,33 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Consent documents a practice can start from instead of a blank page.
+"""Documents and questions a practice can start from instead of a blank page.
 
-A starter is a document plus the questions that go with it. Adding one to a
-form creates the document as the practice's own — published, so the form can
-go live, and from then on edited like anything else the practice wrote — and
-appends a consent item pointing at it and the starter's questions after it.
-Nothing here is read again once a practice has its copy: the copy is theirs.
+A starter is a document plus the questions that go with it, or a set of
+questions alone. Adding one to a form creates the document as the practice's
+own — published, so the form can go live, and from then on edited like
+anything else the practice wrote — and appends a consent item pointing at it
+and the starter's questions after it. Nothing here is read again once a
+practice has its copy: the copy is theirs.
 
-A starter's text is checked the same way a practice's is (see the tests): it
-must parse through :mod:`app.intake.documents` and its digest is pinned, so a
+The built-in starters are :data:`STARTERS`. A deployment can add its own
+starter documents and questions with :func:`register_intake_starter`;
+:func:`intake_starters` is what the editor lists, built-ins first and then
+the registered ones in the order they were registered.
+
+Every starter is checked by :func:`check_starter`: its text must parse
+through :mod:`app.intake.documents` and its questions must publish behind
+the document. The built-ins also have their digest pinned in the tests, so a
 change to the wording is a deliberate change to a pinned value rather than a
-drift nobody noticed.
+drift nobody noticed; a deployment registering its own can pin theirs the
+same way with :func:`app.intake.documents.content_digest`.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .items import ItemDraft
+from .documents import canonical_text
+from .items import ITEM_KEY_PATTERN, ItemDraft, validate_item_list
 
 #: The question on the AI-tools starter whose answer goes on the client's
 #: chart as their AI-notes answer, and what each option means there. Found on
@@ -37,16 +46,18 @@ AI_TOOLS_DOCUMENT_ITEM_KEY = "ai_tools_consent"
 
 @dataclass(frozen=True)
 class Starter:
-    """One document a practice can start from.
+    """One document, or one set of questions, a practice can start from.
 
     ``document_item_key`` names the consent item that points at the
-    document; ``questions`` follow it on the form, in order.
+    document; ``questions`` follow it on the form, in order. A starter with
+    no ``body_markdown`` has no document and no consent item, only its
+    questions.
     """
 
     key: str
     title: str
-    body_markdown: str
-    document_item_key: str
+    body_markdown: str | None = None
+    document_item_key: str | None = None
     questions: tuple[ItemDraft, ...] = ()
 
 
@@ -123,13 +134,79 @@ AI_TOOLS_CONSENT = Starter(
     ),
 )
 
-#: Every starter, in the order the editor lists them.
+#: The built-in starters, in the order the editor lists them.
 STARTERS: tuple[Starter, ...] = (AI_TOOLS_CONSENT,)
+
+_registered: dict[str, Starter] = {}
+
+
+def check_starter(chosen: Starter) -> None:
+    """Raise :class:`ValueError` unless *chosen* can be added to a form.
+
+    The document must parse into words a client can read, and its consent
+    item and questions must pass the checks a form passes when it is
+    published, given that the practice's copy of the document is published
+    — which adopting the starter makes so. A use-restricted measure among
+    the questions is not refused here: whether the practice holds the
+    permission is asked when it publishes the form.
+    """
+    if not ITEM_KEY_PATTERN.match(chosen.key):
+        raise ValueError(
+            f"{chosen.key!r} cannot be a starter's key — use lowercase letters, "
+            "numbers and underscores."
+        )
+    if not chosen.title.strip():
+        raise ValueError(f"{chosen.key}: a starter needs a title.")
+    items = list(chosen.questions)
+    if chosen.body_markdown is None:
+        if chosen.document_item_key is not None:
+            raise ValueError(f"{chosen.key}: a consent item needs a document to point at.")
+        if not items:
+            raise ValueError(f"{chosen.key}: a starter needs a document or a question.")
+    else:
+        if chosen.document_item_key is None:
+            raise ValueError(f"{chosen.key}: a document needs a consent item to point at it.")
+        if not canonical_text(chosen.body_markdown):
+            raise ValueError(f"{chosen.key}: the document has no words in it.")
+        consent_item = ItemDraft(
+            key=chosen.document_item_key,
+            item_type="consent_document",
+            config={"document_key": "the-practices-copy"},
+        )
+        items.insert(0, consent_item)
+    validate_item_list(items, published_document=lambda _key: "published")
+
+
+def register_intake_starter(chosen: Starter) -> None:
+    """Add *chosen* to the starters the editor lists, after those before it.
+
+    Raises :class:`ValueError` if it fails :func:`check_starter`, or if its
+    key or title is already taken. Titles are unique because adopting a
+    starter reuses the practice's published document of the same title, so
+    two starters sharing one would share a document.
+    """
+    check_starter(chosen)
+    for existing in intake_starters():
+        if existing.key == chosen.key:
+            raise ValueError(f"There is already a starter named {chosen.key!r}.")
+        if existing.title == chosen.title:
+            raise ValueError(f"There is already a starter titled {chosen.title!r}.")
+    _registered[chosen.key] = chosen
+
+
+def intake_starters() -> tuple[Starter, ...]:
+    """Every starter, built-ins first, in the order the editor lists them."""
+    return (*STARTERS, *_registered.values())
 
 
 def starter(key: str) -> Starter | None:
     """The starter named *key*, or ``None``."""
-    return next((s for s in STARTERS if s.key == key), None)
+    return next((s for s in intake_starters() if s.key == key), None)
+
+
+def clear_registered_intake_starters() -> None:
+    """Forget every registered starter. For tests."""
+    _registered.clear()
 
 
 __all__ = [
@@ -139,5 +216,9 @@ __all__ = [
     "AI_TRANSCRIPTION_ITEM_KEY",
     "STARTERS",
     "Starter",
+    "check_starter",
+    "clear_registered_intake_starters",
+    "intake_starters",
+    "register_intake_starter",
     "starter",
 ]
