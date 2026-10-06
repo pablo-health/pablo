@@ -48,7 +48,7 @@ import { useNoteTypeLabel } from "@/hooks/useNoteTypes"
 import { useUserTimeZone } from "@/hooks/usePreferences"
 import { pdfSignatureBlock } from "@/lib/utils/signatureBlock"
 import type { RedraftEdits, RedraftNoteRequest } from "@/types/notes"
-import type { NoteContent, SOAPNoteModel } from "@/types/sessions"
+import type { NoteContent } from "@/types/sessions"
 import { noteContentToJson } from "@/types/sessions"
 
 const HIGHLIGHT_DURATION_MS = 4000
@@ -78,10 +78,11 @@ export default function SessionDetailPage({ params }: PageProps) {
     sections: [],
   })
 
-  // Local state for edited SOAP note (before finalization)
-  const [localSoapNoteEdited, setLocalSoapNoteEdited] = useState<SOAPNoteModel | null>(null)
-  // Last saved edit of a non-SOAP note, shown until the session refetches.
+  // Last saved edit, shown until the session refetches.
   const [localNoteEdited, setLocalNoteEdited] = useState<NoteContent | null>(null)
+  // The save in flight, if any: a redraft or a dictation waits for it, so a
+  // redraft that keeps edits sees the latest one.
+  const savingEditsRef = useRef<Promise<unknown> | null>(null)
   const updateNoteEdits = useUpdateNoteEdits()
   const redraftNote = useRedraftSessionNote()
   const addDictation = useAddSessionDictation()
@@ -137,56 +138,35 @@ export default function SessionDetailPage({ params }: PageProps) {
     setLocalRatingFeedback(feedback)
   }
 
+  // Every edit, of every note type, is saved to the note as soon as it is
+  // made — the same PATCH the standalone note page uses — so it survives a
+  // reload and is what a redraft and signing read. The local copy shows the
+  // edit until the session refetches.
   const handleNoteSave = (edited: NoteContent) => {
-    // A session under review holds SOAP edits for finalize to persist. A
-    // finalized session's note that was unlocked to correct an error has no
-    // finalize left, so every type saves straight to the note.
-    if (edited.note_type === "soap" && session?.status === "pending_review") {
-      // SOAP edits are held here and persisted by finalize (soap_note_edited).
-      const soap: SOAPNoteModel = {
-        subjective: edited.subjective,
-        objective: edited.objective,
-        assessment: edited.assessment,
-        plan: edited.plan,
-      }
-      setLocalSoapNoteEdited(soap)
-      return
-    }
-    // Finalize has no slot for any other type's content, so those edits are
-    // saved to the note straight away — the same PATCH the standalone note
-    // page uses. The local copy shows the edit until the session refetches.
     const noteId = session?.note?.id
     if (!noteId) return
     setLocalNoteEdited(edited)
-    updateNoteEdits.mutate(
-      { noteId, data: { content_edited: noteContentToJson(edited) } },
-      { onError: () => setLocalNoteEdited(null) },
-    )
+    savingEditsRef.current = updateNoteEdits
+      .mutateAsync({ noteId, data: { content_edited: noteContentToJson(edited) } })
+      .catch(() => setLocalNoteEdited(null))
   }
 
-  // SOAP edits under review are held on this page until finalize; a redraft
-  // that keeps edits has to see them, so they are saved before one starts.
-  const saveHeldEdits = async (noteId: string) => {
-    if (localSoapNoteEdited) {
-      await updateNoteEdits.mutateAsync({
-        noteId,
-        data: { content_edited: { ...localSoapNoteEdited } },
-      })
-    }
-    setLocalSoapNoteEdited(null)
+  // A redraft rewrites the note from the saved copy, so it waits for a save
+  // in flight, and the local copy must not mask what it returns.
+  const settleEdits = async () => {
+    await savingEditsRef.current
     setLocalNoteEdited(null)
   }
 
   const handleRedraft = async (data: RedraftNoteRequest) => {
-    const noteId = session?.note?.id
-    if (!noteId) return
-    await saveHeldEdits(noteId)
+    if (!session?.note) return
+    await settleEdits()
     redraftNote.mutate({ sessionId: id, data })
   }
 
   const handleDictation = async (clip: DictationClip, edits?: RedraftEdits) => {
     const note = session?.note
-    if (note && !note.finalized_at) await saveHeldEdits(note.id)
+    if (note && !note.finalized_at) await settleEdits()
     return addDictation.mutateAsync({
       sessionId: id,
       audio: clip.blob,
@@ -244,11 +224,7 @@ export default function SessionDetailPage({ params }: PageProps) {
   }
 
   const note = session.note
-  // localSoapNoteEdited is only ever set from a SOAP save, so tagging it
-  // "soap" here restates its type rather than imposing one.
-  const pendingEdited: NoteContent | null = localSoapNoteEdited
-    ? { note_type: "soap", ...localSoapNoteEdited }
-    : localNoteEdited
+  const pendingEdited = localNoteEdited
   // A session with no note yet doesn't say which type it will be.
   const noteHeading = note ? `${noteTypeLabel(note.note_type)} note` : "Note"
   const canReview =
@@ -420,7 +396,6 @@ export default function SessionDetailPage({ params }: PageProps) {
                     qualityRating={localRatingFeedback.rating}
                     qualityRatingReason={localRatingFeedback.reason}
                     qualityRatingSections={localRatingFeedback.sections}
-                    soapNoteEdited={localSoapNoteEdited}
                   />
                 </div>
               </div>

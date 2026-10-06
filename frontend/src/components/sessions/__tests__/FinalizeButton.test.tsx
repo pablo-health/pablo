@@ -9,7 +9,7 @@ import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { FinalizeButton } from "../FinalizeButton"
-import type { SessionStatus, SOAPNoteModel } from "@/types/sessions"
+import type { SessionStatus } from "@/types/sessions"
 import * as useSessions from "@/hooks/useSessions"
 
 vi.mock("@/hooks/useNoteSigning", () => ({
@@ -120,21 +120,15 @@ describe("FinalizeButton", () => {
       expect(preview).toHaveTextContent("Electronically signed by Sam Ortiz, LMFT, LPCC")
     })
 
-    it("signs with the entered name and credentials, the rating and edited SOAP", async () => {
+    it("signs with the entered name and credentials and the rating, and no note body", async () => {
+      // The note's edits are already saved on it; signing locks what it holds.
       const user = userEvent.setup()
       mockMutateAsync.mockResolvedValue({})
-      const edited: SOAPNoteModel = {
-        subjective: "S",
-        objective: "O",
-        assessment: "A",
-        plan: "P",
-      }
       render(
         <FinalizeButton
           {...defaultProps}
           qualityRatingReason="Clear"
           qualityRatingSections={["plan"]}
-          soapNoteEdited={edited}
         />,
         { wrapper: createWrapper() },
       )
@@ -151,7 +145,6 @@ describe("FinalizeButton", () => {
           quality_rating: 4,
           quality_rating_reason: "Clear",
           quality_rating_sections: ["plan"],
-          soap_note_edited: edited,
           signature: { signer_name: "Sam Ortiz", signer_credentials: "PhD" },
         },
       })
