@@ -2,7 +2,7 @@
 
 /**
  * A draft still arrives when the model that drafts notes is down. The stack
- * names a fallback model (AI_MODEL_FALLBACKS), and its stand-in for the
+ * names a fallback model for drafting (AI_FALLBACKS), and its stand-in for the
  * models (scripts/fake_llm.py) answers a transcript carrying the line below
  * from the fallback alone: every call to the first model fails with a 503.
  * So a draft can only appear here if drafting moved on to the fallback.

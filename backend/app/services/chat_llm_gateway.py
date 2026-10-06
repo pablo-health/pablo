@@ -35,7 +35,13 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from ..reliability import LLM_REQUEST, Idempotency, acall_with_retry
+from ..reliability import (
+    LLM_REQUEST,
+    Idempotency,
+    RetryExhaustedError,
+    acall_with_retry,
+    is_transient,
+)
 from .llm_provider import strip_provider_prefix
 from .llm_telemetry import LLMSpanRequest, llm_span
 from .vertex_client import vertex_genai_client
@@ -85,6 +91,28 @@ class StreamEvent:
     output_tokens: int | None = None
     error_code: str | None = None
     error_message: str | None = None
+    transient: bool = False
+    """On an error event: whether another attempt, on this model or another,
+    could plausibly succeed (a rate limit, 5xx, timeout or dropped
+    connection) rather than meeting the same refusal."""
+
+
+def is_transient_failure(exc: BaseException) -> bool:
+    """Whether ``exc`` or anything it chains is a failure worth another attempt.
+
+    A retry the gateway gave up on counts: it was retrying because the
+    failure was transient.
+    """
+    seen: set[int] = set()
+    cause: BaseException | None = exc
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        if isinstance(cause, RetryExhaustedError) or is_transient(
+            cause, retry_status=LLM_REQUEST.retry_status
+        ):
+            return True
+        cause = cause.__cause__
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -273,6 +301,7 @@ class GeminiChatLLMGateway(ChatLLMGateway):
                     finish_reason="error",
                     error_code=error_code,
                     error_message=type(exc).__name__,
+                    transient=is_transient_failure(exc),
                 )
                 return
 
@@ -405,4 +434,5 @@ __all__ = [
     "GeminiChatLLMGateway",
     "StreamEvent",
     "UserAssistantTurn",
+    "is_transient_failure",
 ]

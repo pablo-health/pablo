@@ -207,6 +207,14 @@ class BedrockStructuredLLMGateway(StructuredLLMGateway):
         self._clients: dict[float, Any] = {}
         self._lock = threading.Lock()
 
+    def client(self, timeout_seconds: float) -> Any:
+        """A bedrock-runtime client bounded by ``timeout_seconds``, shared by bound.
+
+        Also what the streaming chat gateway calls through, so both share
+        one credential session.
+        """
+        return self._client(timeout_seconds)
+
     def _client(self, timeout_seconds: float) -> Any:
         bound = math.ceil(timeout_seconds / _TIMEOUT_STEP_SECONDS) * _TIMEOUT_STEP_SECONDS
         with self._lock:

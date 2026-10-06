@@ -1587,17 +1587,32 @@ class Settings(BaseSettings):
             "fallback."
         ),
     )
-    ai_model_fallbacks: str = Field(
-        default="",
+    ai_fallbacks: dict[str, str] = Field(
+        default_factory=dict,
         description=(
-            "Comma-separated models a long structured call (drafting a note, "
-            "importing one, deriving a note type) moves on to, in order, when "
-            "ai_model fails transiently or gives no answer in time. Same "
-            "format as ai_model_flash_fallbacks, e.g. "
-            "``bedrock:us.anthropic.claude-sonnet-4-6``. Unlike the interactive "
-            "list, these are never started beside a slow primary: one call "
-            "runs at a time. Empty (default) keeps today's single model and "
-            "its own retry."
+            "Fallback models per AI feature, as a JSON object from feature "
+            "key to comma-separated model ids (provider prefix allowed), e.g. "
+            '``{"note_generation": "<provider>:<model>"}``. A feature moves '
+            "on to its fallbacks, in order, only when its own model fails "
+            "transiently, gives an unusable answer or runs out of time. A "
+            "feature not named here has no fallback: there is deliberately "
+            "no default list, so a feature is never answered by a model "
+            "nobody chose for it. Which models suit which feature is "
+            "configurable per deployment; nothing is set by default.\n\n"
+            "Keys read by this codebase (others may be read by extensions):\n"
+            "- ``note_generation``: drafting a note of any type, and the "
+            "source-attribution calls that follow it.\n"
+            "- ``note_import``: reading an imported note into a note type.\n"
+            "- ``note_type_derive``: proposing a note type from samples.\n"
+            "- ``availability_parse``: reading hours a clinician describes. "
+            "Falls back to ai_model_flash_fallbacks when not named here.\n"
+            "- ``chat``: the clinician's assistant chat.\n"
+            "- ``patient_chat``: chat with a client. Client-facing: name a "
+            "fallback here only once that model has passed the same crisis "
+            "evaluation as the primary.\n\n"
+            "Long calls (the note keys) run one model at a time, never side "
+            "by side; chat changes model only before the first word of an "
+            "answer is streamed, never part-way through one."
         ),
     )
     ai_hedge_after_seconds: float | None = Field(
@@ -1613,8 +1628,8 @@ class Settings(BaseSettings):
     )
 
     # Amazon Bedrock, for ``bedrock:``-prefixed models (most usefully as an
-    # entry in ai_model_flash_fallbacks or ai_model_fallbacks, a second
-    # provider on a second cloud).
+    # entry in ai_model_flash_fallbacks or ai_fallbacks, a second provider
+    # on a second cloud).
     aws_bedrock_region: str = Field(
         default="us-east-1",
         description=(
@@ -1648,10 +1663,18 @@ class Settings(BaseSettings):
         """``ai_model_flash_fallbacks`` split into model ids, in order."""
         return tuple(m.strip() for m in self.ai_model_flash_fallbacks.split(",") if m.strip())
 
-    @property
-    def fallback_models(self) -> tuple[str, ...]:
-        """``ai_model_fallbacks`` split into model ids, in order."""
-        return tuple(m.strip() for m in self.ai_model_fallbacks.split(",") if m.strip())
+    def fallbacks_for(self, feature: str) -> tuple[str, ...]:
+        """The fallback models ``ai_fallbacks`` names for ``feature``, in order.
+
+        Empty for a feature it does not name. ``availability_parse`` alone
+        also reads ai_model_flash_fallbacks, the setting it had before
+        features were keyed; no other feature reads that list.
+        """
+        if feature in self.ai_fallbacks:
+            return tuple(m.strip() for m in self.ai_fallbacks[feature].split(",") if m.strip())
+        if feature == "availability_parse":
+            return self.flash_fallback_models
+        return ()
 
     note_max_output_tokens: int = Field(
         default=16384,

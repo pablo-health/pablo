@@ -140,7 +140,7 @@ services:
       # Drafting falls back to a second model when the first fails. The
       # stand-in answers this name too, and answers it alone for a transcript
       # that tells it the first model is down.
-      - AI_MODEL_FALLBACKS=stand-in-fallback
+      - 'AI_FALLBACKS={"note_generation": "stand-in-fallback"}'
       # What a clinician dictates after a session is transcribed by the same
       # stand-in, which hears the same words in every clip. With no task
       # queue here, the dictation is transcribed and applied in the API

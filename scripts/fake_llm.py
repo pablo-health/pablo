@@ -121,7 +121,7 @@ REFUSES_DRAFT = "The stand-in will not draft this session."
 #: every other model is unavailable, as a provider outage would leave it.
 PRIMARY_DOWN = "The first drafting model is down for this session."
 
-#: The fallback the stack names in AI_MODEL_FALLBACKS.
+#: The fallback the stack names for note drafting in AI_FALLBACKS.
 FALLBACK_MODEL = "stand-in-fallback"
 
 

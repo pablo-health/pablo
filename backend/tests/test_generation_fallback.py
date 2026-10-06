@@ -3,7 +3,7 @@
 """A fallback model for long structured calls: drafting, importing, deriving.
 
 Each call site is built the way the app builds it, with no gateway passed
-in, so these exercise the real wiring: ``AI_MODEL_FALLBACKS`` in the
+in, so these exercise the real wiring: ``AI_FALLBACKS`` in the
 environment, the provider registry resolving each model to its gateway,
 and the hedged gateway running the legs. The models are ``test:`` ids
 served by one stub that fails the primary as each test tells it to.
@@ -11,6 +11,7 @@ served by one stub that fails the primary as each test tells it to.
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -25,6 +26,7 @@ from app.notes import NoteTypeRegistry, register_builtin_note_types
 from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
 from app.reliability import RetryExhaustedError
 from app.services import structured_llm_gateway
+from app.services.ai_features import AIFeature
 from app.services.hedged_structured_llm_gateway import (
     GENERATION_BUDGET_SECONDS,
     HedgedStructuredLLMGateway,
@@ -140,8 +142,9 @@ class Provider(StructuredLLMGateway):
 
 @pytest.fixture
 def fallbacks(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Configure one fallback, as a deployment would."""
-    monkeypatch.setenv("AI_MODEL_FALLBACKS", FALLBACK)
+    """Name one fallback for each long-call feature, as a deployment would."""
+    keys = ("note_generation", "note_import", "note_type_derive")
+    monkeypatch.setenv("AI_FALLBACKS", json.dumps(dict.fromkeys(keys, FALLBACK)))
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -211,7 +214,41 @@ class TestWiring:
         assert NoteImportService()._llm_gateway is default
         assert NoteTypeDeriveService(NoteImportService())._llm_gateway is default
         stand_in = HttpStructuredLLMGateway("http://stand-in.invalid")
-        assert generation_gateway(stand_in) is stand_in
+        assert generation_gateway(AIFeature.NOTE_GENERATION, stand_in) is stand_in
+
+    def test_a_feature_not_named_has_no_fallback_whatever_else_is_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No default list: the interactive list and other features' entries stay theirs."""
+        monkeypatch.setenv("AI_MODEL_FLASH_FALLBACKS", "test:interactive")
+        monkeypatch.setenv("AI_FALLBACKS", json.dumps({"note_import": FALLBACK}))
+        get_settings.cache_clear()
+        try:
+            settings = get_settings()
+            assert settings.fallbacks_for(AIFeature.NOTE_GENERATION) == ()
+            assert settings.fallbacks_for(AIFeature.CHAT) == ()
+            assert settings.fallbacks_for(AIFeature.NOTE_IMPORT) == (FALLBACK,)
+            assert settings.fallbacks_for(AIFeature.AVAILABILITY_PARSE) == ("test:interactive",)
+            default = get_default_structured_llm_gateway()
+            assert RegistryNoteGenerationService()._llm_gateway is default
+            assert isinstance(NoteImportService()._llm_gateway, HedgedStructuredLLMGateway)
+        finally:
+            get_settings.cache_clear()
+
+    def test_availability_parse_named_in_the_map_wins_over_its_old_list(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AI_MODEL_FLASH_FALLBACKS", "test:interactive")
+        monkeypatch.setenv(
+            "AI_FALLBACKS", json.dumps({"availability_parse": f"{FALLBACK}, test:second"})
+        )
+        get_settings.cache_clear()
+        try:
+            hedged = HedgedStructuredLLMGateway.from_settings()
+            legs = [leg.model for leg in hedged.policy_for("flash", 15.0).legs]
+        finally:
+            get_settings.cache_clear()
+        assert legs == ["flash", FALLBACK, "test:second", "flash"]
 
     @pytest.mark.usefixtures("fallbacks")
     def test_configured_each_call_site_runs_the_fallback_order_one_at_a_time(self) -> None:

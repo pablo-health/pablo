@@ -21,8 +21,9 @@ Every call ends within 25 s, the deadline of the ``LLM_REQUEST`` retry
 this replaces: a leg that starts late is given what is left of it.
 
 A long call (drafting, importing or deriving a note) uses the same legs
-with no stall threshold, built by :func:`generation_gateway` from
-``ai_model_fallbacks``. Attempts run one at a time, in this order:
+with no stall threshold, built by :func:`generation_gateway` from the
+feature's entry in ``ai_fallbacks``. Attempts run one at a time, in this
+order:
 
 1. the requested model, for up to 180 s;
 2. each fallback once, in the configured order, each started only when the
@@ -63,6 +64,7 @@ from ..reliability.hedge import (
 )
 from ..reliability.hedge_sync import run_hedged_sync
 from ..settings import get_settings
+from .ai_features import AIFeature
 from .structured_llm_gateway import (
     _STRUCTURED_LLM_TIMEOUT_SECONDS,
     StructuredCompletion,
@@ -162,11 +164,14 @@ class HedgedStructuredLLMGateway(StructuredLLMGateway):
 
     @classmethod
     def from_settings(
-        cls, resolve: Callable[[str], StructuredLLMGateway] = resolve_structured_llm_gateway
+        cls,
+        resolve: Callable[[str], StructuredLLMGateway] = resolve_structured_llm_gateway,
+        feature: str = AIFeature.AVAILABILITY_PARSE,
     ) -> HedgedStructuredLLMGateway:
+        """An interactive gateway with ``feature``'s fallbacks, if it has any."""
         settings = get_settings()
         return cls(
-            fallbacks=settings.flash_fallback_models,
+            fallbacks=settings.fallbacks_for(feature),
             stall_after=settings.ai_hedge_after_seconds or INTERACTIVE_STALL_AFTER,
             resolve=resolve,
         )
@@ -243,17 +248,19 @@ class HedgedStructuredLLMGateway(StructuredLLMGateway):
         return completion
 
 
-def generation_gateway(single: StructuredLLMGateway | None = None) -> StructuredLLMGateway:
-    """The gateway a long structured call goes through.
+def generation_gateway(
+    feature: str, single: StructuredLLMGateway | None = None
+) -> StructuredLLMGateway:
+    """The gateway a long structured call for ``feature`` goes through.
 
-    With ``ai_model_fallbacks`` empty, that is ``single`` (the default
+    With no fallbacks named for ``feature``, that is ``single`` (the default
     Gemini gateway unless given), unchanged: one model, its own retry. With
-    fallbacks configured, a hedged gateway that runs the attempts listed in
-    this module's docstring one at a time, never side by side. ``single``,
-    when given, answers every leg whatever its model, as the end-to-end
-    stand-in does.
+    fallbacks named, a hedged gateway that runs the attempts listed in this
+    module's docstring one at a time, never side by side. ``single``, when
+    given, answers every leg whatever its model, as the end-to-end stand-in
+    does.
     """
-    fallbacks = get_settings().fallback_models
+    fallbacks = get_settings().fallbacks_for(feature)
     if not fallbacks:
         return single or get_default_structured_llm_gateway()
     return HedgedStructuredLLMGateway(

@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, ClassVar, Literal
 from ..models import ChatMessage, QuotaStatus
 from ..reliability import Idempotency, RetryExhaustedError, RetryPolicy, acall_with_retry
 from ..utcnow import utc_now
+from .ai_features import AIFeature
 from .chat_context_bundler import (
     ContextBundle,
     ContextOverflowError,
@@ -41,6 +42,7 @@ from .chat_context_bundler import (
     assemble_context_bundle,
     default_source_selection,
 )
+from .chat_failover import failover_chat_gateway
 from .chat_llm_gateway import StreamEvent, UserAssistantTurn
 from .llm_telemetry import RetrievedDocumentRef, retrieval_span
 
@@ -597,7 +599,12 @@ class ChatTurnService:
             is_first_attempt = attempt_count == 1
             buffer: list[str] = []
             final: StreamEvent | None = None
-            stream = self._gateway.stream_completion(
+            # A client's own chat and a clinician's are separate features, so
+            # each gets only the fallbacks configured for it (see
+            # ``chat_failover``): a client-facing answer never inherits the
+            # clinician chat's fallback.
+            feature = AIFeature.PATIENT_CHAT if context.patient_principal else AIFeature.CHAT
+            stream = failover_chat_gateway(feature, self._gateway).stream_completion(
                 model=context.model,
                 system_prompt=system_prompt,
                 prior_turns=prior_turns,

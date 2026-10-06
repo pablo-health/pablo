@@ -10,6 +10,7 @@ as the backend would validate a model's.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -19,6 +20,7 @@ from app.notes import NoteTypeRegistry, register_builtin_note_types
 from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
 from app.routes.notes import get_note_generation_service
 from app.services import dictation_transcription, http_structured_llm_gateway
+from app.services.ai_features import AIFeature
 from app.services.dictation_transcription import HttpDictationTranscriber
 from app.services.hedged_structured_llm_gateway import generation_gateway
 from app.services.http_structured_llm_gateway import HttpStructuredLLMGateway
@@ -226,12 +228,14 @@ def test_with_the_first_model_down_the_fallback_drafts(
     stand_in: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """As the stack runs it: the stand-in answers only the named fallback."""
-    monkeypatch.setenv("AI_MODEL_FALLBACKS", FALLBACK_MODEL)
+    monkeypatch.setenv("AI_FALLBACKS", json.dumps({"note_generation": FALLBACK_MODEL}))
     get_settings.cache_clear()
     try:
         service = RegistryNoteGenerationService(
             registry=_service().registry,
-            llm_gateway=generation_gateway(HttpStructuredLLMGateway(BASE_URL)),
+            llm_gateway=generation_gateway(
+                AIFeature.NOTE_GENERATION, HttpStructuredLLMGateway(BASE_URL)
+            ),
         )
         transcript = Transcript(format="txt", content=f"[00:01] Client: {PRIMARY_DOWN}")
         generated = service.generate_note("soap", transcript, PATIENT, NOW)

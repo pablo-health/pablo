@@ -86,6 +86,7 @@ from ..services import (
     RegistryNoteGenerationService,
     get_audit_service,
 )
+from ..services.ai_features import AIFeature
 from ..services.audio_retention import AudioOnSigning
 from ..services.file_storage import file_storage_from_settings
 from ..services.hedged_structured_llm_gateway import generation_gateway
@@ -140,7 +141,7 @@ def get_note_generation_service() -> NoteGenerationService:
     """
     base_url = get_settings().note_generation_base_url
     if base_url:
-        stand_in = generation_gateway(HttpStructuredLLMGateway(base_url))
+        stand_in = generation_gateway(AIFeature.NOTE_GENERATION, HttpStructuredLLMGateway(base_url))
         return RegistryNoteGenerationService(llm_gateway=stand_in)
     return RegistryNoteGenerationService()
 

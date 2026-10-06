@@ -45,6 +45,7 @@ from ..notes.practice_types import render_user_prompt
 from ..notes.prompts.soap import SOAP_SYSTEM_PROMPT
 from ..notes.visit_times import PSYCHOTHERAPY_SECTION_KEY, client_present_turns
 from ..settings import get_settings
+from .ai_features import AIFeature
 from .hedged_structured_llm_gateway import generation_gateway
 from .psychotherapy_start import (
     START_INSTRUCTIONS,
@@ -240,7 +241,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
     ) -> None:
         self.therapist_name = therapist_name or "Therapist"
         self.registry = registry or get_default_registry()
-        self._llm_gateway = llm_gateway or generation_gateway()
+        self._llm_gateway = llm_gateway or generation_gateway(AIFeature.NOTE_GENERATION)
         self._model = model
 
     def _resolve_model(self) -> str:
