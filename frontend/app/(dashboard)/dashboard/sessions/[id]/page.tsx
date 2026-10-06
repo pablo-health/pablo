@@ -310,7 +310,12 @@ export default function SessionDetailPage({ params }: PageProps) {
 
             {/* Above the drafted sections and outside them: read from the
                 client's consent record, never part of the note. */}
-            {note && <NoteConsentLine patientId={session.patient_id} />}
+            {note && (
+              <NoteConsentLine
+                patientId={session.patient_id}
+                modality={session.video_link ? "telehealth" : undefined}
+              />
+            )}
             {note && <VisitTimesPanel sessionId={session.id} readonly={!noteEditable} />}
 
             {note && <RedraftStatus status={note.status} requestFailed={redraftNote.isError} />}

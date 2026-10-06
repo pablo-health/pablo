@@ -145,9 +145,9 @@ def _release(session: Any, schema_token: Any, uid_token: Any) -> None:
 _INSERT = text(
     "INSERT INTO client_ai_consent_events "
     "(id, patient_id, decision, effective_on, source, recorded_by, recorded_at, "
-    " intake_submission_id) "
+    " intake_submission_id, modality, consented_by) "
     "VALUES (gen_random_uuid(), CAST(:pid AS uuid), :decision, current_date, :source, "
-    "        CAST(:recorded_by AS uuid), now(), NULL)"
+    "        CAST(:recorded_by AS uuid), now(), NULL, :modality, :consented_by)"
 )
 
 
@@ -157,6 +157,8 @@ def _insert(conn: Connection, patient_id: str, user_id: str, **overrides: str | 
         "decision": "consented",
         "source": "clinician",
         "recorded_by": user_id,
+        "modality": None,
+        "consented_by": None,
     }
     params.update(overrides)
     conn.execute(_INSERT, params)
@@ -191,6 +193,43 @@ def test_grantee_records_and_reads_history_in_order(
         ("declined", date(2026, 10, 2)),
     ]
     assert record.current.recorded_by_name == "Dr. A"
+    # Answers recorded without them read null.
+    assert (record.current.modality, record.current.consented_by) == (None, None)
+    assert record.current.client_stated_location is None
+
+
+def test_how_the_answer_was_given_round_trips(
+    engine: Engine, tenant_schema: str, patient_id: str
+) -> None:
+    from app.services.client_ai_consent import (  # noqa: PLC0415
+        ai_consent_record,
+        record_ai_consent,
+    )
+
+    repo, session, s_tok, u_tok = _repo_as(engine, tenant_schema, _CLINICIAN_A)
+    try:
+        record_ai_consent(
+            patient_id,
+            "consented",
+            date(2026, 10, 4),
+            "clinician",
+            _CLINICIAN_A,
+            modality="telehealth",
+            client_stated_location="At home",
+            consented_by="guardian",
+            repo=repo,
+        )
+        session.commit()
+        current = ai_consent_record(patient_id, repo=repo).current
+    finally:
+        _release(session, s_tok, u_tok)
+
+    assert current is not None
+    assert (current.modality, current.client_stated_location, current.consented_by) == (
+        "telehealth",
+        "At home",
+        "guardian",
+    )
 
 
 def test_clinician_without_a_grant_reads_nothing(
@@ -233,8 +272,16 @@ def test_clinician_without_a_grant_cannot_write(
         {"decision": "maybe"},
         {"source": "intake_form"},
         {"recorded_by": None},
+        {"modality": "phone"},
+        {"consented_by": "sibling"},
     ],
-    ids=["unknown-decision", "intake-form-without-submission", "clinician-without-recorder"],
+    ids=[
+        "unknown-decision",
+        "intake-form-without-submission",
+        "clinician-without-recorder",
+        "unknown-modality",
+        "unknown-giver",
+    ],
 )
 def test_check_constraints_refuse_malformed_rows(
     engine: Engine, tenant_schema: str, patient_id: str, overrides: dict[str, str | None]

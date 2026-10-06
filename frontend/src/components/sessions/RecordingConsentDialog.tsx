@@ -14,12 +14,17 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
-import { formatConsentDate } from "@/components/patients/AiConsentLine"
+import { Label } from "@/components/ui/label"
+import { formatConsentDate, giverWord } from "@/components/patients/AiConsentLine"
 import { useRecordAiConsent } from "@/hooks/useAiConsent"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { fetchAiConsent, fetchAiNotesConsentSetting } from "@/lib/api/aiConsent"
 import { queryKeys } from "@/lib/api/queryKeys"
-import type { AiConsentRecord, AiNotesConsentSetting } from "@/types/aiConsent"
+import type {
+  AiConsentGiver,
+  AiConsentRecord,
+  AiNotesConsentSetting,
+} from "@/types/aiConsent"
 
 /**
  * What the client's answer about AI-assisted notes means for starting a
@@ -109,18 +114,25 @@ export function RecordingConsentDialog({
   const people = usePeopleTerm()
   const record = useRecordAiConsent()
   const [error, setError] = useState<string | null>(null)
+  const [giver, setGiver] = useState<AiConsentGiver>("client")
   const open = consent !== null && consent.kind !== "clear"
 
   function close() {
     setError(null)
+    setGiver("client")
     onCancel()
   }
 
   async function agreedToday() {
     setError(null)
     try {
-      // No date: the server records the clinician's own today.
-      await record.mutateAsync({ patientId, data: { decision: "consented" } })
+      // No date: the server records the clinician's own today. Only an
+      // in-person visit reaches this answer (telehealth asks on the
+      // recording), so that is how it was given.
+      await record.mutateAsync({
+        patientId,
+        data: { decision: "consented", modality: "in_person", consented_by: giver },
+      })
     } catch {
       setError("Could not save. Please try again.")
       return
@@ -171,6 +183,21 @@ export function RecordingConsentDialog({
                 Ask whether the {people.one} agrees to AI-assisted notes before you record.
               </DialogDescription>
             </DialogHeader>
+            <div className="space-y-1.5">
+              <Label htmlFor="recording-consent-giver">Answered by</Label>
+              <select
+                id="recording-consent-giver"
+                value={giver}
+                onChange={(e) => setGiver(e.target.value as AiConsentGiver)}
+                className="block w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm"
+              >
+                {(["client", "parent", "guardian"] as const).map((value) => (
+                  <option key={value} value={value}>
+                    {giverWord(value, people)}
+                  </option>
+                ))}
+              </select>
+            </div>
             {error && <p className="text-sm text-red-500">{error}</p>}
             <DialogFooter>
               <Button variant="ghost" onClick={close}>
@@ -180,7 +207,7 @@ export function RecordingConsentDialog({
                 Record anyway
               </Button>
               <Button onClick={() => void agreedToday()} disabled={record.isPending}>
-                {record.isPending ? "Saving…" : `${people.One} agreed today`}
+                {record.isPending ? "Saving…" : `${giverWord(giver, people)} agreed today`}
               </Button>
             </DialogFooter>
           </>

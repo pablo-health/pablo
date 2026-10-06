@@ -13,6 +13,12 @@ export type AiConsentDecision = "consented" | "declined"
 
 export type AiConsentSource = "clinician" | "intake_form"
 
+/** Where the answer was given. */
+export type AiConsentModality = "in_person" | "telehealth"
+
+/** Who gave the answer: the client, or a parent or guardian for them. */
+export type AiConsentGiver = "client" | "parent" | "guardian"
+
 export interface AiConsentEntry {
   id: string
   decision: AiConsentDecision
@@ -21,6 +27,11 @@ export interface AiConsentEntry {
   source: AiConsentSource
   recorded_by_name: string | null
   recorded_at: string
+  /** How the answer was given; `null` (or absent) when nobody said. */
+  modality?: AiConsentModality | null
+  /** Where the client said they were, in their words (telehealth). */
+  client_stated_location?: string | null
+  consented_by?: AiConsentGiver | null
 }
 
 export interface AiConsentRecord {
@@ -44,4 +55,7 @@ export interface RecordAiConsentRequest {
   decision: AiConsentDecision
   /** Defaults to today on the server when omitted. */
   effective_on?: string
+  modality?: AiConsentModality
+  client_stated_location?: string
+  consented_by?: AiConsentGiver
 }

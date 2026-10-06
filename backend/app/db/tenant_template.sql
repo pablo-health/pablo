@@ -375,7 +375,12 @@ CREATE TABLE __TENANT_SCHEMA__.client_ai_consent_events (
     recorded_by uuid,
     recorded_at timestamp with time zone NOT NULL,
     intake_submission_id uuid,
+    modality character varying(16),
+    client_stated_location text,
+    consented_by character varying(16),
+    CONSTRAINT ck_client_ai_consent_events_consented_by CHECK (((consented_by IS NULL) OR ((consented_by)::text = ANY ((ARRAY['client'::character varying, 'parent'::character varying, 'guardian'::character varying])::text[])))),
     CONSTRAINT ck_client_ai_consent_events_decision CHECK (((decision)::text = ANY ((ARRAY['consented'::character varying, 'declined'::character varying])::text[]))),
+    CONSTRAINT ck_client_ai_consent_events_modality CHECK (((modality IS NULL) OR ((modality)::text = ANY ((ARRAY['in_person'::character varying, 'telehealth'::character varying])::text[])))),
     CONSTRAINT ck_client_ai_consent_events_recorded_by CHECK ((((source)::text <> 'clinician'::text) OR (recorded_by IS NOT NULL))),
     CONSTRAINT ck_client_ai_consent_events_source CHECK (((source)::text = ANY ((ARRAY['clinician'::character varying, 'intake_form'::character varying])::text[]))),
     CONSTRAINT ck_client_ai_consent_events_submission CHECK ((((source)::text = 'intake_form'::text) = (intake_submission_id IS NOT NULL)))

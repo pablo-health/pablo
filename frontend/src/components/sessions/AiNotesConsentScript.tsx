@@ -34,7 +34,7 @@ export function formatRetention(days: number): string {
  */
 export function consentScript(retentionDays: number): string[] {
   return [
-    "I'd like to record our session today.",
+    "I've started recording our session.",
     "The recording is turned into a written transcript, and an AI tool uses it to draft my notes. I read and correct every note myself.",
     // The practice's setting, and no more. 0 is enforced by signing itself,
     // so the script can say it plainly; for a number of days, whether deletion
@@ -71,7 +71,11 @@ export function AiNotesConsentScriptButton({ className }: { className?: string }
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Asking about AI-assisted notes</DialogTitle>
-            <DialogDescription>Read this aloud before you start recording.</DialogDescription>
+            {/* Read once recording has started, so the answer is on the
+                recording itself rather than only on the chart. */}
+            <DialogDescription>
+              Start recording, then read this aloud so the answer is on the recording.
+            </DialogDescription>
           </DialogHeader>
           <blockquote
             data-testid="ai-notes-consent-script"
