@@ -20,6 +20,8 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  # Dispatch CI on the bump branch (see "Run the checks" below).
+  actions: write
 
 concurrency:
   group: base-image-bump
@@ -96,10 +98,14 @@ jobs:
 
       - name: Open pull request
         if: steps.decide.outputs.changed == 'true'
+        id: cpr
         uses: peter-evans/create-pull-request@v8
         with:
           branch: chore/base-image-bump
           delete-branch: true
+          # Only the Dockerfile. Without this the action commits the whole work
+          # tree, including the scan cache Trivy writes under .cache/.
+          add-paths: backend/Dockerfile.production
           commit-message: "chore(deps): bump Chainguard base image digests"
           title: "chore(deps): bump Chainguard base image digests"
           body: |
@@ -116,6 +122,19 @@ jobs:
             dependencies
             ci
             base-image
+
+      # A pull request opened with the workflow token starts no workflows of
+      # its own, so the bump would wait on required checks that never run.
+      # Dispatch is the one event that token may trigger; these runs report
+      # against the branch head, which is the PR's commit.
+      - name: Run the checks on the bump branch
+        if: steps.cpr.outputs.pull-request-operation == 'created' || steps.cpr.outputs.pull-request-operation == 'updated'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for wf in ci.yml e2e.yml security.yml; do
+            gh workflow run "$wf" --repo "${{ github.repository }}" --ref chore/base-image-bump
+          done
 
   # File a tracking issue when the scheduled (weekly) run fails, so a broken
   # cron doesn't just sit red until someone happens to check the Actions tab.
