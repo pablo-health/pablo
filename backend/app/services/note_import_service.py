@@ -21,7 +21,10 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
-from typing import Any
+from functools import partial
+from typing import TYPE_CHECKING, Any, Protocol
+
+from anyio import fail_after, to_thread
 
 from ..notes import NoteTypeDefinition, NoteTypeRegistry, get_default_registry
 from ..notes.diagnoses import DIAGNOSES_KIND_LABEL
@@ -31,6 +34,7 @@ from ..settings import get_settings
 # They are imported (not reimplemented) so an imported note is exactly the
 # same shape as a generated one; see CLAUDE.md "Don't duplicate OSS".
 from .ai_features import AIFeature
+from .document_ai_ocr import LOW_CONFIDENCE_MARKER
 from .hedged_structured_llm_gateway import generation_gateway
 from .note_generation_service import (
     SOAP_KEY,
@@ -44,6 +48,9 @@ from .structured_llm_gateway import (
     StructuredOutputTruncatedError,
 )
 
+if TYPE_CHECKING:
+    from .document_ai_ocr import OcrResult
+
 logger = logging.getLogger(__name__)
 
 # Mirror patient_documents_service: PyMuPDF text shorter than this almost
@@ -56,6 +63,11 @@ _MAX_DOCX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
 
 # Largest document accepted for import, before any text is extracted.
 MAX_IMPORT_DOC_BYTES = 15 * 1024 * 1024
+
+# Reading a scanned PDF is an OCR network call. A few pages take seconds; the
+# OCR client's own deadline is 60s per attempt with one retry. Past this the
+# caller gets a retryable error instead of a request held open for minutes.
+DOCUMENT_READ_TIMEOUT_SECONDS = 90.0
 
 # Cap the extracted text fed to the parser. A single SOAP note is a few KB;
 # anything past this is either not one note or an attempt to run up LLM cost.
@@ -118,10 +130,25 @@ EXTRACT_INTO_SYSTEM_PROMPT = (
 class DocumentTextExtractionError(ValueError):
     """Raised when an uploaded document yields no usable text.
 
-    The common case is a scanned / image-only PDF that has no embedded text
-    layer; rather than import an empty note, callers should surface this so
-    the clinician knows to upload a text-based export.
+    Rather than import an empty note, callers surface the message as a 4xx.
+    A scanned PDF only lands here when OCR is off or could not read it.
     """
+
+
+class DocumentReadTimeoutError(RuntimeError):
+    """Reading an upload ran past :data:`DOCUMENT_READ_TIMEOUT_SECONDS`. Retryable."""
+
+
+class PdfOcr(Protocol):
+    """What the reader needs from an OCR client (``DocumentAiOcrClient``)."""
+
+    @property
+    def is_configured(self) -> bool: ...
+
+    @property
+    def max_pages(self) -> int: ...
+
+    def extract(self, *, pdf_bytes: bytes, mime_type: str) -> OcrResult | None: ...
 
 
 class UnsupportedDocumentTypeError(ValueError):
@@ -277,17 +304,18 @@ def _extract_docx_text(data: bytes) -> str:
     return body
 
 
-def _extract_pdf_text(data: bytes) -> str:
+def _extract_pdf_text(data: bytes, ocr: PdfOcr | None) -> str:
     """Pull the embedded text layer out of a PDF via PyMuPDF.
 
-    Raises :class:`DocumentTextExtractionError` for a scanned / image-only
-    PDF (text below :data:`_SCANNED_PDF_TEXT_THRESHOLD`).
+    A scanned / image-only PDF (text below :data:`_SCANNED_PDF_TEXT_THRESHOLD`)
+    is read with OCR instead, when ``ocr`` is given and switched on.
     """
     import pymupdf  # imported lazily
 
     try:
         with pymupdf.open(stream=data, filetype="pdf") as doc:
             body = "".join(page.get_text() for page in doc).strip()
+            page_count = int(doc.page_count)
     except Exception as exc:
         # MuPDF raises a range of errors on corrupt / encrypted / non-PDF
         # input; surface a clean 4xx rather than a 500 with a traceback.
@@ -295,11 +323,46 @@ def _extract_pdf_text(data: bytes) -> str:
             "Couldn't read this PDF — it may be corrupted, password-protected, or not a PDF."
         ) from exc
     if len(body) < _SCANNED_PDF_TEXT_THRESHOLD:
-        raise DocumentTextExtractionError(
-            "This PDF has no extractable text — it looks like a scan or image. "
-            "Upload a text-based PDF or TXT export instead."
-        )
+        return _ocr_scanned_pdf(data, page_count, ocr)
     return body
+
+
+def _ocr_scanned_pdf(data: bytes, page_count: int, ocr: PdfOcr | None) -> str:
+    """Read a scanned PDF's text with OCR, or say plainly why it can't be read.
+
+    The OCR client folds every failure (no project, API error, page cap) into
+    ``None``. The page cap is checked here first so the reader is told the one
+    thing they can change. Logs carry counts and sizes only.
+    """
+    if ocr is None or not ocr.is_configured:
+        raise DocumentTextExtractionError(
+            "Scanned PDFs can't be read here. Upload a Word or text version instead."
+        )
+    if page_count > ocr.max_pages:
+        raise DocumentTextExtractionError(
+            f"This scanned PDF has more than {ocr.max_pages} pages. Upload a shorter one."
+        )
+    result = ocr.extract(pdf_bytes=data, mime_type="application/pdf")
+    # The low-confidence marker is a note to a reader of the raw text. Here
+    # the text is relocated into note fields, where it would read as content.
+    text = result.text.removeprefix(LOW_CONFIDENCE_MARKER).strip() if result else ""
+    if result is None or not text:
+        logger.warning(
+            "Scanned PDF not read by OCR: pages=%d bytes=%d status=%s",
+            page_count,
+            len(data),
+            "failed" if result is None else "empty",
+        )
+        raise DocumentTextExtractionError(
+            "We couldn't read this scanned PDF. Try again, or upload a Word or text version."
+        )
+    logger.info(
+        "Scanned PDF read by OCR: pages=%d bytes=%d low_confidence_pages=%d",
+        page_count,
+        len(data),
+        len(result.low_confidence_pages),
+    )
+    return text
 
 
 def extract_document_text(
@@ -307,16 +370,21 @@ def extract_document_text(
     *,
     content_type: str | None = None,
     filename: str | None = None,
+    ocr: PdfOcr | None = None,
 ) -> str:
     """Extract plain text from an uploaded clinical document.
 
-    Supports text-based PDFs (PyMuPDF), Word .docx (standard-library zip/XML),
-    and plain-text files. Raises :class:`UnsupportedDocumentTypeError` for
-    anything else and :class:`DocumentTextExtractionError` when a supported
-    file yields no usable text.
+    Supports PDFs (PyMuPDF, with OCR for a scan when ``ocr`` is given), Word
+    .docx (python-docx), and plain-text files. Raises
+    :class:`UnsupportedDocumentTypeError` for anything else and
+    :class:`DocumentTextExtractionError` when a supported file yields no
+    usable text.
+
+    Blocking, and with ``ocr`` a network call: from an async route use
+    :func:`read_document_text`.
     """
     if _looks_like_pdf(content_type, filename):
-        text = _extract_pdf_text(data)
+        text = _extract_pdf_text(data, ocr)
     elif _looks_like_docx(content_type, filename):
         text = _extract_docx_text(data)
     elif _looks_like_text(content_type, filename):
@@ -332,6 +400,36 @@ def extract_document_text(
     if len(text) > _MAX_EXTRACTED_CHARS:
         raise DocumentTextExtractionError("This document is too long to import as a single note.")
     return text
+
+
+async def read_document_text(
+    data: bytes,
+    *,
+    content_type: str | None = None,
+    filename: str | None = None,
+    ocr: PdfOcr | None = None,
+) -> str:
+    """:func:`extract_document_text` off the event loop, with a time limit.
+
+    The worker thread carries the request's context. On timeout the thread is
+    abandoned (it ends at the OCR client's own deadline) and the caller gets
+    :class:`DocumentReadTimeoutError`, which routes answer with a retryable 503.
+    """
+    extract = partial(
+        extract_document_text, data, content_type=content_type, filename=filename, ocr=ocr
+    )
+    try:
+        with fail_after(DOCUMENT_READ_TIMEOUT_SECONDS):
+            return await to_thread.run_sync(extract, abandon_on_cancel=True)
+    except TimeoutError as exc:
+        logger.warning(
+            "Reading an upload timed out after %.0fs: bytes=%d",
+            DOCUMENT_READ_TIMEOUT_SECONDS,
+            len(data),
+        )
+        raise DocumentReadTimeoutError(
+            "Reading this document is taking longer than usual. Try again in a moment."
+        ) from exc
 
 
 # ---------------------------------------------------------------------------

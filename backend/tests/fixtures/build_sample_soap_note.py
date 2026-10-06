@@ -1,5 +1,9 @@
 """Regenerate ``sample_soap_note.pdf``, the committed note-import fixture.
 
+Also writes ``sample_soap_note_scanned.pdf``: the same note with each page
+rendered to an image and wrapped in a new PDF, so it has no text layer, the
+way a scanned or faxed page arrives. That one exercises the OCR fallback.
+
 The extraction tests need a PDF that looks like something a therapist would
 actually hand us: multi-page, a header block of labelled fields, the four SOAP
 sections with inline sub-labels, a numbered homework list, and a signature
@@ -18,6 +22,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pymupdf
 from reportlab.lib.enums import TA_JUSTIFY
 from reportlab.lib.pagesizes import LETTER
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -25,6 +30,10 @@ from reportlab.lib.units import inch
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
 OUT = Path(__file__).with_name("sample_soap_note.pdf")
+SCANNED_OUT = Path(__file__).with_name("sample_soap_note_scanned.pdf")
+
+# Low enough to keep the committed file small, high enough for OCR to read.
+_SCAN_DPI = 100
 
 HEADER_FIELDS = [
     ("Client", "Testy NotARealPatient"),
@@ -215,6 +224,18 @@ def build() -> Path:
     return OUT
 
 
+def build_scanned(source: Path = OUT) -> Path:
+    """Render each page of ``source`` to a grayscale image in a new, text-free PDF."""
+    with pymupdf.open(source) as text_pdf, pymupdf.open() as scanned:
+        for page in text_pdf:
+            pixmap = page.get_pixmap(dpi=_SCAN_DPI, colorspace=pymupdf.csGRAY)
+            image_page = scanned.new_page(width=page.rect.width, height=page.rect.height)
+            image_page.insert_image(image_page.rect, stream=pixmap.tobytes("jpeg", jpg_quality=55))
+        scanned.set_metadata({})
+        scanned.save(SCANNED_OUT, garbage=4, deflate=True)
+    return SCANNED_OUT
+
+
 if __name__ == "__main__":
-    path = build()
-    print(f"wrote {path} ({path.stat().st_size} bytes)")
+    for path in (build(), build_scanned()):
+        print(f"wrote {path} ({path.stat().st_size} bytes)")

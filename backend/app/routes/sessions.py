@@ -102,14 +102,16 @@ from ..services import (
     get_audit_service,
 )
 from ..services.audio_retention import AudioOnSigning
+from ..services.document_ai_ocr import DocumentAiOcrClient, get_document_ocr_client
 from ..services.file_storage import FileTooLargeError, UploadTarget
 from ..services.http_structured_llm_gateway import HttpStructuredLLMGateway
 from ..services.note_import_service import (
     MAX_IMPORT_DOC_BYTES,
+    DocumentReadTimeoutError,
     DocumentTextExtractionError,
     NoteImportService,
     UnsupportedDocumentTypeError,
-    extract_document_text,
+    read_document_text,
 )
 from ..services.recording_consent import RecordingConsentGate, get_recording_consent_gate
 from ..services.session_generation_worker import (
@@ -544,6 +546,7 @@ async def import_session(
     user: User = Depends(require_baa_acceptance),
     session_service: SessionService = Depends(get_session_service),
     note_import_service: NoteImportService = Depends(get_note_import_service),
+    ocr: DocumentAiOcrClient = Depends(get_document_ocr_client),
     audit: AuditService = Depends(get_audit_service),
 ) -> SessionResponse:
     """Import an existing SOAP note (PDF or TXT) as a pending-review session.
@@ -564,9 +567,18 @@ async def import_session(
             detail=f"File too large. Max {_MAX_IMPORT_DOC_BYTES // (1024 * 1024)} MB.",
         )
 
+    # Release the request-scoped DB connection before reading the document
+    # (OCR of a scan) and the multi-second LLM parse. The middleware opens a
+    # transaction (SET search_path) at request entry; holding that pooled
+    # connection idle across the Gemini call is what let Cloud SQL reap it
+    # mid-request, surfacing as a 500 on the first query inside
+    # import_session. Tenant scoping re-arms on the next checkout -- same seam
+    # pattern as upload_session (THERAPY-da7t).
+    release_db_connection()
+
     try:
-        text = await run_in_threadpool(
-            extract_document_text, data, content_type=file.content_type, filename=file.filename
+        text = await read_document_text(
+            data, content_type=file.content_type, filename=file.filename, ocr=ocr
         )
     except UnsupportedDocumentTypeError as exc:
         raise HTTPException(
@@ -576,14 +588,8 @@ async def import_session(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
-
-    # Release the request-scoped DB connection before the multi-second LLM
-    # parse. The middleware opens a transaction (SET search_path) at request
-    # entry; holding that pooled connection idle across the Gemini call is
-    # what let Cloud SQL reap it mid-request, surfacing as a 500 on the first
-    # query inside import_session. Tenant scoping re-arms on the next
-    # checkout -- same seam pattern as upload_session (THERAPY-da7t).
-    release_db_connection()
+    except DocumentReadTimeoutError as exc:
+        raise ServiceUnavailableError(str(exc), code="DOCUMENT_READ_TIMEOUT") from exc
 
     # The parse is a blocking model call; run on the event loop it froze every
     # other request on the instance until it returned. The worker thread carries
