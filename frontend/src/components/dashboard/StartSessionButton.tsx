@@ -27,6 +27,19 @@ interface ReadyIntent {
 }
 
 /**
+ * Issue a launch intent. A failure (backend flag off, network, not
+ * authorized) resolves to `null`: the anchor stays inert, no launch attempt.
+ */
+function issueIntent(
+  appointmentId: string,
+  aiConsentPrompted = false,
+): Promise<ReadyIntent | null> {
+  return createLaunchIntent(appointmentId, { aiConsentPrompted })
+    .then(({ intent_id, launch_url }) => ({ intentId: intent_id, launchUrl: launch_url }))
+    .catch(() => null)
+}
+
+/**
  * "Start Session" — hands the appointment off to the enrolled companion via
  * a domain-verified deep link.
  *
@@ -54,6 +67,10 @@ interface ReadyIntent {
  *     from the dialog's own button, through the same synthesized anchor as 3.
  *     A failed read does not block: the server refuses a declined client's
  *     recording itself.
+ *  5. "Record anyway" hands off a second intent that carries the answer, so
+ *     the companion does not ask the same question again. It is minted as
+ *     soon as the read says nobody has asked, for the same reason as 1: the
+ *     dialog's click has to navigate inside its own gesture.
  */
 export function StartSessionButton({ appointmentId, patientId }: StartSessionButtonProps) {
   // The prefetched intent, if any. `null` until the first hover/focus or click.
@@ -87,20 +104,27 @@ export function StartSessionButton({ appointmentId, patientId }: StartSessionBut
   const prefetchIntent = useCallback((): Promise<ReadyIntent | null> => {
     if (intent) return Promise.resolve(intent)
     if (fetchingRef.current) return fetchingRef.current
-    fetchingRef.current = createLaunchIntent(appointmentId)
-      .then(({ intent_id, launch_url }) => {
-        const ready = { intentId: intent_id, launchUrl: launch_url }
-        setIntent(ready)
+    fetchingRef.current = issueIntent(appointmentId)
+      .then((ready) => {
+        if (ready) setIntent(ready)
         return ready
       })
-      // Intent issuance failed (backend flag off, network, not-authorized).
-      // Leave today's behavior — the anchor stays inert; no launch attempt.
-      .catch(() => null)
       .finally(() => {
         fetchingRef.current = null
       })
     return fetchingRef.current
   }, [appointmentId, intent])
+
+  // The intent "Record anyway" hands off; see 5 above. Issued at most once.
+  const [promptedIntent, setPromptedIntent] = useState<ReadyIntent | null>(null)
+  const promptedRef = useRef<Promise<ReadyIntent | null> | null>(null)
+  const prefetchPromptedIntent = useCallback((): Promise<ReadyIntent | null> => {
+    promptedRef.current ??= issueIntent(appointmentId, true).then((ready) => {
+      setPromptedIntent(ready)
+      return ready
+    })
+    return promptedRef.current
+  }, [appointmentId])
 
   // Same shape as the intent: one read, shared by hover and click.
   const consentRef = useRef<Promise<RecordingConsent> | null>(null)
@@ -110,10 +134,11 @@ export function StartSessionButton({ appointmentId, patientId }: StartSessionBut
       .catch((): RecordingConsent => ({ kind: "clear" }))
       .then((read) => {
         setConsent(read)
+        if (read.kind === "not_asked") void prefetchPromptedIntent()
         return read
       })
     return consentRef.current
-  }, [checkConsent, consent, patientId])
+  }, [checkConsent, consent, patientId, prefetchPromptedIntent])
 
   const prefetch = () => {
     void prefetchIntent()
@@ -171,13 +196,38 @@ export function StartSessionButton({ appointmentId, patientId }: StartSessionBut
     })
   }
 
+  const handOff = (ready: ReadyIntent) => {
+    clickThroughAnchor(ready.launchUrl)
+    armFallback(ready.intentId)
+  }
+
   // From the dialog: asked once, so later clicks on this button hand off directly.
   const startFromDialog = () => {
     setAsking(null)
     setConsent({ kind: "clear" })
-    if (!intent) return
-    clickThroughAnchor(intent.launchUrl)
-    armFallback(intent.intentId)
+    if (intent) handOff(intent)
+  }
+
+  const recordAnyway = () => {
+    setAsking(null)
+    setConsent({ kind: "clear" })
+    if (promptedIntent) {
+      setIntent(promptedIntent)
+      handOff(promptedIntent)
+      return
+    }
+    // Not issued yet (or it failed): wait for it, and if it never comes, hand
+    // off the plain intent — the companion then asks once more.
+    setBusy(true)
+    void prefetchPromptedIntent().then((ready) => {
+      const target = ready ?? intent
+      if (!target) {
+        setBusy(false)
+        return
+      }
+      setIntent(target)
+      handOff(target)
+    })
   }
 
   return (
@@ -202,6 +252,7 @@ export function StartSessionButton({ appointmentId, patientId }: StartSessionBut
         consent={asking}
         onCancel={() => setAsking(null)}
         onStart={startFromDialog}
+        onRecordAnyway={recordAnyway}
       />
     </>
   )

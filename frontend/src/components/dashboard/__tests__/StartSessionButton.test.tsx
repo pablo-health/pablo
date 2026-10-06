@@ -93,7 +93,7 @@ describe("StartSessionButton", () => {
 
     await user.hover(link)
 
-    expect(createLaunchIntent).toHaveBeenCalledWith("appt-1")
+    expect(createLaunchIntent).toHaveBeenCalledWith("appt-1", { aiConsentPrompted: false })
     await waitFor(() =>
       expect(link).toHaveAttribute(
         "href",
@@ -273,17 +273,85 @@ describe("StartSessionButton and the client's answer about AI-assisted notes", (
     expect(armNoHandoffFallback).toHaveBeenCalledTimes(1)
   })
 
+  const PROMPTED_URL = "https://app.pablo.health/launch/intent-prompted"
+  const promptedIntent = () =>
+    Promise.resolve({ intent_id: "intent-prompted", launch_url: PROMPTED_URL, expires_in: 180 })
+
+  function issuePromptedIntent(prompted: () => Promise<unknown>) {
+    createLaunchIntent.mockImplementation(
+      (_appointmentId: string, options?: { aiConsentPrompted?: boolean }) =>
+        options?.aiConsentPrompted
+          ? prompted()
+          : Promise.resolve({ intent_id: "intent-abc", launch_url: LAUNCH_URL, expires_in: 180 }),
+    )
+  }
+
   it("'Record anyway' hands off without writing anything, and does not ask again", async () => {
     practiceAsks(true)
     answerOnFile(null)
+    issuePromptedIntent(promptedIntent)
 
     const user = await clickStart()
     const dialog = await screen.findByRole("dialog", { name: "No consent on file" })
     await user.click(within(dialog).getByRole("button", { name: "Record anyway" }))
 
-    expect(clickThroughAnchor).toHaveBeenCalledWith(LAUNCH_URL)
+    // The intent it hands off tells the desktop app this was already asked.
+    expect(clickThroughAnchor).toHaveBeenCalledWith(PROMPTED_URL)
+    expect(createLaunchIntent).toHaveBeenCalledWith("appt-1", { aiConsentPrompted: true })
     expect(recordAiConsent).not.toHaveBeenCalled()
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
+  })
+
+  it("'Record anyway' waits for its intent when the click beats it", async () => {
+    practiceAsks(true)
+    answerOnFile(null)
+    let issue: (value: unknown) => void = () => {}
+    const late = new Promise((resolve) => (issue = resolve))
+    issuePromptedIntent(() => late)
+
+    const user = await clickStart()
+    const dialog = await screen.findByRole("dialog", { name: "No consent on file" })
+    await user.click(within(dialog).getByRole("button", { name: "Record anyway" }))
+    expect(clickThroughAnchor).not.toHaveBeenCalled()
+
+    issue({ intent_id: "intent-prompted", launch_url: PROMPTED_URL, expires_in: 180 })
+    await waitFor(() => expect(clickThroughAnchor).toHaveBeenCalledWith(PROMPTED_URL))
+  })
+
+  it("'Record anyway' still hands off when its own intent cannot be issued", async () => {
+    practiceAsks(true)
+    answerOnFile(null)
+    issuePromptedIntent(() => Promise.reject(new Error("network")))
+
+    const user = await clickStart()
+    const dialog = await screen.findByRole("dialog", { name: "No consent on file" })
+    await user.click(within(dialog).getByRole("button", { name: "Record anyway" }))
+
+    await waitFor(() => expect(clickThroughAnchor).toHaveBeenCalledWith(LAUNCH_URL))
+  })
+
+  it("'Client agreed today' hands off the plain intent", async () => {
+    practiceAsks(true)
+    answerOnFile(null)
+    recordAiConsent.mockResolvedValue({ current: null, history: [] })
+    issuePromptedIntent(promptedIntent)
+
+    const user = await clickStart()
+    const dialog = await screen.findByRole("dialog", { name: "No consent on file" })
+    await user.click(within(dialog).getByRole("button", { name: "Client agreed today" }))
+
+    await waitFor(() => expect(clickThroughAnchor).toHaveBeenCalledWith(LAUNCH_URL))
+    expect(clickThroughAnchor).not.toHaveBeenCalledWith(PROMPTED_URL)
+  })
+
+  it("does not issue a 'Record anyway' intent for a client already asked", async () => {
+    practiceAsks(true)
+    answerOnFile("consented")
+
+    await clickStart()
+
+    await waitFor(() => expect(armNoHandoffFallback).toHaveBeenCalledTimes(1))
+    expect(createLaunchIntent).not.toHaveBeenCalledWith("appt-1", { aiConsentPrompted: true })
   })
 
   it("'Cancel' closes without handing off or writing", async () => {

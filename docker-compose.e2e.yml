@@ -175,6 +175,10 @@ services:
       # reading the ledger never calls the processor, and nothing in this
       # stack charges a card. Same rule as the clearinghouse key above.
       - STRIPE_SECRET_KEY=sk_test_e2e_not_a_real_key
+      # The desktop-app hand-off. The app itself cannot run here, but what
+      # "Start session" hands it can: recording-consent.spec.ts issues real
+      # intents and redeems them as the app would.
+      - ENABLE_LAUNCH_INTENT=true
       # The patient portal's front door. Both factors have to be readable by
       # a spec or no test can walk a sign-in: the magic link arrives at the
       # mail server above, and the step-up code goes to the fake gateway

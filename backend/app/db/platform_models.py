@@ -1056,6 +1056,11 @@ class LaunchIntentRow(PlatformBase):
         DateTime(timezone=True), nullable=False, index=True
     )
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # True when the web asked "No consent on file" and the clinician chose to
+    # record anyway, so the companion does not ask the same question again.
+    ai_consent_prompted: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
 
 
 class PlatformAuditLogRow(PlatformBase):

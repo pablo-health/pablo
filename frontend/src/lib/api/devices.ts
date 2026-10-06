@@ -53,14 +53,18 @@ export async function listCompanionDevices(
  * `launch_url` is the domain-verified deep link the dashboard navigates to
  * in order to hand off to the companion. 404 when the backend launch flow
  * is flag-gated off.
+ *
+ * `aiConsentPrompted`: the clinician was just asked "No consent on file" and
+ * chose to record anyway, so the companion does not ask the same question.
  */
 export async function createLaunchIntent(
   appointmentId: string,
+  { aiConsentPrompted = false }: { aiConsentPrompted?: boolean } = {},
   token?: string,
 ): Promise<LaunchIntentResponse> {
   return post<LaunchIntentResponse>(
     "/api/launch/intent",
-    { appointment_id: appointmentId },
+    { appointment_id: appointmentId, ai_consent_prompted: aiConsentPrompted },
     token,
   )
 }
