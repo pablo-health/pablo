@@ -1486,7 +1486,8 @@ CREATE TABLE __TENANT_SCHEMA__.therapy_sessions (
     redacted_transcript text,
     naturalized_transcript text,
     deleted_at timestamp with time zone,
-    transcription_job_metadata jsonb
+    transcription_job_metadata jsonb,
+    client_present_end_seconds double precision
 );
 
 

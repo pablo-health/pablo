@@ -24,6 +24,9 @@ Hard failures, any one of which fails the run:
 - **Diagnoses as stated.** Every stated diagnosis is there with its code, no
   diagnosis carries a code the clinician never said, and a rule-out is marked
   as one.
+- **The clinician's words, quoted.** A statement the case names (risk the
+  clinician dictated after the client left, say) appears in its field inside
+  quotation marks.
 - **Nothing invented.** No value holds a code or level the clinician never
   stated (an E/M level, a psychotherapy add-on, a substance use disorder code).
 
@@ -32,6 +35,11 @@ Hard failures, any one of which fails the run:
 | Case | Template | Sample |
 |---|---|---|
 | `psychiatric-evaluation-new-client` | `psychiatric_evaluation` | a new-client evaluation by video, with the clinician's dictated addendum; three diagnoses, one a rule-out; billed 90792 |
+| `psychiatric-follow-up-dictated-addendum` | `psychiatric_follow_up` | a short medication check by video, drafted as a two-channel call; risk and mental status are stated only in the addendum dictated after the client left, and must come back quoted; self-harm, thought content and cognition are covered nowhere and must read "Not stated." |
+
+A case drafted as a recorded call splits its transcript where the client's
+last line ends: what the clinician says after it reaches the model as a
+separate addendum, exactly as a recorded session's does.
 
 ## Running it
 

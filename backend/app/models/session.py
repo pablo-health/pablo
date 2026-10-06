@@ -16,6 +16,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from ..notes.client_present import recording_end, segments_from_transcript
 from .enums import (
     SessionSource,
     SessionStatus,
@@ -199,6 +200,11 @@ class SessionResponse(BaseModel):
     notes: str | None = None
     started_at: datetime | None = None
     ended_at: datetime | None = None
+    # Seconds into the recording when the client was last present (0 for a
+    # dictation), and how long the clinician dictated after that. Both None
+    # when the boundary is unknown.
+    client_present_end_seconds: float | None = None
+    clinician_addendum_seconds: float | None = None
     updated_at: datetime | None = None
     # Parsed transcript segments for source linking
     transcript_segments: list[TranscriptSegmentModel] | None = None
@@ -249,6 +255,8 @@ class SessionResponse(BaseModel):
             notes=session.notes,
             started_at=session.started_at,
             ended_at=session.ended_at,
+            client_present_end_seconds=session.client_present_end_seconds,
+            clinician_addendum_seconds=_clinician_addendum_seconds(session),
             updated_at=session.updated_at,
             transcript_segments=transcript_segments,
             processing_started_at=session.processing_started_at,
@@ -258,6 +266,14 @@ class SessionResponse(BaseModel):
             naturalized_transcript=session.naturalized_transcript,
             note=note,
         )
+
+
+def _clinician_addendum_seconds(session: TherapySession) -> float | None:
+    boundary = session.client_present_end_seconds
+    if boundary is None:
+        return None
+    end = recording_end(segments_from_transcript(session.transcript))
+    return max(end - boundary, 0.0)
 
 
 class SessionListResponse(BaseModel):
@@ -311,6 +327,9 @@ class TherapySession:
     notes: str | None = None
     started_at: datetime | None = None
     ended_at: datetime | None = None
+    #: Seconds into the recording when the client was last present; see
+    #: :mod:`app.notes.client_present`.
+    client_present_end_seconds: float | None = None
     updated_at: datetime | None = None
     audio_gcs_path: str | None = None
     transcription_job_metadata: dict[str, Any] | None = None
@@ -347,6 +366,7 @@ class TherapySession:
             notes=data.get("notes"),
             started_at=data.get("started_at"),
             ended_at=data.get("ended_at"),
+            client_present_end_seconds=data.get("client_present_end_seconds"),
             updated_at=data.get("updated_at"),
             audio_gcs_path=data.get("audio_gcs_path"),
             transcription_job_metadata=data.get("transcription_job_metadata"),
@@ -377,6 +397,7 @@ class TherapySession:
             "notes": self.notes,
             "started_at": self.started_at,
             "ended_at": self.ended_at,
+            "client_present_end_seconds": self.client_present_end_seconds,
             "updated_at": self.updated_at,
             "audio_gcs_path": self.audio_gcs_path,
             "transcription_job_metadata": self.transcription_job_metadata,

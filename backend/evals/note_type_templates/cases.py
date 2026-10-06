@@ -39,6 +39,12 @@ class TemplateCase:
     must come back with exactly ``stated_codes``, each item carrying its code,
     and ``rule_out`` codes marked as such. No value may contain a
     ``forbidden`` string (a code or level the clinician never said).
+
+    A case may bring its own ``transcript`` instead of a template sample.
+    ``recorded_call`` drafts it as a two-channel call, so the clinician's
+    turns after the client's last line reach the model as the dictated
+    addendum. Each ``quoted`` pair is a field and a phrase it must quote.
+    With ``fill_unnamed`` off, fields the case does not name are not graded.
     """
 
     name: str
@@ -52,6 +58,10 @@ class TemplateCase:
     stated_codes: frozenset[str] = frozenset()
     rule_out: frozenset[str] = frozenset()
     forbidden: tuple[str, ...] = field(default_factory=tuple)
+    transcript: str | None = None
+    recorded_call: bool = False
+    quoted: tuple[tuple[str, str], ...] = ()
+    fill_unnamed: bool = True
 
 
 def load_template(template: str) -> dict[str, Any]:
@@ -95,5 +105,44 @@ INTAKE_NEW_CLIENT = TemplateCase(
 )
 
 
+# A medication check by video. The client never speaks of risk; the clinician
+# states it, and the mental status findings, in the addendum dictated after the
+# client has gone. Neither the visit nor the addendum covers self-harm,
+# thought content or cognition.
+_FOLLOW_UP_WITH_ADDENDUM = "\n".join(
+    [
+        "[00:00:04] Therapist: Hi, good to see you again. Are you at home today?",
+        "[00:00:08] Client: Yes, I'm at home.",
+        "[00:00:12] Therapist: How has the sertraline been since we went up to 100?",
+        "[00:00:20] Client: Better. I'm sleeping through most nights and the mornings "
+        "are less heavy. A little nausea the first week, gone now.",
+        "[00:00:41] Therapist: Good. Any missed doses?",
+        "[00:00:44] Client: Maybe one, when I travelled.",
+        "[00:00:50] Therapist: That's fine. We'll stay at 100 and meet again in six weeks.",
+        "[00:00:58] Client: Sounds good. Thank you, see you then.",
+        "[00:01:20] Therapist: Addendum for the note. Client denies suicidal ideation, "
+        "intent or plan. Overall risk is low.",
+        "[00:01:34] Therapist: Mood described as better, affect brighter than last "
+        "visit. Continue sertraline 100 milligrams daily.",
+    ]
+)
+
+FOLLOW_UP_ADDENDUM = TemplateCase(
+    name="psychiatric-follow-up-dictated-addendum",
+    template="psychiatric_follow_up",
+    sample="",
+    transcript=_FOLLOW_UP_WITH_ADDENDUM,
+    recorded_call=True,
+    inputs={"place_of_service": "Telehealth", "client_location": "Home"},
+    quoted=(
+        ("risk.suicidal_homicidal_ideation", "denies suicidal ideation"),
+        ("risk.overall_risk", "risk is low"),
+        ("mse.mood_affect", "affect brighter"),
+    ),
+    not_covered=("risk.self_harm_violence", "mse.thought_content", "mse.cognition"),
+    fill_unnamed=False,
+)
+
+
 def all_cases() -> tuple[TemplateCase, ...]:
-    return (INTAKE_NEW_CLIENT,)
+    return (INTAKE_NEW_CLIENT, FOLLOW_UP_ADDENDUM)
