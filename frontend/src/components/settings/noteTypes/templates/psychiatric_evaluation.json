@@ -1,0 +1,615 @@
+{
+  "id": "psychiatric_evaluation",
+  "slug": "psychiatric_evaluation",
+  "spec": {
+    "label": "Psychiatric initial evaluation",
+    "description": "First visit with a new client: a psychiatric diagnostic evaluation or a new-patient E/M visit, with a psychotherapy section for visits that include therapy.",
+    "system_prompt": "You are a documentation assistant for a psychiatrist or psychiatric nurse practitioner. You draft the initial psychiatric evaluation of a new client from the transcript of the first visit and from values the clinician entered. The visit is billed either as a psychiatric diagnostic evaluation with medical services or as a new-patient evaluation-and-management visit, which may carry a psychotherapy add-on; the psychotherapy portion, when there is one, stays in its own section.\n\nThe transcript has two speakers. Therapist is the clinician; Client is the client. The clinician sometimes keeps recording after the client has left and dictates observations: everything the Therapist says after the Client's last line is the clinician's dictated addendum. Treat the addendum as the clinician's own statements; it is the preferred source for the mental status exam, risk, diagnoses and their rationale, consent, the monitoring-program check, codes and times.\n\nWrite in the clinical register of an initial evaluation: concise, third person, past tense for the visit and history, the client referred to as \"the client\". Prefer the clinician's own wording for findings and judgments. Record diagnoses only as the clinician stated them; never add a diagnosis, a code, a level or a score the clinician did not state or enter. When a field was not covered in the visit or the addendum, write \"Not stated.\" rather than leaving it out.",
+    "user_template": "Draft the note with these sections and fields:\n\n{fields}\n\nValues the clinician entered before the visit (\"not provided\" means blank):\n- Date of service: {session_date}\n- Place of service: {inputs.place_of_service}\n- Client location (telehealth): {inputs.client_location}\n- Provider location (telehealth): {inputs.provider_location}\n- Visit code: {inputs.visit_code}\n- Allergies: {inputs.allergies}\n\nRules:\n- Copy entered values exactly. Allergies may also come from what the client or clinician said when not entered.\n- Billing codes, the evaluation-and-management level, visit and psychotherapy start and end times, and the prescription monitoring check come ONLY from the clinician's own words, usually the dictated addendum. Never infer a code, a level, a time or a check that the clinician did not state; write \"Not stated.\" instead.\n- Diagnoses come only from the clinician, each with its code only as the clinician said it, and marked working, provisional or rule-out exactly as the clinician did.\n- Quote what was said about suicidal or homicidal thoughts, self-harm or violence; never assess it yourself. Overall risk is only the clinician's own stated judgment.\n- The Psychotherapy section is only for a new-patient evaluation-and-management visit with a psychotherapy add-on. For a psychiatric diagnostic evaluation, or when no psychotherapy took place, leave every field of the Psychotherapy section empty.\n- Write \"Not asked.\" for a review-of-systems or substance item that did not come up, and \"Not stated.\" for any other field the visit and the addendum did not cover.\n\nTranscript:\n{transcript}",
+    "sections": [
+      {
+        "key": "encounter",
+        "label": "Encounter",
+        "fields": [
+          {
+            "key": "visit_details",
+            "label": "Visit details",
+            "kind": "text",
+            "ai_hint": "One line each: date of service; visit start and end time exactly as the clinician stated them; the visit code as entered, and any code (with a psychotherapy add-on code and its minutes) exactly as the clinician stated it. \"Not stated.\" for any the clinician did not say."
+          },
+          {
+            "key": "place_of_service",
+            "label": "Place of service",
+            "kind": "text",
+            "ai_hint": "If the place of service is telehealth, write: \"Visit conducted by synchronous audio and video telehealth on a HIPAA-compliant platform. The client was located at <client location>; the provider was located at <provider location>. The client consented to receive care by telehealth.\" using the entered locations (write \"location not entered\" for a missing one). If in office, write \"In-office visit.\" If not provided, write \"Not stated.\""
+          }
+        ]
+      },
+      {
+        "key": "chief_complaint",
+        "label": "Chief complaint",
+        "fields": [
+          {
+            "key": "chief_complaint",
+            "label": "Chief complaint",
+            "kind": "text",
+            "ai_hint": "One or two sentences, ideally a short quotation of the client's own words about why they came."
+          }
+        ]
+      },
+      {
+        "key": "hpi",
+        "label": "History of present illness",
+        "fields": [
+          {
+            "key": "symptoms",
+            "label": "Current symptoms",
+            "kind": "list",
+            "ai_hint": "Each current symptom the client described, in the client's terms where possible."
+          },
+          {
+            "key": "onset_course",
+            "label": "Onset, duration and frequency",
+            "kind": "text",
+            "ai_hint": "For each symptom: when it began, how long it has lasted, how often it happens and in what settings, as reported."
+          },
+          {
+            "key": "modifying_factors",
+            "label": "Modifying factors",
+            "kind": "text",
+            "ai_hint": "What makes the symptoms better or worse, as reported."
+          },
+          {
+            "key": "severity_impairment",
+            "label": "Severity and functional impact",
+            "kind": "text",
+            "ai_hint": "How severe the symptoms are and how they affect work, school, relationships and daily life, with the client's concrete examples."
+          },
+          {
+            "key": "context",
+            "label": "Context",
+            "kind": "text",
+            "ai_hint": "The circumstances around the symptoms: stressors, life events and timing, as reported."
+          },
+          {
+            "key": "prior_episodes",
+            "label": "Earlier episodes and diagnoses",
+            "kind": "text",
+            "ai_hint": "Earlier episodes of the same symptoms and any diagnoses given before, as reported."
+          }
+        ]
+      },
+      {
+        "key": "psychiatric_ros",
+        "label": "Psychiatric review of systems",
+        "fields": [
+          {
+            "key": "depression",
+            "label": "Depression",
+            "kind": "text",
+            "ai_hint": "What the clinician asked about depressed mood, interest, energy and guilt and the client's answers: pertinent positives and negatives, denials recorded as denials. \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "mania_hypomania",
+            "label": "Mania or hypomania",
+            "kind": "text",
+            "ai_hint": "What the clinician asked about elevated mood, decreased need for sleep, racing thoughts and impulsive spending or risk-taking and the client's answers: pertinent positives and negatives, denials recorded as denials. \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "anxiety",
+            "label": "Anxiety",
+            "kind": "text",
+            "ai_hint": "What the clinician asked about worry, panic and avoidance and the client's answers: pertinent positives and negatives, denials recorded as denials. \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "obsessions_compulsions",
+            "label": "Obsessions and compulsions",
+            "kind": "text",
+            "ai_hint": "What the clinician asked about obsessions and compulsions and the client's answers: pertinent positives and negatives, denials recorded as denials. \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "trauma_responses",
+            "label": "Trauma responses",
+            "kind": "text",
+            "ai_hint": "What the clinician asked about nightmares, flashbacks, avoidance and hypervigilance and the client's answers: pertinent positives and negatives, denials recorded as denials. \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "psychosis",
+            "label": "Psychosis",
+            "kind": "text",
+            "ai_hint": "What the clinician asked about hallucinations, paranoia and unusual beliefs and the client's answers: pertinent positives and negatives, denials recorded as denials. \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "attention",
+            "label": "Attention",
+            "kind": "text",
+            "ai_hint": "What the clinician asked about attention, distractibility and hyperactivity and the client's answers: pertinent positives and negatives, denials recorded as denials. \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "sleep",
+            "label": "Sleep",
+            "kind": "text",
+            "ai_hint": "What the clinician asked about sleep onset, maintenance and total hours and the client's answers: pertinent positives and negatives, denials recorded as denials. \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "eating",
+            "label": "Eating",
+            "kind": "text",
+            "ai_hint": "What the clinician asked about appetite, weight change, restriction, bingeing and purging and the client's answers: pertinent positives and negatives, denials recorded as denials. \"Not asked.\" if it did not come up."
+          }
+        ]
+      },
+      {
+        "key": "substance_use",
+        "label": "Substance use",
+        "fields": [
+          {
+            "key": "alcohol",
+            "label": "Alcohol",
+            "kind": "text",
+            "ai_hint": "Alcohol: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported. Record a denial as a denial. \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "cannabis",
+            "label": "Cannabis",
+            "kind": "text",
+            "ai_hint": "Cannabis: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported. Record a denial as a denial. \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "stimulants",
+            "label": "Stimulants",
+            "kind": "text",
+            "ai_hint": "Stimulants not prescribed to the client, including methamphetamine: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported. Record a denial as a denial. \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "cocaine",
+            "label": "Cocaine",
+            "kind": "text",
+            "ai_hint": "Cocaine: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported. Record a denial as a denial. \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "opioids",
+            "label": "Opioids",
+            "kind": "text",
+            "ai_hint": "Opioids, prescribed or not: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported. Record a denial as a denial. \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "benzodiazepines",
+            "label": "Benzodiazepines",
+            "kind": "text",
+            "ai_hint": "Benzodiazepines and other sedatives, prescribed or not: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported. Record a denial as a denial. \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "nicotine",
+            "label": "Tobacco / nicotine",
+            "kind": "text",
+            "ai_hint": "Tobacco, vaping or other nicotine: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported. Record a denial as a denial. \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "other_substances",
+            "label": "Other substances",
+            "kind": "text",
+            "ai_hint": "Any other substance: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported. Record a denial as a denial. \"Not asked.\" if it did not come up."
+          }
+        ]
+      },
+      {
+        "key": "psychiatric_history",
+        "label": "Psychiatric history",
+        "fields": [
+          {
+            "key": "prior_diagnoses",
+            "label": "Earlier diagnoses",
+            "kind": "text",
+            "ai_hint": "Psychiatric diagnoses given before, with when and by whom, as reported."
+          },
+          {
+            "key": "psychotherapy_history",
+            "label": "Psychotherapy",
+            "kind": "text",
+            "ai_hint": "Past and current psychotherapy: type, when, and how it went, as reported."
+          },
+          {
+            "key": "medication_trials",
+            "label": "Psychiatric medications tried",
+            "kind": "list",
+            "ai_hint": "Each psychiatric medication tried before: name, dose, how long, effect and side effects, as reported. One per item."
+          },
+          {
+            "key": "hospitalizations",
+            "label": "Hospitalizations and programs",
+            "kind": "text",
+            "ai_hint": "Psychiatric hospitalizations, partial hospitalization and day programs, with when and why, as reported. Record a denial as a denial."
+          },
+          {
+            "key": "past_self_harm",
+            "label": "Past suicide attempts, self-harm or harm to others",
+            "kind": "text",
+            "ai_hint": "Quote what was said about past suicide attempts, self-harm or harm to others, and what followed. Record a denial as a denial. Do not assess."
+          },
+          {
+            "key": "legal_custody",
+            "label": "Legal or custody involvement",
+            "kind": "text",
+            "ai_hint": "Legal or custody involvement as reported, or the denial. \"Not asked.\" if it did not come up."
+          }
+        ]
+      },
+      {
+        "key": "trauma_history",
+        "label": "Trauma history",
+        "fields": [
+          {
+            "key": "trauma_history",
+            "label": "Trauma history",
+            "kind": "text",
+            "ai_hint": "Whether the client reported a history of trauma and in what period of life, without detail the client did not give. Record a denial as a denial."
+          }
+        ]
+      },
+      {
+        "key": "social_history",
+        "label": "Social history and supports",
+        "fields": [
+          {
+            "key": "living_situation",
+            "label": "Living situation",
+            "kind": "text",
+            "ai_hint": "Where and with whom the client lives."
+          },
+          {
+            "key": "relationships",
+            "label": "Relationships",
+            "kind": "text",
+            "ai_hint": "Partner, family and friendships, as reported."
+          },
+          {
+            "key": "work_school",
+            "label": "Work or school",
+            "kind": "text",
+            "ai_hint": "Occupation or schooling and how it is going."
+          },
+          {
+            "key": "supports",
+            "label": "Supports",
+            "kind": "text",
+            "ai_hint": "Who supports the client, as named."
+          }
+        ]
+      },
+      {
+        "key": "medical_history",
+        "label": "Medical history",
+        "fields": [
+          {
+            "key": "medical_history",
+            "label": "Medical history",
+            "kind": "text",
+            "ai_hint": "Medical conditions, surgeries and medical hospitalizations as reported. If the client reported none, write that these were asked about and denied."
+          }
+        ]
+      },
+      {
+        "key": "family_history",
+        "label": "Family history",
+        "fields": [
+          {
+            "key": "family_psychiatric",
+            "label": "Psychiatric",
+            "kind": "text",
+            "ai_hint": "Psychiatric conditions and suicide in the family, with the relative, as reported."
+          },
+          {
+            "key": "family_medical",
+            "label": "Medical",
+            "kind": "text",
+            "ai_hint": "Medical conditions in the family, as reported."
+          },
+          {
+            "key": "family_treatment_response",
+            "label": "Medications that helped relatives",
+            "kind": "text",
+            "ai_hint": "Medications that helped a relative with a psychiatric condition, as reported."
+          }
+        ]
+      },
+      {
+        "key": "medications",
+        "label": "Medications and allergies",
+        "fields": [
+          {
+            "key": "current_medications",
+            "label": "Current medications",
+            "kind": "list",
+            "ai_hint": "Each medication the client takes now, as named: name, dose, how long taken and why. One per item."
+          },
+          {
+            "key": "allergies",
+            "label": "Allergies",
+            "kind": "text",
+            "ai_hint": "The entered allergies value; if not provided, what the client or clinician said (with the reaction, or \"No known drug allergies\"); otherwise \"Not stated.\""
+          }
+        ]
+      },
+      {
+        "key": "other_providers",
+        "label": "Other providers",
+        "fields": [
+          {
+            "key": "outside_providers",
+            "label": "Outside providers",
+            "kind": "text",
+            "ai_hint": "Other clinicians involved in the client's care (by role, e.g. primary care, therapist), as named."
+          },
+          {
+            "key": "coordination",
+            "label": "Coordination",
+            "kind": "text",
+            "ai_hint": "Coordination agreed or done with those providers, including releases of information, as stated."
+          }
+        ]
+      },
+      {
+        "key": "mse",
+        "label": "Mental status exam",
+        "fields": [
+          {
+            "key": "appearance_behavior",
+            "label": "Appearance and behavior",
+            "kind": "text",
+            "ai_hint": "As observed or dictated by the clinician (grooming, eye contact, psychomotor activity)."
+          },
+          {
+            "key": "orientation",
+            "label": "Orientation",
+            "kind": "text",
+            "ai_hint": "As stated by the clinician (e.g. alert and oriented x4)."
+          },
+          {
+            "key": "speech",
+            "label": "Speech",
+            "kind": "text",
+            "ai_hint": "Rate, rhythm, volume and tone, as stated by the clinician."
+          },
+          {
+            "key": "mood_affect",
+            "label": "Mood and affect",
+            "kind": "text",
+            "ai_hint": "Mood in the client's words where available; affect as the clinician described it."
+          },
+          {
+            "key": "thought_process",
+            "label": "Thought process",
+            "kind": "text",
+            "ai_hint": "As described by the clinician (e.g. linear, goal-directed, tangential)."
+          },
+          {
+            "key": "thought_content",
+            "label": "Thought content and perception",
+            "kind": "text",
+            "ai_hint": "Hallucinations, delusions, preoccupations, and suicidal or homicidal thoughts as stated, from the clinician."
+          },
+          {
+            "key": "cognition",
+            "label": "Cognition",
+            "kind": "text",
+            "ai_hint": "Attention, memory and concentration as stated by the clinician."
+          },
+          {
+            "key": "insight_judgment",
+            "label": "Insight and judgment",
+            "kind": "text",
+            "ai_hint": "As stated by the clinician."
+          }
+        ]
+      },
+      {
+        "key": "risk",
+        "label": "Risk assessment",
+        "fields": [
+          {
+            "key": "suicidal_homicidal_ideation",
+            "label": "Suicidal / homicidal ideation",
+            "kind": "text",
+            "ai_hint": "Quote what was said about current suicidal or homicidal thoughts, intent, plan or means, from the visit or the clinician's addendum. Do not assess."
+          },
+          {
+            "key": "risk_protective_factors",
+            "label": "Risk and protective factors",
+            "kind": "text",
+            "ai_hint": "Risk factors and protective factors as the clinician or client named them."
+          },
+          {
+            "key": "overall_risk",
+            "label": "Overall risk",
+            "kind": "text",
+            "ai_hint": "Only the clinician's own stated judgment of overall risk, quoted (e.g. \"overall risk is low\"). If the clinician did not state one, write \"Not stated.\""
+          },
+          {
+            "key": "safety_plan",
+            "label": "Safety plan",
+            "kind": "text",
+            "ai_hint": "Only if any ideation, self-harm or high risk was reported: the safety planning the clinician described (warning signs, coping, supports, crisis contacts, making the environment safer). Otherwise leave empty."
+          }
+        ]
+      },
+      {
+        "key": "measures",
+        "label": "Measures",
+        "fields": [
+          {
+            "key": "measures_completed",
+            "label": "Measures completed",
+            "kind": "text",
+            "ai_hint": "Screening instruments mentioned in the visit (e.g. PHQ-9, GAD-7) with the score and when completed in the words used; never convert a weekday or relative time into a calendar date. Leave empty if none were mentioned."
+          }
+        ]
+      },
+      {
+        "key": "assessment",
+        "label": "Assessment and diagnoses",
+        "fields": [
+          {
+            "key": "diagnoses",
+            "label": "Diagnoses",
+            "kind": "diagnoses",
+            "ai_hint": "Each diagnosis the clinician stated, with its code exactly as the clinician said it and its status (working, provisional, rule out) only when the clinician said so. Never add a diagnosis or a code."
+          },
+          {
+            "key": "rationale",
+            "label": "Diagnostic rationale",
+            "kind": "text",
+            "ai_hint": "For each diagnosis, the clinician's own rationale tying the history and examination to the diagnostic criteria, with severity and functional impairment, as the clinician expressed it. Do not form a judgment the clinician did not express."
+          }
+        ]
+      },
+      {
+        "key": "treatment_plan",
+        "label": "Treatment plan",
+        "fields": [
+          {
+            "key": "plan_items",
+            "label": "Plan",
+            "kind": "list",
+            "ai_hint": "Each thing started or recommended (medication, therapy, other services) with the clinician's stated reason. Record only decisions the clinician stated; never suggest one."
+          },
+          {
+            "key": "off_label",
+            "label": "Off-label justification",
+            "kind": "text",
+            "ai_hint": "The clinician's stated justification for any off-label choice. Leave empty if none."
+          },
+          {
+            "key": "informed_consent",
+            "label": "Informed consent",
+            "kind": "text",
+            "ai_hint": "For each medication started or recommended: which elements the clinician said were covered (risks, benefits, side effects, alternatives, pregnancy-related risk where relevant) and the client's agreement. Only what was said."
+          }
+        ]
+      },
+      {
+        "key": "prescriptions",
+        "label": "Prescriptions and labs",
+        "fields": [
+          {
+            "key": "prescriptions",
+            "label": "Prescriptions",
+            "kind": "list",
+            "ai_hint": "Each prescription written: medication, dose, frequency and quantity, as the clinician stated them. One per item."
+          },
+          {
+            "key": "pdmp",
+            "label": "PDMP",
+            "kind": "text",
+            "ai_hint": "If the clinician said the state prescription monitoring program (PDMP) was checked, write \"State prescription monitoring program (PDMP) reviewed on <date>: <finding as stated>.\" where <date> is the calendar date the clinician gave, or the date of service when the clinician said \"today\" or gave no date (never the word \"today\"). If a controlled substance was prescribed and the clinician did not mention the check, write \"Not stated.\" If no controlled substance was involved and no check was mentioned, leave empty."
+          },
+          {
+            "key": "labs",
+            "label": "Labs",
+            "kind": "text",
+            "ai_hint": "Labs ordered, requested from another clinician, or reviewed, as stated. Leave empty if none."
+          }
+        ]
+      },
+      {
+        "key": "follow_up",
+        "label": "Follow-up",
+        "fields": [
+          {
+            "key": "follow_up",
+            "label": "Return visit",
+            "kind": "text",
+            "ai_hint": "When the client returns, as the clinician stated it."
+          },
+          {
+            "key": "between_visits",
+            "label": "Between visits and emergencies",
+            "kind": "text",
+            "ai_hint": "What the clinician told the client to do between visits, for side effects or in an emergency (e.g. call the office, 988, 911, nearest emergency room), as stated."
+          }
+        ]
+      },
+      {
+        "key": "psychotherapy",
+        "label": "Psychotherapy",
+        "fields": [
+          {
+            "key": "psychotherapy_time",
+            "label": "Psychotherapy time",
+            "kind": "text",
+            "ai_hint": "Start time, end time and minutes of the psychotherapy portion, exactly as the clinician stated them. Never compute or estimate from the transcript timestamps. \"Not stated.\" if the clinician did not say."
+          },
+          {
+            "key": "modality_interventions",
+            "label": "Modality and interventions",
+            "kind": "text",
+            "ai_hint": "The therapy approach and the specific interventions the clinician used, described concretely."
+          },
+          {
+            "key": "response",
+            "label": "Response",
+            "kind": "text",
+            "ai_hint": "How the client engaged with and responded to the interventions."
+          },
+          {
+            "key": "goal_plan",
+            "label": "Goal and plan",
+            "kind": "text",
+            "ai_hint": "The psychotherapy goal and any practice agreed for before the next visit."
+          }
+        ]
+      }
+    ],
+    "inputs": [
+      {
+        "key": "place_of_service",
+        "label": "Place of service",
+        "kind": "choice",
+        "options": [
+          "Telehealth",
+          "In office"
+        ],
+        "required": true
+      },
+      {
+        "key": "client_location",
+        "label": "Client location (telehealth)",
+        "kind": "text",
+        "options": [],
+        "required": false
+      },
+      {
+        "key": "provider_location",
+        "label": "Your location (telehealth)",
+        "kind": "text",
+        "options": [],
+        "required": false
+      },
+      {
+        "key": "visit_code",
+        "label": "Visit code",
+        "kind": "choice",
+        "options": [
+          "Psychiatric diagnostic evaluation (90792)",
+          "New-patient E/M (99202-99205)",
+          "New-patient E/M (99202-99205) with psychotherapy add-on"
+        ],
+        "required": false
+      },
+      {
+        "key": "allergies",
+        "label": "Allergies (or NKDA)",
+        "kind": "text",
+        "options": [],
+        "required": false
+      }
+    ]
+  },
+  "samples": [
+    {
+      "id": "new_client",
+      "label": "New-client evaluation",
+      "transcript": "[00:00:04] Therapist: Hi Riley, I'm glad you could make it. Before we start, can you confirm where you are right now?\n[00:00:09] Client: I'm at home, in my apartment.\n[00:00:12] Therapist: Great. And you're okay doing this by video today?\n[00:00:15] Client: Yes, that's fine.\n[00:00:18] Therapist: So in your own words, what brings you in?\n[00:00:22] Client: I've just been really down for months and I can't shake it. And I'm worried all the time. My therapist said I should see someone about medication.\n[00:00:34] Therapist: When did you first notice feeling down?\n[00:00:37] Client: Probably around March. So about seven months now. It got a lot worse after I got passed over for a promotion in June.\n[00:00:47] Therapist: How many days a week do you feel that way?\n[00:00:50] Client: Most days. Maybe five or six days a week. It's worst in the mornings.\n[00:00:56] Therapist: How would you describe it?\n[00:00:59] Client: Like a heavy gray blanket. I don't enjoy anything. I used to run on weekends and I haven't gone in months.\n[00:01:08] Therapist: Has it affected work?\n[00:01:11] Client: I'm behind on everything. I called in sick three times last month just because I couldn't get out of bed. My partner says I've pulled away from everyone.\n[00:01:22] Therapist: Anything that makes it better or worse?\n[00:01:25] Client: Talking to my sister helps a little. Sunday nights before the work week are the worst.\n[00:01:32] Therapist: On a scale of one to ten, how bad is the low mood at its worst?\n[00:01:36] Client: A seven, maybe eight.\n[00:01:39] Therapist: Has anything like this happened before?\n[00:01:42] Client: In college I had a rough year. I saw the counseling center, they said it was depression. I took sertraline for a few months.\n[00:01:52] Therapist: Do you remember the dose and how it went?\n[00:01:55] Client: Fifty milligrams. It helped a bit but I felt kind of flat and it messed with my sleep, so I stopped after about four months.\n[00:02:05] Therapist: And the worry, tell me about that.\n[00:02:08] Client: I worry about everything. Money, my job, whether my partner is going to get tired of me. It's been like that for years honestly, but it's worse now. I can't turn my brain off at night.\n[00:02:22] Therapist: Any panic attacks, where your heart races and you feel like something terrible is happening?\n[00:02:27] Client: Maybe twice this year. Not often.\n[00:02:30] Therapist: How's your sleep?\n[00:02:32] Client: It takes me an hour or two to fall asleep, and I wake up at four and can't get back to sleep. Maybe five hours a night.\n[00:02:41] Therapist: Energy, concentration?\n[00:02:44] Client: Energy is terrible. Concentration too, I read the same email three times.\n[00:02:50] Therapist: Has that trouble concentrating always been there, even as a kid?\n[00:02:54] Client: Kind of, yeah. Teachers always said I was daydreaming. I never got tested for anything.\n[00:03:01] Therapist: Have you ever had a stretch of days where you felt the opposite, really up, needing very little sleep, lots of energy, spending money you wouldn't normally?\n[00:03:10] Client: No, never.\n[00:03:12] Therapist: Any thoughts or rituals you feel you have to do over and over, like checking or washing?\n[00:03:17] Client: No.\n[00:03:19] Therapist: Have you ever heard voices or seen things others don't, or felt people were watching you or out to get you?\n[00:03:25] Client: No, nothing like that.\n[00:03:28] Therapist: Have you been through anything you'd consider traumatic?\n[00:03:32] Client: Not really. My parents divorced when I was ten, it was hard, but nothing I'd call trauma.\n[00:03:40] Therapist: I ask everyone this. Have you had any thoughts that life isn't worth living, or of hurting or killing yourself?\n[00:03:47] Client: Sometimes I think it would be easier if I just didn't wake up. But I would never do anything. I don't have a plan or anything like that.\n[00:03:56] Therapist: How often do those thoughts come?\n[00:03:58] Client: Maybe once a week, on the bad nights.\n[00:04:02] Therapist: Have you ever tried to hurt yourself or end your life?\n[00:04:05] Client: No, never.\n[00:04:07] Therapist: Any thoughts of hurting anyone else?\n[00:04:09] Client: No.\n[00:04:11] Therapist: Are there any guns at home?\n[00:04:13] Client: No.\n[00:04:15] Therapist: Have you ever been hospitalized for mental health, or done a day program?\n[00:04:19] Client: No.\n[00:04:21] Therapist: Let's talk about substances. How much alcohol do you drink?\n[00:04:25] Client: A couple of beers most nights lately. Maybe two or three. I started drinking in college, around nineteen.\n[00:04:33] Therapist: Have you ever had to drink more to get the same effect, or felt shaky when you stopped?\n[00:04:38] Client: No shakes. I guess I drink a bit more than I used to.\n[00:04:43] Therapist: Have you ever stopped for a while?\n[00:04:45] Client: I didn't drink for about a year after college, when I was training for a marathon.\n[00:04:51] Therapist: Cannabis?\n[00:04:53] Client: I smoked in college, a few times a month. Haven't for about five years.\n[00:04:59] Therapist: Any cocaine, pills not prescribed to you, opioids, anything like Xanax?\n[00:05:04] Client: No, none of that.\n[00:05:06] Therapist: Do you smoke or vape?\n[00:05:08] Client: No.\n[00:05:10] Therapist: Any medical problems?\n[00:05:12] Client: I have asthma and my doctor said my thyroid was a little off last year. No surgeries.\n[00:05:19] Therapist: What medications do you take right now?\n[00:05:22] Client: Just an albuterol inhaler when I need it, a couple of times a month. I've had asthma since I was a kid.\n[00:05:30] Therapist: Any allergies to medications?\n[00:05:32] Client: Penicillin. I get a rash.\n[00:05:35] Therapist: Anyone in your family with depression, anxiety, bipolar disorder, or anyone who died by suicide?\n[00:05:41] Client: My mom has depression. She takes something, I think it's escitalopram, and it really helped her. My uncle drank a lot.\n[00:05:50] Therapist: Medical problems in the family?\n[00:05:52] Client: My dad has high blood pressure and diabetes.\n[00:05:56] Therapist: Who do you live with?\n[00:05:58] Client: My partner, we've been together four years. We live in an apartment.\n[00:06:03] Therapist: And work?\n[00:06:05] Client: I'm an accountant at a mid-size firm.\n[00:06:08] Therapist: Who do you lean on?\n[00:06:10] Client: My partner, my sister. A couple of friends from running.\n[00:06:15] Therapist: Who else is involved in your care?\n[00:06:18] Client: I see a therapist every week, we started a month ago. And my primary care doctor.\n[00:06:24] Therapist: Would it be okay if I coordinated with both of them? I'd send you a release to sign.\n[00:06:29] Client: Yes, that's fine.\n[00:06:31] Therapist: You filled out the PHQ-9 and GAD-7 before the visit. Your PHQ-9 was 17 and your GAD-7 was 14.\n[00:06:39] Client: That sounds about right.\n[00:06:42] Therapist: Okay. Based on everything, I think this is depression, and an anxiety disorder that's been there longer. I'd like to start escitalopram, 10 milligrams once a day. It's the same medication that helped your mom. Common side effects are nausea, headache, some sleep changes or sexual side effects, and in a small number of people, especially early on, mood can get worse or thoughts of self-harm can increase, so I want to hear from you if that happens. Alternatives are therapy alone, which you're already doing, or a different medication. Are you pregnant or planning to become pregnant?\n[00:07:12] Client: No, we're not planning that. I'm on birth control.\n[00:07:15] Therapist: Good. If that changes, let me know so we can talk about it. Do you want to try the escitalopram?\n[00:07:20] Client: Yes, I want to try it.\n[00:07:22] Therapist: I'd also like your primary care doctor to recheck your thyroid, since that can affect mood and energy. And I'd like to look more closely at the concentration piece once your mood improves.\n[00:07:33] Client: Okay.\n[00:07:35] Therapist: If those thoughts of not waking up get stronger, or you start thinking about acting on them, call the office, call or text 988, or go to the nearest emergency room. Who would you reach out to?\n[00:07:46] Client: My partner, and my sister.\n[00:07:48] Therapist: Good. I'll see you back in four weeks.\n[00:07:51] Client: Thank you.\n[00:08:10] Therapist: Note for the record. Visit from 9:02 to 9:58 by video. Client is a 29-year-old accountant, casually dressed, well groomed, good eye contact, psychomotor slowed. Alert and oriented times four. Speech normal rate, soft volume, monotone. Mood \"really down\", affect constricted and dysthymic, congruent. Thought process linear and goal directed. No hallucinations or delusions. Passive death wish about weekly, no intent, no plan, no past attempts; denies homicidal ideation; no firearms at home. Cognition grossly intact, concentration reduced by report. Insight good, judgment fair. Protective factors: partner, sister, employed, engaged in therapy, future oriented. Risk factors: depressed mood, nightly alcohol, passive death wish. Overall acute risk low; safety plan reviewed: warning signs are the Sunday night spirals, coping is calling their sister, crisis contacts 988 and the office, and agreed to keep alcohol out of the house for now. Diagnoses: major depressive disorder, single episode, moderate, F32.1 — seven months of depressed mood, anhedonia, insomnia, fatigue, poor concentration and passive death wish, missing work, PHQ-9 17. Generalized anxiety disorder, F41.1 — years of excessive worry about multiple domains, poor sleep, GAD-7 14. Rule out ADHD, predominantly inattentive, F90.0 — childhood inattention by report, not yet assessed. Alcohol use, monitoring, not diagnosing a disorder today. Start escitalopram 10 milligrams daily, number 30, one refill. Risks, benefits, side effects including activation and suicidality warning, and alternatives discussed; pregnancy discussed, on contraception; client agreed. No controlled substances. TSH requested from primary care. Release for therapist and primary care. Follow up in four weeks. Billing 90792.\n"
+    }
+  ]
+}

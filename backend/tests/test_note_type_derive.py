@@ -287,7 +287,7 @@ def test_the_response_schema_is_the_spec_schema_inlined() -> None:
     assert "user_template" not in schema["properties"]
     section = schema["properties"]["sections"]["items"]
     field = section["properties"]["fields"]["items"]
-    assert field["properties"]["kind"]["enum"] == ["text", "list"]
+    assert field["properties"]["kind"]["enum"] == ["text", "list", "diagnoses"]
 
 
 # ---------------------------------------------------------------------------

@@ -29,6 +29,7 @@ from reportlab.platypus import (
 )
 
 from ..models.session import SOAPNote
+from ..notes.diagnoses import diagnosis_text
 from .export_pdf_billing import billing_flowables
 from .export_pdf_clinical import clinical_flowables
 
@@ -53,7 +54,7 @@ def _key_label(key: str) -> str:
 
 def _field_text(value: Any) -> str:
     if isinstance(value, list):
-        return "; ".join(str(item) for item in value if item not in (None, ""))
+        return "; ".join(diagnosis_text(item) for item in value if item not in (None, ""))
     return "" if value is None else str(value)
 
 

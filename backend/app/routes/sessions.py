@@ -943,8 +943,10 @@ def upload_transcript_to_session(
     session_id: str,
     http_request: Request,
     request: UploadTranscriptToSessionRequest,
+    background: BackgroundTasks,
     user: User = Depends(require_baa_acceptance),
     session_service: SessionService = Depends(get_session_service),
+    note_generation_service: NoteGenerationService = Depends(get_note_generation_service),
     audit: AuditService = Depends(get_audit_service),
 ) -> dict[str, str]:
     """Attach a transcript to an existing session and start async generation.
@@ -980,6 +982,15 @@ def upload_transcript_to_session(
         # PROCESSING and the in-flight job reads the latest transcript, so
         # there's nothing to do — answer 202 either way.
         logger.info("generate-soap already enqueued for session %s (dedup)", session.id)
+    # As in ``upload_session``: with the stand-in configured and no queue, the
+    # job runs here, after the response.
+    if settings.note_generation_base_url:
+        background.add_task(
+            _draft_in_process,
+            GenerateSoapJob(session_id=session.id, user_id=user.id),
+            http_request,
+            note_generation_service,
+        )
 
     audit.log_session_action(
         AuditAction.SESSION_TRANSCRIPT_UPLOADED,
