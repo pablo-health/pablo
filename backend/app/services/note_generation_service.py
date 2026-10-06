@@ -33,6 +33,7 @@ from ..models import (
     Transcript,
 )
 from ..notes import NoteTypeDefinition, NoteTypeRegistry, get_default_registry
+from ..notes.diagnoses import DIAGNOSES_KIND_LABEL, DIAGNOSES_SCHEMA, coerce_diagnoses
 from ..notes.practice_types import render_user_prompt
 from ..notes.prompts.soap import SOAP_SYSTEM_PROMPT
 from ..settings import get_settings
@@ -565,6 +566,8 @@ def _mock_registry_content(definition: NoteTypeDefinition, patient: Patient) -> 
                     f"Mock {f.label} item A ({diagnosis}).",
                     f"Mock {f.label} item B.",
                 ]
+            elif f.kind == "diagnoses":
+                section_content[f.key] = [{"label": diagnosis, "code": None, "status": None}]
             else:
                 section_content[f.key] = (
                     f"Mock {section.label} / {f.label} content for session ({diagnosis})."
@@ -615,6 +618,7 @@ def _fields_block(definition: NoteTypeDefinition) -> str:
             kind_label = {
                 "text": "free-form string",
                 "list": "list of short strings",
+                "diagnoses": DIAGNOSES_KIND_LABEL,
                 "structured": "nested object",
             }[f.kind]
             lines.append(f"    * {f.key} ({kind_label}) — {hint}")
@@ -629,6 +633,8 @@ def _build_registry_response_schema(definition: NoteTypeDefinition) -> dict[str,
         for f in section.fields:
             if f.kind == "list":
                 fields[f.key] = {"type": "array", "items": {"type": "string"}}
+            elif f.kind == "diagnoses":
+                fields[f.key] = DIAGNOSES_SCHEMA
             elif f.kind == "structured":
                 fields[f.key] = {"type": "object"}
             else:
@@ -654,6 +660,8 @@ def _coerce_registry_response(
                     section_content[f.key] = [str(item).strip() for item in raw_value if item]
                 else:
                     section_content[f.key] = []
+            elif f.kind == "diagnoses":
+                section_content[f.key] = coerce_diagnoses(raw_value)
             elif f.kind == "structured":
                 section_content[f.key] = raw_value if isinstance(raw_value, dict) else {}
             else:

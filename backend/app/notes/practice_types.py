@@ -74,7 +74,7 @@ _PLACEHOLDER = re.compile(r"\{(transcript|session_date|fields|inputs\.[a-z][a-z0
 class PracticeFieldSpec(BaseModel):
     key: str = Field(pattern=_PART_KEY)
     label: str = Field(min_length=1, max_length=80)
-    kind: Literal["text", "list"] = "text"
+    kind: Literal["text", "list", "diagnoses"] = "text"
     ai_hint: str = Field(default="", max_length=2000)
 
 

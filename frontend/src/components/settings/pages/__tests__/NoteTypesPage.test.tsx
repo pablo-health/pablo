@@ -19,6 +19,7 @@ import { renderWithProviders } from "@/test/renderWithProviders"
 import { ApiError } from "@/lib/api/client"
 import type { DeriveNoteTypeResponse, NoteTypeSchema, PracticeNoteTypeSpec } from "@/types/noteTypes"
 import template from "../../noteTypes/templates/psychiatric_follow_up.json"
+import evaluationTemplate from "../../noteTypes/templates/psychiatric_evaluation.json"
 
 const mockList = vi.fn()
 const mockGet = vi.fn()
@@ -75,6 +76,7 @@ const SOAP = schema("soap", { ...COACH_SPEC, label: "SOAP" }, null)
 const COACH = schema("custom.coach", COACH_SPEC, 3)
 
 const TEMPLATE_SPEC = template.spec as PracticeNoteTypeSpec
+const EVALUATION_SPEC = evaluationTemplate.spec as PracticeNoteTypeSpec
 
 beforeEach(() => {
   mockList.mockResolvedValue({ note_types: [SOAP, COACH] })
@@ -178,6 +180,21 @@ describe("NoteTypesPage editor", () => {
 
     await waitFor(() => expect(mockSave).toHaveBeenCalledTimes(1))
     expect(mockSave).toHaveBeenCalledWith("psychiatric_follow_up", TEMPLATE_SPEC, undefined)
+  })
+
+  it("starting from the initial evaluation template and saving stores it unchanged", async () => {
+    const user = userEvent.setup()
+    renderWithProviders(<NoteTypesPage />)
+
+    await user.click(await screen.findByRole("button", { name: "Start from Psychiatric initial evaluation" }))
+    // The assessment's diagnoses field is the one whose shape reads Diagnoses.
+    const shapes = screen.getAllByLabelText("Shape") as HTMLSelectElement[]
+    expect(shapes.filter((s) => s.value === "diagnoses")).toHaveLength(1)
+    expect(within(shapes[0]).getByRole("option", { name: "Diagnoses" })).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Save note type" }))
+
+    await waitFor(() => expect(mockSave).toHaveBeenCalledTimes(1))
+    expect(mockSave).toHaveBeenCalledWith("psychiatric_evaluation", EVALUATION_SPEC, undefined)
   })
 
   it("opens imported JSON in the editor, and refuses what isn't a note type", async () => {
