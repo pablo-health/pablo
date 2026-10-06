@@ -349,7 +349,8 @@ CREATE TABLE platform.launch_intents (
     created_at timestamp with time zone NOT NULL,
     expires_at timestamp with time zone NOT NULL,
     consumed_at timestamp with time zone,
-    ai_consent_prompted boolean DEFAULT false NOT NULL
+    ai_consent_prompted boolean DEFAULT false NOT NULL,
+    ask_consent_on_recording boolean DEFAULT false NOT NULL
 );
 
 CREATE TABLE platform.panel_applications (

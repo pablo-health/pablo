@@ -34,6 +34,8 @@ export interface AppointmentResponse {
   provider?: string | null
   /** The service's own handle for the meeting. Opens nothing by itself. */
   meeting_external_id?: string | null
+  /** The visit's place-of-service code ("11" office, "02"/"10" telehealth). */
+  place_of_service?: string | null
   notes: string | null
   note_type: string
   /** Values for the note type's declared inputs. */
