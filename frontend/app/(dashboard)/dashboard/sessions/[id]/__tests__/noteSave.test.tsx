@@ -15,20 +15,29 @@ import { createMockNote, createMockSession } from "@/test/factories"
 import type { Note } from "@/types/notes"
 import type { NoteContent } from "@/types/sessions"
 
-const { mockUseSession, mockUpdateEdits, finalizeProps } = vi.hoisted(() => ({
-  mockUseSession: vi.fn(),
-  mockUpdateEdits: vi.fn(),
-  finalizeProps: { soapNoteEdited: undefined as unknown },
-}))
+const { mockUseSession, mockUpdateEdits, mockSaveEdits, mockRedraft, finalizeProps } =
+  vi.hoisted(() => ({
+    mockUseSession: vi.fn(),
+    mockUpdateEdits: vi.fn(),
+    mockSaveEdits: vi.fn(),
+    mockRedraft: vi.fn(),
+    finalizeProps: { soapNoteEdited: undefined as unknown },
+  }))
 
 vi.mock("@/hooks/useSessions", () => ({
   useSession: () => mockUseSession(),
   useUpdateSessionMetadata: () => ({ mutate: vi.fn(), isPending: false }),
   useUpdateSessionRating: () => ({ mutateAsync: vi.fn() }),
+  useRedraftSessionNote: () => ({ mutate: mockRedraft, isPending: false, isError: false }),
 }))
 
 vi.mock("@/hooks/useNotes", () => ({
-  useUpdateNoteEdits: () => ({ mutate: mockUpdateEdits, isError: false }),
+  useUpdateNoteEdits: () => ({
+    mutate: mockUpdateEdits,
+    mutateAsync: mockSaveEdits,
+    isError: false,
+    isPending: false,
+  }),
 }))
 
 vi.mock("@/hooks/useNoteTypes", () => ({
@@ -38,6 +47,25 @@ vi.mock("@/hooks/useNoteTypes", () => ({
 
 // Reads the practice setting and the client's consent record; not under test here.
 vi.mock("@/components/sessions/NoteConsentLine", () => ({ NoteConsentLine: () => null }))
+
+// Stand-in details panel: one button that redrafts with a fixed value.
+vi.mock("@/components/sessions/NoteInputsPanel", () => ({
+  NoteInputsPanel: ({
+    onRedraft,
+    hasEdits,
+  }: {
+    onRedraft: (data: unknown) => void
+    hasEdits: boolean
+  }) => (
+    <button
+      onClick={() =>
+        onRedraft({ note_inputs: { visit_code: "99214" }, ...(hasEdits ? { edits: "keep" } : {}) })
+      }
+    >
+      redraft
+    </button>
+  ),
+}))
 
 const DAP_EDIT: NoteContent = {
   note_type: "schema",
@@ -188,6 +216,44 @@ describe("session page note save", () => {
     expect(await screen.findByRole("heading", { name: "SOAP note" })).toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "save edit" }))
     expect(mockUpdateEdits).not.toHaveBeenCalled()
+  })
+
+  it("saves SOAP edits held for finalize before a redraft that keeps them", async () => {
+    givenSession(createMockNote({ id: "note-4", note_type: "soap", content: {} }))
+    await renderPage()
+
+    fireEvent.click(await screen.findByRole("button", { name: "save edit" }))
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "redraft" }))
+    })
+
+    expect(mockSaveEdits).toHaveBeenCalledWith({
+      noteId: "note-4",
+      data: { content_edited: { subjective: "S", objective: "O", assessment: "A", plan: "P" } },
+    })
+    expect(mockRedraft).toHaveBeenCalledWith({
+      sessionId: "session-123",
+      data: { note_inputs: { visit_code: "99214" }, edits: "keep" },
+    })
+    expect(mockSaveEdits.mock.invocationCallOrder[0]).toBeLessThan(
+      mockRedraft.mock.invocationCallOrder[0],
+    )
+  })
+
+  it("says a redraft is running, and holds the note still meanwhile", async () => {
+    givenSession(createMockNote({ note_type: "dap", content: {}, status: "processing" }))
+    await renderPage()
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Redrafting the note…")
+    fireEvent.click(screen.getByRole("button", { name: "save edit" }))
+    expect(mockUpdateEdits).not.toHaveBeenCalled()
+  })
+
+  it("says a redraft that didn't finish left the note as it was", async () => {
+    givenSession(createMockNote({ note_type: "dap", content: {}, status: "failed" }))
+    await renderPage()
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("your note hasn't changed")
   })
 
   it("names no note type while the note is still being generated", async () => {

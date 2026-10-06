@@ -140,4 +140,57 @@ export interface NoteDraftPreviewResponse {
   sections: Record<string, Record<string, unknown>>
 }
 
+/** What `POST /api/note-types/derive` proposes from: send at least one sample or a description. */
+export interface DeriveNoteTypeRequest {
+  /** Pasted note text, one per sample. */
+  samples: string[]
+  /** PDF, Word or text files, one note each. */
+  files: File[]
+  description: string
+  /** A note type or reference key to compare the proposal against. */
+  reference: string | null
+}
+
+/** One sample's check against the proposal. */
+export interface DeriveCoverage {
+  /** Index of the sample: pasted samples first, then files. */
+  sample: number
+  passages: number
+  /** Passages no proposed field took, verbatim. */
+  unplaced: string[]
+  /** How many lines were left out as not note content (signatures, header facts); absent from older servers. */
+  excluded?: number
+  /** False when the sample could not be checked; `unplaced` is then empty. */
+  checked: boolean
+}
+
+export interface DeriveGuardFinding {
+  path: string
+  outcome: string
+}
+
+export interface NoteTypeReference {
+  key: string
+  label: string
+}
+
+export interface DeriveSuggestion {
+  label: string
+  description: string
+}
+
+/** A proposed note type and the checks run on it. Nothing is saved. */
+export interface DeriveNoteTypeResponse {
+  spec: PracticeNoteTypeSpec
+  coverage: DeriveCoverage[]
+  guard: DeriveGuardFinding[]
+  reference: NoteTypeReference | null
+  /** Elements of the reference the proposal has no section or field for. */
+  suggestions: DeriveSuggestion[]
+}
+
+export interface NoteTypeReferenceListResponse {
+  references: NoteTypeReference[]
+}
+
 export const DEFAULT_NOTE_TYPE = "soap"

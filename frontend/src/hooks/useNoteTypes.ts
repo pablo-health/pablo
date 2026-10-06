@@ -3,7 +3,9 @@
 "use client"
 
 import {
+  deriveNoteType,
   getNoteType,
+  listDeriveReferences,
   listNoteTypes,
   previewNoteDraft,
   retirePracticeNoteType,
@@ -11,6 +13,8 @@ import {
 } from "@/lib/api/noteTypes"
 import { queryKeys } from "@/lib/api/queryKeys"
 import type {
+  DeriveNoteTypeRequest,
+  DeriveNoteTypeResponse,
   NoteDraftPreviewRequest,
   NoteDraftPreviewResponse,
   NoteTypeSchema,
@@ -78,5 +82,21 @@ export function useRetirePracticeNoteType(token?: string) {
 export function usePreviewNoteDraft(token?: string) {
   return useAuthMutation<NoteDraftPreviewResponse, NoteDraftPreviewRequest>({
     mutationFn: (body) => previewNoteDraft(body, token),
+  })
+}
+
+/** Propose a note type from the clinician's notes. Saves nothing, so invalidates nothing. */
+export function useDeriveNoteType(token?: string) {
+  return useAuthMutation<DeriveNoteTypeResponse, DeriveNoteTypeRequest>({
+    mutationFn: (request) => deriveNoteType(request, token),
+  })
+}
+
+/** References registered with this deployment; fixed at server startup. */
+export function useDeriveReferences(token?: string) {
+  return useAuthQuery({
+    queryKey: queryKeys.noteTypes.deriveReferences(),
+    queryFn: () => listDeriveReferences(token),
+    staleTime: Infinity,
   })
 }

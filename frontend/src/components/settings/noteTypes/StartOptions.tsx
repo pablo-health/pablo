@@ -2,7 +2,7 @@
 
 "use client"
 
-import { LayoutTemplate } from "lucide-react"
+import { FileText, LayoutTemplate } from "lucide-react"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -15,11 +15,12 @@ import { NOTE_TYPE_TEMPLATES, type NoteTypeTemplate } from "./templates"
 interface StartOptionsProps {
   onBlank: () => void
   onTemplate: (template: NoteTypeTemplate) => void
+  onFromNotes: () => void
   onImport: (spec: PracticeNoteTypeSpec) => void
 }
 
-/** Ways to begin a new note type: blank, from a template, or from JSON. */
-export function StartOptions({ onBlank, onTemplate, onImport }: StartOptionsProps) {
+/** Ways to begin a new note type: blank, from a template, from your own notes, or from JSON. */
+export function StartOptions({ onBlank, onTemplate, onFromNotes, onImport }: StartOptionsProps) {
   const [json, setJson] = useState("")
   const [importError, setImportError] = useState<string | null>(null)
 
@@ -60,6 +61,19 @@ export function StartOptions({ onBlank, onTemplate, onImport }: StartOptionsProp
             </Button>
           </ListRow>
         ))}
+      </ul>
+
+      <h3 className="mb-1 mt-5 text-[13px] font-semibold text-foreground">Start from your notes</h3>
+      <ul>
+        <ListRow
+          icon={FileText}
+          title="From your notes"
+          subtitle="Give a few of your notes, or describe them, and get a note type in the same shape."
+        >
+          <Button size="sm" variant="outline" aria-label="Start from your notes" onClick={onFromNotes}>
+            Use
+          </Button>
+        </ListRow>
       </ul>
 
       <details className="mt-4">
