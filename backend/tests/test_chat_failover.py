@@ -127,7 +127,9 @@ class TestFailover:
         primary = FakeChatLLMGateway(scripts=[[_DOWN]])
         bedrock = FakeChatLLMGateway(scripts=[list(_ANSWER)])
         gateway = FailoverChatLLMGateway(
-            primary, ["bedrock:some-model"], resolve=lambda _m: bedrock
+            primary,
+            ["bedrock:some-model"],
+            resolve=lambda m: bedrock if m.startswith("bedrock:") else primary,
         )
         assert _stream(gateway) == _ANSWER
         assert [c["model"] for c in bedrock.calls] == ["bedrock:some-model"]
@@ -153,6 +155,28 @@ class TestTurnService:
         assert text == "From the fallback."
         assert events[-1].kind == "done"
         assert [c["model"] for c in fake.calls] == ["gemini-test-flash", FALLBACK]
+
+    def test_a_bedrock_primary_streams_through_bedrock_and_falls_back_to_the_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A primary swap: the feature's own model is on Bedrock, the tier default behind it."""
+        monkeypatch.setenv("AI_MODELS", json.dumps({"chat": "bedrock:claude"}))
+        monkeypatch.setenv("AI_FALLBACKS", json.dumps({"chat": "gemini-test-flash"}))
+        get_settings.cache_clear()
+        bedrock = FakeChatLLMGateway(scripts=[[_DOWN]])
+        monkeypatch.setattr("app.services.chat_failover._bedrock_gateway", lambda: bedrock)
+        vertex = FakeChatLLMGateway(scripts=[list(_ANSWER)])
+        ChatTurnService._conversation_locks.clear()
+        try:
+            events = _drain(self._service(vertex), _make_context())
+        finally:
+            get_settings.cache_clear()
+
+        assert [c["model"] for c in bedrock.calls] == ["bedrock:claude"]
+        assert [c["model"] for c in vertex.calls] == ["gemini-test-flash"]
+        assert "".join(str(e.data["text"]) for e in events if e.kind == "delta") == (
+            "From the fallback."
+        )
 
     @pytest.mark.usefixtures("mapped")
     def test_a_clients_answer_never_inherits_the_clinician_chats_fallback(

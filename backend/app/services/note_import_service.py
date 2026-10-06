@@ -483,7 +483,9 @@ class NoteImportService:
         # far faster than the pro/thinking default. Falls back to ai_model
         # when no flash model is configured.
         settings = get_settings()
-        return self._model or settings.ai_model_flash or settings.ai_model
+        return self._model or settings.model_for(
+            AIFeature.NOTE_IMPORT, settings.ai_model_flash or settings.ai_model
+        )
 
     def _complete_with_retry(
         self,

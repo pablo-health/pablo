@@ -247,7 +247,8 @@ class RegistryNoteGenerationService(NoteGenerationService):
     def _resolve_model(self) -> str:
         if self._model is not None:
             return self._model
-        return get_settings().ai_model
+        settings = get_settings()
+        return settings.model_for(AIFeature.NOTE_GENERATION, settings.ai_model)
 
     def generate_note(
         self,

@@ -50,6 +50,7 @@ from ..scheduling_engine.services.date_intent import (
     resolve_date_intent,
 )
 from ..settings import get_settings
+from .ai_features import AIFeature
 from .hedged_structured_llm_gateway import HedgedStructuredLLMGateway
 from .structured_llm_gateway import StructuredLLMGateway, StructuredOutputTruncatedError
 
@@ -738,7 +739,9 @@ class AvailabilityRuleParseService:
         # Mapping a sentence onto a fixed schema is mechanical, not
         # generative -- same flash-tier default as note import.
         settings = get_settings()
-        return self._model or settings.ai_model_flash or settings.ai_model
+        return self._model or settings.model_for(
+            AIFeature.AVAILABILITY_PARSE, settings.ai_model_flash or settings.ai_model
+        )
 
     def parse(
         self,

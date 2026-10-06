@@ -18,9 +18,12 @@ own retry of the connection. The turn service's single retry of a failed
 answer runs this sequence once more, and that is the most an answer ever
 costs: two passes over the configured models.
 
-A fallback is named by model string. ``bedrock:`` models stream through
-Bedrock; any other is served by the feature's own gateway, as the primary
-is. Each answer that needed a fallback logs one line: the model that
+Every model, the primary included, is named by model string: ``bedrock:``
+models stream through Bedrock, and any other through the feature's own
+gateway. So a feature whose primary is a Bedrock model (``ai_models``) can
+fall back to the tier default on Vertex, and the other way round.
+
+Each answer that needed a fallback logs one line: the model that
 answered and the error code of each that did not. Never prompt or answer
 text.
 """
@@ -79,7 +82,7 @@ class FailoverChatLLMGateway(ChatLLMGateway):
         models = [model, *(m for m in dict.fromkeys(self._fallbacks) if m != model)]
         failures: list[str] = []
         for index, leg_model in enumerate(models):
-            gateway = self._gateway if index == 0 else self._resolve(leg_model)
+            gateway = self._resolve(leg_model)
             stream = gateway.stream_completion(
                 model=leg_model,
                 system_prompt=system_prompt,
@@ -115,9 +118,15 @@ class FailoverChatLLMGateway(ChatLLMGateway):
 
 
 def failover_chat_gateway(feature: str, gateway: ChatLLMGateway) -> ChatLLMGateway:
-    """``gateway`` with ``feature``'s fallbacks behind it, or unchanged with none."""
-    fallbacks = get_settings().fallbacks_for(feature)
-    if not fallbacks:
+    """``gateway`` with ``feature``'s fallbacks behind it, or unchanged with none.
+
+    Also wrapped when the feature has a primary of its own in ``ai_models``,
+    so a ``bedrock:`` primary streams through Bedrock with ``gateway``'s
+    models as its fallbacks.
+    """
+    settings = get_settings()
+    fallbacks = settings.fallbacks_for(feature)
+    if not fallbacks and feature not in settings.ai_models:
         return gateway
     return FailoverChatLLMGateway(gateway, fallbacks)
 

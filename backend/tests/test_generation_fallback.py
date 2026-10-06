@@ -236,6 +236,27 @@ class TestWiring:
             )
         assert provider.models == [PRIMARY]
 
+    def test_a_feature_can_swap_its_primary_and_fall_back_to_the_default(
+        self, monkeypatch: pytest.MonkeyPatch, serve: Callable[[Provider], Provider]
+    ) -> None:
+        """``ai_models`` names the primary; the old default can be its fallback."""
+        monkeypatch.setenv("AI_MODELS", json.dumps({"note_generation": PRIMARY}))
+        monkeypatch.setenv("AI_FALLBACKS", json.dumps({"note_generation": FALLBACK}))
+        get_settings.cache_clear()
+        provider = serve(Provider(primary=[_transient()]))
+        definition = to_definition("custom.eval", 1, _DIAGNOSES_SPEC)
+        try:
+            service = RegistryNoteGenerationService(registry=_registry())
+            generated = service.generate_note(
+                definition.key, TRANSCRIPT, PATIENT, NOW, definition=definition
+            )
+            assert get_settings().model_for(AIFeature.NOTE_IMPORT, "flash") == "flash"
+        finally:
+            get_settings.cache_clear()
+
+        assert generated.content["assessment"]["formulation"] == WRITTEN
+        assert provider.models == [PRIMARY, FALLBACK]
+
     def test_a_feature_not_named_has_no_fallback_whatever_else_is_set(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

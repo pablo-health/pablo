@@ -447,7 +447,8 @@ class NoteTypeDeriveService:
         for budget in (base, base * 2):
             try:
                 return self._llm_gateway.complete_structured(
-                    model=self._model or settings.ai_model,
+                    model=self._model
+                    or settings.model_for(AIFeature.NOTE_TYPE_DERIVE, settings.ai_model),
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
                     response_schema=schema,

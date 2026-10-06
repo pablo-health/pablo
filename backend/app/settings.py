@@ -1587,6 +1587,18 @@ class Settings(BaseSettings):
             "fallback."
         ),
     )
+    ai_models: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "The primary model per AI feature, as a JSON object from feature "
+            "key (the keys listed on ai_fallbacks) to one model id, provider "
+            "prefix allowed. A feature named here uses that model in place "
+            "of its tier's default (ai_model, or ai_model_flash for the "
+            "interactive features); one not named keeps the default. With "
+            "ai_fallbacks, a feature can run on any provider and fall back to "
+            "any other, the tier default included. Empty by default."
+        ),
+    )
     ai_fallbacks: dict[str, str] = Field(
         default_factory=dict,
         description=(
@@ -1662,6 +1674,10 @@ class Settings(BaseSettings):
     def flash_fallback_models(self) -> tuple[str, ...]:
         """``ai_model_flash_fallbacks`` split into model ids, in order."""
         return tuple(m.strip() for m in self.ai_model_flash_fallbacks.split(",") if m.strip())
+
+    def model_for(self, feature: str, default: str) -> str:
+        """``feature``'s primary model: its ``ai_models`` entry, else ``default``."""
+        return (self.ai_models.get(feature) or "").strip() or default
 
     def fallbacks_for(self, feature: str) -> tuple[str, ...]:
         """The fallback models ``ai_fallbacks`` names for ``feature``, in order.
