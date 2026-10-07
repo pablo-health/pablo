@@ -330,7 +330,7 @@ function summaryOf(value: AnswerValue | null): string | null {
  * Read through the same query the signing screen used, so a form walked in
  * this session names its documents without a second request.
  */
-function ConsentReviewLabel({ item, sessionToken }: ReviewLabelProps) {
+function ConsentReviewLabel({ item, sessionToken, heading = null }: ReviewLabelProps) {
   const own = item.label?.trim()
   const pinned = pinnedVersionOf(item.config)
   const document = useQuery({
@@ -339,10 +339,17 @@ function ConsentReviewLabel({ item, sessionToken }: ReviewLabelProps) {
     enabled: !own && pinned !== null,
     retry: false,
   })
-  if (own) return <>{own}</>
-  if (document.data) return <>{document.data.title}</>
+  // A part that holds one document is usually named after it, and the
+  // heading above the row already says it.
+  const title = own || document.data?.title
+  if (title && heading !== null && sameTitle(title, heading)) return null
+  if (title) return <>{title}</>
   if (document.isPending && pinned !== null) return null
   return <>{CONSENT_REVIEW_LABEL}</>
+}
+
+function sameTitle(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase()
 }
 
 export const consentDocumentRenderer: ItemRenderer = {

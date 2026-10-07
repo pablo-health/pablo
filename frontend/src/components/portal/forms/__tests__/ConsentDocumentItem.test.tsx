@@ -21,7 +21,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import * as api from "@/lib/api/patientIntake"
 import { PatientIntakeError } from "@/lib/api/patientIntake"
 import type { IntakeAssignmentItem, IntakeSignature } from "@/lib/api/patientIntake"
+import { partsOf } from "../parts"
 import { rendererFor } from "../renderers/registry"
+import { ReviewScreen } from "../ReviewScreen"
 import {
   CONSENT_AWAITING_GUARDIAN,
   CONSENT_NEEDS_RESIGN,
@@ -479,6 +481,77 @@ describe("the review row", () => {
 
     expect(screen.getByTestId("label")).toHaveTextContent("Our treatment agreement")
     expect(fetchConsentDocument).not.toHaveBeenCalled()
+  })
+
+  function section(id: string, title: string, position: number): IntakeAssignmentItem {
+    return {
+      ...consentItem(),
+      id,
+      key: `section_${position}`,
+      position,
+      item_type: "section",
+      required: false,
+      config: { title },
+    }
+  }
+
+  function renderReview(items: IntakeAssignmentItem[]) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={client}>
+        <ReviewScreen
+          parts={partsOf(items)}
+          values={{ [ITEM_ID]: { signed: true, signature_id: "sig" } }}
+          form={null}
+          sessionToken={SESSION}
+          onEdit={vi.fn()}
+          onBack={null}
+          onSubmit={vi.fn()}
+          submitting={false}
+          error={null}
+        />
+      </QueryClientProvider>,
+    )
+  }
+
+  it("does not repeat a title the part heading already says", async () => {
+    renderReview([
+      section("00000000-0000-4000-8000-000000000010", DOCUMENT_TITLE, 0),
+      consentItem({ position: 1 }),
+    ])
+
+    await waitFor(() => expect(fetchConsentDocument).toHaveBeenCalled())
+    // Let the title arrive: a row still loading is empty too.
+    await fetchConsentDocument.mock.results[0].value
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(screen.getByTestId("forms-review-part-title")).toHaveTextContent(DOCUMENT_TITLE)
+    expect(screen.getByTestId("forms-review-label")).toBeEmptyDOMElement()
+    expect(screen.getByText(CONSENT_SIGNED_BADGE)).toBeInTheDocument()
+  })
+
+  it("keeps the title when the part is named something else", async () => {
+    renderReview([
+      section("00000000-0000-4000-8000-000000000010", "Paperwork", 0),
+      consentItem({ position: 1 }),
+    ])
+
+    await waitFor(() =>
+      expect(screen.getByTestId("forms-review-label")).toHaveTextContent(DOCUMENT_TITLE),
+    )
+  })
+
+  it("keeps each title when a part holds more than one document", async () => {
+    const second = "00000000-0000-4000-8000-000000000011"
+    renderReview([
+      section("00000000-0000-4000-8000-000000000010", DOCUMENT_TITLE, 0),
+      consentItem({ position: 1 }),
+      consentItem({ id: second, key: "consent_2", position: 2 }),
+    ])
+
+    await waitFor(() => {
+      const labels = screen.getAllByTestId("forms-review-label")
+      expect(labels.map((label) => label.textContent)).toEqual([DOCUMENT_TITLE, DOCUMENT_TITLE])
+    })
   })
 
   it("says what kind of question it is when the title cannot be read", async () => {
