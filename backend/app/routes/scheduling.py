@@ -50,7 +50,12 @@ from ..models.availability_rule_params import (
     AvailabilityRuleParamsError,
     validate_rule_params,
 )
-from ..models.enums import SessionSource, SessionStatus, SessionType, VideoPlatform
+from ..models.enums import (
+    SessionSource,
+    SessionStatus,
+    session_type_from_label,
+    video_platform_from_label,
+)
 from ..models.scheduling import (
     AppointmentListResponse,
     AppointmentResponse,
@@ -1142,10 +1147,8 @@ def start_session_from_appointment(
         scheduled_at=appt.start_at,
         duration_minutes=appt.duration_minutes,
         video_link=appt.video_link,
-        video_platform=VideoPlatform(appt.video_platform) if appt.video_platform else None,
-        session_type=(
-            SessionType(appt.session_type) if appt.session_type else SessionType.INDIVIDUAL
-        ),
+        video_platform=video_platform_from_label(appt.video_platform),
+        session_type=session_type_from_label(appt.session_type),
         source=SessionSource.COMPANION,
         notes=appt.notes,
         note_type=requested_note_type,
