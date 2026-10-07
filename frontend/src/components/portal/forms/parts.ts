@@ -23,6 +23,7 @@
  */
 
 import type { IntakeAssignmentItem } from "@/lib/api/patientIntake"
+import { ruleOf } from "@/lib/intake/visibility"
 import { OPENING_PART_TITLE } from "./formsCopy"
 import { rendererFor } from "./renderers/registry"
 
@@ -93,20 +94,57 @@ export interface PartPlace {
   /** 1-based, among the parts of this walk. */
   part: number
   parts: number
-  /** 1-based among the part's questions that collect something; null otherwise. */
+  /**
+   * 1-based among the part's questions that collect something; null
+   * otherwise. A follow-up shares the number of the question it follows.
+   */
   question: { index: number; total: number } | null
 }
 
+/**
+ * Where one screen sits in its part.
+ *
+ * **A follow-up is counted as part of the question that opened it.** A
+ * question a rule shows only after an answer earlier in the same part would
+ * otherwise grow the total under the patient's feet — "1 of 7" becoming "2
+ * of 8" one press later. So the total counts only the questions the part
+ * asks whatever the answers, and a follow-up carries the number of the
+ * question it follows from. A rule pointing at an earlier part does not
+ * move this part's count, so a question it shows is counted normally.
+ */
 export function placeOf(parts: FormPart[], item: IntakeAssignmentItem): PartPlace | null {
   const partIndex = parts.findIndex((part) => part.screens.includes(item))
   if (partIndex < 0) return null
   const part = parts[partIndex]
-  const counted = part.screens.filter(collectsAnswer)
-  const index = counted.indexOf(item)
+  const counted = part.screens.filter(
+    (screen) => collectsAnswer(screen) && triggerIn(part, screen) === null,
+  )
+  const index = collectsAnswer(item) ? counted.indexOf(rootOf(part, item)) : -1
   return {
     title: part.title,
     part: partIndex + 1,
     parts: parts.length,
     question: index < 0 ? null : { index: index + 1, total: counted.length },
+  }
+}
+
+/** The question in this part whose answer decides whether `item` is shown. */
+function triggerIn(part: FormPart, item: IntakeAssignmentItem): IntakeAssignmentItem | null {
+  const rule = ruleOf(item.config)
+  if (rule === null) return null
+  return part.screens.find((screen) => screen.key === rule.item_key && screen !== item) ?? null
+}
+
+/** The question a follow-up — or a follow-up of a follow-up — hangs from. */
+function rootOf(part: FormPart, item: IntakeAssignmentItem): IntakeAssignmentItem {
+  // Rules only look backwards, so this ends; the set is there so a stored
+  // form that broke that rule cannot hang the walk.
+  const seen = new Set<IntakeAssignmentItem>([item])
+  let current = item
+  for (;;) {
+    const trigger = triggerIn(part, current)
+    if (trigger === null || seen.has(trigger)) return current
+    seen.add(trigger)
+    current = trigger
   }
 }

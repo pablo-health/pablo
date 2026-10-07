@@ -265,6 +265,73 @@ describe("a form with sections", () => {
   })
 })
 
+describe("a follow-up a rule opens inside a part", () => {
+  const FOLLOW = {
+    part: "b0000000-0000-4000-8000-000000000001",
+    drinks: "b0000000-0000-4000-8000-000000000002",
+    howMuch: "b0000000-0000-4000-8000-000000000003",
+    smoke: "b0000000-0000-4000-8000-000000000004",
+    intro: "b0000000-0000-4000-8000-000000000005",
+    other: "b0000000-0000-4000-8000-000000000006",
+  }
+  const ITEMS: IntakeAssignmentItem[] = [
+    row(FOLLOW.intro, "intro", 0, "free_text", {}, "Anything to tell us first?"),
+    row(FOLLOW.part, "substances_part", 1, "section", { title: "Substances" }),
+    row(FOLLOW.drinks, "drinks", 2, "yes_no", {}, "Do you drink alcohol?"),
+    row(
+      FOLLOW.howMuch,
+      "how_much",
+      3,
+      "free_text",
+      { visible_when: { item_key: "drinks", op: "eq", value: true } },
+      "How much in a week?",
+    ),
+    row(FOLLOW.smoke, "smoke", 4, "free_text", {}, "Do you smoke?"),
+  ]
+
+  it("keeps the part's total steady and numbers the follow-up with its question", async () => {
+    vi.mocked(api.fetchAssignment).mockResolvedValue(
+      assignmentDetail({
+        items: ITEMS,
+        progress: { complete: false, missing: [FOLLOW.drinks, FOLLOW.smoke] },
+      }),
+    )
+    const user = userEvent.setup()
+    renderFlow()
+
+    await screen.findByText("Do you drink alcohol?")
+    expect(header().progress).toBe("1 of 2")
+    await user.click(screen.getByRole("radio", { name: "Yes" }))
+    await user.click(screen.getByTestId("forms-continue"))
+
+    await screen.findByText("How much in a week?")
+    expect(header()).toEqual({ count: "Part 2 of 2", title: "Substances", progress: "1 of 2" })
+    await typeAndContinue(user, "forms-free-text", "Two glasses.")
+
+    await screen.findByText("Do you smoke?")
+    expect(header().progress).toBe("2 of 2")
+  })
+
+  it("counts a question a rule in an earlier part opened like any other", () => {
+    const items = [
+      row(FOLLOW.drinks, "drinks", 0, "yes_no", {}, "Do you drink alcohol?"),
+      row(FOLLOW.part, "substances_part", 1, "section", { title: "Substances" }),
+      row(
+        FOLLOW.howMuch,
+        "how_much",
+        2,
+        "free_text",
+        { visible_when: { item_key: "drinks", op: "eq", value: true } },
+        "How much in a week?",
+      ),
+      row(FOLLOW.smoke, "smoke", 3, "free_text", {}, "Do you smoke?"),
+    ]
+    const parts = partsOf(items)
+    expect(placeOf(parts, items[2])?.question).toEqual({ index: 1, total: 2 })
+    expect(placeOf(parts, items[3])?.question).toEqual({ index: 2, total: 2 })
+  })
+})
+
 describe("partsOf", () => {
   const sorted = [...SECTIONED].sort((a, b) => a.position - b.position)
 
