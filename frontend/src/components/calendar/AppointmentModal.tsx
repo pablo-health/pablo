@@ -39,6 +39,7 @@ import type { UserPreferences } from "@/lib/api/users"
 import { DEFAULT_NOTE_TYPE, type NoteInputSchema } from "@/types/noteTypes"
 import { ApiError } from "@/lib/api/client"
 import { filledInputs } from "@/lib/noteInputs"
+import { isTelehealth } from "@/lib/telehealth"
 import type { EditorialTheme } from "./editorial/EditorialSidebar"
 import "./editorial/editorial.css"
 
@@ -511,7 +512,16 @@ function AppointmentForm({
     checkConflictsMutation.isPending
 
   const save = (ruleOverride: boolean) => {
-    const videoPlatform = appointment?.video_platform ?? preferences?.default_video_platform ?? null
+    // The default video platform belongs to telehealth visits only; an
+    // in-person visit stamped with one would read as a video session.
+    const telehealth = isTelehealth({
+      provider: appointment?.provider ?? null,
+      video_link: videoLink || null,
+      place_of_service: appointment?.place_of_service ?? null,
+    })
+    const videoPlatform =
+      appointment?.video_platform ??
+      (telehealth ? (preferences?.default_video_platform ?? null) : null)
     const payload = {
       patient_id: patientId,
       title,

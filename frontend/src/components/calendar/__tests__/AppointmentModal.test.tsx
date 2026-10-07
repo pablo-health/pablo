@@ -668,7 +668,7 @@ describe("AppointmentModal", () => {
   })
 
   describe("Video platform default", () => {
-    it("carries the user's default video platform onto a newly created appointment", async () => {
+    it("carries the user's default video platform onto a new telehealth appointment", async () => {
       const user = userEvent.setup()
       const prefs = { default_video_platform: "google_meet" } as UserPreferences
       render(<AppointmentModal open onClose={vi.fn()} preferences={prefs} />, {
@@ -677,10 +677,74 @@ describe("AppointmentModal", () => {
       const patientTrigger = screen.getByRole("combobox", { name: /client/i })
       await user.click(patientTrigger)
       await user.click(screen.getByRole("option", { name: /Doe, Jane/i }))
+      await user.click(screen.getByRole("button", { name: /more options/i }))
+      await user.type(screen.getByLabelText("Video link"), "https://meet.example.com/abc")
       await user.click(screen.getByRole("button", { name: "Schedule" }))
 
       const [payload] = mockCreate.mock.calls[0]
       expect(payload).toMatchObject({ video_platform: "google_meet" })
+    })
+
+    it("leaves the video platform off a new in-person appointment", async () => {
+      const user = userEvent.setup()
+      const prefs = { default_video_platform: "google_meet" } as UserPreferences
+      render(<AppointmentModal open onClose={vi.fn()} preferences={prefs} />, {
+        wrapper: createWrapper(),
+      })
+      await user.click(screen.getByRole("combobox", { name: /client/i }))
+      await user.click(screen.getByRole("option", { name: /Doe, Jane/i }))
+      await user.click(screen.getByRole("button", { name: "Schedule" }))
+
+      const [payload] = mockCreate.mock.calls[0]
+      expect(payload).toMatchObject({ video_platform: null })
+    })
+
+    it("leaves the video platform off a new in-person series", async () => {
+      const user = userEvent.setup()
+      const prefs = { default_video_platform: "zoom" } as UserPreferences
+      render(<AppointmentModal open onClose={vi.fn()} preferences={prefs} />, {
+        wrapper: createWrapper(),
+      })
+      await user.click(screen.getByRole("combobox", { name: /client/i }))
+      await user.click(screen.getByRole("option", { name: /Doe, Jane/i }))
+      await user.click(screen.getByRole("radio", { name: "Weekly" }))
+      await user.click(screen.getByRole("button", { name: "Schedule" }))
+
+      expect(mockCreateRecurring.mock.calls[0][0]).toMatchObject({ video_platform: null })
+    })
+
+    it("gives an in-person appointment no video platform on edit", async () => {
+      const user = userEvent.setup()
+      const prefs = { default_video_platform: "google_meet" } as UserPreferences
+      render(
+        <AppointmentModal
+          open
+          onClose={vi.fn()}
+          appointment={{ ...baseAppointment, place_of_service: "11" }}
+          preferences={prefs}
+        />,
+        { wrapper: createWrapper() },
+      )
+      await user.click(screen.getByRole("button", { name: "Save changes" }))
+
+      expect(mockUpdate.mock.calls[0][0].data).toMatchObject({ video_platform: null })
+    })
+
+    it("gives a telehealth place of service the default on edit", async () => {
+      const user = userEvent.setup()
+      const prefs = { default_video_platform: "google_meet" } as UserPreferences
+      render(
+        <AppointmentModal
+          open
+          onClose={vi.fn()}
+          appointment={{ ...baseAppointment, place_of_service: "10" }}
+          preferences={prefs}
+        />,
+        { wrapper: createWrapper() },
+      )
+      await user.click(screen.getByRole("button", { name: "Save changes" }))
+
+      expect(mockUpdate.mock.calls[0][0].data).toMatchObject({ video_platform: "google_meet" })
     })
 
     it("keeps an existing appointment's video platform on edit", async () => {
