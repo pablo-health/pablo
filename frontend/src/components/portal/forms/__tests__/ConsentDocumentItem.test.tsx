@@ -153,6 +153,17 @@ describe("reading the document", () => {
     expect(screen.getByRole("heading", { name: DOCUMENT_TITLE })).toBeInTheDocument()
   })
 
+  it("flows at full height on the page, with signing after it", async () => {
+    // A long document in a fixed-height box is a small scrolling window on a
+    // phone. The page scrolls instead, and the signing controls follow it.
+    renderConsent()
+
+    const body = await screen.findByTestId("forms-consent-document")
+    expect(body.className).not.toMatch(/max-h-|overflow-y-(auto|scroll)/)
+    const name = screen.getByRole("textbox")
+    expect(body.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   it("asks the version the form pinned, not whatever is newest", async () => {
     renderConsent()
 
