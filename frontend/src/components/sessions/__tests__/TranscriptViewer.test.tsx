@@ -44,7 +44,6 @@ describe("TranscriptViewer", () => {
       render(<TranscriptViewer transcript={transcript} />)
 
       expect(screen.getByText("Transcript")).toBeInTheDocument()
-      expect(screen.getByText("Format: VTT")).toBeInTheDocument()
     })
 
     it("displays VTT format correctly", () => {
@@ -80,7 +79,6 @@ Patient: I'm feeling better.`,
 
       expect(screen.getByText(/First line/)).toBeInTheDocument()
       expect(screen.getByText(/Second line/)).toBeInTheDocument()
-      expect(screen.getByText("Format: JSON")).toBeInTheDocument()
     })
 
     it("displays TXT format correctly", () => {
@@ -93,21 +91,19 @@ Patient: I'm feeling better.`,
 
       expect(screen.getByText(/This is plain text/)).toBeInTheDocument()
       expect(screen.getByText(/With multiple lines/)).toBeInTheDocument()
-      expect(screen.getByText("Format: TXT")).toBeInTheDocument()
     })
 
-    it("displays format in uppercase", () => {
-      const formats: Array<TranscriptModel["format"]> = ["vtt", "json", "txt"]
+    it("never shows how the transcript was stored", () => {
+      // A Zoom call recorded by the desktop app is stored as google_meet.
+      const transcript: TranscriptModel = {
+        format: "google_meet",
+        content: "[00:00:05] Therapist: How was the week?",
+      }
 
-      formats.forEach((format) => {
-        const { rerender } = render(
-          <TranscriptViewer transcript={{ format, content: "Test" }} />
-        )
+      render(<TranscriptViewer transcript={transcript} />)
 
-        expect(screen.getByText(`Format: ${format.toUpperCase()}`)).toBeInTheDocument()
-
-        rerender(<div />)
-      })
+      expect(screen.queryByText(/Format/i)).not.toBeInTheDocument()
+      expect(screen.queryByText(/google_meet/i)).not.toBeInTheDocument()
     })
   })
 
