@@ -13,7 +13,7 @@ from sqlalchemy.dialects.postgresql import insert
 from ...db.platform_models import CompanionDeviceRow
 from ...models.companion_device import CompanionDevice, DevicePlatform, KeyStorage
 from ...utcnow import utc_now
-from ..companion_device import CompanionDeviceRepository
+from ..companion_device import LAST_SEEN_RESOLUTION, CompanionDeviceRepository
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -110,12 +110,23 @@ class PostgresCompanionDeviceRepository(CompanionDeviceRepository):
 
     def touch_last_seen(self, install_id: str, when: datetime | None = None) -> None:
         ts = when or utc_now()
-        stmt = (
-            update(CompanionDeviceRow)
+        # SKIP LOCKED rather than a plain UPDATE: a companion sends several
+        # requests at once for the same install_id, and a plain UPDATE queues
+        # each one behind whichever request locked the row first, until it
+        # hits lock_timeout. Skipping is safe because the request holding the
+        # lock is recording the same fact.
+        claimable = (
+            select(CompanionDeviceRow.install_id)
             .where(
                 CompanionDeviceRow.install_id == install_id,
                 CompanionDeviceRow.revoked_at.is_(None),
+                CompanionDeviceRow.last_seen < ts - LAST_SEEN_RESOLUTION,
             )
+            .with_for_update(skip_locked=True)
+        )
+        stmt = (
+            update(CompanionDeviceRow)
+            .where(CompanionDeviceRow.install_id.in_(claimable))
             .values(last_seen=ts)
         )
         self._session.execute(stmt)

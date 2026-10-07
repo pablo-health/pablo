@@ -55,6 +55,7 @@ from urllib.parse import urlsplit, urlunsplit
 import jwt
 from fastapi import Request, Response, status
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from ..services.replay_guard import ReplayGuard, get_replay_guard
@@ -321,17 +322,28 @@ def _default_device_lookup(install_id: str) -> CompanionDevice | None:
 
 
 def _touch_last_seen(install_id: str) -> None:
-    """Best-effort ``last_seen`` bump after a successful proof."""
-    try:
-        from ..db import get_db_session
-        from ..repositories.postgres.companion_device import (
-            PostgresCompanionDeviceRepository,
-        )
+    """Best-effort ``last_seen`` bump after a successful proof.
 
-        PostgresCompanionDeviceRepository(get_db_session()).touch_last_seen(install_id)
+    Committed straight away rather than with the request: a row lock taken
+    here would otherwise be held for as long as the route runs, and every
+    other request from the same device would queue behind it. A failure is
+    logged and swallowed — ``last_seen`` is bookkeeping and must never fail
+    the request it rides on.
+    """
+    from ..db import get_db_session
+    from ..repositories.postgres.companion_device import PostgresCompanionDeviceRepository
+
+    try:
+        session = get_db_session()
     except RuntimeError:
         # No session in scope (tests / dev). last_seen is non-critical.
         return
+    try:
+        PostgresCompanionDeviceRepository(session).touch_last_seen(install_id)
+        session.commit()
+    except SQLAlchemyError as err:
+        session.rollback()
+        logger.warning("Companion last_seen update skipped: %s", type(err).__name__)
 
 
 class DPoPMiddleware(BaseHTTPMiddleware):

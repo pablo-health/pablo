@@ -5,11 +5,16 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timedelta
 from threading import Lock
 
 from ..models.companion_device import CompanionDevice
 from ..utcnow import utc_now
+
+# How fresh ``last_seen`` is kept. It answers "is this device still in use",
+# which minute-level precision serves; writing it on every request would turn
+# every companion call into a write on one shared row.
+LAST_SEEN_RESOLUTION = timedelta(seconds=60)
 
 
 class CompanionDeviceRepository(ABC):
@@ -40,7 +45,11 @@ class CompanionDeviceRepository(ABC):
 
     @abstractmethod
     def touch_last_seen(self, install_id: str, when: datetime | None = None) -> None:
-        """Update last_seen for an active device. No-op if missing or revoked."""
+        """Update last_seen for an active device.
+
+        No-op if the device is missing or revoked, or was already seen within
+        ``LAST_SEEN_RESOLUTION``. Never waits on a concurrent writer.
+        """
 
 
 class InMemoryCompanionDeviceRepository(CompanionDeviceRepository):
@@ -83,6 +92,8 @@ class InMemoryCompanionDeviceRepository(CompanionDeviceRepository):
         with self._lock:
             existing = self._rows.get(install_id)
             if existing is None or existing.revoked_at is not None:
+                return
+            if existing.last_seen >= ts - LAST_SEEN_RESOLUTION:
                 return
             self._rows[install_id] = CompanionDevice(
                 install_id=existing.install_id,
