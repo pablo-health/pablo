@@ -10,17 +10,24 @@
  */
 
 import { test, expect } from "../fixtures/auth"
+import { BROWSER_TIME_ZONE } from "../fixtures/clock"
 import { givePatient } from "../fixtures/scenarios"
 
 /** A civil date some days back, as the date input takes it and as the chart
- * shows it. Computed from today so the answer is never dated in the future. */
+ * shows it. Computed from the browser's today (not this process's, which is
+ * UTC) so the answer is never dated in the future. */
 function daysAgo(days: number): { iso: string; shown: string } {
-  const day = new Date()
-  day.setDate(day.getDate() - days)
-  const pad = (n: number) => String(n).padStart(2, "0")
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: BROWSER_TIME_ZONE })
+  const day = new Date(`${today}T00:00:00Z`)
+  day.setUTCDate(day.getUTCDate() - days)
   return {
-    iso: `${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}`,
-    shown: day.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+    iso: day.toISOString().slice(0, 10),
+    shown: day.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      timeZone: "UTC",
+    }),
   }
 }
 
