@@ -11,7 +11,12 @@ from unittest.mock import Mock
 
 import pytest
 from app.models import Patient, ScheduleSessionRequest, SessionStatus, VideoPlatform
-from app.models.enums import SessionSource, SessionType, video_platform_from_label
+from app.models.enums import (
+    SessionSource,
+    SessionType,
+    session_type_from_label,
+    video_platform_from_label,
+)
 from app.models.session import SOAPNote
 from app.notes import get_default_registry
 from app.notes.practice_types import RepositoryPracticeNoteTypeSource
@@ -197,6 +202,44 @@ class TestVideoPlatformFromLabel:
         assert session.video_platform == "meet"
 
 
+class TestSessionTypeFromLabel:
+    """An appointment's session type label never fails a session start."""
+
+    @pytest.mark.parametrize(
+        ("label", "expected"),
+        [
+            # What the appointment form and session defaults offer.
+            ("individual", SessionType.INDIVIDUAL),
+            ("couples", SessionType.COUPLES),
+            ("group", SessionType.GROUP),
+            (" Group ", SessionType.GROUP),
+            # An appointment type's own name, or nothing at all.
+            ("Intake (60 min)", SessionType.INDIVIDUAL),
+            ("", SessionType.INDIVIDUAL),
+            (None, SessionType.INDIVIDUAL),
+        ],
+    )
+    def test_maps_label(self, label: str | None, expected: SessionType) -> None:
+        assert session_type_from_label(label) == expected
+
+    def test_group_appointment_starts_a_group_session(
+        self,
+        appt_repo: InMemoryAppointmentRepository,
+        session_service: SessionService,
+        patient: Patient,
+    ) -> None:
+        appt = _make_appointment(appt_repo, session_type="group")
+        request = ScheduleSessionRequest(
+            patient_id=appt.patient_id or "",
+            scheduled_at=appt.start_at,
+            session_type=session_type_from_label(appt.session_type),
+        )
+
+        session, _ = session_service.schedule_session(USER_ID, request)
+
+        assert session.session_type == "group"
+
+
 class TestStartSessionFromAppointment:
     """Tests mirroring the start_session_from_appointment endpoint logic."""
 
@@ -217,9 +260,7 @@ class TestStartSessionFromAppointment:
             duration_minutes=appt.duration_minutes,
             video_link=appt.video_link,
             video_platform=video_platform_from_label(appt.video_platform),
-            session_type=(
-                SessionType(appt.session_type) if appt.session_type else SessionType.INDIVIDUAL
-            ),
+            session_type=session_type_from_label(appt.session_type),
             source=SessionSource.COMPANION,
             notes=appt.notes,
         )
@@ -301,9 +342,7 @@ class TestStartSessionFromAppointment:
             duration_minutes=appt.duration_minutes,
             video_link=appt.video_link,
             video_platform=video_platform_from_label(appt.video_platform),
-            session_type=(
-                SessionType(appt.session_type) if appt.session_type else SessionType.INDIVIDUAL
-            ),
+            session_type=session_type_from_label(appt.session_type),
             source=SessionSource.COMPANION,
             notes=appt.notes,
         )

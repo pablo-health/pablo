@@ -218,6 +218,36 @@ def test_start_session_reads_any_video_platform_label(
 
 
 @pytest.mark.parametrize(
+    ("label", "session_type"),
+    [("group", "group"), ("couples", "couples"), ("Intake (60 min)", "individual")],
+)
+def test_start_session_reads_any_session_type_label(
+    client: TestClient, label: str, session_type: str
+) -> None:
+    """Starting a session from a Group appointment, or one booked under a
+    type with its own name, succeeds."""
+    appointment = _appointment()
+    appointment.session_type = label
+    appointment.note_type = None
+    appointment.note_inputs = None
+    appointment.diagnosis_codes = ["F41.1"]
+    scheduling_svc = MagicMock()
+    scheduling_svc.get_appointment.return_value = appointment
+    session_svc = MagicMock()
+    session_svc.schedule_session.return_value = (_session(), _patient())
+    _wire_scheduling_overrides(scheduling_svc=scheduling_svc, session_svc=session_svc)
+
+    response = client.post(
+        "/api/appointments/appt-1/start-session",
+        json={"recording": False},
+    )
+
+    assert response.status_code == 201, response.text
+    request = session_svc.schedule_session.call_args.args[1]
+    assert request.session_type == session_type
+
+
+@pytest.mark.parametrize(
     ("visit_codes", "written"),
     [(None, {"diagnosis_codes": ["F41.1"]}), (["F32.9"], {})],
 )

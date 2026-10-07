@@ -53,7 +53,7 @@ from ..models.availability_rule_params import (
 from ..models.enums import (
     SessionSource,
     SessionStatus,
-    SessionType,
+    session_type_from_label,
     video_platform_from_label,
 )
 from ..models.scheduling import (
@@ -1148,9 +1148,7 @@ def start_session_from_appointment(
         duration_minutes=appt.duration_minutes,
         video_link=appt.video_link,
         video_platform=video_platform_from_label(appt.video_platform),
-        session_type=(
-            SessionType(appt.session_type) if appt.session_type else SessionType.INDIVIDUAL
-        ),
+        session_type=session_type_from_label(appt.session_type),
         source=SessionSource.COMPANION,
         notes=appt.notes,
         note_type=requested_note_type,

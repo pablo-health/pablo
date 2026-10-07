@@ -63,6 +63,23 @@ class SessionType(StrEnum):
 
     INDIVIDUAL = "individual"
     COUPLES = "couples"
+    GROUP = "group"
+
+
+def session_type_from_label(label: str | None) -> SessionType:
+    """Read an appointment's session type label as a ``SessionType``.
+
+    An appointment carries the name of the type it was booked under, which a
+    practice can name freely, so it is read leniently and never raises. A
+    label that is not one of the values is ``INDIVIDUAL``, the default a
+    session gets everywhere else it is created without one.
+    """
+    if label is None:
+        return SessionType.INDIVIDUAL
+    try:
+        return SessionType(label.strip().lower())
+    except ValueError:
+        return SessionType.INDIVIDUAL
 
 
 class SessionSource(StrEnum):
