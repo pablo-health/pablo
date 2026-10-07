@@ -483,7 +483,12 @@ class TestSavingAnAnswer:
                 json={"value": value},
                 headers=_auth(_TOKEN_A),
             )
-        assert last.json()["progress"] == {"complete": True, "missing": [], "parts": 1, "parts_left": 0}
+        assert last.json()["progress"] == {
+            "complete": True,
+            "missing": [],
+            "parts": 1,
+            "parts_left": 0,
+        }
 
     def test_an_answer_that_does_not_fit_the_question_is_422(
         self, portal: TestClient, service: IntakeAssignmentService, published_version: str
