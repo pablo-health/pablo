@@ -37,6 +37,8 @@ from app.main import app
 from app.models import Patient, PatientMessage
 from app.models.audit import ACTOR_TYPE_CLINICIAN, ACTOR_TYPE_PATIENT, AuditAction
 from app.models.patient_message_api import MAX_MESSAGE_BODY
+from app.portal.delivery import CapturingNoticeDelivery
+from app.portal.factory import get_notice_delivery
 from app.rate_limit import reset_patient_message_send_limiter
 from app.repositories import InMemoryPatientMessageRepository, InMemoryPatientRepository
 from app.routes import patient_messages
@@ -1237,3 +1239,137 @@ class TestHookDispatchFromRoutes:
         )
 
         assert len(seen) == 2
+
+
+# ---------------------------------------------------------------------------
+# Telling the patient a reply is waiting
+# ---------------------------------------------------------------------------
+
+
+def _wire_portal_address(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A practice and a portal link, patched where :mod:`app.portal.notices` reads them."""
+    from app.portal import notices as notices_module  # noqa: PLC0415 — test-local seam
+    from app.portal.practice_routes import PracticeAddress  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        notices_module, "_resolve_practice_from_email", lambda _email: ("practice-1", "schema")
+    )
+    monkeypatch.setattr(
+        notices_module,
+        "ensure_practice_slug",
+        lambda _pid: PracticeAddress(slug="a-practice", display_name="A Practice", enabled=True),
+    )
+    monkeypatch.setattr(
+        notices_module,
+        "build_portal_link",
+        lambda *, slug: f"https://portal.example.test/portal/{slug}",
+    )
+
+
+class _FailingNotices(CapturingNoticeDelivery):
+    def send_notice(self, *, to_email: str, notice: str, link: str) -> None:
+        raise RuntimeError("mail server down")
+
+
+def _chart_a(email: str | None) -> Patient:
+    now = utc_now()
+    return Patient(
+        id=_PATIENT_A,
+        first_name="Ada",
+        last_name="Lovelace",
+        email=email,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+@pytest.fixture
+def notices() -> CapturingNoticeDelivery:
+    return CapturingNoticeDelivery()
+
+
+@pytest.fixture
+def notice_client(
+    patient_client: TestClient,
+    message_repo: InMemoryPatientMessageRepository,
+    patient_repo: InMemoryPatientRepository,
+    notices: CapturingNoticeDelivery,
+    mock_user_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> TestClient:
+    """Patient A has an email address and the caller may reach their chart."""
+    _wire_portal_address(monkeypatch)
+    patient_repo.create(_chart_a("ada@example.com"), _CHART_CREATOR)
+    patient_repo.grant_access(_PATIENT_A, mock_user_id)
+    message_repo.grant_access(_PATIENT_A, mock_user_id)
+    app.dependency_overrides[get_notice_delivery] = lambda: notices
+    return patient_client
+
+
+def _reply(client: TestClient, thread_id: str, body: str = "on it") -> None:
+    response = client.post(f"/api/message-threads/{thread_id}/replies", json={"body": body})
+    assert response.status_code == 201, response.text
+
+
+class TestReplyNotice:
+    def test_a_reply_sends_one_link_only_notice(
+        self, notice_client: TestClient, notices: CapturingNoticeDelivery
+    ) -> None:
+        thread_id = _start(notice_client, _TOKEN_A)["id"]
+
+        _reply(notice_client, thread_id)
+
+        assert len(notices.sent) == 1
+        sent = notices.sent[0]
+        assert sent.to_email == "ada@example.com"
+        assert sent.notice == "portal_message_waiting"
+        assert sent.link == "https://portal.example.test/portal/a-practice"
+
+    def test_more_replies_before_the_patient_reads_send_nothing_more(
+        self, notice_client: TestClient, notices: CapturingNoticeDelivery
+    ) -> None:
+        first = _start(notice_client, _TOKEN_A)["id"]
+        second = _start(notice_client, _TOKEN_A, subject="another thing")["id"]
+
+        _reply(notice_client, first, "one")
+        _reply(notice_client, first, "two")
+        _reply(notice_client, second, "three")
+
+        assert len(notices.sent) == 1
+
+    def test_once_the_patient_has_read_the_next_reply_notifies_again(
+        self, notice_client: TestClient, notices: CapturingNoticeDelivery
+    ) -> None:
+        thread_id = _start(notice_client, _TOKEN_A)["id"]
+        _reply(notice_client, thread_id, "one")
+        notice_client.post(f"{PATIENT_BASE}/{thread_id}/read", headers=_auth(_TOKEN_A))
+
+        _reply(notice_client, thread_id, "two")
+
+        assert len(notices.sent) == 2
+
+    def test_a_chart_with_no_email_address_sends_nothing(
+        self,
+        notice_client: TestClient,
+        patient_repo: InMemoryPatientRepository,
+        notices: CapturingNoticeDelivery,
+    ) -> None:
+        patient_repo.create(_chart_a(None), _CHART_CREATOR)
+        thread_id = _start(notice_client, _TOKEN_A)["id"]
+
+        _reply(notice_client, thread_id)
+
+        assert notices.sent == []
+
+    def test_a_failed_send_does_not_fail_the_reply(self, notice_client: TestClient) -> None:
+        app.dependency_overrides[get_notice_delivery] = _FailingNotices
+        thread_id = _start(notice_client, _TOKEN_A)["id"]
+
+        _reply(notice_client, thread_id)
+
+    def test_a_patient_send_emails_nobody(
+        self, notice_client: TestClient, notices: CapturingNoticeDelivery
+    ) -> None:
+        _start(notice_client, _TOKEN_A)
+
+        assert notices.sent == []

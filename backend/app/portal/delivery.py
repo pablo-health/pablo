@@ -162,7 +162,7 @@ class SmsGateway(Protocol):
 #: can be emailed about is enumerable from one place and a caller cannot
 #: invent a notice with a sentence of its own in the name.
 PORTAL_NOTICES: frozenset[str] = frozenset(
-    {"intake_correction_requested", "refill_request_decided"}
+    {"intake_correction_requested", "portal_message_waiting", "refill_request_decided"}
 )
 
 
