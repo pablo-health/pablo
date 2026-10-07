@@ -13,7 +13,6 @@ import { useUserTimeZone } from "@/hooks/usePreferences"
 import { appointmentBadge } from "@/lib/appointmentBadge"
 import { isCompanionAvailable } from "@/lib/companion"
 import { useCompanionAccess } from "@/lib/companion.extensions"
-import { isTelehealth } from "@/lib/telehealth"
 import type { AppointmentResponse } from "@/types/scheduling"
 import { CompanionGetDialog } from "./CompanionGetDialog"
 import { StartSessionButton } from "./StartSessionButton"
@@ -177,7 +176,6 @@ function AppointmentRow({
         <StartSessionButton
           appointmentId={appointment.id}
           patientId={appointment.patient_id}
-          telehealth={isTelehealth(appointment)}
         />
       ) : launchable && platformSupported ? (
         <Button size="sm" variant="outline" onClick={onGetApp}>
