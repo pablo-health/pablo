@@ -197,3 +197,65 @@ class TestAnItemThatNoLongerParses:
     def test_an_optional_unparseable_item_is_not(self) -> None:
         items = [CompletionItem(item_id="i1", key="broken", required=False, config=None)]
         assert assess(items, {}).complete is True
+
+
+def _sectioned_packet() -> list[CompletionItem]:
+    """Three parts: an opening, a history with an optional question, a last one.
+
+    A fourth section's only question is opened by a rule, so that section is
+    a part only while the rule shows its question.
+    """
+    return [
+        _item("i1", "reason", "reason"),
+        _item("s1", "history", "section", title="History"),
+        _item("i2", "drinks", "yes_no"),
+        _item("i3", "notes", "free_text", required=False),
+        _item("s2", "more", "section", title="More about drinking"),
+        _item(
+            "i4",
+            "how_much",
+            "free_text",
+            visible_when={"item_key": "drinks", "op": "eq", "value": True},
+        ),
+        _item("s3", "last", "section", title="Last"),
+        _item("i5", "pharmacy", "free_text", required=False),
+    ]
+
+
+class TestPartsLeft:
+    """The count a list of forms shows: parts, the way the walk counts them."""
+
+    def test_an_untouched_form_has_every_part_left(self) -> None:
+        result = assess(_sectioned_packet(), {})
+        assert result.parts == 3
+        assert result.parts_left == 3
+
+    def test_a_part_whose_questions_are_all_hidden_is_not_a_part(self) -> None:
+        result = assess(_sectioned_packet(), {"drinks": {"yes": False}})
+        assert result.parts == 3
+
+    def test_a_part_a_rule_opens_counts_once_it_is_shown(self) -> None:
+        result = assess(_sectioned_packet(), {"drinks": {"yes": True}})
+        assert result.parts == 4
+
+    def test_parts_left_run_from_the_first_missing_question_to_the_end(self) -> None:
+        # The last part holds only an optional question, but the walk still
+        # steps through it, so it is still a part left.
+        answers = {"reason": {"text": "Sleep."}}
+        result = assess(_sectioned_packet(), answers)
+        assert result.missing == ["i2"]
+        assert result.parts_left == 2
+
+    def test_a_complete_form_has_no_parts_left(self) -> None:
+        answers = {"reason": {"text": "Sleep."}, "drinks": {"yes": False}}
+        result = assess(_sectioned_packet(), answers)
+        assert result.complete is True
+        assert result.parts_left == 0
+
+    def test_a_form_without_sections_is_one_part(self) -> None:
+        result = assess(_default_packet(), {})
+        assert result.parts == 1
+        assert result.parts_left == 1
+
+    def test_an_empty_form_is_still_one_part(self) -> None:
+        assert assess([], {}).parts == 1

@@ -289,7 +289,12 @@ def _require_stepped_up(patient: PatientContext) -> None:
 
 
 def _progress(completion: Completion) -> IntakeProgressResponse:
-    return IntakeProgressResponse(complete=completion.complete, missing=completion.missing)
+    return IntakeProgressResponse(
+        complete=completion.complete,
+        missing=completion.missing,
+        parts=completion.parts,
+        parts_left=completion.parts_left,
+    )
 
 
 def _assignment_response(

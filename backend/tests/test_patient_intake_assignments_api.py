@@ -483,7 +483,7 @@ class TestSavingAnAnswer:
                 json={"value": value},
                 headers=_auth(_TOKEN_A),
             )
-        assert last.json()["progress"] == {"complete": True, "missing": []}
+        assert last.json()["progress"] == {"complete": True, "missing": [], "parts": 1, "parts_left": 0}
 
     def test_an_answer_that_does_not_fit_the_question_is_422(
         self, portal: TestClient, service: IntakeAssignmentService, published_version: str
@@ -856,7 +856,7 @@ class TestSubmitting:
         detail = portal.get(f"{ASSIGNMENTS}/{assignment['id']}", headers=_auth(_TOKEN_A)).json()
         assert detail["status"] == "submitted"
         assert detail["receipt_code"] == submitted["receipt_code"]
-        assert detail["progress"] == {"complete": True, "missing": []}
+        assert detail["progress"] == {"complete": True, "missing": [], "parts": 1, "parts_left": 0}
         assert all(item["value"] is not None for item in detail["items"])
 
     def test_handing_it_in_twice_is_409(

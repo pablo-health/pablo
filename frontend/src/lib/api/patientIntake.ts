@@ -68,10 +68,17 @@ export interface IntakeForm {
  * The only thing any client may believe about completion. `missing` holds
  * item ids in the order the form asks them, so the walk can send somebody to
  * the first one without sorting anything.
+ *
+ * `parts` and `parts_left` count the form the way the walk does: the
+ * stretches between its section headings, and how many remain from where
+ * the patient picks up. Optional because a server older than the fields
+ * does not send them.
  */
 export interface IntakeProgress {
   complete: boolean
   missing: string[]
+  parts?: number
+  parts_left?: number
 }
 
 /** One form somebody was asked to fill in. Mirrors `IntakeAssignmentResponse`. */

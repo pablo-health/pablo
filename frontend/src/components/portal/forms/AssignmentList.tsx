@@ -23,6 +23,7 @@ import {
   LIST_SENT,
   LIST_START,
   LIST_WITHDRAWN,
+  partsLeft,
   questionsLeft,
 } from "./formsCopy"
 
@@ -98,6 +99,10 @@ function AssignmentRow({
  * An outstanding count is a fact about the rows, so it is safe to show; what
  * it means for the patient — whether they can hand the form in — is only
  * ever the server's `complete`.
+ *
+ * A form in parts is counted in parts, from the server's `parts_left`, so
+ * the row agrees with the "Part N of M" the walk opens on. A form with no
+ * sections keeps the question count.
  */
 function stateLine(assignment: IntakeAssignment): string {
   if (assignment.status === "withdrawn") return LIST_WITHDRAWN
@@ -107,6 +112,10 @@ function stateLine(assignment: IntakeAssignment): string {
   // not on a list that carries no words the practice wrote.
   if (assignment.status === "needs_correction") return LIST_CORRECTION
   if (!OPEN_STATUSES.has(assignment.status)) return LIST_SENT
-  if (assignment.progress.complete) return LIST_PROGRESS_DONE
-  return questionsLeft(assignment.progress.missing.length)
+  const { complete, missing, parts, parts_left: left } = assignment.progress
+  if (complete) return LIST_PROGRESS_DONE
+  if (parts !== undefined && parts > 1 && left !== undefined && left > 0) {
+    return partsLeft(left, parts)
+  }
+  return questionsLeft(missing.length)
 }

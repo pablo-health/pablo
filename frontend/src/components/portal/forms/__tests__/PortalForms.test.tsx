@@ -62,6 +62,55 @@ describe("PortalForms", () => {
     expect(screen.getByTestId("forms-list-state")).toHaveTextContent("4 questions left")
   })
 
+  it("counts a form in parts in the parts the walk shows, from the server", async () => {
+    // Thirty required questions are outstanding, but the walk counts in
+    // parts, so the row does too — from where the patient picks up.
+    vi.mocked(api.listAssignments).mockResolvedValue([
+      {
+        ...ASSIGNMENT,
+        status: "in_progress",
+        progress: {
+          complete: false,
+          missing: Array.from({ length: 30 }, (_, i) => `item-${i}`),
+          parts: 14,
+          parts_left: 7,
+        },
+      },
+    ])
+
+    renderModule()
+
+    expect(await screen.findByTestId("forms-list-state")).toHaveTextContent(
+      "7 of 14 parts left",
+    )
+  })
+
+  it("names only the number of parts on a form nobody has started", async () => {
+    vi.mocked(api.listAssignments).mockResolvedValue([
+      {
+        ...ASSIGNMENT,
+        progress: { complete: false, missing: ["a", "b"], parts: 3, parts_left: 3 },
+      },
+    ])
+
+    renderModule()
+
+    expect(await screen.findByTestId("forms-list-state")).toHaveTextContent("3 parts")
+  })
+
+  it("keeps the question count on a form with no sections", async () => {
+    vi.mocked(api.listAssignments).mockResolvedValue([
+      {
+        ...ASSIGNMENT,
+        progress: { complete: false, missing: ["a", "b"], parts: 1, parts_left: 1 },
+      },
+    ])
+
+    renderModule()
+
+    expect(await screen.findByTestId("forms-list-state")).toHaveTextContent("2 questions left")
+  })
+
   it("says a form is ready to send only when the server says it is", async () => {
     vi.mocked(api.listAssignments).mockResolvedValue([
       { ...ASSIGNMENT, status: "in_progress", progress: { complete: true, missing: [] } },

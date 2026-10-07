@@ -36,6 +36,18 @@ export function questionsLeft(outstanding: number): string {
   return outstanding === 1 ? "1 question left" : `${outstanding} questions left`
 }
 
+/**
+ * How much of a form in parts is outstanding, in the parts the walk shows.
+ *
+ * Parts rather than questions because the walk counts in parts ("Part 8 of
+ * 14"), and a count of required questions leaves out every optional one the
+ * walk still steps through — a row that said 30 opened a walk of 47.
+ */
+export function partsLeft(left: number, total: number): string {
+  if (left === total) return `${total} parts`
+  return `${left} of ${total} parts left`
+}
+
 /** Both dead ends a portal session can hand a form. */
 export const EXPIRED_HEADING = "This link has expired"
 export const EXPIRED_BODY = "You'll need a new sign-in link to carry on."
