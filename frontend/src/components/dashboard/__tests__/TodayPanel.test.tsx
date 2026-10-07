@@ -147,6 +147,31 @@ describe("TodayPanel", () => {
     ).not.toBeInTheDocument()
   })
 
+  it("does not offer Download when the device check fails, and offers a retry", () => {
+    const refetch = vi.fn()
+    useCompanionDevices.mockReturnValue({
+      data: undefined,
+      isError: true,
+      refetch,
+    })
+    mockSummary([makeAppointment({ id: "appt-x" })])
+
+    renderPanel()
+
+    expect(
+      screen.queryByRole("button", { name: /download pablo companion/i }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole("link", { name: /start session/i }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: /don't have it yet/i }),
+    ).not.toBeInTheDocument()
+
+    screen.getByRole("button", { name: /try again/i }).click()
+    expect(refetch).toHaveBeenCalledOnce()
+  })
+
   it("links already-recorded appointments to the web session detail", () => {
     mockSummary([makeAppointment({ status: "completed", session_id: "sess-99" })])
 

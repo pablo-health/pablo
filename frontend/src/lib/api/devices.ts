@@ -39,8 +39,8 @@ export interface LaunchIntentResponse {
  * List the current user's enrolled (non-revoked) companion installs.
  *
  * Returns an empty array when the user has no companion enrolled. May 404
- * on deployments where the backend endpoint is not yet available — callers
- * should treat any failure as "no devices" and degrade gracefully.
+ * on deployments where the backend endpoint is not yet available; only that
+ * case means "no devices" (see useCompanionDevices).
  */
 export async function listCompanionDevices(
   token?: string,
