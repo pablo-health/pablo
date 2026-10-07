@@ -18,6 +18,11 @@
  * only when the form has other parts to tell it apart from. Anything else
  * gets no heading rather than a name nobody wrote.
  *
+ * **Instructions lead into the question after them.** A block of
+ * instructions collects nothing either, so it is shown above the next
+ * question in its part rather than as an uncounted screen of its own. Only
+ * instructions with nothing after them in their part keep a screen.
+ *
  * Built from the questions this patient is shown, so a part whose questions
  * are all hidden by a rule disappears rather than showing as an empty count.
  */
@@ -34,6 +39,11 @@ export interface FormPart {
   title: string | null
   /** The screens of this part, in order. Never a section. */
   screens: IntakeAssignmentItem[]
+  /**
+   * Instructions shown above a screen rather than on one of their own,
+   * keyed by the id of the screen they lead into.
+   */
+  notes: Record<string, IntakeAssignmentItem[]>
 }
 
 /** The item types whose only job is to say who the patient is and why they came. */
@@ -53,17 +63,34 @@ export function collectsAnswer(item: IntakeAssignmentItem): boolean {
  */
 export function partsOf(items: IntakeAssignmentItem[]): FormPart[] {
   const parts: FormPart[] = []
-  let current: FormPart = { key: "opening", title: null, screens: [] }
+  let current: FormPart = { key: "opening", title: null, screens: [], notes: {} }
+  // Instructions waiting for the next screen in this part to ride on.
+  let pending: IntakeAssignmentItem[] = []
+  const close = () => {
+    // Nothing after them in this part: they keep a screen of their own
+    // rather than leaking into a part with a different name.
+    current.screens.push(...pending)
+    pending = []
+    parts.push(current)
+  }
   for (const item of items) {
     if (item.item_type === "section") {
-      parts.push(current)
+      close()
       const title = typeof item.config.title === "string" ? item.config.title.trim() : ""
-      current = { key: item.id, title: title === "" ? null : title, screens: [] }
+      current = { key: item.id, title: title === "" ? null : title, screens: [], notes: {} }
       continue
+    }
+    if (item.item_type === "instructions") {
+      pending.push(item)
+      continue
+    }
+    if (pending.length > 0) {
+      current.notes[item.id] = pending
+      pending = []
     }
     current.screens.push(item)
   }
-  parts.push(current)
+  close()
 
   const walked = parts.filter((part) => part.screens.length > 0)
   const opening = walked[0]
@@ -86,6 +113,12 @@ export function narrowParts(
   return parts
     .map((part) => ({ ...part, screens: part.screens.filter(keep) }))
     .filter((part) => part.screens.length > 0)
+}
+
+/** The instructions shown above one screen, in the order the form gives them. */
+export function notesFor(parts: FormPart[], item: IntakeAssignmentItem): IntakeAssignmentItem[] {
+  const part = parts.find((candidate) => candidate.screens.includes(item))
+  return part?.notes[item.id] ?? []
 }
 
 /** Where one screen sits: which part, and which question within it. */

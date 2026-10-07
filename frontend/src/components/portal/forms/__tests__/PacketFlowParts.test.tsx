@@ -22,7 +22,7 @@ import type { IntakeAssignmentItem } from "@/lib/api/patientIntake"
 import { ItemScreen } from "../ItemScreen"
 import { PacketFlow } from "../PacketFlow"
 import { ReviewScreen } from "../ReviewScreen"
-import { narrowParts, partsOf, placeOf } from "../parts"
+import { narrowParts, notesFor, partsOf, placeOf } from "../parts"
 import { ASSIGNMENT_ID, INTAKE_FORM, ITEM_IDS, SEEDED_ITEMS, assignmentDetail } from "./formFixtures"
 
 vi.mock("@/lib/api/patientIntake", async (importOriginal) => {
@@ -167,14 +167,15 @@ describe("a form with sections", () => {
       title: "Medical history",
       progress: "1 of 2",
     })
+    expect(screen.queryByTestId("forms-item-instructions")).not.toBeInTheDocument()
     await typeAndContinue(user, "forms-free-text", "Asthma.")
 
-    // A paragraph to read carries the part's name but is not counted.
-    await screen.findByTestId("forms-item-instructions")
-    expect(header()).toEqual({ count: "Part 2 of 3", title: "Medical history", progress: null })
-    await user.click(screen.getByTestId("forms-continue"))
-
+    // A paragraph to read is not a screen: it sits above the question it
+    // leads into.
     await screen.findByText("What medicines do you take?")
+    expect(screen.getByTestId("forms-item-instructions")).toHaveTextContent(
+      "The next question is about medicines.",
+    )
     expect(header().progress).toBe("2 of 2")
     await typeAndContinue(user, "forms-free-text", "None.")
 
@@ -349,6 +350,29 @@ describe("partsOf", () => {
 
   it("does not name an opening that is the whole form", () => {
     expect(partsOf(SEEDED_ITEMS).map((part) => part.title)).toEqual([null])
+  })
+
+  it("folds instructions into the next screen of their part", () => {
+    const parts = partsOf(sorted)
+    const medical = parts[1]
+    expect(medical.screens.map((item) => item.id)).toEqual([IDS.conditions, IDS.medications])
+    expect(medical.notes[IDS.medications].map((item) => item.id)).toEqual([IDS.note])
+    const medications = sorted.find((item) => item.id === IDS.medications)!
+    expect(notesFor(parts, medications).map((item) => item.id)).toEqual([IDS.note])
+  })
+
+  it("keeps instructions with nothing after them in their part as a screen", () => {
+    const items = [
+      row(IDS.conditions, "conditions", 0, "free_text", {}, "Any health conditions?"),
+      row(IDS.note, "closing_note", 1, "instructions", { body_markdown: "Thanks." }),
+      row(IDS.substance, "substance_part", 2, "section", { title: "Substance use" }),
+      row(IDS.alcohol, "alcohol", 3, "free_text", {}, "How much do you drink in a week?"),
+    ]
+    const parts = partsOf(items)
+    expect(parts[0].screens.map((item) => item.id)).toEqual([IDS.conditions, IDS.note])
+    expect(parts[1].notes).toEqual({})
+    // Still uncounted on its own screen.
+    expect(placeOf(parts, items[1])?.question).toBeNull()
   })
 
   it("treats a section with no title as a part with no name", () => {

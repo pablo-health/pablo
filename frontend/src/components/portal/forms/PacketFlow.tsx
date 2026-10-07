@@ -5,7 +5,8 @@
  *
  * **A form's sections are its parts.** A section heading is not a screen of
  * its own; its title sits above every question in its part, with a count
- * kept to that part. See `./parts`.
+ * kept to that part. Nor is a block of instructions with a question after
+ * it in the same part: it sits above that question. See `./parts`.
  *
  * A stepped walk rather than one long page. Most people meet this on a
  * phone, and sixteen measure items plus a free-text box on a single scroll
@@ -52,7 +53,7 @@ import { evaluate, ruleOf, type VisibilityMap } from "@/lib/intake/visibility"
 import { RATE_LIMITED, SAVE_FAILED, SUBMIT_FAILED } from "./formsCopy"
 import { FormsAlreadySent, FormsLoadFailed, FormsLoading } from "./FormsNotice"
 import { ItemScreen } from "./ItemScreen"
-import { narrowParts, partsOf, placeOf } from "./parts"
+import { narrowParts, notesFor, partsOf, placeOf } from "./parts"
 import { ReceiptScreen } from "./ReceiptScreen"
 import { rendererFor } from "./renderers/registry"
 import type { AnswerValue } from "./renderers/types"
@@ -356,6 +357,7 @@ export function PacketFlow({
       saving={save.isPending}
       error={error}
       place={placeOf(parts, item)}
+      notes={notesFor(parts, item)}
     />
   )
 }
