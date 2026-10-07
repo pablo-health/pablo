@@ -7,21 +7,19 @@
  * - Declined: "Start session" says so, with the date, and links to the chart;
  *   the session start the desktop app would make is refused by the server
  *   with CLIENT_DECLINED_AI_NOTES.
- * - Not asked yet: "Start session" asks first. "Client agreed today" puts a
- *   dated answer on the chart and then hands off to the desktop app. "Record
- *   anyway" hands off an intent that tells the desktop app it was asked, so
- *   the app does not ask again.
- * - Not asked yet, over telehealth: only "Ask now" and "Don't record". "Ask
- *   now" hands off an intent that tells the desktop app to ask on the
- *   recording, and the server refuses a start that does not say so.
+ * - Not asked yet, in person or over telehealth: only "Start recording and
+ *   ask" and "Don't record". The first hands off an intent that tells the
+ *   desktop app to ask on the recording, and nothing goes on the chart until
+ *   the client answers there. Over telehealth the server also refuses a start
+ *   that does not say so.
  *
  * The desktop app is the one thing the stack cannot run. Two of its edges
  * are stood in for in the browser, and nothing else: the list of enrolled
  * installs (enrolling one takes the app's own sign-in) and the launch intent,
  * whose handoff link is pointed at a page that only records it was reached.
- * The "Record anyway" test lets the intent through to the real server and
- * redeems it the way the app does. The consent record, the setting, the chart
- * and the server's refusal are all the real stack.
+ * The "Start recording and ask" tests let the intent through to the real
+ * server and redeem it the way the app does. The consent record, the setting,
+ * the chart and the server's refusal are all the real stack.
  *
  * In a practice of its own (fixtures/freshPractice.ts): the answer only
  * counts while the practice asks, and the spec about that setting turns it
@@ -199,31 +197,6 @@ test("a client who declined is not recorded, and the chart says when", async () 
   }
 })
 
-test("with nothing on file, 'Client agreed today' records it and starts", async () => {
-  const { page, api } = practice
-  const patient = await givePatient(api)
-  const appointment = await giveSessionToday(api, patient, 15)
-  try {
-    await startSessionFor(page, patient)
-
-    const dialog = page.getByRole("dialog", { name: "No consent on file" })
-    await dialog.getByRole("button", { name: "Client agreed today" }).click()
-    await expect(page).toHaveURL(new RegExp(HANDOFF_PATH))
-
-    await page.goto(`/dashboard/patients/${patient.id}`)
-    await expect(page.getByTestId("ai-consent-line")).toHaveText(
-      `AI notes: agreed ${shown(new Date())}`,
-    )
-    // The record says how it was given: in person, by the client.
-    const record = await api.get<{ current: { modality: string; consented_by: string } }>(
-      `/api/patients/${patient.id}/ai-consent`,
-    )
-    expect(record.current).toMatchObject({ modality: "in_person", consented_by: "client" })
-  } finally {
-    await api.delete(`/api/appointments/${appointment.id}`)
-  }
-})
-
 interface Redeemed {
   appointment_id: string
   ai_consent_prompted: boolean
@@ -231,65 +204,13 @@ interface Redeemed {
   telehealth: boolean
 }
 
-test("with nothing on file, 'Record anyway' tells the desktop app it was asked", async () => {
-  const { page, api } = practice
-  const patient = await givePatient(api)
-  const appointment = await giveSessionToday(api, patient, 15)
-
-  // The real server issues the intents; only the link is pointed at the stand-in page.
-  const issued: { intentId: string; prompted: boolean }[] = []
-  const issueForReal = async (route: Route) => {
-    const response = await route.fetch()
-    const body = (await response.json()) as { intent_id: string }
-    issued.push({
-      intentId: body.intent_id,
-      prompted: route.request().postDataJSON().ai_consent_prompted === true,
-    })
-    await route.fulfill({
-      response,
-      json: { ...body, launch_url: new URL(HANDOFF_PATH, page.url()).toString() },
-    })
-  }
-  await page.route("**/api/launch/intent", issueForReal)
-  try {
-    await startSessionFor(page, patient)
-
-    const dialog = page.getByRole("dialog", { name: "No consent on file" })
-    await dialog.getByRole("button", { name: "Record anyway" }).click()
-    await expect(page).toHaveURL(new RegExp(HANDOFF_PATH))
-
-    // Redeemed as the desktop app does when the link opens it.
-    const prompted = issued.find((intent) => intent.prompted)
-    expect(prompted).toBeDefined()
-    const handedOff = await api.post<Redeemed>("/api/launch/redeem", {
-      intent_id: prompted?.intentId,
-    })
-    expect(handedOff).toMatchObject({ appointment_id: appointment.id, ai_consent_prompted: true })
-
-    // The intent a plain start would have handed off does not say so.
-    const plain = issued.find((intent) => !intent.prompted)
-    expect(plain).toBeDefined()
-    const unprompted = await api.post<Redeemed>("/api/launch/redeem", {
-      intent_id: plain?.intentId,
-    })
-    expect(unprompted.ai_consent_prompted).toBe(false)
-
-    // Nothing was put on the chart.
-    const record = await api.get<{ current: unknown }>(`/api/patients/${patient.id}/ai-consent`)
-    expect(record.current).toBeNull()
-  } finally {
-    await page.unroute("**/api/launch/intent", issueForReal)
-    await api.delete(`/api/appointments/${appointment.id}`)
-  }
-})
-
-test("a telehealth session with nothing on file is asked on the recording, never recorded anyway", async () => {
-  const { page, api } = practice
-  const patient = await givePatient(api)
-  const appointment = await giveSessionToday(api, patient, 17, {
-    video_link: "https://video.example/room",
-  })
-
+/**
+ * Let launch intents through to the real server, pointing only the handoff
+ * link at the stand-in page. Returns the intents issued, in order.
+ */
+async function issueIntentsForReal(
+  page: Page,
+): Promise<{ issued: { intentId: string; askNow: boolean }[]; stop: () => Promise<void> }> {
   const issued: { intentId: string; askNow: boolean }[] = []
   const issueForReal = async (route: Route) => {
     const response = await route.fetch()
@@ -304,19 +225,97 @@ test("a telehealth session with nothing on file is asked on the recording, never
     })
   }
   await page.route("**/api/launch/intent", issueForReal)
+  return { issued, stop: () => page.unroute("**/api/launch/intent", issueForReal) }
+}
+
+/** The dialog offers asking on the recording or not recording, and nothing else. */
+async function expectOnlyAskOrDontRecord(page: Page) {
+  const dialog = page.getByRole("dialog", { name: "No consent for AI-assisted notes" })
+  await expect(dialog).toContainText("You'll see what to read aloud once recording starts.")
+  await expect(dialog.getByRole("button", { name: "Record anyway" })).toHaveCount(0)
+  await expect(dialog.getByRole("button", { name: /agreed today/ })).toHaveCount(0)
+  await expect(dialog.getByRole("button", { name: "Don't record" })).toBeVisible()
+  // The read-aloud script says recording has started, so it is not shown yet.
+  await expect(dialog).not.toContainText(/started recording/i)
+  return dialog
+}
+
+test("in person with nothing on file, 'Start recording and ask' hands off asking on the recording", async () => {
+  const { page, api } = practice
+  const patient = await givePatient(api)
+  const appointment = await giveSessionToday(api, patient, 15)
+  const intents = await issueIntentsForReal(page)
   try {
     await startSessionFor(page, patient)
 
-    const dialog = page.getByRole("dialog", { name: "No consent on file" })
-    await expect(dialog).toContainText("For a telehealth session, ask once recording starts")
-    await expect(dialog.getByRole("button", { name: "Record anyway" })).toHaveCount(0)
-    await expect(dialog.getByRole("button", { name: /agreed today/ })).toHaveCount(0)
-    await expect(dialog.getByRole("button", { name: "Don't record" })).toBeVisible()
-    await dialog.getByRole("button", { name: "Ask now" }).click()
+    const dialog = await expectOnlyAskOrDontRecord(page)
+    await dialog.getByRole("button", { name: "Start recording and ask" }).click()
     await expect(page).toHaveURL(new RegExp(HANDOFF_PATH))
 
     // Redeemed as the desktop app does: it learns to ask on the recording.
-    const askNow = issued.find((intent) => intent.askNow)
+    const askNow = intents.issued.find((intent) => intent.askNow)
+    expect(askNow).toBeDefined()
+    const handedOff = await api.post<Redeemed>("/api/launch/redeem", {
+      intent_id: askNow?.intentId,
+    })
+    expect(handedOff).toMatchObject({
+      appointment_id: appointment.id,
+      ask_consent_on_recording: true,
+      ai_consent_prompted: false,
+      telehealth: false,
+    })
+
+    // Nothing was put on the chart: the answer comes from the recording.
+    const record = await api.get<{ current: unknown }>(`/api/patients/${patient.id}/ai-consent`)
+    expect(record.current).toBeNull()
+
+    // The server starts an in-person session that says it is asking.
+    const started = await api.post<{ id: string }>(
+      `/api/appointments/${appointment.id}/start-session`,
+      { asking_consent_on_recording: true },
+    )
+    expect(started.id).toBeTruthy()
+  } finally {
+    await intents.stop()
+    await api.delete(`/api/appointments/${appointment.id}`).catch(() => undefined)
+  }
+})
+
+test("in person with nothing on file, 'Don't record' hands nothing off", async () => {
+  const { page, api } = practice
+  const patient = await givePatient(api)
+  const appointment = await giveSessionToday(api, patient, 16)
+  try {
+    await startSessionFor(page, patient)
+
+    const dialog = await expectOnlyAskOrDontRecord(page)
+    await dialog.getByRole("button", { name: "Don't record" }).click()
+    await expect(dialog).toBeHidden()
+    await expect(page).not.toHaveURL(new RegExp(HANDOFF_PATH))
+
+    const record = await api.get<{ current: unknown }>(`/api/patients/${patient.id}/ai-consent`)
+    expect(record.current).toBeNull()
+  } finally {
+    await api.delete(`/api/appointments/${appointment.id}`)
+  }
+})
+
+test("a telehealth session with nothing on file is asked on the recording, never recorded anyway", async () => {
+  const { page, api } = practice
+  const patient = await givePatient(api)
+  const appointment = await giveSessionToday(api, patient, 17, {
+    video_link: "https://video.example/room",
+  })
+  const intents = await issueIntentsForReal(page)
+  try {
+    await startSessionFor(page, patient)
+
+    const dialog = await expectOnlyAskOrDontRecord(page)
+    await dialog.getByRole("button", { name: "Start recording and ask" }).click()
+    await expect(page).toHaveURL(new RegExp(HANDOFF_PATH))
+
+    // Redeemed as the desktop app does: it learns to ask on the recording.
+    const askNow = intents.issued.find((intent) => intent.askNow)
     expect(askNow).toBeDefined()
     const handedOff = await api.post<Redeemed>("/api/launch/redeem", {
       intent_id: askNow?.intentId,
@@ -346,7 +345,7 @@ test("a telehealth session with nothing on file is asked on the recording, never
     )
     expect(started.id).toBeTruthy()
   } finally {
-    await page.unroute("**/api/launch/intent", issueForReal)
+    await intents.stop()
     await api.delete(`/api/appointments/${appointment.id}`).catch(() => undefined)
   }
 })
