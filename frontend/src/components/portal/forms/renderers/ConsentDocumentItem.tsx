@@ -198,7 +198,12 @@ function SignableConsent({
 
       <div
         data-testid="forms-consent-document"
-        className="prose-sm mt-4 max-h-80 overflow-y-auto rounded-md border border-neutral-200 p-4 text-sm leading-relaxed text-neutral-800"
+        // At its full height, on the page. A long document — a privacy notice
+        // runs to several screens — inside a fixed-height box is a small
+        // window scrolled with a thumb on a phone, inside a page that also
+        // scrolls. The page is what scrolls; the box to tick and the name to
+        // type follow the last line.
+        className="prose-sm mt-4 break-words rounded-md border border-neutral-200 p-4 text-sm leading-relaxed text-neutral-800"
         // The server built this by escaping the practice's text first and
         // emitting a fixed set of tags second, so there is no character it
         // could contain that arrives here as markup. See
