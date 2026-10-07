@@ -31,6 +31,18 @@ export const LIST_PROGRESS_DONE = "Ready to send"
 export const LIST_WITHDRAWN = "No longer needed"
 export const LIST_CORRECTION = "Your practice has a question"
 
+/**
+ * What a row on the list is called.
+ *
+ * Not the form's name: that is the name the clinician filed it under in
+ * settings ("New client intake 2026-10-07"), written for their own list and
+ * never meant for a client. A form has no client-facing title to show
+ * instead, so the row says whose forms these are.
+ */
+export function formsFrom(practiceName: string | null): string {
+  return `Forms from ${practiceName ?? "your practice"}`
+}
+
 /** How much of a form is outstanding, from the count the server sent. */
 export function questionsLeft(outstanding: number): string {
   return outstanding === 1 ? "1 question left" : `${outstanding} questions left`
