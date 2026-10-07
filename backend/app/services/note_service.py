@@ -338,18 +338,26 @@ class NoteService:
         that field holds a time the clinician dictated; ``replace_dictated``
         is the clinician choosing the confirmed window over it. Refused on a
         locked note.
+
+        The window is not a clinician edit: on a note the clinician hasn't
+        edited it goes into the draft, so a later redraft has no edits to ask
+        about (and writes the window into the new draft again). On an edited
+        note it goes into the edits, which are what the note shows.
         """
         note = self.get_note(note_id, user_id)
         if note.finalized_at is not None:
             raise NoteLockedError(f"Note {note_id} is signed and locked", {"note_id": note_id})
         window = {**(note.psychotherapy_window or {}), "confirmed": confirmed}
         note.psychotherapy_window = window
-        current = note.content_edited or note.content
+        edited = bool(note.content_edited)
+        current = note.content_edited if edited else note.content
         if current is not None and replace_dictated and drafted_time(current) is not None:
             current = clear_drafted_time(current)
         filled = apply_confirmed_window(current, window)
-        if filled is not current:
+        if filled is not current and edited:
             note.content_edited = filled
+        elif filled is not current:
+            note.content = filled
         note.updated_at = utc_now()
         return self._notes.update(note, user_id)
 
