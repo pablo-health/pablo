@@ -20,8 +20,7 @@ from evals.note_templates.scorers import calendar_dates, grade
 THERAPY_DRAFT: dict[str, dict[str, Any]] = {
     "encounter": {
         "visit_details": (
-            "Date of service: 2026-03-12. E/M code: 99214. Psychotherapy add-on code: 90836. "
-            "Psychotherapy time: 10:14 to 10:55, 41 minutes."
+            "Date of service: 2026-03-12. E/M code: 99214. Psychotherapy add-on code: 90836."
         ),
         "place_of_service": (
             "Visit conducted by synchronous audio and video telehealth on a HIPAA-compliant "
@@ -126,10 +125,18 @@ def test_good_medication_only_draft_passes() -> None:
         ),
         ("plan", "follow_up", "Return 2026-04-09 at 10:00.", "codes_only_dictated"),
         # A dictated code or time left out.
+        ("encounter", "visit_details", "E/M 99214.", "codes_only_dictated"),
+        # The visit details restate the psychotherapy time, even as dictated.
         (
             "encounter",
             "visit_details",
-            "E/M 99214. 10:14 to 10:55, 41 minutes.",
+            "E/M 99214. Add-on 90836. Psychotherapy time: 10:14 to 10:55, 41 minutes.",
+            "codes_only_dictated",
+        ),
+        (
+            "encounter",
+            "visit_details",
+            "E/M 99214. Add-on 90836. Psychotherapy start time: Not stated.",
             "codes_only_dictated",
         ),
         ("psychotherapy", "psychotherapy_time", "41 minutes.", "codes_only_dictated"),

@@ -15,7 +15,7 @@
             "key": "visit_details",
             "label": "Visit details",
             "kind": "text",
-            "ai_hint": "One line each: date of service; visit start and end time exactly as the clinician stated them; the visit code as entered, and any code (with a psychotherapy add-on code and its minutes) exactly as the clinician stated it. \"Not stated.\" for any the clinician did not say."
+            "ai_hint": "One line each: date of service; visit start and end time exactly as the clinician stated them; the visit code as entered, and any code (with a psychotherapy add-on code) exactly as the clinician stated it. \"Not stated.\" for any the clinician did not say. Leave psychotherapy times and minutes out: the Psychotherapy section states them."
           },
           {
             "key": "place_of_service",

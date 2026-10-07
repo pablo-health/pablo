@@ -169,6 +169,22 @@ def test_a_time_the_window_cannot_complete_fails() -> None:
     ]
 
 
+def test_a_psychotherapy_time_left_not_stated_elsewhere_fails() -> None:
+    draft = {
+        "encounter": {
+            "visit_details": "E/M code: Not stated.\nPsychotherapy start time: Not stated."
+        },
+        "psychotherapy": {"psychotherapy_time": "Minutes: 52."},
+    }
+
+    failures = grade(FOLLOW_UP_THERAPY_START, draft, _ANY_START)["failures"]
+
+    assert failures == [
+        "encounter.visit_details still says 'Psychotherapy start time: Not stated.' "
+        "after the window was confirmed"
+    ]
+
+
 def _plan(labs: str, medications: str) -> dict[str, Any]:
     return {"plan": {"labs": labs, "medications": [medications]}}
 

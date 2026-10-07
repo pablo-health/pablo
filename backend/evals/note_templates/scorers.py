@@ -35,6 +35,7 @@ CODE = re.compile(r"\b(?:9\d{4}|G\d{4})\b")
 DIAGNOSIS_CODE = re.compile(r"\b[A-TV-Z]\d{2}(?:\.[0-9A-Z]{1,4})?\b")
 CLOCK = re.compile(r"\b\d{1,2}:\d{2}\b")
 MINUTES = re.compile(r"\b(\d+)\s*-?\s*min(?:ute)?s?\b", re.IGNORECASE)
+PSYCHOTHERAPY_TIME_LINE = re.compile(r"psychotherapy[^\n.:]*\b(?:time|minutes)\b", re.IGNORECASE)
 QUOTED = re.compile('["\u201c\u201d]([^"\u201c\u201d]+)["\u201c\u201d]')
 RISK_LEVEL = re.compile(r"\b(?:low|moderate|high|minimal|elevated|imminent)\b", re.IGNORECASE)
 TODAY = re.compile(r"\btoday\b", re.IGNORECASE)
@@ -121,7 +122,12 @@ def _quote_in_transcript(quote: str, transcript: str) -> bool:
 
 
 def codes_only_dictated(draft: Draft, case: TemplateCase) -> list[str]:
-    """Billing codes, clock times and minutes appear only as dictated."""
+    """Billing codes, clock times and minutes appear only as dictated.
+
+    The psychotherapy time lives in one place, the Psychotherapy section: the
+    visit details never restate it, so a confirmed window can't leave a
+    second, stale copy behind.
+    """
     e = case.expected
     problems: list[str] = []
     for path, text in _all_text(draft):
@@ -131,26 +137,24 @@ def codes_only_dictated(draft: Draft, case: TemplateCase) -> list[str]:
         problems += [
             f"{path}: time {t} was not dictated" for t in CLOCK.findall(text) if t not in e.times
         ]
-    for where in (("encounter", "visit_details"), ("psychotherapy", "psychotherapy_time")):
-        text = _text(draft, *where)
-        problems += [
-            f"{'.'.join(where)}: {m} minutes was not dictated"
-            for m in MINUTES.findall(text)
-            if m not in e.minutes
-        ]
+    timing = _text(draft, "psychotherapy", "psychotherapy_time")
+    problems += [
+        f"psychotherapy.psychotherapy_time: {m} minutes was not dictated"
+        for m in MINUTES.findall(timing)
+        if m not in e.minutes
+    ]
     details = _text(draft, "encounter", "visit_details")
+    if PSYCHOTHERAPY_TIME_LINE.search(details) or MINUTES.search(details):
+        problems.append("encounter.visit_details: restates the psychotherapy time")
     problems += [
         f"encounter.visit_details: dictated code {c} missing" for c in e.codes if c not in details
     ]
     if e.therapy:
-        timing = _text(draft, "psychotherapy", "psychotherapy_time")
-        for wanted in (*e.times, *e.minutes):
-            for path, text in (
-                ("encounter.visit_details", details),
-                ("psychotherapy.psychotherapy_time", timing),
-            ):
-                if not re.search(rf"\b{re.escape(wanted)}\b", text):
-                    problems.append(f"{path}: dictated {wanted} missing")
+        problems += [
+            f"psychotherapy.psychotherapy_time: dictated {wanted} missing"
+            for wanted in (*e.times, *e.minutes)
+            if not re.search(rf"\b{re.escape(wanted)}\b", timing)
+        ]
     return problems
 
 

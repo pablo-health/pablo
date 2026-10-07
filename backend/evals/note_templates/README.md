@@ -19,7 +19,7 @@ Any problem from any check fails the case.
 
 | Check | Fails when | Protects |
 |---|---|---|
-| `codes_only_dictated` | anywhere in the note, a procedure code (9xxxx, Gxxxx) or clock time the clinician did not dictate; minutes in the visit details or psychotherapy time that were not dictated; a dictated code, time or minutes count missing from where the template puts it | codes and psychotherapy time come only from the clinician's words, verbatim, never estimated from timestamps |
+| `codes_only_dictated` | anywhere in the note, a procedure code (9xxxx, Gxxxx) or clock time the clinician did not dictate; minutes in the psychotherapy time that were not dictated; any psychotherapy time or minutes restated in the visit details; a dictated code, time or minutes count missing from where the template puts it | codes and psychotherapy time come only from the clinician's words, verbatim, never estimated from timestamps, and the psychotherapy time is stated once, so a confirmed window leaves no stale copy |
 | `psychotherapy_section` | any psychotherapy field written for a visit with no therapy ("Not stated." included); the issues or interventions empty for a visit with therapy | a medication-only visit never reads as one with a therapy portion |
 | `risk_quoted` | suicidal/homicidal ideation, self-harm/violence or overall acute risk is neither a quotation nor "Not stated."; a quotation that is not in the transcript; a risk level (low, moderate, high, ...) written outside a quotation | the draft records what was said and the clinician's own judgment, never its own |
 | `safety_plan` | a safety plan written when no ideation, self-harm or violence was reported | no safety planning appears that did not happen |
