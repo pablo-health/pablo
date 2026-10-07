@@ -11,7 +11,7 @@ from unittest.mock import Mock
 
 import pytest
 from app.models import Patient, ScheduleSessionRequest, SessionStatus, VideoPlatform
-from app.models.enums import SessionSource, SessionType
+from app.models.enums import SessionSource, SessionType, video_platform_from_label
 from app.models.session import SOAPNote
 from app.notes import get_default_registry
 from app.notes.practice_types import RepositoryPracticeNoteTypeSource
@@ -145,6 +145,58 @@ def patient(patient_repo: InMemoryPatientRepository) -> Patient:
     return _make_patient(patient_repo)
 
 
+class TestVideoPlatformFromLabel:
+    """An appointment's free-text platform label never fails a session start."""
+
+    @pytest.mark.parametrize(
+        ("label", "expected"),
+        [
+            # What the session-defaults dropdown offers.
+            ("zoom", VideoPlatform.ZOOM),
+            ("google_meet", VideoPlatform.MEET),
+            ("teams", VideoPlatform.TEAMS),
+            ("doxy", None),
+            ("other", None),
+            # Older and alternate spellings.
+            ("meet", VideoPlatform.MEET),
+            ("googlemeet", VideoPlatform.MEET),
+            ("hangouts", VideoPlatform.MEET),
+            ("microsoft_teams", VideoPlatform.TEAMS),
+            ("msteams", VideoPlatform.TEAMS),
+            ("none", VideoPlatform.NONE),
+            # Case and whitespace do not matter.
+            ("  Google_Meet ", VideoPlatform.MEET),
+            ("ZOOM", VideoPlatform.ZOOM),
+            # Anything else is unknown, not "no video".
+            ("simplepractice", None),
+            ("", None),
+            (None, None),
+        ],
+    )
+    def test_maps_label(self, label: str | None, expected: VideoPlatform | None) -> None:
+        assert video_platform_from_label(label) == expected
+
+    def test_google_meet_appointment_starts_a_session(
+        self,
+        appt_repo: InMemoryAppointmentRepository,
+        session_service: SessionService,
+        patient: Patient,
+    ) -> None:
+        appt = _make_appointment(
+            appt_repo, video_link="https://meet.google.com/abc", video_platform="google_meet"
+        )
+        request = ScheduleSessionRequest(
+            patient_id=appt.patient_id or "",
+            scheduled_at=appt.start_at,
+            video_link=appt.video_link,
+            video_platform=video_platform_from_label(appt.video_platform),
+        )
+
+        session, _ = session_service.schedule_session(USER_ID, request)
+
+        assert session.video_platform == "meet"
+
+
 class TestStartSessionFromAppointment:
     """Tests mirroring the start_session_from_appointment endpoint logic."""
 
@@ -164,7 +216,7 @@ class TestStartSessionFromAppointment:
             scheduled_at=appt.start_at,
             duration_minutes=appt.duration_minutes,
             video_link=appt.video_link,
-            video_platform=VideoPlatform(appt.video_platform) if appt.video_platform else None,
+            video_platform=video_platform_from_label(appt.video_platform),
             session_type=(
                 SessionType(appt.session_type) if appt.session_type else SessionType.INDIVIDUAL
             ),
@@ -248,7 +300,7 @@ class TestStartSessionFromAppointment:
             scheduled_at=appt.start_at,
             duration_minutes=appt.duration_minutes,
             video_link=appt.video_link,
-            video_platform=VideoPlatform(appt.video_platform) if appt.video_platform else None,
+            video_platform=video_platform_from_label(appt.video_platform),
             session_type=(
                 SessionType(appt.session_type) if appt.session_type else SessionType.INDIVIDUAL
             ),

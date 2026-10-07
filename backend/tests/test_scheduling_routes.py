@@ -187,6 +187,37 @@ def test_start_session_default_authorizer_allows_explicit_note_type(
 
 
 @pytest.mark.parametrize(
+    ("label", "platform"),
+    [("google_meet", "meet"), ("doxy", None), ("other", None)],
+)
+def test_start_session_reads_any_video_platform_label(
+    client: TestClient, label: str, platform: str | None
+) -> None:
+    """Starting a session from an appointment whose platform label is not a
+    session platform value (Google Meet, Doxy, Other) succeeds."""
+    appointment = _appointment()
+    appointment.video_link = "https://meet.example/abc"
+    appointment.video_platform = label
+    appointment.note_type = None
+    appointment.note_inputs = None
+    appointment.diagnosis_codes = ["F41.1"]
+    scheduling_svc = MagicMock()
+    scheduling_svc.get_appointment.return_value = appointment
+    session_svc = MagicMock()
+    session_svc.schedule_session.return_value = (_session(), _patient())
+    _wire_scheduling_overrides(scheduling_svc=scheduling_svc, session_svc=session_svc)
+
+    response = client.post(
+        "/api/appointments/appt-1/start-session",
+        json={"recording": False},
+    )
+
+    assert response.status_code == 201, response.text
+    request = session_svc.schedule_session.call_args.args[1]
+    assert request.video_platform == platform
+
+
+@pytest.mark.parametrize(
     ("visit_codes", "written"),
     [(None, {"diagnosis_codes": ["F41.1"]}), (["F32.9"], {})],
 )
