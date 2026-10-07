@@ -93,14 +93,10 @@ export const TranscriptViewer = forwardRef<TranscriptViewerHandle, TranscriptVie
       <div className={cn("card space-y-4", className)}>
         {/* Header */}
         <div className="flex justify-between items-center">
-          <div>
-            <h3 className="text-lg font-semibold text-neutral-900">
-              Transcript
-            </h3>
-            <p className="text-sm text-neutral-500">
-              Format: {transcript.format.toUpperCase()}
-            </p>
-          </div>
+          {/* The transcript's format is how it was stored, not something
+              the reader needs: a call recorded by the desktop app is stored
+              as "google_meet" whatever the platform was. */}
+          <h3 className="text-lg font-semibold text-neutral-900">Transcript</h3>
 
           <Button
             variant="outline"

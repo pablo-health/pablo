@@ -35,7 +35,7 @@ export type SessionStatus =
   | "finalized"
   | "failed"
 
-export type TranscriptFormat = "vtt" | "json" | "txt"
+export type TranscriptFormat = "vtt" | "json" | "txt" | "google_meet"
 
 export interface TranscriptModel {
   format: TranscriptFormat
