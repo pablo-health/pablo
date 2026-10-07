@@ -215,12 +215,70 @@ class TestDPoPEndToEnd:
     def test_valid_proof_passes_and_touches_last_seen(
         self, client: TestClient, enrolled: dict, engine: Engine
     ) -> None:
+        self._backdate_last_seen(engine, enrolled["install_id"])
         before = self._last_seen(engine, enrolled["install_id"])
         proof = _sign_proof(enrolled["key"])
         resp = client.get(_PROBE_PATH, headers=_headers(enrolled["install_id"], proof))
         assert resp.status_code == 200
         after = self._last_seen(engine, enrolled["install_id"])
         assert after > before
+
+    def test_recent_last_seen_is_not_rewritten(
+        self, client: TestClient, enrolled: dict, engine: Engine
+    ) -> None:
+        self._backdate_last_seen(engine, enrolled["install_id"])
+        first = _sign_proof(enrolled["key"])
+        assert (
+            client.get(_PROBE_PATH, headers=_headers(enrolled["install_id"], first)).status_code
+            == 200
+        )
+        touched = self._last_seen(engine, enrolled["install_id"])
+
+        second = _sign_proof(enrolled["key"])
+        assert (
+            client.get(_PROBE_PATH, headers=_headers(enrolled["install_id"], second)).status_code
+            == 200
+        )
+        assert self._last_seen(engine, enrolled["install_id"]) == touched
+
+    def test_locked_device_row_does_not_block_the_request(
+        self, client: TestClient, enrolled: dict, engine: Engine
+    ) -> None:
+        # A companion sends several requests at once for one install_id. Hold
+        # the device row the way a concurrent request's touch would and prove
+        # this request neither waits out lock_timeout nor fails.
+        self._backdate_last_seen(engine, enrolled["install_id"])
+        before = self._last_seen(engine, enrolled["install_id"])
+        with engine.connect() as holder, holder.begin():
+            holder.execute(
+                text("SELECT 1 FROM platform.companion_devices WHERE install_id = :iid FOR UPDATE"),
+                {"iid": enrolled["install_id"]},
+            )
+            proof = _sign_proof(enrolled["key"])
+            started = time.monotonic()
+            resp = client.get(_PROBE_PATH, headers=_headers(enrolled["install_id"], proof))
+            elapsed = time.monotonic() - started
+
+        assert resp.status_code == 200
+        assert elapsed < 2
+        # The locked row was skipped, not written.
+        assert self._last_seen(engine, enrolled["install_id"]) == before
+
+    def test_touch_failure_does_not_fail_the_request(
+        self, client: TestClient, enrolled: dict, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from app.repositories.postgres.companion_device import (  # noqa: PLC0415
+            PostgresCompanionDeviceRepository,
+        )
+        from sqlalchemy.exc import OperationalError  # noqa: PLC0415
+
+        def _fail(_self: object, _install_id: str) -> None:
+            raise OperationalError("UPDATE", {}, Exception("canceling statement"))
+
+        monkeypatch.setattr(PostgresCompanionDeviceRepository, "touch_last_seen", _fail)
+        proof = _sign_proof(enrolled["key"])
+        resp = client.get(_PROBE_PATH, headers=_headers(enrolled["install_id"], proof))
+        assert resp.status_code == 200
 
     def test_replayed_jti_rejected(self, client: TestClient, enrolled: dict) -> None:
         proof = _sign_proof(enrolled["key"])
@@ -323,6 +381,18 @@ class TestDPoPEndToEnd:
     def test_no_install_id_passes_as_legacy(self, client: TestClient) -> None:
         resp = client.get(_PROBE_PATH, headers={"Authorization": "Bearer e2e-token"})
         assert resp.status_code == 200
+
+    @staticmethod
+    def _backdate_last_seen(engine: Engine, install_id: str) -> None:
+        """Age last_seen past the write resolution so the next touch writes."""
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE platform.companion_devices "
+                    "SET last_seen = now() - interval '1 hour' WHERE install_id = :iid"
+                ),
+                {"iid": install_id},
+            )
 
     @staticmethod
     def _last_seen(engine: Engine, install_id: str):  # type: ignore[no-untyped-def]
