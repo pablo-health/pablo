@@ -20,9 +20,18 @@ import { givePatient } from "../fixtures/scenarios"
 
 type Session = { id: string; status: string }
 type Dictations = { data: Array<{ status: string }> }
+type PsychotherapyContent = { psychotherapy?: { psychotherapy_time?: string } }
 type NoteOnSession = {
-  note: { content_edited: { psychotherapy?: { psychotherapy_time?: string } } | null }
+  note: { content: PsychotherapyContent | null; content_edited: PsychotherapyContent | null }
 }
+
+// A clip dictated afterwards: Chromium's fake microphone (a tone).
+test.use({
+  permissions: ["microphone"],
+  launchOptions: {
+    args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"],
+  },
+})
 
 const withPsychotherapy = {
   label: "Follow-up with therapy (e2e)",
@@ -133,9 +142,34 @@ test.describe("visit minutes", () => {
       await conflict.getByRole("button", { name: "Use 37 minutes" }).click()
       await expect(conflict).toHaveCount(0)
       const windowText = await page.getByTestId("psychotherapy-confirmed").innerText()
+      // Confirming is not an edit: the window goes into the draft.
       const saved = await api.get<NoteOnSession>(`/api/sessions/${session.id}`)
-      expect(saved.note.content_edited?.psychotherapy?.psychotherapy_time).toBe(windowText)
+      expect(saved.note.content?.psychotherapy?.psychotherapy_time).toBe(windowText)
+      expect(saved.note.content_edited).toBeNull()
       // On the note itself as well as in the panel above it.
+      await expect(page.getByText(windowText, { exact: true })).toHaveCount(2)
+
+      // So dictating more redrafts without asking about edits, and keeps the window.
+      const panel = page.getByRole("region", { name: "Dictate more" })
+      await panel.getByRole("button", { name: "Dictate more" }).click()
+      await expect(panel.getByText(/Recording 0:0[1-9]/)).toBeVisible({ timeout: 10_000 })
+      await panel.getByRole("button", { name: "Stop" }).click()
+      const sent = page.waitForResponse(
+        (r) => /\/api\/sessions\/[\w-]+\/dictations$/.test(r.url()) && r.request().method() === "POST",
+      )
+      await panel.getByRole("button", { name: "Add to note" }).click()
+      // Sent straight away: no "You've edited this note" question in between.
+      expect((await sent).status()).toBe(202)
+      await expect(page.getByRole("dialog", { name: "You've edited this note" })).toHaveCount(0)
+      await expect
+        .poll(
+          async () =>
+            (await api.get<{ note: { status: string } }>(`/api/sessions/${session.id}`)).note
+              .status,
+          { timeout: 30_000 },
+        )
+        .toBe("complete")
+      await page.reload()
       await expect(page.getByText(windowText, { exact: true })).toHaveCount(2)
     })
   })
