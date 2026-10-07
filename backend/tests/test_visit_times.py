@@ -41,6 +41,7 @@ from app.routes.notes import get_appointment_repository
 from app.routes.session_dictations import get_dictation_repository
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.services.note_generation_service import RegistryNoteGenerationService
+from app.services.note_redraft import has_edits
 from app.services.note_service import NoteService
 from app.services.note_signing import NoteLockedError
 from app.services.structured_llm_gateway import FakeStructuredLLMGateway, StructuredCompletion
@@ -341,11 +342,39 @@ class TestConfirm:
 
         assert saved.psychotherapy_window is not None
         assert saved.psychotherapy_window["confirmed"]["minutes"] == 52
-        assert saved.content_edited is not None
+        assert saved.content is not None
         assert (
-            saved.content_edited["psychotherapy"]["psychotherapy_time"]
+            saved.content["psychotherapy"]["psychotherapy_time"]
             == "11:12 AM to 12:04 PM, 52 minutes"
         )
+
+    def test_confirming_is_not_an_edit_and_a_redraft_does_not_ask_about_edits(
+        self, notes: InMemoryNotesRepository
+    ) -> None:
+        session = _session()
+        note = notes.add(_note(session))
+
+        saved = _confirm(session, note, notes, start_seconds=750.0)
+
+        assert saved.content_edited is None
+        assert not has_edits(saved)
+        # What the redraft writes still gets the window (see the redraft tests below).
+
+    def test_on_an_edited_note_the_window_goes_into_the_edits_it_shows(
+        self, notes: InMemoryNotesRepository
+    ) -> None:
+        session = _session()
+        note = notes.add(_note(session))
+        edits = {"psychotherapy": {"psychotherapy_time": "Not stated.", "interventions": "Mine."}}
+        edited = NoteService(notes).update_note_edits(note.id, edits, "u1")
+
+        saved = _confirm(session, edited, notes, start_seconds=750.0)
+
+        assert saved.content_edited is not None
+        assert saved.content_edited["psychotherapy"] == {
+            "psychotherapy_time": "11:12 AM to 12:04 PM, 52 minutes",
+            "interventions": "Mine.",
+        }
 
     def test_typed_minutes_are_kept_without_clock_times(
         self, notes: InMemoryNotesRepository
@@ -355,8 +384,8 @@ class TestConfirm:
 
         saved = _confirm(session, note, notes, minutes=40)
 
-        assert saved.content_edited is not None
-        assert saved.content_edited["psychotherapy"]["psychotherapy_time"] == "40 minutes"
+        assert saved.content is not None
+        assert saved.content["psychotherapy"]["psychotherapy_time"] == "40 minutes"
 
     def test_minutes_above_the_client_present_span_are_rejected(
         self, notes: InMemoryNotesRepository
@@ -389,11 +418,34 @@ class TestConfirm:
         assert times.psychotherapy.dictated_time == "11:15 to 12:00, 45 minutes"
 
         chosen = _confirm(session, saved, notes, start_seconds=750.0, resolution="use_confirmed")
-        assert chosen.content_edited is not None
-        assert chosen.content_edited["psychotherapy"]["psychotherapy_time"].endswith("52 minutes")
+        assert chosen.content is not None
+        assert chosen.content["psychotherapy"]["psychotherapy_time"].endswith("52 minutes")
         resolved = build_visit_times(session, chosen, None).psychotherapy
         assert resolved is not None
         assert not resolved.disagrees
+
+    def test_choosing_the_window_over_a_dictated_time_survives_a_redraft(
+        self, notes: InMemoryNotesRepository
+    ) -> None:
+        session = _session()
+        dictated = "11:15 to 12:00, 45 minutes"
+        note = notes.add(_note(session, time_field=dictated))
+        chosen = _confirm(session, note, notes, start_seconds=750.0, resolution="use_confirmed")
+
+        # The redraft drafts the dictated time again; the clinician's choice holds.
+        redrafted = NoteService(notes).complete_redraft(
+            chosen,
+            content={"psychotherapy": {"psychotherapy_time": dictated}},
+            content_edited=None,
+            note_type_version=None,
+            user_id="u1",
+        )
+
+        assert redrafted.content is not None
+        assert redrafted.content["psychotherapy"]["psychotherapy_time"].endswith("52 minutes")
+        shown = build_visit_times(session, redrafted, None).psychotherapy
+        assert shown is not None
+        assert not shown.disagrees
 
     def test_dictated_minutes_that_match_are_completed_on_confirm_and_on_redraft(
         self, notes: InMemoryNotesRepository
@@ -404,8 +456,8 @@ class TestConfirm:
 
         saved = _confirm(session, note, notes, start_seconds=750.0)
         window = "11:12 AM to 12:04 PM, 52 minutes"
-        assert saved.content_edited is not None
-        assert saved.content_edited["psychotherapy"]["psychotherapy_time"] == window
+        assert saved.content is not None
+        assert saved.content["psychotherapy"]["psychotherapy_time"] == window
         shown = build_visit_times(session, saved, None).psychotherapy
         assert shown is not None
         assert not shown.disagrees

@@ -206,6 +206,8 @@ def confirm_psychotherapy_window(
         confirmed = {"start_seconds": None, "minutes": minutes}
     confirmed["window_text"] = text
     confirmed["keep_dictated"] = request.resolution == "keep_dictated"
+    # Remembered, so a redraft that brings the dictated time back gets the window again.
+    confirmed["use_confirmed"] = request.resolution == "use_confirmed"
     return note_service.confirm_psychotherapy_window(
         note.id,
         confirmed,

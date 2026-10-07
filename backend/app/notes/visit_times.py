@@ -204,7 +204,8 @@ def apply_confirmed_window(
     """``content`` with the confirmed window in its psychotherapy time field.
 
     Fills the field where it states nothing, or states only minutes that
-    match the window; any other time the clinician dictated stays, and
+    match the window, or holds a dictated time the clinician chose the window
+    over; any other time the clinician dictated stays, and
     :func:`disagrees` reports any conflict.
     """
     confirmed = (window or {}).get("confirmed")
@@ -215,7 +216,8 @@ def apply_confirmed_window(
     ):
         return content
     dictated = drafted_time(content)
-    if dictated is not None and not _window_completes(dictated, confirmed):
+    chosen = confirmed.get("use_confirmed")
+    if dictated is not None and not chosen and not _window_completes(dictated, confirmed):
         return content
     filled = copy.deepcopy(content)
     filled[PSYCHOTHERAPY_SECTION_KEY][PSYCHOTHERAPY_TIME_FIELD] = confirmed["window_text"]
