@@ -27,6 +27,8 @@ from app.intake.starters import (
     AI_TOOLS_DOCUMENT_ITEM_KEY,
     AI_TRANSCRIPTION_ITEM_KEY,
     STARTERS,
+    TELEHEALTH_DOCUMENT_ITEM_KEY,
+    TELEHEALTH_LOCATION_ITEM_KEY,
     Starter,
     check_starter,
     clear_registered_intake_starters,
@@ -34,11 +36,23 @@ from app.intake.starters import (
     register_intake_starter,
     starter,
 )
+from app.models.client_ai_consent import CLIENT_STATED_LOCATION_MAX
+from app.repositories.client_ai_consent import InMemoryClientAiConsentRepository
+from app.repositories.patient_intake_signature import InMemoryPatientIntakeSignatureRepository
 from app.services.audio_retention import retention_phrase
-from app.services.intake_form_ai_consent import signed_on, transcription_answer
+from app.services.intake_form_ai_consent import (
+    FormAiConsentRecorder,
+    consented_by,
+    modality,
+    signed_on,
+    stated_location,
+    transcription_answer,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from app.models.client_ai_consent import AiConsentEvent
 
 #: The digest of each starter's words. A change here is a change to what
 #: clients are asked to agree to, so it is made on purpose or not at all.
@@ -298,3 +312,116 @@ class TestTheDayItTakesEffect:
 
     def test_none_when_nothing_was_signed(self) -> None:
         assert signed_on(_ITEMS, []) is None
+
+
+_TELEHEALTH_ITEMS: list[dict[str, object]] = [
+    *_ITEMS,
+    {"id": "tele-doc", "key": TELEHEALTH_DOCUMENT_ITEM_KEY, "item_type": "consent_document"},
+    {"id": "tele-where", "key": TELEHEALTH_LOCATION_ITEM_KEY, "item_type": "free_text"},
+    {"id": "guardian", "key": "minor_guardian", "item_type": "guardian"},
+]
+
+
+class TestHowTheAnswerWasGiven:
+    def test_telehealth_when_the_telehealth_consent_was_signed(self) -> None:
+        signatures: list[dict[str, object]] = [
+            {"item_id": "tele-doc", "signed_at": datetime(2026, 10, 2, tzinfo=UTC)}
+        ]
+        assert modality(_TELEHEALTH_ITEMS, signatures) == "telehealth"
+
+    def test_unknown_when_it_was_not_signed(self) -> None:
+        signed_elsewhere: list[dict[str, object]] = [
+            {"item_id": "doc-item", "signed_at": datetime(2026, 10, 2, tzinfo=UTC)}
+        ]
+        assert modality(_TELEHEALTH_ITEMS, signed_elsewhere) is None
+        assert modality(_ITEMS, []) is None
+
+    def test_the_location_answer_is_copied(self) -> None:
+        answers = {"tele-where": {"text": "  At home in Ann Arbor, Michigan "}}
+        assert stated_location(_TELEHEALTH_ITEMS, answers) == "At home in Ann Arbor, Michigan"
+
+    def test_no_location_when_the_question_was_not_answered(self) -> None:
+        assert stated_location(_TELEHEALTH_ITEMS, {}) is None
+        assert stated_location(_TELEHEALTH_ITEMS, {"tele-where": {"text": "  "}}) is None
+        assert stated_location(_ITEMS, {"tele-where": {"text": "Ann Arbor"}}) is None
+
+    def test_a_long_location_is_cut_to_what_the_record_holds(self) -> None:
+        answers = {"tele-where": {"text": "x" * (CLIENT_STATED_LOCATION_MAX + 50)}}
+        assert stated_location(_TELEHEALTH_ITEMS, answers) == "x" * CLIENT_STATED_LOCATION_MAX
+
+
+class TestWhoGaveTheAnswer:
+    def test_the_client_when_no_guardian_is_named(self) -> None:
+        assert consented_by(_TELEHEALTH_ITEMS, {}) == "client"
+        assert consented_by(_ITEMS, {}) == "client"
+
+    @pytest.mark.parametrize("relationship", ["Mother", "father", "Parent", "my dad"])
+    def test_a_parent(self, relationship: str) -> None:
+        answers = {"guardian": {"name": "Sam Rivera", "relationship": relationship}}
+        assert consented_by(_TELEHEALTH_ITEMS, answers) == "parent"
+
+    @pytest.mark.parametrize("relationship", ["Grandmother", "Legal guardian", "Aunt", ""])
+    def test_anyone_else_named_is_a_guardian(self, relationship: str) -> None:
+        answers = {"guardian": {"name": "Sam Rivera", "relationship": relationship}}
+        assert consented_by(_TELEHEALTH_ITEMS, answers) == "guardian"
+
+    def test_a_guardian_block_left_blank_is_the_client(self) -> None:
+        answers = {"guardian": {"name": " ", "relationship": "Mother"}}
+        assert consented_by(_TELEHEALTH_ITEMS, answers) == "client"
+
+
+class TestTheRecorder:
+    """What an accepted form writes, end to end through the recorder."""
+
+    def _record(
+        self, answers: dict[str, dict[str, object]], signed: list[str]
+    ) -> AiConsentEvent | None:
+        signatures = InMemoryPatientIntakeSignatureRepository()
+        for item_id in signed:
+            signatures.add(
+                {
+                    "id": f"sig-{item_id}",
+                    "assignment_id": "a-1",
+                    "patient_id": "p-1",
+                    "item_id": item_id,
+                    "signer_role": "patient",
+                    "signed_at": datetime(2026, 10, 2, 15, tzinfo=UTC),
+                }
+            )
+        self.consent = InMemoryClientAiConsentRepository()
+        return FormAiConsentRecorder(signatures, self.consent).record(
+            assignment={"id": "a-1", "patient_id": "p-1", "submitted_at": None},
+            items=_TELEHEALTH_ITEMS,
+            answers=answers,
+            accepted_by="clinician-1",
+            accepted_at=datetime(2026, 10, 3, 9, tzinfo=UTC),
+        )
+
+    def test_a_telehealth_form_records_modality_location_and_who(self) -> None:
+        event = self._record(
+            {
+                "choice-item": {"key": "consent"},
+                "tele-where": {"text": "At home in Ann Arbor, Michigan"},
+            },
+            signed=["doc-item", "tele-doc"],
+        )
+        assert event is not None
+        assert event.decision == "consented"
+        assert event.modality == "telehealth"
+        assert event.client_stated_location == "At home in Ann Arbor, Michigan"
+        assert event.consented_by == "client"
+        assert event.effective_on == date(2026, 10, 2)
+        assert self.consent.list_for_patient("p-1") == [event]
+
+    def test_a_form_without_telehealth_leaves_modality_unset(self) -> None:
+        event = self._record(
+            {
+                "choice-item": {"key": "decline"},
+                "guardian": {"name": "Sam Rivera", "relationship": "Mother"},
+            },
+            signed=["doc-item"],
+        )
+        assert event is not None
+        assert event.modality is None
+        assert event.client_stated_location is None
+        assert event.consented_by == "parent"

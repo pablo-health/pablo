@@ -232,6 +232,74 @@ def test_how_the_answer_was_given_round_trips(
     )
 
 
+def test_an_accepted_telehealth_form_says_how_the_answer_was_given(
+    engine: Engine, tenant_schema: str, patient_id: str
+) -> None:
+    """The form recorder's row passes the table's constraints and reads back."""
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    from app.intake.starters import (  # noqa: PLC0415
+        AI_TOOLS_DOCUMENT_ITEM_KEY,
+        AI_TRANSCRIPTION_ITEM_KEY,
+        TELEHEALTH_DOCUMENT_ITEM_KEY,
+        TELEHEALTH_LOCATION_ITEM_KEY,
+    )
+    from app.repositories.patient_intake_signature import (  # noqa: PLC0415
+        InMemoryPatientIntakeSignatureRepository,
+    )
+    from app.services.client_ai_consent import ai_consent_record  # noqa: PLC0415
+    from app.services.intake_form_ai_consent import FormAiConsentRecorder  # noqa: PLC0415
+
+    assignment_id = str(uuid.uuid4())
+    items: list[dict[str, object]] = [
+        {"id": "ai-doc", "key": AI_TOOLS_DOCUMENT_ITEM_KEY, "item_type": "consent_document"},
+        {"id": "ai-choice", "key": AI_TRANSCRIPTION_ITEM_KEY, "item_type": "single_choice"},
+        {"id": "tele-doc", "key": TELEHEALTH_DOCUMENT_ITEM_KEY, "item_type": "consent_document"},
+        {"id": "tele-where", "key": TELEHEALTH_LOCATION_ITEM_KEY, "item_type": "free_text"},
+    ]
+    signatures = InMemoryPatientIntakeSignatureRepository()
+    for item_id in ("ai-doc", "tele-doc"):
+        signatures.add(
+            {
+                "id": f"sig-{item_id}",
+                "assignment_id": assignment_id,
+                "patient_id": patient_id,
+                "item_id": item_id,
+                "signer_role": "patient",
+                "signed_at": datetime(2026, 10, 5, 14, tzinfo=UTC),
+            }
+        )
+
+    repo, session, s_tok, u_tok = _repo_as(engine, tenant_schema, _CLINICIAN_A)
+    try:
+        FormAiConsentRecorder(signatures, repo).record(
+            assignment={"id": assignment_id, "patient_id": patient_id, "submitted_at": None},
+            items=items,
+            answers={
+                "ai-choice": {"key": "consent"},
+                "tele-where": {"text": "At home in Ann Arbor, Michigan"},
+            },
+            accepted_by=_CLINICIAN_A,
+            accepted_at=datetime(2026, 10, 6, 9, tzinfo=UTC),
+        )
+        session.commit()
+        current = ai_consent_record(patient_id, repo=repo).current
+    finally:
+        _release(session, s_tok, u_tok)
+
+    assert current is not None
+    assert (current.source, current.decision, current.effective_on) == (
+        "intake_form",
+        "consented",
+        date(2026, 10, 5),
+    )
+    assert (current.modality, current.client_stated_location, current.consented_by) == (
+        "telehealth",
+        "At home in Ann Arbor, Michigan",
+        "client",
+    )
+
+
 def test_clinician_without_a_grant_reads_nothing(
     engine: Engine, tenant_schema: str, patient_id: str
 ) -> None:

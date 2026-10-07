@@ -309,6 +309,7 @@ export function PacketFlow({
         items={items}
         values={values}
         form={form}
+        sessionToken={sessionToken}
         correction={correction}
         onEdit={(itemId) => {
           const index = items.findIndex((item) => item.id === itemId)

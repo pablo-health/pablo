@@ -17,6 +17,11 @@
  * Between the two clients the practice changes how long session audio is
  * kept, and the second client's document says the new number: the period is
  * the practice's setting, read when the document is shown.
+ *
+ * A second form carries a telehealth consent and its location question
+ * beside the AI-tools one. The review names each document by its title, and
+ * once accepted the client's answer is on record as given over telehealth,
+ * from where they said they would be.
  */
 
 import type { Page } from "@playwright/test"
@@ -43,8 +48,20 @@ interface IntakeVersionDetail {
   items: { id: string; key: string; item_type: string }[]
 }
 
+interface IntakeDocument {
+  id: string
+  document_key: string
+}
+
 interface AiConsentRecord {
-  current: { decision: string; effective_on: string; source: string } | null
+  current: {
+    decision: string
+    effective_on: string
+    source: string
+    modality: string | null
+    client_stated_location: string | null
+    consented_by: string | null
+  } | null
 }
 
 /** A date-only string as the chart header shows it. */
@@ -210,5 +227,122 @@ test.describe("AI-tools consent", () => {
         `AI notes: ${client.word} ${shown(record.current?.effective_on ?? "")}`,
       )
     }
+  })
+
+  test("a telehealth form records the answer as given over telehealth, and where @portal", async ({
+    api,
+    browser,
+  }) => {
+    const suffix = Date.now().toString(36)
+    const aiTitle = `AI-assisted notes ${suffix}`
+    const telehealthTitle = `Consent to telehealth ${suffix}`
+    const location = "At home in Ann Arbor, Michigan"
+
+    // --- the practice: two documents and a form that asks both -------------
+    // Through the API: the editor is the test above. Neither consent item is
+    // given wording of its own, so the review has to name each by its title.
+    const publishDocument = async (title: string) => {
+      const draft = await api.post<IntakeDocument>("/api/intake/documents", {
+        title,
+        body_markdown: `# ${title}\n\nPlease read this before you sign it.\n`,
+        signer_roles: ["patient"],
+      })
+      return api.post<IntakeDocument>(`/api/intake/documents/${draft.id}/publish`)
+    }
+    const aiDocument = await publishDocument(aiTitle)
+    const telehealthDocument = await publishDocument(telehealthTitle)
+
+    const template = await api.post<IntakeTemplate>("/api/intake/templates", {
+      name: `Telehealth intake ${suffix}`,
+    })
+    const draftPath = `/api/intake/templates/${template.id}/versions/${template.versions[0].id}`
+    await api.put(`${draftPath}/items`, {
+      items: [
+        {
+          key: "telehealth_consent",
+          item_type: "consent_document",
+          config: { document_key: telehealthDocument.document_key },
+        },
+        {
+          key: "telehealth_location",
+          item_type: "free_text",
+          label: "Where will you usually be during telehealth sessions?",
+          config: { max_len: 200 },
+        },
+        {
+          key: "ai_tools_consent",
+          item_type: "consent_document",
+          config: { document_key: aiDocument.document_key },
+        },
+        {
+          key: "ai_transcription",
+          item_type: "single_choice",
+          label: "Session transcription",
+          config: {
+            options: [
+              { key: "consent", label: "I consent" },
+              { key: "decline", label: "I do not consent" },
+            ],
+          },
+        },
+      ],
+    })
+    const published = await api.post<IntakeVersionDetail>(`${draftPath}/publish`)
+    expect(published.published_at).not.toBeNull()
+
+    const email = `ai-consent-telehealth-${suffix}@example.com`
+    const phone = `+1555${`${Date.now()}`.slice(-7)}`
+    const patient = await givePatient(api, { email, phone, date_of_birth: "1990-03-14" })
+    const assignment = await api.post<{ id: string }>(
+      `/api/patients/${patient.id}/intake-assignments`,
+      { version_id: published.id },
+    )
+
+    // --- the client: sign, say where, choose, review, hand in ---------------
+    const context = await browser.newContext({ baseURL: BASE_URL, timezoneId: BROWSER_TIME_ZONE })
+    const portal = await context.newPage()
+    try {
+      await openTheForm(api, portal, patient.id, email, phone)
+      const signer = `Client ${suffix}`
+      const sign = async (title: string) => {
+        await expect(portal.getByTestId("forms-consent-document")).toContainText(title)
+        await portal.getByTestId("forms-consent-affirm").check()
+        await portal.getByTestId("forms-consent-name").fill(signer)
+        await portal.getByTestId("forms-consent-sign").click()
+        await expect(portal.getByTestId("forms-consent-signed")).toContainText(signer)
+        await portal.getByTestId("forms-continue").click()
+      }
+
+      await sign(telehealthTitle)
+      await portal.getByTestId("forms-free-text").fill(location)
+      await portal.getByTestId("forms-continue").click()
+      await sign(aiTitle)
+      await portal.getByTestId("forms-single-choice").getByLabel("I consent", { exact: true }).check()
+      await portal.getByTestId("forms-continue").click()
+
+      // Each document is named by its own title on the review.
+      const labels = portal.getByTestId("forms-review").getByTestId("forms-review-label")
+      await expect(labels).toHaveText([
+        telehealthTitle,
+        "Where will you usually be during telehealth sessions?",
+        aiTitle,
+        "Session transcription",
+      ])
+      await expect(portal.getByTestId("forms-review")).not.toContainText("Consent document")
+
+      await portal.getByTestId("forms-submit").click()
+      await expect(portal.getByTestId("forms-receipt-code")).toHaveText(/^[2-9A-HJ-NP-TV-Z]{8}$/)
+    } finally {
+      await context.close()
+    }
+
+    // --- the practice accepts it, and the record says how it was given ------
+    await api.post(`/api/patients/${patient.id}/intake-assignments/${assignment.id}/accept`)
+    const record = await api.get<AiConsentRecord>(`/api/patients/${patient.id}/ai-consent`)
+    expect(record.current?.decision).toBe("consented")
+    expect(record.current?.source).toBe("intake_form")
+    expect(record.current?.modality).toBe("telehealth")
+    expect(record.current?.client_stated_location).toBe(location)
+    expect(record.current?.consented_by).toBe("client")
   })
 })
