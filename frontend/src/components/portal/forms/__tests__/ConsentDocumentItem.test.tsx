@@ -25,6 +25,7 @@ import { rendererFor } from "../renderers/registry"
 import {
   CONSENT_AWAITING_GUARDIAN,
   CONSENT_NEEDS_RESIGN,
+  CONSENT_REVIEW_LABEL,
   CONSENT_SIGNED_BADGE,
 } from "../formsCopy"
 
@@ -440,5 +441,43 @@ describe("the review row", () => {
     expect(
       renderer.summary({ signed: true, signature_id: "sig" }, consentItem(), null),
     ).toBe(CONSENT_SIGNED_BADGE)
+  })
+
+  function renderReviewLabel(item: IntakeAssignmentItem) {
+    const { ReviewLabel } = rendererFor("consent_document")
+    if (!ReviewLabel) throw new Error("the consent renderer names its review row")
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={client}>
+        <p data-testid="label">
+          <ReviewLabel item={item} sessionToken={SESSION} />
+        </p>
+      </QueryClientProvider>,
+    )
+  }
+
+  it("names the row by the document's own title", async () => {
+    renderReviewLabel(consentItem())
+
+    await waitFor(() => expect(screen.getByTestId("label")).toHaveTextContent(DOCUMENT_TITLE))
+    expect(fetchConsentDocument).toHaveBeenCalledWith(SESSION, VERSION_ID)
+  })
+
+  it("keeps the practice's own wording when the item has one", () => {
+    renderReviewLabel(consentItem({ label: "Our treatment agreement" }))
+
+    expect(screen.getByTestId("label")).toHaveTextContent("Our treatment agreement")
+    expect(fetchConsentDocument).not.toHaveBeenCalled()
+  })
+
+  it("says what kind of question it is when the title cannot be read", async () => {
+    fetchConsentDocument.mockRejectedValue(
+      new PatientIntakeError("unavailable", "down"),
+    )
+    renderReviewLabel(consentItem())
+
+    await waitFor(() =>
+      expect(screen.getByTestId("label")).toHaveTextContent(CONSENT_REVIEW_LABEL),
+    )
   })
 })

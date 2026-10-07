@@ -43,6 +43,15 @@ AI_TRANSCRIPTION_DECISIONS: dict[str, str] = {
 #: given is the day the transcription answer takes effect.
 AI_TOOLS_DOCUMENT_ITEM_KEY = "ai_tools_consent"
 
+#: A telehealth consent document on a form, and the question asking where the
+#: client will be during telehealth sessions. A form that carries the AI-notes
+#: answer and a signed document under the first key records the answer as
+#: given over telehealth, with the answer to the second as where the client
+#: said they would be. A starter a deployment registers for telehealth uses
+#: these keys so its answers are read the same way.
+TELEHEALTH_DOCUMENT_ITEM_KEY = "telehealth_consent"
+TELEHEALTH_LOCATION_ITEM_KEY = "telehealth_location"
+
 
 @dataclass(frozen=True)
 class Starter:
@@ -215,6 +224,8 @@ __all__ = [
     "AI_TRANSCRIPTION_DECISIONS",
     "AI_TRANSCRIPTION_ITEM_KEY",
     "STARTERS",
+    "TELEHEALTH_DOCUMENT_ITEM_KEY",
+    "TELEHEALTH_LOCATION_ITEM_KEY",
     "Starter",
     "check_starter",
     "clear_registered_intake_starters",

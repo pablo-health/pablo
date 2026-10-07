@@ -43,6 +43,8 @@ interface ReviewScreenProps {
   items: IntakeAssignmentItem[]
   values: Record<string, AnswerValue | null>
   form: IntakeForm | null
+  /** The patient's session, for the rows whose name is read from the server. */
+  sessionToken: string
   /** Set while the practice has sent the form back. Absent otherwise. */
   correction?: IntakeCorrection | null
   onEdit: (itemId: string) => void
@@ -57,6 +59,7 @@ export function ReviewScreen({
   items,
   values,
   form,
+  sessionToken,
   correction = null,
   onEdit,
   onBack,
@@ -97,6 +100,7 @@ export function ReviewScreen({
             item={item}
             value={values[item.id] ?? null}
             form={form}
+            sessionToken={sessionToken}
             onEdit={onEdit}
           />
         ))}
@@ -137,19 +141,28 @@ function ReviewRow({
   item,
   value,
   form,
+  sessionToken,
   onEdit,
 }: {
   item: IntakeAssignmentItem
   value: AnswerValue | null
   form: IntakeForm | null
+  sessionToken: string
   onEdit: (itemId: string) => void
 }) {
   const renderer = rendererFor(item.item_type)
   const summary = renderer.summary(value, item, form)
+  const ReviewLabel = renderer.ReviewLabel
   return (
     <li data-testid={`forms-review-row-${item.id}`} className="flex gap-3 py-3">
       <div className="flex-1">
-        <p className="text-xs font-medium text-neutral-500">{renderer.label(item, form)}</p>
+        <p data-testid="forms-review-label" className="text-xs font-medium text-neutral-500">
+          {ReviewLabel ? (
+            <ReviewLabel item={item} sessionToken={sessionToken} />
+          ) : (
+            renderer.label(item, form)
+          )}
+        </p>
         <p className="mt-1 whitespace-pre-line text-sm text-neutral-800">
           {summary ?? <span className="text-neutral-500">{REVIEW_UNANSWERED}</span>}
         </p>

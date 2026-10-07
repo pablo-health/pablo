@@ -184,12 +184,13 @@ export function consentSignedBy(name: string, signedAt: string): string {
 }
 
 /**
- * What the review screen calls a consent item the practice gave no wording.
+ * What the review screen calls a consent item when its document's title
+ * cannot be read.
  *
- * The document's own title is the natural name, and the review screen has
- * only the item — the title arrives with the document, which that screen
- * does not fetch. So it says what kind of question it is rather than
- * inventing a heading the practice never wrote.
+ * The review row names a consent item by its document's own title, which it
+ * reads from the server. When that read fails, or the item points at no
+ * document, it says what kind of question it is rather than inventing a
+ * heading the practice never wrote.
  */
 export const CONSENT_REVIEW_LABEL = "Consent document"
 

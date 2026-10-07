@@ -55,7 +55,13 @@ import {
 } from "../formsCopy"
 import { ConsentDocumentRead, SignedRow } from "./ConsentDocumentRead"
 import { Unavailable } from "./DisplayItem"
-import type { AnswerValue, ItemRenderer, ItemRendererProps, LiveItemProps } from "./types"
+import type {
+  AnswerValue,
+  ItemRenderer,
+  ItemRendererProps,
+  LiveItemProps,
+  ReviewLabelProps,
+} from "./types"
 
 const NAME_MAX = 160
 
@@ -312,6 +318,28 @@ function summaryOf(value: AnswerValue | null): string | null {
   return value?.signed === true ? CONSENT_SIGNED_BADGE : null
 }
 
+/**
+ * The review row's name for a consent item: the practice's wording if it
+ * gave the item one, otherwise the document's own title.
+ *
+ * Read through the same query the signing screen used, so a form walked in
+ * this session names its documents without a second request.
+ */
+function ConsentReviewLabel({ item, sessionToken }: ReviewLabelProps) {
+  const own = item.label?.trim()
+  const pinned = pinnedVersionOf(item.config)
+  const document = useQuery({
+    queryKey: ["patient-intake", "document", sessionToken, pinned ?? ""],
+    queryFn: () => fetchConsentDocument(sessionToken, pinned as string),
+    enabled: !own && pinned !== null,
+    retry: false,
+  })
+  if (own) return <>{own}</>
+  if (document.data) return <>{document.data.title}</>
+  if (document.isPending && pinned !== null) return null
+  return <>{CONSENT_REVIEW_LABEL}</>
+}
+
 export const consentDocumentRenderer: ItemRenderer = {
   Component: ConsentDocumentItem,
   // The walk's save route refuses this type outright: its answer names a
@@ -320,5 +348,6 @@ export const consentDocumentRenderer: ItemRenderer = {
   // But it is a question, not a heading — so it is counted and reviewed.
   writesItself: true,
   label: (item) => item.label?.trim() || CONSENT_REVIEW_LABEL,
+  ReviewLabel: ConsentReviewLabel,
   summary: summaryOf,
 }
