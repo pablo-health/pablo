@@ -3,6 +3,10 @@
 /**
  * One form, walked a question at a time.
  *
+ * **A form's sections are its parts.** A section heading is not a screen of
+ * its own; its title sits above every question in its part, with a count
+ * kept to that part. See `./parts`.
+ *
  * A stepped walk rather than one long page. Most people meet this on a
  * phone, and sixteen measure items plus a free-text box on a single scroll
  * is the shape that gets abandoned halfway.
@@ -48,6 +52,7 @@ import { evaluate, ruleOf, type VisibilityMap } from "@/lib/intake/visibility"
 import { RATE_LIMITED, SAVE_FAILED, SUBMIT_FAILED } from "./formsCopy"
 import { FormsAlreadySent, FormsLoadFailed, FormsLoading } from "./FormsNotice"
 import { ItemScreen } from "./ItemScreen"
+import { narrowParts, partsOf, placeOf } from "./parts"
 import { ReceiptScreen } from "./ReceiptScreen"
 import { rendererFor } from "./renderers/registry"
 import type { AnswerValue } from "./renderers/types"
@@ -148,7 +153,7 @@ export function PacketFlow({
    * after the rules rather than instead of them, so a reopened question a
    * rule has since hidden stays hidden.
    */
-  const items = useMemo(() => {
+  const parts = useMemo(() => {
     const shown = visibility(
       ordered.map((item) => ({
         key: item.key,
@@ -157,11 +162,18 @@ export function PacketFlow({
       })),
       answers,
     )
-    const visible = ordered.filter((item) => shown[item.key])
+    // Parts are read off the whole visible form before a correction narrows
+    // it, so a question sent back still carries the name of the part it
+    // came from.
+    const walked = partsOf(ordered.filter((item) => shown[item.key]))
     const asked = detail?.correction ?? null
-    if (asked === null) return visible
-    return visible.filter((item) => asked.item_ids.includes(item.id))
+    if (asked === null) return walked
+    return narrowParts(walked, (item) => asked.item_ids.includes(item.id))
   }, [ordered, answers, detail, form, visibility])
+
+  // The screens, in order. A section is never one: its title rides above
+  // the questions of its part instead.
+  const items = useMemo(() => parts.flatMap((part) => part.screens), [parts])
 
   /** What is on screen: this sitting's edits over what is already saved. */
   const values = useMemo(
@@ -171,14 +183,6 @@ export function PacketFlow({
       ) as Record<string, AnswerValue | null>,
     [items, edits],
   )
-
-  // The questions that collect something, whether the walk saves it or the
-  // renderer writes it for itself. A consent document is counted here and
-  // shown on the review screen; what it is NOT is saved on Continue.
-  const countable = items.filter((item) => {
-    const renderer = rendererFor(item.item_type)
-    return renderer.answerable || renderer.writesItself === true
-  })
 
   /**
    * A renderer wrote something through a route of its own.
@@ -267,7 +271,7 @@ export function PacketFlow({
     const value = values[item.id] ?? null
     setError(null)
 
-    // A heading, a paragraph, a question this portal cannot ask yet, or one
+    // A paragraph, a question this portal cannot ask yet, or one
     // whose renderer already wrote through a route of its own: there is
     // nothing the save route would accept, so the press only moves. An
     // optional question nobody touched is the same — sending `{}` would be
@@ -306,7 +310,7 @@ export function PacketFlow({
   if (current.kind === "review") {
     return (
       <ReviewScreen
-        items={items}
+        parts={parts}
         values={values}
         form={form}
         sessionToken={sessionToken}
@@ -328,7 +332,6 @@ export function PacketFlow({
   }
 
   const item = items[current.index]
-  const countableIndex = countable.indexOf(item)
 
   return (
     <ItemScreen
@@ -352,9 +355,7 @@ export function PacketFlow({
       onContinue={() => void advanceFrom(current.index)}
       saving={save.isPending}
       error={error}
-      position={
-        countableIndex < 0 ? null : { index: countableIndex + 1, total: countable.length }
-      }
+      place={placeOf(parts, item)}
     />
   )
 }

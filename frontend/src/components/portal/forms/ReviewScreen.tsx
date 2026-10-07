@@ -17,6 +17,10 @@
  * a correction is open the heading says who is asking, the practice's own
  * note sits under it, and the list is the questions they named. The note is
  * shown as it was written; nothing here paraphrases it.
+ *
+ * **Answers sit under the part they were given in.** The same parts the walk
+ * showed, by the same names, so a row is found where it was answered. A part
+ * with no name — the start of a form with no sections — has no heading.
  */
 
 import { Button } from "@/components/ui/button"
@@ -36,11 +40,13 @@ import {
   SUBMITTING,
   correctionHeading,
 } from "./formsCopy"
+import { collectsAnswer, type FormPart } from "./parts"
 import { rendererFor } from "./renderers/registry"
 import type { AnswerValue } from "./renderers/types"
 
 interface ReviewScreenProps {
-  items: IntakeAssignmentItem[]
+  /** The parts of the walk, already narrowed to what this patient is shown. */
+  parts: FormPart[]
   values: Record<string, AnswerValue | null>
   form: IntakeForm | null
   /** The patient's session, for the rows whose name is read from the server. */
@@ -56,7 +62,7 @@ interface ReviewScreenProps {
 }
 
 export function ReviewScreen({
-  items,
+  parts,
   values,
   form,
   sessionToken,
@@ -70,10 +76,9 @@ export function ReviewScreen({
   // Every question that collects something, including the ones whose
   // renderer wrote through a route of its own — a consent document belongs
   // on this list as much as an answer does.
-  const answerable = items.filter((item) => {
-    const renderer = rendererFor(item.item_type)
-    return renderer.answerable || renderer.writesItself === true
-  })
+  const groups = parts
+    .map((part) => ({ part, rows: part.screens.filter(collectsAnswer) }))
+    .filter((group) => group.rows.length > 0)
 
   return (
     <div data-testid="forms-review" className="flex flex-col">
@@ -93,18 +98,32 @@ export function ReviewScreen({
         <p className="mt-2 text-sm text-neutral-600">{REVIEW_BODY}</p>
       )}
 
-      <ul className="mt-5 flex flex-col divide-y divide-neutral-200 border-y border-neutral-200">
-        {answerable.map((item) => (
-          <ReviewRow
-            key={item.id}
-            item={item}
-            value={values[item.id] ?? null}
-            form={form}
-            sessionToken={sessionToken}
-            onEdit={onEdit}
-          />
+      <div className="mt-5 flex flex-col gap-5">
+        {groups.map(({ part, rows }) => (
+          <section key={part.key} data-testid="forms-review-part">
+            {part.title !== null && (
+              <h3
+                data-testid="forms-review-part-title"
+                className="mb-1 text-sm font-semibold text-neutral-900"
+              >
+                {part.title}
+              </h3>
+            )}
+            <ul className="flex flex-col divide-y divide-neutral-200 border-y border-neutral-200">
+              {rows.map((item) => (
+                <ReviewRow
+                  key={item.id}
+                  item={item}
+                  value={values[item.id] ?? null}
+                  form={form}
+                  sessionToken={sessionToken}
+                  onEdit={onEdit}
+                />
+              ))}
+            </ul>
+          </section>
         ))}
-      </ul>
+      </div>
 
       {error && (
         <p data-testid="forms-submit-error" className="mt-4 text-sm text-red-600">

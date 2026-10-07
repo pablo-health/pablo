@@ -48,10 +48,36 @@ export const RETRY_ACTION = "Try again"
 
 export const LOADING = "Loading your forms…"
 
-/** Where the patient is in the questions that collect an answer. */
+/**
+ * Where the patient is: which part of the form, and how far into it.
+ *
+ * A form's sections are its parts, and the count is kept to the part. "2 of
+ * 3" under "Consent to telehealth" is a number somebody can hold in their
+ * head; one count across the whole form reaches the dozens and reads as how
+ * much is left to do, which is the screen people close.
+ *
+ * Only questions that collect something are counted. A paragraph to read is
+ * not a question.
+ */
 export function questionPosition(index: number, total: number): string {
   return `Question ${index} of ${total}`
 }
+
+/** The count inside a named part, which already says what it is counting. */
+export function positionInPart(index: number, total: number): string {
+  return `${index} of ${total}`
+}
+
+export function partPosition(index: number, total: number): string {
+  return `Part ${index} of ${total}`
+}
+
+/**
+ * What a form's opening is called, when it is the identity check and the
+ * reason for coming in and nothing else. Anything else that comes before the
+ * first section gets no heading.
+ */
+export const OPENING_PART_TITLE = "About you"
 
 /** Navigation through one form. */
 export const BACK = "Back"

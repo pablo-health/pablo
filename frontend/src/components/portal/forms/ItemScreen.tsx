@@ -17,7 +17,15 @@
 import { Button } from "@/components/ui/button"
 import type { IntakeArtifact, IntakeAssignmentItem, IntakeForm } from "@/lib/api/patientIntake"
 import { CrisisFooter } from "./CrisisFooter"
-import { BACK, CONTINUE, SAVING, questionPosition } from "./formsCopy"
+import {
+  BACK,
+  CONTINUE,
+  SAVING,
+  partPosition,
+  positionInPart,
+  questionPosition,
+} from "./formsCopy"
+import type { PartPlace } from "./parts"
 import { rendererFor } from "./renderers/registry"
 import type { AnswerValue } from "./renderers/types"
 
@@ -39,8 +47,8 @@ interface ItemScreenProps {
   saving: boolean
   /** The server's own sentence about the last attempt to save this answer. */
   error: string | null
-  /** Where this question sits among the ones that collect an answer. */
-  position: { index: number; total: number } | null
+  /** Which part of the form this question is in, and where in it. */
+  place: PartPlace | null
 }
 
 export function ItemScreen({
@@ -57,17 +65,13 @@ export function ItemScreen({
   onContinue,
   saving,
   error,
-  position,
+  place,
 }: ItemScreenProps) {
   const renderer = rendererFor(item.item_type)
 
   return (
     <div data-testid="forms-item-screen" className="flex flex-col">
-      {position && (
-        <p data-testid="forms-progress" className="text-xs font-medium text-neutral-500">
-          {questionPosition(position.index, position.total)}
-        </p>
-      )}
+      {place && <PartHeader place={place} />}
 
       <div className="mt-3">
         <renderer.Component
@@ -107,6 +111,44 @@ export function ItemScreen({
           {saving ? SAVING : CONTINUE}
         </Button>
       </div>
+    </div>
+  )
+}
+
+/**
+ * The part this question belongs to, and how far into it.
+ *
+ * Two quiet lines rather than a bar: the parts are counted only when there
+ * is more than one, and the count inside a part sits beside its name. A
+ * part with no name — the start of a form with no sections — keeps the
+ * plain "Question 2 of 3".
+ */
+function PartHeader({ place }: { place: PartPlace }) {
+  const { title, question } = place
+  return (
+    <div data-testid="forms-part-header" className="flex flex-col gap-0.5">
+      {place.parts > 1 && (
+        <p data-testid="forms-part-count" className="text-xs text-neutral-500">
+          {partPosition(place.part, place.parts)}
+        </p>
+      )}
+      {(title !== null || question !== null) && (
+        <p className="text-sm font-medium text-neutral-700">
+          {title !== null && <span data-testid="forms-part-title">{title}</span>}
+          {title !== null && question !== null && (
+            <span aria-hidden="true" className="text-neutral-400">
+              {" · "}
+            </span>
+          )}
+          {question !== null && (
+            <span data-testid="forms-progress" className="font-normal text-neutral-500">
+              {title !== null
+                ? positionInPart(question.index, question.total)
+                : questionPosition(question.index, question.total)}
+            </span>
+          )}
+        </p>
+      )}
     </div>
   )
 }
