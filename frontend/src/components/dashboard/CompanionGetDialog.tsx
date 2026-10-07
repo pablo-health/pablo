@@ -51,11 +51,18 @@ export function CompanionGetDialog({
 
         <div className="flex flex-col gap-2 pt-1">
           {mac && downloadUrl ? (
-            <Button asChild>
-              <a href={downloadUrl} target="_blank" rel="noreferrer">
-                Download for macOS
-              </a>
-            </Button>
+            <>
+              <Button asChild>
+                <a href={downloadUrl} target="_blank" rel="noreferrer">
+                  Download for macOS
+                </a>
+              </Button>
+              {/* The dashboard only learns the app is installed once someone
+                  signs in from it, so say so where they download it. */}
+              <p className="text-xs text-neutral-500">
+                After installing, open the app and sign in.
+              </p>
+            </>
           ) : mac ? (
             <>
               <Button disabled>Download for macOS</Button>
