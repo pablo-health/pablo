@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -167,16 +168,34 @@ def confirmed_window(case: TemplateCase) -> dict[str, Any] | None:
 
 
 def _grade_confirmed_window(case: TemplateCase, content: dict[str, Any]) -> list[str]:
-    """Once the clinician confirms the start, the time field reads the window."""
+    """Once the clinician confirms the start, the time field reads the window.
+
+    And nothing else in the note still calls a psychotherapy time "Not stated."
+    """
     confirmed = confirmed_window(case)
     if confirmed is None:
         return []
     filled = apply_confirmed_window(content, {"confirmed": confirmed}) or {}
-    stated = _text(filled.get(PSYCHOTHERAPY_SECTION_KEY, {}).get(PSYCHOTHERAPY_TIME_FIELD))
-    if stated == confirmed["window_text"]:
-        return []
     field = f"{PSYCHOTHERAPY_SECTION_KEY}.{PSYCHOTHERAPY_TIME_FIELD}"
-    return [f"{field} reads {stated!r} after confirming {confirmed['window_text']!r}"]
+    stated = _text(filled.get(PSYCHOTHERAPY_SECTION_KEY, {}).get(PSYCHOTHERAPY_TIME_FIELD))
+    failures = []
+    if stated != confirmed["window_text"]:
+        failures.append(f"{field} reads {stated!r} after confirming {confirmed['window_text']!r}")
+    failures += [
+        f"{section}.{key} still says {line.strip()!r} after the window was confirmed"
+        for section, fields in filled.items()
+        if isinstance(fields, dict)
+        for key, value in fields.items()
+        for line in _text(value).splitlines()
+        if _UNSTATED_THERAPY_TIME.search(line)
+    ]
+    return failures
+
+
+# "Psychotherapy start time: Not stated." and the like.
+_UNSTATED_THERAPY_TIME = re.compile(
+    r"psychotherapy[^\n:]*\b(?:time|minutes)\b[^\n]*not stated", re.IGNORECASE
+)
 
 
 _QUOTE_MARKS = ('"', "\u201c", "\u201d")
