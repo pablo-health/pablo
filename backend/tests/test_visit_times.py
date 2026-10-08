@@ -1,10 +1,12 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Visit times on the note, and the psychotherapy window the clinician confirms."""
+"""Visit times on the note, and the psychotherapy time the clinician confirms."""
 
 from __future__ import annotations
 
+import itertools
 import json
+import random
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -23,15 +25,18 @@ from app.notes import NoteTypeRegistry, register_builtin_note_types
 from app.notes.client_present import TimedSegment
 from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
 from app.notes.visit_times import (
-    SIGNALS_AGREE_SECONDS,
-    StartCandidate,
+    TURN_LABELS,
+    DictatedTime,
+    Run,
+    TurnLabel,
     apply_confirmed_window,
+    dictated_time_text,
     disagrees,
     drafted_time,
-    parse_transcript_time,
-    resolve_start_candidates,
-    snap_to_turn,
-    stated_clock_time,
+    interleaved_text,
+    layout,
+    therapy_minutes,
+    therapy_seconds,
     window_minutes,
     window_text,
 )
@@ -45,6 +50,7 @@ from app.services.note_redraft import has_edits
 from app.services.note_service import NoteService
 from app.services.note_signing import NoteLockedError
 from app.services.structured_llm_gateway import FakeStructuredLLMGateway, StructuredCompletion
+from app.services.therapy_labels import parse_labels
 from app.services.visit_times_service import build_visit_times, confirm_psychotherapy_window
 
 if TYPE_CHECKING:
@@ -78,6 +84,25 @@ _VISIT = "\n".join(
     ]
 )
 
+# The turns of that visit while the client was present, labeled two ways.
+_CONTIGUOUS: list[dict[str, Any]] = [
+    {"seconds": 5.0, "label": "medication_management"},
+    {"seconds": 180.0, "label": "medication_management"},
+    {"seconds": 710.0, "label": "medication_management"},
+    {"seconds": 750.0, "label": "therapy"},
+    {"seconds": 1800.0, "label": "therapy"},
+    {"seconds": 3892.0, "label": "therapy"},
+]
+# Therapy 3:00-11:50 and 12:30-30:00, a risk screen to the end: 1580 s, 26 minutes.
+_INTERLEAVED: list[dict[str, Any]] = [
+    {"seconds": 5.0, "label": "admin"},
+    {"seconds": 180.0, "label": "therapy"},
+    {"seconds": 710.0, "label": "medication_management"},
+    {"seconds": 750.0, "label": "therapy"},
+    {"seconds": 1800.0, "label": "screening_risk"},
+    {"seconds": 3892.0, "label": "screening_risk"},
+]
+
 
 def _session(
     *, boundary: float | None = 3895.0, content: str = _VISIT, video: str | None = "zoom"
@@ -98,7 +123,15 @@ def _session(
     )
 
 
-def _note(session: TherapySession, *, time_field: str = "Not stated.", **extra: Any) -> Note:
+def _note(
+    session: TherapySession,
+    *,
+    dictated: DictatedTime | None = None,
+    labels: list[dict[str, Any]] | None = None,
+    **extra: Any,
+) -> Note:
+    """A drafted note; the time field holds the dictated time as a draft renders it."""
+    proposal = {"dictated": dictated.to_dict() if dictated else None, "labels": labels or []}
     return Note(
         id=str(uuid.uuid4()),
         patient_id=session.patient_id,
@@ -108,48 +141,117 @@ def _note(session: TherapySession, *, time_field: str = "Not stated.", **extra: 
         updated_at=_STARTED,
         content={
             "plan": {"follow_up": "Four weeks."},
-            "psychotherapy": {"psychotherapy_time": time_field, "interventions": "CBT."},
+            "psychotherapy": {
+                "psychotherapy_time": dictated_time_text(dictated),
+                "interventions": "CBT.",
+            },
         },
+        psychotherapy_window={"proposal": proposal},
         **extra,
     )
 
 
-class TestStartSignals:
-    def test_the_clinicians_spoken_cue_wins(self) -> None:
-        assert resolve_start_candidates(marked=750.0, cued=True, attributed=1800.0) == [
-            StartCandidate(750.0, "spoken_cue")
+def _turns(*starts: float) -> list[TimedSegment]:
+    return [TimedSegment("Therapist", "", s, s + 1) for s in starts]
+
+
+class TestDictatedTime:
+    def test_a_reply_states_a_time_only_with_minutes_or_a_clock_time(self) -> None:
+        assert DictatedTime.from_reply({"as_dictated": "", "minutes": 0}) is None
+        assert DictatedTime.from_reply({"start": " ", "end": ""}) is None
+        assert DictatedTime.from_reply("41 minutes") is None
+        assert DictatedTime.from_reply({"minutes": 41}) == DictatedTime(minutes=41)
+        assert DictatedTime.from_reply({"start": "around 10:15"}) == DictatedTime(
+            start="around 10:15"
+        )
+
+    def test_it_renders_clock_times_then_minutes(self) -> None:
+        assert dictated_time_text(DictatedTime("10:14", "10:55", 41)) == (
+            "10:14 to 10:55, 41 minutes"
+        )
+        assert dictated_time_text(DictatedTime(minutes=18)) == "18 minutes"
+        assert dictated_time_text(DictatedTime(start="10:15")) == "Started 10:15"
+        assert dictated_time_text(None) == ""
+
+
+class TestTherapyMinutes:
+    def test_a_turn_runs_to_the_next_and_the_last_to_where_the_client_left(self) -> None:
+        turns = _turns(0, 60, 200)
+        labels: dict[float, TurnLabel] = {60.0: "therapy", 200.0: "therapy"}
+
+        assert therapy_seconds(labels, turns, 300.0) == 240.0
+        assert therapy_minutes(labels, turns, 300.0) == 4
+
+    def test_runs_merge_and_an_unlabeled_turn_is_unattributed(self) -> None:
+        turns = _turns(0, 60, 120, 180)
+        labels: dict[float, TurnLabel] = {0.0: "admin", 60.0: "therapy", 120.0: "therapy"}
+
+        assert layout(labels, turns, 240.0) == [
+            Run("admin", 0.0, 60.0),
+            Run("therapy", 60.0, 180.0),
+            Run("unattributed", 180.0, 240.0),
         ]
 
-    def test_agreeing_signals_offer_one_start(self) -> None:
-        assert resolve_start_candidates(
-            marked=750.0, cued=False, attributed=750.0 + SIGNALS_AGREE_SECONDS
-        ) == [StartCandidate(750.0, "marked")]
+    def test_the_tail_is_never_counted(self) -> None:
+        turns = _turns(0, 60, 400, 500)  # the client left at 300
+        labels: dict[float, TurnLabel] = {s.start: "therapy" for s in turns}
 
-    def test_disagreeing_signals_offer_both(self) -> None:
-        assert resolve_start_candidates(
-            marked=750.0, cued=False, attributed=750.0 + SIGNALS_AGREE_SECONDS + 1
-        ) == [StartCandidate(750.0, "marked"), StartCandidate(871.0, "attributed")]
+        assert therapy_seconds(labels, turns, 300.0) == 300.0
 
-    def test_a_lone_signal_is_offered(self) -> None:
-        assert resolve_start_candidates(marked=None, cued=False, attributed=30.0) == [
-            StartCandidate(30.0, "attributed")
-        ]
+    @pytest.mark.parametrize("seed", range(200))
+    def test_random_layouts_never_exceed_the_span_or_count_the_tail(self, seed: int) -> None:
+        rng = random.Random(seed)  # noqa: S311 — deterministic layouts, not crypto
+        starts = sorted(rng.sample(range(0, 4000), rng.randint(0, 40)))
+        turns = _turns(*map(float, starts))
+        end = float(rng.randint(1, 4200))
+        labels: dict[float, TurnLabel] = {
+            s.start: rng.choice(TURN_LABELS) for s in turns if rng.random() < 0.9
+        }
 
-    def test_transcript_times_parse_as_written(self) -> None:
-        assert parse_transcript_time("12:30") == 750.0
-        assert parse_transcript_time("[00:12:30]") == 750.0
-        assert parse_transcript_time("Stand-in draft for psychotherapy_start.") is None
+        seconds = therapy_seconds(labels, turns, end)
+        assert 0 <= seconds <= end
+        assert therapy_minutes(labels, turns, end) * 60 <= end
+        # Relabeling the tail changes nothing.
+        tail: dict[float, TurnLabel] = {s.start: "therapy" for s in turns if s.start >= end}
+        assert therapy_seconds({**labels, **tail}, turns, end) == seconds
+        # The runs tile the client-present span exactly.
+        runs = layout(labels, turns, end)
+        assert all(a.end == b.start for a, b in itertools.pairwise(runs))
+        if runs:
+            assert runs[-1].end == end
+        # Labeling every turn therapy counts from the first turn to where the client left.
+        everything: dict[float, TurnLabel] = {s.start: "therapy" for s in turns}
+        present = [s for s in starts if s < end]
+        assert therapy_seconds(everything, turns, end) == (end - present[0] if present else 0)
 
-    def test_a_stated_time_is_kept_only_when_it_names_a_time(self) -> None:
-        assert stated_clock_time("around 10:15") == "around 10:15"
-        assert stated_clock_time("Stand-in draft for psychotherapy_start.stated.") is None
 
-    def test_a_mark_snaps_to_the_nearest_turn(self) -> None:
-        turns = [
-            TimedSegment("Therapist", "a", 700.0, 705.0),
-            TimedSegment("Client", "b", 790, 800),
-        ]
-        assert snap_to_turn(740.0, turns) == 700.0
+class TestLabels:
+    def test_every_client_present_turn_gets_a_label(self) -> None:
+        turns = _turns(0, 60, 120, 180)
+        reply = {
+            "runs": [
+                {"first_segment": 0, "last_segment": 0, "label": "admin"},
+                {"first_segment": 1, "last_segment": 2, "label": "therapy"},
+                {"first_segment": 3, "last_segment": 9, "label": "screening_risk"},
+                {"first_segment": 1, "last_segment": 1, "label": "admin"},
+                {"first_segment": 0, "last_segment": 3, "label": "billable"},
+            ],
+            "cue_segment": 1,
+        }
+
+        labels, cue = parse_labels(reply, turns)
+
+        # A run past the last turn is cut at it; the first run to claim a turn wins.
+        assert labels == {
+            0.0: "admin",
+            60.0: "therapy",
+            120.0: "therapy",
+            180.0: "screening_risk",
+        }
+        assert cue == 60.0
+
+    def test_no_cue_and_no_runs_label_nothing(self) -> None:
+        assert parse_labels({"runs": [], "cue_segment": -1}, _turns(0, 60)) == ({}, None)
 
 
 class TestWindow:
@@ -166,64 +268,80 @@ class TestWindow:
         )
         assert text == "11:12 AM to 12:04 PM, 52 minutes"
 
+    def test_interleaved_minutes_say_so(self) -> None:
+        assert interleaved_text(26) == (
+            "26 minutes (interleaved with medication management; time accounted separately)"
+        )
+
     def test_a_dictated_time_disagrees_unless_the_minutes_match(self) -> None:
         confirmed = {"window_text": "11:12 AM to 12:04 PM, 52 minutes", "minutes": 52}
-        assert disagrees("11:15 to 12:00, 45 minutes", confirmed)
-        assert not disagrees("Psychotherapy 52 minutes", confirmed)
-        assert not disagrees(None, confirmed)
-        assert not disagrees("45 minutes", {**confirmed, "keep_dictated": True})
 
-    def test_the_window_fills_only_an_unstated_field(self) -> None:
-        window = {"confirmed": {"window_text": "52 minutes", "minutes": 52}}
-        unstated = {"psychotherapy": {"psychotherapy_time": "Not stated."}}
+        def window(dictated: DictatedTime) -> tuple[dict[str, Any], dict[str, Any]]:
+            content = {"psychotherapy": {"psychotherapy_time": dictated_time_text(dictated)}}
+            return content, {"proposal": {"dictated": dictated.to_dict()}, "confirmed": confirmed}
+
+        assert disagrees(*window(DictatedTime("11:15", "12:00", 45)))
+        assert not disagrees(*window(DictatedTime(minutes=52)))
+        assert not disagrees(
+            {"psychotherapy": {"psychotherapy_time": ""}}, {"confirmed": confirmed}
+        )
+        content, kept = window(DictatedTime(minutes=45))
+        assert not disagrees(content, {**kept, "confirmed": {**confirmed, "keep_dictated": True}})
+
+    def test_text_the_clinician_typed_disagrees_until_they_pick(self) -> None:
+        confirmed = {"window_text": "52 minutes", "minutes": 52}
+        typed = {"psychotherapy": {"psychotherapy_time": "about half an hour"}}
+
+        assert drafted_time(typed) == "about half an hour"
+        assert disagrees(typed, {"confirmed": confirmed})
+        assert apply_confirmed_window(typed, {"confirmed": confirmed}) is typed
+
+    def test_the_time_fills_only_an_empty_field(self) -> None:
+        window = {
+            "proposal": {"dictated": {"minutes": 45}},
+            "confirmed": {"window_text": "52 minutes", "minutes": 52},
+        }
+        empty = {"psychotherapy": {"psychotherapy_time": ""}}
         dictated = {"psychotherapy": {"psychotherapy_time": "45 minutes"}}
 
-        filled = apply_confirmed_window(unstated, window)
+        filled = apply_confirmed_window(empty, window)
         assert filled is not None
         assert filled["psychotherapy"]["psychotherapy_time"] == "52 minutes"
         assert apply_confirmed_window(dictated, window) is dictated
 
     @pytest.mark.parametrize("draft", ["drafted", "redrafted"])
     def test_the_window_completes_a_draft_that_states_only_the_minutes(self, draft: str) -> None:
-        # Drafted by the model: "Start time: Not stated. End time: Not stated. Minutes: 18."
-        content = _CAPTURED[draft]
-        confirmed = _CAPTURED["confirmed"]
+        # Drafted by the model: the clinician dictated 18 minutes and no clock times.
+        content = {"psychotherapy": {**_CAPTURED[draft]["psychotherapy"]}}
+        content["psychotherapy"]["psychotherapy_time"] = "18 minutes"
+        window = {"proposal": {"dictated": {"minutes": 18}}, "confirmed": _CAPTURED["confirmed"]}
 
-        filled = apply_confirmed_window(content, {"confirmed": confirmed})
+        filled = apply_confirmed_window(content, window)
 
-        assert not disagrees(drafted_time(content), confirmed)
+        assert not disagrees(content, window)
         assert filled is not None
         assert filled["psychotherapy"]["psychotherapy_time"] == "3:08 PM to 3:26 PM, 18 minutes"
-
-    def test_a_draft_whose_every_part_is_not_stated_holds_no_time(self) -> None:
-        compound = "Start time: Not stated. End time: Not stated. Minutes: Not stated."
-        assert drafted_time({"psychotherapy": {"psychotherapy_time": compound}}) is None
-        assert drafted_time({"psychotherapy": {"psychotherapy_time": "Not stated."}}) is None
 
     @pytest.mark.parametrize(
         "dictated",
         [
-            "Start time: 3:10 PM. End time: Not stated. Minutes: 18.",
-            "3 pm to 3:18, 18 minutes",
-            "Minutes: 25.",
-            "about half an hour",
+            DictatedTime(start="3:10 PM", minutes=18),
+            DictatedTime(start="3 pm", end="3:18", minutes=18),
+            DictatedTime(minutes=25),
         ],
     )
-    def test_a_dictated_time_the_window_would_change_is_kept(self, dictated: str) -> None:
-        window = {"confirmed": _CAPTURED["confirmed"]}
-        content = {"psychotherapy": {"psychotherapy_time": dictated}}
+    def test_a_dictated_time_the_window_would_change_is_kept(self, dictated: DictatedTime) -> None:
+        window = {"proposal": {"dictated": dictated.to_dict()}, "confirmed": _CAPTURED["confirmed"]}
+        content = {"psychotherapy": {"psychotherapy_time": dictated_time_text(dictated)}}
         assert apply_confirmed_window(content, window) is content
 
     def test_matching_minutes_the_clinician_chose_to_keep_stay(self) -> None:
-        content = {"psychotherapy": {"psychotherapy_time": "Minutes: 18."}}
-        window = {"confirmed": {**_CAPTURED["confirmed"], "keep_dictated": True}}
+        content = {"psychotherapy": {"psychotherapy_time": "18 minutes"}}
+        window = {
+            "proposal": {"dictated": {"minutes": 18}},
+            "confirmed": {**_CAPTURED["confirmed"], "keep_dictated": True},
+        }
         assert apply_confirmed_window(content, window) is content
-
-    @pytest.mark.parametrize("stated", ["Minutes: 18.", "18 minutes", "18 min", "minutes 18"])
-    def test_minutes_agree_whichever_way_round_they_are_written(self, stated: str) -> None:
-        confirmed = {"window_text": "3:08 PM to 3:26 PM, 18 minutes", "minutes": 18}
-        assert not disagrees(stated, confirmed)
-        assert disagrees(stated.replace("18", "25"), confirmed)
 
 
 def _dictation(session: TherapySession, status: str, seconds: int | None) -> SessionDictation:
@@ -365,7 +483,7 @@ class TestConfirm:
     ) -> None:
         session = _session()
         note = notes.add(_note(session))
-        edits = {"psychotherapy": {"psychotherapy_time": "Not stated.", "interventions": "Mine."}}
+        edits = {"psychotherapy": {"psychotherapy_time": "", "interventions": "Mine."}}
         edited = NoteService(notes).update_note_edits(note.id, edits, "u1")
 
         saved = _confirm(session, edited, notes, start_seconds=750.0)
@@ -409,7 +527,7 @@ class TestConfirm:
         self, notes: InMemoryNotesRepository
     ) -> None:
         session = _session()
-        note = notes.add(_note(session, time_field="11:15 to 12:00, 45 minutes"))
+        note = notes.add(_note(session, dictated=DictatedTime("11:15", "12:00", 45)))
 
         saved = _confirm(session, note, notes, start_seconds=750.0)
         times = build_visit_times(session, saved, None)
@@ -428,17 +546,18 @@ class TestConfirm:
         self, notes: InMemoryNotesRepository
     ) -> None:
         session = _session()
-        dictated = "11:15 to 12:00, 45 minutes"
-        note = notes.add(_note(session, time_field=dictated))
+        dictated = DictatedTime("11:15", "12:00", 45)
+        note = notes.add(_note(session, dictated=dictated))
         chosen = _confirm(session, note, notes, start_seconds=750.0, resolution="use_confirmed")
 
         # The redraft drafts the dictated time again; the clinician's choice holds.
         redrafted = NoteService(notes).complete_redraft(
             chosen,
-            content={"psychotherapy": {"psychotherapy_time": dictated}},
+            content={"psychotherapy": {"psychotherapy_time": dictated_time_text(dictated)}},
             content_edited=None,
             note_type_version=None,
             user_id="u1",
+            psychotherapy_proposal={"dictated": dictated.to_dict()},
         )
 
         assert redrafted.content is not None
@@ -451,8 +570,8 @@ class TestConfirm:
         self, notes: InMemoryNotesRepository
     ) -> None:
         session = _session()
-        stated = "Start time: Not stated. End time: Not stated. Minutes: 52 minutes."
-        note = notes.add(_note(session, time_field=stated))
+        stated = DictatedTime(minutes=52)
+        note = notes.add(_note(session, dictated=stated))
 
         saved = _confirm(session, note, notes, start_seconds=750.0)
         window = "11:12 AM to 12:04 PM, 52 minutes"
@@ -464,10 +583,11 @@ class TestConfirm:
 
         redrafted = NoteService(notes).complete_redraft(
             saved,
-            content={"psychotherapy": {"psychotherapy_time": stated.replace(" minutes.", ".")}},
+            content={"psychotherapy": {"psychotherapy_time": dictated_time_text(stated)}},
             content_edited=None,
             note_type_version=None,
             user_id="u1",
+            psychotherapy_proposal={"dictated": stated.to_dict()},
         )
         assert redrafted.content is not None
         assert redrafted.content["psychotherapy"]["psychotherapy_time"] == window
@@ -476,7 +596,7 @@ class TestConfirm:
         self, notes: InMemoryNotesRepository
     ) -> None:
         session = _session()
-        note = notes.add(_note(session, time_field="45 minutes"))
+        note = notes.add(_note(session, dictated=DictatedTime(minutes=45)))
 
         saved = _confirm(session, note, notes, start_seconds=750.0, resolution="keep_dictated")
 
@@ -502,9 +622,9 @@ class TestConfirm:
             session_id=session.id,
             patient_id=session.patient_id,
             note_type="custom.follow_up",
-            content={"psychotherapy": {"psychotherapy_time": "Not stated.", "interventions": ""}},
+            content={"psychotherapy": {"psychotherapy_time": "", "interventions": ""}},
             user_id="u1",
-            psychotherapy_start={"candidates": [], "stated_clock_time": None},
+            psychotherapy_proposal={"dictated": None, "labels": []},
         )
 
         assert redrafted.psychotherapy_window is not None
@@ -525,14 +645,114 @@ class TestConfirm:
             content_edited=None,
             note_type_version=None,
             user_id="u1",
-            psychotherapy_start={"candidates": [{"seconds": 750.0, "source": "marked"}]},
+            psychotherapy_proposal={"labels": _CONTIGUOUS},
         )
 
         assert redrafted.psychotherapy_window is not None
         assert redrafted.psychotherapy_window["confirmed"]["minutes"] == 40
-        assert redrafted.psychotherapy_window["proposal"]["candidates"][0]["seconds"] == 750.0
+        assert redrafted.psychotherapy_window["proposal"]["labels"] == _CONTIGUOUS
         assert redrafted.content is not None
         assert redrafted.content["psychotherapy"]["psychotherapy_time"] == "40 minutes"
+
+    def test_labels_in_one_run_write_a_window(self, notes: InMemoryNotesRepository) -> None:
+        session = _session()
+        note = notes.add(_note(session))
+
+        saved = _confirm(session, note, notes, labels=_CONTIGUOUS)
+
+        assert saved.content is not None
+        assert (
+            saved.content["psychotherapy"]["psychotherapy_time"]
+            == "11:12 AM to 12:04 PM, 52 minutes"
+        )
+        assert saved.psychotherapy_window is not None
+        assert saved.psychotherapy_window["confirmed"]["contiguous"] is True
+
+    def test_interleaved_labels_write_the_minutes_and_say_so(
+        self, notes: InMemoryNotesRepository
+    ) -> None:
+        session = _session()
+        note = notes.add(_note(session, labels=_CONTIGUOUS))
+
+        saved = _confirm(session, note, notes, labels=_INTERLEAVED)
+
+        assert saved.content is not None
+        assert saved.content["psychotherapy"]["psychotherapy_time"] == interleaved_text(26)
+        times = build_visit_times(session, saved, None).psychotherapy
+        assert times is not None
+        assert times.confirmed_minutes == 26
+        assert times.contiguous is False
+        # The confirmed labels, not the proposed ones, are what the timeline shows.
+        assert [t.label for t in times.turns] == [i["label"] for i in _INTERLEAVED]
+        assert [r.label for r in times.runs] == [
+            "admin",
+            "therapy",
+            "medication_management",
+            "therapy",
+            "screening_risk",
+        ]
+
+    def test_relabeling_replaces_the_time_confirmed_before(
+        self, notes: InMemoryNotesRepository
+    ) -> None:
+        session = _session()
+        first = _confirm(session, notes.add(_note(session)), notes, labels=_CONTIGUOUS)
+
+        again = _confirm(session, first, notes, labels=_INTERLEAVED)
+
+        assert again.content is not None
+        assert again.content["psychotherapy"]["psychotherapy_time"] == interleaved_text(26)
+        shown = build_visit_times(session, again, None).psychotherapy
+        assert shown is not None
+        assert not shown.disagrees
+
+    def test_no_therapy_turns_confirm_zero_minutes(self, notes: InMemoryNotesRepository) -> None:
+        session = _session()
+        labels = [{**item, "label": "medication_management"} for item in _CONTIGUOUS]
+
+        saved = _confirm(session, notes.add(_note(session)), notes, labels=labels)
+
+        assert saved.psychotherapy_window is not None
+        assert saved.psychotherapy_window["confirmed"]["minutes"] == 0
+
+    def test_dictated_minutes_win_over_the_labels(self, notes: InMemoryNotesRepository) -> None:
+        session = _session()
+        note = notes.add(_note(session, dictated=DictatedTime(minutes=22), labels=_INTERLEAVED))
+
+        shown = build_visit_times(session, note, None).psychotherapy
+        assert shown is not None
+        assert shown.labeled_minutes == 26
+        assert shown.dictated is not None
+        assert shown.dictated.minutes == 22
+
+        saved = _confirm(session, note, notes, labels=_INTERLEAVED)
+        assert saved.content is not None
+        assert saved.content["psychotherapy"]["psychotherapy_time"] == "22 minutes"
+        after = build_visit_times(session, saved, None).psychotherapy
+        assert after is not None
+        assert after.disagrees
+
+        # "Use my minutes": the dictated count stays and nothing is left to settle.
+        kept = _confirm(session, saved, notes, minutes=22, resolution="keep_dictated")
+        assert kept.content is not None
+        assert kept.content["psychotherapy"]["psychotherapy_time"] == "22 minutes"
+        settled = build_visit_times(session, kept, None).psychotherapy
+        assert settled is not None
+        assert not settled.disagrees
+        assert settled.confirmed_minutes == 22
+
+    def test_a_label_on_a_turn_after_the_client_left_is_rejected(
+        self, notes: InMemoryNotesRepository
+    ) -> None:
+        session = _session()
+        note = notes.add(_note(session))
+
+        with pytest.raises(UnprocessableEntityError):
+            _confirm(session, note, notes, labels=[{"seconds": 3960.0, "label": "therapy"}])
+
+    def test_a_request_gives_exactly_one_shape(self) -> None:
+        with pytest.raises(ValueError, match="exactly one"):
+            ConfirmPsychotherapyWindowRequest(minutes=10, labels=[])
 
 
 _FOLLOW_UP = PracticeNoteTypeSpec.model_validate(
@@ -559,7 +779,7 @@ _FOLLOW_UP = PracticeNoteTypeSpec.model_validate(
 )
 
 
-class TestDraftProposesAStart:
+class TestDraftProposesTheTime:
     def _draft(self, *responses: dict[str, Any]) -> tuple[Any, FakeStructuredLLMGateway]:
         registry = NoteTypeRegistry()
         register_builtin_note_types(registry)
@@ -582,44 +802,59 @@ class TestDraftProposesAStart:
         )
         return result, gateway
 
-    def test_the_draft_marks_a_start_after_the_medication_check(self) -> None:
+    def test_the_draft_returns_the_dictated_time_and_the_turns_are_labeled(self) -> None:
         drafted = {
             "plan": {"follow_up": "Four weeks."},
             "psychotherapy": {
-                "psychotherapy_time": "Not stated.",
+                "psychotherapy_time": "Psychotherapy 41 minutes, as the clinician said.",
                 "modality_interventions": "Cognitive restructuring of the replayed argument.",
             },
-            "psychotherapy_start": {
-                "transcript_time": "12:30",
-                "cued_by_clinician": False,
-                "stated_clock_time": "",
+            "psychotherapy_time_stated": {
+                "start": "",
+                "end": "",
+                "minutes": 41,
+                "as_dictated": "forty-one minutes of therapy",
             },
         }
-        attribution = {"attributions": [{"claim": 1, "segments": [4]}]}
-
-        result, gateway = self._draft(drafted, attribution)
-
-        assert "psychotherapy_start" in gateway.calls[0]["response_schema"]["properties"]
-        assert "psychotherapy_start" not in result.content
-        # The mark (12:30) and the attributed turn (30:00) disagree: both offered,
-        # neither the client-present span's start.
-        assert result.psychotherapy_start == {
-            "candidates": [
-                {"seconds": 750.0, "source": "marked"},
-                {"seconds": 1800.0, "source": "attributed"},
+        labeled = {
+            "runs": [
+                {"first_segment": 0, "last_segment": 2, "label": "medication_management"},
+                {"first_segment": 3, "last_segment": 5, "label": "therapy"},
             ],
-            "stated_clock_time": None,
+            "cue_segment": 3,
         }
 
-    def test_an_unreadable_mark_and_a_failed_attribution_propose_nothing(self) -> None:
+        result, gateway = self._draft(drafted, labeled)
+
+        assert "psychotherapy_time_stated" in gateway.calls[0]["response_schema"]["properties"]
+        assert "psychotherapy_time_stated" not in result.content
+        # The field is rendered from the parts, not the model's own sentence.
+        assert result.content["psychotherapy"]["psychotherapy_time"] == "41 minutes"
+        # Only the six turns before the client left are labeled; the addendum never is.
+        assert "[S5]" in gateway.calls[1]["user_prompt"]
+        assert "[S6]" not in gateway.calls[1]["user_prompt"]
+        assert "Addendum" not in gateway.calls[1]["user_prompt"]
+        assert result.psychotherapy_proposal == {
+            "dictated": {
+                "start": None,
+                "end": None,
+                "minutes": 41,
+                "as_dictated": "forty-one minutes of therapy",
+            },
+            "labels": _CONTIGUOUS,
+            "cue_seconds": 750.0,
+        }
+
+    def test_nothing_stated_and_a_failed_labeling_propose_nothing(self) -> None:
         drafted = {
-            "psychotherapy": {"modality_interventions": ""},
-            "psychotherapy_start": {"transcript_time": "later on", "stated_clock_time": ""},
+            "psychotherapy": {"psychotherapy_time": "Not stated.", "modality_interventions": ""},
+            "psychotherapy_time_stated": {"start": "", "end": "", "as_dictated": ""},
         }
 
         result, _gateway = self._draft(drafted)
 
-        assert result.psychotherapy_start is None
+        assert result.psychotherapy_proposal is None
+        assert result.content["psychotherapy"]["psychotherapy_time"] == ""
 
 
 @pytest.fixture

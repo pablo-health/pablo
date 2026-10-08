@@ -319,7 +319,7 @@ export default function SessionDetailPage({ params }: PageProps) {
                 modality={session.video_link ? "telehealth" : undefined}
               />
             )}
-            {note && <VisitTimesPanel sessionId={session.id} readonly={!noteEditable} />}
+            {note && <VisitTimesPanel sessionId={session.id} readonly={!noteEditable} note={note} />}
 
             {note && <RedraftStatus status={note.status} requestFailed={redraftNote.isError} />}
 

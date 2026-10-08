@@ -308,7 +308,7 @@ class SessionService:
             content=result.content,
             user_id=user_id,
             note_type_version=result.note_type_version,
-            psychotherapy_start=result.psychotherapy_start,
+            psychotherapy_proposal=result.psychotherapy_proposal,
         )
         if step is not None:
             step.store(note, definition, chart, drafted, result.content)

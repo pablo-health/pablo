@@ -270,9 +270,10 @@ class NoteRow(Base):
     # Values the clinician supplied for the note type's declared inputs,
     # kept so generation sees the same context every time it runs.
     note_inputs: Mapped[dict | None] = mapped_column(JSONB)
-    # The visit's psychotherapy window: the start the draft proposed and the
-    # one the clinician confirmed (see app.notes.visit_times). Kept apart from
-    # content so a redraft keeps the confirmation.
+    # The visit's psychotherapy time: what the draft proposed (the time the
+    # clinician dictated, a label per turn) and what the clinician confirmed
+    # (see app.notes.visit_times). Kept apart from content so a redraft keeps
+    # the confirmation.
     psychotherapy_window: Mapped[dict | None] = mapped_column(JSONB)
     # AI-generated and clinician-edited note bodies. Shape varies by
     # note_type; the registry owns validation. Mirrors the existing

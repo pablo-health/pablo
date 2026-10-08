@@ -28,7 +28,7 @@ from app.services.note_generation_service import (
 )
 from app.services.note_import_service import _build_extract_schema
 from app.services.note_type_derive_service import derive_response_schema
-from app.services.psychotherapy_start import START_KEY, START_SCHEMA
+from app.services.therapy_labels import LABEL_SCHEMA, TIME_KEY, TIME_SCHEMA
 from jsonschema import Draft202012Validator
 
 from .test_generation_fallback import instance
@@ -55,10 +55,10 @@ def _templates() -> list[NoteTypeDefinition]:
 
 
 def _draft_schema(definition: NoteTypeDefinition) -> dict[str, Any]:
-    """What a draft asks for, the psychotherapy start included where it is asked."""
+    """What a draft asks for, the dictated psychotherapy time included where it is asked."""
     schema = _build_registry_response_schema(definition)
     if any(s.key == PSYCHOTHERAPY_SECTION_KEY for s in definition.sections):
-        schema["properties"][START_KEY] = START_SCHEMA
+        schema["properties"][TIME_KEY] = TIME_SCHEMA
     return schema
 
 
@@ -106,7 +106,7 @@ def test_an_import_schema_translates(definition: NoteTypeDefinition) -> None:
     Draft202012Validator(translated).validate(instance(translated))
 
 
-def test_the_large_templates_carry_diagnoses_and_the_psychotherapy_start() -> None:
+def test_the_large_templates_carry_diagnoses_and_the_psychotherapy_time() -> None:
     """The cases the plain registry types do not exercise."""
     schemas = [to_json_schema(_draft_schema(d)) for d in _templates()]
     kinds = [
@@ -116,7 +116,7 @@ def test_the_large_templates_carry_diagnoses_and_the_psychotherapy_start() -> No
         for field in section.get("properties", {}).values()
     ]
     assert to_json_schema(DIAGNOSES_SCHEMA) in kinds
-    assert any(START_KEY in schema["properties"] for schema in schemas)
+    assert any(TIME_KEY in schema["properties"] for schema in schemas)
 
 
 def test_a_diagnosis_needs_its_label_on_the_bedrock_leg() -> None:
@@ -126,12 +126,17 @@ def test_a_diagnosis_needs_its_label_on_the_bedrock_leg() -> None:
     assert to_json_schema(DIAGNOSES_SCHEMA)["items"]["title"] == "StatedDiagnosis"
 
 
-def test_the_psychotherapy_start_translates() -> None:
-    start = Draft202012Validator(to_json_schema(START_SCHEMA))
-    assert start.is_valid(
-        {"transcript_time": "00:02:10", "cued_by_clinician": True, "stated_clock_time": ""}
-    )
-    assert not start.is_valid({"cued_by_clinician": "yes"})
+def test_the_dictated_psychotherapy_time_translates() -> None:
+    stated = Draft202012Validator(to_json_schema(TIME_SCHEMA))
+    assert stated.is_valid({"start": "10:14", "end": "", "minutes": 41, "as_dictated": "41"})
+    assert not stated.is_valid({"minutes": "forty-one"})
+
+
+def test_the_turn_labels_translate() -> None:
+    labels = Draft202012Validator(to_json_schema(LABEL_SCHEMA))
+    run = {"first_segment": 0, "last_segment": 4, "label": "therapy"}
+    assert labels.is_valid({"runs": [run], "cue_segment": -1})
+    assert not labels.is_valid({"runs": [{**run, "label": "billable"}]})
 
 
 def test_the_derive_schema_translates_and_accepts_a_proposal() -> None:

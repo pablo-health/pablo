@@ -41,11 +41,13 @@ line sits under Prescriptions rather than Plan.
 | `suffix_only_where_stated` | a chart-fed field (each history field the template fills from the chart, the current medications, the allergies) is marked "(stated this visit" when the case says nothing new was stated about it, or unmarked when it was | the mark is how the clinician finds what to update at signing: missing, a change goes unnoticed; stray, it asks for review of nothing |
 | `history_from_chart` | a history field the template fills from the chart does not start with the chart's text word for word, or with "Not recorded" when the chart has nothing, or carries anything after it that is not marked | history comes from the chart as recorded; what the visit adds follows it, marked |
 | `history_from_visit` | in a template that takes history from the visit (the evaluation), a field the visit covered is empty, "Not recorded" or "Not stated.", or leaves out what was said | an intake writes the history it took |
+| `therapy_minutes` | where the clinician dictated minutes, the draft does not return them as dictated; in a case drafted as a recorded visit with every turn labeled: a turn after the client left is labeled, the turns proposed as therapy add up to more than the client was present, to anything for a visit with no therapy, or to a sum more than one turn (the longest turn while the client was present) from the labeled one | the therapy minutes are the therapy turns, wherever they fall in the visit; the dictated tail is never counted; a dictated count is what the note carries |
 | `hpi_by_domain` | in the follow-up, which takes the history by symptom domain: a domain the visit covered is empty or "Not discussed.", or leaves out what was said; a domain that never came up reads anything but "Not discussed." | each domain records this visit's pertinent positives and negatives, and a question never asked is not written up as a denial |
 | `counseling_only_as_stated` | the plan's education or lifestyle counseling is written when the clinician explained or advised nothing (a "None." item included), or leaves out what the clinician did explain | counseling an auditor reads is counseling that happened |
 
 The checks are unit-tested on hand-made drafts, passing and failing, in
-`backend/tests/test_note_template_eval_scorers.py`.
+`backend/tests/test_note_template_eval_scorers.py` and, for the therapy
+minutes, `backend/tests/test_note_template_eval_therapy_minutes.py`.
 
 ## Cases
 
@@ -64,6 +66,9 @@ values entered before the visit and the chart behind it are in `cases.py`.
 | `follow-up-empty-chart` | sleep only; no diagnosis named | in office; nothing on the chart | every history field and the allergies "Not recorded", the medications "None recorded", no mark; no diagnosis; "Not recorded (not asked this visit)" for every substance but alcohol and cannabis |
 | `evaluation-empty-chart` | an intake: the client lists two medications and denies allergies; the clinician states two coded diagnoses | telehealth, 90792; nothing on the chart | each history field from what the client said; "None recorded", then levothyroxine and omeprazole, marked; escitalopram in the plan only; allergies "Not recorded (stated this visit: …)" with the denial quoted; F41.0 and F41.1 and no other diagnosis; the dictated 2:00 to 2:55 and 90792 and no other time or code |
 | `follow-up-risk-language` | passive suicidal ideation; the clinician states the level and the safety plan in the dictation | telehealth; one coded problem, NKDA, sertraline 150 | ideation quoted; overall risk the clinician's "moderate", quoted, never outside a quotation; the safety plan written; 200 mg in the plan, 150 in the current list |
+| `follow-up-interleaved` | recorded: therapy, a medication check in the middle, more therapy, the risk screen near the end; codes dictated, no minutes | telehealth; nothing on the chart | therapy turns adding up to 22 minutes (1331 s), give or take one turn; none of the dictated tail labeled; 99214 and 90833 |
+| `follow-up-interleaved-dictated-minutes` | recorded: therapy, a screen, therapy, a medication check, therapy; the clinician dictates thirty minutes | telehealth; nothing on the chart | therapy turns adding up to 24 minutes (1497 s), give or take one turn; 30 minutes returned as dictated and in the note |
+| `follow-up-no-therapy-recorded` | recorded: the `medication_only` sample | in office; bupropion | no turn labeled therapy; an empty psychotherapy section |
 
 In the medication-only sample the clinician asks "Any alcohol or anything
 else?" and the client answers only about alcohol. Other substances are

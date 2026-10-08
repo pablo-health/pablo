@@ -39,8 +39,8 @@ class TemplateCase:
     addendum. Each ``quoted`` pair is a field and a phrase it must quote.
     With ``fill_unnamed`` off, fields the case does not name are not graded.
     ``therapy_starts_between`` is ``(low, high)`` in seconds into the
-    recording: every psychotherapy start the draft proposes is at or after
-    ``low``, and the first one offered is no later than ``high``.
+    recording: no turn before ``low`` is labeled therapy, and the first
+    turn labeled therapy is no later than ``high``.
     ``confirmed_start_seconds`` is the therapy start the clinician confirms:
     once confirmed, the psychotherapy time field must read the window from
     there to where the client left, as the visit-times panel writes it.

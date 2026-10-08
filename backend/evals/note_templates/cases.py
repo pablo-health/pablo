@@ -17,7 +17,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import date
 from functools import cache
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.notes.chart_context import (
     ChartContext,
@@ -29,6 +29,9 @@ from app.notes.practice_types import PracticeNoteTypeSpec
 from app.notes.spec_templates import TEMPLATES_DIR
 
 from evals.note_templates import visits
+
+if TYPE_CHECKING:
+    from app.notes.visit_times import TurnLabel
 
 
 @dataclass(frozen=True)
@@ -125,6 +128,13 @@ class TemplateCase:
     """The chart's active medications, as the clinician last recorded them."""
     history: tuple[ChartHistoryField, ...] = ()
     """The chart's recorded history fields. Every other history field is "Not recorded"."""
+    recorded: bool = False
+    """Drafted as a recorded visit: where the client left is measured from the
+    transcript, and what the clinician says after it is the dictated addendum."""
+    segment_labels: tuple[tuple[str, TurnLabel], ...] | None = None
+    """What every turn the client was present for was, as runs: each label
+    holds from its turn's timestamp until the next run starts. The therapy
+    minutes the draft proposes are graded against these."""
 
     @property
     def chart(self) -> ChartContext:
@@ -512,6 +522,75 @@ FOLLOW_UP_RISK_LANGUAGE = TemplateCase(
     ),
 )
 
+FOLLOW_UP_INTERLEAVED = TemplateCase(
+    name="follow-up-interleaved",
+    template="psychiatric_follow_up",
+    visit=visits.INTERLEAVED_MEDICATION_CHECK,
+    session_date=date(2026, 4, 2),
+    inputs=TELEHEALTH,
+    recorded=True,
+    segment_labels=(
+        ("00:00:04", "admin"),
+        ("00:00:14", "therapy"),
+        ("00:07:40", "medication_management"),
+        ("00:10:05", "therapy"),
+        ("00:24:50", "screening_risk"),
+        ("00:27:00", "admin"),
+    ),
+    expected=Expected(
+        therapy=True,
+        codes=("99214", "90833"),
+        telehealth=TELEHEALTH_LOCATIONS,
+        diagnoses=(Diagnosis(None, ("depress",)),),
+    ),
+)
+
+FOLLOW_UP_INTERLEAVED_DICTATED = TemplateCase(
+    name="follow-up-interleaved-dictated-minutes",
+    template="psychiatric_follow_up",
+    visit=visits.INTERLEAVED_DICTATED_MINUTES,
+    session_date=date(2026, 4, 3),
+    inputs=TELEHEALTH,
+    recorded=True,
+    segment_labels=(
+        ("00:00:05", "admin"),
+        ("00:00:18", "therapy"),
+        ("00:07:55", "screening_risk"),
+        ("00:09:40", "therapy"),
+        ("00:18:40", "medication_management"),
+        ("00:21:10", "therapy"),
+        ("00:29:30", "admin"),
+    ),
+    expected=Expected(
+        therapy=True,
+        codes=("99214", "90833"),
+        minutes=("30",),
+        telehealth=TELEHEALTH_LOCATIONS,
+        diagnoses=(Diagnosis(None, ("panic",)),),
+    ),
+)
+
+# The medication-only sample as a recorded visit: no turn is therapy.
+FOLLOW_UP_NO_THERAPY_RECORDED = TemplateCase(
+    name="follow-up-no-therapy-recorded",
+    template="psychiatric_follow_up",
+    sample="medication_only",
+    session_date=date(2026, 3, 13),
+    inputs={"place_of_service": "In office"},
+    medications=(ChartMedication("Bupropion XL", "150 mg", "every morning"),),
+    recorded=True,
+    segment_labels=(
+        ("00:00:04", "medication_management"),
+        ("00:00:27", "screening_risk"),
+        ("00:00:39", "medication_management"),
+    ),
+    expected=Expected(
+        therapy=False,
+        diagnoses=(Diagnosis(None, ("depress",)),),
+        current_medications=("Bupropion XL 150 mg, every morning",),
+    ),
+)
+
 ALL_CASES: tuple[TemplateCase, ...] = (
     FOLLOW_UP_WITH_THERAPY,
     FOLLOW_UP_MEDICATION_ONLY,
@@ -522,4 +601,7 @@ ALL_CASES: tuple[TemplateCase, ...] = (
     FOLLOW_UP_EMPTY_CHART,
     EVALUATION_EMPTY_CHART,
     FOLLOW_UP_RISK_LANGUAGE,
+    FOLLOW_UP_INTERLEAVED,
+    FOLLOW_UP_INTERLEAVED_DICTATED,
+    FOLLOW_UP_NO_THERAPY_RECORDED,
 )

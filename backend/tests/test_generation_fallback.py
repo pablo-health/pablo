@@ -40,13 +40,13 @@ from app.services.note_generation_service import (
 )
 from app.services.note_import_service import NoteImportService
 from app.services.note_type_derive_service import NoteTypeDeriveService
-from app.services.psychotherapy_start import START_KEY
 from app.services.structured_llm_gateway import (
     StructuredCompletion,
     StructuredLLMGateway,
     StructuredOutputTruncatedError,
     register_structured_llm_provider,
 )
+from app.services.therapy_labels import TIME_KEY
 from app.settings import get_settings
 
 from .test_note_type_derive import PROPOSAL
@@ -371,16 +371,17 @@ class TestNoteDrafting:
         assert generated.content["assessment"]["formulation"] == WRITTEN
         assert provider.models == [PRIMARY, FALLBACK]
 
-    def test_the_psychotherapy_start_parses_from_the_fallback(
+    def test_the_dictated_psychotherapy_time_parses_from_the_fallback(
         self, serve: Callable[[Provider], Provider]
     ) -> None:
         def answer(schema: dict[str, Any]) -> dict[str, Any]:
             data: dict[str, Any] = instance(schema)
-            if START_KEY in data:
-                data[START_KEY] = {
-                    "transcript_time": "00:02:10",
-                    "cued_by_clinician": True,
-                    "stated_clock_time": "",
+            if TIME_KEY in data:
+                data[TIME_KEY] = {
+                    "start": "10:14",
+                    "end": "10:55",
+                    "minutes": 41,
+                    "as_dictated": "Psychotherapy from 10:14 to 10:55, 41 minutes.",
                 }
             return data
 
@@ -392,10 +393,11 @@ class TestNoteDrafting:
         )
 
         assert generated.content["psychotherapy"]["interventions"] == WRITTEN
-        assert generated.psychotherapy_start is not None
-        assert {"seconds": 130.0, "source": "spoken_cue"} in generated.psychotherapy_start[
-            "candidates"
-        ]
+        assert generated.psychotherapy_proposal is not None
+        assert generated.psychotherapy_proposal["dictated"]["minutes"] == 41
+        assert generated.content["psychotherapy"]["psychotherapy_time"] == (
+            "10:14 to 10:55, 41 minutes"
+        )
 
     def test_a_fallback_that_refuses_does_not_mask_the_primarys_answer(
         self, serve: Callable[[Provider], Provider]

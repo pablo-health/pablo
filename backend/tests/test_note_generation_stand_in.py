@@ -570,3 +570,61 @@ def test_a_substance_field_is_the_baseline_then_the_visits_screen(
     )
     substance = generated.content["substance_use"]
     assert (substance["alcohol"], substance["cannabis"]) == (alcohol, cannabis)
+
+
+_INTERLEAVED = "\n".join(
+    [
+        "[00:00:05] Therapist: Hi, good to see you today.",
+        "[00:01:00] Therapist: Now let's get into the session work you wanted.",
+        "[00:01:30] Client: I keep replaying the argument with my sister.",
+        "[00:15:00] Therapist: Quick check: any side effects since the dose change?",
+        "[00:16:00] Client: No, sleep is better than it was.",
+        "[00:20:00] Therapist: Back to the argument. What did you tell yourself?",
+        "[00:35:00] Therapist: Any thoughts of hurting yourself?",
+        "[00:35:30] Client: No, none at all, not even close.",
+        "[00:40:10] Client: Thank you, see you next month then.",
+        "[00:41:00] Therapist: Addendum. Psychotherapy 30 minutes.",
+    ]
+)
+
+
+def test_the_stand_in_labels_the_turns_and_hears_the_dictated_minutes(
+    stand_in: list[str],
+) -> None:
+    spec = {
+        "label": "Follow-up",
+        "sections": [
+            {
+                "key": "psychotherapy",
+                "label": "Psychotherapy",
+                "fields": [{"key": "psychotherapy_time", "label": "Psychotherapy time"}],
+            }
+        ],
+    }
+    definition = to_definition("custom.e2e", 1, PracticeNoteTypeSpec.model_validate(spec))
+
+    generated = _service().generate_note(
+        definition.key,
+        Transcript(format="txt", content=_INTERLEAVED),
+        PATIENT,
+        NOW,
+        definition=definition,
+        client_present_end_seconds=2414.0,
+    )
+
+    proposal = generated.psychotherapy_proposal
+    assert proposal is not None
+    assert [run["label"] for run in proposal["labels"]] == [
+        "admin",
+        "therapy",
+        "therapy",
+        "medication_management",
+        "medication_management",
+        "therapy",
+        "screening_risk",
+        "screening_risk",
+        "admin",
+    ]
+    assert proposal["cue_seconds"] == 60.0
+    assert proposal["dictated"]["minutes"] == 30
+    assert generated.content["psychotherapy"]["psychotherapy_time"] == "30 minutes"

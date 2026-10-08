@@ -4,14 +4,18 @@
 
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { useVisitTimes } from "@/hooks/useVisitTimes"
+import { useMdmLevel } from "@/hooks/useMdmReview"
 import { useUserTimeZone } from "@/hooks/usePreferences"
-import { clientPresentLineText, visitLineText } from "@/lib/visitTimes"
+import type { Note } from "@/types/notes"
+import { clientPresentLineText, durationsLineText, visitLineText } from "@/lib/visitTimes"
 import { PsychotherapyWindow } from "./PsychotherapyWindow"
 
 /**
  * A recorded visit's times, above its note: when it started and ended, how
  * long the client was on the recording, and — for a note with a
- * psychotherapy section — the therapy portion's confirmed minutes.
+ * psychotherapy section — the therapy portion's confirmed minutes. Once the
+ * therapy minutes are confirmed it states both durations, the whole visit's
+ * and the therapy's, as a coded note's header does.
  *
  * Total time including documentation is shown only for a note without a
  * psychotherapy section: it counts only for a visit chosen by time, and a
@@ -20,10 +24,14 @@ import { PsychotherapyWindow } from "./PsychotherapyWindow"
 export function VisitTimesPanel({
   sessionId,
   readonly,
+  note,
 }: {
   sessionId: string
   readonly?: boolean
+  /** The session's note: its chosen MDM level flags a thin medical visit. */
+  note?: Note | null
 }) {
+  const mdmLevel = useMdmLevel(note)
   const timeZone = useUserTimeZone()
   const people = usePeopleTerm()
   const { data: times } = useVisitTimes(sessionId)
@@ -36,6 +44,7 @@ export function VisitTimesPanel({
     people,
   )
   const psychotherapy = times.psychotherapy
+  const durations = durationsLineText(times)
   if (!visit && !present && !psychotherapy?.offered && times.total_with_documentation_minutes === null) {
     return null
   }
@@ -52,6 +61,11 @@ export function VisitTimesPanel({
           {present}
         </p>
       )}
+      {durations && (
+        <p data-testid="durations-line" className="text-sm text-neutral-700">
+          {durations}
+        </p>
+      )}
       {psychotherapy?.offered && (
         <PsychotherapyWindow
           sessionId={sessionId}
@@ -59,6 +73,7 @@ export function VisitTimesPanel({
           startedAt={times.recording_started_at}
           timeZone={timeZone}
           readonly={readonly}
+          mdmLevel={mdmLevel}
         />
       )}
       {times.total_with_documentation_minutes !== null && (
