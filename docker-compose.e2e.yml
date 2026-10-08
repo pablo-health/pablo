@@ -402,8 +402,10 @@ services:
       dockerfile: backend/Dockerfile.dev
     # Two entrypoints, in this order, because they do different halves of the
     # job. ``migrate.py`` brings the platform schema and the ``practice``
-    # TEMPLATE to head; it does not touch the per-practice schemas at all, and
-    # ``migrate_tenants.py`` is what fans the tenant chain out across those.
+    # TEMPLATE to head and then provisions (on an empty database, the
+    # deployment's own practice, cloned from that template at head); it does
+    # not migrate existing per-practice schemas, and ``migrate_tenants.py`` is
+    # what fans the tenant chain out across those.
     # A deployment runs both as separate jobs; a stack that ran only the first
     # would be correct on a fresh volume — where every practice is provisioned
     # from the freshly-regenerated template — and would silently leave an

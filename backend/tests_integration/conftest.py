@@ -187,14 +187,52 @@ def pytest_configure(config: pytest.Config) -> None:
     os.environ["DATABASE_BACKEND"] = "postgres"
 
     _build_platform_schema(pablo_url)
+    _provision_schemas(pablo_url)
+
+
+def _provision_schemas(database_url: str) -> None:
+    """Provision the template and the default practice, as the migrate step does.
+
+    Importing the app used to do this, so every test that built the app got it
+    for free. The app no longer touches the database when it starts; the migrate
+    step (``bin/migrate.py``) provisions, so the suite runs the same call once
+    per session, in its own process like the platform chain above.
+    """
+    import subprocess  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    backend_dir = Path(__file__).resolve().parents[1]
+    env = {**os.environ, "DATABASE_URL": database_url, "DATABASE_BACKEND": "postgres"}
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from app.db import get_engine\n"
+            "from app.db.provisioning import ensure_schemas\n"
+            "ensure_schemas(get_engine())\n",
+        ],
+        cwd=backend_dir,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        msg = (
+            "Could not provision schemas for the integration suite.\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+        raise RuntimeError(msg)
 
 
 def _build_platform_schema(database_url: str) -> None:
     """Build the platform schema once per session, the way production builds it.
 
-    Boot does not build it — ``ensure_schemas`` checks and refuses — so anything
-    that constructs the app needs it to exist first. Before the platform chain
-    existed, ``ensure_schemas`` built it itself with
+    Nothing else builds it — provisioning (``ensure_schemas``) checks and
+    refuses — so anything that provisions or constructs the app needs it
+    first. Before the platform chain existed, ``ensure_schemas`` built it
+    itself with
     ``PlatformBase.metadata.create_all``, and this suite inherited that for free.
 
     Running the real chain rather than ``create_all`` is the point, not a

@@ -15,9 +15,12 @@ before migrating — so it holds for every caller (`make migrate`, the template
 regen, the tests), not only for this entrypoint.
 
 After a successful upgrade this also moves a pre-provisioning deployment onto
-its own practice schema, if it is still on the template. See
+its own practice schema, if it is still on the template (see
 ``_run_single_practice_migration`` for why that belongs here rather than in the
-boot path or in an operator's hands.
+boot path or in an operator's hands), and then provisions: the template, and on
+an empty database the deployment's own practice (``app.db.provisioning.
+ensure_schemas``). The app itself touches no database when it starts, so this
+step has to run before it does — on a fresh install as on every upgrade.
 """
 
 from __future__ import annotations
@@ -131,6 +134,30 @@ def _run_single_practice_migration() -> int:
     return 0
 
 
+def _provision_schemas() -> None:
+    """Provision the template and, on an empty database, the deployment's practice.
+
+    Runs after the practice migration, which has to move an old install off the
+    template first: provisioning refuses a registry that still points there.
+    Idempotent, so an existing deployment does nothing. Not guarded: a refusal
+    here fails the migrate job, which is what keeps a revision that could not
+    serve from rolling out.
+    """
+    from app.db import get_engine  # noqa: PLC0415
+    from app.db.provisioning import ensure_schemas  # noqa: PLC0415
+
+    ensure_schemas(get_engine())
+
+
+def _after_upgrade() -> int:
+    """The practice migration, then provisioning. A process exit code."""
+    rc = _run_single_practice_migration()
+    if rc != 0:
+        return rc
+    _provision_schemas()
+    return 0
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     os.chdir(Path(__file__).resolve().parent.parent)
@@ -176,4 +203,4 @@ if __name__ == "__main__":
     if rc:
         sys.exit(rc)
 
-    sys.exit(_run_single_practice_migration() if _is_upgrade(args) else 0)
+    sys.exit(_after_upgrade() if _is_upgrade(args) else 0)

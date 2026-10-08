@@ -49,14 +49,13 @@ from unittest.mock import MagicMock, patch
 # which reads settings, which validates DATABASE_URL.
 plant_placeholder_database_url()
 
-# Patch database engine/session before importing app (which triggers ensure_schemas at import)
+# Patch database engine/session before importing app
 _mock_session_instance = MagicMock()
 _mock_session_factory = MagicMock(return_value=_mock_session_instance)
 _mock_engine = MagicMock()
 
 patch("app.db.get_engine", return_value=_mock_engine).start()
 patch("app.db.get_session_factory", return_value=_mock_session_factory).start()
-patch("app.db.provisioning.ensure_schemas", return_value=None).start()
 
 import pytest  # noqa: E402
 from app.auth.firebase_init import initialize_firebase_app  # noqa: E402

@@ -104,13 +104,9 @@ def pg_session(engine: Engine) -> Iterator[Session]:
 
 @pytest.fixture(scope="module")
 def fastapi_app() -> FastAPI:
-    """Import the FastAPI app lazily.
-
-    ``app.main`` runs ``ensure_schemas(get_engine())`` at import time,
-    which connects to DATABASE_URL. We defer the import until after
-    pytestmark has gated on ``DATABASE_URL`` being set.
-    """
-    from app.main import app  # noqa: PLC0415  # deferred — DB connect at import
+    """Import the FastAPI app lazily, after pytestmark has gated on
+    ``DATABASE_URL`` being set (``app.db`` reads settings on import)."""
+    from app.main import app  # noqa: PLC0415  # deferred — settings read at import
 
     return app
 

@@ -146,9 +146,12 @@ Four that are easy to get wrong:
    is load-bearing.** `create_all` used to run at boot and in the tenant
    chain's `env.py`; both are gone. So:
 
-   - **The migrate job builds schemas, boot does not.** `ensure_schemas`
-     checks the platform schema exists and refuses to serve if it
-     doesn't. `python backend/bin/migrate.py` does both chains in order.
+   - **The migrate job builds and provisions schemas; boot touches no
+     database.** `python backend/bin/migrate.py` runs both chains in
+     order, then `ensure_schemas`: the template, and on an empty database
+     the deployment's own practice. It refuses if the platform schema is
+     missing. Importing `app.main` must not connect — a slow first
+     connection on a new instance crashed the import while it did.
    - **The platform chain runs before the tenant chain**, always. Tenant
      revisions declare foreign keys into `platform.users` and create
      nothing in that schema, so the tenant chain cannot run first — it

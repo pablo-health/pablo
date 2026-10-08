@@ -2,8 +2,10 @@
 
 """Practice schema provisioning — create and migrate practice schemas.
 
-On first startup, creates the platform schema and a default practice schema.
-For Pablo Practice edition, new practices get their own schemas on demand.
+The migrate step (``backend/bin/migrate.py``) provisions the template and, on an
+empty database, the deployment's own practice (:func:`ensure_schemas`). Further
+practices get their own schemas on demand (:func:`create_practice_schema`).
+Nothing here runs on boot.
 """
 
 from __future__ import annotations
@@ -60,12 +62,12 @@ _post_provision_hooks: list[PostProvisionHook] = []
 def register_post_provision_hook(hook: PostProvisionHook) -> None:
     """Register a callback to run after a fresh tenant schema is built.
 
-    A downstream deployment's overlay registers this hook during
-    application startup so that ``create_practice_schema`` callers
-    (boot-time ``ensure_schemas``, ``PentestTenantService.provision``,
-    future provisioning paths) automatically get the overlay's own
-    per-tenant addendum applied without each call site re-implementing
-    the wrapping.
+    A downstream deployment's overlay registers this hook in every process
+    that can provision — the application at startup, and its migrate step
+    before calling :func:`ensure_schemas` — so that ``create_practice_schema``
+    callers (``ensure_schemas``, ``PentestTenantService.provision``, future
+    provisioning paths) automatically get the overlay's own per-tenant
+    addendum applied without each call site re-implementing the wrapping.
 
     Idempotent: appending the same hook twice would invoke it twice;
     the overlay's startup code is responsible for guarding against
@@ -92,25 +94,25 @@ def _now() -> datetime:
     return utc_now()
 
 
-# Arbitrary 64-bit key for the boot-time provisioning advisory lock. Any
-# constant works — the value just needs to be stable so every booting
-# instance picks the same lock. Generated once via random.randint to avoid
-# colliding with locks the application may take elsewhere.
+# Arbitrary 64-bit key for the provisioning advisory lock. Any constant works —
+# the value just needs to be stable so every concurrent migrate run picks the
+# same lock. Generated once via random.randint to avoid colliding with locks the
+# application may take elsewhere.
 _PROVISIONING_LOCK_KEY = 7283194065831042197
 
 
 def _has_any_practice(engine: Engine) -> bool:
     """Whether this deployment has registered a practice already.
 
-    The question boot needs answered before it provisions a default one, and
-    deliberately "any practice", not "the default practice". A deployment that
-    provisions tenants explicitly may never register one called ``default`` —
-    asking only about that id would conclude the database was empty and invent
-    a schema alongside a hundred real ones.
+    The question provisioning needs answered before it creates a default one,
+    and deliberately "any practice", not "the default practice". A deployment
+    that provisions tenants explicitly may never register one called
+    ``default`` — asking only about that id would conclude the database was
+    empty and invent a schema alongside a hundred real ones.
 
     Returns False on a database that has no ``platform.practices`` yet, which
-    is a first boot: the table is created moments earlier in the same
-    function, so this is belt and braces rather than an expected path.
+    is a fresh install: the platform chain creates the table before this runs,
+    so this is belt and braces rather than an expected path.
     """
     from sqlalchemy.orm import Session
 
@@ -120,7 +122,7 @@ def _has_any_practice(engine: Engine) -> bool:
             return session.query(PracticeRow.id).first() is not None
     except SQLAlchemyError:
         logger.warning(
-            "Could not read the practice registry; treating this as a first boot",
+            "Could not read the practice registry; treating this as a fresh install",
             exc_info=True,
         )
         return False
@@ -146,9 +148,9 @@ def _provision_core_schemas(engine: Engine) -> None:
     provisions its own tenants. The extra schema is in the database and in
     nobody's registry, so every per-tenant migration — they all iterate
     ``platform.practices`` — skips it forever. It drifts quietly until
-    something notices, and what notices is this same boot path: the next
-    ``create_practice_schema`` re-runs the RLS guard over the accumulated
-    staleness and refuses to start.
+    something notices, and what notices is this same provisioning path: the
+    next ``create_practice_schema`` re-runs the RLS guard over the accumulated
+    staleness and refuses.
 
     That is not hypothetical. A retired table (``booking_policy``) was dropped
     from every REGISTERED tenant, survived in one unregistered schema, and took
@@ -156,8 +158,9 @@ def _provision_core_schemas(engine: Engine) -> None:
     should never have existed.
 
     Asking the registry rather than reading a flag keeps it one rule for
-    everyone: a first boot on an empty database gets its practice with no
-    operator step, and a database that already has practices is left alone.
+    everyone: the first migrate run on an empty database gives it its practice
+    with no operator step, and a database that already has practices is left
+    alone.
     """
     create_practice_schema(engine, DEFAULT_PRACTICE_SCHEMA)
 
@@ -173,15 +176,23 @@ def _provision_core_schemas(engine: Engine) -> None:
 def ensure_schemas(engine: Engine) -> None:
     """Provision this deployment's practice schemas. Does NOT build the platform schema.
 
-    Called on application startup when database_backend=postgres.
-    Idempotent — safe to call on every boot.
+    Called by the migrate step (``backend/bin/migrate.py``) after the platform
+    chain, never on boot. Idempotent — safe to call on every migrate run.
+
+    It ran at import of ``app.main`` until 2026-10: every container start
+    opened a database connection and took this lock, to do work that only
+    matters once per database. On a new instance whose first database
+    connection was slower than ``database_connect_timeout_seconds``, the import
+    failed and the container restarted. The migrate step runs before the app
+    starts, with the database in front of it and its output in the log, which
+    is where provisioning belongs.
 
     Who owns what:
 
     * **The platform schema** — the platform chain
-      (``backend/alembic_platform/``), run by the migrate job. Boot only checks
-      that it is there, via :func:`require_platform_schema`, and refuses to
-      serve if it is not.
+      (``backend/alembic_platform/``), run by the migrate job. This only checks
+      that it is there, via :func:`require_platform_schema`, and refuses if it
+      is not.
 
       It used to be built here, by ``PlatformBase.metadata.create_all``, and
       that is the arrangement this function was shaped around. ``create_all``
@@ -197,22 +208,20 @@ def ensure_schemas(engine: Engine) -> None:
       (``backend/alembic/``) fanned out per-tenant at deploy time by
       ``app.db.migrate_tenants.fan_out``.
 
-    Concurrency: when Cloud Run starts multiple container instances
-    simultaneously (deployment rollout + min-instance warm-up overlap), every
-    instance races through this function, and provisioning a schema is not
-    atomic — two instances can both observe "schema missing" and both try to
-    build it, with the loser failing the deploy. The mutation phase is
-    serialized behind a session-scoped Postgres advisory lock so only one
-    instance runs it at a time. The lock auto-releases when the connection
-    closes.
+    Concurrency: two migrate runs can overlap (two deploys started close
+    together, a local stack beside a CI job), and provisioning a schema is not
+    atomic — both can observe "schema missing" and both try to build it, with
+    the loser failing. The mutation phase is serialized behind a session-scoped
+    Postgres advisory lock so only one runs it at a time. The lock
+    auto-releases when the connection closes.
     """
     with engine.connect() as conn:
         # pg_advisory_lock blocks until acquired. Cheap (in-memory in PG),
         # held only for the duration of provisioning (sub-second).
         conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": _PROVISIONING_LOCK_KEY})
         try:
-            # The platform schema is built by the migrate job, via
-            # ``backend/alembic_platform/``. Boot checks and refuses.
+            # The platform schema is built earlier in the migrate step, via
+            # ``backend/alembic_platform/``. This checks and refuses.
             #
             # It used to be built here, by ``PlatformBase.metadata.create_all``,
             # and that is what this whole block used to be for. ``create_all``
@@ -242,12 +251,12 @@ def ensure_schemas(engine: Engine) -> None:
             with Session(engine) as session:
                 session.execute(text(f"SET search_path = {PLATFORM_SCHEMA}, public"))
                 existing = session.get(PracticeRow, DEFAULT_PRACTICE_ID)
-                # Only register the default practice when this boot actually
+                # Only register the default practice when this run actually
                 # provisioned its schema. Writing the row on a deployment that
                 # has other practices would point the registry at a schema
                 # nothing created — the mirror image of the orphan above, and
                 # worse, because a registered-but-absent practice fails at the
-                # first request rather than at boot.
+                # first request rather than here.
                 if existing is None:
                     if not _has_any_practice(engine):
                         session.add(
@@ -267,20 +276,21 @@ def ensure_schemas(engine: Engine) -> None:
                     # were separated. Its charts are in the template schema, so
                     # re-pointing the row here would silently orphan every one
                     # of them — moving the data is a migration with a pre-flight
-                    # (``app.db.single_practice_migration``), not a line in a
-                    # boot path.
+                    # (``app.db.single_practice_migration``), which the migrate
+                    # step runs just before this.
                     #
                     # This used to warn and carry on. Carrying on means serving
                     # a database whose chart schema has no row policies at all,
-                    # and a warning in a startup log is not a control: nobody is
-                    # reading it, and the deployment looks healthy. Refusing is
-                    # the honest state — the operator gets one actionable line
-                    # instead of an install that works until someone notices it
-                    # never had isolation.
+                    # and a warning in a log is not a control: nobody is reading
+                    # it, and the deployment looks healthy. Refusing is the
+                    # honest state — the migrate step fails, so nothing rolls
+                    # out, and the operator gets one actionable line instead of
+                    # an install that works until someone notices it never had
+                    # isolation.
                     raise RuntimeError(
                         f"Practice '{DEFAULT_PRACTICE_ID}' is still registered against the "
                         f"template schema '{DEFAULT_PRACTICE_SCHEMA}', which carries no row "
-                        f"policies. Refusing to start: serving from it would run this "
+                        f"policies. Refusing to provision: serving from it would run this "
                         f"deployment without row-level security over live charts.\n\n"
                         f"    python backend/bin/migrate_default_practice.py --check\n"
                         f"    python backend/bin/migrate_default_practice.py\n\n"
