@@ -114,9 +114,10 @@ test("the clinician picks the MDM levels, then a psychotherapy portion brings th
     "Confirm the psychotherapy minutes to see it",
   )
 
-  await page.getByRole("radio", { name: "Type the minutes" }).check()
-  await page.getByLabel("Psychotherapy minutes").fill("20")
-  await page.getByRole("button", { name: "Confirm" }).click()
+  const times = page.getByTestId("visit-times")
+  await times.getByRole("button", { name: "Type the minutes" }).click()
+  await times.getByLabel("Psychotherapy minutes").fill("20")
+  await times.getByRole("button", { name: "Confirm" }).click()
   await expect(page.getByTestId("psychotherapy-confirmed")).toHaveText("20 minutes")
 
   await expect(panel.getByTestId("mdm-add-on")).toHaveText("90833 · 20 confirmed minutes")
