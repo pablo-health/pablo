@@ -271,7 +271,7 @@ export function AppointmentsList({
       )}
 
       <section>
-        <h3 className="mb-2 text-sm font-semibold text-neutral-900">{UPCOMING_HEADING}</h3>
+        <h2 className="mb-2 text-sm font-semibold text-neutral-900">{UPCOMING_HEADING}</h2>
         {upcoming.length === 0 ? (
           <p data-testid="appointments-none-upcoming" className="text-sm text-neutral-600">
             {NO_UPCOMING}
