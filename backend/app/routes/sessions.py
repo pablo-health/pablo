@@ -42,6 +42,7 @@ from ..auth.service import (
     require_baa_acceptance,
     require_cloud_tasks_invoker,
 )
+from ..chart_proposals.step import ChartProposalStep
 from ..db import release_db_connection
 from ..db.tenant_session import tenant_db_session
 from ..jobs.task_queue import enqueue
@@ -81,6 +82,9 @@ from ..repositories import (
 )
 from ..repositories import (
     get_chart_history_repository as _history_repo_factory,
+)
+from ..repositories import (
+    get_chart_proposal_repository as _proposal_repo_factory,
 )
 from ..repositories import (
     get_medication_repository as _medication_repo_factory,
@@ -306,6 +310,7 @@ def get_worker_session_service(
         _problem_repo_factory(),
         _medication_repo_factory(),
         _history_repo_factory(),
+        ChartProposalStep(_proposal_repo_factory(), _history_repo_factory()),
     )
 
 

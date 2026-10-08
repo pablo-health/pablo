@@ -45,6 +45,7 @@ from .session_service import (
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from ..chart_proposals.step import ChartProposalStep
     from ..models import Patient, TherapySession
     from ..models.note import Note
     from ..repositories import PatientRepository, TherapySessionRepository
@@ -210,6 +211,22 @@ def _filled(value: Any) -> bool:
     return True
 
 
+def source_transcript(
+    session: TherapySession, dictation_repo: SessionDictationRepository | None
+) -> Transcript:
+    """The session's transcript, then everything dictated for its note.
+
+    Only dictations that went into a redraft count; one that became an
+    addendum to a signed note is already in the record as that addendum.
+    """
+    dictations = dictation_repo.list_for_session(session.id) if dictation_repo else []
+    dictated = [d.transcript for d in dictations if d.used_as == "redraft" and d.transcript]
+    if not dictated:
+        return session.transcript
+    content = "\n\n".join([session.transcript.content, DICTATED_HEADING, *dictated])
+    return Transcript(format=session.transcript.format, content=content)
+
+
 class NoteRedraftService:
     """Start a session note's redraft, and run it off the request."""
 
@@ -220,12 +237,14 @@ class NoteRedraftService:
         note_service: NoteService,
         note_generation_service: NoteGenerationService,
         dictation_repo: SessionDictationRepository | None = None,
+        proposal_step: ChartProposalStep | None = None,
     ) -> None:
         self.session_repo = session_repo
         self.patient_repo = patient_repo
         self.note_service = note_service
         self.note_generation_service = note_generation_service
         self.dictation_repo = dictation_repo
+        self.proposal_step = proposal_step
 
     def _redraftable(self, session_id: str, user_id: str) -> tuple[TherapySession, Note]:
         session = self.session_repo.get(session_id, user_id)
@@ -296,17 +315,7 @@ class NoteRedraftService:
         return note, edits == RedraftEdits.KEEP
 
     def _source_transcript(self, session: TherapySession) -> Transcript:
-        """The session's transcript, then everything dictated for its note.
-
-        Only dictations that went into a redraft count; one that became an
-        addendum to a signed note is already in the record as that addendum.
-        """
-        dictations = self.dictation_repo.list_for_session(session.id) if self.dictation_repo else []
-        dictated = [d.transcript for d in dictations if d.used_as == "redraft" and d.transcript]
-        if not dictated:
-            return session.transcript
-        content = "\n\n".join([session.transcript.content, DICTATED_HEADING, *dictated])
-        return Transcript(format=session.transcript.format, content=content)
+        return source_transcript(session, self.dictation_repo)
 
     def run(
         self,
@@ -344,6 +353,8 @@ class NoteRedraftService:
         transcript = self._source_transcript(session)
         previous = note.content
         shown = as_shown(note.note_type, previous, note.content_edited if keep_edits else None)
+        step = self.proposal_step
+        chart = step.chart(patient) if step is not None else None
         # Nothing is held open across the model call (see generate_session_note).
         release_db_connection()
 
@@ -371,6 +382,13 @@ class NoteRedraftService:
             release_db_connection()
             raise SOAPGenerationFailedError from exc
 
+        drafted = (
+            step.draft(
+                self.note_generation_service, definition, chart, transcript, generated.content
+            )
+            if step is not None
+            else None
+        )
         # Read again: the clinician may have saved edits, or signed, meanwhile.
         current = self.note_service.get_note(note.id, user_id)
         if current.finalized_at is not None:
@@ -391,4 +409,12 @@ class NoteRedraftService:
             user_id=user_id,
             psychotherapy_proposal=generated.psychotherapy_proposal,
         )
+        if step is not None:
+            step.store(
+                note,
+                definition,
+                chart,
+                drafted,
+                as_shown(note.note_type, note.content, note.content_edited),
+            )
         return session, patient, note

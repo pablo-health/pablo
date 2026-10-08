@@ -25,6 +25,16 @@ async function openHistory(page: Page, patientId: string): Promise<void> {
   await expect(page.getByRole("tab", { name: /History/ })).toHaveAttribute("data-state", "active")
 }
 
+/** Do ``save`` and wait until the server has the value, so a reload reads it back. */
+async function saved(page: Page, save: () => Promise<void>): Promise<void> {
+  await Promise.all([
+    page.waitForResponse(
+      (r) => r.url().includes("/chart-history/") && r.request().method() === "PUT" && r.ok(),
+    ),
+    save(),
+  ])
+}
+
 test.describe("chart history", () => {
   test("a history field is edited on the chart, kept across a reload, and its earlier value stays", async ({
     api,
@@ -38,7 +48,7 @@ test.describe("chart history", () => {
 
     await field.getByRole("button", { name: "Add Living situation" }).click()
     await field.getByLabel("Living situation").fill("Lives with spouse and two children.")
-    await field.getByRole("button", { name: "Save" }).click()
+    await saved(page, () => field.getByRole("button", { name: "Save" }).click())
     await expect(field).toContainText("Lives with spouse and two children.")
 
     await page.reload()
@@ -47,7 +57,7 @@ test.describe("chart history", () => {
 
     await field.getByRole("button", { name: "Edit Living situation" }).click()
     await field.getByLabel("Living situation").fill("Separated in August; lives alone.")
-    await field.getByRole("button", { name: "Save" }).click()
+    await saved(page, () => field.getByRole("button", { name: "Save" }).click())
 
     await page.reload()
     await expect(field.getByText("Separated in August; lives alone.")).toBeVisible()

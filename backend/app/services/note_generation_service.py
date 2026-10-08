@@ -18,7 +18,7 @@ import dataclasses
 import json
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -45,7 +45,6 @@ from ..notes.client_present import (
 from ..notes.diagnoses import DIAGNOSES_KIND_LABEL, DIAGNOSES_SCHEMA, coerce_diagnoses
 from ..notes.practice_types import PromptBlocks, render_user_prompt
 from ..notes.prompts.soap import SOAP_SYSTEM_PROMPT
-from ..notes.registry import is_practice_key
 from ..notes.visit_times import (
     PSYCHOTHERAPY_SECTION_KEY,
     PSYCHOTHERAPY_TIME_FIELD,
@@ -78,6 +77,9 @@ from .therapy_labels import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: One structured call: ``(system_prompt, user_prompt, response_schema)`` to the reply.
+CompleteStructured = Callable[[str, str, dict[str, Any]], dict[str, Any]]
 
 
 class TransientNoteGenerationError(Exception):
@@ -233,6 +235,14 @@ class NoteGenerationService(ABC):
             ValueError: If generation fails.
         """
 
+    def chart_proposal_completion(self) -> CompleteStructured | None:
+        """The structured call a draft's chart proposals are asked through.
+
+        The same model and provider as the draft (see
+        :mod:`app.chart_proposals.drafting`). ``None`` proposes nothing.
+        """
+        return None
+
 
 class RegistryNoteGenerationService(NoteGenerationService):
     """Real implementation: registry-driven prompts via the structured gateway.
@@ -358,11 +368,11 @@ class RegistryNoteGenerationService(NoteGenerationService):
         else:
             system_prompt = _DEFAULT_GENERATION_PROMPT_SYSTEM
 
-        # Allergies, medications and history go to the types a practice
-        # defines for itself — the prescriber's notes, which must state them —
-        # and not to the built-in therapy formats, which have no place for them.
+        # Allergies, medications and history go to the types that ask for them
+        # (the prescriber's notes, which must state them) and not to the
+        # built-in therapy formats, which have no place for them.
         chart_block = (
-            render_chart_block(chart, full_chart=is_practice_key(definition.key))
+            render_chart_block(chart, full_chart=definition.full_chart)
             if chart is not None and definition.reads_chart
             else None
         )
@@ -418,6 +428,25 @@ class RegistryNoteGenerationService(NoteGenerationService):
             thinking_budget=settings.note_source_attribution_thinking_budget,
             temperature=0.0,
         ).data
+
+    def chart_proposal_completion(self) -> CompleteStructured:
+        """A second call after the draft, budgeted like source attribution."""
+
+        def complete(
+            system_prompt: str, user_prompt: str, response_schema: dict[str, Any]
+        ) -> dict[str, Any]:
+            settings = get_settings()
+            return self._llm_gateway.complete_structured(
+                model=self._resolve_model(),
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_schema=response_schema,
+                max_output_tokens=settings.note_source_attribution_max_output_tokens,
+                thinking_budget=settings.note_source_attribution_thinking_budget,
+                temperature=0.0,
+            ).data
+
+        return complete
 
     def _complete_structured_with_retry(
         self,

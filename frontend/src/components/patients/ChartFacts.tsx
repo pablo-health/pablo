@@ -47,6 +47,18 @@ export function ChartFacts({ patient }: { patient: PatientResponse }) {
           </Button>
         )}
       </div>
+      {patient.allergy_status === "recorded" &&
+        patient.allergies
+          ?.filter((a) => a.note)
+          .map((a) => (
+            <p
+              key={a.substance}
+              className="text-sm text-neutral-600 md:col-span-2"
+              data-testid="allergy-note"
+            >
+              {a.substance}: {a.note}
+            </p>
+          ))}
       {editing && <AllergiesDialog patient={patient} open onOpenChange={setEditing} />}
     </>
   )

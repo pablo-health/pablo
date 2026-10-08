@@ -16,6 +16,7 @@ from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from app.chart_proposals.drafting import propose_chart_updates
 from app.models import Patient, Transcript
 from app.notes import NoteTypeRegistry, register_builtin_note_types
 from app.notes.chart_context import (
@@ -425,6 +426,9 @@ def test_a_follow_up_writes_the_charts_history_word_for_word(stand_in: list[str]
     assert content["substance_use"]["alcohol"] == (
         "Two glasses of wine on weekends. (not asked this visit)"
     )
+    # A field the chart has nothing for reads as a model writes it, not as a draft of the visit.
+    assert content["social_history"]["relationships"] == "Not recorded"
+    assert content["family_history"]["family_medical"] == "Not recorded"
 
 
 def _draft_current_medications(chart: ChartContext, transcript: str) -> list[str]:
@@ -513,6 +517,26 @@ def test_the_stand_in_reads_a_pathological_line_in_bounded_time(line: str) -> No
     _current_medications([], line)
     _stated_updates(line)
     assert time.perf_counter() - started < 0.5
+
+
+def test_the_stand_in_proposes_what_a_line_says_for_the_chart(stand_in: list[str]) -> None:
+    """A client line ``Update on <key>: <text>`` is a proposal citing that line."""
+    transcript = Transcript(
+        format="txt",
+        content="[00:01] Therapist: Anything new?\n"
+        "[00:04] Client: Update on work_school: Laid off in March.\n"
+        "[00:09] Client: Update on allergies: Penicillin - hives.",
+    )
+
+    proposals = propose_chart_updates(
+        _service().chart_proposal_completion(), ChartContext(), transcript
+    ).proposals
+
+    assert [(p.field_key, p.item_key, p.proposed_text) for p in proposals] == [
+        ("work_school", "", "Laid off in March."),
+        ("allergies", "Penicillin", "hives."),
+    ]
+    assert [[e.segment_id for e in p.evidence] for p in proposals] == [[1], [2]]
 
 
 @pytest.mark.parametrize(
