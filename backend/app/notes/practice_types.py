@@ -137,6 +137,7 @@ def to_definition(
         ),
         required_fields=required_fields,
         source_spec=spec,
+        full_chart=True,
     )
 
 
@@ -155,6 +156,7 @@ def resolve(
     full = resolved.model_copy(update={"label": spec.label, "description": spec.description})
     return replace(
         to_definition(key, version, full, required_fields=base.required_fields),
+        full_chart=base.full_chart,
         based_on=BasedOn(
             key=base.key, label=base.label, additions=patch.additions(), hidden=patch.hidden()
         ),

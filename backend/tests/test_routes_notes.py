@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from app.chart_history.service import ChartHistoryService
+from app.chart_proposals.step import ChartProposalStep
 from app.main import app
 from app.medications.schemas import CreateMedicationRequest
 from app.medications.service import MedicationService
@@ -29,6 +30,7 @@ from app.problems.schemas import AddProblemRequest
 from app.problems.service import ProblemService
 from app.repositories import (
     InMemoryChartHistoryRepository,
+    InMemoryChartProposalRepository,
     InMemoryMedicationRepository,
     InMemoryNotesRepository,
     InMemoryPatientProblemRepository,
@@ -184,6 +186,10 @@ def _seed_patient(
         updated_at=now,
     )
     return patient_repo.create(patient, user_id)
+
+
+def _proposal_step() -> ChartProposalStep:
+    return ChartProposalStep(InMemoryChartProposalRepository(), InMemoryChartHistoryRepository())
 
 
 class _StubGenerator(NoteGenerationService):
@@ -519,6 +525,7 @@ class TestGenerateStandaloneNoteJob:
             problem_repo=problems,
             medication_repo=medications,
             history_repo=history,
+            proposal_step=_proposal_step(),
             note_generation_service=stub,
             user_repo=mock_user_repo,
             audit=audit,
@@ -583,6 +590,7 @@ class TestGenerateStandaloneNoteJob:
             problem_repo=InMemoryPatientProblemRepository(),
             medication_repo=InMemoryMedicationRepository(),
             history_repo=InMemoryChartHistoryRepository(),
+            proposal_step=_proposal_step(),
             note_generation_service=_FailingGenerator(),
             user_repo=mock_user_repo,
             audit=MagicMock(),
@@ -632,6 +640,7 @@ class TestGenerateStandaloneNoteJob:
                 problem_repo=InMemoryPatientProblemRepository(),
                 medication_repo=InMemoryMedicationRepository(),
                 history_repo=InMemoryChartHistoryRepository(),
+                proposal_step=_proposal_step(),
                 note_generation_service=_TransientGenerator(),
                 user_repo=mock_user_repo,
                 audit=MagicMock(),
@@ -648,6 +657,7 @@ class TestGenerateStandaloneNoteJob:
             problem_repo=InMemoryPatientProblemRepository(),
             medication_repo=InMemoryMedicationRepository(),
             history_repo=InMemoryChartHistoryRepository(),
+            proposal_step=_proposal_step(),
             note_generation_service=_TransientGenerator(),
             user_repo=mock_user_repo,
             audit=MagicMock(),

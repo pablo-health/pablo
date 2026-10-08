@@ -141,6 +141,9 @@ vi.mock("@/components/payments/ChargeCardSection", () => ({
 vi.mock("@/components/notes/signing/NoteSignaturePanel", () => ({
   NoteSignaturePanel: () => null,
 }))
+vi.mock("@/components/notes/chartUpdates/ChartUpdatesPanel", () => ({
+  ChartUpdatesPanel: () => null,
+}))
 vi.mock("@/hooks/useNoteSigning", () => ({ useNoteSigning: () => ({ data: undefined }) }))
 vi.mock("@/hooks/usePreferences", () => ({ useUserTimeZone: () => "UTC" }))
 

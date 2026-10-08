@@ -265,6 +265,25 @@ def _chart(user_prompt: str) -> _Chart | None:
     return chart
 
 
+#: How a field's hint says the draft prints it from the chart.
+_FROM_THE_CHART = "From the chart"
+
+
+def _chart_fed_fields(user_prompt: str) -> set[str]:
+    """The fields the prompt says are printed from the chart (``* key (kind) — From the chart``).
+
+    A model writes "Not recorded" in such a field when the chart has nothing
+    for it, rather than drafting it from the visit. String operations only:
+    the prompt is caller text, so no regex runs over it.
+    """
+    fields: set[str] = set()
+    for line in user_prompt.splitlines():
+        head, dash, hint = line.partition(" — ")
+        if dash and hint.startswith(_FROM_THE_CHART) and head.lstrip().startswith("* "):
+            fields.add(head.lstrip()[2:].partition(" ")[0])
+    return fields
+
+
 def _stated_updates(user_prompt: str) -> dict[str, str]:
     """What client lines say changed, by history key. String operations only: the
     prompt is caller text, so no regex runs over it."""
@@ -329,13 +348,16 @@ def _with_chart(content: dict[str, Any], chart: _Chart, user_prompt: str = "") -
     problems; an allergies field states the chart's allergies; a current
     medications field is the chart's list, line for line, or "None recorded",
     then any medication a client line says they take that the chart lacks;
-    a history field is the chart's text for its key, word for word, then what
+    a history field is the chart's text for its key, word for word ("Not
+    recorded" where the chart has none and the hint says it comes from the
+    chart), then what
     a client line says changed; a substance field is the chart's baseline,
     then the visit's screen. So a spec can see that a draft was written
     against the chart it was handed.
     """
     updates = _stated_updates(user_prompt)
     unchanged = _unchanged(user_prompt)
+    chart_fed = _chart_fed_fields(user_prompt)
     for section_key, section in content.items():
         if not isinstance(section, dict):
             continue
@@ -347,7 +369,7 @@ def _with_chart(content: dict[str, Any], chart: _Chart, user_prompt: str = "") -
             if section_key == "substance_use":
                 section[key] = _screened(chart, key, updates, unchanged)
                 continue
-            if (key in chart.history or key in updates) and section_key != "substance_use":
+            if key in chart.history or key in updates or key in chart_fed:
                 section[key] = chart.history.get(key, "Not recorded")
                 if key in updates:
                     section[key] += f' (stated this visit: "{updates[key]}")'
@@ -410,6 +432,8 @@ async def draft_note(call: NoteCall) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail="model unavailable")
     if call.response_schema.get("title") == "PracticeNoteTypeSpec":
         return {"data": DERIVED_PROPOSAL, "finish_reason": "stop"}
+    if call.response_schema.get("title") == "ChartProposals":
+        return {"data": {"proposals": _chart_proposals(call.user_prompt)}, "finish_reason": "stop"}
     if "runs" in call.response_schema.get("properties", {}):
         return {"data": _turn_labels(call.user_prompt), "finish_reason": "stop"}
     note = _source_note(call.user_prompt)
@@ -453,6 +477,34 @@ def _dictated(user_prompt: str) -> dict[str, str]:
         if sep and text.strip():
             values[_slug(label)] = text.strip()
     return values
+
+
+def _chart_proposals(user_prompt: str) -> list[dict[str, Any]]:
+    """One proposal per numbered "Update on <key>: <text>" client line, citing it.
+
+    The same lines a draft marks "(stated this visit: ...)". The proposal
+    call numbers each line ``[Sn]``; the proposal cites that line, as a model
+    would cite the line that says it. For allergies the text is
+    ``<substance> - <reaction>``.
+    """
+    proposals = []
+    for line in user_prompt.splitlines():
+        head, found, rest = line.partition(_STATED_UPDATE)
+        if not found or not head.startswith("[S"):
+            continue
+        segment = head[2:].partition("]")[0]
+        key, _, text = rest.partition(": ")
+        entry, _, reaction = text.partition(" - ") if key == "allergies" else ("", "", text)
+        proposals.append(
+            {
+                "field_key": key.strip(),
+                "entry": entry.strip(),
+                "proposed_text": reaction.strip(),
+                "what_changed": "Stated this visit",
+                "evidence_segment_ids": [int(segment)] if segment.isdigit() else [],
+            }
+        )
+    return proposals
 
 
 @app.post("/transcription/v1/transcribe")

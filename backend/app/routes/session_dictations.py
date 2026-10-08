@@ -34,6 +34,7 @@ from ..auth.service import (
     require_baa_acceptance,
     require_cloud_tasks_invoker,
 )
+from ..chart_proposals.step import ChartProposalStep  # noqa: TC001 — runtime annotation
 from ..db import arm_current_user_id, get_db_session, set_tenant_schema
 from ..db.tenant_session import tenant_db_session
 from ..jobs.task_queue import enqueue
@@ -79,7 +80,7 @@ from ..services.session_dictation_service import (
 )
 from ..services.session_generation_worker import resolve_tenant_schema_for_user
 from ..settings import get_settings
-from .notes import get_note_generation_service
+from .notes import get_note_generation_service, get_worker_proposal_step
 from .sessions import (
     _ALLOWED_AUDIO_TYPES,
     _reject_if_not_audio,
@@ -108,6 +109,7 @@ def _service(
     notes_repo: NotesRepository,
     dictation_repo: SessionDictationRepository,
     note_generation_service: NoteGenerationService,
+    proposal_step: ChartProposalStep | None = None,
 ) -> SessionDictationService:
     settings = get_settings()
     note_service = NoteService(notes_repo)
@@ -116,7 +118,12 @@ def _service(
         note_service=note_service,
         dictation_repo=dictation_repo,
         redraft_service=NoteRedraftService(
-            session_repo, patient_repo, note_service, note_generation_service, dictation_repo
+            session_repo,
+            patient_repo,
+            note_service,
+            note_generation_service,
+            dictation_repo,
+            proposal_step,
         ),
         storage=file_storage_from_settings(settings),
         bucket=settings.transcription_audio_bucket,
@@ -136,6 +143,7 @@ def get_session_dictation_service(
 
 def get_worker_session_dictation_service(
     note_generation_service: NoteGenerationService = Depends(get_note_generation_service),
+    proposal_step: ChartProposalStep = Depends(get_worker_proposal_step),
 ) -> SessionDictationService:
     """The service for the queue worker, which arms its own tenant scope."""
     return _service(
@@ -144,6 +152,7 @@ def get_worker_session_dictation_service(
         _notes_repo_factory(),
         _dictation_repo_factory(),
         note_generation_service,
+        proposal_step,
     )
 
 
@@ -329,7 +338,9 @@ def _run_in_process(
             job,
             http_request,
             None,
-            get_worker_session_dictation_service(note_generation_service),
+            get_worker_session_dictation_service(
+                note_generation_service, get_worker_proposal_step()
+            ),
             get_user_repository(),
             get_audit_service(),
         )

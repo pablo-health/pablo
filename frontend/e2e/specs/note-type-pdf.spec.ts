@@ -91,7 +91,10 @@ test("a signed note of a practice's own type exports its fields, visit times and
     const finalized = page.waitForResponse(
       (r) => r.url().endsWith(`/api/sessions/${session.id}/finalize`) && r.ok(),
     )
-    await signDialog.getByRole("button", { name: "Sign and lock" }).click()
+    // The draft states a diagnosis the problem list lacks, so the dialog
+    // offers it first; signing without adding it is one click.
+    await expect(signDialog.getByRole("region", { name: "Update the chart" })).toBeVisible()
+    await signDialog.getByRole("button", { name: "Sign without updating" }).click()
     await finalized
     await page.reload()
     await expect(page.getByTestId("signature-block")).toContainText(

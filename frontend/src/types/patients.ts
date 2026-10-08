@@ -58,6 +58,10 @@ export interface AllergyEntry {
   substance: string
   reaction?: string | null
   severity?: "mild" | "moderate" | "severe" | null
+  /** What has been said about it since (taken without a reaction, say); the entry stands. */
+  note?: string | null
+  /** The note the entry, or its note, was accepted from. */
+  source_note_id?: string | null
 }
 
 export interface UpdateAllergiesRequest {

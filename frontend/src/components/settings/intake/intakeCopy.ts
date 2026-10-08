@@ -192,6 +192,8 @@ export function versionChoice(version: number, publishedAt: string | null): stri
 /** Writing a document from the question that asks for it. */
 export const WRITE_NEW_DOCUMENT = "Write a new one"
 export const PUBLISH_AND_USE = "Publish and use it"
+/** Named apart from the question's own "Name" field, which sits just above it. */
+export const NEW_DOCUMENT_NAME_LABEL = "Document name"
 /** Said under "Start from a template": picking one also adds its document. */
 export const STARTER_ADDS_DOCUMENT =
   "A template with a document also adds it to Documents in your packets, to edit like any other."

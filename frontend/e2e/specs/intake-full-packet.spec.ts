@@ -531,7 +531,7 @@ test.describe("intake, assignment through accepted export", () => {
     // Everything below is scoped to the Packets card: the documents card and
     // the licensed-instruments card are on this page too, and all three have
     // a "Name" field and a "Save" button.
-    const forms = page.getByRole("region", { name: "Packets" })
+    const forms = page.getByRole("region", { name: "Packets", exact: true })
     await expect(forms).toBeVisible()
 
     // Every packet this card creates starts as "New packet" and opens as it

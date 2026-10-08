@@ -1931,6 +1931,88 @@ class PatientChartHistoryRevisionRow(Base):
     )
 
 
+class NoteChartProposalRow(Base):
+    """A chart update a note proposes, and what the clinician decided (``app.chart_proposals``).
+
+    Kept beside the note, never in its content, so the note's body, PDF and
+    exports cannot carry one. ``field_key`` names the chart field;
+    ``item_key`` the entry within a list field (an allergy's substance), empty
+    for a free-text field. ``evidence`` is the cited transcript segments, each
+    ``{"segment_id", "text"}``, checked against the transcript when written.
+    ``origin`` is ``transcript`` for a proposal drafted from what was said and
+    ``note`` for one taken from the note's own text (an intake's history).
+    ``decision`` is ``pending`` until the clinician accepts, edits or
+    discards it; ``decided_text`` is the clinician's text for an edit.
+
+    One row per note per field and entry. Carries ``patient_id`` so the
+    reconcile pass gives it the ``has_patient_access`` row policy.
+    """
+
+    __tablename__ = "note_chart_proposals"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    note_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("notes.id", ondelete="CASCADE"), nullable=False
+    )
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("patients.id", ondelete="CASCADE"), nullable=False
+    )
+    field_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    item_key: Mapped[str] = mapped_column(
+        String(200), nullable=False, default="", server_default=text("''")
+    )
+    proposed_text: Mapped[str] = mapped_column(Text, nullable=False)
+    what_changed: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    origin: Mapped[str] = mapped_column(String(16), nullable=False)
+    decision: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="pending", server_default=text("'pending'")
+    )
+    decided_text: Mapped[str | None] = mapped_column(Text)
+    decided_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("note_id", "field_key", "item_key", name="uq_note_chart_proposals_field"),
+        CheckConstraint(
+            "decision IN ('pending', 'accepted', 'edited', 'discarded')",
+            name="ck_note_chart_proposals_decision",
+        ),
+    )
+
+
+class NoteChartProposalRunRow(Base):
+    """Whether a note's proposal call last ran, and how it ended (``app.chart_proposals``).
+
+    One row per note. ``status`` is ``ok``, ``failed`` (the call raised;
+    ``error_class`` names the exception type, never its message) or
+    ``skipped`` (a note type the call does not run on). Without it a failed
+    call would read as "nothing changed". Carries ``patient_id`` for the
+    ``has_patient_access`` row policy, like ``note_chart_proposals``.
+    """
+
+    __tablename__ = "note_chart_proposal_runs"
+
+    note_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("notes.id", ondelete="CASCADE"), primary_key=True
+    )
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("patients.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    error_class: Mapped[str | None] = mapped_column(String(100))
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('ok', 'failed', 'skipped')", name="ck_note_chart_proposal_runs_status"
+        ),
+    )
+
+
 class RefillRequestRow(Base):
     """A patient's request, from the portal, to have a medication refilled.
 

@@ -13,7 +13,7 @@ import {
 } from "@/hooks/useIntakeDocuments"
 import {
   DOCUMENT_BODY_LABEL,
-  DOCUMENT_NAME_LABEL,
+  NEW_DOCUMENT_NAME_LABEL,
   PUBLISH_AND_USE,
 } from "./intakeCopy"
 
@@ -61,7 +61,7 @@ export function NewDocumentInline({ idPrefix, onCreated }: NewDocumentInlineProp
   return (
     <div className="space-y-2 rounded-xl border border-border p-3">
       <div className="space-y-1">
-        <Label htmlFor={nameId}>{DOCUMENT_NAME_LABEL}</Label>
+        <Label htmlFor={nameId}>{NEW_DOCUMENT_NAME_LABEL}</Label>
         <Input
           id={nameId}
           value={title}
