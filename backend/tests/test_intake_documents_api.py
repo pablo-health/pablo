@@ -456,9 +456,11 @@ class TestStarters:
     def test_the_list_names_the_ai_tools_consent(self, practice: TestClient) -> None:
         response = practice.get(STARTERS)
         assert response.status_code == 200
-        assert {"key": "ai_tools_consent", "title": "Consent for the use of AI tools"} in (
-            response.json()
-        )
+        assert {
+            "key": "ai_tools_consent",
+            "title": "Consent for the use of AI tools",
+            "has_document": True,
+        } in response.json()
 
     def test_adopting_one_publishes_the_practices_copy(self, practice: TestClient) -> None:
         response = practice.post(f"{STARTERS}/ai_tools_consent")
@@ -566,8 +568,13 @@ class TestRegisteredStarters:
         return practice
 
     def test_they_are_listed_after_the_built_ins(self, practice: TestClient) -> None:
-        listed = [s["key"] for s in practice.get(STARTERS).json()]
-        assert listed == ["ai_tools_consent", "cancellation_policy", "previous_care"]
+        listed = [(s["key"], s["has_document"]) for s in practice.get(STARTERS).json()]
+        # The one without a document is questions alone, and says so.
+        assert listed == [
+            ("ai_tools_consent", True),
+            ("cancellation_policy", True),
+            ("previous_care", False),
+        ]
 
     def test_adopting_one_publishes_the_copy_and_hands_back_its_items(
         self, practice: TestClient

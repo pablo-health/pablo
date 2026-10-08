@@ -574,11 +574,12 @@ test.describe("intake, assignment through accepted export", () => {
     await addQuestion("Measure")
     await pick("Which measure", "PHQ-9")
 
-    // A document to read and sign. The picker offers published documents,
-    // and which WORDING gets signed is settled by publishing this form.
-    await addQuestion("Consent to sign")
+    // A document to read and sign, through its own button. The picker offers
+    // published documents, and which WORDING gets signed is settled by
+    // publishing this form.
+    await forms.getByRole("button", { name: "Add a document" }).click()
+    await forms.getByRole("button", { name: document.title, exact: true }).click()
     await questionBox().fill(CONSENT_QUESTION)
-    await pick("Which document", document.title)
 
     // A card, and the plan in words as well as in a photograph.
     //

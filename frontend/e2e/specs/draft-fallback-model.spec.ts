@@ -30,7 +30,7 @@ test("a transcript is drafted by the fallback model when the first one is down",
       `[00:00:05] Therapist: How have things been?\n[00:00:09] Client: ${PRIMARY_DOWN}`,
     ),
   })
-  await page.getByRole("button", { name: "Upload & Generate SOAP" }).click()
+  await page.getByRole("button", { name: "Upload & Draft Note" }).click()
 
   const notice = page.getByTestId("draft-notice")
   await expect(notice).toContainText("Draft ready")

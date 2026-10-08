@@ -3,8 +3,9 @@
 /**
  * UploadTranscriptDialog Component
  *
- * File upload dialog with drag & drop, patient selection, and date picker.
- * Validates file format/size and uploads transcript for SOAP generation.
+ * File upload dialog with drag & drop, patient selection, date picker and
+ * note type. Validates file format/size and uploads the transcript to be
+ * drafted as the chosen note type (SOAP unless another is picked).
  */
 
 "use client"
@@ -38,6 +39,7 @@ import {
 import { ApiError } from "@/lib/api/client"
 import { usePatientList } from "@/hooks/usePatients"
 import { useUploadSession } from "@/hooks/useSessions"
+import { useNoteTypes } from "@/hooks/useNoteTypes"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import type { PeopleWords } from "@/lib/peopleTerm"
 import { parseTranscriptFile } from "@/lib/utils/transcriptParser"
@@ -47,6 +49,15 @@ import {
   formatFileSize,
 } from "@/lib/utils/fileValidation"
 import { SessionGeneratingOverlay } from "./SessionGeneratingOverlay"
+import {
+  DEFAULT_TRANSCRIPT_NOTE_TYPE,
+  TranscriptNoteType,
+  draftInputs,
+  missingInputs,
+  noteTypeFields,
+  transcriptNoteTypes,
+  type TranscriptNoteTypeChoice,
+} from "./TranscriptNoteType"
 import type { SessionResponse, TranscriptFormat } from "@/types/sessions"
 
 export interface UploadTranscriptDialogProps {
@@ -112,6 +123,17 @@ export function UploadTranscriptDialog({
 
   const { data: patientsData, isLoading: isLoadingPatients } = usePatientList()
   const uploadMutation = useUploadSession()
+  const { data: catalog } = useNoteTypes()
+  const noteTypes = transcriptNoteTypes(catalog?.note_types ?? [])
+  const [noteTypeChoice, setNoteTypeChoice] =
+    useState<TranscriptNoteTypeChoice>(DEFAULT_TRANSCRIPT_NOTE_TYPE)
+  const [showMissingInputs, setShowMissingInputs] = useState(false)
+  const typeInputs = draftInputs(noteTypes.find((t) => t.key === noteTypeChoice.noteType))
+
+  const resetNoteType = () => {
+    setNoteTypeChoice(DEFAULT_TRANSCRIPT_NOTE_TYPE)
+    setShowMissingInputs(false)
+  }
 
   const {
     register,
@@ -187,6 +209,11 @@ export function UploadTranscriptDialog({
 
   const onSubmit = async (data: UploadFormData) => {
     setUploadError(null)
+    if (missingInputs(typeInputs, noteTypeChoice.inputs).length > 0) {
+      setShowMissingInputs(true)
+      return
+    }
+    const typeFields = noteTypeFields(noteTypeChoice, typeInputs)
 
     let transcript: Awaited<ReturnType<typeof parseTranscriptFile>>
     try {
@@ -209,10 +236,12 @@ export function UploadTranscriptDialog({
             patient_id: data.patient_id,
             session_date: data.session_date,
             transcript,
+            ...typeFields,
           },
         })
         setOpen(false)
         reset()
+        resetNoteType()
         setSelectedFile(null)
         setFileError(null)
         onSuccess(session)
@@ -233,6 +262,7 @@ export function UploadTranscriptDialog({
     // note reaches pending_review, then navigates.
     setOpen(false)
     reset()
+    resetNoteType()
     setSelectedFile(null)
     setFileError(null)
     setGeneratingPatientId(data.patient_id)
@@ -243,6 +273,7 @@ export function UploadTranscriptDialog({
           patient_id: data.patient_id,
           session_date: data.session_date,
           transcript,
+          ...typeFields,
         },
       },
       {
@@ -269,6 +300,7 @@ export function UploadTranscriptDialog({
     if (!newOpen) {
       // Reset form when closing
       reset()
+      resetNoteType()
       setSelectedFile(null)
       setFileError(null)
       setUploadError(null)
@@ -312,11 +344,14 @@ export function UploadTranscriptDialog({
         <DialogHeader>
           <DialogTitle>Upload Session Transcript</DialogTitle>
           <DialogDescription>
-            Upload a transcript to generate a SOAP note. Accepted formats: VTT, JSON, TXT
+            Upload a transcript to draft a note. Accepted formats: VTT, JSON, TXT
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+        <form
+          onSubmit={handleSubmit(onSubmit, () => setShowMissingInputs(true))}
+          className="space-y-6"
+        >
           {/* Patient Selection — hidden when the patient is already in context */}
           {!lockedPatient && (
             <div className="space-y-2">
@@ -365,6 +400,13 @@ export function UploadTranscriptDialog({
               <p className="text-sm text-destructive">{errors.session_date.message}</p>
             )}
           </div>
+
+          <TranscriptNoteType
+            types={noteTypes}
+            value={noteTypeChoice}
+            onChange={setNoteTypeChoice}
+            showMissing={showMissingInputs}
+          />
 
           {/* File Upload */}
           <div className="space-y-2">
@@ -463,7 +505,7 @@ export function UploadTranscriptDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={uploadMutation.isPending}>
-              {uploadMutation.isPending ? "Uploading..." : "Upload & Generate SOAP"}
+              {uploadMutation.isPending ? "Uploading..." : "Upload & Draft Note"}
             </Button>
           </DialogFooter>
         </form>

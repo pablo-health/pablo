@@ -159,6 +159,31 @@ class IntakePacketService:
             return self._repo.update_template(template_id, archived_at=utc_now())
         return self._repo.update_template(template_id, unarchive=True)
 
+    def document_usage(self) -> dict[str, list[dict[str, object]]]:
+        """Which packets put each document in front of people.
+
+        Keyed by ``document_key``, each a list of ``{"id", "name"}`` in the
+        order the packets are listed. A packet counts when its newest version
+        — the one being worked on, or the one being sent — has a consent item
+        pointing at the document. An archived packet sends nothing, so it is
+        left out.
+        """
+        usage: dict[str, list[dict[str, object]]] = {}
+        for template in self._repo.list_templates():
+            latest = self._repo.latest_version(str(template["id"]))
+            if latest is None:
+                continue
+            keys: set[str] = set()
+            for item in self._repo.list_items(str(latest["id"])):
+                config = item.get("config")
+                if item["item_type"] != "consent_document" or not isinstance(config, dict):
+                    continue
+                if key := config.get("document_key"):
+                    keys.add(str(key))
+            for key in sorted(keys):
+                usage.setdefault(key, []).append({"id": template["id"], "name": template["name"]})
+        return usage
+
     # --- versions ---
 
     def list_versions(self, template_id: str) -> list[dict[str, object]]:

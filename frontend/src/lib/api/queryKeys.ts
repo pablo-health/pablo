@@ -241,6 +241,8 @@ const baseQueryKeys = {
   intakeTemplates: {
     all: ["intake-templates"] as const,
     list: () => [...baseQueryKeys.intakeTemplates.all, "list"] as const,
+    // Under the packets' key, so saving or archiving a packet refreshes it.
+    documentUsage: () => [...baseQueryKeys.intakeTemplates.all, "document-usage"] as const,
     version: (templateId: string, versionId: string) =>
       [...baseQueryKeys.intakeTemplates.all, "version", templateId, versionId] as const,
   },

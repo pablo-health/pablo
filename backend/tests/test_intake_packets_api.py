@@ -508,6 +508,56 @@ class TestNewVersions:
         assert [i["key"] for i in frozen["items"]] == ["demographics", "reason"]
 
 
+class TestDocumentUsage:
+    """Which packets ask for each document, for the documents list to say."""
+
+    _FEES = "55555555-5555-4555-8555-555555555555"
+    _PRIVACY = "66666666-6666-4666-8666-666666666666"
+
+    def _packet(self, client: TestClient, name: str, document_keys: list[str]) -> str:
+        template = _create(client, name)
+        items: list[dict[str, Any]] = [{"key": "reason", "item_type": "reason"}]
+        items += [
+            {
+                "key": f"consent_{n}",
+                "item_type": "consent_document",
+                "config": {"document_key": key},
+            }
+            for n, key in enumerate(document_keys)
+        ]
+        response = _items(client, str(template["id"]), _draft_id(template), items)
+        assert response.status_code == 200, response.text
+        return str(template["id"])
+
+    def _usage(self, client: TestClient) -> dict[str, list[str]]:
+        response = client.get("/api/intake/document-usage")
+        assert response.status_code == 200, response.text
+        return {row["document_key"]: [p["name"] for p in row["packets"]] for row in response.json()}
+
+    def test_names_every_packet_that_asks_for_a_document(self, intake_client: TestClient) -> None:
+        self._packet(intake_client, "New client intake", [self._FEES, self._PRIVACY])
+        self._packet(intake_client, "Couples intake", [self._FEES])
+        self._packet(intake_client, "Questions only", [])
+
+        assert self._usage(intake_client) == {
+            self._FEES: ["New client intake", "Couples intake"],
+            self._PRIVACY: ["New client intake"],
+        }
+
+    def test_an_archived_packet_is_not_counted(self, intake_client: TestClient) -> None:
+        # An archived packet sends nothing, so saying a document is used
+        # there would send a practice looking for a packet it put away.
+        self._packet(intake_client, "Kept", [self._FEES])
+        archived = self._packet(intake_client, "Put away", [self._FEES])
+        assert intake_client.patch(f"{BASE}/{archived}", json={"archived": True}).status_code == 200
+
+        assert self._usage(intake_client) == {self._FEES: ["Kept"]}
+
+    def test_a_document_no_packet_asks_for_is_not_listed(self, intake_client: TestClient) -> None:
+        self._packet(intake_client, "Questions only", [])
+        assert self._usage(intake_client) == {}
+
+
 class TestConsentItems:
     """A form that asks somebody to sign a document.
 

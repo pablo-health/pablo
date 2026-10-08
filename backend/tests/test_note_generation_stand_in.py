@@ -389,6 +389,29 @@ def test_the_prescriber_templates_take_current_medications_from_the_chart(templa
     assert "Never write NKDA unless the chart says it." in hints["allergies"]
 
 
+def test_a_follow_ups_allergies_are_the_charts_allergies(stand_in: list[str]) -> None:
+    """The follow-up's allergies field is chart-fed but not a history key; the
+    stand-in printed "Not recorded" there whatever the chart held, so no spec
+    could see a follow-up drafted against the chart's allergies."""
+    definition = _follow_up()
+    chart = ChartContext(
+        allergy_status="recorded",
+        allergies=({"substance": "Penicillin", "reaction": "Hives"},),
+    )
+
+    generated = _service().generate_note(
+        definition.key,
+        TRANSCRIPT,
+        PATIENT,
+        NOW,
+        inputs={"place_of_service": "In office"},
+        definition=definition,
+        chart=chart,
+    )
+
+    assert generated.content["medications"]["allergies"] == "Penicillin (Hives)"
+
+
 def test_a_follow_up_writes_the_charts_history_word_for_word(stand_in: list[str]) -> None:
     """Each history field is the chart's text for its key; a substance field adds its screen."""
     definition = _follow_up()

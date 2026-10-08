@@ -350,7 +350,7 @@ def _with_chart(content: dict[str, Any], chart: _Chart, user_prompt: str = "") -
     then any medication a client line says they take that the chart lacks;
     a history field is the chart's text for its key, word for word ("Not
     recorded" where the chart has none and the hint says it comes from the
-    chart), then what
+    chart; a chart-fed allergies field is the chart's allergies), then what
     a client line says changed; a substance field is the chart's baseline,
     then the visit's screen. So a spec can see that a draft was written
     against the chart it was handed.
@@ -370,7 +370,10 @@ def _with_chart(content: dict[str, Any], chart: _Chart, user_prompt: str = "") -
                 section[key] = _screened(chart, key, updates, unchanged)
                 continue
             if key in chart.history or key in updates or key in chart_fed:
-                section[key] = chart.history.get(key, "Not recorded")
+                # A chart-fed allergies field reads the chart's allergy list,
+                # which is not a history key.
+                on_chart = chart.allergies if "allerg" in key else None
+                section[key] = chart.history.get(key, on_chart or "Not recorded")
                 if key in updates:
                     section[key] += f' (stated this visit: "{updates[key]}")'
                 continue
