@@ -12,7 +12,8 @@ name: End-to-end
 on:
   workflow_call:
   schedule:
-    - cron: "0 5 * * *"
+    - cron: "0 5 * * 1-6"
+    - cron: "0 5 * * 0"
   workflow_dispatch:
   pull_request:
     branches: [main]
@@ -189,10 +190,77 @@ jobs:
         if: always()
         run: docker compose -f docker-compose.e2e.yml -f docker-compose.e2e-hosted.yml down --volumes --remove-orphans
 
+  portal-accessibility-webkit:
+    name: Patient portal accessibility (iPhone WebKit)
+    needs: classify
+    if: needs.classify.outputs.run == 'true' && (github.event_name == 'workflow_dispatch' || github.event.schedule == '0 5 * * 0')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install the Playwright browser
+        working-directory: frontend
+        run: npx playwright install --with-deps webkit
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Build the stack
+        uses: docker/bake-action@018cb6412ab401ebaa809aa5f85966b74628600f # v7
+        with:
+          source: .
+          files: |
+            docker-compose.e2e.yml
+            docker-bake.e2e.hcl
+          load: true
+
+      - name: Start the stack
+        run: docker compose -f docker-compose.e2e.yml up --no-build --wait
+
+      - name: Audit the patient portal
+        working-directory: frontend
+        run: npx playwright test --config e2e/playwright.mobile.config.ts --project iphone-webkit
+        env:
+          CI: "1"
+
+      - name: Stack logs
+        if: failure()
+        run: docker compose -f docker-compose.e2e.yml logs --no-color --timestamps
+
+      - name: Upload report and traces
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-portal-accessibility-webkit
+          path: |
+            frontend/e2e/playwright-report/
+            frontend/e2e/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Stop the stack
+        if: always()
+        run: docker compose -f docker-compose.e2e.yml down --volumes --remove-orphans
+
   e2e:
     name: End-to-end (compose + Playwright)
     if: always()
-    needs: [classify, e2e-shards, hosted-address]
+    needs:
+      - classify
+      - e2e-shards
+      - hosted-address
+      - portal-accessibility-webkit
     runs-on: ubuntu-latest
     steps:
       - name: Verify end-to-end result
@@ -201,6 +269,9 @@ jobs:
           SHOULD_RUN: ${{ needs.classify.outputs.run }}
           SHARDS_RESULT: ${{ needs.e2e-shards.result }}
           HOSTED_RESULT: ${{ needs.hosted-address.result }}
+          WEBKIT_A11Y_RESULT: ${{ needs.portal-accessibility-webkit.result }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
         run: |
           if [[ "$CLASSIFY_RESULT" != "success" ]]; then
             echo "Change classification failed."
@@ -212,5 +283,9 @@ jobs:
           fi
           if [[ "$SHARDS_RESULT" != "success" || "$HOSTED_RESULT" != "success" ]]; then
             echo "One or more end-to-end lanes failed or were cancelled."
+            exit 1
+          fi
+          if [[ "$EVENT_NAME" == "workflow_dispatch" || "$EVENT_SCHEDULE" == "0 5 * * 0" ]] && [[ "$WEBKIT_A11Y_RESULT" != "success" ]]; then
+            echo "The weekly iPhone WebKit accessibility lane failed or was cancelled."
             exit 1
           fi

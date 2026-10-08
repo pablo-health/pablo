@@ -12,6 +12,7 @@
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",
     "test:e2e": "playwright test --config e2e/playwright.config.ts",
+    "test:e2e:a11y": "playwright test --config e2e/playwright.mobile.config.ts",
     "postinstall": "patch-package"
   },
   "dependencies": {
@@ -52,6 +53,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@eslint/eslintrc": "^3.3.7",
     "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4.3.3",

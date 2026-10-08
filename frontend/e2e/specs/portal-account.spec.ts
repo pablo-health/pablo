@@ -255,12 +255,12 @@ test("the portal works at a phone's width, by keyboard @portal", async ({ api, p
 
   // The landing is the sign-in: ask for a link the way somebody without a
   // mouse does.
-  const field = page.getByTestId("portal-recover-email")
+  const field = page.getByRole("textbox", { name: "Email" })
   await expect(field).toBeVisible()
   await field.focus()
   await page.keyboard.type("nobody@example.com")
   await page.keyboard.press("Tab")
-  await expect(page.getByTestId("portal-recover-submit")).toBeFocused()
+  await expect(page.getByRole("button", { name: "Email me a sign-in link" })).toBeFocused()
   await page.keyboard.press("Enter")
 
   // One conditional sentence, announced, for every address.

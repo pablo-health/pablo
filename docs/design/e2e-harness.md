@@ -147,6 +147,15 @@ backend routes, the compose files, the fake clearinghouse, or
 the nightly catches drift. The job is a required check once it has run
 green for a week.
 
+The patient portal also has a focused accessibility journey. The ordinary
+shards run its signed-out and signed-in states at a phone-sized Chromium
+viewport and fail on automatically detectable Axe violations without starting
+another stack. Weekly and manually dispatched runs repeat the audit in
+WebKit with an iPhone device profile.
+The audit covers Home, Forms, Messages, Appointments, and Refills; keyboard
+flow and horizontal overflow remain explicit assertions because Axe cannot
+judge either interaction.
+
 The live vendor lane (below) is its own workflow: weekly, on demand, and
 on pull requests that touch the clearinghouse adapter, the live suite or
 the recorded fixtures, with the test key held as a repository secret that
