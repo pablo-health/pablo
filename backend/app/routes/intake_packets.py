@@ -40,10 +40,12 @@ from ..models import User  # noqa: TC001 — fastapi resolves the annotation at 
 from ..models.audit import AuditAction, ResourceType
 from ..models.intake_packet_api import (
     CreateTemplateRequest,
+    DocumentUsageResponse,
     IntakeItemResponse,
     IntakeTemplateResponse,
     IntakeVersionDetailResponse,
     IntakeVersionResponse,
+    PacketRef,
     ReplaceItemsRequest,
     UpdateTemplateRequest,
 )
@@ -179,6 +181,22 @@ def list_templates(
     return [
         _template_response(service, row)
         for row in service.list_templates(include_archived=include_archived)
+    ]
+
+
+@router.get("/document-usage", response_model=list[DocumentUsageResponse])
+def document_usage(
+    service: PacketService,
+    _user: User = Depends(require_baa_acceptance),
+) -> list[DocumentUsageResponse]:
+    """Which packets ask for each document. A document no packet asks for is
+    not listed."""
+    return [
+        DocumentUsageResponse(
+            document_key=key,
+            packets=[PacketRef(id=str(p["id"]), name=str(p["name"])) for p in packets],
+        )
+        for key, packets in service.document_usage().items()
     ]
 
 

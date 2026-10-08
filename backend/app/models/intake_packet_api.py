@@ -127,13 +127,30 @@ class IntakeTemplateResponse(BaseModel):
     versions: list[IntakeVersionResponse]
 
 
+class PacketRef(BaseModel):
+    """A packet, named the way the practice named it."""
+
+    id: str
+    name: str
+
+
+class DocumentUsageResponse(BaseModel):
+    """``GET /api/intake/document-usage``: one document and the packets that
+    ask for it, so the documents list can say where each one is used."""
+
+    document_key: str
+    packets: list[PacketRef]
+
+
 __all__ = [
     "CreateTemplateRequest",
+    "DocumentUsageResponse",
     "IntakeItemRequest",
     "IntakeItemResponse",
     "IntakeTemplateResponse",
     "IntakeVersionDetailResponse",
     "IntakeVersionResponse",
+    "PacketRef",
     "ReplaceItemsRequest",
     "UpdateTemplateRequest",
 ]

@@ -245,6 +245,7 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # patient. Publishing IS audited (INTAKE_TEMPLATE_PUBLISHED), because
         # that is the version every later submission gets read back against.
         ("get", "/api/intake/templates"),  # lists the practice's own forms
+        ("get", "/api/intake/document-usage"),  # which of its forms ask for which document
         ("post", "/api/intake/templates"),  # creates a form, no patient data
         ("get", "/api/intake/templates/{template_id}"),  # one form and its versions
         ("patch", "/api/intake/templates/{template_id}"),  # renames or archives a form

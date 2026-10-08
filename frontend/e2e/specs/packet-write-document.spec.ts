@@ -79,6 +79,11 @@ test.describe("A packet writes its own document", () => {
     const documents = page.getByRole("region", { name: "Documents in your packets" })
     await documents.getByRole("button", { name: /^Show \d+ documents?$/ }).click()
     await expect(documents.getByRole("button", { name: new RegExp(documentTitle) })).toBeVisible()
+
+    // And it says which packet asks for it, as a link back to that packet.
+    const usedIn = documents.getByRole("link", { name: packetName, exact: true })
+    await expect(usedIn).toBeVisible()
+    await expect(usedIn).toHaveAttribute("href", `/dashboard/settings/portal?packet=${template.id}`)
   })
 
   test("a consent question can ask for an earlier published wording, and that is what publishing pins", async ({

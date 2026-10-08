@@ -25,7 +25,9 @@ import {
   DOCUMENT_PUBLISHED_NOTICE,
   DRAFT_BADGE,
   NEW_DOCUMENT_NAME,
+  NOT_IN_A_PACKET,
   PUBLISHED_BADGE,
+  USED_IN,
 } from "../intakeCopy"
 import type { IntakeDocument } from "@/types/intakeDocuments"
 
@@ -35,8 +37,14 @@ const mockSave = vi.fn()
 const mockPublish = vi.fn()
 const mockNewVersion = vi.fn()
 
+const mockUseUsage = vi.fn()
+
 /** What the publish mutation last failed with, so a test can set it. */
 let publishError: Error | null = null
+
+vi.mock("@/hooks/useIntakePackets", () => ({
+  useDocumentUsage: () => mockUseUsage(),
+}))
 
 vi.mock("@/hooks/useIntakeDocuments", () => ({
   useIntakeDocuments: () => mockUseDocuments(),
@@ -80,6 +88,47 @@ describe("IntakeDocumentsCard", () => {
     vi.clearAllMocks()
     publishError = null
     mockUseDocuments.mockReturnValue({ data: [DRAFT] })
+    mockUseUsage.mockReturnValue({ data: [] })
+  })
+
+  describe("where each document is used", () => {
+    it("names each packet that asks for it, linking to that packet", () => {
+      mockUseUsage.mockReturnValue({
+        data: [
+          {
+            document_key: "key-1",
+            packets: [
+              { id: "packet-a", name: "New client intake" },
+              { id: "packet-b", name: "Couples intake" },
+            ],
+          },
+        ],
+      })
+      renderOpen()
+
+      expect(screen.getByText(USED_IN, { exact: false })).toBeInTheDocument()
+      expect(screen.getByRole("link", { name: "New client intake" })).toHaveAttribute(
+        "href",
+        "/dashboard/settings/portal?packet=packet-a",
+      )
+      expect(screen.getByRole("link", { name: "Couples intake" })).toHaveAttribute(
+        "href",
+        "/dashboard/settings/portal?packet=packet-b",
+      )
+    })
+
+    it("says so when no packet asks for it", () => {
+      renderOpen()
+      expect(screen.getByText(NOT_IN_A_PACKET)).toBeInTheDocument()
+    })
+
+    it("says nothing while the answer is loading", () => {
+      // "Not in a packet yet" before the answer arrives would be untrue for
+      // every document that is in one.
+      mockUseUsage.mockReturnValue({ data: undefined })
+      renderOpen()
+      expect(screen.queryByText(NOT_IN_A_PACKET)).not.toBeInTheDocument()
+    })
   })
 
   it("starts closed, saying how many documents there are", () => {
