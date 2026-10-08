@@ -25,7 +25,7 @@ export function PortalFooter({ displayName }: { displayName: string | null }) {
     )
   }
   return (
-    <footer data-testid="portal-footer" className="px-4 py-6 text-center text-xs text-neutral-400">
+    <footer data-testid="portal-footer" className="px-4 py-6 text-center text-xs text-neutral-600">
       <p>Powered by Pablo</p>
     </footer>
   )

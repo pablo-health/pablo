@@ -120,12 +120,12 @@ export function RefillRequestForm({
       data-testid="portal-refills-form"
       aria-labelledby="portal-refills-form-heading"
     >
-      <h3
+      <h2
         id="portal-refills-form-heading"
         className="text-sm font-semibold text-neutral-900"
       >
         {FORM_HEADING}
-      </h3>
+      </h2>
 
       {hasList ? (
         <fieldset className="flex flex-col gap-2" data-testid="portal-refills-medications">
