@@ -415,6 +415,70 @@ class TestAnotherPatientsForm:
 # ---------------------------------------------------------------------------
 
 
+class TestWhatThePatientCallsIt:
+    """The portal names a packet by the title written for the person filling
+    it in, never by the practice's own label for it."""
+
+    _PRIVATE = "Kept for our list 2026-10-07"
+
+    def _template_id(self, packets: InMemoryIntakePacketRepository, version_id: str) -> str:
+        return str(packets.versions[version_id]["template_id"])
+
+    def test_a_titled_packet_carries_its_title_and_not_its_name(
+        self,
+        portal: TestClient,
+        service: IntakeAssignmentService,
+        packets: InMemoryIntakePacketRepository,
+        packet_service: IntakePacketService,
+        published_version: str,
+    ) -> None:
+        template_id = self._template_id(packets, published_version)
+        packet_service.rename_template(template_id, self._PRIVATE)
+        packet_service.set_client_title(template_id, "  Before your first visit  ")
+        mine = _seed_assignment(service, _PATIENT_A, published_version)
+
+        listed = portal.get(ASSIGNMENTS, headers=_auth(_TOKEN_A))
+        opened = portal.get(f"{ASSIGNMENTS}/{mine['id']}", headers=_auth(_TOKEN_A))
+
+        assert listed.json()[0]["client_title"] == "Before your first visit"
+        assert opened.json()["client_title"] == "Before your first visit"
+        for response in (listed, opened):
+            assert "packet_name" not in response.text
+            assert self._PRIVATE not in response.text
+
+    def test_an_untitled_packet_carries_no_title_and_still_not_its_name(
+        self,
+        portal: TestClient,
+        service: IntakeAssignmentService,
+        packets: InMemoryIntakePacketRepository,
+        packet_service: IntakePacketService,
+        published_version: str,
+    ) -> None:
+        packet_service.rename_template(self._template_id(packets, published_version), self._PRIVATE)
+        _seed_assignment(service, _PATIENT_A, published_version)
+
+        response = portal.get(ASSIGNMENTS, headers=_auth(_TOKEN_A))
+
+        assert response.json()[0]["client_title"] is None
+        assert self._PRIVATE not in response.text
+
+    def test_the_chart_still_shows_the_practice_its_own_name(
+        self,
+        chart: TestClient,
+        packets: InMemoryIntakePacketRepository,
+        packet_service: IntakePacketService,
+        published_version: str,
+    ) -> None:
+        template_id = self._template_id(packets, published_version)
+        packet_service.set_client_title(template_id, "Before your first visit")
+        _assign(chart, _PATIENT_A, published_version)
+
+        body = chart.get(f"/api/patients/{_PATIENT_A}/intake-assignments").json()
+
+        assert body[0]["packet_name"] == "Intake"
+        assert body[0]["client_title"] == "Before your first visit"
+
+
 class TestSavingAnAnswer:
     def test_a_first_save_moves_the_form_to_in_progress(
         self, portal: TestClient, service: IntakeAssignmentService, published_version: str

@@ -3,9 +3,10 @@
 /**
  * The forms this patient has been asked for.
  *
- * One row each: whose forms these are, where they have got to, and the way
- * back in. The row is not titled with the form's name, which is the
- * clinician's own label for it in settings; see `formsFrom`. "Continue" is the only action — resuming is the server's
+ * One row each: its title, where it has got to, and the way back in. The
+ * title is the one the practice wrote for the person filling it in, or whose
+ * forms these are when it wrote none — never the clinician's own label for
+ * it in settings; see `rowTitle`. "Continue" is the only action — resuming is the server's
  * answer to what is still outstanding, not this screen's guess, so the row
  * does not try to say which question comes next.
  *
@@ -24,9 +25,9 @@ import {
   LIST_SENT,
   LIST_START,
   LIST_WITHDRAWN,
-  formsFrom,
   partsLeft,
   questionsLeft,
+  rowTitle,
 } from "./formsCopy"
 
 /** The statuses a patient can still write to. Mirrors `WRITABLE_STATUSES`. */
@@ -56,7 +57,7 @@ export function AssignmentList({ assignments, practiceName = null, onOpen }: Ass
             <AssignmentRow
               key={assignment.id}
               assignment={assignment}
-              title={formsFrom(practiceName)}
+              title={rowTitle(assignment.client_title, practiceName)}
               onOpen={onOpen}
             />
           ))}

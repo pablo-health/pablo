@@ -110,7 +110,10 @@ export interface IntakeVersionDetail extends IntakeVersion {
 
 export interface IntakeTemplate {
   id: string
+  /** The practice's own label for the packet; never shown to the person filling it in. */
   name: string
+  /** The title the person filling it in sees in their portal, or null for the portal's own wording. */
+  client_title: string | null
   created_at: string
   archived_at: string | null
   versions: IntakeVersion[]

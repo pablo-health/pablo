@@ -83,6 +83,7 @@ const DRAFT: IntakeVersionDetail = {
 const TEMPLATE: IntakeTemplate = {
   id: "template-1",
   name: "Intake",
+  client_title: null,
   created_at: "2026-09-01T10:00:00Z",
   archived_at: null,
   versions: [
@@ -192,6 +193,34 @@ describe("IntakeFormsCard", () => {
     expect(mockUpdateTemplate).toHaveBeenCalledWith({
       id: TEMPLATE.id,
       data: { name: "New client intake" },
+    })
+  })
+
+  it("sets the title clients see, and clears it when emptied", async () => {
+    const user = userEvent.setup()
+    mockUseTemplates.mockReturnValue({ data: [{ ...TEMPLATE, client_title: "Before your first visit" }] })
+    render(<IntakeFormsCard />)
+    await user.click(screen.getByRole("button", { name: TEMPLATE.name }))
+
+    const title = await screen.findByLabelText("Title clients see")
+    expect(title).toHaveValue("Before your first visit")
+    // Nothing changed, nothing to save.
+    expect(screen.queryByRole("button", { name: "Save title" })).not.toBeInTheDocument()
+
+    await user.clear(title)
+    await user.type(title, "  Yearly check-in ")
+    await user.click(screen.getByRole("button", { name: "Save title" }))
+    expect(mockUpdateTemplate).toHaveBeenLastCalledWith({
+      id: TEMPLATE.id,
+      data: { client_title: "Yearly check-in" },
+    })
+
+    // Emptied is an answer, not a mistake: it clears the title.
+    await user.clear(title)
+    await user.click(screen.getByRole("button", { name: "Save title" }))
+    expect(mockUpdateTemplate).toHaveBeenLastCalledWith({
+      id: TEMPLATE.id,
+      data: { client_title: null },
     })
   })
 

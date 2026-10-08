@@ -28,6 +28,7 @@ import {
 import type { IntakeItemInput, IntakeTemplate } from "@/types/intakePackets"
 import { IntakeItemEditor } from "./IntakeItemEditor"
 import { NewDocumentInline } from "./NewDocumentInline"
+import { PacketClientTitle } from "./PacketClientTitle"
 import {
   ADD_PACKET,
   DRAFT_BADGE,
@@ -211,6 +212,7 @@ export function IntakeFormsCard() {
               {open && version && (
                 <div className="mt-3 space-y-3 border-t border-border pt-3">
                   <PacketName key={template.name} template={template} />
+                  <PacketClientTitle key={`title-${template.client_title ?? ""}`} template={template} />
                   <div className="flex items-center gap-2">
                     {template.versions.map((v) => (
                       <Button

@@ -342,6 +342,40 @@ class TestAQuestionCarriesItsOwnWording:
             session.close()
 
 
+class TestAPacketCarriesATitleForThePersonFillingItIn:
+    """``client_title`` lands in a freshly provisioned schema (from the
+    template, not the chain) and round-trips through the repository."""
+
+    def test_it_is_set_read_back_and_cleared(self, two_practices: tuple[Engine, str, str]) -> None:
+        from app.services.intake_packet_service import IntakePacketService  # noqa: PLC0415
+
+        engine, first, _ = two_practices
+        session, repo = _repo_on(engine, first)
+        try:
+            service = IntakePacketService(repo)
+            created = service.create_template("Our label", str(uuid.uuid4()))
+            template_id = str(created["id"])
+            assert created["client_title"] is None
+
+            # One transaction throughout: the search_path is set on this
+            # connection, and a commit would hand it back to the pool. Expiring
+            # the session makes each read a real SELECT, not the cached object.
+            service.set_client_title(template_id, " Before your first visit ")
+            session.expire_all()
+            read = repo.get_template(template_id)
+            assert read is not None
+            assert read["client_title"] == "Before your first visit"
+            assert read["name"] == "Our label"
+
+            service.set_client_title(template_id, None)
+            session.expire_all()
+            cleared = repo.get_template(template_id)
+            assert cleared is not None
+            assert cleared["client_title"] is None
+        finally:
+            session.close()
+
+
 class TestTwoPracticesCannotSeeEachOther:
     def test_a_form_created_in_one_is_invisible_in_the_other(
         self, two_practices: tuple[Engine, str, str]

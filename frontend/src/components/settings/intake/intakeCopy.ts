@@ -117,6 +117,12 @@ export const ADD_PACKET = "Add a packet"
 export const RENAME_PACKET = "Rename"
 export const PACKET_NAME_LABEL = "Packet name"
 export const SAVE_NAME = "Save name"
+/** The title the person filling the packet in sees; the name above stays the practice's own. */
+export function clientTitleLabel(people: PeopleWords): string {
+  return `Title ${people.many} see`
+}
+export const CLIENT_TITLE_HINT = 'Shown in their portal. Left empty, it says "Forms from" and your practice name.'
+export const SAVE_TITLE = "Save title"
 export const DRAFT_BADGE = "Draft"
 export const PUBLISHED_BADGE = "Published"
 export const PUBLISH_BUTTON = "Publish"

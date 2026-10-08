@@ -62,18 +62,18 @@ class IntakeProgressResponse(BaseModel):
     parts_left: int = 0
 
 
-class IntakeAssignmentResponse(BaseModel):
-    """One form somebody was asked to fill in.
+class PatientIntakeAssignmentResponse(BaseModel):
+    """One form somebody was asked to fill in, as the person filling it sees it.
 
-    ``packet_name`` is carried rather than looked up separately, because a
-    list of assignments with no names on it is a list of identifiers. The
-    version number goes with it so "Intake, version 3" reads the way the
-    settings editor writes it.
+    ``client_title`` is the title the practice wrote for the person filling
+    it in, null when it wrote none. The packet's ``name`` is not here: it is
+    the practice's own label, written for its list ("New client intake
+    2026-10-07"), and the patient surface never carries it.
     """
 
     id: str
     version_id: str
-    packet_name: str
+    client_title: str | None = None
     version: int
     status: str
     assigned_at: datetime
@@ -83,6 +83,18 @@ class IntakeAssignmentResponse(BaseModel):
     #: the phone and a person at the chart can name the same submission.
     receipt_code: str | None = None
     progress: IntakeProgressResponse
+
+
+class IntakeAssignmentResponse(PatientIntakeAssignmentResponse):
+    """One assignment as the practice sees it, on the chart.
+
+    ``packet_name`` is carried rather than looked up separately, because a
+    list of assignments with no names on it is a list of identifiers. The
+    version number goes with it so "Intake, version 3" reads the way the
+    settings editor writes it.
+    """
+
+    packet_name: str
 
 
 class IntakeAssignmentItemResponse(BaseModel):
@@ -179,7 +191,7 @@ class IntakeCorrectionResponse(BaseModel):
     outstanding: list[str]
 
 
-class IntakeAssignmentDetailResponse(IntakeAssignmentResponse):
+class IntakeAssignmentDetailResponse(PatientIntakeAssignmentResponse):
     """One assignment, its questions, and the answers saved against them.
 
     ``artifacts`` rides along rather than living on a route of its own, so
@@ -338,6 +350,7 @@ __all__ = [
     "IntakeCorrectionResponse",
     "IntakeProgressResponse",
     "IntakeSubmissionResponse",
+    "PatientIntakeAssignmentResponse",
     "SaveAnswerRequest",
     "SaveIntakeCoverageResponse",
     "SavedAnswerResponse",

@@ -666,6 +666,10 @@ class IntakePacketTemplateRow(Base):
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
+    #: What the person filling the packet in sees as its title. ``name`` is
+    #: the practice's own label and never leaves the practice; NULL here
+    #: means the portal falls back to naming whose forms these are.
+    client_title: Mapped[str | None] = mapped_column(String(120))
     created_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

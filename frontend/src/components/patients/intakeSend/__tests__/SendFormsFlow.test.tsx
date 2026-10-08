@@ -76,6 +76,7 @@ function template(overrides: Partial<IntakeTemplate> = {}): IntakeTemplate {
   return {
     id: "template-1",
     name: "Before we meet",
+    client_title: null,
     created_at: "2026-03-01T12:00:00Z",
     archived_at: null,
     versions: [version("version-1", 1, "2026-03-02T12:00:00Z")],
