@@ -7,7 +7,6 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, date, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -36,9 +35,8 @@ from app.services.note_generation_service import MockNoteGenerationService
 if TYPE_CHECKING:
     from app.notes import NoteTypeDefinition
 
-TEMPLATES = (
-    Path(__file__).resolve().parents[2] / "frontend/src/components/settings/noteTypes/templates"
-)
+from app.notes.spec_templates import TEMPLATES_DIR as TEMPLATES
+
 USER = "clinician-1"
 
 TRANSCRIPT = Transcript(

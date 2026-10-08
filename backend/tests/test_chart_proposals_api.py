@@ -7,7 +7,6 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -43,9 +42,8 @@ if TYPE_CHECKING:
     )
     from fastapi.testclient import TestClient
 
-TEMPLATES = (
-    Path(__file__).resolve().parents[2] / "frontend/src/components/settings/noteTypes/templates"
-)
+from app.notes.spec_templates import TEMPLATES_DIR as TEMPLATES
+
 FOLLOW_UP = "custom.psychiatric_follow_up"
 EVALUATION = "custom.psychiatric_evaluation"
 SEPARATED = "Married; separated, divorce in progress since June."
