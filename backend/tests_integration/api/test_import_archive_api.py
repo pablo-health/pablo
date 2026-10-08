@@ -368,8 +368,11 @@ def test_same_name_without_birthdays_lands_only_where_assigned(
     viewed = client.get(f"/api/migration/runs/{run['id']}/files", params={"path": note_path})
     assert viewed.status_code == 200
     assert viewed.content.startswith(b"%PDF")
-    outside = client.get(f"/api/migration/runs/{run['id']}/files", params={"path": "../x"})
-    assert outside.status_code == 404
+    for escape in ("../x", "/etc/passwd", f"../{note_path}"):
+        outside = client.get(f"/api/migration/runs/{run['id']}/files", params={"path": escape})
+        assert outside.status_code == 404
+    encoded = client.get(f"/api/migration/runs/{run['id']}/files?path=..%2F..%2Fetc%2Fpasswd")
+    assert encoded.status_code == 404
 
     notes = [r for r in group["records"] if r["record_type"] == "note"]
     answers = {f"note:{notes[0]['source_id']}": PABLO, f"note:{notes[1]['source_id']}": PABLO}

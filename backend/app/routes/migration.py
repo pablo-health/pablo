@@ -28,6 +28,7 @@ from ..migration.apply import ArchiveApplier
 from ..migration.jobs import archive_base, run_apply, run_preview
 from ..migration.ledger import (
     ArchiveError,
+    archive_file,
     archive_path,
     delete_archive,
     get_run,
@@ -364,8 +365,8 @@ def view_import_file(
     known = {r["path"] for r in (run.preview or {}).get("records", [])}
     if path not in known:
         raise NotFoundError("That file is not part of this import.")
-    target = (root / path).resolve()
-    if not target.is_file() or root.resolve() not in target.parents:
+    target = archive_file(root, path)
+    if target is None:
         raise NotFoundError("That file is not part of this import.")
     index = sorted(known).index(path)
     audit.log(
