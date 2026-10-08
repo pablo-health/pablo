@@ -186,7 +186,10 @@ export function IntakeFormsCard() {
       <Suspense fallback={null}>
         <PacketFromLink onPacket={setOpenTemplateId} />
       </Suspense>
-      {list.length === 0 && <p className="text-[13px] text-muted-foreground">{EMPTY_STATE}</p>}
+      {/* Only once the list has arrived: while it loads, "No packets yet" is untrue. */}
+      {templates !== undefined && list.length === 0 && (
+        <p className="text-[13px] text-muted-foreground">{EMPTY_STATE}</p>
+      )}
 
       <ul className="space-y-2">
         {list.map((template) => {
