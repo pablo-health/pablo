@@ -53,9 +53,11 @@ def recorded_text(text: str) -> str:
     stated = text.strip()
     for empty in _EMPTY_CHART:
         if stated.lower().startswith(empty):
-            stated = stated[len(empty) :].strip().lstrip(".").strip()
-            if stated.lower().startswith(_STATED_OPEN) and stated.endswith(")"):
-                stated = stated[len(_STATED_OPEN) : -1].strip()
+            rest = stated[len(empty) :].strip().lstrip(".").strip()
+            # Anything else after it ("(not asked this visit)") states nothing.
+            if not (rest.lower().startswith(_STATED_OPEN) and rest.endswith(")")):
+                return ""
+            stated = rest[len(_STATED_OPEN) : -1].strip().strip('"“”').strip()
             break
     return "" if stated.lower().rstrip(".").strip() in _NOTHING_STATED else stated
 

@@ -217,10 +217,13 @@ def test_a_note_proposes_each_stated_field_the_chart_lacks_as_written(key: str) 
         ("Not recorded.", ""),
         ("None recorded", ""),
         ("asked — no change", ""),
+        ("Not recorded (not asked this visit)", ""),
+        ("Not recorded (asked this visit: no change)", ""),
         (
             "Not recorded (stated this visit: lives with a partner since May)",
             "lives with a partner since May",
         ),
+        ('Not recorded (stated this visit: "a few times a month.")', "a few times a month."),
         ("Married 19 years.", "Married 19 years."),
     ],
 )
