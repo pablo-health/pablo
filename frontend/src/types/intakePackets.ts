@@ -108,6 +108,12 @@ export interface IntakeVersionDetail extends IntakeVersion {
   items: IntakeItem[]
 }
 
+/** One document and the packets whose newest version asks for it. */
+export interface DocumentUsage {
+  document_key: string
+  packets: { id: string; name: string }[]
+}
+
 export interface IntakeTemplate {
   id: string
   /** The practice's own label for the packet; never shown to the person filling it in. */

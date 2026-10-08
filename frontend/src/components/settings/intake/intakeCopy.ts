@@ -151,6 +151,9 @@ export const DOCUMENTS_TITLE = "Documents in your packets"
 export const DOCUMENTS_DESCRIPTION =
   "What your packets ask people to read and sign. Editing one starts a new version."
 export const DOCUMENTS_EMPTY = "No documents yet."
+/** Under each document: the packets that ask for it. */
+export const USED_IN = "Used in"
+export const NOT_IN_A_PACKET = "Not in a packet yet."
 export const HIDE_DOCUMENTS = "Hide documents"
 /** `null` while the list is still loading: no count is better than a wrong one. */
 export function showDocuments(count: number | null): string {

@@ -3,6 +3,7 @@
 "use client";
 
 import { Plus } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 import { SettingsBadge, SettingsCard } from "@/components/settings/ui";
 import { Button } from "@/components/ui/button";
@@ -16,6 +17,7 @@ import {
   usePublishIntakeDocument,
   useSaveIntakeDocument,
 } from "@/hooks/useIntakeDocuments";
+import { useDocumentUsage } from "@/hooks/useIntakePackets";
 import type { IntakeDocument } from "@/types/intakeDocuments";
 import {
   ADD_DOCUMENT,
@@ -30,8 +32,10 @@ import {
   HIDE_DOCUMENTS,
   NEW_DOCUMENT_NAME,
   NEW_DOCUMENT_VERSION_BUTTON,
+  NOT_IN_A_PACKET,
   PUBLISHED_BADGE,
   PUBLISH_BUTTON,
+  USED_IN,
   showDocuments,
 } from "./intakeCopy";
 
@@ -139,6 +143,36 @@ function DocumentEditor({
 }
 
 /**
+ * Which packets ask for this document, each a link that opens it above.
+ *
+ * Rendered only once the answer has arrived: "Not in a packet yet" while it
+ * loads would be untrue for every document that is.
+ */
+function UsedIn({ packets }: { packets: { id: string; name: string }[] }) {
+  if (packets.length === 0) {
+    return (
+      <p className="mt-1 text-[12.5px] text-muted-foreground">{NOT_IN_A_PACKET}</p>
+    );
+  }
+  return (
+    <p className="mt-1 text-[12.5px] text-muted-foreground">
+      {USED_IN}{" "}
+      {packets.map((packet, i) => (
+        <span key={packet.id}>
+          {i > 0 && ", "}
+          <Link
+            href={`/dashboard/settings/portal?packet=${packet.id}`}
+            className="font-medium text-foreground underline"
+          >
+            {packet.name}
+          </Link>
+        </span>
+      ))}
+    </p>
+  );
+}
+
+/**
  * Practice > Patient portal > Documents.
  *
  * The documents a practice asks people to sign, beside the forms it asks
@@ -152,6 +186,7 @@ function DocumentEditor({
  */
 export function IntakeDocumentsCard() {
   const { data: documents } = useIntakeDocuments();
+  const { data: usage } = useDocumentUsage();
   const createDocument = useCreateIntakeDocument();
   const saveDocument = useSaveIntakeDocument();
   const publish = usePublishIntakeDocument();
@@ -164,6 +199,9 @@ export function IntakeDocumentsCard() {
 
   const list = documents ?? [];
   const error = messageOf(publish.error) ?? messageOf(saveDocument.error);
+  const usedIn = new Map(
+    (usage ?? []).map((row) => [row.document_key, row.packets]),
+  );
 
   return (
     <SettingsCard title={DOCUMENTS_TITLE} description={DOCUMENTS_DESCRIPTION}>
@@ -212,6 +250,9 @@ export function IntakeDocumentsCard() {
                       {published ? PUBLISHED_BADGE : DRAFT_BADGE}
                     </SettingsBadge>
                   </div>
+                  {usage !== undefined && (
+                    <UsedIn packets={usedIn.get(document.document_key) ?? []} />
+                  )}
 
                   {open && (
                     <div className="mt-3 space-y-3 border-t border-border pt-3">
