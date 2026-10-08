@@ -61,10 +61,12 @@ scripts/run-chart-proposal-eval.sh --case unchanged
 
 ### Pronouns
 
-Before the prompt said how to refer to the client, every run of
-`stopped-working` wrote "when she was let go". With the rule, three runs
-of it passed with no gendered pronoun ("they were let go", or no pronoun at
-all), and a run of every case passed.
+Before the prompt said how to refer to the person seen, every run of
+`stopped-working` wrote "when she was let go". With the rule (in the
+clinician's word, "the client" in every case here), three runs of it
+passed with no gendered pronoun, three runs of
+`medication-another-prescriber-started` passed (one proposing the allowed
+medical history), and a run of all seven cases passed.
 
 ### With the medication list
 
