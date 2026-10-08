@@ -481,11 +481,12 @@ class SessionService:
         source_text: str,
         note_content: dict[str, Any],
         note_type: str = DEFAULT_NOTE_TYPE,
+        note_type_version: int | None = None,
     ) -> tuple[TherapySession, Patient, Note]:
         """Create a session from an already-written note imported as a file.
 
         Unlike :meth:`upload_session`, the note content is supplied by the
-        caller — parsed from an uploaded SOAP document — rather than
+        caller — parsed from an uploaded document — rather than
         generated from a transcript, so there is no LLM call here. The
         original document text is stored as the session transcript so it can
         be shown beside the parsed note during review. The session lands in
@@ -524,6 +525,7 @@ class SessionService:
             note_type=note_type,
             content=note_content,
             user_id=user_id,
+            note_type_version=note_type_version,
         )
 
         patient.session_count += 1

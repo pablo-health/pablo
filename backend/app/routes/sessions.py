@@ -65,7 +65,12 @@ from ..models import (
 )
 from ..models.note import Note
 from ..models.session import TherapySession
-from ..notes import NoteTypeAuthorizer, get_note_type_authorizer
+from ..notes import (
+    NoteTypeAuthorizer,
+    NoteTypeDefinition,
+    NoteTypeRegistry,
+    get_note_type_authorizer,
+)
 from ..rate_limit import get_audio_upload_limiter
 from ..repositories import (
     NotesRepository,
@@ -119,13 +124,14 @@ from ..services.session_generation_worker import (
     resolve_tenant_schema_for_user,
     run_soap_generation_job,
 )
+from ..services.session_service import DEFAULT_NOTE_TYPE
 from ..services.transcription_queue_service import (
     MockTranscriptionQueueService,
     TranscriptionQueueService,
 )
 from ..settings import get_settings
 from ..utcnow import utc_now
-from .notes import get_audio_on_signing, get_note_generation_service
+from .notes import get_audio_on_signing, get_note_generation_service, get_registry
 
 # Optional subscription extension point. When a billing overlay is
 # installed it registers ``app.routes.subscription``; otherwise the
@@ -533,6 +539,36 @@ def _resolve_import_session_date(override: str | None, extracted: datetime | Non
     return utc_now().replace(tzinfo=None)
 
 
+def _importable_note_type(
+    note_type: str, registry: NoteTypeRegistry, authorizer: NoteTypeAuthorizer, user: User
+) -> NoteTypeDefinition:
+    """The definition a document is imported into, or the reason it can't be.
+
+    The same set a clinician can start a visit note from: a built-in or one of
+    the practice's active types, of session context, and not a hand-written
+    restricted type (an import is a model reading the document).
+    """
+    if not registry.has(note_type):
+        raise BadRequestError(
+            "That note type isn't available.",
+            {"note_type": note_type},
+            code="UNKNOWN_NOTE_TYPE",
+        )
+    definition = registry.get(note_type)
+    if definition.context != "session" or definition.restricted:
+        raise BadRequestError(
+            f"{definition.label} notes can't be imported.",
+            {"note_type": note_type},
+            code="NOTE_TYPE_NOT_IMPORTABLE",
+        )
+    if not authorizer.is_allowed(user, note_type):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Note type {note_type!r} not allowed for this subscription",
+        )
+    return definition
+
+
 @router.post(
     "/api/patients/{patient_id}/sessions/import",
     status_code=status.HTTP_201_CREATED,
@@ -542,22 +578,26 @@ async def import_session(
     file: UploadFile,
     http_request: Request,
     session_date: str | None = Form(default=None),
+    note_type: str = Form(default=DEFAULT_NOTE_TYPE),
     _ctx: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_baa_acceptance),
     session_service: SessionService = Depends(get_session_service),
     note_import_service: NoteImportService = Depends(get_note_import_service),
     ocr: DocumentAiOcrClient = Depends(get_document_ocr_client),
+    registry: NoteTypeRegistry = Depends(get_registry),
+    authorizer: NoteTypeAuthorizer = Depends(get_note_type_authorizer),
     audit: AuditService = Depends(get_audit_service),
 ) -> SessionResponse:
-    """Import an existing SOAP note (PDF or TXT) as a pending-review session.
+    """Import an existing note (PDF, Word or TXT) as a pending-review session.
 
-    Extracts the document's text, parses it into a structured SOAP note plus
-    the date the session took place, and creates a session dated from the
-    document — or from ``session_date`` when the caller overrides it. The
-    original text is kept as the session transcript so it can be reviewed
-    beside the parsed note. One file per request; the client uploads several
-    in parallel for a bulk chart import.
+    Extracts the document's text, parses it into the fields of ``note_type``
+    (SOAP unless named) plus the date the session took place, and creates a
+    session dated from the document — or from ``session_date`` when the
+    caller overrides it. The original text is kept as the session transcript
+    so it can be reviewed beside the parsed note. One file per request; the
+    client uploads several in parallel for a bulk chart import.
     """
+    definition = _importable_note_type(note_type, registry, authorizer, user)
     _gate_trial_session(user.email)
 
     data = await file.read()
@@ -598,7 +638,7 @@ async def import_session(
     try:
         with fail_after(IMPORT_PARSE_TIMEOUT_SECONDS):
             parsed = await to_thread.run_sync(
-                note_import_service.parse_soap_note, text, abandon_on_cancel=True
+                note_import_service.parse_note, text, definition, abandon_on_cancel=True
             )
     except TimeoutError as exc:
         logger.warning("Imported-note parse timed out after %.0fs", IMPORT_PARSE_TIMEOUT_SECONDS)
@@ -608,7 +648,7 @@ async def import_session(
         ) from exc
     except ValueError as exc:
         logger.exception("Imported-note parse failed")
-        raise ServerError("Could not read the SOAP note from this document.") from exc
+        raise ServerError("Could not read the note from this document.") from exc
 
     resolved_date = _resolve_import_session_date(session_date, parsed.session_datetime())
 
@@ -619,6 +659,8 @@ async def import_session(
             session_date=resolved_date,
             source_text=text,
             note_content=parsed.content,
+            note_type=definition.key,
+            note_type_version=definition.version,
         )
     except PatientNotFoundError as exc:
         raise NotFoundError("Patient not found", {"patient_id": patient_id}) from exc
