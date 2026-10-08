@@ -12,11 +12,17 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from app.chart_history.dependencies import get_chart_history_repository
 from app.chart_history.service import ChartHistoryService
-from app.chart_proposals.dependencies import get_chart_proposal_repository
-from app.chart_proposals.models import DraftedProposal, Evidence
+from app.chart_proposals.dependencies import (
+    get_chart_proposal_repository,
+    get_proposal_medication_repository,
+)
+from app.chart_proposals.models import DraftedProposal, Evidence, MedicationChange
 from app.chart_proposals.service import ChartProposalService
 from app.chart_proposals.step import ChartProposalStep
 from app.main import app
+from app.medications.repository import InMemoryMedicationRepository
+from app.medications.schemas import CreateMedicationRequest
+from app.medications.service import MedicationService
 from app.models import Note, Patient, SessionStatus, TherapySession, Transcript
 from app.notes import NoteTypeRegistry, register_builtin_note_types
 from app.notes.chart_context import ChartContext
@@ -385,3 +391,70 @@ def test_a_note_type_the_call_does_not_run_on_is_skipped_not_failed(
     listed = client.get(f"/api/notes/{note.id}/chart-proposals").json()
     assert (listed["run"]["status"], listed["run"]["retryable"]) == ("skipped", False)
     assert client.post(f"/api/notes/{note.id}/chart-proposals/retry").status_code == 409
+
+
+def test_medication_changes_are_accepted_against_the_list_and_never_rewritten(
+    client: TestClient,
+    mock_repo: InMemoryPatientRepository,
+    mock_notes_repo: InMemoryNotesRepository,
+    mock_user_id: str,
+    chart: tuple[InMemoryChartHistoryRepository, InMemoryChartProposalRepository],
+) -> None:
+    _, proposals = chart
+    medications = InMemoryMedicationRepository()
+    medications.grant_all_access()
+    app.dependency_overrides[get_proposal_medication_repository] = lambda: medications
+    try:
+        patient = _patient(mock_repo, mock_user_id)
+        MedicationService(medications).create(
+            patient.id,
+            mock_user_id,
+            CreateMedicationRequest(drug_name="lithium", dose="300 mg", frequency="twice daily"),
+        )
+        note = NoteService(mock_notes_repo).create_standalone_note(
+            patient_id=patient.id,
+            note_type=FOLLOW_UP,
+            content={},
+            user_id=mock_user_id,
+            note_type_version=1,
+        )
+        evidence = (Evidence(2, "[00:09] Clinician: Stop the lithium, it's causing nausea."),)
+        ChartProposalService(proposals).refresh(
+            note,
+            ChartContext(),
+            {},
+            [
+                DraftedProposal(
+                    field_key="medications",
+                    item_key="lithium",
+                    proposed_text="Stopped: nausea",
+                    what_changed="Stopped because of nausea",
+                    evidence=evidence,
+                    change=MedicationChange(action="stop", drug_name="lithium", reason="nausea"),
+                )
+            ],
+        )
+
+        (listed,) = client.get(f"/api/notes/{note.id}/chart-proposals").json()["data"]
+        url = f"/api/notes/{note.id}/chart-proposals/{listed['id']}/decision"
+        edited = client.post(url, json={"decision": "edit", "text": "Keep it."})
+        accepted = client.post(url, json={"decision": "accept"})
+    finally:
+        app.dependency_overrides.pop(get_proposal_medication_repository, None)
+
+    assert (listed["label"], listed["editable"], listed["current_text"]) == (
+        "Medications: Stop lithium",
+        False,
+        "lithium 300 mg, twice daily",
+    )
+    assert listed["change"]["action"] == "stop"
+    assert edited.status_code == 409
+    assert accepted.status_code == 200, accepted.text
+    (row,) = medications.list_by_patient(patient.id)
+    # A standalone note's visit is the day it was written.
+    assert (row["status"], row["stopped_at"], row["stop_reason"], row["source_note_id"]) == (
+        "discontinued",
+        note.created_at.date(),
+        "nausea",
+        note.id,
+    )

@@ -69,7 +69,8 @@ def _print(results: list[dict[str, Any]]) -> None:
             f"{'PASS' if r['passed'] else 'FAIL'}  run {r['run']}  {r['case']}  ({r['seconds']}s)"
         )
         for p in r["proposals"]:
-            print(f"      {p['field_key']}: {p['proposed_text']}")
+            entry = f" ({p['item_key']})" if p["item_key"] else ""
+            print(f"      {p['field_key']}{entry}: {p['proposed_text']}")
         for name, found in r["failed_checks"].items():
             for problem in found:
                 print(f"      {name}: {problem}")

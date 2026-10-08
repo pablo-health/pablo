@@ -433,7 +433,13 @@ async def draft_note(call: NoteCall) -> dict[str, Any]:
     if call.response_schema.get("title") == "PracticeNoteTypeSpec":
         return {"data": DERIVED_PROPOSAL, "finish_reason": "stop"}
     if call.response_schema.get("title") == "ChartProposals":
-        return {"data": {"proposals": _chart_proposals(call.user_prompt)}, "finish_reason": "stop"}
+        return {
+            "data": {
+                "proposals": _chart_proposals(call.user_prompt),
+                "medication_changes": _medication_changes(call.user_prompt),
+            },
+            "finish_reason": "stop",
+        }
     if "runs" in call.response_schema.get("properties", {}):
         return {"data": _turn_labels(call.user_prompt), "finish_reason": "stop"}
     note = _source_note(call.user_prompt)
@@ -505,6 +511,35 @@ def _chart_proposals(user_prompt: str) -> list[dict[str, Any]]:
             }
         )
     return proposals
+
+
+#: How a clinician line changes the medication list:
+#: "Clinician: Medication start: hydroxyzine; 25 mg; in the afternoon as needed".
+#: After the name come the dose, the frequency and, for a stop, the reason; any
+#: may be left empty.
+_MEDICATION_DECISION = "Clinician: Medication "
+
+
+def _medication_changes(user_prompt: str) -> list[dict[str, Any]]:
+    """One medication change per numbered "Medication <action>: ..." line, citing it."""
+    changes = []
+    for line in user_prompt.splitlines():
+        head, found, rest = line.partition(_MEDICATION_DECISION)
+        if not found or not head.startswith("[S"):
+            continue
+        segment = head[2:].partition("]")[0]
+        action, _, values = rest.partition(": ")
+        name, dose, frequency, reason = ([*values.split(";"), "", "", ""])[:4]
+        change = {
+            "action": action.strip(),
+            "drug_name": name.strip(),
+            "what_changed": "Stated this visit",
+            "evidence_segment_ids": [int(segment)] if segment.isdigit() else [],
+        }
+        given = {"dose": dose, "frequency": frequency, "reason": reason}
+        change.update({k: v.strip() for k, v in given.items() if v.strip()})
+        changes.append(change)
+    return changes
 
 
 @app.post("/transcription/v1/transcribe")

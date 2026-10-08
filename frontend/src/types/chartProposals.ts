@@ -13,12 +13,29 @@ export interface ProposalEvidence {
   text: string
 }
 
+/** A change to the medication list, as the visit stated it. */
+export interface MedicationChange {
+  /** start, stop and change are the clinician's; add is a medication the client takes. */
+  action: "start" | "stop" | "change" | "add"
+  drug_name: string
+  /** For a change, the new value; null leaves it as it is. */
+  dose: string | null
+  frequency: string | null
+  category: string | null
+  /** Why a medication was stopped. */
+  reason: string | null
+}
+
 export interface ChartProposal {
   id: string
   field_key: string
   /** For a list field, the entry it is about (an allergy's substance); otherwise "". */
   item_key: string
   label: string
+  /** False for a medication change, which is accepted or discarded, not rewritten. */
+  editable: boolean
+  /** The structured change, for a medication; null for free text. */
+  change: MedicationChange | null
   /** What the chart says now; null when nothing is recorded. */
   current_text: string | null
   proposed_text: string

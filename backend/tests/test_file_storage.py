@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import json
+from io import BytesIO
 from typing import Any
 from unittest.mock import MagicMock
 from urllib.parse import parse_qs, urlparse
@@ -20,6 +21,7 @@ import boto3
 import pytest
 from app.services.file_storage import (
     GcsFileStorage,
+    InvalidObjectNameError,
     LocalFileStorage,
     S3FileStorage,
     file_storage_from_settings,
@@ -342,6 +344,60 @@ class TestLocalFileStorage:
     def test_list_names_missing_dir_returns_empty(self, tmp_path: Any) -> None:
         storage = LocalFileStorage()
         assert storage.list_names(bucket=str(tmp_path), prefix="nope/obj.speech.") == []
+
+    @pytest.mark.parametrize(
+        "object_name",
+        ["../outside.pdf", "tenant/../../outside.pdf", "/etc/outside.pdf", "", "."],
+    )
+    def test_names_that_leave_the_bucket_are_refused(self, tmp_path: Any, object_name: str) -> None:
+        storage = LocalFileStorage()
+        bucket = tmp_path / "bucket"
+        bucket.mkdir()
+        (tmp_path / "outside.pdf").write_bytes(b"secret")
+        with pytest.raises(InvalidObjectNameError):
+            storage.upload_bytes(
+                bucket=str(bucket), object_name=object_name, data=b"x", content_type="text/plain"
+            )
+        with pytest.raises(InvalidObjectNameError):
+            storage.upload_stream(
+                bucket=str(bucket),
+                object_name=object_name,
+                fileobj=BytesIO(b"x"),
+                content_type="text/plain",
+                max_bytes=10,
+            )
+        with pytest.raises(InvalidObjectNameError):
+            storage.download_bytes(bucket=str(bucket), object_name=object_name)
+        with pytest.raises(InvalidObjectNameError):
+            storage.fetch_metadata(bucket=str(bucket), object_name=object_name)
+        with pytest.raises(InvalidObjectNameError):
+            storage.delete(bucket=str(bucket), object_name=object_name)
+        assert (tmp_path / "outside.pdf").read_bytes() == b"secret"
+
+    def test_a_listing_prefix_cannot_leave_the_bucket(self, tmp_path: Any) -> None:
+        bucket = tmp_path / "bucket"
+        bucket.mkdir()
+        with pytest.raises(InvalidObjectNameError):
+            LocalFileStorage().list_names(bucket=str(bucket), prefix="../")
+
+    def test_an_encoded_separator_is_a_literal_name_inside_the_bucket(self, tmp_path: Any) -> None:
+        """``%2F`` is not a separator to a filesystem: it names a file in the bucket."""
+        storage = LocalFileStorage()
+        bucket = tmp_path / "bucket"
+        bucket.mkdir()
+        name = "..%2F..%2Foutside.pdf"
+        storage.upload_bytes(bucket=str(bucket), object_name=name, data=b"x", content_type="x")
+        assert (bucket / name).read_bytes() == b"x"
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["bucket"]
+
+    def test_a_dotted_name_that_stays_inside_still_works(self, tmp_path: Any) -> None:
+        storage = LocalFileStorage()
+        base = str(tmp_path)
+        storage.upload_bytes(
+            bucket=base, object_name="tenant/./a/../lic.pdf", data=b"pdf", content_type="x"
+        )
+        assert storage.download_bytes(bucket=base, object_name="tenant/lic.pdf") == b"pdf"
+        assert storage.list_names(bucket=base, prefix="tenant/") == ["tenant/lic.pdf"]
 
 
 # ---- settings factory ---------------------------------------------------
