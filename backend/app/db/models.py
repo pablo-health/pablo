@@ -1979,6 +1979,35 @@ class NoteChartProposalRow(Base):
     )
 
 
+class NoteChartProposalRunRow(Base):
+    """Whether a note's proposal call last ran, and how it ended (``app.chart_proposals``).
+
+    One row per note. ``status`` is ``ok``, ``failed`` (the call raised;
+    ``error_class`` names the exception type, never its message) or
+    ``skipped`` (a note type the call does not run on). Without it a failed
+    call would read as "nothing changed". Carries ``patient_id`` for the
+    ``has_patient_access`` row policy, like ``note_chart_proposals``.
+    """
+
+    __tablename__ = "note_chart_proposal_runs"
+
+    note_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("notes.id", ondelete="CASCADE"), primary_key=True
+    )
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("patients.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    error_class: Mapped[str | None] = mapped_column(String(100))
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('ok', 'failed', 'skipped')", name="ck_note_chart_proposal_runs_status"
+        ),
+    )
+
+
 class RefillRequestRow(Base):
     """A patient's request, from the portal, to have a medication refilled.
 

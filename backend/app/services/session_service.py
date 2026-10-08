@@ -299,7 +299,7 @@ class SessionService:
                 self.note_generation_service, definition, chart, session.transcript, result.content
             )
             if step is not None
-            else []
+            else None
         )
         note = self.note_service.create_or_update_for_session(
             session_id=session.id,

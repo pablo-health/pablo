@@ -149,7 +149,7 @@ def test_the_call_numbers_the_transcript_and_a_failure_proposes_nothing() -> Non
         prompts.append(user)
         return _reply(_relationships(FINALIZED, [DIVORCE]))
 
-    kept = propose_chart_updates(complete, _chart(relationships=SEPARATED), TRANSCRIPT)
+    kept = propose_chart_updates(complete, _chart(relationships=SEPARATED), TRANSCRIPT).proposals
 
     assert [p.evidence[0].text for p in kept] == [
         "[00:09] Client: The divorce was finalized on April 2."
@@ -159,7 +159,8 @@ def test_the_call_numbers_the_transcript_and_a_failure_proposes_nothing() -> Non
     def fails(system: str, user: str, schema: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError("model unavailable")
 
-    assert propose_chart_updates(fails, _chart(), TRANSCRIPT) == []
+    failed = propose_chart_updates(fails, _chart(), TRANSCRIPT)
+    assert (failed.proposals, failed.error_class) == ([], "RuntimeError")
 
 
 def test_the_prompt_lists_every_field_and_says_never_to_remove() -> None:
@@ -441,12 +442,13 @@ def test_the_step_proposes_only_for_a_practice_type() -> None:
     chart = _chart(relationships=SEPARATED)
 
     follow_up = step.draft(generator, _definition("psychiatric_follow_up"), chart, TRANSCRIPT, {})
-    assert [p.field_key for p in follow_up] == ["relationships"]
+    assert follow_up is not None
+    assert [p.field_key for p in follow_up.proposals] == ["relationships"]
 
-    assert step.draft(generator, get_default_registry().get("soap"), chart, TRANSCRIPT, {}) == []
+    assert step.draft(generator, get_default_registry().get("soap"), chart, TRANSCRIPT, {}) is None
     assert (
         step.draft(
             MockNoteGenerationService(), _definition("psychiatric_follow_up"), chart, TRANSCRIPT, {}
         )
-        == []
+        is None
     )

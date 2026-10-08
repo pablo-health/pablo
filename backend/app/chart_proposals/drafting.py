@@ -12,7 +12,9 @@ have, is dropped: an unsupported proposal never reaches the clinician. No
 text is matched against the transcript; the evidence kept is the cited
 lines' own text.
 
-The call never fails the draft: any error leaves the note with no proposals.
+The call never fails the draft. An error leaves the note with no proposals
+and is recorded as the note's run having failed, so the clinician is told
+the note was not checked rather than shown an empty list.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 from ..notes.chart_context import STATED_THIS_VISIT
 from ..services.source_attribution_service import format_transcript_with_segment_ids
 from .families import FAMILIES, chart_key_for, family_for, proposable_keys
-from .models import DraftedProposal, Evidence
+from .models import Drafted, DraftedProposal, Evidence
 from .recorded import field_text
 
 if TYPE_CHECKING:
@@ -187,14 +189,15 @@ def propose_chart_updates(
     transcript: Transcript,
     *,
     draft: Mapping[str, Any] | None = None,
-) -> list[DraftedProposal]:
-    """Ask what this visit changes on the chart; never raises."""
+) -> Drafted:
+    """Ask what this visit changes on the chart. Never raises: a failure is
+    returned with its exception type, so the note can say it was not checked."""
     indexed = format_transcript_with_segment_ids(transcript.content)
     if not indexed:
-        return []
+        return Drafted([])
     try:
         reply = complete(SYSTEM_PROMPT, build_prompt(chart, indexed, draft=draft), RESPONSE_SCHEMA)
-        return parse_proposals(reply, chart, _segment_texts(indexed))
-    except Exception:
+        return Drafted(parse_proposals(reply, chart, _segment_texts(indexed)))
+    except Exception as exc:
         logger.warning("Chart proposal call failed; the note has no proposals", exc_info=True)
-        return []
+        return Drafted([], error_class=type(exc).__name__)

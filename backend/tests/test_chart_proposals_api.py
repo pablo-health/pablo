@@ -18,7 +18,7 @@ from app.chart_proposals.models import DraftedProposal, Evidence
 from app.chart_proposals.service import ChartProposalService
 from app.chart_proposals.step import ChartProposalStep
 from app.main import app
-from app.models import Patient, SessionStatus, TherapySession, Transcript
+from app.models import Note, Patient, SessionStatus, TherapySession, Transcript
 from app.notes import NoteTypeRegistry, register_builtin_note_types
 from app.notes.chart_context import ChartContext
 from app.notes.practice_types import RepositoryPracticeNoteTypeSource
@@ -229,21 +229,31 @@ class _Proposing(MockNoteGenerationService):
         return complete
 
 
-def test_a_session_draft_stores_its_proposals_beside_the_note(
-    mock_repo: InMemoryPatientRepository,
-    mock_session_repo: InMemoryTherapySessionRepository,
-    mock_notes_repo: InMemoryNotesRepository,
-    mock_user_id: str,
+class _Failing(MockNoteGenerationService):
+    def chart_proposal_completion(self) -> Any:
+        def complete(system: str, user: str, schema: dict[str, Any]) -> dict[str, Any]:
+            raise TimeoutError("deadline exceeded")
+
+        return complete
+
+
+def _drafted_session_note(
+    generator: MockNoteGenerationService,
+    note_type: str,
+    patients: InMemoryPatientRepository,
+    sessions: InMemoryTherapySessionRepository,
+    notes: InMemoryNotesRepository,
+    user_id: str,
     chart: tuple[InMemoryChartHistoryRepository, InMemoryChartProposalRepository],
-) -> None:
+) -> Note:
+    """A session note drafted through the session service, its proposal step included."""
     history, proposals = chart
-    patient = _patient(mock_repo, mock_user_id)
-    ChartHistoryService(history).set(patient.id, "relationships", mock_user_id, SEPARATED)
-    registry = app.dependency_overrides[notes_routes.get_registry]()
-    session = mock_session_repo.create(
+    patient = _patient(patients, user_id)
+    ChartHistoryService(history).set(patient.id, "relationships", user_id, SEPARATED)
+    session = sessions.create(
         TherapySession(
             id=str(uuid.uuid4()),
-            user_id=mock_user_id,
+            user_id=user_id,
             patient_id=patient.id,
             session_date=datetime.now(UTC),
             session_number=1,
@@ -257,23 +267,41 @@ def test_a_session_draft_stores_its_proposals_beside_the_note(
         )
     )
     service = SessionService(
-        mock_session_repo,
-        mock_repo,
-        _Proposing(registry),
-        NoteService(mock_notes_repo),
+        sessions,
+        patients,
+        generator,
+        NoteService(notes),
         problem_repo=InMemoryPatientProblemRepository(),
         history_repo=history,
         proposal_step=ChartProposalStep(proposals, history),
     )
-    definition = registry.get(FOLLOW_UP)
-
-    note = service._generate_and_persist_note(
+    return service._generate_and_persist_note(
         session,
         patient,
+        note_type,
+        user_id,
+        definition=generator.registry.get(note_type),
+        chart=service._chart_for(patient, user_id),
+    )
+
+
+def test_a_session_draft_stores_its_proposals_beside_the_note(
+    mock_repo: InMemoryPatientRepository,
+    mock_session_repo: InMemoryTherapySessionRepository,
+    mock_notes_repo: InMemoryNotesRepository,
+    mock_user_id: str,
+    chart: tuple[InMemoryChartHistoryRepository, InMemoryChartProposalRepository],
+) -> None:
+    _, proposals = chart
+    registry = app.dependency_overrides[notes_routes.get_registry]()
+    note = _drafted_session_note(
+        _Proposing(registry),
         FOLLOW_UP,
+        mock_repo,
+        mock_session_repo,
+        mock_notes_repo,
         mock_user_id,
-        definition=definition,
-        chart=service._chart_for(patient, mock_user_id),
+        chart,
     )
 
     (stored,) = [p for p in proposals.list_for_note(note.id) if p.origin == "transcript"]
@@ -281,5 +309,81 @@ def test_a_session_draft_stores_its_proposals_beside_the_note(
     assert [e.text for e in stored.evidence] == [
         "[00:05] Client: The divorce was finalized on April 2."
     ]
+    run = proposals.run(note.id)
+    assert run is not None
+    assert (run.status, run.error_class) == ("ok", None)
     # The note's content carries no proposal.
     assert FINALIZED not in json.dumps(note.content)
+
+
+def test_a_failed_call_is_recorded_shown_and_retried(
+    client: TestClient,
+    mock_repo: InMemoryPatientRepository,
+    mock_session_repo: InMemoryTherapySessionRepository,
+    mock_notes_repo: InMemoryNotesRepository,
+    mock_user_id: str,
+    chart: tuple[InMemoryChartHistoryRepository, InMemoryChartProposalRepository],
+) -> None:
+    _, proposals = chart
+    registry = app.dependency_overrides[notes_routes.get_registry]()
+    note = _drafted_session_note(
+        _Failing(registry),
+        FOLLOW_UP,
+        mock_repo,
+        mock_session_repo,
+        mock_notes_repo,
+        mock_user_id,
+        chart,
+    )
+
+    # The draft itself is unaffected.
+    assert note.content
+    run = proposals.run(note.id)
+    assert run is not None
+    assert (run.status, run.error_class) == ("failed", "TimeoutError")
+    listed = client.get(f"/api/notes/{note.id}/chart-proposals").json()
+    assert [p for p in listed["data"] if p["origin"] == "transcript"] == []
+    assert (listed["run"]["status"], listed["run"]["retryable"]) == ("failed", True)
+
+    app.dependency_overrides[notes_routes.get_note_generation_service] = lambda: _Proposing(
+        registry
+    )
+    try:
+        retried = client.post(f"/api/notes/{note.id}/chart-proposals/retry")
+    finally:
+        app.dependency_overrides.pop(notes_routes.get_note_generation_service, None)
+
+    assert retried.status_code == 200, retried.text
+    body = retried.json()
+    assert body["run"]["status"] == "ok"
+    assert [p["field_key"] for p in body["data"] if p["origin"] == "transcript"] == [
+        "relationships"
+    ]
+
+
+def test_a_note_type_the_call_does_not_run_on_is_skipped_not_failed(
+    client: TestClient,
+    mock_repo: InMemoryPatientRepository,
+    mock_session_repo: InMemoryTherapySessionRepository,
+    mock_notes_repo: InMemoryNotesRepository,
+    mock_user_id: str,
+    chart: tuple[InMemoryChartHistoryRepository, InMemoryChartProposalRepository],
+) -> None:
+    _, proposals = chart
+    registry = app.dependency_overrides[notes_routes.get_registry]()
+    note = _drafted_session_note(
+        _Failing(registry),
+        "soap",
+        mock_repo,
+        mock_session_repo,
+        mock_notes_repo,
+        mock_user_id,
+        chart,
+    )
+
+    run = proposals.run(note.id)
+    assert run is not None
+    assert run.status == "skipped"
+    listed = client.get(f"/api/notes/{note.id}/chart-proposals").json()
+    assert (listed["run"]["status"], listed["run"]["retryable"]) == ("skipped", False)
+    assert client.post(f"/api/notes/{note.id}/chart-proposals/retry").status_code == 409

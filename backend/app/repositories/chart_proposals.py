@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
     from datetime import datetime
 
-    from ..chart_proposals.models import ChartProposal, Decision
+    from ..chart_proposals.models import ChartProposal, Decision, ProposalRun
 
 
 class ChartProposalRepository(ABC):
@@ -44,12 +44,27 @@ class ChartProposalRepository(ABC):
         decided_at: datetime,
     ) -> None: ...
 
+    @abstractmethod
+    def run(self, note_id: str) -> ProposalRun | None:
+        """How the note's proposal call last ended; ``None`` before it has run."""
+
+    @abstractmethod
+    def record_run(self, run: ProposalRun) -> None:
+        """Replace the note's run record."""
+
 
 class InMemoryChartProposalRepository(ChartProposalRepository):
     """For unit tests."""
 
     def __init__(self) -> None:
         self._rows: dict[str, ChartProposal] = {}
+        self._runs: dict[str, ProposalRun] = {}
+
+    def run(self, note_id: str) -> ProposalRun | None:
+        return self._runs.get(note_id)
+
+    def record_run(self, run: ProposalRun) -> None:
+        self._runs[run.note_id] = run
 
     def list_for_note(self, note_id: str) -> list[ChartProposal]:
         mine = [p for p in self._rows.values() if p.note_id == note_id]

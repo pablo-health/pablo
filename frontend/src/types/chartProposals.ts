@@ -33,8 +33,19 @@ export interface ChartProposal {
   created_at: string
 }
 
+/** How the note's proposal call last ended. */
+export interface ProposalRun {
+  /** "failed": the note was not checked; "skipped": its type is not checked. */
+  status: "ok" | "failed" | "skipped"
+  computed_at: string
+  /** Whether it can be run again (a note drafted from a session's transcript). */
+  retryable: boolean
+}
+
 export interface ChartProposalsResponse {
   data: ChartProposal[]
+  /** Null for a note the call never ran on. */
+  run: ProposalRun | null
 }
 
 export interface DecideChartProposalRequest {

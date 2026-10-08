@@ -4,6 +4,7 @@
  * Chart proposals API client
  *
  * `GET  /api/notes/{note_id}/chart-proposals` — every proposal on the note,
+ * `POST /api/notes/{note_id}/chart-proposals/retry` — check the note again after a failed check,
  * `POST /api/notes/{note_id}/chart-proposals/{proposal_id}/decision` — accept, edit or discard one.
  */
 
@@ -32,4 +33,11 @@ export async function decideChartProposal(
     data,
     token,
   )
+}
+
+export async function retryChartProposals(
+  noteId: string,
+  token?: string,
+): Promise<ChartProposalsResponse> {
+  return post<ChartProposalsResponse>(`/api/notes/${noteId}/chart-proposals/retry`, {}, token)
 }

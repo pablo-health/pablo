@@ -7,7 +7,11 @@ import type {
   ChartProposalsResponse,
   DecideChartProposalRequest,
 } from "@/types/chartProposals"
-import { decideChartProposal, getChartProposals } from "@/lib/api/chartProposals"
+import {
+  decideChartProposal,
+  getChartProposals,
+  retryChartProposals,
+} from "@/lib/api/chartProposals"
 import { queryKeys } from "@/lib/api/queryKeys"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
 
@@ -31,5 +35,13 @@ export function useDecideChartProposal(patientId: string) {
       queryKeys.chartHistory.byPatient(patientId),
       queryKeys.patients.detail(patientId),
     ],
+  })
+}
+
+/** Check the note for chart updates again, after a check that failed. */
+export function useRetryChartProposals() {
+  return useAuthMutation<ChartProposalsResponse, { noteId: string }>({
+    mutationFn: ({ noteId }) => retryChartProposals(noteId),
+    invalidateKeys: ({ noteId }) => [queryKeys.chartProposals.byNote(noteId)],
   })
 }

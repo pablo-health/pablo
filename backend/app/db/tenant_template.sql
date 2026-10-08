@@ -747,6 +747,17 @@ CREATE TABLE __TENANT_SCHEMA__.note_addenda (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.note_chart_proposal_runs (
+    note_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    status character varying(16) NOT NULL,
+    error_class character varying(100),
+    computed_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_note_chart_proposal_runs_status CHECK (((status)::text = ANY ((ARRAY['ok'::character varying, 'failed'::character varying, 'skipped'::character varying])::text[])))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.note_chart_proposals (
     id uuid NOT NULL,
     note_id uuid NOT NULL,
@@ -1772,6 +1783,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.intake_packet_versions
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.note_addenda
     ADD CONSTRAINT note_addenda_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_chart_proposal_runs
+    ADD CONSTRAINT note_chart_proposal_runs_pkey PRIMARY KEY (note_id);
 
 
 
@@ -2915,6 +2931,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.note_addenda
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.note_addenda
     ADD CONSTRAINT note_addenda_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_chart_proposal_runs
+    ADD CONSTRAINT note_chart_proposal_runs_note_id_fkey FOREIGN KEY (note_id) REFERENCES __TENANT_SCHEMA__.notes(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_chart_proposal_runs
+    ADD CONSTRAINT note_chart_proposal_runs_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
 
 
 

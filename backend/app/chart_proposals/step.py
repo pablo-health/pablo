@@ -2,12 +2,13 @@
 
 """The proposal step, run whenever a note's content changes.
 
-After a draft or a redraft it is split the way a draft is: the chart is read
-while the caller holds its connection, the proposal call runs with nothing
-checked out, and the result is stored once the note is. After a clinician's
-edit is saved only the proposals from the note's own text are recomputed; the
-proposal call is not run again. Only the types a practice defines for itself
-read the full chart, so only they propose updates to it.
+After a draft, a redraft or a retry it is split the way a draft is: the
+chart is read while the caller holds its connection, the proposal call runs
+with nothing checked out, and the result is stored once the note is, with a
+record of how the call ended. After a clinician's edit is saved only the
+proposals from the note's own text are recomputed; the proposal call is not
+run again. Only the types a practice defines for itself read the full chart,
+so only they propose updates to it; for the rest the run is ``skipped``.
 """
 
 from __future__ import annotations
@@ -16,7 +17,9 @@ from typing import TYPE_CHECKING
 
 from ..notes.chart_context import chart_context_for
 from ..notes.registry import is_practice_key
+from ..utcnow import utc_now
 from .drafting import propose_chart_updates
+from .models import ProposalRun, RunStatus
 from .service import ChartProposalService
 
 if TYPE_CHECKING:
@@ -28,7 +31,7 @@ if TYPE_CHECKING:
     from ..notes.chart_context import ChartContext
     from ..repositories import ChartHistoryRepository, ChartProposalRepository
     from ..services.note_generation_service import NoteGenerationService
-    from .models import DraftedProposal
+    from .models import Drafted
 
 
 def proposes_chart_updates(definition: NoteTypeDefinition | None) -> bool:
@@ -52,11 +55,11 @@ class ChartProposalStep:
         chart: ChartContext | None,
         transcript: Transcript,
         content: Mapping[str, Any],
-    ) -> list[DraftedProposal]:
-        """The proposal call. Holds no connection; returns nothing for a type that proposes none."""
+    ) -> Drafted | None:
+        """The proposal call, holding no connection. ``None`` when it does not run."""
         complete = generator.chart_proposal_completion()
         if complete is None or chart is None or not proposes_chart_updates(definition):
-            return []
+            return None
         return propose_chart_updates(complete, chart, transcript, draft=content)
 
     def store(
@@ -64,12 +67,28 @@ class ChartProposalStep:
         note: Note,
         definition: NoteTypeDefinition | None,
         chart: ChartContext | None,
-        drafted: list[DraftedProposal],
+        drafted: Drafted | None,
         shown: Mapping[str, Any],
     ) -> None:
-        """After a draft or redraft: ``drafted`` replaces what is pending; ``shown`` is the note."""
+        """After a draft, redraft or retry: ``drafted`` replaces what is pending, and how
+        the call ended is recorded. ``shown`` is the note as it reads."""
+        status: RunStatus = "skipped"
+        if drafted is not None:
+            status = "failed" if drafted.error_class else "ok"
+        self._proposals.record_run(
+            ProposalRun(
+                note_id=note.id,
+                patient_id=note.patient_id,
+                status=status,
+                computed_at=utc_now(),
+                error_class=drafted.error_class if drafted is not None else None,
+            )
+        )
         if chart is not None and proposes_chart_updates(definition):
-            ChartProposalService(self._proposals).refresh(note, chart, shown, drafted)
+            # A failed call keeps what was pending from the last call that ran.
+            answered = drafted is not None and not drafted.error_class
+            proposals = drafted.proposals if drafted is not None and answered else None
+            ChartProposalService(self._proposals).refresh(note, chart, shown, proposals)
 
     def edited(
         self,

@@ -210,6 +210,22 @@ def _filled(value: Any) -> bool:
     return True
 
 
+def source_transcript(
+    session: TherapySession, dictation_repo: SessionDictationRepository | None
+) -> Transcript:
+    """The session's transcript, then everything dictated for its note.
+
+    Only dictations that went into a redraft count; one that became an
+    addendum to a signed note is already in the record as that addendum.
+    """
+    dictations = dictation_repo.list_for_session(session.id) if dictation_repo else []
+    dictated = [d.transcript for d in dictations if d.used_as == "redraft" and d.transcript]
+    if not dictated:
+        return session.transcript
+    content = "\n\n".join([session.transcript.content, DICTATED_HEADING, *dictated])
+    return Transcript(format=session.transcript.format, content=content)
+
+
 class NoteRedraftService:
     """Start a session note's redraft, and run it off the request."""
 
@@ -294,17 +310,7 @@ class NoteRedraftService:
         return note, edits == RedraftEdits.KEEP
 
     def _source_transcript(self, session: TherapySession) -> Transcript:
-        """The session's transcript, then everything dictated for its note.
-
-        Only dictations that went into a redraft count; one that became an
-        addendum to a signed note is already in the record as that addendum.
-        """
-        dictations = self.dictation_repo.list_for_session(session.id) if self.dictation_repo else []
-        dictated = [d.transcript for d in dictations if d.used_as == "redraft" and d.transcript]
-        if not dictated:
-            return session.transcript
-        content = "\n\n".join([session.transcript.content, DICTATED_HEADING, *dictated])
-        return Transcript(format=session.transcript.format, content=content)
+        return source_transcript(session, self.dictation_repo)
 
     def run(
         self,
@@ -376,7 +382,7 @@ class NoteRedraftService:
                 self.note_generation_service, definition, chart, transcript, generated.content
             )
             if step is not None
-            else []
+            else None
         )
         # Read again: the clinician may have saved edits, or signed, meanwhile.
         current = self.note_service.get_note(note.id, user_id)

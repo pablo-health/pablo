@@ -13,11 +13,15 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { ReactNode } from "react"
 import { FinalizeButton } from "@/components/sessions/FinalizeButton"
 import * as useSessions from "@/hooks/useSessions"
-import { decideChartProposal, getChartProposals } from "@/lib/api/chartProposals"
+import {
+  decideChartProposal,
+  getChartProposals,
+  retryChartProposals,
+} from "@/lib/api/chartProposals"
 import { getNoteType } from "@/lib/api/noteTypes"
 import { listProblems } from "@/lib/api/problems"
 import { createMockNote } from "@/test/factories"
-import type { ChartProposal } from "@/types/chartProposals"
+import type { ChartProposal, ProposalRun } from "@/types/chartProposals"
 import type { NoteTypeSchema } from "@/types/noteTypes"
 import { ChartUpdatesPanel } from "../ChartUpdatesPanel"
 import { changeParts } from "../changeHighlight"
@@ -25,6 +29,7 @@ import { changeParts } from "../changeHighlight"
 vi.mock("@/lib/api/chartProposals", () => ({
   getChartProposals: vi.fn(),
   decideChartProposal: vi.fn(),
+  retryChartProposals: vi.fn(),
 }))
 vi.mock("@/lib/api/noteTypes", () => ({ getNoteType: vi.fn(), listNoteTypes: vi.fn() }))
 vi.mock("@/lib/api/problems", () => ({ addProblem: vi.fn(), listProblems: vi.fn() }))
@@ -85,6 +90,15 @@ function proposal(overrides: Partial<ChartProposal> = {}): ChartProposal {
   }
 }
 
+const OK: ProposalRun = { status: "ok", computed_at: "2026-10-08T00:00:00Z", retryable: true }
+const FAILED: ProposalRun = { ...OK, status: "failed" }
+
+function listing(data: ChartProposal[], run: ProposalRun | null = OK) {
+  return { data, run }
+}
+
+const NOT_CHECKED = "Pablo couldn't check this note for chart updates."
+
 const finalize = vi.fn()
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -106,7 +120,7 @@ beforeEach(() => {
   readOnly.value = false
   vi.mocked(getNoteType).mockResolvedValue(FOLLOW_UP)
   vi.mocked(listProblems).mockResolvedValue({ data: [], total: 0 })
-  vi.mocked(getChartProposals).mockResolvedValue({ data: [proposal()] })
+  vi.mocked(getChartProposals).mockResolvedValue(listing([proposal()]))
   vi.spyOn(useSessions, "useFinalizeSession").mockReturnValue({
     mutateAsync: finalize,
     isPending: false,
@@ -117,7 +131,7 @@ afterEach(() => vi.clearAllMocks())
 
 describe("the Update the chart step at sign", () => {
   it("does not appear when the note proposes nothing", async () => {
-    vi.mocked(getChartProposals).mockResolvedValue({ data: [] })
+    vi.mocked(getChartProposals).mockResolvedValue(listing([]))
     const { dialog } = await openSignDialog()
 
     await waitFor(() => expect(getChartProposals).toHaveBeenCalledWith("note-1"))
@@ -152,7 +166,7 @@ describe("the Update the chart step at sign", () => {
     vi.mocked(decideChartProposal).mockResolvedValue(proposal({ decision: "accepted" }))
     const { user, dialog } = await openSignDialog()
 
-    vi.mocked(getChartProposals).mockResolvedValue({ data: [proposal({ decision: "accepted" })] })
+    vi.mocked(getChartProposals).mockResolvedValue(listing([proposal({ decision: "accepted" })]))
     await user.click(await within(dialog).findByRole("button", { name: "Accept" }))
 
     expect(decideChartProposal).toHaveBeenCalledWith("note-1", "proposal-1", { decision: "accept" })
@@ -188,7 +202,7 @@ describe("the Update the chart step at sign", () => {
   })
 
   it("offers a diagnosis the note states that the problem list lacks", async () => {
-    vi.mocked(getChartProposals).mockResolvedValue({ data: [] })
+    vi.mocked(getChartProposals).mockResolvedValue(listing([]))
     vi.mocked(getNoteType).mockResolvedValue(FOLLOW_UP)
     const note = createMockNote({
       ...NOTE,
@@ -209,14 +223,59 @@ describe("the Update the chart step at sign", () => {
   })
 })
 
+describe("a check that failed", () => {
+  it("says so at sign, retries, and signs in one click either way", async () => {
+    vi.mocked(getChartProposals).mockResolvedValue(listing([], FAILED))
+    vi.mocked(retryChartProposals).mockResolvedValue(listing([proposal()]))
+    const { user, dialog } = await openSignDialog()
+
+    expect(await within(dialog).findByText(NOT_CHECKED)).toBeInTheDocument()
+    expect(within(dialog).getByRole("button", { name: "Sign and lock" })).toBeInTheDocument()
+
+    vi.mocked(getChartProposals).mockResolvedValue(listing([proposal()]))
+    await user.click(within(dialog).getByRole("button", { name: "Retry" }))
+
+    expect(retryChartProposals).toHaveBeenCalledWith("note-1")
+    expect(
+      await within(dialog).findByRole("button", { name: "Sign without updating" }),
+    ).toBeInTheDocument()
+    expect(within(dialog).queryByText(NOT_CHECKED)).not.toBeInTheDocument()
+  })
+
+  it("offers no retry where the note cannot be checked again", async () => {
+    vi.mocked(getChartProposals).mockResolvedValue(listing([], { ...FAILED, retryable: false }))
+    const { dialog } = await openSignDialog()
+
+    expect(await within(dialog).findByText(NOT_CHECKED)).toBeInTheDocument()
+    expect(within(dialog).queryByRole("button", { name: "Retry" })).not.toBeInTheDocument()
+  })
+
+  it("says nothing for a note type that is not checked", async () => {
+    vi.mocked(getChartProposals).mockResolvedValue(listing([], { ...OK, status: "skipped" }))
+    const { dialog } = await openSignDialog()
+
+    await waitFor(() => expect(getChartProposals).toHaveBeenCalled())
+    expect(within(dialog).queryByText(NOT_CHECKED)).not.toBeInTheDocument()
+    expect(within(dialog).queryByText("Update the chart")).not.toBeInTheDocument()
+  })
+
+  it("is said on the signed note too", async () => {
+    vi.mocked(getChartProposals).mockResolvedValue(listing([], FAILED))
+    render(<ChartUpdatesPanel note={NOTE} />, { wrapper })
+
+    expect(await screen.findByText(NOT_CHECKED)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument()
+  })
+})
+
 describe("the signed note's chart updates", () => {
   it("lists what was decided and still offers what was left", async () => {
-    vi.mocked(getChartProposals).mockResolvedValue({
-      data: [
+    vi.mocked(getChartProposals).mockResolvedValue(
+      listing([
         proposal({ id: "a", decision: "discarded" }),
         proposal({ id: "b", label: "Trauma history", current_text: null, proposed_text: "None." }),
-      ],
-    })
+      ]),
+    )
     render(<ChartUpdatesPanel note={NOTE} />, { wrapper })
 
     expect(await screen.findByText("Discarded")).toBeInTheDocument()
@@ -234,7 +293,7 @@ describe("the signed note's chart updates", () => {
   })
 
   it("is not shown when the note proposed nothing", async () => {
-    vi.mocked(getChartProposals).mockResolvedValue({ data: [] })
+    vi.mocked(getChartProposals).mockResolvedValue(listing([]))
     render(<ChartUpdatesPanel note={NOTE} />, { wrapper })
 
     await waitFor(() => expect(getChartProposals).toHaveBeenCalled())

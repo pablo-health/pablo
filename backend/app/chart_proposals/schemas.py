@@ -12,8 +12,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .families import family_for
 
 if TYPE_CHECKING:
+    from ..models import Note
     from ..notes.chart_context import ChartContext
-    from .models import ChartProposal
+    from .models import ChartProposal, ProposalRun
 
 
 class DecideProposalRequest(BaseModel):
@@ -57,8 +58,28 @@ class ChartProposalResponse(BaseModel):
     created_at: datetime
 
 
+class ProposalRunResponse(BaseModel):
+    status: str
+    """``ok``, ``failed`` (the note was not checked) or ``skipped``."""
+    computed_at: datetime
+    retryable: bool
+    """Whether the call can be run again: a note drafted from a session's transcript."""
+
+
 class ChartProposalsResponse(BaseModel):
     data: list[ChartProposalResponse]
+    run: ProposalRunResponse | None
+    """How the proposal call last ended; ``None`` for a note it never ran on."""
+
+
+def run_response(run: ProposalRun | None, note: Note) -> ProposalRunResponse | None:
+    if run is None:
+        return None
+    return ProposalRunResponse(
+        status=run.status,
+        computed_at=run.computed_at,
+        retryable=run.status != "skipped" and note.session_id is not None,
+    )
 
 
 def proposal_response(proposal: ChartProposal, chart: ChartContext) -> ChartProposalResponse:

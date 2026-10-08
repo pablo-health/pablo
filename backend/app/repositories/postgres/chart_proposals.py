@@ -12,8 +12,15 @@ from typing import TYPE_CHECKING, cast
 
 from sqlalchemy import delete, select
 
-from ...chart_proposals.models import ChartProposal, Decision, Evidence, Origin
-from ...db.models import NoteChartProposalRow
+from ...chart_proposals.models import (
+    ChartProposal,
+    Decision,
+    Evidence,
+    Origin,
+    ProposalRun,
+    RunStatus,
+)
+from ...db.models import NoteChartProposalRow, NoteChartProposalRunRow
 from ..chart_proposals import ChartProposalRepository
 
 if TYPE_CHECKING:
@@ -102,3 +109,25 @@ class PostgresChartProposalRepository(ChartProposalRepository):
             row.decided_by = decided_by
             row.decided_at = decided_at
             self._session.flush()
+
+    def run(self, note_id: str) -> ProposalRun | None:
+        row = self._session.get(NoteChartProposalRunRow, note_id)
+        if row is None:
+            return None
+        return ProposalRun(
+            note_id=row.note_id,
+            patient_id=row.patient_id,
+            status=cast("RunStatus", row.status),
+            computed_at=row.computed_at,
+            error_class=row.error_class,
+        )
+
+    def record_run(self, run: ProposalRun) -> None:
+        row = self._session.get(NoteChartProposalRunRow, run.note_id)
+        if row is None:
+            row = NoteChartProposalRunRow(note_id=run.note_id, patient_id=run.patient_id)
+            self._session.add(row)
+        row.status = run.status
+        row.error_class = run.error_class
+        row.computed_at = run.computed_at
+        self._session.flush()

@@ -19,6 +19,34 @@ field the chart had nothing for."""
 RECORDED_THIS_VISIT = "Recorded this visit"
 
 
+RunStatus = Literal["ok", "failed", "skipped"]
+
+
+@dataclass(frozen=True)
+class ProposalRun:
+    """How a note's proposal call last ended.
+
+    ``failed`` means the call raised and the note has no proposals from it,
+    which is not the same as nothing having changed. ``skipped`` is a note
+    type the call does not run on. ``error_class`` is the exception's type
+    name, never its message.
+    """
+
+    note_id: str
+    patient_id: str
+    status: RunStatus
+    computed_at: datetime
+    error_class: str | None = None
+
+
+@dataclass(frozen=True)
+class Drafted:
+    """The proposal call's answer: what it proposed, or the error it failed with."""
+
+    proposals: list[DraftedProposal]
+    error_class: str | None = None
+
+
 @dataclass(frozen=True)
 class Evidence:
     """A transcript segment a proposal cites, with its text as the transcript has it."""

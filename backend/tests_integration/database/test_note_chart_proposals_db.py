@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 import pytest
 from app.chart_history.service import ChartHistoryService
 from app.chart_proposals.families import ChartWriters
-from app.chart_proposals.models import DraftedProposal, Evidence
+from app.chart_proposals.models import DraftedProposal, Evidence, ProposalRun
 from app.chart_proposals.service import ChartProposalService, Choice
 from app.db import PLATFORM_SCHEMA
 from app.db.provisioning import create_practice_schema, ensure_schemas
@@ -167,3 +167,23 @@ def test_grantee_stores_and_decides_and_an_outsider_sees_nothing(
 
     assert (entry.text, entry.source_note_id) == (_PROPOSAL.proposed_text, note.id)
     assert (decided.decision, decided.decided_by) == ("accepted", _CLINICIAN_A)
+
+
+def test_a_run_record_is_kept_per_note_and_replaced(engine: Engine, tenant: str) -> None:
+    patient, note = _patient_and_note(engine, tenant)
+
+    with _session(engine, tenant, _CLINICIAN_A) as session:
+        repo = PostgresChartProposalRepository(session)
+        now = datetime.now(UTC)
+        repo.record_run(ProposalRun(note.id, patient.id, "failed", now, "TimeoutError"))
+        repo.record_run(ProposalRun(note.id, patient.id, "ok", now))
+        session.commit()
+
+    with _session(engine, tenant, _CLINICIAN_A) as session:
+        run = PostgresChartProposalRepository(session).run(note.id)
+    with _session(engine, tenant, _CLINICIAN_B) as session:
+        outsider = PostgresChartProposalRepository(session).run(note.id)
+
+    assert run is not None
+    assert (run.status, run.error_class) == ("ok", None)
+    assert outsider is None

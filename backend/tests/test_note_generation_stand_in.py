@@ -526,7 +526,7 @@ def test_the_stand_in_proposes_what_a_line_says_for_the_chart(stand_in: list[str
 
     proposals = propose_chart_updates(
         _service().chart_proposal_completion(), ChartContext(), transcript
-    )
+    ).proposals
 
     assert [(p.field_key, p.item_key, p.proposed_text) for p in proposals] == [
         ("work_school", "", "Laid off in March."),

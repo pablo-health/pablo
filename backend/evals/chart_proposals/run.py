@@ -43,12 +43,16 @@ def run_case(case: ProposalCase, model: str | None, run: int) -> dict[str, Any]:
         model=model,
     )
     started = time.monotonic()
-    proposals = propose_chart_updates(
+    drafted = propose_chart_updates(
         generator.chart_proposal_completion(),
         case.chart,
         Transcript(format="txt", content=case.transcript),
     )
+    proposals = drafted.proposals
     problems = grade(proposals, case)
+    if drafted.error_class:
+        # A call that failed was not graded: say so, rather than as a missing proposal.
+        problems = {"call_failed": [drafted.error_class]}
     return {
         "case": case.name,
         "run": run,
