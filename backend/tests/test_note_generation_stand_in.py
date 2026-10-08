@@ -308,6 +308,8 @@ def test_a_draft_echoes_the_chart_it_was_written_against(stand_in: list[str]) ->
     }
 
 
+Q_NEW = '(stated this visit: "...")'
+
 FOLLOW_UP_TEMPLATE = (
     Path(__file__).resolve().parents[2]
     / "frontend/src/components/settings/noteTypes/templates/psychiatric_follow_up.json"
@@ -384,13 +386,13 @@ def test_the_prescriber_templates_take_current_medications_from_the_chart(templa
         "From the chart, exactly as given, or 'None recorded'. Then each medication the client "
         "reports currently taking that the chart lacks"
     )
-    assert "(stated this visit: ...)" in hints["current_medications"]
-    assert "(stated this visit: ...)" in hints["allergies"]
+    assert Q_NEW in hints["current_medications"]
+    assert Q_NEW in hints["allergies"]
     assert "Never write NKDA unless the chart says it." in hints["allergies"]
 
 
 def test_a_follow_up_writes_the_charts_history_word_for_word(stand_in: list[str]) -> None:
-    """Each history field is the chart's text for its key; the substance screen is not."""
+    """Each history field is the chart's text for its key; a substance field adds its screen."""
     definition = _follow_up()
     chart = ChartContext(
         history=(
@@ -423,7 +425,9 @@ def test_a_follow_up_writes_the_charts_history_word_for_word(stand_in: list[str]
     assert content["social_history"]["living_situation"] == (
         "Separated in August; lives alone.\nSees the children on weekends."
     )
-    assert content["substance_use"]["alcohol"] != "Two glasses of wine on weekends."
+    assert content["substance_use"]["alcohol"] == (
+        "Two glasses of wine on weekends. (not asked this visit)"
+    )
 
 
 def _draft_current_medications(chart: ChartContext, transcript: str) -> list[str]:
@@ -452,8 +456,8 @@ def test_medications_the_client_reports_are_added_after_an_empty_chart(
     )
     assert current == [
         "None recorded",
-        "(stated this visit: sertraline 50 mg)",
-        "(stated this visit: trazodone 50 mg at night)",
+        '(stated this visit: "sertraline 50 mg")',
+        '(stated this visit: "trazodone 50 mg at night")',
     ]
 
 
@@ -491,7 +495,7 @@ def test_a_history_field_keeps_the_charts_text_and_adds_what_the_visit_changed(
     )
     social = generated.content["social_history"]
     assert social["work_school"] == (
-        "Employed at a logistics firm. (stated this visit: laid off last week.)"
+        'Employed at a logistics firm. (stated this visit: "laid off last week.")'
     )
     assert social["supports"] == "Sister nearby."
 
@@ -512,3 +516,39 @@ def test_the_stand_in_reads_a_pathological_line_in_bounded_time(line: str) -> No
     _current_medications([], line)
     _stated_updates(line)
     assert time.perf_counter() - started < 0.5
+
+
+@pytest.mark.parametrize(
+    ("transcript", "alcohol", "cannabis"),
+    [
+        (
+            "[00:04] Client: No change in alcohol.",
+            "Two glasses of wine a week. (asked this visit: no change)",
+            "Not recorded (not asked this visit)",
+        ),
+        (
+            "[00:04] Client: Update on alcohol: stopped drinking in September.\n"
+            "[00:06] Client: Update on cannabis: a few times a month.",
+            'Two glasses of wine a week. (stated this visit: "stopped drinking in September.")',
+            'Not recorded (stated this visit: "a few times a month.")',
+        ),
+    ],
+)
+def test_a_substance_field_is_the_baseline_then_the_visits_screen(
+    stand_in: list[str], transcript: str, alcohol: str, cannabis: str
+) -> None:
+    definition = _follow_up()
+    chart = ChartContext(
+        history=(ChartHistoryField("alcohol", "Two glasses of wine a week.", date(2026, 7, 14)),)
+    )
+    generated = _service().generate_note(
+        definition.key,
+        Transcript(format="txt", content=transcript),
+        PATIENT,
+        NOW,
+        inputs={"place_of_service": "In office"},
+        definition=definition,
+        chart=chart,
+    )
+    substance = generated.content["substance_use"]
+    assert (substance["alcohol"], substance["cannabis"]) == (alcohol, cannabis)

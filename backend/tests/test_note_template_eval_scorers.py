@@ -54,10 +54,10 @@ THERAPY_DRAFT: dict[str, dict[str, Any]] = {
     },
     "subjective": {"chief_complaint": '"The worry has been bad."'},
     "substance_use": {
-        "alcohol": "A glass of wine on weekends, maybe two.",
-        "tobacco_nicotine": "Denied.",
-        "cannabis": "Denied.",
-        "other_substances": "Denied.",
+        "alcohol": "One to two drinks on weekends. (asked this visit: no change)",
+        "tobacco_nicotine": 'Not recorded (stated this visit: "denies.")',
+        "cannabis": 'Not recorded (stated this visit: "denies.")',
+        "other_substances": 'Not recorded (stated this visit: "denies.")',
     },
     "risk": {
         "suicidal_homicidal_ideation": (
@@ -129,10 +129,10 @@ MEDICATION_ONLY_DRAFT: dict[str, dict[str, Any]] = {
         "place_of_service": "In-office visit.",
     },
     "substance_use": {
-        "alcohol": 'Denies ("No, I don\'t drink").',
-        "tobacco_nicotine": "Not asked.",
-        "cannabis": "Not asked.",
-        "other_substances": "Not asked.",
+        "alcohol": 'Not recorded (stated this visit: "No, I don\'t drink")',
+        "tobacco_nicotine": "Not recorded (not asked this visit)",
+        "cannabis": "Not recorded (not asked this visit)",
+        "other_substances": "Not recorded (not asked this visit)",
     },
     "risk": {
         "suicidal_homicidal_ideation": 'Client: "No." Clinician: "denies SI and HI".',
@@ -180,10 +180,10 @@ def test_what_the_visit_changed_may_follow_a_history_fields_chart_text() -> None
         THERAPY_DRAFT,
         "social_history",
         "work_school",
-        "Financial analyst, full time, since 2022. (stated this visit: on leave this month.)",
+        'Financial analyst, full time, since 2022. (stated this visit: "on leave this month.")',
     )
     draft = _with(
-        draft, "trauma_history", "trauma_history", "Not recorded (stated this visit: denies.)"
+        draft, "trauma_history", "trauma_history", 'Not recorded (stated this visit: "denies.")'
     )
     assert history_from_chart(draft, FOLLOW_UP_WITH_THERAPY) == []
     # The therapy sample states neither, so the marks themselves are flagged.
@@ -205,7 +205,7 @@ def test_a_medication_the_client_reports_may_follow_the_charts_list() -> None:
         MEDICATION_ONLY_DRAFT,
         "medications",
         "current_medications",
-        ["Bupropion XL 150 mg, every morning", "(stated this visit: melatonin 3 mg)"],
+        ["Bupropion XL 150 mg, every morning", '(stated this visit: "melatonin 3 mg")'],
     )
     # The list itself is sound; the mark is wrong only because this visit's
     # client named no other medication.
@@ -259,6 +259,15 @@ def test_a_medication_the_client_reports_may_follow_the_charts_list() -> None:
         ("psychotherapy", "issues_addressed", "", "psychotherapy_section"),
         # A risk field paraphrased, judged, or quoting what nobody said.
         ("risk", "self_harm_violence", "Client denies self-harm.", "risk_quoted"),
+        # Seen from a real model on this sample: a paraphrase where a quotation belongs.
+        (
+            "risk",
+            "self_harm_violence",
+            "The client denied thoughts of hurting themselves or anyone else.",
+            "risk_quoted",
+        ),
+        # Also seen: "anything else?" was asked and answered, but read as never asked.
+        ("substance_use", "other_substances", "Not recorded (not asked this visit)", "substances"),
         ("risk", "overall_risk", 'Risk is low ("Denies SI and HI.").', "risk_quoted"),
         ("risk", "suicidal_homicidal_ideation", '"I would never hurt myself."', "risk_quoted"),
         ("risk", "overall_risk", "", "risk_quoted"),
@@ -285,9 +294,18 @@ def test_a_medication_the_client_reports_may_follow_the_charts_list() -> None:
             "Client's home in Faketown, AA; Clinic office at 123 Test St, Faketown, AA.",
             "telehealth_attestation",
         ),
-        # An asked substance with no answer.
-        ("substance_use", "cannabis", "Not asked.", "substances"),
-        ("substance_use", "alcohol", "", "substances"),
+        # An asked substance with no screen, or the baseline lost or rewritten.
+        ("substance_use", "cannabis", "Not recorded (not asked this visit)", "substances"),
+        ("substance_use", "alcohol", "One to two drinks on weekends.", "substances"),
+        ("substance_use", "alcohol", "(asked this visit: no change)", "substances"),
+        (
+            "substance_use",
+            "alcohol",
+            "A glass of wine on weekends. (asked this visit: no change)",
+            "substances",
+        ),
+        ("substance_use", "cannabis", "Not recorded (stated this visit: )", "substances"),
+        ("substance_use", "cannabis", 'Not recorded (stated this visit: "")', "substances"),
         # A diagnosis or code nobody entered.
         (
             "assessment",
@@ -376,7 +394,13 @@ def test_therapy_draft_failures_are_caught(section: str, key: str, value: Any, c
         # An office visit is not attested as telehealth.
         ("encounter", "place_of_service", "Telehealth visit.", "telehealth_attestation"),
         # Never asked: not a denial.
-        ("substance_use", "tobacco_nicotine", "Denied.", "substances"),
+        (
+            "substance_use",
+            "tobacco_nicotine",
+            'Not recorded (stated this visit: "denies")',
+            "substances",
+        ),
+        ("substance_use", "cannabis", "Not recorded (asked this visit: no change)", "substances"),
         ("substance_use", "cannabis", "", "substances"),
         # Only the diagnosis the clinician named, with no invented code.
         (
@@ -492,15 +516,16 @@ FULL_CHART_DRAFT: dict[str, dict[str, Any]] = {
         ],
         "allergies": "Sulfa drugs (hives)",
     },
+    # The follow-up prints each baseline as recorded, then this visit's screen.
     "substance_use": {
-        "alcohol": "Asked — no change.",
-        "cannabis": "Asked — no change.",
-        "tobacco_nicotine": "Asked — no change.",
-        "stimulants": "Not asked",
-        "cocaine": "Not asked",
-        "opioids": "Not asked",
-        "benzodiazepines": "Not asked",
-        "other_substances": "Not asked",
+        "alcohol": "Two to three drinks a week, wine with dinner. (asked this visit: no change)",
+        "cannabis": "Used in college; none since 2010. (asked this visit: no change)",
+        "tobacco_nicotine": "Never. (asked this visit: no change)",
+        "stimulants": "Not recorded (not asked this visit)",
+        "cocaine": "Not recorded (not asked this visit)",
+        "opioids": "Not recorded (not asked this visit)",
+        "benzodiazepines": "None. (not asked this visit)",
+        "other_substances": "Not recorded (not asked this visit)",
     },
 }
 
@@ -942,3 +967,24 @@ def test_a_diagnosis_returned_as_label_code_and_status_is_read_whole() -> None:
 
     none = {"assessment": {"diagnoses": [{"label": "No diagnoses recorded", "code": None}]}}
     assert diagnoses_only_stated(none, FOLLOW_UP_EMPTY_CHART) == []
+
+
+def test_substances_are_graded_the_way_each_template_writes_them() -> None:
+    """The follow-up prints the baseline then the screen; the evaluation, which
+    seeds the chart, writes what the client said."""
+    answered = {
+        "substance_use": {
+            "alcohol": "A glass of wine most nights.",
+            "cannabis": "Denies.",
+            "tobacco_nicotine": "Quit in 2019.",
+            "cocaine": "Denies.",
+            "opioids": "Denies.",
+            "benzodiazepines": "Denies.",
+        }
+    }
+    assert substances(answered, EVALUATION_EMPTY_CHART) == []
+
+    unscreened = {"substance_use": {"alcohol": "Two to three drinks a week, wine with dinner."}}
+    assert "substance_use.alcohol: asked, but no screen recorded" in substances(
+        unscreened, FOLLOW_UP_FULL_CHART
+    )

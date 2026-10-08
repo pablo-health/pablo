@@ -66,6 +66,8 @@ PSYCHOTHERAPY_TIME_LINE = re.compile(r"psychotherapy[^\n.:]*\b(?:time|minutes)\b
 QUOTED = re.compile('["\u201c\u201d]([^"\u201c\u201d]+)["\u201c\u201d]')
 RISK_LEVEL = re.compile(r"\b(?:low|moderate|high|minimal|elevated|imminent)\b", re.IGNORECASE)
 TODAY = re.compile(r"\btoday\b", re.IGNORECASE)
+STATED_PREFIX = "(stated this visit:"
+"""How a chart-fed field marks what the visit stated after the chart's own text."""
 
 _MONTHS = [m.lower() for m in calendar.month_name[1:]]
 _DATE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -326,9 +328,58 @@ def telehealth_attestation(draft: Draft, case: TemplateCase) -> list[str]:
     return problems
 
 
+ASKED_NO_CHANGE = "(asked this visit: no change)"
+NOT_ASKED = "(not asked this visit)"
+_SCREEN_MARKS = (ASKED_NO_CHANGE, STATED_PREFIX, NOT_ASKED)
+
+
+def split_screen(text: str) -> tuple[str, str]:
+    """A substance field's baseline text, and the screen suffix that follows it."""
+    at = min((i for m in _SCREEN_MARKS if (i := text.find(m)) >= 0), default=len(text))
+    return text[:at].rstrip(), text[at:].strip()
+
+
+def _prints_baseline(case: TemplateCase) -> bool:
+    """Whether the template's substance fields print the chart's baseline."""
+    return any(
+        s == "substance_use" and "substance use baseline" in hint.lower()
+        for s, _, hint in _spec_fields(case)
+    )
+
+
+def _baseline_then_screen(draft: Draft, case: TemplateCase) -> list[str]:
+    e = case.expected
+    baseline = {f.key: f.text for f in case.history}
+    problems = []
+    for k in (*e.substances_asked, *e.substances_not_asked):
+        path = f"substance_use.{k}"
+        chart_text, screen = split_screen(_text(draft, "substance_use", k))
+        if normalize(chart_text) != normalize(baseline.get(k, "Not recorded")):
+            problems.append(f"{path}: not the chart's baseline as recorded")
+        if k in e.substances_not_asked and screen != NOT_ASKED:
+            problems.append(f'{path}: should end "{NOT_ASKED}"')
+        if k in e.substances_asked and not (
+            screen == ASKED_NO_CHANGE
+            or (
+                screen.startswith(STATED_PREFIX) and screen.removeprefix(STATED_PREFIX).strip(' )"')
+            )
+        ):
+            problems.append(f"{path}: asked, but no screen recorded")
+    return problems
+
+
 def substances(draft: Draft, case: TemplateCase) -> list[str]:
-    """Not asked reads "Not asked"; asked records the answer; the chart's
-    baseline is never copied in as this visit's screen."""
+    """Each substance field is graded the way its template writes it.
+
+    Where the template prints the chart's baseline (the follow-up), a field is
+    that baseline, then this visit's screen: "(not asked this visit)" when it
+    never came up, "(asked this visit: no change)" or "(stated this visit:
+    ...)" when it did. Where the template drafts substance use from the visit
+    (the evaluation), not asked reads "Not asked", asked records the answer,
+    and the chart's baseline is never copied in as this visit's answer.
+    """
+    if _prints_baseline(case):
+        return _baseline_then_screen(draft, case)
     e = case.expected
     problems = [
         f'substance_use.{k}: should read "Not asked"'

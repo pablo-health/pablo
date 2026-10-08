@@ -84,3 +84,42 @@ def test_the_evaluation_keeps_psychotherapy_off_a_diagnostic_evaluation() -> Non
     assert spec.user_template is not None
     assert "For a psychiatric diagnostic evaluation" in spec.user_template
     assert "leave every field of the Psychotherapy section empty" in spec.user_template
+
+
+_PRESCRIBER = ("psychiatric_follow_up", "psychiatric_evaluation")
+
+
+def _spec(name: str) -> dict[str, Any]:
+    spec: dict[str, Any] = json.loads((TEMPLATES / f"{name}.json").read_text())["spec"]
+    return spec
+
+
+def _hints(spec: dict[str, Any], section: str) -> dict[str, str]:
+    return {
+        f["key"]: f["ai_hint"] for s in spec["sections"] if s["key"] == section for f in s["fields"]
+    }
+
+
+@pytest.mark.parametrize("name", _PRESCRIBER)
+def test_every_risk_field_asks_for_verbatim_quotation(name: str) -> None:
+    """A risk field written as a paraphrase ("the client denied thoughts of...") is a
+    claim nobody made; each hint, and the prompt, asks for the words in quotation marks."""
+    spec = _spec(name)
+    risk = _hints(spec, "risk")
+    assert set(risk) >= {
+        "suicidal_homicidal_ideation",
+        "risk_protective_factors",
+        "overall_risk",
+        "safety_plan",
+    }
+    for key, hint in risk.items():
+        assert "verbatim, in quotation marks" in hint, key
+        assert "paraphrase" in hint, key
+    assert "Every risk field holds only words said in the visit" in spec["user_template"]
+
+
+@pytest.mark.parametrize("name", _PRESCRIBER)
+def test_a_catch_all_question_counts_as_asking_about_other_substances(name: str) -> None:
+    hint = _hints(_spec(name), "substance_use")["other_substances"]
+    assert '"anything else?"' in hint
+    assert "counts as asking" in hint
