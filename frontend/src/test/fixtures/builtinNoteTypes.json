@@ -989,7 +989,7 @@
             "key": "other_substances",
             "label": "Other substances",
             "kind": "text",
-            "ai_hint": "Any other substance: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported. Record a denial as a denial. \"Not asked.\" if it did not come up."
+            "ai_hint": "Any other substance: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported. Record a denial as a denial. \"Not asked.\" if it did not come up. A catch-all question (\"anything else?\", \"any other drugs?\") counts as asking: record the answer to it."
           }
         ]
       },
@@ -1127,13 +1127,13 @@
             "key": "current_medications",
             "label": "Current medications",
             "kind": "list",
-            "ai_hint": "From the chart, exactly as given, or 'None recorded'. Then each medication the client reports currently taking that the chart lacks, with the dose as stated, appended as \"(stated this visit: ...)\". A medication started, stopped or changed in this visit goes in the plan, not here."
+            "ai_hint": "From the chart, exactly as given, or 'None recorded'. Then each medication the client reports currently taking that the chart lacks, with the dose as stated, appended as (stated this visit: \"...\"). A medication started, stopped or changed in this visit goes in the plan, not here."
           },
           {
             "key": "allergies",
             "label": "Allergies",
             "kind": "text",
-            "ai_hint": "From the chart, exactly as given (a list, NKDA, or 'Not recorded'). Then any allergy, or denial of allergies, the client or clinician states in this visit, appended as \"(stated this visit: ...)\". Never write NKDA unless the chart says it."
+            "ai_hint": "From the chart, exactly as given (a list, NKDA, or 'Not recorded'). Then any allergy, or denial of allergies, the client or clinician states in this visit, appended as (stated this visit: \"...\"). Never write NKDA unless the chart says it."
           }
         ]
       },
@@ -1217,25 +1217,25 @@
             "key": "suicidal_homicidal_ideation",
             "label": "Suicidal / homicidal ideation",
             "kind": "text",
-            "ai_hint": "Quote what was said about current suicidal or homicidal thoughts, intent, plan or means, from the visit or the clinician's addendum. Do not assess."
+            "ai_hint": "What was said about current suicidal or homicidal thoughts, intent, plan or means: the exact words, verbatim, in quotation marks, from the visit or the clinician's dictated addendum, naming who said them. Never a paraphrase, never a summary, never a level the clinician did not say. \"Not stated.\" if nothing was said."
           },
           {
             "key": "risk_protective_factors",
             "label": "Risk and protective factors",
             "kind": "text",
-            "ai_hint": "Risk factors and protective factors as the clinician or client named them."
+            "ai_hint": "Risk factors and protective factors as the clinician or client named them: the exact words, verbatim, in quotation marks, from the visit or the clinician's dictated addendum, naming who said them. Never a paraphrase, never a summary, never a level the clinician did not say. \"Not stated.\" if none were named."
           },
           {
             "key": "overall_risk",
             "label": "Overall risk",
             "kind": "text",
-            "ai_hint": "Only the clinician's own stated judgment of overall risk, quoted (e.g. \"overall risk is low\"). If the clinician did not state one, write \"Not stated.\""
+            "ai_hint": "Only the clinician's own stated judgment of overall risk, verbatim, in quotation marks (e.g. \"overall risk is low\"). Never a paraphrase, never a level the clinician did not say. \"Not stated.\" if the clinician did not state one."
           },
           {
             "key": "safety_plan",
             "label": "Safety plan",
             "kind": "text",
-            "ai_hint": "Only if any ideation, self-harm or high risk was reported: the safety planning the clinician described (warning signs, coping, supports, crisis contacts, making the environment safer). Otherwise leave empty."
+            "ai_hint": "Only if any ideation, self-harm or high risk was reported: the safety planning the clinician described (warning signs, coping, supports, crisis contacts, making the environment safer), in the clinician's own words, verbatim, in quotation marks; never a paraphrase or summary. Otherwise leave empty."
           }
         ]
       },
@@ -1485,49 +1485,49 @@
             "key": "alcohol",
             "label": "Alcohol",
             "kind": "text",
-            "ai_hint": "This visit's screen for alcohol, against the chart's baseline: \"asked — no change\" if the client was asked and described no change; the change, as stated, if they described one; \"Not asked\" if it did not come up."
+            "ai_hint": "The chart's substance use baseline for alcohol, exactly as given, or 'Not recorded'. Then this visit's screen: \"(asked this visit: no change)\", (stated this visit: \"...\") with the change as stated, or \"(not asked this visit)\"."
           },
           {
             "key": "cannabis",
             "label": "Cannabis",
             "kind": "text",
-            "ai_hint": "This visit's screen for cannabis, against the chart's baseline: \"asked — no change\" if the client was asked and described no change; the change, as stated, if they described one; \"Not asked\" if it did not come up."
+            "ai_hint": "The chart's substance use baseline for cannabis, exactly as given, or 'Not recorded'. Then this visit's screen: \"(asked this visit: no change)\", (stated this visit: \"...\") with the change as stated, or \"(not asked this visit)\"."
           },
           {
             "key": "stimulants",
             "label": "Stimulants",
             "kind": "text",
-            "ai_hint": "This visit's screen for stimulants not prescribed to the client, against the chart's baseline: \"asked — no change\" if the client was asked and described no change; the change, as stated, if they described one; \"Not asked\" if it did not come up."
+            "ai_hint": "The chart's substance use baseline for stimulants not prescribed to the client, exactly as given, or 'Not recorded'. Then this visit's screen: \"(asked this visit: no change)\", (stated this visit: \"...\") with the change as stated, or \"(not asked this visit)\"."
           },
           {
             "key": "cocaine",
             "label": "Cocaine",
             "kind": "text",
-            "ai_hint": "This visit's screen for cocaine, against the chart's baseline: \"asked — no change\" if the client was asked and described no change; the change, as stated, if they described one; \"Not asked\" if it did not come up."
+            "ai_hint": "The chart's substance use baseline for cocaine, exactly as given, or 'Not recorded'. Then this visit's screen: \"(asked this visit: no change)\", (stated this visit: \"...\") with the change as stated, or \"(not asked this visit)\"."
           },
           {
             "key": "opioids",
             "label": "Opioids",
             "kind": "text",
-            "ai_hint": "This visit's screen for opioids, prescribed or not, against the chart's baseline: \"asked — no change\" if the client was asked and described no change; the change, as stated, if they described one; \"Not asked\" if it did not come up."
+            "ai_hint": "The chart's substance use baseline for opioids, prescribed or not, exactly as given, or 'Not recorded'. Then this visit's screen: \"(asked this visit: no change)\", (stated this visit: \"...\") with the change as stated, or \"(not asked this visit)\"."
           },
           {
             "key": "benzodiazepines",
             "label": "Benzodiazepines",
             "kind": "text",
-            "ai_hint": "This visit's screen for benzodiazepines or other sedatives, prescribed or not, against the chart's baseline: \"asked — no change\" if the client was asked and described no change; the change, as stated, if they described one; \"Not asked\" if it did not come up."
+            "ai_hint": "The chart's substance use baseline for benzodiazepines or other sedatives, prescribed or not, exactly as given, or 'Not recorded'. Then this visit's screen: \"(asked this visit: no change)\", (stated this visit: \"...\") with the change as stated, or \"(not asked this visit)\"."
           },
           {
             "key": "tobacco_nicotine",
             "label": "Tobacco / nicotine",
             "kind": "text",
-            "ai_hint": "This visit's screen for tobacco, vaping or other nicotine, against the chart's baseline: \"asked — no change\" if the client was asked and described no change; the change, as stated, if they described one; \"Not asked\" if it did not come up."
+            "ai_hint": "The chart's substance use baseline for tobacco, vaping or other nicotine, exactly as given, or 'Not recorded'. Then this visit's screen: \"(asked this visit: no change)\", (stated this visit: \"...\") with the change as stated, or \"(not asked this visit)\"."
           },
           {
             "key": "other_substances",
             "label": "Other substances",
             "kind": "text",
-            "ai_hint": "This visit's screen for any other substance, against the chart's baseline: \"asked — no change\" if the client was asked and described no change; the change, as stated, if they described one; \"Not asked\" if it did not come up."
+            "ai_hint": "The chart's substance use baseline for any other substance, exactly as given, or 'Not recorded'. Then this visit's screen: \"(asked this visit: no change)\", (stated this visit: \"...\") with the change as stated, or \"(not asked this visit)\". A catch-all question (\"anything else?\", \"any other drugs?\") counts as asking: record the answer to it."
           }
         ]
       },
@@ -1539,13 +1539,13 @@
             "key": "current_medications",
             "label": "Current medications",
             "kind": "list",
-            "ai_hint": "From the chart, exactly as given, or 'None recorded'. Then each medication the client reports currently taking that the chart lacks, with the dose as stated, appended as \"(stated this visit: ...)\". A medication started, stopped or changed in this visit goes in the plan, not here."
+            "ai_hint": "From the chart, exactly as given, or 'None recorded'. Then each medication the client reports currently taking that the chart lacks, with the dose as stated, appended as (stated this visit: \"...\"). A medication started, stopped or changed in this visit goes in the plan, not here."
           },
           {
             "key": "allergies",
             "label": "Allergies",
             "kind": "text",
-            "ai_hint": "From the chart, exactly as given (a list, NKDA, or 'Not recorded'). Then any allergy, or denial of allergies, the client or clinician states in this visit, appended as \"(stated this visit: ...)\". Never write NKDA unless the chart says it."
+            "ai_hint": "From the chart, exactly as given (a list, NKDA, or 'Not recorded'). Then any allergy, or denial of allergies, the client or clinician states in this visit, appended as (stated this visit: \"...\"). Never write NKDA unless the chart says it."
           }
         ]
       },
@@ -1557,37 +1557,37 @@
             "key": "prior_diagnoses",
             "label": "Earlier diagnoses",
             "kind": "text",
-            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as \"(stated this visit: ...)\"."
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\")."
           },
           {
             "key": "psychotherapy_history",
             "label": "Psychotherapy",
             "kind": "text",
-            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as \"(stated this visit: ...)\"."
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\")."
           },
           {
             "key": "medication_trials",
             "label": "Psychiatric medications tried",
             "kind": "text",
-            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as \"(stated this visit: ...)\"."
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\")."
           },
           {
             "key": "hospitalizations",
             "label": "Hospitalizations and programs",
             "kind": "text",
-            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as \"(stated this visit: ...)\"."
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\")."
           },
           {
             "key": "past_self_harm",
             "label": "Past suicide attempts, self-harm or harm to others",
             "kind": "text",
-            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as \"(stated this visit: ...)\"."
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\")."
           },
           {
             "key": "legal_custody",
             "label": "Legal or custody involvement",
             "kind": "text",
-            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as \"(stated this visit: ...)\"."
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\")."
           }
         ]
       },
@@ -1599,7 +1599,7 @@
             "key": "trauma_history",
             "label": "Trauma history",
             "kind": "text",
-            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as \"(stated this visit: ...)\"."
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\")."
           }
         ]
       },
@@ -1611,31 +1611,31 @@
             "key": "living_situation",
             "label": "Living situation",
             "kind": "text",
-            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as \"(stated this visit: ...)\"."
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\"). The client's location during a telehealth visit belongs to the place-of-service attestation: it is not where they live and never changes this field."
           },
           {
             "key": "relationships",
             "label": "Relationships",
             "kind": "text",
-            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as \"(stated this visit: ...)\"."
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\")."
           },
           {
             "key": "work_school",
             "label": "Work or school",
             "kind": "text",
-            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as \"(stated this visit: ...)\"."
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\")."
           },
           {
             "key": "supports",
             "label": "Supports",
             "kind": "text",
-            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as \"(stated this visit: ...)\"."
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\")."
           },
           {
             "key": "cultural_considerations",
             "label": "Cultural considerations",
             "kind": "text",
-            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as \"(stated this visit: ...)\"."
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\")."
           }
         ]
       },
@@ -1647,7 +1647,7 @@
             "key": "medical_history",
             "label": "Medical history",
             "kind": "text",
-            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as \"(stated this visit: ...)\"."
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\")."
           }
         ]
       },
@@ -1659,19 +1659,19 @@
             "key": "family_psychiatric",
             "label": "Psychiatric",
             "kind": "text",
-            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as \"(stated this visit: ...)\"."
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\")."
           },
           {
             "key": "family_medical",
             "label": "Medical",
             "kind": "text",
-            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as \"(stated this visit: ...)\"."
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\")."
           },
           {
             "key": "family_treatment_response",
             "label": "Medications that helped relatives",
             "kind": "text",
-            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as \"(stated this visit: ...)\"."
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\")."
           }
         ]
       },
@@ -1683,31 +1683,31 @@
             "key": "suicidal_homicidal_ideation",
             "label": "Suicidal / homicidal ideation",
             "kind": "text",
-            "ai_hint": "Quote what was said about suicidal or homicidal thoughts, intent, plan or means, from the visit or the clinician's addendum. Do not assess."
+            "ai_hint": "What was said about suicidal or homicidal thoughts, intent, plan or means: the exact words, verbatim, in quotation marks, from the visit or the clinician's dictated addendum, naming who said them. Never a paraphrase, never a summary, never a level the clinician did not say. \"Not stated.\" if nothing was said."
           },
           {
             "key": "self_harm_violence",
             "label": "Self-harm / violent behavior",
             "kind": "text",
-            "ai_hint": "Quote what was said about self-harm or violence. Do not assess."
+            "ai_hint": "What was said about self-harm or violence: the exact words, verbatim, in quotation marks, from the visit or the clinician's dictated addendum, naming who said them. Never a paraphrase, never a summary, never a level the clinician did not say. \"Not stated.\" if nothing was said."
           },
           {
             "key": "risk_protective_factors",
             "label": "Risk and protective factors",
             "kind": "text",
-            "ai_hint": "Risk factors and protective factors as the clinician or client named them (e.g. stable employment, support system, medication adherence)."
+            "ai_hint": "Risk factors and protective factors as the clinician or client named them: the exact words, verbatim, in quotation marks, from the visit or the clinician's dictated addendum, naming who said them. Never a paraphrase, never a summary, never a level the clinician did not say. \"Not stated.\" if none were named."
           },
           {
             "key": "overall_risk",
             "label": "Overall acute risk",
             "kind": "text",
-            "ai_hint": "Only the clinician's own stated judgment of overall acute risk, quoted (e.g. \"overall risk is low\"). If the clinician did not state one, write \"Not stated.\""
+            "ai_hint": "Only the clinician's own stated judgment of overall acute risk, verbatim, in quotation marks (e.g. \"overall risk is low\"). Never a paraphrase, never a level the clinician did not say. \"Not stated.\" if the clinician did not state one."
           },
           {
             "key": "safety_plan",
             "label": "Safety plan",
             "kind": "text",
-            "ai_hint": "Only if any ideation, self-harm or violence was reported: the safety planning the clinician described (warning signs, coping, supports, crisis contacts, means safety). Otherwise leave empty."
+            "ai_hint": "Only if any ideation, self-harm or violence was reported: the safety planning the clinician described (warning signs, coping, supports, crisis contacts, means safety), in the clinician's own words, verbatim, in quotation marks; never a paraphrase or summary. Otherwise leave empty."
           }
         ]
       },

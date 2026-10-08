@@ -124,7 +124,7 @@ test.describe("chart history", () => {
         page.getByText("Car accident at 19; no ongoing symptoms.", { exact: true }),
       ).toBeVisible()
       await expect(
-        page.getByText("Employed at a logistics firm. (stated this visit: laid off last week.)"),
+        page.getByText('Employed at a logistics firm. (stated this visit: "laid off last week.")'),
       ).toBeVisible()
     } finally {
       if (appointmentId) await api.delete(`/api/appointments/${appointmentId}`)
