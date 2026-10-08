@@ -83,7 +83,8 @@ export function nearestTurn(turns: RecordingTurn[], seconds: number, min: number
   return best
 }
 
-export type MdmLevel = "straightforward" | "low" | "moderate" | "high"
+export const MDM_LEVELS = ["straightforward", "low", "moderate", "high"] as const
+export type MdmLevel = (typeof MDM_LEVELS)[number]
 
 /**
  * Fewest minutes left for the medical visit before the split is flagged.

@@ -2,12 +2,14 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 
 import { VisitTimesPanel } from "../VisitTimesPanel"
 import { peopleWords } from "@/lib/peopleTerm"
 import type { VisitTimes } from "@/types/visitTimes"
 
 const mockTimes = vi.fn()
+const mockLevel = vi.fn()
 
 vi.mock("@/hooks/usePeopleTerm", () => ({ usePeopleTerm: () => peopleWords("clients") }))
 vi.mock("@/hooks/useVisitTimes", () => ({
@@ -15,6 +17,7 @@ vi.mock("@/hooks/useVisitTimes", () => ({
   useConfirmPsychotherapyWindow: () => ({ mutate: vi.fn(), isPending: false, isError: false }),
 }))
 vi.mock("@/hooks/usePreferences", () => ({ useUserTimeZone: () => "America/New_York" }))
+vi.mock("@/hooks/useMdmReview", () => ({ useMdmLevel: () => mockLevel() }))
 
 function times(overrides: Partial<VisitTimes> = {}): VisitTimes {
   return {
@@ -31,7 +34,10 @@ function times(overrides: Partial<VisitTimes> = {}): VisitTimes {
 }
 
 describe("VisitTimesPanel", () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockLevel.mockReturnValue(null)
+  })
 
   it("shows the visit's start, end and minutes, and when the client left", () => {
     mockTimes.mockReturnValue(times())
@@ -80,5 +86,40 @@ describe("VisitTimesPanel", () => {
 
     expect(screen.getByTestId("client-present-line")).toHaveTextContent("Dictation only, 2 min")
     expect(screen.queryByTestId("psychotherapy-window")).not.toBeInTheDocument()
+  })
+
+  it("states both durations once the therapy minutes are confirmed, and flags a thin medical visit for the note's level", async () => {
+    mockLevel.mockReturnValue("high")
+    mockTimes.mockReturnValue(
+      times({
+        psychotherapy: {
+          offered: true,
+          end_seconds: 3895,
+          turns: [
+            { seconds: 5, end_seconds: 3895, speaker: "Therapist", text: "…", label: "therapy" },
+          ],
+          runs: [],
+          labeled_minutes: 64,
+          cue_seconds: null,
+          dictated: null,
+          confirmed_start_seconds: null,
+          confirmed_minutes: 60,
+          contiguous: true,
+          labels_confirmed: true,
+          window_text: "60 minutes",
+          dictated_time: null,
+          disagrees: false,
+        },
+      }),
+    )
+    render(<VisitTimesPanel sessionId="s1" />)
+
+    expect(screen.getByTestId("durations-line")).toHaveTextContent(
+      "Total duration: 67 min · Psychotherapy duration: 60 min",
+    )
+    await userEvent.click(screen.getByRole("button", { name: "Change" }))
+    expect(screen.getByTestId("em-remainder-flag")).toHaveTextContent(
+      "short for a high-complexity visit",
+    )
   })
 })
