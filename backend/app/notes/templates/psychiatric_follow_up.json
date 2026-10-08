@@ -1,6 +1,14 @@
 {
   "id": "psychiatric_follow_up",
   "slug": "psychiatric_follow_up",
+  "required_fields": [
+    "risk.suicidal_homicidal_ideation",
+    "risk.self_harm_violence",
+    "risk.risk_protective_factors",
+    "risk.overall_risk",
+    "risk.safety_plan",
+    "psychotherapy.psychotherapy_time"
+  ],
   "spec": {
     "label": "Psychiatric follow-up (E/M + psychotherapy)",
     "description": "Medication-management follow-up, with a psychotherapy section for visits that include therapy.",

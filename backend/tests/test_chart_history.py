@@ -7,7 +7,6 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -20,6 +19,7 @@ from app.chart_history.service import (
 )
 from app.main import app
 from app.models import Patient
+from app.notes.spec_templates import TEMPLATES_DIR
 from app.repositories import InMemoryChartHistoryRepository, InMemoryPatientRepository
 
 if TYPE_CHECKING:
@@ -27,9 +27,7 @@ if TYPE_CHECKING:
 
     from fastapi.testclient import TestClient
 
-TEMPLATES = (
-    Path(__file__).resolve().parents[2] / "frontend/src/components/settings/noteTypes/templates"
-)
+TEMPLATES = TEMPLATES_DIR
 
 
 def _seed_patient(repo: InMemoryPatientRepository, user_id: str) -> Patient:

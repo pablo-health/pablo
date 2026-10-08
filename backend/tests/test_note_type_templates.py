@@ -1,33 +1,29 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""The note-type templates Settings offers as a starting point.
+"""The built-in note types written as spec files.
 
-They ship with the frontend, which sends a template's ``spec`` unchanged when
-a practice saves it without edits. So each one must be a definition the save
-route accepts, already in the shape the server stores (every default spelled
-out), or "start from a template, save" would store something other than the
-file.
+Each is registered at startup as a built-in and offered in Settings as a base
+a practice can adjust. A practice can also detach its adjusted type into a
+full copy, so each file must be a definition the save route accepts, already
+in the shape the server stores (every default spelled out), or a detached
+copy would store something other than the file.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
+from app.notes import NoteTypeRegistry, register_builtin_note_types
 from app.notes.practice_types import SLUG_PATTERN, PracticeNoteTypeSpec
+from app.notes.spec_templates import TEMPLATES_DIR
 
-TEMPLATES = (
-    Path(__file__).resolve().parents[2]
-    / "frontend"
-    / "src"
-    / "components"
-    / "settings"
-    / "noteTypes"
-    / "templates"
-)
+if TYPE_CHECKING:
+    from pathlib import Path
+
+TEMPLATES = TEMPLATES_DIR
 
 _FILES = sorted(TEMPLATES.glob("*.json"))
 
@@ -43,6 +39,33 @@ def test_template_is_stored_exactly_as_shipped(path: Path) -> None:
     assert re.fullmatch(SLUG_PATTERN.strip("^$"), template["slug"])
     spec = PracticeNoteTypeSpec.model_validate(template["spec"])
     assert spec.model_dump(mode="json") == template["spec"]
+
+
+@pytest.mark.parametrize("path", _FILES, ids=[p.stem for p in _FILES])
+def test_template_is_a_built_in_base(path: Path) -> None:
+    template: dict[str, Any] = json.loads(path.read_text())
+    registry = NoteTypeRegistry()
+    register_builtin_note_types(registry)
+
+    base = registry.base_for(template["id"])
+
+    assert base is not None
+    assert base.version is None
+    assert base.source_spec == PracticeNoteTypeSpec.model_validate(template["spec"])
+
+
+@pytest.mark.parametrize("path", _FILES, ids=[p.stem for p in _FILES])
+def test_template_protects_its_risk_fields_and_psychotherapy_time(path: Path) -> None:
+    template: dict[str, Any] = json.loads(path.read_text())
+    spec = PracticeNoteTypeSpec.model_validate(template["spec"])
+    fields = {f"{s.key}.{f.key}" for s in spec.sections for f in s.fields}
+    risk = {p for p in fields if p.startswith("risk.")}
+
+    required = set(template["required_fields"])
+
+    assert required <= fields
+    assert risk <= required
+    assert "psychotherapy.psychotherapy_time" in required
 
 
 @pytest.mark.parametrize("path", _FILES, ids=[p.stem for p in _FILES])

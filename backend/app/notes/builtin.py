@@ -24,6 +24,7 @@ from .registry import (
 )
 from .safety_plan import SAFETY_PLAN_DEFINITION
 from .session_formats import BIRP_DEFINITION, DAP_DEFINITION, GIRP_DEFINITION
+from .spec_templates import spec_templates
 from .treatment_plan import TREATMENT_PLAN_DEFINITION
 
 SOAP_DEFINITION = NoteTypeDefinition(
@@ -289,8 +290,13 @@ BUILTIN_NOTE_DEFINITIONS: tuple[NoteTypeDefinition, ...] = (
 def register_builtin_note_types(registry: NoteTypeRegistry) -> None:
     """Register the built-in note types on ``registry``.
 
-    Idempotent: if called twice on the same registry, re-registers with
-    ``replace=True`` so startup ordering and tests stay simple.
+    That is the types written in code and the ones written as data (the
+    spec files, see :mod:`.spec_templates`), which a practice can also use
+    as the base of its own. Idempotent: if called twice on the same
+    registry, re-registers with ``replace=True`` so startup ordering and
+    tests stay simple.
     """
     for definition in BUILTIN_NOTE_DEFINITIONS:
         registry.register(definition, replace=True)
+    for template in spec_templates():
+        registry.register(template.definition(), replace=True)

@@ -15,7 +15,6 @@ import json
 from dataclasses import dataclass, field
 from datetime import date
 from functools import cache
-from pathlib import Path
 from typing import Any
 
 from app.notes.chart_context import (
@@ -25,16 +24,7 @@ from app.notes.chart_context import (
     ChartProblem,
 )
 from app.notes.practice_types import PracticeNoteTypeSpec
-
-TEMPLATES_DIR = (
-    Path(__file__).resolve().parents[3]
-    / "frontend"
-    / "src"
-    / "components"
-    / "settings"
-    / "noteTypes"
-    / "templates"
-)
+from app.notes.spec_templates import TEMPLATES_DIR
 
 
 @dataclass(frozen=True)

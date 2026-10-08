@@ -24,7 +24,7 @@ import { expect, test } from "../fixtures/auth"
 import { givePatient } from "../fixtures/scenarios"
 
 const TEMPLATE = new URL(
-  "../../src/components/settings/noteTypes/templates/psychiatric_follow_up.json",
+  "../../../backend/app/notes/templates/psychiatric_follow_up.json",
   import.meta.url,
 )
 const SIGNER = "Sam Ortiz"

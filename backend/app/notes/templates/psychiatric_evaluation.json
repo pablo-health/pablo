@@ -1,6 +1,13 @@
 {
   "id": "psychiatric_evaluation",
   "slug": "psychiatric_evaluation",
+  "required_fields": [
+    "risk.suicidal_homicidal_ideation",
+    "risk.risk_protective_factors",
+    "risk.overall_risk",
+    "risk.safety_plan",
+    "psychotherapy.psychotherapy_time"
+  ],
   "spec": {
     "label": "Psychiatric initial evaluation",
     "description": "First visit with a new client: a psychiatric diagnostic evaluation or a new-patient E/M visit, with a psychotherapy section for visits that include therapy.",

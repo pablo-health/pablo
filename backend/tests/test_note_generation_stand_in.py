@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import time
 from datetime import UTC, date, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -26,6 +25,7 @@ from app.notes.chart_context import (
     ChartProblem,
 )
 from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
+from app.notes.spec_templates import TEMPLATES_DIR
 from app.routes.notes import get_note_generation_service
 from app.services import dictation_transcription, http_structured_llm_gateway
 from app.services.ai_features import AIFeature
@@ -308,10 +308,7 @@ def test_a_draft_echoes_the_chart_it_was_written_against(stand_in: list[str]) ->
     }
 
 
-FOLLOW_UP_TEMPLATE = (
-    Path(__file__).resolve().parents[2]
-    / "frontend/src/components/settings/noteTypes/templates/psychiatric_follow_up.json"
-)
+FOLLOW_UP_TEMPLATE = TEMPLATES_DIR / "psychiatric_follow_up.json"
 
 
 def _follow_up() -> NoteTypeDefinition:

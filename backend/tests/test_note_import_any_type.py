@@ -22,13 +22,11 @@ from typing import Any
 import pytest
 from app.notes import NoteTypeDefinition, get_default_registry, register_builtin_note_types
 from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
+from app.notes.spec_templates import TEMPLATES_DIR
 from app.services.note_import_service import EXTRACT_SYSTEM_PROMPT, NoteImportService
 from app.services.structured_llm_gateway import FakeStructuredLLMGateway, StructuredCompletion
 
-_TEMPLATE = (
-    Path(__file__).resolve().parents[2]
-    / "frontend/src/components/settings/noteTypes/templates/psychiatric_follow_up.json"
-)
+_TEMPLATE = TEMPLATES_DIR / "psychiatric_follow_up.json"
 _DOCUMENT = (
     Path(__file__).parent / "fixtures/notes/transfer_psychiatric_follow_up.txt"
 ).read_text()

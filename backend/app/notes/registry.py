@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 
 if TYPE_CHECKING:
     from ..models import Patient, Transcript
+    from .practice_spec import PracticeNoteTypeSpec
 
 NoteFieldKind = Literal["text", "list", "diagnoses", "structured"]
 """Shape of a single field within a section.
@@ -160,8 +161,34 @@ class NoteTypeDefinition:
     chart is never handed to a draft that has no business reading it.
     """
 
+    required_fields: tuple[str, ...] = ()
+    """Fields (``section.field``) a type based on this one cannot hide.
+
+    Set on a type whose note is incomplete without them — the risk fields of
+    a prescriber's note, say. Empty for every type with nothing to protect.
+    """
+    source_spec: PracticeNoteTypeSpec | None = field(default=None, compare=False)
+    """The spec this definition was built from, when it was built from one.
+
+    Only a spec-shaped type can be a base for a practice's own: a patch is
+    applied to a spec. Built-in types written in code (SOAP and the like)
+    have none.
+    """
+    based_on: BasedOn | None = field(default=None, compare=False)
+    """Set when this is a practice type built from a base and a patch."""
+
     def section_keys(self) -> list[str]:
         return [s.key for s in self.sections]
+
+
+@dataclass(frozen=True)
+class BasedOn:
+    """The base a practice type was built on, and how much its patch changes."""
+
+    key: str
+    label: str
+    additions: int
+    hidden: int
 
 
 class PracticeNoteTypeSource(Protocol):
@@ -245,6 +272,20 @@ class NoteTypeRegistry:
             return self._types[key]
         except KeyError as exc:
             raise KeyError(f"Note type {key!r} is not registered") from exc
+
+    def base_for(self, key: str) -> NoteTypeDefinition | None:
+        """The definition ``key`` names, when a practice type can be based on it.
+
+        A base is spec-shaped and is not itself based on another type, so a
+        patch always applies to one fixed spec.
+        """
+        try:
+            definition = self.get(key)
+        except KeyError:
+            return None
+        if definition.source_spec is None or definition.based_on is not None:
+            return None
+        return definition
 
     def has(self, key: str) -> bool:
         """Whether a new note may be created with ``key`` — retired types may not."""

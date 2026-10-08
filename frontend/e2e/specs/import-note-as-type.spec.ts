@@ -21,7 +21,7 @@ type Template = { spec: { label: string } }
 type Imported = { id: string; note: { note_type: string } | null }
 
 const TEMPLATE = new URL(
-  "../../src/components/settings/noteTypes/templates/psychiatric_follow_up.json",
+  "../../../backend/app/notes/templates/psychiatric_follow_up.json",
   import.meta.url,
 )
 
