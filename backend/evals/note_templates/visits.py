@@ -364,3 +364,89 @@ worsening at work. Continue escitalopram 10 milligrams every morning and propran
 milligrams as needed before meetings. Return in three weeks. Psychotherapy thirty minutes. \
 Billing 99214 plus 90833.
 """
+
+# The follow-up's therapy sample as a clinician in a state with its own name
+# for the monitoring program would dictate it, with the client at home. The
+# clinician dictates the mental status, the risk finding and the protective
+# factors, which the note writes as the clinician's findings; the client's
+# answer about thoughts of harm is the only thing in the risk fields to quote.
+# "Nicotine, cannabis, anything else?" gets one answer for all three.
+WITH_THERAPY_AT_HOME = """\
+[00:00:05] Therapist: Hi Jordan, good to see you. Before we start, are you at home today?
+[00:00:09] Client: Yeah, I'm at home.
+[00:00:12] Therapist: Great. So how have things been since we last met?
+[00:00:18] Client: Honestly, better on the focus side. The Adderall is working. I'm getting \
+through my reports at work. But the worry has been bad the last couple of weeks. Like, lying \
+in bed running through everything that could go wrong.
+[00:00:41] Therapist: Okay. Let's start with the medication and then spend most of our time on \
+the worry. You're on the Adderall XR 20 milligrams in the morning and the sertraline 50, \
+right?
+[00:00:50] Client: Yes, both in the morning.
+[00:00:53] Therapist: Any missed doses?
+[00:00:55] Client: Maybe one sertraline last week, I forgot it on the weekend.
+[00:01:01] Therapist: Okay. Any trouble falling asleep, appetite changes, heart racing, \
+headaches?
+[00:01:07] Client: Appetite's a little lower at lunch but I eat a big dinner. Sleep is mostly \
+the worrying, not the medication I think. No heart stuff.
+[00:01:19] Therapist: Any alcohol?
+[00:01:21] Client: A glass of wine on weekends, maybe two.
+[00:01:25] Therapist: Nicotine, cannabis, anything else?
+[00:01:27] Client: No, none of that.
+[00:01:30] Therapist: And I always ask: any thoughts of hurting yourself or anyone else, or \
+that you'd be better off dead?
+[00:01:36] Client: No. Nothing like that.
+[00:01:39] Therapist: Okay. You did the GAD-7 on Friday and it came in at 13, up from 8 last \
+time. That fits what you're describing.
+[00:01:48] Client: Yeah, that sounds right.
+[00:01:52] Therapist: Mood otherwise? Any periods where you're not sleeping and don't need it, \
+racing, spending a lot?
+[00:01:58] Client: No, nothing like that. Mood is okay, just the worry.
+[00:02:04] Therapist: So here's what I'm thinking. The Adderall is doing its job, so we'll \
+keep that the same. For the anxiety, I'd like to go up on the sertraline from 50 to 75 \
+milligrams. Same timing. You might get some stomach upset or a bit of jitteriness the first \
+week, and it can take a few weeks to see the change. The other option is staying put and \
+leaning on therapy alone for a month. What do you think?
+[00:02:31] Client: I'd rather try the increase. The worry's getting in the way.
+[00:02:35] Therapist: Okay, we'll do 75. If you have anything like worsening mood or new \
+thoughts of self-harm, call the office, and if it's urgent, 988 or 911. I'll see you back in \
+four weeks.
+[00:02:47] Client: Sounds good.
+[00:02:50] Therapist: Alright. Let's spend the rest of our time on the worry. Tell me about \
+last night.
+[00:02:56] Client: I got into bed at eleven and just started going over the quarterly review. \
+What if my numbers are wrong, what if my manager thinks I'm not cut out for this. I looked at \
+the clock and it was one thirty.
+[00:03:12] Therapist: When you notice the thought "my manager thinks I'm not cut out for \
+this," how strongly do you believe it right then, zero to a hundred?
+[00:03:20] Client: In the moment, like ninety.
+[00:03:23] Therapist: And what's the evidence for it?
+[00:03:27] Client: She asked me to redo a slide last month.
+[00:03:31] Therapist: And evidence against?
+[00:03:35] Client: She gave me the new account. She said my last report was clear.
+[00:03:41] Therapist: So if you put those side by side, what would be a more balanced thought?
+[00:03:47] Client: Maybe... she asks everybody to redo things, and she trusts me with the \
+bigger account.
+[00:03:55] Therapist: How much do you believe the original thought now?
+[00:03:58] Client: Maybe forty.
+[00:04:02] Therapist: That's a real shift. Let's also set up a worry window: fifteen minutes \
+at six in the evening where you write down every worry, and when one shows up at night you \
+tell yourself it goes in tomorrow's window. Want to try it?
+[00:04:15] Client: I can try that. I did the time-blocking thing you suggested before and it \
+worked most days.
+[00:04:21] Therapist: How many days did you use the time blocks?
+[00:04:24] Client: Four out of five workdays, most weeks.
+[00:04:28] Therapist: That's great follow-through. Let's add the worry window and the thought \
+record twice this week, and we'll look at them next time. I'd like to keep doing this kind of \
+work at each visit.
+[00:04:39] Client: Okay. Thanks, this helped.
+[00:04:42] Therapist: Take care, Jordan.
+[00:04:58] Therapist: Note for the record. Client alert and oriented times four, well groomed, \
+good eye contact. Speech normal rate and volume. Mood anxious, affect congruent, mildly \
+constricted. Thought process linear and goal directed. No hallucinations or delusions. Denies \
+SI and HI. Cognition intact. Insight and judgment good. Protective factors: employed, \
+supportive partner, engaged in treatment. Overall acute risk is low. Generalized anxiety \
+worsening, ADHD stable. Sertraline increase discussed, benefits, side effects, and the \
+alternative of no change; client agreed. Continue Adderall XR 20. MAPS checked today before \
+the refill, no early fills, no other prescribers. No labs today. Psychotherapy from 10:14 to \
+10:55, 41 minutes. Billing 99214 plus 90836.
+"""

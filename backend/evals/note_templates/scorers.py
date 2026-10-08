@@ -37,13 +37,30 @@ if TYPE_CHECKING:
 
 Draft = dict[str, dict[str, Any]]
 
-RISK_QUOTED = (
+CLIENT_QUOTED = (
     ("risk", "suicidal_homicidal_ideation"),
     ("risk", "self_harm_violence"),
-    ("risk", "overall_risk"),
 )
-"""Fields that must quote what was said, or read "Not stated."; a template
-without one of them is not graded on it."""
+"""Fields that must quote what the client said, or read "Not stated."; a
+template without one of them is not graded on it."""
+OVERALL_RISK = ("risk", "overall_risk")
+SELF_HARM = ("risk", "self_harm_violence")
+INSTRUCTION = re.compile(r"\b(?:988|911|emergency room|call the office|call me)\b", re.IGNORECASE)
+"""What a safety instruction to the client names, which belongs in the
+emergency instructions, not in what was reported about self-harm."""
+ATTRIBUTION_TAG = re.compile(
+    r"\b(?:clinician|therapist|provider)\s+"
+    r"(?:dictated|stated|asked|noted|said|reported|documented)\b"
+    r"|\b(?:clinician|therapist|provider)\s*:"
+    r"|\bclient\s+responded\b"
+    r"|\bas noted by (?:the )?(?:clinician|therapist|provider)\b"
+    r"|\bdictated addendum\b"
+    r"|\bper (?:the )?(?:clinician|therapist|provider)\b",
+    re.IGNORECASE,
+)
+"""An attribution tag: the note is the clinician's own statement, so it never
+says who dictated a line of it."""
+TRANSCRIPT_CLIENT_TURN = re.compile(r"^\[[\d:]+\] Client: (.*)$", re.MULTILINE)
 
 STATED_MARK = "(stated this visit"
 """What marks a value stated this visit, "(stated this visit)" or
@@ -78,6 +95,7 @@ times. A time the client mentions ("it wears off by 9:00 AM") is not one."""
 MINUTES = re.compile(r"\b(\d+)\s*-?\s*min(?:ute)?s?\b", re.IGNORECASE)
 PSYCHOTHERAPY_TIME_LINE = re.compile(r"psychotherapy[^\n.:]*\b(?:time|minutes)\b", re.IGNORECASE)
 QUOTED = re.compile('["\u201c\u201d]([^"\u201c\u201d]+)["\u201c\u201d]')
+QUOTE_MARK = re.compile('["\u201c\u201d]')
 RISK_LEVEL = re.compile(r"\b(?:low|moderate|high|minimal|elevated|imminent)\b", re.IGNORECASE)
 TODAY = re.compile(r"\btoday\b", re.IGNORECASE)
 STATED_PREFIX = "(stated this visit:"
@@ -157,6 +175,19 @@ def _quote_in_transcript(quote: str, transcript: str) -> bool:
     said = normalize(transcript)
     parts = [normalize(p) for p in re.split(r"\.\.\.|…", quote)]
     return all(p in said for p in parts if p)
+
+
+def client_words(transcript: str) -> str:
+    """Everything the client said, one turn per line: what a quotation of the
+    client may be drawn from."""
+    return "\n".join(TRANSCRIPT_CLIENT_TURN.findall(transcript))
+
+
+def clinician_words(transcript: str) -> str:
+    """Everything the clinician said, the dictated addendum included."""
+    return "\n".join(
+        line for line in transcript.splitlines() if not TRANSCRIPT_CLIENT_TURN.match(line)
+    )
 
 
 def is_marked(text: str) -> bool:
@@ -257,35 +288,88 @@ def psychotherapy_section(draft: Draft, case: TemplateCase) -> list[str]:
     ]
 
 
-def risk_quoted(draft: Draft, case: TemplateCase) -> list[str]:
-    """Each risk field quotes what was said, or reads "Not stated."; never a judgment."""
-    problems: list[str] = []
+def risk_as_said(draft: Draft, case: TemplateCase) -> list[str]:
+    """The client's words about harm are quoted, never paraphrased; the overall
+    risk is the level the clinician stated, as the clinician's finding; the
+    draft never judges a level of its own."""
     fields = {(s, k) for s, k, _ in _spec_fields(case)}
-    for section, key in RISK_QUOTED:
-        if (section, key) not in fields:
-            continue
-        text = _text(draft, section, key)
-        path = f"{section}.{key}"
-        wanted = case.expected.risk_quotes.get(key, ())
-        if is_not_stated(text):
-            if wanted:
-                problems.append(f"{path}: the clinician stated it, but the field is not stated")
-            continue
-        quotes = QUOTED.findall(text)
-        if not quotes:
-            problems.append(f'{path}: neither a quotation nor "Not stated."')
-            continue
-        if wanted and not any(w in normalize(q) for q in quotes for w in wanted):
-            problems.append(f"{path}: no quotation carries {' or '.join(map(repr, wanted))}")
+    problems: list[str] = []
+    for section, key in CLIENT_QUOTED:
+        if (section, key) in fields:
+            problems += _client_quoted(draft, case, section, key)
+    if SELF_HARM in fields:
         problems += [
-            f"{path}: quoted {q!r} was not said"
-            for q in quotes
-            if not _quote_in_transcript(q, case.transcript)
+            f"risk.self_harm_violence: {w!r} is an instruction to the client, not a finding"
+            for w in INSTRUCTION.findall(_text(draft, *SELF_HARM))
         ]
-        outside = QUOTED.sub(" ", text)
-        problems += [
-            f"{path}: {w!r} judged outside a quotation" for w in RISK_LEVEL.findall(outside)
-        ]
+    if OVERALL_RISK in fields:
+        problems += _overall_risk(draft, case)
+    return problems
+
+
+def _client_quoted(draft: Draft, case: TemplateCase, section: str, key: str) -> list[str]:
+    text = _text(draft, section, key)
+    path = f"{section}.{key}"
+    wanted = case.expected.risk_quotes.get(key, ())
+    if is_not_stated(text):
+        return [f"{path}: the client said it, but the field is not stated"] if wanted else []
+    quotes = QUOTED.findall(text)
+    if not quotes:
+        return [f'{path}: the client\'s words are not quoted, nor is it "Not stated."']
+    problems = []
+    if wanted and not any(w in normalize(q) for q in quotes for w in wanted):
+        problems.append(f"{path}: no quotation carries {' or '.join(map(repr, wanted))}")
+    problems += [
+        f"{path}: quoted {q!r} is not the client's words"
+        for q in quotes
+        if not _quote_in_transcript(q, client_words(case.transcript))
+    ]
+    outside = QUOTED.sub(" ", text)
+    problems += [f"{path}: {w!r} judged outside a quotation" for w in RISK_LEVEL.findall(outside)]
+    return problems
+
+
+def _overall_risk(draft: Draft, case: TemplateCase) -> list[str]:
+    text = _text(draft, *OVERALL_RISK)
+    path = "risk.overall_risk"
+    stated = case.expected.risk_level
+    if stated is None:
+        return [] if is_not_stated(text) else [f"{path}: no level was stated: {text!r}"]
+    problems = []
+    if QUOTED.search(text):
+        problems.append(f"{path}: the clinician's finding is quoted")
+    levels = {w.lower() for w in RISK_LEVEL.findall(text)}
+    if stated not in levels:
+        problems.append(f"{path}: the stated level {stated!r} is missing")
+    problems += [f"{path}: {w!r} was not stated" for w in sorted(levels - {stated})]
+    return problems
+
+
+def no_attribution_tags(draft: Draft, _case: TemplateCase) -> list[str]:
+    """No field says who dictated, asked or answered: the note is the
+    clinician's own statement, and a quotation is framed as the client's."""
+    return [
+        f"{path}: attribution tag {m.group(0)!r}"
+        for path, text in _all_text(draft)
+        for m in ATTRIBUTION_TAG.finditer(text)
+    ]
+
+
+def findings_unquoted(draft: Draft, case: TemplateCase) -> list[str]:
+    """What the clinician dictated is written as findings, with no quotation
+    marks; a field that quotes the client does so once."""
+    e = case.expected
+    problems = [
+        f"{path}: the clinician's finding is quoted: {text!r}"
+        for path in e.findings
+        if QUOTE_MARK.search(text := _text(draft, *path.split(".", 1)))
+    ]
+    for path, words in e.quoted_once.items():
+        quotes = QUOTED.findall(_text(draft, *path.split(".", 1)))
+        if len(quotes) != 1:
+            problems.append(f"{path}: {len(quotes)} quotations, not one: {quotes!r}")
+        elif not any(w in normalize(quotes[0]) for w in words):
+            problems.append(f"{path}: the quotation carries none of {words!r}")
     return problems
 
 
@@ -339,6 +423,10 @@ def telehealth_attestation(draft: Draft, case: TemplateCase) -> list[str]:
         for loc in locations
         if normalize(loc) not in text
     ]
+    if "located at" in text:
+        problems.append('encounter.place_of_service: "located at" a location; write "in" it')
+    if case.expected.client_at_home and "at home" not in text:
+        problems.append("encounter.place_of_service: the client said they were at home")
     return problems
 
 
@@ -361,24 +449,33 @@ def _prints_baseline(case: TemplateCase) -> bool:
     )
 
 
+def is_denial(text: str) -> bool:
+    return any(w in normalize(text).split() for w in ("denied", "denies"))
+
+
 def _baseline_then_screen(draft: Draft, case: TemplateCase) -> list[str]:
     e = case.expected
     baseline = {f.key: f.text for f in case.history}
     problems = []
-    for k in (*e.substances_asked, *e.substances_not_asked):
+    graded = (*e.substances_asked, *e.substances_not_asked, *e.substances_denied)
+    for k in (*graded, *e.substances_stated):
         path = f"substance_use.{k}"
         chart_text, screen = split_screen(_text(draft, "substance_use", k))
         if normalize(chart_text) != normalize(baseline.get(k, "Not recorded")):
             problems.append(f"{path}: not the chart's baseline as recorded")
+        answer = (
+            screen.removeprefix(STATED_PREFIX).strip(' )"')
+            if screen.startswith(STATED_PREFIX)
+            else ""
+        )
         if k in e.substances_not_asked and screen != NOT_ASKED:
             problems.append(f'{path}: should end "{NOT_ASKED}"')
-        if k in e.substances_asked and not (
-            screen == ASKED_NO_CHANGE
-            or (
-                screen.startswith(STATED_PREFIX) and screen.removeprefix(STATED_PREFIX).strip(' )"')
-            )
-        ):
+        if k in e.substances_asked and not (screen == ASKED_NO_CHANGE or answer):
             problems.append(f"{path}: asked, but no screen recorded")
+        if k in e.substances_denied and not is_denial(answer):
+            problems.append(f"{path}: denied, but not marked as a denial: {screen!r}")
+        if k in e.substances_stated and (not answer or is_denial(answer)):
+            problems.append(f"{path}: what was said is not marked as stated: {screen!r}")
     return problems
 
 
@@ -388,7 +485,8 @@ def substances(draft: Draft, case: TemplateCase) -> list[str]:
     Where the template prints the chart's baseline (the follow-up), a field is
     that baseline, then this visit's screen: "(not asked this visit)" when it
     never came up, "(asked this visit: no change)" or "(stated this visit:
-    ...)" when it did. Where the template drafts substance use from the visit
+    ...)" when it did, a denial marked as one and anything else said marked as
+    stated. Where the template drafts substance use from the visit
     (the evaluation), not asked reads "Not asked", asked records the answer,
     and the chart's baseline is never copied in as this visit's answer.
     """
@@ -400,10 +498,12 @@ def substances(draft: Draft, case: TemplateCase) -> list[str]:
         for k in e.substances_not_asked
         if not is_not_asked(_text(draft, "substance_use", k))
     ]
-    for k in e.substances_asked:
+    for k in (*e.substances_asked, *e.substances_denied, *e.substances_stated):
         text = _text(draft, "substance_use", k)
         if is_blank(text) or is_not_asked(text) or is_not_stated(text):
             problems.append(f"substance_use.{k}: asked, but no answer recorded")
+        elif k in e.substances_denied and not is_denial(text):
+            problems.append(f"substance_use.{k}: denied, but not recorded as a denial")
     problems += [
         f"substance_use.{f.key}: the chart's baseline copied in as this visit's screen"
         for f in case.history
@@ -636,7 +736,9 @@ def counseling_only_as_stated(draft: Draft, case: TemplateCase) -> list[str]:
 CHECKS: dict[str, Callable[[Draft, TemplateCase], list[str]]] = {
     "codes_only_dictated": codes_only_dictated,
     "psychotherapy_section": psychotherapy_section,
-    "risk_quoted": risk_quoted,
+    "risk_as_said": risk_as_said,
+    "no_attribution_tags": no_attribution_tags,
+    "findings_unquoted": findings_unquoted,
     "safety_plan": safety_plan_only_with_ideation,
     "pdmp_line": pdmp_line,
     "telehealth_attestation": telehealth_attestation,

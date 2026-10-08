@@ -14,7 +14,7 @@ are invented here, in the same spirit.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from functools import cache
 from typing import TYPE_CHECKING, Any
@@ -105,7 +105,27 @@ class Expected:
     """Suicidal ideation was reported, so the safety plan the clinician
     described must be written."""
     risk_quotes: dict[str, tuple[str, ...]] = field(default_factory=dict)
-    """Risk fields whose quotation must carry one of these words."""
+    """Risk fields where the client's words must be quoted: a quotation must
+    carry one of these words."""
+    risk_level: str | None = None
+    """The overall risk level the clinician stated, which the overall risk
+    field must carry unquoted; ``None``: none was stated, so it reads "Not
+    stated."."""
+    substances_denied: tuple[str, ...] = ()
+    """Substances the client denied, one by one or in one answer to a question
+    naming several: each is marked as a denial stated this visit."""
+    substances_stated: tuple[str, ...] = ()
+    """Substances the client described this visit: each carries what was said,
+    marked as stated, and is neither a denial nor "no change"."""
+    findings: tuple[str, ...] = ()
+    """Fields (``section.key``) the clinician dictated as findings: written as
+    the clinician's statements, so they carry no quotation marks."""
+    quoted_once: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    """Fields (``section.key``) that must quote the client exactly once, the
+    quotation carrying one of these words."""
+    client_at_home: bool = False
+    """The client said they were at home for a telehealth visit, so the
+    attestation says so."""
 
 
 @dataclass(frozen=True)
@@ -213,11 +233,33 @@ FOLLOW_UP_WITH_THERAPY = TemplateCase(
         minutes=("41",),
         pdmp_findings=("early fill", "other prescriber"),
         telehealth=TELEHEALTH_LOCATIONS,
-        substances_asked=("alcohol", "tobacco_nicotine", "cannabis", "other_substances"),
+        # "A glass of wine on weekends, maybe two" is what was said, not "no
+        # change". "Nicotine, cannabis, anything else?" answered "No, none of
+        # that" denies each one named and anything else; the rest were never
+        # named.
+        substances_stated=("alcohol",),
+        substances_denied=("tobacco_nicotine", "cannabis", "other_substances"),
+        substances_not_asked=("stimulants", "cocaine", "opioids", "benzodiazepines"),
         diagnoses=(
             Diagnosis("F41.1", ("anxiety",)),
             Diagnosis("F90.0", ("attention", "adhd", "hyperactivity")),
         ),
+        risk_level="low",
+        # The mental status, the protective factors and the risk level are the
+        # clinician's dictation: findings, never quotations.
+        findings=(
+            "mse.appearance_behavior",
+            "mse.orientation",
+            "mse.speech",
+            "mse.mood_affect",
+            "mse.thought_process",
+            "mse.thought_content",
+            "mse.cognition",
+            "mse.insight_judgment",
+            "risk.risk_protective_factors",
+            "risk.overall_risk",
+        ),
+        quoted_once={"risk.suicidal_homicidal_ideation": ("nothing like that",)},
         current_medications=(
             "Adderall XR 20 mg, every morning",
             "Sertraline 50 mg, every morning",
@@ -245,6 +287,25 @@ FOLLOW_UP_WITH_THERAPY = TemplateCase(
             "social_history.supports",
             "social_history.work_school",
         ),
+    ),
+)
+
+# The same visit and chart, the locations entered as a state alone, and the
+# client saying they are at home: the attestation reads "at home in" the
+# entered state, never "located at" it.
+AT_HOME_LOCATIONS = ("Michigan", "Michigan")
+FOLLOW_UP_WITH_THERAPY_AT_HOME = replace(
+    FOLLOW_UP_WITH_THERAPY,
+    name="follow-up-with-therapy-at-home",
+    sample=None,
+    visit=visits.WITH_THERAPY_AT_HOME,
+    inputs={
+        "place_of_service": "Telehealth",
+        "client_location": AT_HOME_LOCATIONS[0],
+        "provider_location": AT_HOME_LOCATIONS[1],
+    },
+    expected=replace(
+        FOLLOW_UP_WITH_THERAPY.expected, telehealth=AT_HOME_LOCATIONS, client_at_home=True
     ),
 )
 
@@ -470,6 +531,7 @@ EVALUATION_EMPTY_CHART = TemplateCase(
             Diagnosis("F41.0", ("panic",)),
             Diagnosis("F41.1", ("generalized anxiety",)),
         ),
+        risk_level="low",
         current_medications=(),
         not_current=("escitalopram",),
         in_plan=("escitalopram",),
@@ -515,10 +577,8 @@ FOLLOW_UP_RISK_LANGUAGE = TemplateCase(
         not_current=("200",),
         in_plan=("200",),
         ideation=True,
-        risk_quotes={
-            "suicidal_homicidal_ideation": ("better off without me", "passive suicidal"),
-            "overall_risk": ("moderate",),
-        },
+        risk_quotes={"suicidal_homicidal_ideation": ("better off without me",)},
+        risk_level="moderate",
     ),
 )
 
@@ -603,6 +663,7 @@ FOLLOW_UP_NO_THERAPY_RECORDED = TemplateCase(
 
 ALL_CASES: tuple[TemplateCase, ...] = (
     FOLLOW_UP_WITH_THERAPY,
+    FOLLOW_UP_WITH_THERAPY_AT_HOME,
     FOLLOW_UP_MEDICATION_ONLY,
     FOLLOW_UP_FULL_CHART,
     FOLLOW_UP_STATED_CHANGE,
