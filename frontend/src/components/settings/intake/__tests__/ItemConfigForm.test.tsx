@@ -432,4 +432,31 @@ describe("ItemConfigForm: the consent document picker", () => {
     expect(screen.getByText(NO_PUBLISHED_DOCUMENTS)).toBeInTheDocument()
     expect(screen.queryByLabelText(DOCUMENT_PICKER_LABEL)).not.toBeInTheDocument()
   })
+
+  it("writes a new document in place and points the question at it", async () => {
+    const user = userEvent.setup()
+    render(
+      <ItemConfigForm
+        itemType="consent_document"
+        config={{}}
+        onChange={onChange}
+        idPrefix="test"
+        documents={[]}
+        renderNewDocument={(choose) => (
+          <button type="button" onClick={() => choose("key-new")}>
+            Publish the stand-in
+          </button>
+        )}
+      />
+    )
+
+    // Nothing published, and no dead end: the way forward is right here.
+    expect(screen.queryByText(NO_PUBLISHED_DOCUMENTS)).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Write a new one" }))
+    await user.click(screen.getByRole("button", { name: "Publish the stand-in" }))
+
+    expect(lastConfig()).toEqual({ document_key: "key-new" })
+    // Done writing: the button is back for the next one.
+    expect(screen.getByRole("button", { name: "Write a new one" })).toBeInTheDocument()
+  })
 })

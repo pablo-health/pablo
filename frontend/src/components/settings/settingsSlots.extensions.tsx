@@ -82,6 +82,16 @@ export function WebsiteCreateOptions(_props: { canManage: boolean; onDraftSaved:
   return null
 }
 
+/**
+ * Other ways to make a packet, beside "Add a packet" on Practice > Portal.
+ *
+ * A deployment that can put a packet together for the practice renders its
+ * control here; whatever it makes is an ordinary packet in this card.
+ */
+export function PacketsBuildOptions(): ReactNode {
+  return null
+}
+
 /** Extra rows on You > Sign-in & security, below the second-factor rows. */
 export function SecurityLegalRows(): ReactNode {
   return null

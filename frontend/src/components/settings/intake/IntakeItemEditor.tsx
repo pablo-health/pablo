@@ -3,7 +3,7 @@
 "use client"
 
 import { ChevronDown, ChevronUp, Plus, X } from "lucide-react"
-import { useId, useState } from "react"
+import { useId, useState, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -63,6 +63,8 @@ interface IntakeItemEditorProps {
   instruments?: Instrument[]
   /** The practice's blank forms, for a document question to offer. */
   blankForms?: OfferableBlankForm[]
+  /** Writing a new document from a consent question; see ItemConfigForm. */
+  renderNewDocument?: (choose: (documentKey: string) => void) => ReactNode
   /** Built-in documents the practice can add, with the questions they bring. */
   starters?: IntakeStarter[]
   /** Adopt one: the practice's copy is published and its items come back. */
@@ -199,6 +201,7 @@ export function IntakeItemEditor({
   documents,
   instruments,
   blankForms,
+  renderNewDocument,
   starters,
   onAdoptStarter,
   adopting,
@@ -396,6 +399,7 @@ export function IntakeItemEditor({
                     documents={documents}
                     instruments={instruments}
                     blankForms={blankForms}
+                    renderNewDocument={renderNewDocument}
                   />
                   <VisibilityRuleForm
                     rule={ruleOf(item.config)}
