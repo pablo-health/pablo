@@ -9,6 +9,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from app.main import app
 from app.rate_limit import reset_preauth_limiter
+from app.services.auth_code_store import create_auth_code
+from app.services.companion_device_service import DeviceOwnershipConflictError
 from fastapi.testclient import TestClient
 
 
@@ -248,6 +250,7 @@ class TestCompanionDeviceEnrollment:
             )
 
         assert resp.status_code == 200
+        assert resp.json()["enrollment"] == "enrolled"
         mock_identity_repo.resolve_or_create.assert_called_once_with("firebase", "fb-user-1")
         mock_service.enroll.assert_called_once()
         args, _ = mock_service.enroll.call_args
@@ -270,6 +273,7 @@ class TestCompanionDeviceEnrollment:
             )
 
         assert resp.status_code == 200
+        assert resp.json()["enrollment"] is None
         mock_get_repo.assert_not_called()
         mock_get_svc.assert_not_called()
 
@@ -303,6 +307,62 @@ class TestCompanionDeviceEnrollment:
 
         assert resp.status_code == 200
         assert resp.json()["id_token"] == "id_tok"
+        assert resp.json()["enrollment"] == "failed"
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            DeviceOwnershipConflictError("install_id already enrolled to a different user"),
+            RuntimeError("database unavailable"),
+        ],
+    )
+    def test_enrollment_failure_is_reported_and_sign_in_succeeds(
+        self, client: TestClient, error: Exception
+    ) -> None:
+        code = self._create_code(client)
+        mock_identity_repo = MagicMock()
+        mock_identity_repo.resolve_or_create.return_value = "pablo-user-1"
+        mock_service = MagicMock()
+        mock_service.enroll.side_effect = error
+
+        with (
+            patch(
+                "app.routes.auth.get_identity_repository",
+                return_value=mock_identity_repo,
+            ),
+            patch(
+                "app.routes.auth.get_companion_device_service",
+                return_value=mock_service,
+            ),
+        ):
+            resp = client.post(
+                "/api/auth/native/exchange",
+                json={
+                    "code": code,
+                    "redirect_uri": self.REDIRECT_URI,
+                    "enrollment": self.VALID_ENROLLMENT,
+                },
+            )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["id_token"] == "id_tok"
+        assert body["enrollment"] == "failed"
+
+    def test_enrollment_without_firebase_uid_is_reported_failed(self, client: TestClient) -> None:
+        # A code minted before uids were stored on it carries none.
+        issued = "id_tok"
+        code = create_auth_code(issued, issued, self.REDIRECT_URI, firebase_uid=None)
+        resp = client.post(
+            "/api/auth/native/exchange",
+            json={
+                "code": code,
+                "redirect_uri": self.REDIRECT_URI,
+                "enrollment": self.VALID_ENROLLMENT,
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["enrollment"] == "failed"
 
     def test_enrollment_rejects_unknown_platform(self, client: TestClient) -> None:
         code = self._create_code(client)

@@ -34,6 +34,11 @@ describe("CompanionGetDialog", () => {
     const link = screen.getByRole("link", { name: "Download for macOS" })
     expect(link).toHaveAttribute("href", "https://pablo.health")
     expect(link).toHaveAttribute("target", "_blank")
+    // Installing is not enough: the dashboard only sees the app once the
+    // clinician signs in from it.
+    expect(
+      screen.getByText("After installing, open the app and sign in."),
+    ).toBeInTheDocument()
   })
 
   it("links to a deployment-provided download URL", () => {
