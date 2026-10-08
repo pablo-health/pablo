@@ -21,7 +21,7 @@ import {
 import { getNoteType } from "@/lib/api/noteTypes"
 import { listProblems } from "@/lib/api/problems"
 import { createMockNote } from "@/test/factories"
-import type { ChartProposal, ProposalRun } from "@/types/chartProposals"
+import type { ChartProposal, MedicationChange, ProposalRun } from "@/types/chartProposals"
 import type { NoteTypeSchema } from "@/types/noteTypes"
 import { ChartUpdatesPanel } from "../ChartUpdatesPanel"
 import { changeParts } from "../changeHighlight"
@@ -76,6 +76,8 @@ function proposal(overrides: Partial<ChartProposal> = {}): ChartProposal {
     field_key: "relationships",
     item_key: "",
     label: "Social history and supports: Relationships",
+    editable: true,
+    change: null,
     current_text: SEPARATED,
     proposed_text: FINALIZED,
     what_changed: "Divorce finalized",
@@ -298,6 +300,81 @@ describe("the signed note's chart updates", () => {
 
     await waitFor(() => expect(getChartProposals).toHaveBeenCalled())
     expect(screen.queryByText("Chart updates from this note")).not.toBeInTheDocument()
+  })
+})
+
+function medication(
+  action: MedicationChange["action"],
+  name: string,
+  overrides: Partial<ChartProposal> = {},
+): ChartProposal {
+  const verb = { start: "Start", stop: "Stop", change: "Change", add: "Add" }[action]
+  return proposal({
+    id: `${action}-${name}`,
+    field_key: "medications",
+    item_key: name,
+    label: `Medications: ${verb} ${name}`,
+    editable: false,
+    change: {
+      action,
+      drug_name: name,
+      dose: null,
+      frequency: null,
+      category: null,
+      reason: null,
+    },
+    ...overrides,
+  })
+}
+
+const START = medication("start", "hydroxyzine", {
+  current_text: null,
+  proposed_text: "hydroxyzine 25 mg, in the afternoon as needed",
+  what_changed: "Started for afternoon anxiety",
+})
+const STOP = medication("stop", "trazodone", {
+  current_text: "trazodone 50 mg, at bedtime",
+  proposed_text: "Stopped: nausea",
+  what_changed: "Stopped because of nausea",
+})
+
+describe("medication changes", () => {
+  it("shows each against the list, accepted or discarded, never rewritten", async () => {
+    vi.mocked(getChartProposals).mockResolvedValue(listing([START, STOP]))
+    vi.mocked(decideChartProposal).mockResolvedValue({ ...START, decision: "accepted" })
+    const { user, dialog } = await openSignDialog()
+
+    const start = await within(dialog).findByRole("listitem", {
+      name: "Medications: Start hydroxyzine",
+    })
+    const stop = within(dialog).getByRole("listitem", { name: "Medications: Stop trazodone" })
+    expect(within(start).getByText("Not on the list")).toBeInTheDocument()
+    expect(within(start).getByTestId("proposed-text")).toHaveTextContent(
+      "hydroxyzine 25 mg, in the afternoon as needed",
+    )
+    expect(within(stop).getByText("On the chart now").nextElementSibling).toHaveTextContent(
+      "trazodone 50 mg, at bedtime",
+    )
+    expect(within(stop).getByTestId("proposed-text")).toHaveTextContent("Stopped: nausea")
+    expect(within(dialog).queryByRole("button", { name: "Edit" })).not.toBeInTheDocument()
+
+    await user.click(within(start).getByRole("button", { name: "Accept" }))
+    await user.click(within(stop).getByRole("button", { name: "Discard" }))
+
+    expect(decideChartProposal).toHaveBeenCalledWith("note-1", "start-hydroxyzine", {
+      decision: "accept",
+    })
+    expect(decideChartProposal).toHaveBeenCalledWith("note-1", "stop-trazodone", {
+      decision: "discard",
+    })
+  })
+
+  it("says the list was updated once accepted", async () => {
+    vi.mocked(getChartProposals).mockResolvedValue(listing([{ ...STOP, decision: "accepted" }]))
+    render(<ChartUpdatesPanel note={NOTE} />, { wrapper })
+
+    expect(await screen.findByText("Medication list updated")).toBeInTheDocument()
+    expect(screen.queryByText("Added to the chart")).not.toBeInTheDocument()
   })
 })
 

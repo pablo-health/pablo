@@ -6,6 +6,11 @@
  * the visit it came from. Accept writes the proposed text to the chart; Edit
  * writes the clinician's text instead; Discard writes nothing and is not
  * offered again on this note. The note itself never changes.
+ *
+ * A medication change (start, stop, change, add) is a row against the
+ * current list: accepted or discarded, never rewritten here, since it writes
+ * a structured medication record. The list itself is edited on the client's
+ * page.
  */
 
 "use client"
@@ -21,6 +26,11 @@ import { changeParts } from "./changeHighlight"
 const DECIDED: Record<string, string> = {
   accepted: "Added to the chart",
   edited: "Added to the chart with your changes",
+  discarded: "Discarded",
+}
+
+const MEDICATION_DECIDED: Record<string, string> = {
+  accepted: "Medication list updated",
   discarded: "Discarded",
 }
 
@@ -51,6 +61,7 @@ export function ProposalRow({
   const [text, setText] = useState(proposal.proposed_text)
   const [failed, setFailed] = useState(false)
   const pending = proposal.decision === "pending"
+  const decided = proposal.change ? MEDICATION_DECIDED : DECIDED
 
   const send = async (data: DecideChartProposalRequest) => {
     setFailed(false)
@@ -79,7 +90,7 @@ export function ProposalRow({
             On the chart now
           </p>
           <p className="whitespace-pre-wrap text-neutral-700">
-            {proposal.current_text ?? "Not recorded"}
+            {proposal.current_text ?? (proposal.change ? "Not on the list" : "Not recorded")}
           </p>
         </div>
       )}
@@ -120,7 +131,7 @@ export function ProposalRow({
       {!pending ? (
         <p className="inline-flex items-center gap-1 text-xs text-neutral-600">
           {proposal.decision !== "discarded" && <Check className="h-3.5 w-3.5" aria-hidden />}
-          {DECIDED[proposal.decision]}
+          {decided[proposal.decision]}
         </p>
       ) : readOnly ? null : editing ? (
         <div className="flex flex-wrap justify-end gap-2">
@@ -147,15 +158,17 @@ export function ProposalRow({
           >
             Discard
           </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={decide.isPending}
-            onClick={() => setEditing(true)}
-          >
-            Edit
-          </Button>
+          {proposal.editable && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={decide.isPending}
+              onClick={() => setEditing(true)}
+            >
+              Edit
+            </Button>
+          )}
           <Button
             type="button"
             size="sm"

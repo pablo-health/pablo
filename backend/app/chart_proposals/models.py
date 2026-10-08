@@ -21,6 +21,26 @@ RECORDED_THIS_VISIT = "Recorded this visit"
 
 RunStatus = Literal["ok", "failed", "skipped"]
 
+MedicationAction = Literal["start", "stop", "change", "add"]
+"""``start``, ``stop``, ``change``: what the clinician decided this visit. ``add``: a
+medication the client takes now that the list lacks (one another prescriber started)."""
+
+
+@dataclass(frozen=True)
+class MedicationChange:
+    """A change to the medication list, as the visit stated it.
+
+    For ``change``, ``dose`` and ``frequency`` are the new values; ``None``
+    leaves that value as it is. ``reason`` is why a medication was stopped.
+    """
+
+    action: MedicationAction
+    drug_name: str
+    dose: str | None = None
+    frequency: str | None = None
+    category: str | None = None
+    reason: str | None = None
+
 
 @dataclass(frozen=True)
 class ProposalRun:
@@ -66,6 +86,8 @@ class DraftedProposal:
     item_key: str = ""
     """The entry within a list field (an allergy's substance); empty for free text."""
     origin: Origin = "transcript"
+    change: MedicationChange | None = None
+    """The structured change, for a family whose proposals are actions (the medication list)."""
 
 
 @dataclass(frozen=True)
@@ -84,6 +106,7 @@ class ChartProposal:
     decided_text: str | None = None
     decided_by: str | None = None
     decided_at: datetime | None = None
+    change: MedicationChange | None = None
 
     @property
     def pending(self) -> bool:

@@ -774,6 +774,7 @@ CREATE TABLE __TENANT_SCHEMA__.note_chart_proposals (
     decided_by uuid,
     decided_at timestamp with time zone,
     created_at timestamp with time zone NOT NULL,
+    change jsonb,
     CONSTRAINT ck_note_chart_proposals_decision CHECK (((decision)::text = ANY ((ARRAY['pending'::character varying, 'accepted'::character varying, 'edited'::character varying, 'discarded'::character varying])::text[])))
 );
 
@@ -1085,6 +1086,7 @@ CREATE TABLE __TENANT_SCHEMA__.patient_medications (
     stop_reason text,
     frequency text,
     category character varying(16),
+    source_note_id uuid,
     CONSTRAINT ck_patient_medications_category CHECK (((category)::text = ANY ((ARRAY['psychiatric'::character varying, 'other'::character varying])::text[]))),
     CONSTRAINT ck_patient_medications_status CHECK (((status)::text = ANY ((ARRAY['active'::character varying, 'discontinued'::character varying, 'on_hold'::character varying])::text[])))
 );
@@ -3022,6 +3024,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_documents
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_medications
     ADD CONSTRAINT patient_medications_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_medications
+    ADD CONSTRAINT patient_medications_source_note_id_fkey FOREIGN KEY (source_note_id) REFERENCES __TENANT_SCHEMA__.notes(id) ON DELETE SET NULL;
 
 
 

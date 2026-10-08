@@ -14,12 +14,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 
-from app.notes.chart_context import ChartContext, ChartHistoryField
+from app.notes.chart_context import ChartContext, ChartHistoryField, ChartMedication
 
 
 @dataclass(frozen=True)
 class ExpectedProposal:
     field_key: str
+    entry: str = ""
+    """For a list field, the entry: an allergy's substance, a medication's name."""
+    action: str | None = None
+    """For a medication, start, stop, change or add."""
     must_contain: tuple[str, ...] = ()
     must_contain_any: tuple[str, ...] = ()
     """At least one of these, when given."""
@@ -37,14 +41,19 @@ class ProposalCase:
     """Exactly these fields are proposed; an empty tuple means no proposal at all."""
 
 
-def _chart(**history: str) -> ChartContext:
+def _chart(*medications: ChartMedication, **history: str) -> ChartContext:
     return ChartContext(
         allergy_status="nkda",
+        medications=medications,
         history=tuple(ChartHistoryField(k, v, date(2026, 6, 10)) for k, v in history.items()),
     )
 
 
+SERTRALINE = ChartMedication("sertraline", "100 mg", "every morning", "psychiatric")
+
+
 _DIVORCE_CHART = _chart(
+    SERTRALINE,
     relationships="Married; separated, divorce in progress since June. Two teenage sons.",
     legal_custody="Divorce in progress; shared custody of both sons. No other legal involvement.",
     living_situation="Lives alone in an apartment since the separation.",
@@ -118,6 +127,7 @@ UNCHANGED = ProposalCase(
 STOPPED_WORKING = ProposalCase(
     name="stopped-working",
     chart=_chart(
+        ChartMedication("buspirone", "10 mg", "twice a day", "psychiatric"),
         work_school="Works full time as a dental hygienist at a family dental practice.",
         living_situation="Lives with husband and two children.",
     ),
@@ -146,4 +156,103 @@ STOPPED_WORKING = ProposalCase(
 )
 """The job ended: the chart keeps that she worked there and adds that she no longer does."""
 
-ALL_CASES: tuple[ProposalCase, ...] = (DIVORCE_FINALIZED, UNCHANGED, STOPPED_WORKING)
+START_AND_STOP = ProposalCase(
+    name="medication-start-and-stop",
+    chart=_chart(SERTRALINE, ChartMedication("trazodone", "50 mg", "at bedtime", "psychiatric")),
+    transcript="""\
+[00:00] Clinician: How has the anxiety been in the afternoons?
+[00:04] Client: Worse. Around three o'clock it really ramps up.
+[00:10] Clinician: And the trazodone at night?
+[00:13] Client: It helps me sleep, but I wake up nauseous most mornings.
+[00:20] Clinician: Okay. Let's stop the trazodone because of the nausea.
+[00:26] Clinician: For the afternoons, start hydroxyzine 25 mg in the afternoon as needed.
+[00:34] Client: Okay. And I keep taking the sertraline the same?
+[00:38] Clinician: Yes, the sertraline stays at 100 mg every morning.
+[00:44] Clinician: We'll check in again in four weeks.
+""",
+    expected=(
+        ExpectedProposal(
+            field_key="medications",
+            entry="hydroxyzine",
+            action="start",
+            must_contain=("hydroxyzine 25 mg", "afternoon", "as needed"),
+            evidence=(5,),
+        ),
+        ExpectedProposal(
+            field_key="medications",
+            entry="trazodone",
+            action="stop",
+            must_contain=("nausea",),
+            evidence=(4,),
+        ),
+    ),
+)
+"""The clinician starts one medication and stops another: one proposal each, the start with
+its frequency and the stop with its reason. The sertraline, continued, gets none."""
+
+MEDICATION_DISCUSSED = ProposalCase(
+    name="medication-only-discussed",
+    chart=_chart(SERTRALINE),
+    transcript="""\
+[00:00] Clinician: How is the sertraline going?
+[00:03] Client: Fine. I read about lamotrigine online. Would that help me?
+[00:09] Clinician: It's mostly used for mood episodes, and I don't think it fits what you describe.
+[00:17] Client: Okay. What about going up on the sertraline?
+[00:21] Clinician: We could consider that next time if the low days continue.
+[00:27] Client: That makes sense.
+[00:30] Clinician: For now everything stays the same. See you in six weeks.
+""",
+)
+"""A medication asked about and a dose increase considered for later: no proposal."""
+
+ANOTHER_PRESCRIBER = ProposalCase(
+    name="medication-another-prescriber-started",
+    chart=_chart(SERTRALINE),
+    transcript="""\
+[00:00] Clinician: Anything new with your health since we last met?
+[00:04] Client: My primary care doctor put me on lisinopril for my blood pressure.
+[00:10] Clinician: What dose, and when do you take it?
+[00:13] Client: 10 mg, once a day in the morning.
+[00:17] Clinician: Any dizziness with it?
+[00:20] Client: No, none.
+[00:23] Clinician: And the sertraline, still every morning?
+[00:26] Client: Yes, same as always.
+[00:29] Clinician: Good, we'll continue it.
+""",
+    expected=(
+        ExpectedProposal(
+            field_key="medications",
+            entry="lisinopril",
+            action="add",
+            must_contain=("lisinopril", "10 mg"),
+            must_contain_any=("morning", "once a day", "daily"),
+            evidence=(1, 3),
+        ),
+    ),
+)
+"""A medication another prescriber started, which the list lacks: an add, with the dose and
+frequency as the client states them."""
+
+CLIENT_STOPPED = ProposalCase(
+    name="medication-client-stopped",
+    chart=_chart(SERTRALINE, ChartMedication("buspirone", "10 mg", "twice a day", "psychiatric")),
+    transcript="""\
+[00:00] Clinician: How have things been?
+[00:03] Client: Honestly, I stopped taking the buspirone about two weeks ago. It made me dizzy.
+[00:10] Clinician: Thanks for telling me. Has the anxiety changed since?
+[00:14] Client: A little worse in the evenings, but manageable.
+[00:19] Clinician: Let's talk about that more next time before we decide anything.
+[00:24] Client: Okay.
+""",
+)
+"""The client says they stopped a medication, and the clinician decides nothing: no stop."""
+
+ALL_CASES: tuple[ProposalCase, ...] = (
+    DIVORCE_FINALIZED,
+    UNCHANGED,
+    STOPPED_WORKING,
+    START_AND_STOP,
+    MEDICATION_DISCUSSED,
+    ANOTHER_PRESCRIBER,
+    CLIENT_STOPPED,
+)

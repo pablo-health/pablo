@@ -26,6 +26,7 @@ from .recorded import recorded_proposals
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
+    from datetime import date
     from typing import Any
 
     from ..models import Note, Patient
@@ -59,14 +60,27 @@ class ProposalDecidedError(ValueError):
     """The proposal was already accepted, edited or discarded."""
 
 
+class ProposalNotEditableError(ValueError):
+    """The proposal is a structured change: it is accepted or discarded, not rewritten."""
+
+
 def _identity(field_key: str, item_key: str) -> tuple[str, str]:
     return field_key, item_key.strip().lower()
 
 
 class ChartProposalService:
-    def __init__(self, repo: ChartProposalRepository, writers: ChartWriters | None = None) -> None:
+    def __init__(
+        self,
+        repo: ChartProposalRepository,
+        writers: ChartWriters | None = None,
+        *,
+        visit_date: date | None = None,
+    ) -> None:
+        """``visit_date`` is the day of the note's visit, which a medication started
+        or stopped from it is dated by; without it, today."""
         self._repo = repo
         self._writers = writers
+        self._visit_date = visit_date
 
     def proposals(self, note_id: str) -> list[ChartProposal]:
         return self._repo.list_for_note(note_id)
@@ -125,13 +139,18 @@ class ChartProposalService:
         choice: Choice,
         user_id: str,
     ) -> ChartProposal:
-        """Record the clinician's decision; an accept or an edit writes the chart."""
+        """Record the clinician's decision; an accept or an edit writes the chart.
+
+        A change the chart can no longer take (a medication stopped since it was
+        proposed) raises ``ChartChangedError`` and leaves the proposal pending."""
         proposal = next((p for p in self._repo.list_for_note(note.id) if p.id == proposal_id), None)
         family = family_for(proposal.field_key) if proposal is not None else None
         if proposal is None or family is None:
             raise ProposalNotFoundError(proposal_id)
         if not proposal.pending:
             raise ProposalDecidedError(proposal_id)
+        if choice.decision == "edit" and not family.editable:
+            raise ProposalNotEditableError(proposal_id)
         edited = (choice.text or "").strip() if choice.decision == "edit" else None
         if choice.decision != "discard":
             if self._writers is None:
@@ -139,7 +158,8 @@ class ChartProposalService:
             written = edited if edited is not None else proposal.proposed_text
             if not written:
                 raise ValueError("an edit needs the text to record")
-            family.apply(self._writers, patient, proposal, written, WriteSource(user_id, note.id))
+            source = WriteSource(user_id, note.id, self._visit_date)
+            family.apply(self._writers, patient, proposal, written, source)
         self._repo.decide(proposal.id, _DECIDED[choice.decision], edited, user_id, utc_now())
         return next(p for p in self._repo.list_for_note(note.id) if p.id == proposal.id)
 
@@ -156,4 +176,5 @@ class ChartProposalService:
             evidence=drafted.evidence,
             origin=drafted.origin,
             created_at=utc_now(),
+            change=drafted.change,
         )

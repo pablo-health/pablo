@@ -143,6 +143,71 @@ test.describe("chart updates at sign", () => {
     }
   })
 
+  test("an accepted start and stop change the medication list from the note", async ({
+    api,
+    signedInPage: page,
+  }) => {
+    const patient = await givePatient(api)
+    await api.post(`/api/patients/${patient.id}/medications`, {
+      drug_name: "trazodone",
+      dose: "50 mg",
+      frequency: "at bedtime",
+      category: "psychiatric",
+    })
+    const slug = `e2e_meds_${randomBytes(3).toString("hex")}`
+    await api.put(`/api/note-types/custom/${slug}`, {
+      label: `Follow-up ${slug}`,
+      sections: [
+        {
+          key: "social_history",
+          label: "Social history",
+          fields: [{ key: "work_school", label: "Work or school", ai_hint: FROM_THE_CHART }],
+        },
+      ],
+    })
+    const appointments: string[] = []
+    try {
+      const session = await draftedVisit(
+        api,
+        patient.id,
+        `custom.${slug}`,
+        [
+          "[00:00:05] Clinician: How are the afternoons?",
+          "[00:00:09] Clinician: Medication start: hydroxyzine; 25 mg; in the afternoon as needed",
+          "[00:00:15] Clinician: Medication stop: trazodone; ; ; nausea",
+        ].join("\n"),
+        appointments,
+      )
+
+      const dialog = await openSignStep(page, session.id)
+      const start = dialog.getByRole("listitem", { name: "Medications: Start hydroxyzine" })
+      const stop = dialog.getByRole("listitem", { name: "Medications: Stop trazodone" })
+      await expect(start).toContainText("Not on the list")
+      await expect(start).toContainText("hydroxyzine 25 mg, in the afternoon as needed")
+      await expect(stop).toContainText("trazodone 50 mg, at bedtime")
+      await expect(stop).toContainText("Stopped: nausea")
+      await expect(dialog.getByRole("button", { name: "Edit" })).toHaveCount(0)
+      await start.getByRole("button", { name: "Accept" }).click()
+      await stop.getByRole("button", { name: "Accept" }).click()
+      await expect(dialog.getByRole("heading", { name: "Update the chart" })).toBeHidden()
+      await dialog.getByRole("button", { name: "Sign and lock" }).click()
+      await expect
+        .poll(async () => (await api.get<Session>(`/api/sessions/${session.id}`)).status)
+        .toBe("finalized")
+
+      await page.goto(`/dashboard/patients/${patient.id}?tab=medications`)
+      const started = page.getByRole("listitem").filter({ hasText: "hydroxyzine" })
+      await expect(started).toContainText("25 mg, in the afternoon as needed")
+      await expect(started).toContainText("Active")
+      const stopped = page.getByRole("listitem").filter({ hasText: "trazodone" })
+      await expect(stopped).toContainText("Stopped: nausea")
+      await expect(stopped).toContainText("Discontinued")
+    } finally {
+      for (const id of appointments) await api.delete(`/api/appointments/${id}`)
+      await api.request("DELETE", `/api/note-types/custom/${slug}`)
+    }
+  })
+
   test("signing an intake fills the chart, and the next follow-up prints it", async ({
     api,
     signedInPage: page,

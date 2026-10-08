@@ -4,8 +4,19 @@
 
 from __future__ import annotations
 
-from app.chart_proposals.models import DraftedProposal, Evidence
-from evals.chart_proposals.cases import DIVORCE_FINALIZED, STOPPED_WORKING, UNCHANGED
+from typing import TYPE_CHECKING
+
+from app.chart_proposals.models import DraftedProposal, Evidence, MedicationChange
+from evals.chart_proposals.cases import (
+    CLIENT_STOPPED,
+    DIVORCE_FINALIZED,
+    START_AND_STOP,
+    STOPPED_WORKING,
+    UNCHANGED,
+)
+
+if TYPE_CHECKING:
+    from app.chart_proposals.models import MedicationAction
 from evals.chart_proposals.scorers import grade
 
 
@@ -54,4 +65,33 @@ def test_evidence_from_the_wrong_lines_fails() -> None:
     off = _proposal("legal_custody", "Divorce finalized; shared custody.", 0, 3)
     assert grade([RELATIONSHIPS, off], DIVORCE_FINALIZED)["cites_the_lines_that_say_it"] == [
         "legal_custody cites [0, 3], none of [7, 8]"
+    ]
+
+
+def _medication(action: MedicationAction, name: str, text: str, *ids: int) -> DraftedProposal:
+    return DraftedProposal(
+        field_key="medications",
+        item_key=name,
+        proposed_text=text,
+        what_changed="Changed",
+        evidence=tuple(Evidence(i, "line") for i in ids),
+        change=MedicationChange(action=action, drug_name=name),
+    )
+
+
+START = _medication("start", "hydroxyzine", "hydroxyzine 25 mg, in the afternoon as needed", 5)
+STOP = _medication("stop", "Trazodone", "Stopped: nausea", 4)
+
+
+def test_medication_proposals_are_named_by_the_medication_and_its_action() -> None:
+    assert not any(grade([START, STOP], START_AND_STOP).values())
+    assert grade([START], START_AND_STOP)["exactly_the_expected_fields"] == [
+        "missing a proposal for medications: trazodone"
+    ]
+    as_change = _medication("change", "trazodone", "Stopped: nausea", 4)
+    assert grade([START, as_change], START_AND_STOP)["the_stated_action"] == [
+        "trazodone is a change, not a stop"
+    ]
+    assert grade([STOP], CLIENT_STOPPED)["exactly_the_expected_fields"] == [
+        "unexpected proposal for medications: trazodone"
     ]
