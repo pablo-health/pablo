@@ -301,6 +301,23 @@ def measures_undated(draft: Draft, case: TemplateCase) -> list[str]:
 MEDICATION_HEADINGS = frozenset({"psychiatric:", "other:", "not categorized:"})
 
 
+STATED_PREFIX = "(stated this visit:"
+
+
+def is_stated_this_visit(item: str) -> bool:
+    """A list item the visit added after the chart's list: ``(stated this visit: ...)``."""
+    item = item.strip()
+    return item.startswith(STATED_PREFIX) and item.endswith(")")
+
+
+def split_stated(text: str) -> tuple[str, str | None]:
+    """A chart-fed field's chart text, and what the visit appended after it, if anything."""
+    head, sep, tail = text.partition(STATED_PREFIX)
+    if not sep:
+        return text, None
+    return head.rstrip(), tail.rstrip().removesuffix(")")
+
+
 def medications_from_chart(draft: Draft, case: TemplateCase) -> list[str]:
     """The current list is the chart's, word for word, and holds nothing changed today.
 
@@ -324,7 +341,7 @@ def medications_from_chart(draft: Draft, case: TemplateCase) -> list[str]:
         if item.strip()
         and item.strip().lower() not in MEDICATION_HEADINGS
         and normalize(item) not in wanted
-        and not item.rstrip().endswith("(stated this visit)")
+        and not is_stated_this_visit(item)
     ]
     problems += [
         f"medications.current_medications: {word!r} was changed this visit; it belongs to the plan"
@@ -335,7 +352,10 @@ def medications_from_chart(draft: Draft, case: TemplateCase) -> list[str]:
 
 
 def history_from_chart(draft: Draft, case: TemplateCase) -> list[str]:
-    """Each history field is the chart's text, word for word, or "Not recorded"."""
+    """Each history field is the chart's text, word for word, or "Not recorded".
+
+    What the visit changed or added may follow, as ``(stated this visit: ...)``.
+    """
     recorded = {f.key: f.text for f in case.history}
     problems = []
     for group in HISTORY_GROUPS:
@@ -344,10 +364,13 @@ def history_from_chart(draft: Draft, case: TemplateCase) -> list[str]:
         for field in group.fields:
             text = _text(draft, group.key, field.key)
             path = f"{group.key}.{field.key}"
+            chart_text, stated = split_stated(text)
+            if stated is not None and not stated.strip():
+                problems.append(f"{path}: an empty (stated this visit: ...) suffix")
             if field.key in recorded:
-                if normalize(text) != normalize(recorded[field.key]):
+                if normalize(chart_text) != normalize(recorded[field.key]):
                     problems.append(f"{path}: not the chart's text as recorded")
-            elif normalize(text) != "not recorded":
+            elif normalize(chart_text) != "not recorded":
                 problems.append(f'{path}: nothing on the chart, so it should read "Not recorded"')
     return problems
 

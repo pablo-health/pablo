@@ -4,15 +4,13 @@
 
 The problem list, the allergy record, the medication list and the chart
 history are the clinician's own entries, so a draft takes them as written: it
-names each listed diagnosis with its code, never adds a diagnosis that is
-neither listed nor stated by the clinician, keeps a recorded allergy whatever
-the transcript says, states the current medications as the chart lists them,
-and writes each history field word for word. An allergy or a current
-medication stated in the visit that the chart does not have is added after the
-chart's value, marked "stated this visit", never in its place; a diagnosis
-stated that way is marked the same, so it can be added at review. A
-medication started, stopped or changed in the visit belongs to the plan, not
-to the current list.
+names each listed diagnosis with its code and never adds one that is neither
+listed nor stated by the clinician. Every other field fed from the chart
+(allergies, current medications, history) prints the chart's text as recorded;
+what the visit states that changes or adds to it follows as a marked quotation,
+"(stated this visit: ...)", so the note never contradicts itself and never
+loses what the chart said. A medication started, stopped or changed in the
+visit belongs to the plan, not to the current list.
 
 Read while the caller still holds its database connection, then passed in:
 generation itself runs with nothing checked out.
@@ -35,6 +33,8 @@ if TYPE_CHECKING:
     from ..problems.models import Problem
 
 STATED_THIS_VISIT = "(stated this visit)"
+#: How a chart-fed field marks what the visit stated after the chart's own text.
+STATED_SUFFIX = "(stated this visit: ...)"
 
 
 @dataclass(frozen=True)
@@ -206,36 +206,29 @@ def render_chart_block(chart: ChartContext, *, full_chart: bool) -> str:
     )
     if full_chart:
         lines.append(
-            "- The allergies field always carries the chart's value as written above, "
-            "even if the transcript differs: never drop it or contradict it. After it, "
-            "add any allergy the client or clinician states in this visit, quoted, "
-            f'followed by "{STATED_THIS_VISIT}", whatever the chart says, NKDA included. '
-            "A statement that a recorded allergy was a mistake does not remove it: the "
-            "chart's entry stays, and the statement may be quoted after it."
+            "- Fields fed from the chart are the allergies, the current medications, and "
+            "any field whose instructions say it comes from the chart (matched to the chart "
+            "history above by key). Each prints the chart's text exactly as recorded above, "
+            'or "Not recorded" ("None recorded" for medications) when the chart has nothing. '
+            "If the client or clinician states something in this visit that changes or adds "
+            "to it, append it after the chart's text as a quotation marked "
+            f'"{STATED_SUFFIX}". Never replace, drop, contradict or silently merge the '
+            "chart's text. This covers an allergy stated whatever the chart says, NKDA "
+            "included; a denial stated when the chart's allergies are not recorded, written "
+            '"Not recorded (stated this visit: no known drug allergies)" and never as a bare '
+            "NKDA, which is a chart state the clinician sets; a statement that a recorded "
+            "allergy was a mistake, which never removes it; and each medication the client "
+            "reports currently taking that the chart does not list, with the dose as stated. "
+            "A medication the clinician starts, stops or changes in this visit is written in "
+            "the plan, not in the current list."
         )
-        lines.append(
-            "- The current medications field always carries the chart's list exactly as "
-            'written above, or "None recorded". After it, add each medication the client '
-            "reports currently taking that is not on the chart, quoted with the dose as "
-            f'stated, followed by "{STATED_THIS_VISIT}". A medication the clinician starts, '
-            "stops or changes in this visit is written in the plan, not in the current list."
-        )
-        lines.extend(_history_rules(chart))
+        lines.extend(_substance_rule(chart))
     return "\n".join(lines)
 
 
-def _history_rules(chart: ChartContext) -> list[str]:
-    keys = {f.key for f in chart.history}
+def _substance_rule(chart: ChartContext) -> list[str]:
     rules = []
-    if keys - set(SUBSTANCE_KEYS):
-        rules.append(
-            "- Where a field's instructions say it comes from the chart, write the chart "
-            "history text for the field with the same key exactly as recorded: never "
-            "rewrite, summarize, merge or drop it. A key with no chart history above is "
-            '"Not recorded". What the client says this visit that differs is written in '
-            "the visit's own fields, not in a history field."
-        )
-    if keys & set(SUBSTANCE_KEYS):
+    if any(f.key in SUBSTANCE_KEYS for f in chart.history):
         rules.append(
             "- The substance use baseline is what the chart records. A substance field in "
             'the note is this visit\'s screen, not the baseline: "asked \u2014 no change" '

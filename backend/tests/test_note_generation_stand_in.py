@@ -11,6 +11,7 @@ as the backend would validate a model's.
 from __future__ import annotations
 
 import json
+import time
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -36,7 +37,14 @@ from app.services.note_redraft import DICTATED_HEADING
 from app.settings import Settings, get_settings
 from fastapi.testclient import TestClient
 
-from scripts.fake_llm import DICTATION_TEXT, FALLBACK_MODEL, PRIMARY_DOWN, REFUSES_DRAFT
+from scripts.fake_llm import (
+    DICTATION_TEXT,
+    FALLBACK_MODEL,
+    PRIMARY_DOWN,
+    REFUSES_DRAFT,
+    _current_medications,
+    _stated_updates,
+)
 from scripts.fake_llm import app as fake_llm_app
 
 from .test_practice_note_types import COACH_SPEC
@@ -373,10 +381,12 @@ def test_the_prescriber_templates_take_current_medications_from_the_chart(templa
     spec = json.loads(FOLLOW_UP_TEMPLATE.with_name(f"{template}.json").read_text())["spec"]
     hints = {f["key"]: f.get("ai_hint") for section in spec["sections"] for f in section["fields"]}
     assert hints["current_medications"].startswith(
-        "From the chart: its list exactly as given, or 'None recorded'. Then each medication "
-        "the client reports currently taking that is not on the chart"
+        "From the chart, exactly as given, or 'None recorded'. Then each medication the client "
+        "reports currently taking that the chart lacks"
     )
-    assert "(stated this visit)" in hints["current_medications"]
+    assert "(stated this visit: ...)" in hints["current_medications"]
+    assert "(stated this visit: ...)" in hints["allergies"]
+    assert "Never write NKDA unless the chart says it." in hints["allergies"]
 
 
 def test_a_follow_up_writes_the_charts_history_word_for_word(stand_in: list[str]) -> None:
@@ -442,8 +452,8 @@ def test_medications_the_client_reports_are_added_after_an_empty_chart(
     )
     assert current == [
         "None recorded",
-        '"sertraline 50 mg" (stated this visit)',
-        '"trazodone 50 mg at night" (stated this visit)',
+        "(stated this visit: sertraline 50 mg)",
+        "(stated this visit: trazodone 50 mg at night)",
     ]
 
 
@@ -455,3 +465,50 @@ def test_a_reported_medication_already_on_the_chart_is_listed_once_unmarked(
         "[00:04] Client: I'm taking sertraline 100 mg.",
     )
     assert current == ["Sertraline 100 mg, every morning"]
+
+
+def test_a_history_field_keeps_the_charts_text_and_adds_what_the_visit_changed(
+    stand_in: list[str],
+) -> None:
+    definition = _follow_up()
+    chart = ChartContext(
+        history=(
+            ChartHistoryField("work_school", "Employed at a logistics firm.", date(2026, 7, 14)),
+            ChartHistoryField("supports", "Sister nearby.", date(2026, 7, 14)),
+        )
+    )
+    generated = _service().generate_note(
+        definition.key,
+        Transcript(
+            format="txt",
+            content="[00:04] Client: Update on work_school: laid off last week.",
+        ),
+        PATIENT,
+        NOW,
+        inputs={"place_of_service": "In office"},
+        definition=definition,
+        chart=chart,
+    )
+    social = generated.content["social_history"]
+    assert social["work_school"] == (
+        "Employed at a logistics firm. (stated this visit: laid off last week.)"
+    )
+    assert social["supports"] == "Sister nearby."
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Client: I'm taking " + "a" * 10_000,
+        "Client: I'm taking a" * 1_000,
+        "Client: I'm taking " + " " * 10_000 + "x",
+        "Client: I'm taking " + " and" * 2_500,
+        "Client: Update on " + "x" * 10_000,
+    ],
+)
+def test_the_stand_in_reads_a_pathological_line_in_bounded_time(line: str) -> None:
+    """What a client line names is read with string operations, never a backtracking regex."""
+    started = time.perf_counter()
+    _current_medications([], line)
+    _stated_updates(line)
+    assert time.perf_counter() - started < 0.5
