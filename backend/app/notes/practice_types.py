@@ -31,6 +31,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
+from ..people_term import DEFAULT_PEOPLE_TERM, people_words
 from .note_type_patch import PatchError, check_patch, resolve_spec
 from .practice_spec import PracticeNoteTypeSpec
 from .registry import (
@@ -75,7 +76,13 @@ _DEFAULT_SYSTEM_PROMPT = (
     "structure from the supplied transcript."
 )
 
-_PLACEHOLDER = re.compile(r"\{(transcript|session_date|fields|chart|inputs\.[a-z][a-z0-9_]*)\}")
+_PLACEHOLDER = re.compile(
+    r"\{(transcript|session_date|fields|chart|term|inputs\.[a-z][a-z0-9_]*)\}"
+)
+
+#: The one placeholder a system prompt may use: the clinician's word for the
+#: person seen, singular ("client" or "patient").
+_TERM = re.compile(r"\{term\}")
 
 type BaseLookup = Callable[[str], NoteTypeDefinition | None]
 """Finds the definition a based type names (``NoteTypeRegistry.base_for``)."""
@@ -84,6 +91,12 @@ type BaseLookup = Callable[[str], NoteTypeDefinition | None]
 def with_generation_floor(system_prompt: str) -> str:
     """The practice's system prompt (or a neutral default) with the floor after it."""
     return f"{system_prompt.strip() or _DEFAULT_SYSTEM_PROMPT}\n\n{GENERATION_FLOOR}"
+
+
+def render_system_prompt(system_prompt: str, person: str) -> str:
+    """The type's system prompt with ``{term}`` as the clinician's word for the person
+    seen. Any other braces pass through untouched, as in a user template."""
+    return _TERM.sub(person, system_prompt)
 
 
 def practice_key(slug: str) -> str:
@@ -224,10 +237,12 @@ class PromptBlocks:
 
     ``fields`` enumerates the type's sections and fields; ``chart`` is the
     client's problem list and allergies, ``None`` when there is no client.
+    ``person`` is the clinician's word for the person seen, for ``{term}``.
     """
 
     fields: str
     chart: str | None = None
+    person: str = people_words(DEFAULT_PEOPLE_TERM).one
 
 
 def render_user_prompt(
@@ -264,6 +279,8 @@ def render_user_prompt(
             return blocks.fields
         if name == "chart":
             return blocks.chart or "Chart: not available."
+        if name == "term":
+            return blocks.person
         return inputs.get(name.removeprefix("inputs."), "not provided")
 
     rendered = _PLACEHOLDER.sub(substitute, definition.user_template)

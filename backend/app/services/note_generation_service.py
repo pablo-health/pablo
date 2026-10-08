@@ -43,7 +43,7 @@ from ..notes.client_present import (
     split_dictated,
 )
 from ..notes.diagnoses import DIAGNOSES_KIND_LABEL, DIAGNOSES_SCHEMA, coerce_diagnoses
-from ..notes.practice_types import PromptBlocks, render_user_prompt
+from ..notes.practice_types import PromptBlocks, render_system_prompt, render_user_prompt
 from ..notes.prompts.soap import SOAP_SYSTEM_PROMPT
 from ..notes.visit_times import (
     PSYCHOTHERAPY_SECTION_KEY,
@@ -361,8 +361,11 @@ class RegistryNoteGenerationService(NoteGenerationService):
             if client_present_end_seconds == 0:
                 definition = _without_psychotherapy(definition)
 
+        # The clinician's word for the person seen, which a type's prompts may
+        # place as {term}; the chart carries it from whoever reads the note.
+        person = chart.person if chart is not None else ChartContext().person
         if definition.system_prompt is not None:
-            system_prompt = definition.system_prompt
+            system_prompt = render_system_prompt(definition.system_prompt, person)
         elif definition.key == SOAP_KEY:
             system_prompt = SOAP_SYSTEM_PROMPT
         else:
@@ -387,7 +390,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
                 transcript,
                 session_date,
                 inputs,
-                PromptBlocks(fields=_fields_block(definition), chart=chart_block),
+                PromptBlocks(fields=_fields_block(definition), chart=chart_block, person=person),
             )
         else:
             user_prompt = _build_registry_user_prompt(

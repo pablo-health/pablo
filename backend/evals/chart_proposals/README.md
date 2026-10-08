@@ -22,6 +22,7 @@ Any problem from any check fails the case.
 | `the_stated_action` | a medication proposal is a different action (a change where the clinician stopped it) | accepting does what the visit decided |
 | `cites_the_lines_that_say_it` | the proposal cites none of the lines that state the change, or, from a document, leaves out the paragraph that disagrees | the evidence the clinician sees is the sentence that says it, and a conflict in the document is shown |
 | `says_nothing_it_never_should` | a free-text proposal carries what belongs elsewhere, such as a medication in a history field | the medication list stays the place medications are kept |
+| `no_gendered_pronouns` | a proposal calls the client he or she (no case's chart records pronouns) | the chart never assumes a client's gender |
 
 A proposal is named by its field and, for a list field, its entry: a
 medication's proposals are `medications: <name>`, one per medication.
@@ -38,7 +39,7 @@ The checks are unit-tested on hand-made proposals in
 | `stopped-working` | full time as a dental hygienist | stopped working there at the end of August | `work_school` still naming the dental practice and saying it no longer applies |
 | `medication-start-and-stop` | sertraline, trazodone | the clinician starts hydroxyzine 25 mg in the afternoon as needed and stops the trazodone because of nausea | a start with its frequency and a stop with its reason; nothing for the sertraline, continued |
 | `medication-only-discussed` | sertraline | a medication asked about, a dose increase considered for next time | no proposal |
-| `medication-another-prescriber-started` | sertraline | the client's primary care doctor started lisinopril 10 mg once a day | an add with the dose and frequency as stated |
+| `medication-another-prescriber-started` | sertraline | the client's primary care doctor started lisinopril 10 mg once a day | an add with the dose and frequency as stated; `medical_history` for the blood pressure is allowed, not required |
 | `medication-client-stopped` | sertraline, buspirone | the client stopped the buspirone; the clinician decides nothing yet | no proposal |
 
 The history cases' charts list the medication the client mentions taking, as
@@ -80,6 +81,16 @@ continues and the list lacks is an add, and that one only a carried block
 names needs nothing. With that added, the stale-block case cited only the
 interval history for `work_school` in four runs of six; the prompt now says
 the rule about citing the disagreeing paragraph holds for every field.
+With the pronoun rule below merged in, a run of all nine cases passed.
+
+### Pronouns
+
+Before the prompt said how to refer to the person seen, every run of
+`stopped-working` wrote "when she was let go". With the rule (in the
+clinician's word, "the client" in every case here), three runs of it
+passed with no gendered pronoun, three runs of
+`medication-another-prescriber-started` passed (one proposing the allowed
+medical history), and a run of all seven cases passed.
 
 ### With the medication list
 
