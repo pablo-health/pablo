@@ -1270,6 +1270,31 @@
         ]
       },
       {
+        "key": "mdm",
+        "label": "Medical decision making",
+        "fields": [
+          {
+            "key": "problems_addressed",
+            "label": "Problems addressed",
+            "kind": "text",
+            "ai_hint": "One sentence: the conditions addressed at this visit and the status of each as the clinician described it (e.g. \"ADHD, stable on the current dose; anxiety, worse over the last two weeks\"). State facts; do not name a level."
+          },
+          {
+            "key": "data_reviewed",
+            "label": "Data reviewed",
+            "kind": "text",
+            "ai_hint": "One sentence: what was reviewed or ordered (measures, labs, outside records, the PDMP report, history from someone other than the client). \"None\" if nothing was. Do not name a level."
+          },
+          {
+            "key": "management_risk",
+            "label": "Management",
+            "kind": "text",
+            "ai_hint": "One sentence: what the management involved, factually (e.g. prescription drug management with which medications were continued, changed, started or stopped; a controlled substance; a decision about a higher level of care). Do not name a level."
+          }
+        ],
+        "review_only": true
+      },
+      {
         "key": "treatment_plan",
         "label": "Treatment plan",
         "fields": [
@@ -1408,6 +1433,53 @@
         "kind": "text",
         "options": [],
         "required": false
+      },
+      {
+        "key": "mdm_problems",
+        "label": "Problems addressed",
+        "kind": "choice",
+        "options": [
+          "minimal",
+          "low",
+          "moderate",
+          "high"
+        ],
+        "required": false
+      },
+      {
+        "key": "mdm_data",
+        "label": "Data reviewed",
+        "kind": "choice",
+        "options": [
+          "none",
+          "limited",
+          "moderate",
+          "extensive"
+        ],
+        "required": false
+      },
+      {
+        "key": "mdm_risk",
+        "label": "Risk",
+        "kind": "choice",
+        "options": [
+          "minimal",
+          "low",
+          "moderate",
+          "high"
+        ],
+        "required": false
+      },
+      {
+        "key": "new_patient",
+        "label": "New or established patient",
+        "kind": "choice",
+        "options": [
+          "new",
+          "established"
+        ],
+        "required": false,
+        "default": "new"
       }
     ],
     "version": null,
@@ -1452,10 +1524,58 @@
             "ai_hint": "One or two sentences, ideally a short quotation of the client's own words about why they are here today."
           },
           {
-            "key": "interval_history",
-            "label": "Interval history",
+            "key": "depression",
+            "label": "Depression",
             "kind": "text",
-            "ai_hint": "What changed since the last visit: current symptoms, their course, frequency, what makes them better or worse, severity and effect on work, relationships and daily functioning, and relevant life context. Specific to this visit."
+            "ai_hint": "What changed since the last visit in depressed mood, interest, energy, guilt and hopelessness: pertinent positives and negatives as stated, denials recorded as denials. \"Not discussed.\" if it did not come up."
+          },
+          {
+            "key": "anxiety",
+            "label": "Anxiety",
+            "kind": "text",
+            "ai_hint": "What changed since the last visit in worry, panic and avoidance: pertinent positives and negatives as stated, denials recorded as denials. \"Not discussed.\" if it did not come up."
+          },
+          {
+            "key": "insomnia_sleep",
+            "label": "Insomnia and sleep",
+            "kind": "text",
+            "ai_hint": "What changed since the last visit in falling asleep, staying asleep, hours slept and daytime tiredness: pertinent positives and negatives as stated, denials recorded as denials. \"Not discussed.\" if it did not come up."
+          },
+          {
+            "key": "inattention_hyperactivity",
+            "label": "Inattention and hyperactivity",
+            "kind": "text",
+            "ai_hint": "What changed since the last visit in focus, distractibility, finishing tasks and restlessness: pertinent positives and negatives as stated, denials recorded as denials. \"Not discussed.\" if it did not come up."
+          },
+          {
+            "key": "mania",
+            "label": "Mania",
+            "kind": "text",
+            "ai_hint": "What changed since the last visit in elevated or irritable mood, less need for sleep, racing thoughts and impulsive spending or risk-taking: pertinent positives and negatives as stated, denials recorded as denials. \"Not discussed.\" if it did not come up."
+          },
+          {
+            "key": "appetite_eating",
+            "label": "Appetite and eating",
+            "kind": "text",
+            "ai_hint": "What changed since the last visit in appetite, weight, restriction, bingeing and purging: pertinent positives and negatives as stated, denials recorded as denials. \"Not discussed.\" if it did not come up."
+          },
+          {
+            "key": "onset_duration_course",
+            "label": "Onset, duration and course",
+            "kind": "text",
+            "ai_hint": "When the current symptoms or this change began, how long it has lasted, and its course since the last visit (better, worse, unchanged), as stated. \"Not discussed.\" if it did not come up."
+          },
+          {
+            "key": "recent_stressors",
+            "label": "Recent stressors",
+            "kind": "text",
+            "ai_hint": "Stressors and life events since the last visit, as stated. \"Not discussed.\" if none came up."
+          },
+          {
+            "key": "functioning",
+            "label": "Functioning",
+            "kind": "text",
+            "ai_hint": "What changed since the last visit at work or school, in relationships and in daily activities, with the client's concrete examples. \"Not discussed.\" if it did not come up."
           },
           {
             "key": "adherence",
@@ -1468,12 +1588,6 @@
             "label": "Side effects",
             "kind": "text",
             "ai_hint": "Side effects the client was asked about and the answers, by name (e.g. sleep, appetite, palpitations, sexual side effects). Record denials as denials."
-          },
-          {
-            "key": "psychiatric_ros",
-            "label": "Psychiatric review of systems",
-            "kind": "text",
-            "ai_hint": "Pertinent positives and negatives the clinician asked about: mood, mania or hypomania, anxiety, obsessions, trauma symptoms, psychosis, sleep, attention."
           }
         ]
       },
@@ -1809,21 +1923,22 @@
             "key": "problems_addressed",
             "label": "Problems addressed",
             "kind": "text",
-            "ai_hint": "The conditions addressed at this visit and the status of each as the clinician described it (e.g. stable, exacerbated, new). State facts; do not name an MDM level."
+            "ai_hint": "One sentence: the conditions addressed at this visit and the status of each as the clinician described it (e.g. \"ADHD, stable on the current dose; anxiety, worse over the last two weeks\"). State facts; do not name a level."
           },
           {
             "key": "data_reviewed",
             "label": "Data reviewed",
             "kind": "text",
-            "ai_hint": "What was reviewed or ordered: measures, labs, outside records, the PDMP report, and any history from someone other than the client. \"None\" if nothing was. Do not name a level."
+            "ai_hint": "One sentence: what was reviewed or ordered (measures, labs, outside records, the PDMP report, history from someone other than the client). \"None\" if nothing was. Do not name a level."
           },
           {
             "key": "management_risk",
             "label": "Management",
             "kind": "text",
-            "ai_hint": "What the management involved, factually: e.g. prescription drug management (which medications were continued, changed, started or stopped), a controlled substance, a decision about a higher level of care. Do not name a level."
+            "ai_hint": "One sentence: what the management involved, factually (e.g. prescription drug management with which medications were continued, changed, started or stopped; a controlled substance; a decision about a higher level of care). Do not name a level."
           }
-        ]
+        ],
+        "review_only": true
       },
       {
         "key": "plan",
@@ -1833,7 +1948,7 @@
             "key": "medication_plan",
             "label": "Medications",
             "kind": "list",
-            "ai_hint": "For each medication: continue, change, start or stop, with dose and frequency, and the clinician's stated reason. Record only decisions the clinician stated; never suggest one."
+            "ai_hint": "For each medication: continue, change, start or stop, with dose and frequency, and the clinician's stated reason. For a medication continued at the same dose, the reason the clinician gave for continuing it (e.g. stable, still improving, side effects tolerable). Record only decisions the clinician stated; never suggest one."
           },
           {
             "key": "pdmp",
@@ -1846,6 +1961,18 @@
             "label": "Informed consent",
             "kind": "text",
             "ai_hint": "For any medication started, changed or continued where consent was discussed: which medication, and which elements the clinician said were covered (benefits, risks and side effects, alternatives, risk of misuse or dependence for controlled substances), and the client's agreement. Only what was said."
+          },
+          {
+            "key": "education_provided",
+            "label": "Education",
+            "kind": "list",
+            "ai_hint": "Each thing the clinician taught or explained about a medication, a diagnosis or a risk (what a medication does, its side effects, how long it takes to work), as stated. One per item. Leave empty if the clinician explained nothing."
+          },
+          {
+            "key": "lifestyle_counseling",
+            "label": "Lifestyle counseling",
+            "kind": "list",
+            "ai_hint": "Each piece of advice the clinician gave about behavior, sleep, diet, exercise or substance use, as stated. One per item. Leave empty if the clinician gave none."
           },
           {
             "key": "labs",
@@ -1946,6 +2073,53 @@
         "kind": "text",
         "options": [],
         "required": false
+      },
+      {
+        "key": "mdm_problems",
+        "label": "Problems addressed",
+        "kind": "choice",
+        "options": [
+          "minimal",
+          "low",
+          "moderate",
+          "high"
+        ],
+        "required": false
+      },
+      {
+        "key": "mdm_data",
+        "label": "Data reviewed",
+        "kind": "choice",
+        "options": [
+          "none",
+          "limited",
+          "moderate",
+          "extensive"
+        ],
+        "required": false
+      },
+      {
+        "key": "mdm_risk",
+        "label": "Risk",
+        "kind": "choice",
+        "options": [
+          "minimal",
+          "low",
+          "moderate",
+          "high"
+        ],
+        "required": false
+      },
+      {
+        "key": "new_patient",
+        "label": "New or established patient",
+        "kind": "choice",
+        "options": [
+          "new",
+          "established"
+        ],
+        "required": false,
+        "default": "established"
       }
     ],
     "version": null,

@@ -41,6 +41,8 @@ line sits under Prescriptions rather than Plan.
 | `suffix_only_where_stated` | a chart-fed field (each history field the template fills from the chart, the current medications, the allergies) is marked "(stated this visit" when the case says nothing new was stated about it, or unmarked when it was | the mark is how the clinician finds what to update at signing: missing, a change goes unnoticed; stray, it asks for review of nothing |
 | `history_from_chart` | a history field the template fills from the chart does not start with the chart's text word for word, or with "Not recorded" when the chart has nothing, or carries anything after it that is not marked | history comes from the chart as recorded; what the visit adds follows it, marked |
 | `history_from_visit` | in a template that takes history from the visit (the evaluation), a field the visit covered is empty, "Not recorded" or "Not stated.", or leaves out what was said | an intake writes the history it took |
+| `hpi_by_domain` | in the follow-up, which takes the history by symptom domain: a domain the visit covered is empty or "Not discussed.", or leaves out what was said; a domain that never came up reads anything but "Not discussed." | each domain records this visit's pertinent positives and negatives, and a question never asked is not written up as a denial |
+| `counseling_only_as_stated` | the plan's education or lifestyle counseling is written when the clinician explained or advised nothing (a "None." item included), or leaves out what the clinician did explain | counseling an auditor reads is counseling that happened |
 
 The checks are unit-tested on hand-made drafts, passing and failing, in
 `backend/tests/test_note_template_eval_scorers.py`.
@@ -53,8 +55,8 @@ values entered before the visit and the chart behind it are in `cases.py`.
 
 | Case | Visit | Chart and entries | The draft must carry |
 |---|---|---|---|
-| `follow-up-with-therapy` | sample `with_therapy` | telehealth, both locations; two coded problems, two psychiatric medications, three history fields, an alcohol baseline | the three history fields word for word and every other one "Not recorded"; the chart's medications as listed, with sertraline still at 50 mg and the increase to 75 in the plan; 99214 and 90836, 10:14 to 10:55 and 41 minutes, the PDMP check dated 2026-03-12 (the clinician said "today") with its finding, both locations, a psychotherapy section |
-| `follow-up-medication-only` | sample `medication_only` | in office; one uncategorized medication; nothing else | every history field "Not recorded"; the chart's bupropion line as listed; no code, time, minutes or PDMP claim; an empty psychotherapy section; "Not recorded (not asked this visit)" for tobacco and cannabis; only the depression the clinician named, with no code |
+| `follow-up-with-therapy` | sample `with_therapy` | telehealth, both locations; two coded problems, two psychiatric medications, three history fields, an alcohol baseline | the three history fields word for word and every other one "Not recorded"; the chart's medications as listed, with sertraline still at 50 mg and the increase to 75 in the plan; 99214 and 90836, 10:14 to 10:55 and 41 minutes, the PDMP check dated 2026-03-12 (the clinician said "today") with its finding, both locations, a psychotherapy section; the worry, focus, sleep, appetite, mania screen, course and work in their symptom domains; the sertraline side effects and time to work as education |
+| `follow-up-medication-only` | sample `medication_only` | in office; one uncategorized medication; nothing else | every history field "Not recorded"; the chart's bupropion line as listed; no code, time, minutes or PDMP claim; an empty psychotherapy section; "Not recorded (not asked this visit)" for tobacco and cannabis; only the depression the clinician named, with no code; mood and sleep in their domains, "Not discussed." for attention, mania and appetite; no education and no lifestyle counseling, since the clinician gave none |
 | `follow-up-full-chart` | stable, nothing changes | in office; two coded problems, a sulfa allergy, psychiatric and other medications with frequency, every history field, a four-substance baseline | every chart-fed field word for word with no mark anywhere; each substance's baseline, then "(asked this visit: no change)" (or the answer) for alcohol, cannabis and nicotine and "(not asked this visit)" for the five not named |
 | `follow-up-stated-change` | laid off since the last visit; a medication from another doctor; bupropion started | telehealth; one coded problem, NKDA, one medication, four history fields | the chart's work history, then the layoff marked; escitalopram as listed, then omeprazole marked; bupropion in the plan and not in the current list; 99214; nothing else marked |
 | `follow-up-allergy-stated-on-nkda` | the client reports an amoxicillin rash | in office; bipolar II, NKDA, lamotrigine | NKDA, then amoxicillin, marked |
@@ -66,8 +68,8 @@ values entered before the visit and the chart behind it are in `cases.py`.
 In the medication-only sample the clinician asks "Any alcohol or anything
 else?" and the client answers only about alcohol. Other substances are
 left ungraded: asked, but not answered. In the therapy sample the
-clinician dictates "supportive partner", so a marked relationships field is
-allowed but not required.
+clinician dictates "employed, supportive partner", so a marked work,
+relationships or supports field is allowed but not required.
 
 ## Running it
 
@@ -87,6 +89,26 @@ A draft takes 15 to 50 seconds. The model is the configured note model,
 and `--model` overrides it. With `BRAINTRUST_API_KEY` set,
 `backend/evals/test_note_templates.py` pushes the cases to the
 `starting-templates` dataset in `pablo-note-generation`.
+
+## Recorded runs — 2026-10-08, history by symptom domain
+
+Configured note model, against a development project, after the follow-up
+took its history by symptom domain, gained education and lifestyle
+counseling in the plan, and moved its medical decision making out of the
+note. Every case once, then with-therapy and medication-only three times
+more.
+
+| Case | Passed | What failed |
+|---|---|---|
+| `follow-up-with-therapy` | 1 of 4 | the work history marked with the dictated protective factor "employed" (3 of 4) |
+| `follow-up-medication-only` | 4 of 4 | |
+| every other case | 1 of 1 each | |
+
+`hpi_by_domain` and `counseling_only_as_stated` passed in every draft: the
+sertraline side effects and time to work went into education each time,
+and the medication-only drafts left education and counseling empty and the
+domains never raised "Not discussed.". The "employed" mark is the same
+judgment as "supportive partner", so the work history now allows it too.
 
 ## Recorded runs — 2026-10-08, with the history-field mark
 

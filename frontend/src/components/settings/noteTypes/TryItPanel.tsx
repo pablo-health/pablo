@@ -10,6 +10,7 @@ import { SchemaNoteBody } from "@/components/sessions/SchemaNoteView"
 import { usePreviewNoteDraft } from "@/hooks/useNoteTypes"
 import { useSessionList } from "@/hooks/useSessions"
 import { ApiError } from "@/lib/api/client"
+import { isReviewInput } from "@/lib/mdm"
 import type { NoteDraftPreviewRequest, PracticeNoteTypeSpec, SampleVisit } from "@/types/noteTypes"
 import { SegmentedControl, type SegmentedOption } from "../ui"
 import { Labelled, SELECT_CLASS } from "./EditorParts"
@@ -40,6 +41,8 @@ export function TryItPanel({ spec, shape = spec, samples, onInvalid }: TryItPane
   const [sessionId, setSessionId] = useState("")
   const [pasted, setPasted] = useState("")
   const [inputs, setInputs] = useState<Record<string, string>>({})
+  // The medical decision making choices are made at review and never reach a draft.
+  const draftInputs = shape.inputs.filter((input) => !isReviewInput(input.key))
   const preview = usePreviewNoteDraft()
   const { data: sessionList } = useSessionList(undefined, { enabled: source === "session" })
 
@@ -65,7 +68,7 @@ export function TryItPanel({ spec, shape = spec, samples, onInvalid }: TryItPane
   const run = () => {
     if (!transcript) return
     const filled = Object.fromEntries(
-      shape.inputs.map((i) => [i.key, (inputs[i.key] ?? "").trim()]).filter(([, v]) => v),
+      draftInputs.map((i) => [i.key, (inputs[i.key] ?? "").trim()]).filter(([, v]) => v),
     )
     setDrafted(shape)
     preview.mutate(
@@ -124,9 +127,9 @@ export function TryItPanel({ spec, shape = spec, samples, onInvalid }: TryItPane
         </Labelled>
       )}
 
-      {shape.inputs.length > 0 && (
+      {draftInputs.length > 0 && (
         <div className="grid gap-3 sm:grid-cols-2">
-          {shape.inputs.map((input) => (
+          {draftInputs.map((input) => (
             <Labelled key={input.key} label={input.label || "Untitled detail"} hint={input.required ? "Required" : undefined} messages={[]}>
               {(props) =>
                 input.kind === "choice" ? (

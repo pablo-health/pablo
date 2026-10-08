@@ -18,6 +18,8 @@ import type { NoteInputSchema } from "@/types/noteTypes"
 const INPUTS: NoteInputSchema[] = [
   { key: "visit_code", label: "Visit code", kind: "choice", options: ["99213", "99214"], required: true },
   { key: "program", label: "Program", kind: "text", options: [], required: false },
+  // Set in the medical decision making panel, never here.
+  { key: "mdm_problems", label: "Problems addressed", kind: "choice", options: ["low", "moderate"], required: false },
 ]
 
 vi.mock("@/hooks/useNoteTypes", () => ({
@@ -96,6 +98,11 @@ describe("NoteInputsPanel", () => {
     expect(screen.queryByRole("button", { name: "Save and redraft" })).not.toBeInTheDocument()
     expect(screen.getByText("99213")).toBeInTheDocument()
     expect(screen.getByText("Not provided")).toBeInTheDocument()
+  })
+
+  it("leaves the medical decision making choices to their own panel", () => {
+    renderPanel({ note: note({ note_inputs: { visit_code: "99213", mdm_problems: "moderate" } }) })
+    expect(screen.queryByLabelText("Problems addressed")).not.toBeInTheDocument()
   })
 
   it("holds still while a redraft runs", () => {

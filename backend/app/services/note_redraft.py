@@ -30,6 +30,7 @@ from ..models.enums import SessionSource
 from ..models.notes import RedraftEdits
 from ..notes import NoteTypeDefinition, get_default_registry
 from ..notes.client_present import DICTATED_HEADING
+from ..notes.mdm_review import REVIEW_INPUTS
 from ..notes.practice_types import validate_note_inputs
 from .note_generation_service import SOAP_KEY, TransientNoteGenerationError
 from .note_service import NoteNotFoundError
@@ -296,8 +297,12 @@ class NoteRedraftService:
             )
         if note_inputs is not None:
             definition = get_default_registry().get(note.note_type)
+            # The medical decision making choices are set beside the note, not
+            # with the draft's inputs, so replacing those leaves them as they are.
+            replaced = {k: v for k, v in note_inputs.items() if k not in REVIEW_INPUTS}
+            kept = {k: v for k, v in (note.note_inputs or {}).items() if k in REVIEW_INPUTS}
             try:
-                note.note_inputs = validate_note_inputs(definition, note_inputs) or None
+                note.note_inputs = validate_note_inputs(definition, {**replaced, **kept}) or None
             except ValueError as exc:
                 raise BadRequestError(
                     str(exc).strip("'\""),

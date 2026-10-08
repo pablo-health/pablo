@@ -83,6 +83,7 @@ from .routes import (
     launch,
     migration,
     note_chart_proposals,
+    note_mdm,
     note_redraft,
     note_type_derive,
     note_types,
@@ -397,6 +398,7 @@ app.include_router(notes.patient_notes_router)
 app.include_router(notes.internal_jobs_router)
 app.include_router(note_redraft.router)
 app.include_router(note_chart_proposals.router)
+app.include_router(note_mdm.router)
 app.include_router(session_dictations.router)
 app.include_router(patient_documents.patient_documents_router)
 app.include_router(patient_documents.documents_router)

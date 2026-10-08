@@ -52,6 +52,7 @@ import { pdfSignatureBlock } from "@/lib/utils/signatureBlock"
 import type { RedraftEdits, RedraftNoteRequest } from "@/types/notes"
 import type { NoteContent } from "@/types/sessions"
 import { noteContentToJson } from "@/types/sessions"
+import { MdmReviewPanel } from "@/components/sessions/MdmReviewPanel"
 
 const HIGHLIGHT_DURATION_MS = 4000
 
@@ -155,7 +156,8 @@ export default function SessionDetailPage({ params }: PageProps) {
   }
 
   // A redraft rewrites the note from the saved copy, so it waits for a save
-  // in flight, and the local copy must not mask what it returns.
+  // in flight, and the local copy must not mask what it returns. Putting the
+  // computed codes in the note does the same.
   const settleEdits = async () => {
     await savingEditsRef.current
     setLocalNoteEdited(null)
@@ -360,6 +362,15 @@ export default function SessionDetailPage({ params }: PageProps) {
               </p>
             )}
           </div>
+
+          {note && (
+            <MdmReviewPanel
+              key={`mdm-${note.id}`}
+              note={note}
+              editable={noteEditable && !redrafting}
+              beforeApply={settleEdits}
+            />
+          )}
 
           {note && session.source !== "imported" && (
             <NoteInputsPanel

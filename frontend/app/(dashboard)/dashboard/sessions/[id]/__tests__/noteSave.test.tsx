@@ -61,6 +61,7 @@ vi.mock("@/hooks/useNoteTypes", () => ({
 
 // Reads the practice setting and the client's consent record; not under test here.
 vi.mock("@/components/sessions/NoteConsentLine", () => ({ NoteConsentLine: () => null }))
+vi.mock("@/components/sessions/MdmReviewPanel", () => ({ MdmReviewPanel: () => null }))
 vi.mock("@/components/sessions/VisitTimesPanel", () => ({ VisitTimesPanel: () => null }))
 vi.mock("@/hooks/useVisitTimes", () => ({ useVisitPdfLines: () => [] }))
 

@@ -4,7 +4,12 @@
 
 from __future__ import annotations
 
-from app.notes import NARRATIVE_DEFINITION, SOAP_DEFINITION
+from app.notes import (
+    NARRATIVE_DEFINITION,
+    SOAP_DEFINITION,
+    NoteTypeRegistry,
+    register_builtin_note_types,
+)
 from app.services.export_pdf import note_paragraphs
 
 
@@ -42,4 +47,18 @@ def test_an_unregistered_type_is_labelled_from_its_keys() -> None:
     assert note_paragraphs(content, None) == [
         ("Session summary - What happened", "x"),
         ("Session summary - Next time", "y"),
+    ]
+
+
+def test_the_medical_decision_making_evidence_is_not_part_of_the_note() -> None:
+    registry = NoteTypeRegistry()
+    register_builtin_note_types(registry)
+    content = {
+        "encounter": {"visit_details": "E/M code: 99214.", "place_of_service": "In office."},
+        "mdm": {"problems_addressed": "Anxiety, worse.", "data_reviewed": "GAD-7."},
+    }
+
+    assert note_paragraphs(content, registry.get("psychiatric_follow_up")) == [
+        ("Encounter - Visit details", "E/M code: 99214."),
+        ("Encounter - Place of service", "In office."),
     ]

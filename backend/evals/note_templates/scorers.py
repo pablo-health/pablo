@@ -50,6 +50,8 @@ NO_DIAGNOSES = re.compile(r"^(?:no|none)\b.*\brecorded\b|^none$")
 """What a diagnosis list may say when there is none to name."""
 
 THERAPY_SECTION = "psychotherapy"
+HPI_SECTION = "subjective"
+NOT_DISCUSSED = "not discussed"
 CODE = re.compile(r"\b(?:9\d{4}|G\d{4})\b")
 """Procedure codes: E/M and psychotherapy (9xxxx) and add-on (Gxxxx) codes."""
 DIAGNOSIS_CODE = re.compile(r"\b[A-TV-Z]\d{2}(?:\.[0-9A-Z]{1,4})?\b")
@@ -583,6 +585,42 @@ def history_from_visit(draft: Draft, case: TemplateCase) -> list[str]:
     return problems
 
 
+def hpi_by_domain(draft: Draft, case: TemplateCase) -> list[str]:
+    """Each symptom domain the visit covered says what was said about it; one
+    that never came up reads "Not discussed."."""
+    e = case.expected
+    problems = []
+    for key, words in (e.hpi or {}).items():
+        text = normalize(_text(draft, HPI_SECTION, key))
+        path = f"{HPI_SECTION}.{key}"
+        if text in {"", NOT_DISCUSSED}:
+            problems.append(f"{path}: discussed in the visit, but not written")
+        elif not any(w in text for w in words):
+            problems.append(f"{path}: carries none of {words!r}")
+    problems += [
+        f'{HPI_SECTION}.{key}: never came up, so it should read "Not discussed."'
+        for key in e.hpi_not_discussed
+        if normalize(_text(draft, HPI_SECTION, key)) != NOT_DISCUSSED
+    ]
+    return problems
+
+
+def counseling_only_as_stated(draft: Draft, case: TemplateCase) -> list[str]:
+    """The plan's education and lifestyle counseling hold what the clinician
+    said, and are empty when the clinician said nothing of the kind."""
+    e = case.expected
+    problems = []
+    for key, words in (("education_provided", e.education), ("lifestyle_counseling", e.lifestyle)):
+        if words is None:
+            continue
+        items = _items(draft, "plan", key)
+        if not words and items:
+            problems.append(f"plan.{key}: written, but the clinician gave none: {items!r}")
+        elif words and not any(w in normalize(" ".join(items)) for w in words):
+            problems.append(f"plan.{key}: carries none of {words!r}")
+    return problems
+
+
 CHECKS: dict[str, Callable[[Draft, TemplateCase], list[str]]] = {
     "codes_only_dictated": codes_only_dictated,
     "psychotherapy_section": psychotherapy_section,
@@ -599,6 +637,8 @@ CHECKS: dict[str, Callable[[Draft, TemplateCase], list[str]]] = {
     "suffix_only_where_stated": suffix_only_where_stated,
     "history_from_chart": history_from_chart,
     "history_from_visit": history_from_visit,
+    "hpi_by_domain": hpi_by_domain,
+    "counseling_only_as_stated": counseling_only_as_stated,
 }
 
 
