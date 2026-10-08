@@ -18,7 +18,7 @@ import dataclasses
 import json
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -70,6 +70,9 @@ from .structured_llm_gateway import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: One structured call: ``(system_prompt, user_prompt, response_schema)`` to the reply.
+CompleteStructured = Callable[[str, str, dict[str, Any]], dict[str, Any]]
 
 
 class TransientNoteGenerationError(Exception):
@@ -223,6 +226,14 @@ class NoteGenerationService(ABC):
             KeyError: If ``note_type`` is not registered.
             ValueError: If generation fails.
         """
+
+    def chart_proposal_completion(self) -> CompleteStructured | None:
+        """The structured call a draft's chart proposals are asked through.
+
+        The same model and provider as the draft (see
+        :mod:`app.chart_proposals.drafting`). ``None`` proposes nothing.
+        """
+        return None
 
 
 class RegistryNoteGenerationService(NoteGenerationService):
@@ -404,6 +415,25 @@ class RegistryNoteGenerationService(NoteGenerationService):
             thinking_budget=settings.note_source_attribution_thinking_budget,
             temperature=0.0,
         ).data
+
+    def chart_proposal_completion(self) -> CompleteStructured:
+        """A second call after the draft, budgeted like source attribution."""
+
+        def complete(
+            system_prompt: str, user_prompt: str, response_schema: dict[str, Any]
+        ) -> dict[str, Any]:
+            settings = get_settings()
+            return self._llm_gateway.complete_structured(
+                model=self._resolve_model(),
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_schema=response_schema,
+                max_output_tokens=settings.note_source_attribution_max_output_tokens,
+                thinking_budget=settings.note_source_attribution_thinking_budget,
+                temperature=0.0,
+            ).data
+
+        return complete
 
     def _complete_structured_with_retry(
         self,

@@ -18,6 +18,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request,
 from pydantic import BaseModel
 
 from ..auth.service import require_baa_acceptance, require_cloud_tasks_invoker
+from ..chart_proposals.step import ChartProposalStep  # noqa: TC001 — runtime annotation
 from ..db import arm_current_user_id, get_db_session, set_tenant_schema
 from ..db.tenant_session import tenant_db_session
 from ..jobs.task_queue import enqueue
@@ -49,7 +50,7 @@ from ..services import (
 from ..services.note_redraft import NoteRedraftService, RedraftNotPendingError
 from ..services.session_generation_worker import resolve_tenant_schema_for_user
 from ..settings import get_settings
-from .notes import get_note_generation_service
+from .notes import get_note_generation_service, get_worker_proposal_step
 from .session_dictations import get_dictation_repository
 from .sessions import (
     get_notes_repository,
@@ -82,6 +83,7 @@ def get_note_redraft_service(
 
 def get_worker_note_redraft_service(
     note_generation_service: NoteGenerationService = Depends(get_note_generation_service),
+    proposal_step: ChartProposalStep = Depends(get_worker_proposal_step),
 ) -> NoteRedraftService:
     """The redraft service for the queue worker, which arms its own tenant scope."""
     return NoteRedraftService(
@@ -90,6 +92,7 @@ def get_worker_note_redraft_service(
         NoteService(_notes_repo_factory()),
         note_generation_service,
         _dictation_repo_factory(),
+        proposal_step,
     )
 
 

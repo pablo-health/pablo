@@ -27,6 +27,8 @@ from ..auth.service import (
     require_baa_acceptance,
     require_cloud_tasks_invoker,
 )
+from ..chart_proposals.dependencies import get_chart_proposal_step
+from ..chart_proposals.step import ChartProposalStep, proposes_chart_updates
 from ..db import arm_current_user_id, get_db_session, release_db_connection, set_tenant_schema
 from ..jobs.task_queue import enqueue
 from ..models import (
@@ -78,6 +80,9 @@ from ..repositories import (
     get_chart_history_repository as _history_repo_factory,
 )
 from ..repositories import (
+    get_chart_proposal_repository as _proposal_repo_factory,
+)
+from ..repositories import (
     get_medication_repository as _medication_repo_factory,
 )
 from ..repositories import (
@@ -106,6 +111,7 @@ from ..services.file_storage import file_storage_from_settings
 from ..services.hedged_structured_llm_gateway import generation_gateway
 from ..services.http_structured_llm_gateway import HttpStructuredLLMGateway
 from ..services.note_generation_service import TransientNoteGenerationError
+from ..services.note_redraft import as_shown
 from ..services.note_signing import current_signature
 from ..services.session_dictation_service import awaiting_addendum
 from ..services.session_generation_worker import resolve_tenant_schema_for_user
@@ -237,6 +243,11 @@ def get_worker_medication_repository() -> MedicationRepository:
     return _medication_repo_factory()
 
 
+def get_worker_proposal_step() -> ChartProposalStep:
+    """The chart-proposal step after a draft, for the worker (it arms its own tenant)."""
+    return ChartProposalStep(_proposal_repo_factory(), _history_repo_factory())
+
+
 def get_worker_history_repository() -> ChartHistoryRepository:
     """Chart history, for the same worker."""
     return _history_repo_factory()
@@ -275,13 +286,17 @@ def update_note(
     request: UpdateNoteEditsRequest,
     user: User = Depends(require_baa_acceptance),
     note_service: NoteService = Depends(get_note_service),
+    patients: PatientRepository = Depends(get_patient_repository),
+    proposal_step: ChartProposalStep = Depends(get_chart_proposal_step),
+    registry: NoteTypeRegistry = Depends(get_registry),
     audit: AuditService = Depends(get_audit_service),
 ) -> NoteResponse:
-    """Persist clinician edits to a note's content."""
+    """Persist clinician edits to a note's content, and what they now propose for the chart."""
     try:
         note = note_service.update_note_edits(note_id, request.content_edited, user.id)
     except NoteNotFoundError as exc:
         raise NotFoundError("Note not found", {"note_id": note_id}) from exc
+    _refresh_chart_proposals(note, user, patients, proposal_step, registry)
 
     audit.log_note_action(
         action=AuditAction.SESSION_UPDATED,
@@ -293,6 +308,25 @@ def update_note(
         changes={"changed_fields": ["content_edited"], **_restricted_change(note)},
     )
     return NoteResponse.from_note(note)
+
+
+def _refresh_chart_proposals(
+    note: Note,
+    user: User,
+    patients: PatientRepository,
+    step: ChartProposalStep,
+    registry: NoteTypeRegistry,
+) -> None:
+    """What the note's own text proposes for the chart, after an edit to it is saved."""
+    try:
+        definition: NoteTypeDefinition | None = registry.get(note.note_type, note.note_type_version)
+    except KeyError:
+        definition = None
+    patient = patients.get(note.patient_id, user.id)
+    if patient is not None and proposes_chart_updates(definition):
+        step.edited(
+            note, definition, patient, as_shown(note.note_type, note.content, note.content_edited)
+        )
 
 
 @router.post("/{note_id}/finalize")
@@ -751,6 +785,7 @@ def generate_standalone_note_job(
     problem_repo: PatientProblemRepository = Depends(get_worker_problem_repository),
     medication_repo: MedicationRepository = Depends(get_worker_medication_repository),
     history_repo: ChartHistoryRepository = Depends(get_worker_history_repository),
+    proposal_step: ChartProposalStep = Depends(get_worker_proposal_step),
     note_generation_service: NoteGenerationService = Depends(get_note_generation_service),
     user_repo: UserRepository = Depends(get_user_repository),
     audit: AuditService = Depends(get_audit_service),
@@ -854,12 +889,16 @@ def generate_standalone_note_job(
         note_service.fail_generation(payload.note_id, payload.user_id)
         return {"status": "failed"}
 
+    drafted = proposal_step.draft(
+        note_generation_service, definition, chart, transcript, generated.content
+    )
     note = note_service.complete_generation(
         payload.note_id,
         generated.content,
         payload.user_id,
         note_type_version=generated.note_type_version,
     )
+    proposal_step.store(note, definition, chart, drafted, generated.content)
 
     owner = user_repo.get(payload.user_id)
     if owner is not None:

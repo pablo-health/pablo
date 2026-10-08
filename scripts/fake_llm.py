@@ -379,6 +379,8 @@ async def draft_note(call: NoteCall) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail="model unavailable")
     if call.response_schema.get("title") == "PracticeNoteTypeSpec":
         return {"data": DERIVED_PROPOSAL, "finish_reason": "stop"}
+    if call.response_schema.get("title") == "ChartProposals":
+        return {"data": {"proposals": _chart_proposals(call.user_prompt)}, "finish_reason": "stop"}
     note = _source_note(call.user_prompt)
     if note is not None:
         return {"data": _extracted(call.response_schema, note), "finish_reason": "stop"}
@@ -420,6 +422,34 @@ def _dictated(user_prompt: str) -> dict[str, str]:
         if sep and text.strip():
             values[_slug(label)] = text.strip()
     return values
+
+
+def _chart_proposals(user_prompt: str) -> list[dict[str, Any]]:
+    """One proposal per numbered "Update on <key>: <text>" client line, citing it.
+
+    The same lines a draft marks "(stated this visit: ...)". The proposal
+    call numbers each line ``[Sn]``; the proposal cites that line, as a model
+    would cite the line that says it. For allergies the text is
+    ``<substance> - <reaction>``.
+    """
+    proposals = []
+    for line in user_prompt.splitlines():
+        head, found, rest = line.partition(_STATED_UPDATE)
+        if not found or not head.startswith("[S"):
+            continue
+        segment = head[2:].partition("]")[0]
+        key, _, text = rest.partition(": ")
+        entry, _, reaction = text.partition(" - ") if key == "allergies" else ("", "", text)
+        proposals.append(
+            {
+                "field_key": key.strip(),
+                "entry": entry.strip(),
+                "proposed_text": reaction.strip(),
+                "what_changed": "Stated this visit",
+                "evidence_segment_ids": [int(segment)] if segment.isdigit() else [],
+            }
+        )
+    return proposals
 
 
 @app.post("/transcription/v1/transcribe")

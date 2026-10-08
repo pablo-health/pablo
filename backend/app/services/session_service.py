@@ -12,7 +12,7 @@ through to it for session-scoped endpoints.
 import logging
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..api_errors import APIError, BadRequestError, ConflictError, NotFoundError, ServerError
 from ..models import (
@@ -52,6 +52,9 @@ from .note_service import (
     NoteNotFoundError,
     NoteService,
 )
+
+if TYPE_CHECKING:
+    from ..chart_proposals.step import ChartProposalStep
 
 DEFAULT_NOTE_TYPE = "soap"
 
@@ -227,6 +230,7 @@ class SessionService:
         problem_repo: PatientProblemRepository | None = None,
         medication_repo: MedicationRepository | None = None,
         history_repo: ChartHistoryRepository | None = None,
+        proposal_step: "ChartProposalStep | None" = None,
     ) -> None:
         self.session_repo = session_repo
         self.patient_repo = patient_repo
@@ -235,6 +239,7 @@ class SessionService:
         self.problem_repo = problem_repo
         self.medication_repo = medication_repo
         self.history_repo = history_repo
+        self.proposal_step = proposal_step
 
     def _chart_for(self, patient: Patient, user_id: str) -> ChartContext | None:
         """The chart a draft is written against; ``None`` when this service can't read it."""
@@ -288,7 +293,15 @@ class SessionService:
             chart=chart,
             client_present_end_seconds=session.client_present_end_seconds,
         )
-        return self.note_service.create_or_update_for_session(
+        step = self.proposal_step
+        drafted = (
+            step.draft(
+                self.note_generation_service, definition, chart, session.transcript, result.content
+            )
+            if step is not None
+            else []
+        )
+        note = self.note_service.create_or_update_for_session(
             session_id=session.id,
             patient_id=session.patient_id,
             note_type=result.note_type,
@@ -297,6 +310,9 @@ class SessionService:
             note_type_version=result.note_type_version,
             psychotherapy_start=result.psychotherapy_start,
         )
+        if step is not None:
+            step.store(note, definition, chart, drafted, result.content)
+        return note
 
     def create_session_for_generation(
         self,

@@ -747,6 +747,26 @@ CREATE TABLE __TENANT_SCHEMA__.note_addenda (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.note_chart_proposals (
+    id uuid NOT NULL,
+    note_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    field_key character varying(64) NOT NULL,
+    item_key character varying(200) DEFAULT ''::character varying NOT NULL,
+    proposed_text text NOT NULL,
+    what_changed text NOT NULL,
+    evidence jsonb DEFAULT '[]'::jsonb NOT NULL,
+    origin character varying(16) NOT NULL,
+    decision character varying(16) DEFAULT 'pending'::character varying NOT NULL,
+    decided_text text,
+    decided_by uuid,
+    decided_at timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_note_chart_proposals_decision CHECK (((decision)::text = ANY ((ARRAY['pending'::character varying, 'accepted'::character varying, 'edited'::character varying, 'discarded'::character varying])::text[])))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.note_signatures (
     id uuid NOT NULL,
     note_id uuid NOT NULL,
@@ -1755,6 +1775,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.note_addenda
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_chart_proposals
+    ADD CONSTRAINT note_chart_proposals_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.note_signatures
     ADD CONSTRAINT note_signatures_pkey PRIMARY KEY (id);
 
@@ -1992,6 +2017,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.intake_item_definitions
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.intake_packet_versions
     ADD CONSTRAINT uq_intake_packet_versions_number UNIQUE (template_id, version);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_chart_proposals
+    ADD CONSTRAINT uq_note_chart_proposals_field UNIQUE (note_id, field_key, item_key);
 
 
 
@@ -2885,6 +2915,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.note_addenda
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.note_addenda
     ADD CONSTRAINT note_addenda_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_chart_proposals
+    ADD CONSTRAINT note_chart_proposals_note_id_fkey FOREIGN KEY (note_id) REFERENCES __TENANT_SCHEMA__.notes(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_chart_proposals
+    ADD CONSTRAINT note_chart_proposals_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
 
 
 
