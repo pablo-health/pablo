@@ -6,7 +6,8 @@ The problem list, the allergy record, the medication list and the chart
 history are the clinician's own entries, so a draft takes them as written: it
 names each listed diagnosis with its code, never adds a diagnosis that is
 neither listed nor stated by the clinician, never lets the transcript overrule
-a recorded allergy, states the current medications as the chart lists them,
+a recorded allergy (one stated in the visit is added after it, never in its place),
+states the current medications as the chart lists them,
 and writes each history field word for word. What the clinician states that
 the chart does not have yet is marked "stated this visit" so it can be added
 at review; a medication started, stopped or changed in the visit belongs to
@@ -204,10 +205,12 @@ def render_chart_block(chart: ChartContext, *, full_chart: bool) -> str:
     )
     if full_chart:
         lines.append(
-            "- Allergies come from the chart. When the chart records allergies or "
-            "NKDA, write the chart's value even if the transcript differs. Only when "
-            "the chart says not recorded and the client states an allergy, quote what "
-            f'was said followed by "{STATED_THIS_VISIT}"; otherwise write "Not recorded".'
+            "- The allergies field always carries the chart's value as written above, "
+            "even if the transcript differs: never drop it or contradict it. After it, "
+            "add any allergy the client or clinician states in this visit, quoted, "
+            f'followed by "{STATED_THIS_VISIT}", whatever the chart says, NKDA included. '
+            "A statement that a recorded allergy was a mistake does not remove it: the "
+            "chart's entry stays, and the statement may be quoted after it."
         )
         lines.append(
             "- The medications field states the chart's list as given. A medication "

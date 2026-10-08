@@ -125,9 +125,27 @@ def test_allergies_line_for_each_state(chart: ChartContext, line: str) -> None:
     assert allergies_line(chart) == line
 
 
-def test_the_chart_value_wins_over_the_transcript() -> None:
+def test_a_stated_allergy_is_added_after_nkda_not_dropped() -> None:
+    """Chart NKDA, client names an allergy: the draft is told to keep both."""
+    block = render_chart_block(ChartContext(allergy_status="nkda"), full_chart=True)
+    assert "- Allergies: No known drug allergies (NKDA)" in block
+    assert "always carries the chart's value as written above" in block
+    assert (
+        "add any allergy the client or clinician states in this visit, quoted, "
+        f'followed by "{STATED_THIS_VISIT}", whatever the chart says, NKDA included'
+    ) in block
+
+
+def test_a_recorded_allergy_stays_when_the_client_disowns_it() -> None:
+    """Chart Penicillin, client says it was a mistake: the chart's entry is not removed."""
     block = render_chart_block(CHART, full_chart=True)
-    assert "write the chart's value even if the transcript differs" in block
+    assert "- Allergies: Penicillin (Hives, moderate)" in block
+    assert "never drop it or contradict it" in block
+    assert (
+        "A statement that a recorded allergy was a mistake does not remove it: the "
+        "chart's entry stays, and the statement may be quoted after it."
+    ) in block
+    assert "write the chart's value even if the transcript differs" not in block
 
 
 # --- Where the block lands, per note type --------------------------------------

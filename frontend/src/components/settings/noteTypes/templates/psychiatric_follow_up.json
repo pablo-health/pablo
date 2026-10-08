@@ -129,7 +129,7 @@
             "key": "allergies",
             "label": "Allergies",
             "kind": "text",
-            "ai_hint": "The chart's allergies exactly as recorded (a list, or NKDA). Only when the chart says not recorded: what the client or clinician said, followed by \"(stated this visit)\"; otherwise \"Not recorded.\""
+            "ai_hint": "The chart's allergies exactly as recorded (a list, NKDA, or Not recorded), then any allergy the client or clinician stated in this visit, quoted, followed by \"(stated this visit)\"."
           }
         ]
       },
