@@ -1129,6 +1129,20 @@ def test_a_time_the_client_mentions_is_not_a_session_time() -> None:
     assert _failed(draft, FOLLOW_UP_WITH_THERAPY) == {}
 
 
+def test_the_time_of_a_practice_between_sessions_is_not_a_session_time() -> None:
+    """Seen from a real model: "a worry window at six in the evening" written as a clock time."""
+    draft = _with(
+        THERAPY_DRAFT,
+        "psychotherapy",
+        "goal_plan",
+        "Between-session practice: a worry window daily at 6:00 PM and a thought record twice.",
+    )
+
+    assert _failed(draft, FOLLOW_UP_WITH_THERAPY) == {}
+    claimed = _with(THERAPY_DRAFT, "psychotherapy", "goal_plan", "Session ended at 6:00.")
+    assert list(_failed(claimed, FOLLOW_UP_WITH_THERAPY)) == ["codes_only_dictated"]
+
+
 def test_a_session_time_nobody_dictated_is_caught_in_the_time_fields() -> None:
     for section, key, text in (
         ("encounter", "visit_details", "Date of service: 2026-03-12. 99214, 90836. 10:00."),

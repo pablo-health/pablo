@@ -12,7 +12,7 @@
     "label": "Psychiatric initial evaluation",
     "description": "First visit with a new client: a psychiatric diagnostic evaluation or a new-patient E/M visit, with a psychotherapy section for visits that include therapy.",
     "system_prompt": "You are a documentation assistant for a psychiatrist or psychiatric nurse practitioner. You draft the initial psychiatric evaluation of a new {term} from the transcript of the first visit and from values the clinician entered. The visit is billed either as a psychiatric diagnostic evaluation with medical services or as a new-patient evaluation-and-management visit, which may carry a psychotherapy add-on; the psychotherapy portion, when there is one, stays in its own section.\n\nThe transcript has two speakers. Therapist is the clinician; Client is the {term}. The clinician sometimes keeps recording after the {term} has left and dictates observations: everything the Therapist says after the Client's last line is the clinician's dictated addendum. Treat the addendum as the clinician's own statements; it is the preferred source for the mental status exam, risk, diagnoses and their rationale, consent, the monitoring-program check, codes and times.\n\nWrite in the clinical register of an initial evaluation: concise, third person, past tense for the visit and history, the {term} referred to as \"the {term}\". Prefer the clinician's own wording for findings and judgments. Record diagnoses only as the clinician stated them; never add a diagnosis, a code, a level or a score the clinician did not state or enter. When a field was not covered in the visit or the addendum, write \"Not stated.\" rather than leaving it out. Refer to the person seen as \"the {term}\" or with they/them; never he, she, his or her, unless the chart records their pronouns.",
-    "user_template": "Draft the note with these sections and fields:\n\n{fields}\n\nValues the clinician entered before the visit (\"not provided\" means blank):\n- Date of service: {session_date}\n- Place of service: {inputs.place_of_service}\n- Client location (telehealth): {inputs.client_location}\n- Provider location (telehealth): {inputs.provider_location}\n- Visit code: {inputs.visit_code}\n- Allergies: {inputs.allergies}\n\nRules:\n- Copy entered values exactly. Allergies may also come from what the client or clinician said when not entered.\n- Billing codes, the evaluation-and-management level, visit and psychotherapy start and end times, and the prescription monitoring check come ONLY from the clinician's own words, usually the dictated addendum. Never infer a code, a level, a time or a check that the clinician did not state; write \"Not stated.\" instead.\n- Diagnoses come only from the clinician, each with its code only as the clinician said it, and marked working, provisional or rule-out exactly as the clinician did.\n- Every risk field holds only words said in the visit or the dictated addendum, verbatim, in quotation marks, naming who said them: never a paraphrase, a summary or a risk level the clinician did not say. \"Not stated.\" when nothing was said. Overall risk is only the clinician's own stated judgment.\n- The Psychotherapy section is only for a new-patient evaluation-and-management visit with a psychotherapy add-on. For a psychiatric diagnostic evaluation, or when no psychotherapy took place, leave every field of the Psychotherapy section empty.\n- Write \"Not asked.\" for a review-of-systems or substance item that did not come up, and \"Not stated.\" for any other field the visit and the addendum did not cover.\n\nTranscript:\n{transcript}",
+    "user_template": "Draft the note with these sections and fields:\n\n{fields}\n\nValues the clinician entered before the visit (\"not provided\" means blank):\n- Date of service: {session_date}\n- Place of service: {inputs.place_of_service}\n- Client location (telehealth): {inputs.client_location}\n- Provider location (telehealth): {inputs.provider_location}\n- Visit code: {inputs.visit_code}\n- Allergies: {inputs.allergies}\n\nRules:\n- Copy entered values exactly. Allergies may also come from what the client or clinician said when not entered.\n- Billing codes, the evaluation-and-management level, visit and psychotherapy start and end times, and the prescription monitoring check come ONLY from the clinician's own words, usually the dictated addendum. Never infer a code, a level, a time or a check that the clinician did not state; write \"Not stated.\" instead.\n- Diagnoses come only from the clinician, each with its code only as the clinician said it, and marked working, provisional or rule-out exactly as the clinician did.\n- The note is the clinician's own statement. Write what the clinician said or dictated (mental status, risk findings, protective factors, the monitoring-program check, consent, decisions) as findings, declarative and without quotation marks. In no field write who said, asked, noted or dictated something: no \"Clinician dictated:\", \"Clinician stated\", \"clinician noted\", \"per clinician\", \"Client responded:\" or the like.\n- In the risk fields, the {term}'s own words about suicide, self-harm or violence are quoted verbatim and framed as theirs (Asked about thoughts of harming self or others, the {term} said: \"...\"), never paraphrased. Overall risk is only the clinician's stated judgment; never a level the clinician did not say. \"Not stated.\" when nothing was said.\n- The Psychotherapy section is only for a new-patient evaluation-and-management visit with a psychotherapy add-on. For a psychiatric diagnostic evaluation, or when no psychotherapy took place, leave every field of the Psychotherapy section empty.\n- Write \"Not asked.\" for a review-of-systems or substance item that did not come up, and \"Not stated.\" for any other field the visit and the addendum did not cover.\n\nTranscript:\n{transcript}",
     "sections": [
       {
         "key": "encounter",
@@ -28,7 +28,7 @@
             "key": "place_of_service",
             "label": "Place of service",
             "kind": "text",
-            "ai_hint": "If the place of service is telehealth, write: \"Visit conducted by synchronous audio and video telehealth on a HIPAA-compliant platform. The client was located at <client location>; the provider was located at <provider location>. The client consented to receive care by telehealth.\" using the entered locations (write \"location not entered\" for a missing one). If in office, write \"In-office visit.\" If not provided, write \"Not stated.\""
+            "ai_hint": "If the place of service is telehealth, write: \"Visit conducted by synchronous audio and video telehealth on a HIPAA-compliant platform. The client was in <client location>; the provider was in <provider location>. The client consented to receive care by telehealth.\" copying each entered location exactly as written (write \"location not entered\" for a missing one). When the client said they were at home and the entered location does not say so, write \"at home in <client location>\". If in office, write \"In-office visit.\" If not provided, write \"Not stated.\""
           }
         ]
       },
@@ -388,7 +388,7 @@
             "key": "mood_affect",
             "label": "Mood and affect",
             "kind": "text",
-            "ai_hint": "Mood in the client's words where available; affect as the clinician described it."
+            "ai_hint": "Mood and affect as the clinician described them. Only if the clinician gave no mood, the client's own word for it, quoted."
           },
           {
             "key": "thought_process",
@@ -424,25 +424,25 @@
             "key": "suicidal_homicidal_ideation",
             "label": "Suicidal / homicidal ideation",
             "kind": "text",
-            "ai_hint": "What was said about current suicidal or homicidal thoughts, intent, plan or means: the exact words, verbatim, in quotation marks, from the visit or the clinician's dictated addendum, naming who said them. Never a paraphrase, never a summary, never a level the clinician did not say. \"Not stated.\" if nothing was said."
+            "ai_hint": "What was asked and answered about current suicidal or homicidal thoughts, intent, plan or means: the client's own words quoted verbatim and framed as theirs, and the clinician's finding as dictated, unquoted (e.g. Denies SI and HI. Asked about thoughts of harming self or others, the client said: \"...\"). Never a paraphrase of the client, never a level the clinician did not say. \"Not stated.\" if nothing was said."
           },
           {
             "key": "risk_protective_factors",
             "label": "Risk and protective factors",
             "kind": "text",
-            "ai_hint": "Risk factors and protective factors as the clinician or client named them: the exact words, verbatim, in quotation marks, from the visit or the clinician's dictated addendum, naming who said them. Never a paraphrase, never a summary, never a level the clinician did not say. \"Not stated.\" if none were named."
+            "ai_hint": "Risk factors and protective factors as the clinician or client named them, written as findings (e.g. Protective factors: employed, engaged in treatment.). Never one nobody named. \"Not stated.\" if none were named."
           },
           {
             "key": "overall_risk",
             "label": "Overall risk",
             "kind": "text",
-            "ai_hint": "Only the clinician's own stated judgment of overall risk, verbatim, in quotation marks (e.g. \"overall risk is low\"). Never a paraphrase, never a level the clinician did not say. \"Not stated.\" if the clinician did not state one."
+            "ai_hint": "Only the clinician's own stated judgment of overall risk, written as a finding (e.g. Overall risk is low.). Never a level the clinician did not say. \"Not stated.\" if the clinician did not state one."
           },
           {
             "key": "safety_plan",
             "label": "Safety plan",
             "kind": "text",
-            "ai_hint": "Only if any ideation, self-harm or high risk was reported: the safety planning the clinician described (warning signs, coping, supports, crisis contacts, making the environment safer), in the clinician's own words, verbatim, in quotation marks; never a paraphrase or summary. Otherwise leave empty."
+            "ai_hint": "Only if any ideation, self-harm or high risk was reported: the safety planning the clinician described (warning signs, coping, supports, crisis contacts, making the environment safer), in the clinician's own words, unquoted; never a summary that drops a step. Otherwise leave empty."
           }
         ]
       },

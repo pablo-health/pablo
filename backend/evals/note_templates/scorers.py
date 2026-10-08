@@ -88,10 +88,13 @@ CLOCK = re.compile(r"\b\d{1,2}:\d{2}\b")
 TIME_FIELDS = frozenset({"encounter.visit_details", "psychotherapy.psychotherapy_time"})
 """Where a note states when the visit or its psychotherapy took place."""
 SESSION_TIME = re.compile(
-    r"\b(?:start(?:ed|s)?|end(?:ed|s)?|began|session|visit (?:from|time))\b", re.IGNORECASE
+    r"\b(?:start(?:ed|s)?|end(?:ed|s)?|began|(?<!between-)(?<!between )session|"
+    r"visit (?:from|time))\b",
+    re.IGNORECASE,
 )
 """Wording that makes a clock time elsewhere a claim about the visit's own
-times. A time the client mentions ("it wears off by 9:00 AM") is not one."""
+times. A time the client mentions ("it wears off by 9:00 AM") is not one, nor
+is the time of a practice set between sessions ("a worry window at 6:00 PM")."""
 MINUTES = re.compile(r"\b(\d+)\s*-?\s*min(?:ute)?s?\b", re.IGNORECASE)
 PSYCHOTHERAPY_TIME_LINE = re.compile(r"psychotherapy[^\n.:]*\b(?:time|minutes)\b", re.IGNORECASE)
 QUOTED = re.compile('["\u201c\u201d]([^"\u201c\u201d]+)["\u201c\u201d]')

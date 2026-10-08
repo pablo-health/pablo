@@ -231,9 +231,14 @@ def render_chart_block(chart: ChartContext, *, full_chart: bool) -> str:
             "A medication the clinician starts, stops or changes in this visit is written in "
             "the plan, not in the current list. A substance-use field prints the substance "
             'use baseline above for its key, or "Not recorded", then this visit\'s screen '
-            'as its suffix: "(asked this visit: no change)" when the client was asked and '
-            f"described no change, {STATED_SUFFIX} with the change as stated, or "
-            '"(not asked this visit)" when it did not come up. The client\'s location '
+            'as its suffix: "(stated this visit: denied)" when the client denied it, '
+            f"{STATED_SUFFIX} with what the client said about it, "
+            '"(asked this visit: no change)" only when the client said nothing had changed, '
+            'or "(not asked this visit)" when it was not named. One denial answering a '
+            'question that named several ("nicotine, cannabis, anything else?" / "none of '
+            'that") denies each one named, and other substances when it asked about anything '
+            'else; a substance it did not name stays "(not asked this visit)". The client\'s '
+            "location "
             "during a telehealth visit belongs to the place-of-service attestation: it is "
             "not a statement about where they live and never changes living_situation."
         )
