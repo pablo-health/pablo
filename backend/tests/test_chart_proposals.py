@@ -173,6 +173,15 @@ def test_the_prompt_lists_every_field_and_says_never_to_remove() -> None:
     assert "If nothing changed, return an empty list" in prompt
 
 
+def test_the_prompt_asks_for_no_gendered_pronouns() -> None:
+    prompt = build_prompt(_chart(), "[S0] hello")
+
+    assert (
+        'Refer to the client as "the client" or with they/them; never he, she, his or her, '
+        "unless the chart records the client's pronouns."
+    ) in prompt
+
+
 def test_a_field_the_draft_marks_stated_this_visit_is_named_in_the_prompt() -> None:
     draft = {
         "social_history": {"relationships": f"{SEPARATED} (stated this visit: finalized)"},

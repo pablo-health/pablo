@@ -50,6 +50,16 @@ def test_a_removal_fails() -> None:
     ]
 
 
+def test_a_gendered_pronoun_fails() -> None:
+    gendered = _proposal(
+        "work_school", "Worked as a dental hygienist until August, when she was let go.", 1
+    )
+    assert grade([gendered], STOPPED_WORKING)["no_gendered_pronouns"] == ["work_school says 'she'"]
+    # A word that only contains one is fine.
+    other = _proposal("work_school", "Worked as a dental hygienist there until August.", 1)
+    assert grade([other], STOPPED_WORKING)["no_gendered_pronouns"] == []
+
+
 def test_evidence_from_the_wrong_lines_fails() -> None:
     off = _proposal("legal_custody", "Divorce finalized; shared custody.", 0, 3)
     assert grade([RELATIONSHIPS, off], DIVORCE_FINALIZED)["cites_the_lines_that_say_it"] == [

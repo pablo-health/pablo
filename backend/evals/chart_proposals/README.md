@@ -20,6 +20,7 @@ Any problem from any check fails the case.
 | `exactly_the_expected_fields` | a field the visit changed has no proposal; a field nothing changed has one; a field has two | review costs nothing on an ordinary visit, and a change stated once reaches every field it changes |
 | `text_kept_and_changed` | the proposed text leaves out what the chart said, or does not say what changed | a proposal amends and appends, never removes: what stopped being true is kept and said to no longer apply |
 | `cites_the_lines_that_say_it` | the proposal cites none of the lines that state the change | the evidence the clinician sees is the sentence that says it |
+| `no_gendered_pronouns` | a proposal calls the client he or she (no case's chart records pronouns) | the chart never assumes a client's gender |
 
 The checks are unit-tested on hand-made proposals in
 `backend/tests/test_chart_proposal_eval_scorers.py`.
@@ -45,6 +46,13 @@ scripts/run-chart-proposal-eval.sh --case unchanged
 ```
 
 ## Recorded runs — 2026-10-08
+
+### Pronouns
+
+Before the prompt said how to refer to the client, every run of
+`stopped-working` wrote "when she was let go". With the rule, three runs
+of it passed with no gendered pronoun ("they were let go", or no pronoun at
+all), and a run of every case passed.
 
 Configured note model, against a development project, three runs of each
 case: 9 of 9 passed.
