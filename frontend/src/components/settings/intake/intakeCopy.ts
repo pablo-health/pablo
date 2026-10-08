@@ -129,10 +129,22 @@ export const PUBLISH_BUTTON = "Publish"
 export const ADD_QUESTION = "Add question"
 
 /**
- * The built-in documents a practice can add to a form. Adding one also adds
- * the practice's own copy of the document, which it edits like any other.
+ * Putting a document in a packet. Its own button rather than a kind of
+ * question, because a practice thinks of a packet as papers to sign and
+ * questions to answer — and looked for exactly this button.
  */
-export const START_FROM_TEMPLATE = "Start from a template"
+export const ADD_DOCUMENT_TO_PACKET = "Add a document"
+export const YOUR_DOCUMENTS = "Your documents"
+export const BUILT_IN_DOCUMENTS = "Built in"
+export const NO_DOCUMENTS_TO_ADD = "You have no documents yet. Write one here."
+/** Beside a document's name in the packet, so it reads as a paper, not a question. */
+export const DOCUMENT_TAG = "Document"
+
+/**
+ * Built-in questions a practice can add to a form. Built-in documents are
+ * offered under Add a document instead, beside the practice's own.
+ */
+export const START_FROM_TEMPLATE = "Add built-in questions"
 /** Shown when every item a template adds is already on the form. */
 export const TEMPLATE_ALREADY_ON_FORM = "This packet already has it."
 export const NEW_VERSION_BUTTON = "Start a new version"
@@ -149,7 +161,7 @@ export const PUBLISHED_NOTICE =
 
 export const DOCUMENTS_TITLE = "Documents in your packets"
 export const DOCUMENTS_DESCRIPTION =
-  "What your packets ask people to read and sign. Editing one starts a new version."
+  "What your packets ask people to read and sign. Put one in a packet with Add a document. Editing one starts a new version."
 export const DOCUMENTS_EMPTY = "No documents yet."
 export const HIDE_DOCUMENTS = "Hide documents"
 /** `null` while the list is still loading: no count is better than a wrong one. */
@@ -196,9 +208,9 @@ export const WRITE_NEW_DOCUMENT = "Write a new one"
 export const PUBLISH_AND_USE = "Publish and use it"
 /** Named apart from the question's own "Name" field, which sits just above it. */
 export const NEW_DOCUMENT_NAME_LABEL = "Document name"
-/** Said under "Start from a template": picking one also adds its document. */
+/** Said under the built-in documents: picking one also gives the practice its own copy. */
 export const STARTER_ADDS_DOCUMENT =
-  "A template with a document also adds it to Documents in your packets, to edit like any other."
+  "A built-in document also lands in Documents in your packets, to edit like any other."
 
 export const DOCUMENT_PICKER_LABEL = "Which document"
 

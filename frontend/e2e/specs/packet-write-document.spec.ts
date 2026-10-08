@@ -45,10 +45,8 @@ test.describe("A packet writes its own document", () => {
     const packets = page.getByRole("region", { name: "Packets", exact: true })
     await expect(packets.getByLabel("Packet name")).toHaveValue(packetName)
 
-    await packets.getByRole("combobox", { name: "Kind of question" }).click()
-    await page.getByRole("option", { name: "Consent to sign", exact: true }).click()
-    await packets.getByRole("button", { name: "Add question" }).click()
-
+    // A document goes in through its own button, not as a kind of question.
+    await packets.getByRole("button", { name: "Add a document" }).click()
     await packets.getByRole("button", { name: "Write a new one" }).click()
     // Publish says what's missing rather than sitting greyed out.
     await packets.getByRole("button", { name: "Publish and use it" }).click()
@@ -106,11 +104,10 @@ test.describe("A packet writes its own document", () => {
     await page.goto(`/dashboard/settings/portal?packet=${template.id}`)
     const packets = page.getByRole("region", { name: "Packets", exact: true })
 
-    await packets.getByRole("combobox", { name: "Kind of question" }).click()
-    await page.getByRole("option", { name: "Consent to sign", exact: true }).click()
-    await packets.getByRole("button", { name: "Add question" }).click()
-    await packets.getByRole("combobox", { name: "Which document" }).click()
-    await page.getByRole("option", { name: title, exact: true }).click()
+    await packets.getByRole("button", { name: "Add a document" }).click()
+    await packets.getByRole("button", { name: title, exact: true }).click()
+    // On the packet under its own name, so which document it is reads at a glance.
+    await expect(packets.getByRole("combobox", { name: "Which document" })).toContainText(title)
 
     // Newest unless told otherwise; told otherwise here.
     const wording = packets.getByRole("combobox", { name: "Which wording" })

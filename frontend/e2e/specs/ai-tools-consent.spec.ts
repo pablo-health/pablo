@@ -158,7 +158,7 @@ test.describe("AI-tools consent", () => {
     const row = formRow(page, formName)
     await row.getByRole("button", { name: formName, exact: true }).click()
 
-    await row.getByRole("button", { name: "Start from a template" }).click()
+    await row.getByRole("button", { name: "Add a document" }).click()
     await row.getByRole("button", { name: TEMPLATE }).click()
 
     // Added and saved: the question is on the form, and the practice's copy
