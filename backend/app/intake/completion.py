@@ -95,6 +95,16 @@ class Completion:
     complete: bool
     missing: list[str]
     hidden: list[str] = field(default_factory=list)
+    #: How many parts the patient walks: the stretches between the form's
+    #: section headings, counting only those with a question this patient is
+    #: shown. The same parts, by the same rule, as the portal's walk.
+    parts: int = 1
+    #: The parts from the one holding the first missing question to the end
+    #: of the form, or 0 when nothing is missing. That is where a patient who
+    #: opens the form picks up, so it is the count the walk itself will show
+    #: them — rather than a count of required questions, which leaves out
+    #: every optional one the walk still steps through.
+    parts_left: int = 0
 
 
 def assess(
@@ -119,14 +129,38 @@ def assess(
     missing: list[str] = []
     hidden: list[str] = []
 
+    part_of: dict[str, int] = {}
+    parts = 0
+    in_part = False
+
     for item in items:
         if not shown.get(item.key, True):
             hidden.append(item.item_id)
             continue
+        if _is_section(item):
+            # A heading is a boundary, not a screen: the part it opens only
+            # counts once something under it is shown.
+            in_part = False
+            continue
+        if not in_part:
+            parts += 1
+            in_part = True
+        part_of[item.item_id] = parts
         if item.required and not _is_settled(item, answers, today):
             missing.append(item.item_id)
 
-    return Completion(complete=not missing, missing=missing, hidden=hidden)
+    parts_left = parts - part_of[missing[0]] + 1 if missing else 0
+    return Completion(
+        complete=not missing,
+        missing=missing,
+        hidden=hidden,
+        parts=max(parts, 1),
+        parts_left=parts_left,
+    )
+
+
+def _is_section(item: CompletionItem) -> bool:
+    return item.config is not None and item.config.item_type == "section"
 
 
 def _as_visibility_item(item: CompletionItem) -> VisibilityItem:

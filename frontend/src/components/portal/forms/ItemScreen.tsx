@@ -26,6 +26,7 @@ import {
   questionPosition,
 } from "./formsCopy"
 import type { PartPlace } from "./parts"
+import { Instructions } from "./renderers/DisplayItem"
 import { rendererFor } from "./renderers/registry"
 import type { AnswerValue } from "./renderers/types"
 
@@ -49,6 +50,8 @@ interface ItemScreenProps {
   error: string | null
   /** Which part of the form this question is in, and where in it. */
   place: PartPlace | null
+  /** Instructions that lead into this question, shown above it. */
+  notes?: IntakeAssignmentItem[]
 }
 
 export function ItemScreen({
@@ -66,12 +69,19 @@ export function ItemScreen({
   saving,
   error,
   place,
+  notes = [],
 }: ItemScreenProps) {
   const renderer = rendererFor(item.item_type)
 
   return (
     <div data-testid="forms-item-screen" className="flex flex-col">
       {place && <PartHeader place={place} />}
+
+      {notes.map((note) => (
+        <div key={note.id} className="mt-3">
+          <Instructions item={note} />
+        </div>
+      ))}
 
       <div className="mt-3">
         <renderer.Component

@@ -117,6 +117,7 @@ export function ReviewScreen({
                   value={values[item.id] ?? null}
                   form={form}
                   sessionToken={sessionToken}
+                  heading={onlyDocument(rows, item) ? part.title : null}
                   onEdit={onEdit}
                 />
               ))}
@@ -156,17 +157,31 @@ export function ReviewScreen({
   )
 }
 
+/**
+ * Whether `item` is the one consent document in its part.
+ *
+ * A part holding one document is usually named after it, so its row would
+ * read the same title twice; the label leaves it out when it matches.
+ */
+function onlyDocument(rows: IntakeAssignmentItem[], item: IntakeAssignmentItem): boolean {
+  if (item.item_type !== "consent_document") return false
+  return rows.filter((row) => row.item_type === "consent_document").length === 1
+}
+
 function ReviewRow({
   item,
   value,
   form,
   sessionToken,
+  heading,
   onEdit,
 }: {
   item: IntakeAssignmentItem
   value: AnswerValue | null
   form: IntakeForm | null
   sessionToken: string
+  /** The part's heading, when this row is its only document. */
+  heading: string | null
   onEdit: (itemId: string) => void
 }) {
   const renderer = rendererFor(item.item_type)
@@ -177,7 +192,7 @@ function ReviewRow({
       <div className="flex-1">
         <p data-testid="forms-review-label" className="text-xs font-medium text-neutral-500">
           {ReviewLabel ? (
-            <ReviewLabel item={item} sessionToken={sessionToken} />
+            <ReviewLabel item={item} sessionToken={sessionToken} heading={heading} />
           ) : (
             renderer.label(item, form)
           )}

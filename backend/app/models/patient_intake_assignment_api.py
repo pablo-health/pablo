@@ -49,10 +49,17 @@ class IntakeProgressResponse(BaseModel):
 
     ``missing`` holds item ids in the order the form asks them, so a client
     can send somebody to the first one without sorting anything.
+
+    ``parts`` and ``parts_left`` count the form the way the portal walks it:
+    the stretches between its section headings, and how many of them remain
+    from where the patient picks up. A list of forms can then say what the
+    walk will show rather than a count of required questions only.
     """
 
     complete: bool
     missing: list[str]
+    parts: int = 1
+    parts_left: int = 0
 
 
 class IntakeAssignmentResponse(BaseModel):
