@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -173,13 +174,17 @@ def test_the_prompt_lists_every_field_and_says_never_to_remove() -> None:
     assert "If nothing changed, return an empty list" in prompt
 
 
-def test_the_prompt_asks_for_no_gendered_pronouns() -> None:
-    prompt = build_prompt(_chart(), "[S0] hello")
+@pytest.mark.parametrize("person", ["client", "patient"])
+def test_the_prompt_names_the_person_in_the_clinicians_word_and_never_genders_them(
+    person: str,
+) -> None:
+    prompt = build_prompt(replace(_chart(), person=person), "[S0] hello")
 
     assert (
-        'Refer to the client as "the client" or with they/them; never he, she, his or her, '
-        "unless the chart records the client's pronouns."
+        f'Refer to the person seen as "the {person}" or with they/them; never he, she, his or '
+        "her, unless the chart records their pronouns."
     ) in prompt
+    assert "{term}" not in prompt
 
 
 def test_a_field_the_draft_marks_stated_this_visit_is_named_in_the_prompt() -> None:

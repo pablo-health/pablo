@@ -82,8 +82,8 @@ to it. If nothing changed, return an empty list: that is the usual answer. A cli
 restating what the chart already says, something only considered or discussed, and a plan \
 for later are not changes.
 
-Refer to the client as "the client" or with they/them; never he, she, his or her, unless \
-the chart records the client's pronouns.
+Refer to the person seen as "the {term}" or with they/them; never he, she, his or her, \
+unless the chart records their pronouns.
 
 For each change give:
 - field_key: the field's key as listed above.
@@ -127,7 +127,7 @@ def build_prompt(
     for family in FAMILIES:
         parts.extend(family.chart_lines(chart))
         parts.append("")
-    parts.append(_INSTRUCTIONS)
+    parts.append(_INSTRUCTIONS.format(term=chart.person))
     parts.append("")
     parts.append("Rules for the fields:")
     for family in FAMILIES:

@@ -55,6 +55,7 @@ from .note_service import (
 
 if TYPE_CHECKING:
     from ..chart_proposals.step import ChartProposalStep
+    from ..people_term_lookup import PeopleTermLookup
 
 DEFAULT_NOTE_TYPE = "soap"
 
@@ -231,6 +232,7 @@ class SessionService:
         medication_repo: MedicationRepository | None = None,
         history_repo: ChartHistoryRepository | None = None,
         proposal_step: "ChartProposalStep | None" = None,
+        people: "PeopleTermLookup | None" = None,
     ) -> None:
         self.session_repo = session_repo
         self.patient_repo = patient_repo
@@ -240,6 +242,7 @@ class SessionService:
         self.medication_repo = medication_repo
         self.history_repo = history_repo
         self.proposal_step = proposal_step
+        self.people = people
 
     def _chart_for(self, patient: Patient, user_id: str) -> ChartContext | None:
         """The chart a draft is written against; ``None`` when this service can't read it."""
@@ -252,7 +255,11 @@ class SessionService:
         )
         history = self.history_repo.entries(patient.id) if self.history_repo is not None else []
         return chart_context_for(
-            patient, self.problem_repo.list_by_patient(patient.id), medications, history
+            patient,
+            self.problem_repo.list_by_patient(patient.id),
+            medications,
+            history,
+            person=self.people.person(user_id) if self.people is not None else None,
         )
 
     def _get_patient_or_raise(self, patient_id: str, user_id: str) -> Patient:

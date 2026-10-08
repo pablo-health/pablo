@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ..chart_history.fields import HISTORY_KEYS, SUBSTANCE_KEYS, field_label
+from ..people_term import DEFAULT_PEOPLE_TERM, people_words
 from ..problems.models import ProblemStatus
 
 if TYPE_CHECKING:
@@ -72,6 +73,9 @@ class ChartContext:
     allergies: tuple[dict[str, str], ...] = ()
     medications: tuple[ChartMedication, ...] = ()
     history: tuple[ChartHistoryField, ...] = ()
+    person: str = people_words(DEFAULT_PEOPLE_TERM).one
+    """The clinician's word for the person the chart is about, singular: "client" or
+    "patient". Prompts written from the chart use it (``app.people_term``)."""
 
 
 def chart_context_for(
@@ -79,11 +83,14 @@ def chart_context_for(
     problems: Iterable[Problem],
     medications: Iterable[Mapping[str, object]] = (),
     history: Iterable[HistoryEntry] = (),
+    person: str | None = None,
 ) -> ChartContext:
     """``medications`` are medication-repository rows; only active ones are current.
-    ``history`` is the chart-history fields; a removed value is not passed on."""
+    ``history`` is the chart-history fields; a removed value is not passed on.
+    ``person`` is the reading clinician's word, the default when not given."""
     recorded = {e.field_key: e for e in history if e.text}
     return ChartContext(
+        person=person or people_words(DEFAULT_PEOPLE_TERM).one,
         problems=tuple(
             ChartProblem(label=p.label, icd10_code=p.icd10_code, status=p.status)
             for p in problems

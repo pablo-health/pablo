@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from ..models import Note, Patient, Transcript
     from ..notes import NoteTypeDefinition
     from ..notes.chart_context import ChartContext
+    from ..people_term_lookup import PeopleTermLookup
     from ..repositories import ChartHistoryRepository, ChartProposalRepository
     from ..services.note_generation_service import NoteGenerationService
     from .models import Drafted
@@ -45,22 +46,33 @@ class ChartProposalStep:
         proposals: ChartProposalRepository,
         history: ChartHistoryRepository,
         medications: MedicationRepository | None = None,
+        people: PeopleTermLookup | None = None,
     ) -> None:
         self._proposals = proposals
         self._history = history
         self._medications = medications
+        self._people = people
 
     def chart(self, patient: Patient, user_id: str | None = None) -> ChartContext:
         """What the proposals are measured against, for a caller that has no chart yet.
-        The medication list is read as ``user_id`` sees it, when given."""
+        The medication list is read as ``user_id`` sees it, and the chart names the
+        person in their word, when given."""
         medications = (
             self._medications.list_by_patient(patient.id, user_id)
             if self._medications is not None and user_id is not None
             else []
         )
         return chart_context_for(
-            patient, [], medications, history=self._history.entries(patient.id)
+            patient,
+            [],
+            medications,
+            history=self._history.entries(patient.id),
+            person=self.person(user_id) if user_id is not None else None,
         )
+
+    def person(self, user_id: str) -> str | None:
+        """``user_id``'s word for the person seen, singular; ``None`` when not known here."""
+        return self._people.person(user_id) if self._people is not None else None
 
     def draft(
         self,
