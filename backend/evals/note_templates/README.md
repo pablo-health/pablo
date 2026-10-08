@@ -88,7 +88,34 @@ and `--model` overrides it. With `BRAINTRUST_API_KEY` set,
 `backend/evals/test_note_templates.py` pushes the cases to the
 `starting-templates` dataset in `pablo-note-generation`.
 
-## Recorded runs — 2026-10-08
+## Recorded runs — 2026-10-08, with the history-field mark
+
+Configured note model, against a development project, after the
+"(stated this visit: …)" mark was extended to every chart-fed field.
+Stated-change and with-therapy three times each, every other case once.
+
+| Case | Passed | What failed |
+|---|---|---|
+| `follow-up-with-therapy` | 0 of 3 | the self-harm/violence field paraphrased (3 of 3); overall risk written without quotation marks, "Overall acute risk is low." (3 of 3) |
+| `follow-up-stated-change` | 0 of 3 | the self-harm/violence field paraphrased (3 of 3). The work history now carries the layoff, marked, every time |
+| `follow-up-medication-only` | 0 of 1 | the self-harm/violence field paraphrased |
+| `follow-up-full-chart` | 0 of 1 | the self-harm/violence field paraphrased |
+| `follow-up-allergy-stated-on-nkda` | 0 of 1 | the self-harm/violence field paraphrased |
+| `follow-up-allergy-disputed` | 0 of 1 | the self-harm/violence field paraphrased; living situation marked "Not recorded (stated this visit: at his apartment)" from the clinician's opening question |
+| `follow-up-empty-chart` | 1 of 1 | |
+| `evaluation-empty-chart` | 1 of 1 | |
+| `follow-up-risk-language` | 1 of 1 | |
+
+With the mark on every chart-fed field, the drafts also marked additions
+the cases had not foreseen. "For heartburn" went into medical history, the
+dictated "supportive partner" went into supports, and in the disputed-allergy
+visit the brother's allergy went into family medical history and the
+problem sets went into work or school. Each is something the visit did
+say, so those fields now allow the mark without requiring it. The
+apartment does not count: being at an apartment for the visit says nothing
+about where the client lives.
+
+## Recorded runs — 2026-10-08, before the history-field mark
 
 Configured note model, against a development project, the templates as on
 `main` before the "(stated this visit: …)" mark was extended to history
@@ -98,7 +125,7 @@ fields. Four runs of every case.
 |---|---|---|
 | `follow-up-with-therapy` | 0 of 4 | the self-harm/violence field paraphrased (4 of 4); "Not asked" for other substances after "Nicotine, cannabis, anything else?" / "No, none of that." (2 of 4) |
 | `follow-up-medication-only` | 3 of 4 | the self-harm/violence field paraphrased |
-| `follow-up-full-chart` | 0 of 4 | "wears off by nine" written as "9:00 AM" (4 of 4); the self-harm/violence field paraphrased (2 of 4) |
+| `follow-up-full-chart` | 0 of 4 | "wears off by nine" written as "9:00 AM" (4 of 4), which the clock-time check no longer counts, since it is the client's words and not a session time; the self-harm/violence field paraphrased (2 of 4) |
 | `follow-up-stated-change` | 0 of 4 | the work history left as the chart's text with nothing marked; the layoff only in the interval history (4 of 4) |
 | `follow-up-allergy-stated-on-nkda` | 4 of 4 | |
 | `follow-up-allergy-disputed` | 4 of 4 | |

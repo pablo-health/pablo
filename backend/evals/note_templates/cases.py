@@ -85,8 +85,8 @@ class Expected:
     """Medications the client said they take that the chart does not list:
     each is added to the current list, marked as stated this visit."""
     allergies_stated: tuple[str, ...] = ()
-    """Words of what was said about allergies this visit, which the allergies
-    field must carry after the chart's value."""
+    """What was said about allergies this visit, which the allergies field must
+    carry after the chart's value: words, any one of which will do."""
     stated_this_visit: tuple[str, ...] = ()
     """Chart-fed fields (``section.key``) the visit said something new about:
     each must carry the "(stated this visit" mark, and no other may."""
@@ -214,8 +214,9 @@ FOLLOW_UP_WITH_THERAPY = TemplateCase(
         not_current=("75",),
         in_plan=("75",),
         # The clinician dictates "supportive partner" as a protective factor;
-        # whether that adds to an empty relationships field is a judgment.
-        may_state=("social_history.relationships",),
+        # whether that adds to an empty relationships or supports field is a
+        # judgment.
+        may_state=("social_history.relationships", "social_history.supports"),
     ),
 )
 
@@ -329,6 +330,9 @@ FOLLOW_UP_STATED_CHANGE = TemplateCase(
         in_plan=("bupropion",),
         stated_medications=("omeprazole",),
         stated_this_visit=("social_history.work_school", "medications.current_medications"),
+        # The omeprazole is "for heartburn": a condition the medical history
+        # does not have, so adding it there is allowed, not required.
+        may_state=("medical_history.medical_history",),
     ),
 )
 
@@ -376,8 +380,15 @@ FOLLOW_UP_ALLERGY_DISPUTED = TemplateCase(
         diagnoses=(Diagnosis("F90.0", ("attention", "adhd", "hyperactivity")),),
         current_medications=("Atomoxetine 40 mg, every morning",),
         # The client says the allergy was never theirs; the chart's entry
-        # stays, and the statement may be quoted after it.
-        may_state=("medications.allergies",),
+        # stays, and the statement may be quoted after it. The same words say
+        # a brother has the allergy, and problem sets say the client is in
+        # school: both may be added to fields the chart has nothing for. Being
+        # at an apartment for the visit says nothing about living situation.
+        may_state=(
+            "medications.allergies",
+            "family_history.family_medical",
+            "social_history.work_school",
+        ),
     ),
 )
 
@@ -429,7 +440,8 @@ EVALUATION_EMPTY_CHART = TemplateCase(
         not_current=("escitalopram",),
         in_plan=("escitalopram",),
         stated_medications=("levothyroxine", "omeprazole"),
-        allergies_stated=("none that i know of",),
+        # Quoted, or in the chart rule's own words for a stated denial.
+        allergies_stated=("none that i know of", "no known drug allergies", "no known allergies"),
         stated_this_visit=("medications.current_medications", "medications.allergies"),
         history_from_visit={
             "prior_diagnoses": ("panic",),

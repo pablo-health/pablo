@@ -185,7 +185,19 @@ def test_what_the_visit_changed_may_follow_a_history_fields_chart_text() -> None
     draft = _with(
         draft, "trauma_history", "trauma_history", "Not recorded (stated this visit: denies.)"
     )
-    assert _failed(draft, FOLLOW_UP_WITH_THERAPY) == {}
+    assert history_from_chart(draft, FOLLOW_UP_WITH_THERAPY) == []
+    # The therapy sample states neither, so the marks themselves are flagged.
+    assert list(_failed(draft, FOLLOW_UP_WITH_THERAPY)) == ["suffix_only_where_stated"]
+
+
+def test_an_empty_stated_suffix_is_caught() -> None:
+    draft = _with(
+        THERAPY_DRAFT,
+        "social_history",
+        "work_school",
+        "Financial analyst, full time, since 2022. (stated this visit: )",
+    )
+    assert history_from_chart(draft, FOLLOW_UP_WITH_THERAPY)
 
 
 def test_a_medication_the_client_reports_may_follow_the_charts_list() -> None:
@@ -666,7 +678,13 @@ def test_stated_change_failures_are_caught(section: str, key: str, value: Any, c
             'Not recorded (stated this visit: "No, none that I know of.")',
             True,
         ),
+        (
+            EVALUATION_EMPTY_CHART,
+            "Not recorded (stated this visit: no known drug allergies)",
+            True,
+        ),
         (EVALUATION_EMPTY_CHART, "No known drug allergies.", False),
+        (EVALUATION_EMPTY_CHART, "NKDA", False),
         (EVALUATION_EMPTY_CHART, "Not recorded", False),
     ],
 )

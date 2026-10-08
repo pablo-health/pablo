@@ -472,11 +472,9 @@ def allergies_never_dropped(draft: Draft, case: TemplateCase) -> list[str]:
     else:
         kept = "not recorded" in said
     problems = [] if kept else [f"{path}: the chart's {allergies_line(chart)!r} was dropped"]
-    problems += [
-        f"{path}: what was said, {words!r}, is missing"
-        for words in case.expected.allergies_stated
-        if words not in said
-    ]
+    stated = case.expected.allergies_stated
+    if stated and not any(words in said for words in stated):
+        problems.append(f"{path}: what was said ({' or '.join(map(repr, stated))}) is missing")
     return problems
 
 
@@ -513,6 +511,8 @@ def history_from_chart(draft: Draft, case: TemplateCase) -> list[str]:
                 if key in recorded
                 else f'{path}: nothing on the chart, so it should read "Not recorded"'
             )
+        elif rest.rstrip(":") == "stated this visit":
+            problems.append(f"{path}: an empty (stated this visit: ...) suffix")
     return problems
 
 
