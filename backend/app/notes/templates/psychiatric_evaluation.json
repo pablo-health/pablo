@@ -477,6 +477,31 @@
         ]
       },
       {
+        "key": "mdm",
+        "label": "Medical decision making",
+        "fields": [
+          {
+            "key": "problems_addressed",
+            "label": "Problems addressed",
+            "kind": "text",
+            "ai_hint": "One sentence: the conditions addressed at this visit and the status of each as the clinician described it (e.g. \"ADHD, stable on the current dose; anxiety, worse over the last two weeks\"). State facts; do not name a level."
+          },
+          {
+            "key": "data_reviewed",
+            "label": "Data reviewed",
+            "kind": "text",
+            "ai_hint": "One sentence: what was reviewed or ordered (measures, labs, outside records, the PDMP report, history from someone other than the client). \"None\" if nothing was. Do not name a level."
+          },
+          {
+            "key": "management_risk",
+            "label": "Management",
+            "kind": "text",
+            "ai_hint": "One sentence: what the management involved, factually (e.g. prescription drug management with which medications were continued, changed, started or stopped; a controlled substance; a decision about a higher level of care). Do not name a level."
+          }
+        ],
+        "review_only": true
+      },
+      {
         "key": "treatment_plan",
         "label": "Treatment plan",
         "fields": [
@@ -615,6 +640,53 @@
         "kind": "text",
         "options": [],
         "required": false
+      },
+      {
+        "key": "mdm_problems",
+        "label": "Problems addressed",
+        "kind": "choice",
+        "options": [
+          "minimal",
+          "low",
+          "moderate",
+          "high"
+        ],
+        "required": false
+      },
+      {
+        "key": "mdm_data",
+        "label": "Data reviewed",
+        "kind": "choice",
+        "options": [
+          "none",
+          "limited",
+          "moderate",
+          "extensive"
+        ],
+        "required": false
+      },
+      {
+        "key": "mdm_risk",
+        "label": "Risk",
+        "kind": "choice",
+        "options": [
+          "minimal",
+          "low",
+          "moderate",
+          "high"
+        ],
+        "required": false
+      },
+      {
+        "key": "new_patient",
+        "label": "New or established patient",
+        "kind": "choice",
+        "options": [
+          "new",
+          "established"
+        ],
+        "required": false,
+        "default": "new"
       }
     ]
   },

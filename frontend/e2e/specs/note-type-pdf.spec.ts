@@ -114,7 +114,10 @@ test("a signed note of a practice's own type exports its fields, visit times and
     expect(at("Stand-in draft for subjective.chief_complaint.")).toBeLessThan(at("Diagnoses:"))
     expect(at("Diagnoses:")).toBeLessThan(at("Stand-in diagnosis for assessment.diagnoses"))
     expect(at("F00.0")).toBeGreaterThan(at("Stand-in diagnosis for assessment.diagnoses"))
-    expect(at("Mental status exam")).toBeLessThan(at("Medical decision making"))
+    expect(at("Mental status exam")).toBeLessThan(at("Clinical formulation:"))
+    // The medical decision making is reviewed beside the note, never printed in it.
+    expect(pdf).not.toContain("Medical decision making")
+    expect(pdf).not.toContain("Stand-in draft for mdm.")
 
     // The visit's times and the confirmed minutes, above the note.
     expect(at(`Psychotherapy time: ${windowText}`)).toBeLessThan(at("Chief complaint:"))

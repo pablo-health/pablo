@@ -431,6 +431,28 @@ class TestStart:
         assert keep is False
         assert notes_repo.get(note_id, USER).status == "processing"  # type: ignore[union-attr]  # just written
 
+    def test_new_inputs_leave_the_medical_decision_making_choices_alone(
+        self,
+        service: NoteRedraftService,
+        session_repo: InMemoryTherapySessionRepository,
+        patient_repo: InMemoryPatientRepository,
+        notes_repo: InMemoryNotesRepository,
+    ) -> None:
+        session, _ = _drafted_session(
+            session_repo,
+            patient_repo,
+            notes_repo,
+            note_type="psychiatric_follow_up",
+            content={"plan": {"follow_up": "Four weeks."}},
+            note_inputs={"place_of_service": "In office", "mdm_problems": "moderate"},
+        )
+
+        note, _keep = service.start(
+            session.id, USER, note_inputs={"place_of_service": "Telehealth", "mdm_problems": "low"}
+        )
+
+        assert note.note_inputs == {"place_of_service": "Telehealth", "mdm_problems": "moderate"}
+
     def test_an_input_the_type_refuses_is_refused(
         self, service: NoteRedraftService, drafted: tuple[TherapySession, str]
     ) -> None:

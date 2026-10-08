@@ -8,7 +8,7 @@
  */
 
 import type { PeopleWords } from "@/lib/peopleTerm"
-import { isEmptyValue, listItems, textValue } from "@/lib/schemaNoteValues"
+import { inTheNote, isEmptyValue, listItems, textValue } from "@/lib/schemaNoteValues"
 import { diagnosisText, statedDiagnoses } from "@/lib/statedDiagnoses"
 import type { PDFBlock, PDFNote } from "@/lib/utils/pdfExport"
 import { addOnBand, clientPresentLineText, durationsLineText, visitLineText } from "@/lib/visitTimes"
@@ -26,6 +26,7 @@ export interface PDFNoteLayout {
     key: string
     label: string
     fields: Array<{ key: string; label: string; kind: NoteFieldKind }>
+    review_only?: boolean
   }>
 }
 
@@ -51,7 +52,7 @@ export function schemaNotePdf(
 ): PDFNote {
   return {
     title: layout.label,
-    sections: layout.sections.map((section) => {
+    sections: inTheNote(layout.sections).map((section) => {
       const values = sections[section.key] ?? {}
       const blocks: PDFBlock[] = section.fields
         .filter((field) => !isEmptyValue(values[field.key]))

@@ -85,6 +85,8 @@ class NoteInputDef:
     kind: NoteInputKind = "text"
     options: tuple[str, ...] = ()
     required: bool = False
+    default: str | None = None
+    """The value a note takes when the clinician has not chosen one."""
 
 
 @dataclass(frozen=True)
@@ -94,6 +96,10 @@ class NoteSectionDef:
     key: str
     label: str
     fields: tuple[NoteFieldDef, ...]
+    review_only: bool = False
+    """Drafted for the clinician to review beside the note (the evidence for
+    the medical decision making, say), and never shown, printed or exported as
+    part of the note."""
 
     def field_keys(self) -> list[str]:
         return [f.key for f in self.fields]

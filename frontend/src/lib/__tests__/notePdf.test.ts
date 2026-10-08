@@ -40,11 +40,13 @@ function filled(layout: PDFNoteLayout): Record<string, SchemaSectionValues> {
   return sections
 }
 
+/** Every section of the note itself: a review-only one is printed nowhere. */
 function expectEveryFieldInOrder(layout: PDFNoteLayout) {
   const pdf = schemaNotePdf(layout, filled(layout))
+  const printed = layout.sections.filter((s) => !s.review_only)
   expect(pdf.title).toBe(layout.label)
-  expect(pdf.sections.map((s) => s.title)).toEqual(layout.sections.map((s) => s.label))
-  layout.sections.forEach((section, i) => {
+  expect(pdf.sections.map((s) => s.title)).toEqual(printed.map((s) => s.label))
+  printed.forEach((section, i) => {
     const blocks = pdf.sections[i].blocks
     expect(blocks.map((b) => b.label)).toEqual(section.fields.map((f) => f.label))
     section.fields.forEach((field, j) => {
@@ -81,6 +83,25 @@ describe("schemaNotePdf", () => {
   it.each(SCHEMA_BUILTINS.map((t) => [t.key, t] as const))(
     "prints every section and field of %s in order, with its labels",
     (_key, layout) => expectEveryFieldInOrder(layout),
+  )
+
+  it.each(["psychiatric_follow_up", "psychiatric_evaluation"])(
+    "prints no medical decision making section for %s, only the codes in the visit details",
+    (key) => {
+      const layout = BUILTINS.find((t) => t.key === key)!
+      const values = filled(layout)
+      values.encounter.visit_details = "E/M code: 99214. Psychotherapy add-on code: 90833."
+
+      const pdf = schemaNotePdf(layout, values)
+
+      expect(layout.sections.map((s) => s.key)).toContain("mdm")
+      expect(pdf.sections.map((s) => s.title)).not.toContain("Medical decision making")
+      expect(JSON.stringify(pdf)).not.toContain("mdm.problems_addressed")
+      expect(pdf.sections[0].blocks[0]).toEqual({
+        label: "Visit details",
+        content: "E/M code: 99214. Psychotherapy add-on code: 90833.",
+      })
+    },
   )
 
   it("prints a practice type's stated diagnoses one per line, each as stated", () => {
