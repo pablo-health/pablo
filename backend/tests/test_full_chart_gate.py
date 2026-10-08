@@ -61,7 +61,9 @@ def _based_follow_up(registry: NoteTypeRegistry) -> Any:
     return resolve("custom.my_follow_up", 1, registry.get("psychiatric_follow_up"), spec)
 
 
-def _prompt(definition: Any) -> str:
+def _prompts(definition: Any) -> list[str]:
+    """Every prompt the draft sent: the note's own call, and the extraction for a
+    type whose chart-fed fields are written from the chart."""
     gateway = FakeStructuredLLMGateway(default_response=StructuredCompletion(data={}))
     service = RegistryNoteGenerationService(llm_gateway=gateway)
     patient = Patient(id="p", first_name="", last_name="", created_at=NOW, updated_at=NOW)
@@ -74,7 +76,7 @@ def _prompt(definition: Any) -> str:
         definition=definition,
         chart=CHART,
     )
-    return str(gateway.calls[0]["user_prompt"])
+    return [str(call["user_prompt"]) for call in gateway.calls]
 
 
 class _Proposing(RegistryNoteGenerationService):
@@ -93,14 +95,17 @@ def test_a_prescriber_note_gets_the_full_chart_and_proposes(
         registry.get("psychiatric_follow_up") if which == "built-in" else _based_follow_up(registry)
     )
 
-    prompt = _prompt(definition)
+    prompts = "\n".join(_prompts(definition))
     step = ChartProposalStep(InMemoryChartProposalRepository(), InMemoryChartHistoryRepository())
     drafted = step.draft(_Proposing(), definition, CHART, TRANSCRIPT, {})
 
     assert definition.full_chart
-    assert "- Allergies: Penicillin (Hives)" in prompt
-    assert "Sertraline 100 mg, every morning" in prompt
-    assert "work_school (Work or school" in prompt
+    # Written against the allergies, the medications and the history: the note's
+    # own call sees the medication list, and the extraction asks what the visit
+    # said about each field printed from the chart.
+    assert "allergies (Allergies): Penicillin (Hives)" in prompts
+    assert "Sertraline 100 mg, every morning" in prompts
+    assert "work_school (Work or school): Teacher, full time." in prompts
     assert drafted is not None
     assert [p.field_key for p in drafted.proposals] == ["work_school"]
 
@@ -111,7 +116,7 @@ def test_a_format_written_in_code_gets_the_problem_list_alone_and_proposes_nothi
 ) -> None:
     definition = registry.get(key)
 
-    prompt = _prompt(definition)
+    (prompt,) = _prompts(definition)[:1]
     step = ChartProposalStep(InMemoryChartProposalRepository(), InMemoryChartHistoryRepository())
 
     assert not definition.full_chart

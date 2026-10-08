@@ -16,6 +16,8 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .field_sources import FIELD_SOURCES, kind_for_source
+
 _PART_KEY = r"^[a-z][a-z0-9_]{0,39}$"
 
 _MIN_CHOICE_OPTIONS = 2
@@ -36,6 +38,22 @@ class PracticeFieldSpec(BaseModel):
     label: str = Field(min_length=1, max_length=80)
     kind: Literal["text", "list", "diagnoses"] = "text"
     ai_hint: str = Field(default="", max_length=2000)
+    source: str | None = Field(default=None, max_length=40, exclude_if=_omit_when_none)
+    """What code prints this field from, when it is not drafted by the model
+    (see :mod:`app.notes.field_sources`)."""
+
+    @model_validator(mode="after")
+    def _known_source(self) -> Self:
+        if self.source is None:
+            return self
+        if self.source not in FIELD_SOURCES:
+            raise ValueError(f"field {self.key!r} names an unknown source {self.source!r}")
+        if self.kind != kind_for_source(self.source):
+            raise ValueError(
+                f"field {self.key!r} prints {self.source!r}, which takes the "
+                f"{kind_for_source(self.source)!r} kind"
+            )
+        return self
 
 
 class PracticeSectionSpec(BaseModel):

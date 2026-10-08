@@ -231,7 +231,7 @@ def build_document_prompt(chart: ChartContext, segments: Mapping[int, str]) -> s
     return "\n".join(parts)
 
 
-def _segment_texts(indexed_transcript: str) -> dict[int, str]:
+def segment_texts(indexed_transcript: str) -> dict[int, str]:
     texts = {}
     for line in indexed_transcript.splitlines():
         head, _, rest = line.partition("] ")
@@ -239,7 +239,7 @@ def _segment_texts(indexed_transcript: str) -> dict[int, str]:
     return texts
 
 
-def _evidence(raw: Any, segments: Mapping[int, str]) -> tuple[Evidence, ...] | None:
+def cited_evidence(raw: Any, segments: Mapping[int, str]) -> tuple[Evidence, ...] | None:
     """The cited segments, or ``None`` when the proposal cites none or one this visit lacks."""
     if not isinstance(raw, list) or not raw:
         return None
@@ -270,7 +270,7 @@ def parse_proposals(
         family = family_for(field_key)
         if family is None:
             continue
-        evidence = _evidence(item.get("evidence_segment_ids"), segments)
+        evidence = cited_evidence(item.get("evidence_segment_ids"), segments)
         if evidence is None:
             continue
         proposal = DraftedProposal(
@@ -291,7 +291,7 @@ def parse_proposals(
         for item in items if isinstance(items, list) else []:
             if not isinstance(item, Mapping):
                 continue
-            evidence = _evidence(item.get("evidence_segment_ids"), segments)
+            evidence = cited_evidence(item.get("evidence_segment_ids"), segments)
             drafted = family.drafted(item, evidence, chart) if evidence is not None else None
             if drafted is None:
                 continue
@@ -316,7 +316,7 @@ def propose_chart_updates(
     if not indexed:
         return Drafted([])
     prompt = build_prompt(chart, indexed, draft=draft)
-    return _ask(complete, prompt, chart, _segment_texts(indexed), "transcript")
+    return _ask(complete, prompt, chart, segment_texts(indexed), "transcript")
 
 
 def propose_from_document(complete: CompleteStructured, chart: ChartContext, text: str) -> Drafted:

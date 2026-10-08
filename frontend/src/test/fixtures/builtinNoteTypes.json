@@ -821,7 +821,7 @@
             "key": "place_of_service",
             "label": "Place of service",
             "kind": "text",
-            "ai_hint": "If the place of service is telehealth, write: \"Visit conducted by synchronous audio and video telehealth on a HIPAA-compliant platform. The client was located at <client location>; the provider was located at <provider location>. The client consented to receive care by telehealth.\" using the entered locations (write \"location not entered\" for a missing one). If in office, write \"In-office visit.\" If not provided, write \"Not stated.\""
+            "ai_hint": "If the place of service is telehealth, write: \"Visit conducted by synchronous audio and video telehealth on a HIPAA-compliant platform. The client was in <client location> (\"at home in <client location>\" when the client said they were at home); the provider was in <provider location>. The client consented to receive care by telehealth.\" using the entered locations (write \"location not entered\" for a missing one). If in office, write \"In-office visit.\" If not provided, write \"Not stated.\""
           }
         ]
       },
@@ -1509,7 +1509,7 @@
             "key": "place_of_service",
             "label": "Place of service",
             "kind": "text",
-            "ai_hint": "If the place of service is telehealth, write: \"Visit conducted by synchronous audio and video telehealth on a HIPAA-compliant platform. The client was located at <client location>; the provider was located at <provider location>. The client consented to receive care by telehealth.\" using the entered locations (write \"location not entered\" for a missing one). If in office, write \"In-office visit.\" If not provided, write \"Not stated.\""
+            "ai_hint": "If the place of service is telehealth, write: \"Visit conducted by synchronous audio and video telehealth on a HIPAA-compliant platform. The client was in <client location> (\"at home in <client location>\" when the client said they were at home); the provider was in <provider location>. The client consented to receive care by telehealth.\" using the entered locations (write \"location not entered\" for a missing one). If in office, write \"In-office visit.\" If not provided, write \"Not stated.\""
           }
         ]
       },

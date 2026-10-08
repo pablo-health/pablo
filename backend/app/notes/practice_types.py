@@ -141,7 +141,9 @@ def to_definition(
                 key=s.key,
                 label=s.label,
                 fields=tuple(
-                    NoteFieldDef(key=f.key, label=f.label, kind=f.kind, ai_hint=f.ai_hint)
+                    NoteFieldDef(
+                        key=f.key, label=f.label, kind=f.kind, ai_hint=f.ai_hint, source=f.source
+                    )
                     for f in s.fields
                 ),
                 review_only=s.review_only,
