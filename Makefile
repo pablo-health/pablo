@@ -92,7 +92,8 @@ e2e:
 # up over a running stack lets Compose decide which services to recreate, and
 # when it recreates the auth emulator the accounts in the database outlive the
 # ones the emulator signs in, so every spec fails at sign-in. Run `make e2e-down
-# e2e-up` afterwards for the rest of the suite. CI runs this target as is.
+# e2e-up` afterwards for the rest of the suite. CI runs the same hosted stack
+# in an isolated job.
 e2e-hosted:
 	$(E2E_COMPOSE) down --volumes --remove-orphans
 	$(E2E_COMPOSE) -f docker-compose.e2e-hosted.yml up --wait
