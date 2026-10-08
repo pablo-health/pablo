@@ -6,8 +6,9 @@
  * handed to a prescriber's draft as the current list.
  *
  * The stack drafts through its stand-in (NOTE_GENERATION_BASE_URL), which
- * fills a current-medications field with the chart's list line for line —
- * so a draft that shows the list proves the chart reached the model.
+ * fills a current-medications field with the chart's list line for line, then
+ * what a client line says they take that the chart lacks — so a draft that
+ * shows the list proves the chart reached the model.
  */
 
 import { randomBytes } from "node:crypto"
@@ -122,7 +123,9 @@ test.describe("the medication list", () => {
       await api.patch(`/api/sessions/${session.id}/status`, { status: "recording_complete" })
       await api.post(`/api/sessions/${session.id}/transcript`, {
         format: "txt",
-        content: "[00:00:05] Therapist: Let's start bupropion XL 150 mg every morning.",
+        content:
+          "[00:00:02] Client: I'm taking melatonin 3 mg.\n" +
+          "[00:00:05] Therapist: Let's start bupropion XL 150 mg every morning.",
       })
       await expect
         .poll(async () => (await api.get<Session>(`/api/sessions/${session.id}`)).status)
@@ -134,6 +137,8 @@ test.describe("the medication list", () => {
       await expect(page.getByText("Psychiatric:")).toBeVisible()
       await expect(page.getByText("Other:")).toBeVisible()
       await expect(page.getByText(/Hydroxyzine/)).toHaveCount(0)
+      // What the client says they take that the chart lacks follows the list, marked.
+      await expect(page.getByText('"melatonin 3 mg" (stated this visit)')).toBeVisible()
     } finally {
       if (appointmentId) await api.delete(`/api/appointments/${appointmentId}`)
       await api.request("DELETE", `/api/note-types/custom/${slug}`)

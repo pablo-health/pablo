@@ -180,7 +180,7 @@
             "ai_hint": "Benzodiazepines and other sedatives, prescribed or not: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported. Record a denial as a denial. \"Not asked.\" if it did not come up."
           },
           {
-            "key": "nicotine",
+            "key": "tobacco_nicotine",
             "label": "Tobacco / nicotine",
             "kind": "text",
             "ai_hint": "Tobacco, vaping or other nicotine: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported. Record a denial as a denial. \"Not asked.\" if it did not come up."
@@ -274,6 +274,12 @@
             "label": "Supports",
             "kind": "text",
             "ai_hint": "Who supports the client, as named."
+          },
+          {
+            "key": "cultural_considerations",
+            "label": "Cultural considerations",
+            "kind": "text",
+            "ai_hint": "Cultural, religious, language or identity considerations relevant to care, as the client or clinician described them. \"Not asked.\" if it did not come up."
           }
         ]
       },
@@ -321,7 +327,7 @@
             "key": "current_medications",
             "label": "Current medications",
             "kind": "list",
-            "ai_hint": "From the chart; write it exactly as given, or 'None recorded'"
+            "ai_hint": "From the chart: its list exactly as given, or 'None recorded'. Then each medication the client reports currently taking that is not on the chart, quoted with the dose as stated, followed by \"(stated this visit)\". A medication started, stopped or changed in this visit goes in the plan, not here."
           },
           {
             "key": "allergies",

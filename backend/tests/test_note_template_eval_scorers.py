@@ -9,6 +9,7 @@ from datetime import date
 from typing import Any
 
 import pytest
+from app.chart_history.fields import HISTORY_GROUPS, SUBSTANCE_USE
 from app.notes.practice_types import practice_key, to_definition, validate_note_inputs
 from evals.note_templates.cases import (
     ALL_CASES,
@@ -73,6 +74,28 @@ THERAPY_DRAFT: dict[str, dict[str, Any]] = {
     },
 }
 
+
+def _history(recorded: dict[str, str]) -> dict[str, dict[str, str]]:
+    """Every chart-history section, each field the chart's text or "Not recorded"."""
+    return {
+        g.key: {f.key: recorded.get(f.key, "Not recorded") for f in g.fields}
+        for g in HISTORY_GROUPS
+        if g.key != SUBSTANCE_USE
+    }
+
+
+THERAPY_DRAFT.update(
+    _history(
+        {
+            "prior_diagnoses": (
+                "ADHD, predominantly inattentive, diagnosed in college; GAD diagnosed 2024."
+            ),
+            "work_school": "Financial analyst, full time, since 2022.",
+            "family_psychiatric": "Mother: generalized anxiety.\nFather: none known.",
+        }
+    )
+)
+
 MEDICATION_ONLY_DRAFT: dict[str, dict[str, Any]] = {
     "encounter": {
         "visit_details": "Date of service: 2026-03-13. E/M code: Not stated.",
@@ -100,6 +123,7 @@ MEDICATION_ONLY_DRAFT: dict[str, dict[str, Any]] = {
         "issues_addressed": "",
         "modality_interventions": "",
     },
+    **_history({}),
 }
 
 
@@ -119,6 +143,16 @@ def test_good_therapy_draft_passes() -> None:
 
 def test_good_medication_only_draft_passes() -> None:
     assert _failed(MEDICATION_ONLY_DRAFT, FOLLOW_UP_MEDICATION_ONLY) == {}
+
+
+def test_a_medication_the_client_reports_may_follow_the_charts_list() -> None:
+    draft = _with(
+        MEDICATION_ONLY_DRAFT,
+        "medications",
+        "current_medications",
+        ["Bupropion XL 150 mg, every morning", '"melatonin 3 mg" (stated this visit)'],
+    )
+    assert _failed(draft, FOLLOW_UP_MEDICATION_ONLY) == {}
 
 
 @pytest.mark.parametrize(
@@ -225,6 +259,16 @@ def test_good_medication_only_draft_passes() -> None:
             ["Adderall XR 20mg qAM", "Sertraline 50 mg, every morning"],
             "medications_from_chart",
         ),
+        # A history field rewritten from the visit, or left empty when the chart has it.
+        (
+            "social_history",
+            "work_school",
+            "Financial analyst; stressed about the quarterly review.",
+            "history_from_chart",
+        ),
+        ("psychiatric_history", "prior_diagnoses", "", "history_from_chart"),
+        # Nothing on the chart, but the draft fills it from the visit.
+        ("social_history", "relationships", "Supportive partner.", "history_from_chart"),
     ],
 )
 def test_therapy_draft_failures_are_caught(section: str, key: str, value: Any, check: str) -> None:
@@ -264,6 +308,8 @@ def test_therapy_draft_failures_are_caught(section: str, key: str, value: Any, c
             ["Depression, in remission", "Generalized anxiety disorder"],
             "diagnoses_only_stated",
         ),
+        # No history on the chart: a field reads "Not recorded", not "Not stated.".
+        ("trauma_history", "trauma_history", "Not stated.", "history_from_chart"),
         # The chart has bupropion; the list says none, or adds what it does not have.
         ("medications", "current_medications", ["None recorded"], "medications_from_chart"),
         (

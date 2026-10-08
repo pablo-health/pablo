@@ -365,6 +365,13 @@ const baseQueryKeys = {
       [...baseQueryKeys.problems.all, "byPatient", patientId] as const,
   },
 
+  // A client's history fields on the chart
+  chartHistory: {
+    all: ["chartHistory"] as const,
+    byPatient: (patientId: string) =>
+      [...baseQueryKeys.chartHistory.all, "byPatient", patientId] as const,
+  },
+
   // Availability rule query keys
   availabilityRules: {
     all: ["availabilityRules"] as const,

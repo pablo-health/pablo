@@ -15,6 +15,8 @@ import re
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
 
+from app.chart_history.fields import HISTORY_GROUPS, SUBSTANCE_USE
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -300,7 +302,10 @@ MEDICATION_HEADINGS = frozenset({"psychiatric:", "other:", "not categorized:"})
 
 
 def medications_from_chart(draft: Draft, case: TemplateCase) -> list[str]:
-    """The current list is the chart's, word for word, and holds nothing changed today."""
+    """The current list is the chart's, word for word, and holds nothing changed today.
+
+    A medication the client reports taking is allowed after it, marked as stated.
+    """
     expected = case.expected.current_medications
     if expected is None:
         return []
@@ -319,12 +324,31 @@ def medications_from_chart(draft: Draft, case: TemplateCase) -> list[str]:
         if item.strip()
         and item.strip().lower() not in MEDICATION_HEADINGS
         and normalize(item) not in wanted
+        and not item.rstrip().endswith("(stated this visit)")
     ]
     problems += [
         f"medications.current_medications: {word!r} was changed this visit; it belongs to the plan"
         for word in case.expected.not_current
         if any(word in normalize(i).split() for i in items)
     ]
+    return problems
+
+
+def history_from_chart(draft: Draft, case: TemplateCase) -> list[str]:
+    """Each history field is the chart's text, word for word, or "Not recorded"."""
+    recorded = {f.key: f.text for f in case.history}
+    problems = []
+    for group in HISTORY_GROUPS:
+        if group.key == SUBSTANCE_USE:
+            continue
+        for field in group.fields:
+            text = _text(draft, group.key, field.key)
+            path = f"{group.key}.{field.key}"
+            if field.key in recorded:
+                if normalize(text) != normalize(recorded[field.key]):
+                    problems.append(f"{path}: not the chart's text as recorded")
+            elif normalize(text) != "not recorded":
+                problems.append(f'{path}: nothing on the chart, so it should read "Not recorded"')
     return problems
 
 
@@ -339,6 +363,7 @@ CHECKS: dict[str, Callable[[Draft, TemplateCase], list[str]]] = {
     "diagnoses_only_stated": diagnoses_only_stated,
     "measures_undated": measures_undated,
     "medications_from_chart": medications_from_chart,
+    "history_from_chart": history_from_chart,
 }
 
 

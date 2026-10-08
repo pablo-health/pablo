@@ -210,6 +210,15 @@ class _Chart:
     allergies: str | None = None
     medications: list[str] | None = None
     """``None`` when the block has no medication list; ``[]`` when it says none recorded."""
+    history: dict[str, str] = field(default_factory=dict)
+    """Chart history text by field key, as recorded (the substance baseline excluded)."""
+
+
+#: How a client line names what they take: "Client: I'm taking A, B and C."
+_STATED_MEDICATIONS = ("Client: I'm taking ", "Client: I am taking ")
+
+#: How the backend renders one chart-history field: ``  - key (Label, recorded date): text``.
+_HISTORY_LINE = re.compile(r"^  - ([a-z_]+) \([^)]*, recorded [0-9-]+\): (.*)$")
 
 
 def _chart(user_prompt: str) -> _Chart | None:
@@ -221,7 +230,18 @@ def _chart(user_prompt: str) -> _Chart | None:
         return None
     chart = _Chart()
     listing: list[str] | None = None
+    history_key: str | None = None
+    in_history = False
     for line in user_prompt.splitlines():
+        if in_history and (match := _HISTORY_LINE.match(line)):
+            history_key = match.group(1)
+            chart.history[history_key] = match.group(2)
+            continue
+        if history_key is not None and line.startswith("    "):
+            chart.history[history_key] += "\n" + line.removeprefix("    ")
+            continue
+        history_key = None
+        in_history = line == "- Chart history:"
         if line.startswith("- Problem list:"):
             rest = line.removeprefix("- Problem list:").strip()
             chart.problems.extend([rest] if rest else [])
@@ -239,22 +259,49 @@ def _chart(user_prompt: str) -> _Chart | None:
     return chart
 
 
-def _with_chart(content: dict[str, Any], chart: _Chart) -> dict[str, Any]:
+def _current_medications(chart_lines: list[str], user_prompt: str) -> list[str]:
+    """The chart's list as written, then what the client says they take that it lacks.
+
+    A stated medication is matched to the chart by its first word, the drug's
+    name, and is added quoted and marked only when the chart does not list it.
+    """
+    listed = chart_lines or ["None recorded"]
+    on_chart = {line.split()[0].lower() for line in chart_lines if not line.endswith(":")}
+    # Plain string splitting: the prompt is caller text, so no regex runs over it.
+    stated: list[str] = []
+    for line in user_prompt.splitlines():
+        for opener in _STATED_MEDICATIONS:
+            _, found, named = line.partition(opener)
+            if found:
+                named = named.strip().removesuffix(".").replace(" and ", ",")
+                stated.extend(item.strip() for item in named.split(",") if item.strip())
+    return listed + [
+        f'"{item}" (stated this visit)'
+        for item in stated
+        if item.split()[0].lower() not in on_chart
+    ]
+
+
+def _with_chart(content: dict[str, Any], chart: _Chart, user_prompt: str = "") -> dict[str, Any]:
     """Echo the chart into the fields a model would put it in.
 
     A diagnosis field (or SOAP's clinical impression) names the listed
     problems; an allergies field states the chart's allergies; a current
-    medications field is the chart's list, line for line, or "None recorded".
-    So a spec can see that a draft was written against the chart it was
-    handed.
+    medications field is the chart's list, line for line, or "None recorded",
+    then any medication a client line says they take that the chart lacks;
+    a history field is the chart's text for its key, word for word. So a spec
+    can see that a draft was written against the chart it was handed.
     """
-    for section in content.values():
+    for section_key, section in content.items():
         if not isinstance(section, dict):
             continue
         for key, value in section.items():
             if key == "current_medications" and chart.medications is not None:
-                section[key] = chart.medications or ["None recorded"]
+                section[key] = _current_medications(chart.medications, user_prompt)
             if not isinstance(value, str):
+                continue
+            if key in chart.history and section_key != "substance_use":
+                section[key] = chart.history[key]
                 continue
             if "diagnos" in key or key == "clinical_impression":
                 section[key] = f"{value} Problem list: {'; '.join(chart.problems)}."
@@ -322,7 +369,7 @@ async def draft_note(call: NoteCall) -> dict[str, Any]:
     _fill_named(draft, _dictated(call.user_prompt))
     chart = _chart(call.user_prompt)
     if chart is not None:
-        draft = _with_chart(draft, chart)
+        draft = _with_chart(draft, chart, call.user_prompt)
     if "psychotherapy_start" in call.response_schema.get("properties", {}):
         draft["psychotherapy_start"] = _therapy_start(call.user_prompt)
     return {"data": draft, "finish_reason": "stop"}
