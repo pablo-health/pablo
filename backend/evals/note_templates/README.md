@@ -107,6 +107,42 @@ and `--model` overrides it. With `BRAINTRUST_API_KEY` set,
 `backend/evals/test_note_templates.py` pushes the cases to the
 `starting-templates` dataset in `pablo-note-generation`.
 
+## Recorded runs — 2026-10-08, the psychotherapy block
+
+Every case once, before and after the psychotherapy hints changed, on the
+production note model (`bedrock:us.anthropic.claude-sonnet-4-6`) and on the
+fallback (`gemini-3.1-pro-preview`), against a development project.
+
+| Model | Before | After | `therapy_grounded` failures, before | After |
+|---|---|---|---|---|
+| production | 6 of 14 | 8 of 14 | supportive-only, plan-not-stated, interleaved-dictated-minutes | supportive-only |
+| fallback | 12 of 14 | 13 of 14 | supportive-only | none |
+
+What the drafts invented before:
+
+- The listening visit's interventions as "Supportive therapy" (both models),
+  and its cadence as "Ongoing grief-focused supportive therapy to continue
+  at each visit".
+- A goal nobody set: "To continue processing grief" for the listening
+  visit, "Goal: improve sleep onset." for the sleep visit.
+- Progress judged: "The client demonstrated capacity to access positive
+  memories alongside grief", "a meaningful connection", "The client
+  demonstrated willingness to engage with exposure rationale".
+- "Sleep restriction guidance" for the advice to get up when sleep does not
+  come, which is not sleep restriction.
+
+After the change, the one failure left on the production model is the
+listening visit's goal and plan. It repeats the clinician's "Let's keep some
+time for this at each visit," which belongs to the cadence, where it also
+appears. The other failures in these runs are in `suffix_only_where_stated`
+and `diagnoses_only_stated`, on cases this change does not touch, and they
+fail the same way before and after.
+
+Seen, not graded: the production model's interventions for the therapy
+sample now describe the steps (rating the belief, weighing evidence for and
+against, a balanced thought) and no longer write "CBT" or "cognitive
+reframing". The worry window is still named, so the check passes.
+
 ## Recorded runs — 2026-10-08, history by symptom domain
 
 Configured note model, against a development project, after the follow-up
