@@ -308,6 +308,8 @@ def test_a_draft_echoes_the_chart_it_was_written_against(stand_in: list[str]) ->
     }
 
 
+Q_NEW = '(stated this visit: "...")'
+
 FOLLOW_UP_TEMPLATE = (
     Path(__file__).resolve().parents[2]
     / "frontend/src/components/settings/noteTypes/templates/psychiatric_follow_up.json"
@@ -384,8 +386,8 @@ def test_the_prescriber_templates_take_current_medications_from_the_chart(templa
         "From the chart, exactly as given, or 'None recorded'. Then each medication the client "
         "reports currently taking that the chart lacks"
     )
-    assert "(stated this visit: ...)" in hints["current_medications"]
-    assert "(stated this visit: ...)" in hints["allergies"]
+    assert Q_NEW in hints["current_medications"]
+    assert Q_NEW in hints["allergies"]
     assert "Never write NKDA unless the chart says it." in hints["allergies"]
 
 
@@ -454,8 +456,8 @@ def test_medications_the_client_reports_are_added_after_an_empty_chart(
     )
     assert current == [
         "None recorded",
-        "(stated this visit: sertraline 50 mg)",
-        "(stated this visit: trazodone 50 mg at night)",
+        '(stated this visit: "sertraline 50 mg")',
+        '(stated this visit: "trazodone 50 mg at night")',
     ]
 
 
@@ -493,7 +495,7 @@ def test_a_history_field_keeps_the_charts_text_and_adds_what_the_visit_changed(
     )
     social = generated.content["social_history"]
     assert social["work_school"] == (
-        "Employed at a logistics firm. (stated this visit: laid off last week.)"
+        'Employed at a logistics firm. (stated this visit: "laid off last week.")'
     )
     assert social["supports"] == "Sister nearby."
 
@@ -527,8 +529,8 @@ def test_the_stand_in_reads_a_pathological_line_in_bounded_time(line: str) -> No
         (
             "[00:04] Client: Update on alcohol: stopped drinking in September.\n"
             "[00:06] Client: Update on cannabis: a few times a month.",
-            "Two glasses of wine a week. (stated this visit: stopped drinking in September.)",
-            "Not recorded (stated this visit: a few times a month.)",
+            'Two glasses of wine a week. (stated this visit: "stopped drinking in September.")',
+            'Not recorded (stated this visit: "a few times a month.")',
         ),
     ],
 )

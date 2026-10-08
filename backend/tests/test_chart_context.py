@@ -135,7 +135,9 @@ def test_one_rule_covers_every_chart_fed_field() -> None:
     rule = _the_chart_fed_rule(render_chart_block(CHART, full_chart=True))
     assert "the allergies, the current medications, and any field whose instructions" in rule
     assert "prints the chart's text exactly as recorded above" in rule
-    assert f'append it after the chart\'s text as a quotation marked "{STATED_SUFFIX}"' in rule
+    assert f"inside quotation marks: {STATED_SUFFIX}." in rule
+    assert STATED_SUFFIX == '(stated this visit: "...")'
+    assert "never changes living_situation" in rule
     assert "Never replace, drop, contradict or silently merge the chart's text." in rule
     assert "is written in the plan, not in the current list" in rule
     block = render_chart_block(CHART, full_chart=True)
@@ -164,7 +166,7 @@ def test_a_stated_denial_is_appended_to_not_recorded_never_written_as_nkda() -> 
     block = render_chart_block(ChartContext(), full_chart=True)
     assert "- Allergies: Not recorded" in block
     rule = _the_chart_fed_rule(block)
-    assert '"Not recorded (stated this visit: no known drug allergies)"' in rule
+    assert 'Not recorded (stated this visit: "no allergies I know of")' in rule
     assert "never as a bare NKDA" in rule
     assert "- Allergies: No known drug allergies (NKDA)" not in block
 
@@ -451,7 +453,7 @@ def test_the_substance_baseline_is_listed_apart_and_screened_by_suffix() -> None
     rule = _the_chart_fed_rule(block)
     for suffix in (
         '"(asked this visit: no change)"',
-        '"(stated this visit: ...)"',
+        STATED_SUFFIX,
         '"(not asked this visit)"',
     ):
         assert suffix in rule

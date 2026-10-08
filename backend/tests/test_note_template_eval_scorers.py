@@ -33,9 +33,9 @@ THERAPY_DRAFT: dict[str, dict[str, Any]] = {
     "subjective": {"chief_complaint": '"The worry has been bad."'},
     "substance_use": {
         "alcohol": "One to two drinks on weekends. (asked this visit: no change)",
-        "tobacco_nicotine": "Not recorded (stated this visit: denies.)",
-        "cannabis": "Not recorded (stated this visit: denies.)",
-        "other_substances": "Not recorded (stated this visit: denies.)",
+        "tobacco_nicotine": 'Not recorded (stated this visit: "denies.")',
+        "cannabis": 'Not recorded (stated this visit: "denies.")',
+        "other_substances": 'Not recorded (stated this visit: "denies.")',
     },
     "risk": {
         "suicidal_homicidal_ideation": (
@@ -150,10 +150,10 @@ def test_what_the_visit_changed_may_follow_a_history_fields_chart_text() -> None
         THERAPY_DRAFT,
         "social_history",
         "work_school",
-        "Financial analyst, full time, since 2022. (stated this visit: on leave this month.)",
+        'Financial analyst, full time, since 2022. (stated this visit: "on leave this month.")',
     )
     draft = _with(
-        draft, "trauma_history", "trauma_history", "Not recorded (stated this visit: denies.)"
+        draft, "trauma_history", "trauma_history", 'Not recorded (stated this visit: "denies.")'
     )
     assert _failed(draft, FOLLOW_UP_WITH_THERAPY) == {}
 
@@ -163,7 +163,7 @@ def test_a_medication_the_client_reports_may_follow_the_charts_list() -> None:
         MEDICATION_ONLY_DRAFT,
         "medications",
         "current_medications",
-        ["Bupropion XL 150 mg, every morning", "(stated this visit: melatonin 3 mg)"],
+        ["Bupropion XL 150 mg, every morning", '(stated this visit: "melatonin 3 mg")'],
     )
     assert _failed(draft, FOLLOW_UP_MEDICATION_ONLY) == {}
 
@@ -251,6 +251,7 @@ def test_a_medication_the_client_reports_may_follow_the_charts_list() -> None:
             "substances",
         ),
         ("substance_use", "cannabis", "Not recorded (stated this visit: )", "substances"),
+        ("substance_use", "cannabis", 'Not recorded (stated this visit: "")', "substances"),
         # A diagnosis or code nobody entered.
         (
             "assessment",
@@ -326,7 +327,7 @@ def test_therapy_draft_failures_are_caught(section: str, key: str, value: Any, c
         (
             "substance_use",
             "tobacco_nicotine",
-            "Not recorded (stated this visit: denies)",
+            'Not recorded (stated this visit: "denies")',
             "substances",
         ),
         ("substance_use", "cannabis", "Not recorded (asked this visit: no change)", "substances"),

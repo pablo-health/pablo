@@ -278,7 +278,9 @@ def substances(draft: Draft, case: TemplateCase) -> list[str]:
             problems.append(f'{path}: should end "{NOT_ASKED}"')
         if k in e.substances_asked and not (
             screen == ASKED_NO_CHANGE
-            or (screen.startswith(STATED_PREFIX) and screen.removeprefix(STATED_PREFIX).strip(" )"))
+            or (
+                screen.startswith(STATED_PREFIX) and screen.removeprefix(STATED_PREFIX).strip(' )"')
+            )
         ):
             problems.append(f"{path}: asked, but no screen recorded")
     return problems

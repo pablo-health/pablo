@@ -9,7 +9,7 @@ listed nor stated by the clinician. Every other field fed from the chart
 (allergies, current medications, history, the substance-use baseline) prints
 the chart's text as recorded;
 what the visit states that changes or adds to it follows as a marked quotation,
-"(stated this visit: ...)", so the note never contradicts itself and never
+(stated this visit: "..."), so the note never contradicts itself and never
 loses what the chart said. A medication started, stopped or changed in the
 visit belongs to the plan, not to the current list.
 
@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
 STATED_THIS_VISIT = "(stated this visit)"
 #: How a chart-fed field marks what the visit stated after the chart's own text.
-STATED_SUFFIX = "(stated this visit: ...)"
+STATED_SUFFIX = '(stated this visit: "...")'
 
 
 @dataclass(frozen=True)
@@ -212,19 +212,22 @@ def render_chart_block(chart: ChartContext, *, full_chart: bool) -> str:
             "history above by key). Each prints the chart's text exactly as recorded above, "
             'or "Not recorded" ("None recorded" for medications) when the chart has nothing. '
             "If the client or clinician states something in this visit that changes or adds "
-            "to it, append it after the chart's text as a quotation marked "
-            f'"{STATED_SUFFIX}". Never replace, drop, contradict or silently merge the '
-            "chart's text. This covers an allergy stated whatever the chart says, NKDA "
-            "included; a denial stated when the chart's allergies are not recorded, written "
-            '"Not recorded (stated this visit: no known drug allergies)" and never as a bare '
-            "NKDA, which is a chart state the clinician sets; a statement that a recorded "
+            "to it, append it after the chart's text in the speaker's words, inside "
+            f"quotation marks: {STATED_SUFFIX}. Never replace, drop, contradict or silently "
+            "merge the chart's text. This covers an allergy stated whatever the chart says, "
+            "NKDA included; a denial stated when the chart's allergies are not recorded, "
+            'written like Not recorded (stated this visit: "no allergies I know of") and '
+            "never as a bare NKDA, which is a chart state the clinician sets; a statement "
+            "that a recorded "
             "allergy was a mistake, which never removes it; and each medication the client "
             "reports currently taking that the chart does not list, with the dose as stated. "
             "A medication the clinician starts, stops or changes in this visit is written in "
             "the plan, not in the current list. A substance-use field prints the substance "
             'use baseline above for its key, or "Not recorded", then this visit\'s screen '
             'as its suffix: "(asked this visit: no change)" when the client was asked and '
-            'described no change, "(stated this visit: ...)" with the change as stated, or '
-            '"(not asked this visit)" when it did not come up.'
+            f"described no change, {STATED_SUFFIX} with the change as stated, or "
+            '"(not asked this visit)" when it did not come up. The client\'s location '
+            "during a telehealth visit belongs to the place-of-service attestation: it is "
+            "not a statement about where they live and never changes living_situation."
         )
     return "\n".join(lines)

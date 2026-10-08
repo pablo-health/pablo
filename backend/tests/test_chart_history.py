@@ -69,11 +69,11 @@ def test_the_follow_up_reads_history_from_the_chart_and_screens_substances() -> 
             hint = hints[(group.key, field.key)]
             if field.key in history:
                 assert hint.startswith("From the chart, exactly as given, or 'Not recorded'.")
-                assert "(stated this visit: ...)" in hint
+                assert '(stated this visit: "...")' in hint
             else:
                 assert hint.startswith("The chart's substance use baseline for ")
                 assert "(asked this visit: no change)" in hint
-                assert "(stated this visit: ...)" in hint
+                assert '(stated this visit: "...")' in hint
                 assert "(not asked this visit)" in hint
 
 
@@ -253,3 +253,18 @@ def test_a_patient_the_caller_cannot_see_is_not_found(
         f"/api/patients/{patient_id}/chart-history/supports", json={"text": "Sister."}
     )
     assert response.status_code == 404
+
+
+def test_a_telehealth_location_is_not_where_the_client_lives() -> None:
+    spec = json.loads((TEMPLATES / "psychiatric_follow_up.json").read_text())["spec"]
+    hints = {(s["key"], f["key"]): f["ai_hint"] for s in spec["sections"] for f in s["fields"]}
+    hint = hints[("social_history", "living_situation")]
+    assert "location during a telehealth visit" in hint
+    assert "never changes this field" in hint
+
+
+@pytest.mark.parametrize("template", ["psychiatric_evaluation", "psychiatric_follow_up"])
+def test_the_prescriber_templates_never_gender_the_client(template: str) -> None:
+    spec = json.loads((TEMPLATES / f"{template}.json").read_text())["spec"]
+    assert "never he, she, his or her" in spec["system_prompt"]
+    assert "they/them" in spec["system_prompt"]

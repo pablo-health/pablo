@@ -290,7 +290,7 @@ def _unchanged(user_prompt: str) -> set[str]:
 def _screened(chart: _Chart, key: str, updates: dict[str, str], unchanged: set[str]) -> str:
     """A substance field: the chart's baseline, then this visit's screen."""
     if key in updates:
-        screen = f"(stated this visit: {updates[key]})"
+        screen = f'(stated this visit: "{updates[key]}")'
     elif key in unchanged:
         screen = "(asked this visit: no change)"
     else:
@@ -302,7 +302,7 @@ def _current_medications(chart_lines: list[str], user_prompt: str) -> list[str]:
     """The chart's list as written, then what the client says they take that it lacks.
 
     A stated medication is matched to the chart by its first word, the drug's
-    name, and is added as ``(stated this visit: ...)`` only when the chart does
+    name, and is added as ``(stated this visit: "...")`` only when the chart does
     not list it.
     """
     listed = chart_lines or ["None recorded"]
@@ -316,7 +316,9 @@ def _current_medications(chart_lines: list[str], user_prompt: str) -> list[str]:
                 named = named.strip().removesuffix(".").replace(" and ", ",")
                 stated.extend(item.strip() for item in named.split(",") if item.strip())
     return listed + [
-        f"(stated this visit: {item})" for item in stated if item.split()[0].lower() not in on_chart
+        f'(stated this visit: "{item}")'
+        for item in stated
+        if item.split()[0].lower() not in on_chart
     ]
 
 
@@ -348,7 +350,7 @@ def _with_chart(content: dict[str, Any], chart: _Chart, user_prompt: str = "") -
             if (key in chart.history or key in updates) and section_key != "substance_use":
                 section[key] = chart.history.get(key, "Not recorded")
                 if key in updates:
-                    section[key] += f" (stated this visit: {updates[key]})"
+                    section[key] += f' (stated this visit: "{updates[key]}")'
                 continue
             if "diagnos" in key or key == "clinical_impression":
                 section[key] = f"{value} Problem list: {'; '.join(chart.problems)}."
