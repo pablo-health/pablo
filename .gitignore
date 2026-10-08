@@ -87,3 +87,6 @@ credentials.json
 *.pem
 *.p12
 !*.example
+
+# Scanner caches (Trivy writes .cache/trivy during the base-image bump)
+.cache/
