@@ -90,7 +90,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Annotated, NoReturn
+from typing import TYPE_CHECKING, Annotated, NoReturn
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, status
 
@@ -137,6 +137,8 @@ from ..models.patient_message_api import (
     InboxThreadResponse,
     UnreadThreadCountResponse,
 )
+from ..portal.factory import get_notice_delivery
+from ..portal.message_notice import notify_patient_of_reply
 from ..rate_limit import get_patient_message_send_limiter
 from ..repositories import (
     InboxItemStateRepository,
@@ -153,6 +155,9 @@ from ..repositories import get_patient_repository as _patient_repo_factory
 from ..services import AuditService, get_audit_service
 from ..services.patient_message_hooks import PatientMessageEvent, dispatch_patient_message
 from ..utcnow import utc_now
+
+if TYPE_CHECKING:
+    from ..portal.delivery import PortalNoticeDelivery
 
 logger = logging.getLogger(__name__)
 
@@ -845,6 +850,8 @@ def reply_to_thread(
     documents: PatientDocumentRepository = Depends(get_patient_document_repository),
     inbox_states: InboxItemStateRepository = Depends(get_reply_inbox_state_repository),
     users: UserRepository = Depends(get_user_repository),
+    patients: PatientRepository = Depends(get_clinician_patient_repository),
+    notices: PortalNoticeDelivery = Depends(get_notice_delivery),
     audit: AuditService = Depends(get_audit_service),
 ) -> ClinicianReplyResponse:
     """Write back to the patient. This is the other half of the loop.
@@ -938,6 +945,16 @@ def reply_to_thread(
         practice_schema=ctx.practice_schema,
         thread=thread,
         message=message,
+    )
+    # The patient hears that something is waiting, once until they read it
+    # (see :mod:`app.portal.message_notice`). Never fails the reply.
+    patient = patients.get(thread.patient_id, user.id)
+    notify_patient_of_reply(
+        notices,
+        repo,
+        patient_id=thread.patient_id,
+        to_email=patient.email if patient is not None else None,
+        from_clinician_email=user.email,
     )
     return ClinicianReplyResponse(
         **PatientMessageResponse.from_message(message).model_dump(), inbox=outcome
