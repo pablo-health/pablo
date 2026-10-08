@@ -1,0 +1,270 @@
+# Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+
+"""Synthetic visits written for the eval, about no one.
+
+Each is in the templates' own sample format: one line per turn, a timestamp,
+the speaker (Therapist is the clinician, Client the client), and whatever the
+clinician dictates after the client's last line. Generation numbers the lines
+as transcript segments, exactly as it numbers a recorded session's.
+
+Each visit exists to put one chart rule under pressure, named above it.
+"""
+
+from __future__ import annotations
+
+# A chart with every field filled, and a visit that changes none of it.
+# Alcohol, cannabis and nicotine are asked by name; nothing else is.
+FULL_CHART = """\
+[00:00:04] Therapist: Hi Avery, come on in. How have the last two months been?
+[00:00:09] Client: Steady, honestly. Mood has been good, and I'm sleeping through most nights.
+[00:00:16] Therapist: Are you taking the sertraline every morning?
+[00:00:19] Client: Every morning. And the trazodone maybe twice a week, when I can't settle.
+[00:00:26] Therapist: Any nausea, headaches, feeling groggy in the morning after the trazodone?
+[00:00:31] Client: A little groggy the morning after, but it wears off by nine.
+[00:00:37] Therapist: How's the worry?
+[00:00:40] Client: It's there, but I can talk myself down. Nothing like last year.
+[00:00:46] Therapist: Alcohol, same as before?
+[00:00:49] Client: Same as always. A glass of wine with dinner a couple of times a week.
+[00:00:55] Therapist: Any cannabis?
+[00:00:57] Client: No.
+[00:00:59] Therapist: Do you smoke or vape?
+[00:01:01] Client: No, never have.
+[00:01:04] Therapist: Any thoughts of hurting yourself or anyone else?
+[00:01:07] Client: No.
+[00:01:09] Therapist: Good. Then we keep everything the same, and I'll see you in eight weeks.
+[00:01:14] Client: Sounds good.
+[00:01:31] Therapist: Note for the record. Client alert and oriented times four, well groomed, \
+good eye contact. Speech normal. Mood "steady", affect full and congruent. Thought process \
+linear. No hallucinations or delusions. Denies SI and HI. Insight and judgment good. Major \
+depression, recurrent, stable. Generalized anxiety stable. Continue sertraline 100 milligrams \
+every morning and trazodone 50 at bedtime as needed. Return in eight weeks.
+"""
+
+# The client was laid off since the chart's work history was written, and
+# reports a medication another doctor started. The clinician starts one.
+STATED_CHANGE = """\
+[00:00:05] Therapist: Hi Morgan. Are you at home today?
+[00:00:08] Client: Yes, at home.
+[00:00:10] Therapist: How have things been since last month?
+[00:00:14] Client: Not great. I got laid off from the bank three weeks ago. They closed my branch.
+[00:00:22] Therapist: I'm sorry. How has your mood been since then?
+[00:00:26] Client: Low. I'm sleeping until noon some days and I don't want to do anything.
+[00:00:33] Therapist: Are you still taking the escitalopram every morning?
+[00:00:36] Client: Yes, every day. Oh, and my primary care doctor put me on omeprazole, \
+20 milligrams every morning, for heartburn.
+[00:00:45] Therapist: Thanks, good to know. Any side effects from the escitalopram?
+[00:00:49] Client: No.
+[00:00:51] Therapist: Any alcohol?
+[00:00:53] Client: A bit more than usual. Maybe three beers on a weekend night.
+[00:00:59] Therapist: Any thoughts of hurting yourself or anyone else?
+[00:01:02] Client: No. I'm frustrated, but no.
+[00:01:06] Therapist: Okay. I'd like to add bupropion XL, 150 milligrams in the morning, \
+for energy and motivation. It can cause trouble sleeping or some jitteriness at first, and \
+rarely seizures, so no binge drinking on it. The alternative is staying where we are. What \
+do you think?
+[00:01:24] Client: Let's try it.
+[00:01:26] Therapist: Okay. Keep the escitalopram the same. Call the office if anything \
+gets worse, and 988 if it's urgent. I'll see you in four weeks.
+[00:01:34] Client: Thanks.
+[00:01:52] Therapist: Note for the record. Client alert and oriented times four, casually \
+dressed, fair eye contact. Speech soft, normal rate. Mood "low", affect constricted. Thought \
+process linear. No hallucinations or delusions. Denies SI and HI. Insight and judgment good. \
+Major depression worsening after job loss. Continue escitalopram 10 milligrams every morning. \
+Start bupropion XL 150 milligrams every morning; risks, benefits and the alternative of no \
+change discussed, client agreed. Return in four weeks. Billing 99214.
+"""
+
+# The chart says no known drug allergies; the client now reports one.
+ALLERGY_STATED = """\
+[00:00:04] Therapist: Hi Quinn. How have you been?
+[00:00:07] Client: Pretty even. No highs, no big lows.
+[00:00:11] Therapist: Taking the lamotrigine twice a day?
+[00:00:14] Client: Yes. Oh, I should tell you, I found out I'm allergic to amoxicillin. \
+Urgent care gave it to me last month and I broke out in a rash all over.
+[00:00:25] Therapist: Thank you for telling me. Any rash from the lamotrigine itself, or \
+anything new on your skin since then?
+[00:00:31] Client: No, it cleared up when I stopped the amoxicillin.
+[00:00:35] Therapist: Good. Any alcohol or cannabis?
+[00:00:38] Client: Neither.
+[00:00:40] Therapist: Any thoughts of hurting yourself or anyone else?
+[00:00:43] Client: No.
+[00:00:45] Therapist: Then we'll keep the lamotrigine the same. See you in six weeks.
+[00:00:50] Client: Okay, thanks.
+[00:01:06] Therapist: Note for the record. Client alert and oriented, well groomed. Speech \
+normal. Mood "even", affect euthymic. Thought process linear. Denies SI and HI. Insight and \
+judgment good. Bipolar II, stable. Continue lamotrigine 100 milligrams twice daily. Return \
+in six weeks.
+"""
+
+# The chart records a penicillin allergy; the client says it was never theirs.
+ALLERGY_DISPUTED = """\
+[00:00:05] Therapist: Hi Drew. You're at your apartment today?
+[00:00:08] Client: Yep.
+[00:00:10] Therapist: How's the focus been on the atomoxetine?
+[00:00:14] Client: Better. I'm finishing my problem sets on time. One thing, though. That \
+penicillin allergy on my record? My mom says that was actually my brother. I've never \
+reacted to anything.
+[00:00:27] Therapist: Okay. Let's leave it on your chart until your primary care doctor \
+can confirm it, just to be safe.
+[00:00:33] Client: That's fine.
+[00:00:35] Therapist: Any stomach upset or trouble sleeping on the atomoxetine?
+[00:00:39] Client: Some stomach upset if I take it without breakfast.
+[00:00:44] Therapist: Take it with food, then. Any alcohol?
+[00:00:47] Client: Not really. A beer at a party once a month, maybe.
+[00:00:52] Therapist: Any thoughts of hurting yourself or anyone else?
+[00:00:55] Client: No.
+[00:00:57] Therapist: Good. Same dose, and I'll see you in two months.
+[00:01:01] Client: Thanks.
+[00:01:18] Therapist: Note for the record. Client alert and oriented, casually dressed. \
+Speech normal. Mood "good", affect bright. Thought process linear. Denies SI and HI. Insight \
+and judgment good. ADHD improving. Continue atomoxetine 40 milligrams every morning, with \
+food. Return in two months.
+"""
+
+# A client whose chart has nothing on it yet. The visit talks only about
+# sleep: no medication, allergy or history comes up, and no diagnosis is named.
+EMPTY_CHART = """\
+[00:00:04] Therapist: Hi Taylor. Last time we agreed to try the sleep changes before any \
+medication. How did that go?
+[00:00:11] Client: Better than I expected. I've been off my phone by ten and getting up at \
+the same time every day.
+[00:00:19] Therapist: How long to fall asleep now?
+[00:00:22] Client: Maybe half an hour. It used to be two hours.
+[00:00:26] Therapist: And waking in the night?
+[00:00:29] Client: Once, but I get back to sleep.
+[00:00:32] Therapist: Any alcohol?
+[00:00:34] Client: A beer or two on weekends.
+[00:00:37] Therapist: Cannabis, to help you sleep?
+[00:00:40] Client: No.
+[00:00:42] Therapist: Any thoughts of hurting yourself or anyone else?
+[00:00:45] Client: No.
+[00:00:47] Therapist: Great. Let's keep going without medication and check in in four weeks.
+[00:00:52] Client: Sounds good.
+[00:01:08] Therapist: Note for the record. Client alert and oriented, well groomed. Speech \
+normal. Mood "better", affect full. Thought process linear. Denies SI and HI. Insight and \
+judgment good. Sleep onset improved with the sleep schedule. No medication started. Return \
+in four weeks.
+"""
+
+# A first visit for a client with nothing on the chart. They list what they
+# take and deny allergies. The clinician states two diagnoses with codes.
+INTAKE = """\
+[00:00:04] Therapist: Hi Jamie, thanks for coming in. Can you confirm where you are right now?
+[00:00:09] Client: At home, in my bedroom.
+[00:00:12] Therapist: What brings you in?
+[00:00:15] Client: Panic attacks. I've had four this month, two of them at work. I thought \
+I was having a heart attack the first time.
+[00:00:25] Therapist: When did they start?
+[00:00:28] Client: The first one was in 2019, but they went away. They came back in August.
+[00:00:35] Therapist: Has anyone diagnosed you before?
+[00:00:38] Client: My primary care doctor said panic disorder, back in 2019.
+[00:00:44] Therapist: Any therapy?
+[00:00:46] Client: I did CBT for about six months in 2020. It helped a lot.
+[00:00:52] Therapist: Any medications for it before?
+[00:00:55] Client: Sertraline, 25 milligrams. It made me so nauseous I stopped after two weeks.
+[00:01:02] Therapist: Any hospital stays or programs for mental health?
+[00:01:05] Client: No, never.
+[00:01:07] Therapist: Have you ever tried to hurt yourself or end your life, or hurt someone else?
+[00:01:12] Client: No, never.
+[00:01:14] Therapist: Any legal trouble or custody issues?
+[00:01:17] Client: No.
+[00:01:19] Therapist: Anything you've been through that you'd call traumatic?
+[00:01:23] Client: A car accident when I was seventeen. I was okay, but I don't like highways.
+[00:01:30] Therapist: Who do you live with?
+[00:01:32] Client: A roommate, in an apartment.
+[00:01:35] Therapist: Relationships, family?
+[00:01:38] Client: Single right now. I'm close with my dad.
+[00:01:42] Therapist: And work?
+[00:01:44] Client: I'm a nurse, on night shifts at the hospital.
+[00:01:48] Therapist: Who do you lean on?
+[00:01:50] Client: My dad and my roommate.
+[00:01:53] Therapist: Anything about your culture, faith or background you'd like me to know?
+[00:01:58] Client: I'm Catholic, and church on Sundays matters to me.
+[00:02:03] Therapist: Any medical problems?
+[00:02:05] Client: Hypothyroidism.
+[00:02:07] Therapist: What medications do you take now?
+[00:02:10] Client: Levothyroxine, 75 micrograms every morning. And omeprazole, 20 \
+milligrams before breakfast.
+[00:02:18] Therapist: Any allergies to medications?
+[00:02:21] Client: No, none that I know of.
+[00:02:24] Therapist: Anyone in your family with anxiety, depression, or other mental health \
+problems?
+[00:02:29] Client: My aunt has panic attacks too.
+[00:02:32] Therapist: Medical problems in the family?
+[00:02:34] Client: My dad has heart disease.
+[00:02:37] Therapist: How much alcohol do you drink?
+[00:02:40] Client: Hardly any. A glass of wine at a holiday.
+[00:02:44] Therapist: Cannabis?
+[00:02:46] Client: No.
+[00:02:48] Therapist: Do you smoke or vape?
+[00:02:50] Client: No.
+[00:02:52] Therapist: Any cocaine, opioids, or anything like Xanax that wasn't prescribed to you?
+[00:02:57] Client: No, none of that.
+[00:03:00] Therapist: Any thoughts of hurting yourself or anyone else right now?
+[00:03:04] Client: No.
+[00:03:06] Therapist: You did the GAD-7 before the visit and scored 16.
+[00:03:10] Client: That sounds right.
+[00:03:12] Therapist: I'd like to start escitalopram, 5 milligrams daily for a week, then 10. \
+Nausea is possible early on, usually milder than with sertraline. Some people feel more \
+anxious the first week, and rarely mood gets worse or thoughts of self-harm appear, so call \
+me if that happens. The alternative is going back to CBT on its own. What do you think?
+[00:03:31] Client: I'll try it, and I'd like to get back into therapy too.
+[00:03:35] Therapist: Good. I'll send you some therapist names. I'll see you in four weeks, \
+and call the office or 988 if anything gets worse.
+[00:03:42] Client: Thank you.
+[00:04:01] Therapist: Note for the record. Visit from 2:00 to 2:55 by video. Client well \
+groomed, good eye contact, mildly restless. Alert and oriented times four. Speech normal \
+rate, slightly fast. Mood "on edge", affect anxious. Thought process linear. No \
+hallucinations or delusions. Denies SI and HI, no past attempts. Cognition intact. Insight \
+and judgment good. Protective factors: employed, close to father, engaged in treatment. \
+Overall acute risk is low. Diagnoses: panic disorder, F41.0, recurrent panic attacks since \
+August with fear of dying and avoidance at work. Generalized anxiety disorder, F41.1, GAD-7 \
+16. Start escitalopram 5 milligrams daily for seven days, then 10 milligrams daily; side \
+effects, the activation and suicidality warning, and the alternative of CBT alone \
+discussed; client agreed. Referral to a CBT therapist. Return in four weeks. Billing 90792.
+"""
+
+# The client reports passive suicidal thoughts; the clinician states the risk
+# level and the safety plan only in the dictated addendum.
+RISK_LANGUAGE = """\
+[00:00:05] Therapist: Hi Sky. Are you at home today?
+[00:00:08] Client: Yeah.
+[00:00:10] Therapist: How have the last two weeks been?
+[00:00:13] Client: Worse. The dark mornings are getting to me. I'm dragging myself through work.
+[00:00:20] Therapist: Taking the sertraline every morning?
+[00:00:23] Client: Every morning.
+[00:00:25] Therapist: Any thoughts of hurting yourself or that you'd be better off dead?
+[00:00:30] Client: Some nights I think everyone would be better off without me.
+[00:00:35] Therapist: Thank you for telling me. Have you thought about how you might do it, \
+or about acting on it?
+[00:00:40] Client: No. I wouldn't do anything. I don't have a plan.
+[00:00:44] Therapist: Have you done anything to hurt yourself, like cutting?
+[00:00:47] Client: No, I haven't done anything like that.
+[00:00:50] Therapist: Any thoughts of hurting anyone else?
+[00:00:53] Client: No.
+[00:00:55] Therapist: Are there any guns in the house?
+[00:00:57] Client: No.
+[00:00:59] Therapist: What tends to come right before those nights?
+[00:01:03] Client: Lying awake going over everything I did wrong that day.
+[00:01:07] Therapist: When that starts, what could you do instead?
+[00:01:10] Client: Take the dog out. Call my sister, she's always up late.
+[00:01:15] Therapist: Good. And if it gets stronger, or you start thinking about acting on \
+it, you call or text 988, or call the office. Can you do that?
+[00:01:22] Client: Yes.
+[00:01:24] Therapist: I'd like to go up on the sertraline from 150 to 200 milligrams. \
+Some stomach upset is possible. The alternative is keeping the dose and adding a light box. \
+What do you think?
+[00:01:35] Client: Let's go up.
+[00:01:37] Therapist: Okay. I'll see you in two weeks.
+[00:01:40] Client: Okay.
+[00:01:58] Therapist: Note for the record. Client alert and oriented times four, \
+casually dressed, poor eye contact. Speech slow, soft. Mood "worse", affect constricted. \
+Thought process linear. No hallucinations or delusions. Passive suicidal ideation, no \
+intent, no plan, no self-harm behaviors, no firearms in the home. Denies HI. Risk factors: \
+recurrent depression, passive suicidal ideation, seasonal worsening. Protective factors: \
+sister, dog, engaged in treatment. Overall acute risk is moderate. Safety plan completed: \
+warning sign is late-night rumination, coping is walking the dog and calling their sister, \
+crisis contacts 988 and the office. Major depression, recurrent, worsening. Increase \
+sertraline to 200 milligrams every morning; side effects and the alternative of a light box \
+discussed, client agreed. Return in two weeks.
+"""
