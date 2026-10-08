@@ -8,7 +8,8 @@ Runs inside the request's tenant-scoped session, so the row policy
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from dataclasses import asdict
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import delete, select
 
@@ -16,6 +17,8 @@ from ...chart_proposals.models import (
     ChartProposal,
     Decision,
     Evidence,
+    MedicationAction,
+    MedicationChange,
     Origin,
     ProposalRun,
     RunStatus,
@@ -28,6 +31,19 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from sqlalchemy.orm import Session
+
+
+def _change(raw: dict[str, Any] | None) -> MedicationChange | None:
+    if not raw:
+        return None
+    return MedicationChange(
+        action=cast("MedicationAction", raw["action"]),
+        drug_name=str(raw["drug_name"]),
+        dose=raw.get("dose"),
+        frequency=raw.get("frequency"),
+        category=raw.get("category"),
+        reason=raw.get("reason"),
+    )
 
 
 def _proposal(row: NoteChartProposalRow) -> ChartProposal:
@@ -46,6 +62,7 @@ def _proposal(row: NoteChartProposalRow) -> ChartProposal:
         decided_text=row.decided_text,
         decided_by=row.decided_by,
         decided_at=row.decided_at,
+        change=_change(row.change),
     )
 
 
@@ -76,6 +93,7 @@ class PostgresChartProposalRepository(ChartProposalRepository):
                     origin=p.origin,
                     decision=p.decision,
                     created_at=p.created_at,
+                    change=asdict(p.change) if p.change is not None else None,
                 )
             )
         self._session.flush()

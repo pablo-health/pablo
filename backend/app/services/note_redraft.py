@@ -354,7 +354,7 @@ class NoteRedraftService:
         previous = note.content
         shown = as_shown(note.note_type, previous, note.content_edited if keep_edits else None)
         step = self.proposal_step
-        chart = step.chart(patient) if step is not None else None
+        chart = step.chart(patient, user_id) if step is not None else None
         # Nothing is held open across the model call (see generate_session_note).
         release_db_connection()
 

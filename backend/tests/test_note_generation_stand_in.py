@@ -539,6 +539,28 @@ def test_the_stand_in_proposes_what_a_line_says_for_the_chart(stand_in: list[str
     assert [[e.segment_id for e in p.evidence] for p in proposals] == [[1], [2]]
 
 
+def test_the_stand_in_proposes_what_a_clinician_line_says_for_the_medication_list(
+    stand_in: list[str],
+) -> None:
+    """A ``Medication <action>: <name>; <dose>; <frequency>; <reason>`` line is a change."""
+    transcript = Transcript(
+        format="txt",
+        content="[00:01] Clinician: Medication start: hydroxyzine; 25 mg; in the afternoon\n"
+        "[00:04] Clinician: Medication stop: trazodone; ; ; nausea",
+    )
+    chart = ChartContext(medications=(ChartMedication("trazodone", "50 mg", "at bedtime"),))
+
+    proposals = propose_chart_updates(
+        _service().chart_proposal_completion(), chart, transcript
+    ).proposals
+
+    assert [(p.item_key, p.proposed_text) for p in proposals] == [
+        ("hydroxyzine", "hydroxyzine 25 mg, in the afternoon"),
+        ("trazodone", "Stopped: nausea"),
+    ]
+    assert [[e.segment_id for e in p.evidence] for p in proposals] == [[0], [1]]
+
+
 @pytest.mark.parametrize(
     ("transcript", "alcohol", "cannabis"),
     [

@@ -310,7 +310,9 @@ def get_worker_session_service(
         _problem_repo_factory(),
         _medication_repo_factory(),
         _history_repo_factory(),
-        ChartProposalStep(_proposal_repo_factory(), _history_repo_factory()),
+        ChartProposalStep(
+            _proposal_repo_factory(), _history_repo_factory(), _medication_repo_factory()
+        ),
     )
 
 

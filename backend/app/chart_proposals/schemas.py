@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import datetime  # noqa: TC003 — pydantic resolves field types at runtime
 from typing import TYPE_CHECKING, Literal, Self
 
@@ -40,11 +41,25 @@ class EvidenceResponse(BaseModel):
     text: str
 
 
+class MedicationChangeResponse(BaseModel):
+    action: Literal["start", "stop", "change", "add"]
+    drug_name: str
+    dose: str | None
+    frequency: str | None
+    category: str | None
+    reason: str | None
+
+
 class ChartProposalResponse(BaseModel):
     id: str
     field_key: str
     item_key: str
     label: str
+    editable: bool
+    """Whether the proposed text can be rewritten before it is written; a medication
+    change is accepted or discarded."""
+    change: MedicationChangeResponse | None
+    """The structured change, for a medication proposal; ``None`` for free text."""
     current_text: str | None
     """What the chart says now, ``None`` when nothing is recorded."""
     proposed_text: str
@@ -91,6 +106,12 @@ def proposal_response(proposal: ChartProposal, chart: ChartContext) -> ChartProp
         field_key=proposal.field_key,
         item_key=proposal.item_key,
         label=family.label(proposal),
+        editable=family.editable,
+        change=(
+            MedicationChangeResponse(**asdict(proposal.change))
+            if proposal.change is not None
+            else None
+        ),
         current_text=family.current_text(chart, proposal),
         proposed_text=proposal.proposed_text,
         what_changed=proposal.what_changed,

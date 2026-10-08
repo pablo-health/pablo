@@ -245,7 +245,9 @@ def get_worker_medication_repository() -> MedicationRepository:
 
 def get_worker_proposal_step() -> ChartProposalStep:
     """The chart-proposal step after a draft, for the worker (it arms its own tenant)."""
-    return ChartProposalStep(_proposal_repo_factory(), _history_repo_factory())
+    return ChartProposalStep(
+        _proposal_repo_factory(), _history_repo_factory(), _medication_repo_factory()
+    )
 
 
 def get_worker_history_repository() -> ChartHistoryRepository:

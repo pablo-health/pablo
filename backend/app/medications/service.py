@@ -72,9 +72,12 @@ class MedicationService:
         patient_id: str,
         user_id: str,
         req: CreateMedicationRequest,
+        *,
+        source_note_id: str | None = None,
     ) -> dict[str, object]:
         """Create and persist a new medication record.
 
+        ``source_note_id`` is the note whose accepted proposal added it.
         Returns the saved row dict.
 
         Raises :class:`PatientMedicationAccessError` when the caller has no
@@ -93,6 +96,7 @@ class MedicationService:
             "stopped_at": None,
             "stop_reason": req.stop_reason,
             "notes": req.notes,
+            "source_note_id": source_note_id,
             "created_by": user_id,
             "created_at": now,
             "updated_at": now,
@@ -108,8 +112,13 @@ class MedicationService:
         med_id: str,
         user_id: str,
         req: UpdateMedicationRequest,
+        *,
+        source_note_id: str | None = None,
     ) -> dict[str, object]:
         """Apply a partial update to a medication record.
+
+        ``source_note_id``, when given, is the note whose accepted proposal made
+        the change; an edit on the chart leaves the last one in place.
 
         Automatically sets ``stopped_at`` to today when ``status`` changes
         to ``"discontinued"`` and no explicit ``stopped_at`` is given.
@@ -136,14 +145,14 @@ class MedicationService:
             if req.status == "discontinued" and old_status != "discontinued":
                 auto = req.stopped_at if req.stopped_at is not None else datetime.now(UTC).date()
                 existing["stopped_at"] = auto
-        if req.started_at is not None:
-            existing["started_at"] = req.started_at
-        if req.stopped_at is not None:
-            existing["stopped_at"] = req.stopped_at
-        if req.stop_reason is not None:
-            existing["stop_reason"] = req.stop_reason
-        if req.notes is not None:
-            existing["notes"] = req.notes
+        given = {
+            "started_at": req.started_at,
+            "stopped_at": req.stopped_at,
+            "stop_reason": req.stop_reason,
+            "notes": req.notes,
+            "source_note_id": source_note_id,
+        }
+        existing.update({key: value for key, value in given.items() if value is not None})
 
         existing["updated_at"] = utc_now()
 
