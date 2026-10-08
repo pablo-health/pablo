@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 
 import { IntakeFormsCard } from "../IntakeFormsCard"
@@ -28,6 +28,11 @@ const mockPublish = vi.fn()
 // picker itself is the item editor's test; here it only has to not be a
 // network call.
 const mockUsePublishedDocuments = vi.fn()
+
+const mockSearchParams = vi.hoisted(() => ({ current: new URLSearchParams() }))
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => mockSearchParams.current,
+}))
 
 vi.mock("@/hooks/useIntakeDocuments", () => ({
   usePublishedIntakeDocuments: () => mockUsePublishedDocuments(),
@@ -100,6 +105,7 @@ const TEMPLATE: IntakeTemplate = {
 describe("IntakeFormsCard", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockSearchParams.current = new URLSearchParams()
     mockUseTemplates.mockReturnValue({ data: [TEMPLATE] })
     mockUseVersion.mockReturnValue({ data: DRAFT })
     mockUsePublishedDocuments.mockReturnValue({ data: [] })
@@ -248,14 +254,18 @@ describe("IntakeFormsCard", () => {
     expect(mockCreateTemplate).toHaveBeenCalledWith("New packet", expect.anything())
   })
 
-  it("opens the packet a link names", () => {
-    window.history.pushState({}, "", "/dashboard/settings/portal?packet=template-1")
-    try {
-      render(<IntakeFormsCard />)
-      expect(mockUseVersion).toHaveBeenCalledWith("template-1", "version-2")
-      expect(screen.getByLabelText("Packet name")).toHaveValue("Intake")
-    } finally {
-      window.history.pushState({}, "", "/")
-    }
+  it("opens the packet a link names, even when the link arrives after the card renders", async () => {
+    // An in-app link renders the card before the address changes: the first
+    // render sees no ?packet=, the next one does. A read-once on first render
+    // opened nothing on dev (the builder's "Open your packet").
+    mockSearchParams.current = new URLSearchParams()
+    const view = render(<IntakeFormsCard />)
+    expect(screen.queryByLabelText("Packet name")).not.toBeInTheDocument()
+
+    mockSearchParams.current = new URLSearchParams("packet=template-1")
+    view.rerender(<IntakeFormsCard />)
+
+    await waitFor(() => expect(screen.getByLabelText("Packet name")).toHaveValue("Intake"))
+    expect(mockUseVersion).toHaveBeenCalledWith("template-1", "version-2")
   })
 })

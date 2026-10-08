@@ -3,7 +3,7 @@
 "use client"
 
 import { Plus } from "lucide-react"
-import { useState } from "react"
+import { Suspense, useState } from "react"
 import { PacketsBuildOptions } from "@/components/settings/settingsSlots.extensions"
 import { SettingsBadge, SettingsCard } from "@/components/settings/ui"
 import { Button } from "@/components/ui/button"
@@ -27,6 +27,7 @@ import {
 } from "@/hooks/useIntakePackets"
 import type { IntakeItemInput, IntakeTemplate } from "@/types/intakePackets"
 import { IntakeItemEditor } from "./IntakeItemEditor"
+import { PacketFromLink } from "./PacketFromLink"
 import { DocumentVersionPicker } from "./DocumentVersionPicker"
 import { NewDocumentInline } from "./NewDocumentInline"
 import { PacketClientTitle } from "./PacketClientTitle"
@@ -132,12 +133,8 @@ export function IntakeFormsCard() {
   const saveItems = useSaveIntakeItems()
   const publish = usePublishIntakeVersion()
 
-  // `?packet=<id>` opens that packet, so a page that just made one can send
-  // the practice straight to it. Safe to read on first render: the list comes
-  // from a client fetch, so nothing open renders until after hydration.
-  const [openTemplateId, setOpenTemplateId] = useState<string | null>(() =>
-    typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("packet"),
-  )
+  // `?packet=<id>` opens that packet: see PacketFromLink, rendered below.
+  const [openTemplateId, setOpenTemplateId] = useState<string | null>(null)
   const [openVersionId, setOpenVersionId] = useState<string | null>(null)
 
   const list = templates ?? []
@@ -186,6 +183,9 @@ export function IntakeFormsCard() {
 
   return (
     <SettingsCard title={FORMS_TITLE} description={FORMS_DESCRIPTION}>
+      <Suspense fallback={null}>
+        <PacketFromLink onPacket={setOpenTemplateId} />
+      </Suspense>
       {list.length === 0 && <p className="text-[13px] text-muted-foreground">{EMPTY_STATE}</p>}
 
       <ul className="space-y-2">
