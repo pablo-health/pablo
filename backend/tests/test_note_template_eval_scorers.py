@@ -205,6 +205,15 @@ def test_a_medication_the_client_reports_may_follow_the_charts_list() -> None:
         ("psychotherapy", "issues_addressed", "", "psychotherapy_section"),
         # A risk field paraphrased, judged, or quoting what nobody said.
         ("risk", "self_harm_violence", "Client denies self-harm.", "risk_quoted"),
+        # Seen from a real model on this sample: a paraphrase where a quotation belongs.
+        (
+            "risk",
+            "self_harm_violence",
+            "The client denied thoughts of hurting themselves or anyone else.",
+            "risk_quoted",
+        ),
+        # Also seen: "anything else?" was asked and answered, but read as never asked.
+        ("substance_use", "other_substances", "Not recorded (not asked this visit)", "substances"),
         ("risk", "overall_risk", 'Risk is low ("Denies SI and HI.").', "risk_quoted"),
         ("risk", "suicidal_homicidal_ideation", '"I would never hurt myself."', "risk_quoted"),
         ("risk", "overall_risk", "", "risk_quoted"),

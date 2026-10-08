@@ -5,7 +5,7 @@
     "label": "Psychiatric follow-up (E/M + psychotherapy)",
     "description": "Medication-management follow-up, with a psychotherapy section for visits that include therapy.",
     "system_prompt": "You are a documentation assistant for a psychiatric nurse practitioner. You draft a medication-management follow-up note from the transcript of the visit and from values the clinician entered. The note has two portions that must stay separate: the evaluation-and-management portion (history, risk, mental status, assessment, medical decision making, plan) and, only when therapy took place, a psychotherapy portion.\n\nThe transcript has two speakers. Therapist is the clinician; Client is the client. The clinician sometimes keeps recording after the client has left and dictates observations: everything the Therapist says after the Client's last line is the clinician's dictated addendum. Treat the addendum as the clinician's own statements; it is the preferred source for risk, mental status, the monitoring-program check, consent and the clinician's decisions.\n\nWrite in the clinical register of a coded progress note: concise, third person, past tense, the client referred to as \"the client\". Prefer the clinician's own wording for findings. Never assign a level, score or code that the clinician did not state or enter. When a field was not covered in the visit or the addendum, write \"Not stated.\" rather than leaving it out.",
-    "user_template": "Draft the note with these sections and fields:\n\n{fields}\n\nValues the clinician entered before the visit (\"not provided\" means blank):\n- Date of service: {session_date}\n- Place of service: {inputs.place_of_service}\n- Client location (telehealth): {inputs.client_location}\n- Provider location (telehealth): {inputs.provider_location}\n\n{chart}\n\nRules:\n- Copy entered values exactly.\n- A field whose instructions say it comes from the chart is written from the chart above, exactly as given, or \"Not recorded\" (\"None recorded\" for medications) when the chart has nothing for it, and may carry a \"(stated this visit: ...)\" suffix for what this visit changed or added. Never write \"Not stated.\" in it.\n- Billing codes, psychotherapy start and end times, and the prescription monitoring check come ONLY from the clinician's own words, usually the dictated addendum. Never infer a code, a time or a check that the clinician did not state; write \"Not stated.\" instead.\n- If no psychotherapy took place, leave every field of the Psychotherapy section empty.\n\nTranscript:\n{transcript}",
+    "user_template": "Draft the note with these sections and fields:\n\n{fields}\n\nValues the clinician entered before the visit (\"not provided\" means blank):\n- Date of service: {session_date}\n- Place of service: {inputs.place_of_service}\n- Client location (telehealth): {inputs.client_location}\n- Provider location (telehealth): {inputs.provider_location}\n\n{chart}\n\nRules:\n- Copy entered values exactly.\n- Every risk field holds only words said in the visit or the dictated addendum, verbatim, in quotation marks, naming who said them: never a paraphrase, a summary or a risk level the clinician did not say. \"Not stated.\" when nothing was said. Overall risk is only the clinician's own stated judgment.\n- A field whose instructions say it comes from the chart is written from the chart above, exactly as given, or \"Not recorded\" (\"None recorded\" for medications) when the chart has nothing for it, and may carry a \"(stated this visit: ...)\" suffix for what this visit changed or added. Never write \"Not stated.\" in it.\n- Billing codes, psychotherapy start and end times, and the prescription monitoring check come ONLY from the clinician's own words, usually the dictated addendum. Never infer a code, a time or a check that the clinician did not state; write \"Not stated.\" instead.\n- If no psychotherapy took place, leave every field of the Psychotherapy section empty.\n\nTranscript:\n{transcript}",
     "sections": [
       {
         "key": "encounter",
@@ -111,7 +111,7 @@
             "key": "other_substances",
             "label": "Other substances",
             "kind": "text",
-            "ai_hint": "The chart's substance use baseline for any other substance, exactly as given, or 'Not recorded'. Then this visit's screen: \"(asked this visit: no change)\", \"(stated this visit: ...)\" with the change as stated, or \"(not asked this visit)\"."
+            "ai_hint": "The chart's substance use baseline for any other substance, exactly as given, or 'Not recorded'. Then this visit's screen: \"(asked this visit: no change)\", \"(stated this visit: ...)\" with the change as stated, or \"(not asked this visit)\". A catch-all question (\"anything else?\", \"any other drugs?\") counts as asking: record the answer to it."
           }
         ]
       },
@@ -267,31 +267,31 @@
             "key": "suicidal_homicidal_ideation",
             "label": "Suicidal / homicidal ideation",
             "kind": "text",
-            "ai_hint": "Quote what was said about suicidal or homicidal thoughts, intent, plan or means, from the visit or the clinician's addendum. Do not assess."
+            "ai_hint": "What was said about suicidal or homicidal thoughts, intent, plan or means: the exact words, verbatim, in quotation marks, from the visit or the clinician's dictated addendum, naming who said them. Never a paraphrase, never a summary, never a level the clinician did not say. \"Not stated.\" if nothing was said."
           },
           {
             "key": "self_harm_violence",
             "label": "Self-harm / violent behavior",
             "kind": "text",
-            "ai_hint": "Quote what was said about self-harm or violence. Do not assess."
+            "ai_hint": "What was said about self-harm or violence: the exact words, verbatim, in quotation marks, from the visit or the clinician's dictated addendum, naming who said them. Never a paraphrase, never a summary, never a level the clinician did not say. \"Not stated.\" if nothing was said."
           },
           {
             "key": "risk_protective_factors",
             "label": "Risk and protective factors",
             "kind": "text",
-            "ai_hint": "Risk factors and protective factors as the clinician or client named them (e.g. stable employment, support system, medication adherence)."
+            "ai_hint": "Risk factors and protective factors as the clinician or client named them: the exact words, verbatim, in quotation marks, from the visit or the clinician's dictated addendum, naming who said them. Never a paraphrase, never a summary, never a level the clinician did not say. \"Not stated.\" if none were named."
           },
           {
             "key": "overall_risk",
             "label": "Overall acute risk",
             "kind": "text",
-            "ai_hint": "Only the clinician's own stated judgment of overall acute risk, quoted (e.g. \"overall risk is low\"). If the clinician did not state one, write \"Not stated.\""
+            "ai_hint": "Only the clinician's own stated judgment of overall acute risk, verbatim, in quotation marks (e.g. \"overall risk is low\"). Never a paraphrase, never a level the clinician did not say. \"Not stated.\" if the clinician did not state one."
           },
           {
             "key": "safety_plan",
             "label": "Safety plan",
             "kind": "text",
-            "ai_hint": "Only if any ideation, self-harm or violence was reported: the safety planning the clinician described (warning signs, coping, supports, crisis contacts, means safety). Otherwise leave empty."
+            "ai_hint": "Only if any ideation, self-harm or violence was reported: the safety planning the clinician described (warning signs, coping, supports, crisis contacts, means safety), in the clinician's own words, verbatim, in quotation marks; never a paraphrase or summary. Otherwise leave empty."
           }
         ]
       },
