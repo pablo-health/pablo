@@ -314,7 +314,9 @@ def get_worker_session_service(
         _problem_repo_factory(),
         _medication_repo_factory(),
         _history_repo_factory(),
-        ChartProposalStep(_proposal_repo_factory(), _history_repo_factory()),
+        ChartProposalStep(
+            _proposal_repo_factory(), _history_repo_factory(), _medication_repo_factory()
+        ),
     )
 
 
@@ -650,7 +652,7 @@ async def import_session(
         charted = session_service.patient_repo.get(patient_id, user.id)
         if charted is None:
             raise NotFoundError("Patient not found", {"patient_id": patient_id})
-        chart = proposal_step.chart(charted)
+        chart = proposal_step.chart(charted, user.id)
 
     data = await file.read()
     if len(data) > _MAX_IMPORT_DOC_BYTES:

@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from typing import Any
 
+    from ..medications.repository import MedicationRepository
     from ..models import Note, Patient, Transcript
     from ..notes import NoteTypeDefinition
     from ..notes.chart_context import ChartContext
@@ -39,13 +40,27 @@ def proposes_chart_updates(definition: NoteTypeDefinition | None) -> bool:
 
 
 class ChartProposalStep:
-    def __init__(self, proposals: ChartProposalRepository, history: ChartHistoryRepository) -> None:
+    def __init__(
+        self,
+        proposals: ChartProposalRepository,
+        history: ChartHistoryRepository,
+        medications: MedicationRepository | None = None,
+    ) -> None:
         self._proposals = proposals
         self._history = history
+        self._medications = medications
 
-    def chart(self, patient: Patient) -> ChartContext:
-        """What the proposals are measured against, for a caller that has no chart yet."""
-        return chart_context_for(patient, [], history=self._history.entries(patient.id))
+    def chart(self, patient: Patient, user_id: str | None = None) -> ChartContext:
+        """What the proposals are measured against, for a caller that has no chart yet.
+        The medication list is read as ``user_id`` sees it, when given."""
+        medications = (
+            self._medications.list_by_patient(patient.id, user_id)
+            if self._medications is not None and user_id is not None
+            else []
+        )
+        return chart_context_for(
+            patient, [], medications, history=self._history.entries(patient.id)
+        )
 
     def draft(
         self,

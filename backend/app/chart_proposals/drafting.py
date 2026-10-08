@@ -25,11 +25,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from ..notes.chart_context import STATED_THIS_VISIT
 from ..services.source_attribution_service import format_transcript_with_segment_ids
-from .families import FAMILIES, chart_key_for, family_for, proposable_keys
+from .families import FAMILIES, NOTE_FIELD_CHART_KEYS, chart_key_for, family_for
 from .models import Drafted, DraftedProposal, Evidence, Origin
 from .recorded import field_text
 
@@ -46,16 +47,17 @@ SYSTEM_PROMPT = (
     "infer, interpret or add. Return only the JSON object asked for."
 )
 
-RESPONSE_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "title": "ChartProposals",
-    "properties": {
+
+def _response_schema() -> dict[str, Any]:
+    """``proposals`` for the free-text families, and a list per structured family."""
+    text_keys = [key for f in FAMILIES if f.reply_key is None for key in f.field_keys()]
+    properties: dict[str, Any] = {
         "proposals": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
-                    "field_key": {"type": "string", "enum": list(proposable_keys())},
+                    "field_key": {"type": "string", "enum": text_keys},
                     "entry": {"type": "string"},
                     "proposed_text": {"type": "string"},
                     "what_changed": {"type": "string"},
@@ -64,9 +66,19 @@ RESPONSE_SCHEMA: dict[str, Any] = {
                 "required": ["field_key", "proposed_text", "what_changed", "evidence_segment_ids"],
             },
         }
-    },
-    "required": ["proposals"],
-}
+    }
+    for family in FAMILIES:
+        if family.reply_key is not None:
+            properties[family.reply_key] = {"type": "array", "items": family.reply_item_schema()}
+    return {
+        "type": "object",
+        "title": "ChartProposals",
+        "properties": properties,
+        "required": list(properties),
+    }
+
+
+RESPONSE_SCHEMA: dict[str, Any] = _response_schema()
 
 _INSTRUCTIONS = """\
 Propose an update to a chart field only when the transcript, including anything the \
@@ -122,7 +134,11 @@ def _stated_this_visit(draft: Mapping[str, Any]) -> list[str]:
             text = field_text(value)
             if marker not in text:
                 continue
-            chart_key = chart_key_for(key) or (key if family_for(key) else None)
+            chart_key = (
+                chart_key_for(key)
+                or NOTE_FIELD_CHART_KEYS.get(key)
+                or (key if family_for(key) else None)
+            )
             if chart_key is not None:
                 found.append(f"- {chart_key}: {text}")
     return found
@@ -252,6 +268,20 @@ def parse_proposals(
             continue
         seen.add(identity)
         kept.append(proposal)
+    for family in FAMILIES:
+        items = reply.get(family.reply_key) if family.reply_key is not None else None
+        for item in items if isinstance(items, list) else []:
+            if not isinstance(item, Mapping):
+                continue
+            evidence = _evidence(item.get("evidence_segment_ids"), segments)
+            drafted = family.drafted(item, evidence, chart) if evidence is not None else None
+            if drafted is None:
+                continue
+            identity = (drafted.field_key, drafted.item_key.lower())
+            if identity in seen or not family.admits(drafted, drafted.proposed_text, chart):
+                continue
+            seen.add(identity)
+            kept.append(replace(drafted, origin=origin))
     return kept
 
 

@@ -4,14 +4,22 @@
 
 from __future__ import annotations
 
-from app.chart_proposals.models import DraftedProposal, Evidence
+from dataclasses import replace
+from typing import TYPE_CHECKING
+
+from app.chart_proposals.models import DraftedProposal, Evidence, MedicationChange
 from evals.chart_proposals.cases import (
     CARRIED_BLOCK_IS_STALE,
+    CLIENT_STOPPED,
     DIVORCE_FINALIZED,
+    START_AND_STOP,
     STOPPED_WORKING,
     TRANSFER_NOTE,
     UNCHANGED,
 )
+
+if TYPE_CHECKING:
+    from app.chart_proposals.models import MedicationAction
 from evals.chart_proposals.scorers import grade
 
 
@@ -87,7 +95,7 @@ def test_a_field_either_reading_allows_may_be_proposed_or_not() -> None:
         _proposal("alcohol", "Two glasses of wine per week.", 6),
         _proposal("tobacco_nicotine", "None.", 6),
         _proposal("work_school", "Returned to full-time work.", 2),
-        _proposal("allergies", "rash", 8),
+        replace(_proposal("allergies", "rash", 8), item_key="Penicillin"),
     ]
     assert not any(grade(expected, TRANSFER_NOTE).values())
     sister = _proposal("supports", "Close relationship with sister.", 9)
@@ -95,4 +103,33 @@ def test_a_field_either_reading_allows_may_be_proposed_or_not() -> None:
     trials = _proposal("medication_trials", "Sertraline.", 7)
     assert grade([*expected, trials], TRANSFER_NOTE)["exactly_the_expected_fields"] == [
         "unexpected proposal for medication_trials"
+    ]
+
+
+def _medication(action: MedicationAction, name: str, text: str, *ids: int) -> DraftedProposal:
+    return DraftedProposal(
+        field_key="medications",
+        item_key=name,
+        proposed_text=text,
+        what_changed="Changed",
+        evidence=tuple(Evidence(i, "line") for i in ids),
+        change=MedicationChange(action=action, drug_name=name),
+    )
+
+
+START = _medication("start", "hydroxyzine", "hydroxyzine 25 mg, in the afternoon as needed", 5)
+STOP = _medication("stop", "Trazodone", "Stopped: nausea", 4)
+
+
+def test_medication_proposals_are_named_by_the_medication_and_its_action() -> None:
+    assert not any(grade([START, STOP], START_AND_STOP).values())
+    assert grade([START], START_AND_STOP)["exactly_the_expected_fields"] == [
+        "missing a proposal for medications: trazodone"
+    ]
+    as_change = _medication("change", "trazodone", "Stopped: nausea", 4)
+    assert grade([START, as_change], START_AND_STOP)["the_stated_action"] == [
+        "trazodone is a change, not a stop"
+    ]
+    assert grade([STOP], CLIENT_STOPPED)["exactly_the_expected_fields"] == [
+        "unexpected proposal for medications: trazodone"
     ]

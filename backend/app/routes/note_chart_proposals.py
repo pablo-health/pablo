@@ -11,7 +11,9 @@
   session's transcript can be: a dictated note's transcript is not kept.
 * ``POST /api/notes/{note_id}/chart-proposals/{proposal_id}/decision`` —
   accept, edit or discard one. Accept and edit write the chart with this note
-  as the source; the note is not changed, signed or not.
+  as the source; the note is not changed, signed or not. A medication change
+  is accepted or discarded, not edited (409), and one the list can no longer
+  take (the medication was stopped since) is a 409 that leaves it pending.
 
 Every route loads the note, then its patient, which is the access check (an
 inaccessible one is a 404). Whoever may open the note may decide its
@@ -19,6 +21,8 @@ proposals. Audits name the field key, never the text.
 """
 
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, Request
 
@@ -29,8 +33,9 @@ from ..chart_history.service import ChartHistoryService
 from ..chart_proposals.dependencies import (
     get_chart_proposal_repository,
     get_chart_proposal_step,
+    get_proposal_medication_repository,
 )
-from ..chart_proposals.families import ChartWriters
+from ..chart_proposals.families import ChartChangedError, ChartWriters
 from ..chart_proposals.schemas import (
     ChartProposalResponse,
     ChartProposalsResponse,
@@ -42,17 +47,21 @@ from ..chart_proposals.service import (
     ChartProposalService,
     Choice,
     ProposalDecidedError,
+    ProposalNotEditableError,
     ProposalNotFoundError,
 )
 from ..chart_proposals.step import ChartProposalStep, proposes_chart_updates
 from ..db import release_db_connection
+from ..medications.repository import (  # noqa: TC001 — FastAPI resolves at runtime
+    MedicationRepository,
+)
+from ..medications.service import MedicationService
 from ..models import AuditAction, Note, Patient, User
 from ..models.enums import SessionSource
 from ..notes import (  # noqa: TC001 — FastAPI resolves at runtime
     NoteTypeDefinition,
     NoteTypeRegistry,
 )
-from ..notes.chart_context import ChartContext, chart_context_for
 from ..repositories import (  # noqa: TC001 — FastAPI resolves at runtime
     ChartHistoryRepository,
     ChartProposalRepository,
@@ -73,6 +82,11 @@ from .patients import get_patient_repository
 from .session_dictations import get_dictation_repository
 from .sessions import get_session_repository
 
+if TYPE_CHECKING:
+    from datetime import date
+
+    from ..notes.chart_context import ChartContext
+
 router = APIRouter(prefix="/api/notes", tags=["chart-proposals"])
 
 
@@ -89,8 +103,10 @@ def _note_and_patient(
     return note, patient
 
 
-def _chart(patient: Patient, history: ChartHistoryRepository) -> ChartContext:
-    return chart_context_for(patient, [], history=history.entries(patient.id))
+def _visit_date(note: Note, sessions: TherapySessionRepository, user: User) -> date:
+    """The day of the visit: the session's, or the day a standalone note was written."""
+    session = sessions.get(note.session_id, user.id) if note.session_id else None
+    return (session.session_date if session is not None else note.created_at).date()
 
 
 def _listing(
@@ -110,12 +126,12 @@ def list_chart_proposals(
     user: User = Depends(require_baa_acceptance),
     notes: NoteService = Depends(get_note_service),
     patients: PatientRepository = Depends(get_patient_repository),
-    history: ChartHistoryRepository = Depends(get_chart_history_repository),
     proposals: ChartProposalRepository = Depends(get_chart_proposal_repository),
+    step: ChartProposalStep = Depends(get_chart_proposal_step),
     audit: AuditService = Depends(get_audit_service),
 ) -> ChartProposalsResponse:
     note, patient = _note_and_patient(notes, patients, note_id, user)
-    chart = _chart(patient, history)
+    chart = step.chart(patient, user.id)
     response = _listing(note, chart, proposals)
     audit.log_note_action(
         action=AuditAction.SESSION_VIEWED,
@@ -141,13 +157,19 @@ def decide_chart_proposal(
     notes: NoteService = Depends(get_note_service),
     patients: PatientRepository = Depends(get_patient_repository),
     history: ChartHistoryRepository = Depends(get_chart_history_repository),
+    medications: MedicationRepository = Depends(get_proposal_medication_repository),
+    sessions: TherapySessionRepository = Depends(get_session_repository),
     proposals: ChartProposalRepository = Depends(get_chart_proposal_repository),
+    step: ChartProposalStep = Depends(get_chart_proposal_step),
     audit: AuditService = Depends(get_audit_service),
 ) -> ChartProposalResponse:
     note, patient = _note_and_patient(notes, patients, note_id, user)
-    service = ChartProposalService(
-        proposals, ChartWriters(history=ChartHistoryService(history), patients=patients)
+    writers = ChartWriters(
+        history=ChartHistoryService(history),
+        patients=patients,
+        medications=MedicationService(medications),
     )
+    service = ChartProposalService(proposals, writers, visit_date=_visit_date(note, sessions, user))
     try:
         decided = service.decide(
             note, patient, proposal_id, Choice(body.decision, body.text), user.id
@@ -157,6 +179,15 @@ def decide_chart_proposal(
     except ProposalDecidedError as exc:
         raise ConflictError(
             "This proposal was already decided", {"proposal_id": proposal_id}
+        ) from exc
+    except ProposalNotEditableError as exc:
+        raise ConflictError(
+            "Accept or discard this change; edit the list on the client's page",
+            {"proposal_id": proposal_id},
+        ) from exc
+    except ChartChangedError as exc:
+        raise ConflictError(
+            "The chart has changed since this was proposed", {"proposal_id": proposal_id}
         ) from exc
     change = {"chart_proposal": decided.decision, "field_key": decided.field_key}
     audit.log_note_action(
@@ -176,7 +207,7 @@ def decide_chart_proposal(
             patient,
             changes={"changed_fields": [decided.field_key], **change},
         )
-    return proposal_response(decided, _chart(patient, history))
+    return proposal_response(decided, step.chart(patient, user.id))
 
 
 @router.post("/{note_id}/chart-proposals/retry", response_model=ChartProposalsResponse)
@@ -203,7 +234,7 @@ def retry_chart_proposals(
     if session is None or not proposes_chart_updates(definition):
         raise ConflictError("This note can't be checked again", {"note_id": note_id})
     transcript = source_transcript(session, dictations)
-    chart = step.chart(patient)
+    chart = step.chart(patient, user.id)
     shown = as_shown(note.note_type, note.content, note.content_edited)
     # Nothing is held open across the model call, as in the draft worker.
     release_db_connection()

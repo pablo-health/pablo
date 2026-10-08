@@ -1223,6 +1223,8 @@ class TestZipClinical:
             "id": chart["medication"],
             "drug_name": "Sertraline",
             "dose": "50 mg daily",
+            "frequency": None,
+            "category": None,
             "status": "active",
             "started_on": None,
             "stopped_on": None,

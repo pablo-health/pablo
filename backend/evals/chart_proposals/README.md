@@ -19,8 +19,12 @@ Any problem from any check fails the case.
 |---|---|---|
 | `exactly_the_expected_fields` | a field the visit changed has no proposal; a field nothing changed has one; a field has two | review costs nothing on an ordinary visit, and a change stated once reaches every field it changes |
 | `text_kept_and_changed` | the proposed text leaves out what the chart said, or does not say what changed | a proposal amends and appends, never removes: what stopped being true is kept and said to no longer apply |
+| `the_stated_action` | a medication proposal is a different action (a change where the clinician stopped it) | accepting does what the visit decided |
 | `cites_the_lines_that_say_it` | the proposal cites none of the lines that state the change, or, from a document, leaves out the paragraph that disagrees | the evidence the clinician sees is the sentence that says it, and a conflict in the document is shown |
-| `says_nothing_it_never_should` | a proposal carries what belongs elsewhere, such as a medication in a history field | the medication list stays the place medications are kept |
+| `says_nothing_it_never_should` | a free-text proposal carries what belongs elsewhere, such as a medication in a history field | the medication list stays the place medications are kept |
+
+A proposal is named by its field and, for a list field, its entry: a
+medication's proposals are `medications: <name>`, one per medication.
 
 The checks are unit-tested on hand-made proposals in
 `backend/tests/test_chart_proposal_eval_scorers.py`.
@@ -32,13 +36,20 @@ The checks are unit-tested on hand-made proposals in
 | `divorce-finalized` | separated, divorce in progress; custody shared | the divorce was finalized; everything else restated | `relationships` and `legal_custody`, each keeping its text and adding that the divorce was finalized, citing the client's lines |
 | `unchanged` | the same chart | every field restated, nothing new | no proposal |
 | `stopped-working` | full time as a dental hygienist | stopped working there at the end of August | `work_school` still naming the dental practice and saying it no longer applies |
-| `transfer-note` | empty | an imported follow-up note from another records system (`backend/tests/fixtures/notes/transfer_psychiatric_follow_up.txt`) | `alcohol`, `tobacco_nicotine`, `work_school` and the penicillin allergy, each citing its paragraph; `supports` and `relationships` may be proposed or not; no medication in any proposal |
-| `carried-block-is-stale` | full time as a dental hygienist | an imported note whose carried social history says the client works and whose interval history says they were laid off; its carried medication list disagrees with its plan | `work_school` following the interval history and citing the carried paragraph too; no medication in any proposal |
+| `medication-start-and-stop` | sertraline, trazodone | the clinician starts hydroxyzine 25 mg in the afternoon as needed and stops the trazodone because of nausea | a start with its frequency and a stop with its reason; nothing for the sertraline, continued |
+| `medication-only-discussed` | sertraline | a medication asked about, a dose increase considered for next time | no proposal |
+| `medication-another-prescriber-started` | sertraline | the client's primary care doctor started lisinopril 10 mg once a day | an add with the dose and frequency as stated |
+| `medication-client-stopped` | sertraline, buspirone | the client stopped the buspirone; the clinician decides nothing yet | no proposal |
 
-The last two read the document a paragraph at a time, as an imported note's
-proposals do. Medications are not yet a proposable field; when they are, the
-stale-block case gains the medication the plan states, citing the carried
-list as the conflict.
+The history cases' charts list the medication the client mentions taking, as
+a follow-up's chart would; without it, that mention is a medication the list
+lacks and is rightly proposed as an add.
+
+| `transfer-note` | empty | an imported follow-up note from another records system (`backend/tests/fixtures/notes/transfer_psychiatric_follow_up.txt`) | `alcohol`, `tobacco_nicotine`, `work_school` and the penicillin allergy, each citing its paragraph; `supports` and `relationships` may be proposed or not; no medication in a history field |
+| `carried-block-is-stale` | full time as a dental hygienist | an imported note whose carried social history says the client works and whose interval history says they were laid off; its carried medication list disagrees with its plan | `work_school` following the interval history and citing the carried paragraph too; no medication in a history field |
+
+These two read the document a paragraph at a time, as an imported note's
+proposals do. Their medication proposals are not graded yet.
 
 ## Running it
 
@@ -53,6 +64,17 @@ scripts/run-chart-proposal-eval.sh --case unchanged
 ```
 
 ## Recorded runs — 2026-10-08
+
+### With the medication list
+
+Configured note model, against a development project, three runs of each of
+the seven cases: 21 of 21 passed. Every run proposed the hydroxyzine start as
+`hydroxyzine 25 mg, in the afternoon as needed`, the trazodone stop as
+`Stopped: nausea` and the lisinopril add as `lisinopril 10 mg, once a day in
+the morning`, and nothing for the discussed medication or the client's own
+stop.
+
+### History fields
 
 Configured note model, against a development project, three runs of each
 case: 9 of 9 passed.

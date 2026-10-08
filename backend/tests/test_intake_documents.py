@@ -20,7 +20,18 @@ digest, and changing one character must.
 
 from __future__ import annotations
 
-from app.intake.documents import canonical_text, content_digest, render_html
+import re
+import time
+
+import pytest
+from app.intake.documents import (
+    _BULLET,
+    _HEADING,
+    _NUMBERED,
+    canonical_text,
+    content_digest,
+    render_html,
+)
 
 _CONSENT = """# Consent for treatment
 
@@ -192,3 +203,60 @@ class TestTheCanonicalText:
 
     def test_an_empty_document_is_an_empty_string(self) -> None:
         assert canonical_text("   \n\n  ") == ""
+
+
+class TestLongRunsOfWhitespace:
+    """A line padded with thousands of spaces still parses in linear time.
+
+    A document is practice-typed text, so no run of spaces after a heading
+    or list marker may stall the parser, and tightening the line patterns to
+    guarantee that must not change what an ordinary line captures.
+    """
+
+    _PAD = " \t" * 5_000
+
+    def _render_quickly(self, markdown: str) -> str:
+        started = time.perf_counter()
+        html = render_html(markdown)
+        assert time.perf_counter() - started < 1.0
+        return html
+
+    def test_a_padded_heading_renders(self) -> None:
+        assert self._render_quickly(f"#{self._PAD}Title") == "<h2>Title</h2>"
+
+    def test_a_padded_bullet_renders(self) -> None:
+        assert self._render_quickly(f"-{self._PAD}one") == "<ul><li>one</li></ul>"
+
+    def test_a_padded_numbered_item_renders(self) -> None:
+        assert self._render_quickly(f"1.{self._PAD}one") == "<ol><li>one</li></ol>"
+
+    def test_a_marker_followed_only_by_padding_is_a_paragraph(self) -> None:
+        assert self._render_quickly(f"#{self._PAD}") == "<p>#</p>"
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "# Title",
+            "###   Spaced   title",
+            "####### seven hashes",
+            "#no space",
+            "- one",
+            "  *  two  words",
+            "+\tthree",
+            "-not a bullet",
+            "1. First.",
+            "   12) Twelfth",
+            "1.no space",
+            "-",
+            "#",
+        ],
+    )
+    def test_ordinary_lines_capture_what_the_looser_patterns_did(self, line: str) -> None:
+        looser = {
+            _HEADING: re.compile(r"^(#{1,6})\s+(.*)$"),
+            _BULLET: re.compile(r"^\s{0,3}[-*+]\s+(.*)$"),
+            _NUMBERED: re.compile(r"^\s{0,3}\d{1,9}[.)]\s+(.*)$"),
+        }
+        for pattern, before in looser.items():
+            now, then = pattern.match(line), before.match(line)
+            assert (now.groups() if now else None) == (then.groups() if then else None)

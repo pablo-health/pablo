@@ -21,20 +21,22 @@ from __future__ import annotations
 import os
 import uuid
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 
 import pytest
 from app.chart_history.service import ChartHistoryService
 from app.chart_proposals.families import ChartWriters
-from app.chart_proposals.models import DraftedProposal, Evidence, ProposalRun
+from app.chart_proposals.models import DraftedProposal, Evidence, MedicationChange, ProposalRun
 from app.chart_proposals.service import ChartProposalService, Choice
 from app.db import PLATFORM_SCHEMA
 from app.db.provisioning import create_practice_schema, ensure_schemas
+from app.medications.service import MedicationService
 from app.models import Note, Patient
 from app.notes.chart_context import ChartContext
 from app.repositories.postgres.chart_history import PostgresChartHistoryRepository
 from app.repositories.postgres.chart_proposals import PostgresChartProposalRepository
+from app.repositories.postgres.medication import PostgresMedicationRepository
 from app.repositories.postgres.patient import PostgresPatientRepository
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import ProgrammingError
@@ -187,3 +189,54 @@ def test_a_run_record_is_kept_per_note_and_replaced(engine: Engine, tenant: str)
     assert run is not None
     assert (run.status, run.error_class) == ("ok", None)
     assert outsider is None
+
+
+def test_a_medication_change_round_trips_and_accepting_writes_the_list(
+    engine: Engine, tenant: str
+) -> None:
+    patient, note = _patient_and_note(engine, tenant)
+    start = DraftedProposal(
+        field_key="medications",
+        item_key="hydroxyzine",
+        proposed_text="hydroxyzine 25 mg, in the afternoon as needed",
+        what_changed="Started for afternoon anxiety",
+        evidence=(Evidence(5, "[00:26] Clinician: Start hydroxyzine 25 mg as needed."),),
+        change=MedicationChange(
+            action="start",
+            drug_name="hydroxyzine",
+            dose="25 mg",
+            frequency="in the afternoon as needed",
+            category="psychiatric",
+        ),
+    )
+
+    with _session(engine, tenant, _CLINICIAN_A) as session:
+        patients = PostgresPatientRepository(session)
+        service = ChartProposalService(
+            PostgresChartProposalRepository(session),
+            ChartWriters(
+                history=ChartHistoryService(PostgresChartHistoryRepository(session)),
+                patients=patients,
+                medications=MedicationService(PostgresMedicationRepository(session)),
+            ),
+            visit_date=date(2026, 10, 6),
+        )
+        service.refresh(note, ChartContext(), {}, [start])
+        session.commit()
+        (stored,) = service.proposals(note.id)
+        assert stored.change == start.change
+        current = patients.get(patient.id, _CLINICIAN_A)
+        assert current is not None
+        service.decide(note, current, stored.id, Choice("accept"), _CLINICIAN_A)
+        session.commit()
+
+    with _session(engine, tenant, _CLINICIAN_A) as session:
+        (row,) = PostgresMedicationRepository(session).list_by_patient(patient.id, _CLINICIAN_A)
+
+    assert (
+        row["drug_name"],
+        row["frequency"],
+        row["category"],
+        row["started_at"],
+        row["source_note_id"],
+    ) == ("hydroxyzine", "in the afternoon as needed", "psychiatric", date(2026, 10, 6), note.id)

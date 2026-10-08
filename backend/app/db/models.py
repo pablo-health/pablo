@@ -1795,6 +1795,11 @@ class PatientMedicationRow(Base):
     # effects, remission). Only meaningful for discontinued rows; nullable.
     stop_reason: Mapped[str | None] = mapped_column(Text)
     notes: Mapped[str | None] = mapped_column(Text)
+    # The note whose accepted proposal last wrote this row; NULL for a row
+    # entered on the chart directly.
+    source_note_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("notes.id", ondelete="SET NULL")
+    )
     created_by: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -1974,6 +1979,10 @@ class NoteChartProposalRow(Base):
     decided_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # The structured change, for a field whose proposals are actions on rows
+    # (the medication list): {"action", "drug_name", "dose", "frequency",
+    # "category", "reason"}. NULL for a free-text proposal.
+    change: Mapped[dict | None] = mapped_column(JSONB)
 
     __table_args__ = (
         UniqueConstraint("note_id", "field_key", "item_key", name="uq_note_chart_proposals_field"),
