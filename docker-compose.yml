@@ -30,6 +30,39 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # The backend touches no database when it starts: schemas are built and
+      # provisioned by the migrate step, which has to finish first.
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - therapy-net
+
+  # Schemas, before the backend serves from them: both chains, then
+  # provisioning (on an empty database, the deployment's own practice), then
+  # the tenant chain across existing practices. The same steps a deployment
+  # runs; see docker-compose.e2e.yml for the full reasoning.
+  migrate:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.dev
+    command:
+      [
+        "sh",
+        "-c",
+        "python backend/bin/migrate.py && python backend/bin/migrate_tenants.py",
+      ]
+    volumes:
+      - ./backend:/app/backend
+      - /app/.venv  # Prevent overwriting venv
+    environment:
+      - DATABASE_BACKEND=postgres
+      - DATABASE_URL=postgresql://pablo:pablo_dev@postgres:5432/pablo
+      - ENVIRONMENT=development
+      - LOG_LEVEL=INFO
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - therapy-net
 

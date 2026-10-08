@@ -42,13 +42,17 @@ cd pablo
 ### Local Development
 
 ```bash
+# Database: start Postgres, then build and provision the schemas
+make db-up db-migrate
+
 # Backend
 cd backend && poetry install && poetry run uvicorn app.main:app --reload
 
 # Frontend
 cd frontend && npm ci && npm run dev
 
-# Or use Docker (brings up the backend + Postgres only; run the frontend separately)
+# Or use Docker (brings up Postgres, runs the migrate step, then the backend;
+# run the frontend separately)
 docker compose up
 ```
 

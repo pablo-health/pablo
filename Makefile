@@ -154,9 +154,12 @@ db-down:
 # Run Alembic migrations: platform schema first, then practice schemas. The
 # tenant chain declares foreign keys into platform.users and creates nothing in
 # that schema itself, so the order is load-bearing rather than tidy.
+#
+# bin/migrate.py runs both chains in that order and then provisions the template
+# and, on an empty database, the deployment's practice. The app does not
+# provision when it starts, so a fresh database needs this before the backend.
 db-migrate:
-	cd backend && DATABASE_BACKEND=postgres DATABASE_URL=postgresql://pablo:pablo_dev@localhost:5432/pablo poetry run alembic -n platform upgrade head
-	cd backend && DATABASE_BACKEND=postgres DATABASE_URL=postgresql://pablo:pablo_dev@localhost:5432/pablo poetry run alembic upgrade head
+	cd backend && DATABASE_BACKEND=postgres DATABASE_URL=postgresql://pablo:pablo_dev@localhost:5432/pablo poetry run python bin/migrate.py
 
 # Generate a new Alembic migration
 db-revision:

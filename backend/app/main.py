@@ -19,7 +19,6 @@ from .api_errors import register_exception_handlers
 from .auth.route_security import truly_public
 from .db import get_engine
 from .db.middleware import DatabaseSessionMiddleware
-from .db.provisioning import ensure_schemas
 from .diagnostics.router import (
     diagnostic_assessments_router,
     diagnostic_definitions_router,
@@ -239,8 +238,12 @@ get_default_registry().set_practice_source(
 app.add_middleware(DPoPMiddleware, settings=settings)
 
 # Database session middleware (must be added before security middleware
-# so it wraps the request lifecycle inside the security layer)
-ensure_schemas(get_engine())
+# so it wraps the request lifecycle inside the security layer).
+#
+# Importing the app touches no database. Schemas are provisioned by the
+# migrate step (backend/bin/migrate.py), which runs before the app starts:
+# provisioning here ran on every container start, under an advisory lock, and
+# a slow first database connection on a new instance crashed the import.
 app.add_middleware(DatabaseSessionMiddleware)
 
 # Security middleware - HIPAA TLS enforcement (order matters: security first)
