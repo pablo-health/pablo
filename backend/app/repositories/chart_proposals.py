@@ -26,13 +26,16 @@ class ChartProposalRepository(ABC):
         """Every proposal on the note, decided or not, oldest first."""
 
     @abstractmethod
-    def add(self, proposals: Iterable[ChartProposal]) -> None: ...
+    def add(self, proposals: Iterable[ChartProposal]) -> None:
+        """Store new proposals."""
 
     @abstractmethod
-    def set_pending_text(self, proposal_id: str, proposed_text: str) -> None: ...
+    def set_pending_text(self, proposal_id: str, proposed_text: str) -> None:
+        """Replace a pending proposal's text."""
 
     @abstractmethod
-    def delete(self, proposal_ids: Iterable[str]) -> None: ...
+    def delete(self, proposal_ids: Iterable[str]) -> None:
+        """Remove proposals; an id that is not there is ignored."""
 
     @abstractmethod
     def decide(
@@ -42,7 +45,8 @@ class ChartProposalRepository(ABC):
         decided_text: str | None,
         decided_by: str,
         decided_at: datetime,
-    ) -> None: ...
+    ) -> None:
+        """Record the clinician's decision on a proposal."""
 
     @abstractmethod
     def run(self, note_id: str) -> ProposalRun | None:

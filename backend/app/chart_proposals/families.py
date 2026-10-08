@@ -23,7 +23,7 @@ from ..chart_history.fields import HISTORY_GROUPS, HISTORY_KEYS, SUBSTANCE_KEYS,
 from ..medications.schemas import CreateMedicationRequest, UpdateMedicationRequest
 from ..notes.chart_context import allergies_line, medication_line
 from ..utcnow import utc_now
-from .models import DraftedProposal, MedicationAction, MedicationChange
+from .models import DraftedProposal, MedicationChange
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from ..models import Patient
     from ..notes.chart_context import ChartContext, ChartMedication
     from ..repositories import PatientRepository
-    from .models import Evidence
+    from .models import Evidence, MedicationAction
 
 ALLERGIES = "allergies"
 MEDICATIONS = "medications"
@@ -56,13 +56,16 @@ class FieldRef(Protocol):
     """A chart field, and for a list field the entry: what a proposal is about."""
 
     @property
-    def field_key(self) -> str: ...
+    def field_key(self) -> str:
+        """The chart field."""
 
     @property
-    def item_key(self) -> str: ...
+    def item_key(self) -> str:
+        """The entry within a list field; empty for a free-text field."""
 
     @property
-    def change(self) -> MedicationChange | None: ...
+    def change(self) -> MedicationChange | None:
+        """The structured change, for a family whose proposals are actions."""
 
 
 @dataclass(frozen=True)
@@ -178,20 +181,28 @@ class HistoryFamily(FieldFamily):
 
     def rules(self) -> list[str]:
         return [
-            "- A history field's proposed_text is the field's full revised text. Keep "
-            "the existing text, merge the change into it, and never remove a statement: "
-            "when something stopped being true, keep it and say it no longer applies "
-            '(for example "Worked full time at the library until March; laid off, no '
-            'longer working there."). For an empty field, state what was said.',
-            "- A substance-use field records what the client uses. Propose a change only "
-            "when the client describes a different pattern or amount, or a substance the "
-            'field does not record. "No change" or "same as before" is not a change.',
-            "- One stated fact can change more than one field. Propose each field it "
-            "changes, citing the same lines.",
-            "- The medications the client takes now, and any medication started, stopped "
-            "or changed this visit, are kept on the chart's medication list, not in these "
-            "fields: never propose them to a history field. medication_trials is the "
-            "history of psychiatric medications tried before, as the client recounts it.",
+            (
+                "- A history field's proposed_text is the field's full revised text. Keep "
+                + "the existing text, merge the change into it, and never remove a statement: "
+                + "when something stopped being true, keep it and say it no longer applies "
+                + '(for example "Worked full time at the library until March; laid off, no '
+                + 'longer working there."). For an empty field, state what was said.'
+            ),
+            (
+                "- A substance-use field records what the client uses. Propose a change only "
+                + "when the client describes a different pattern or amount, or a substance the "
+                + 'field does not record. "No change" or "same as before" is not a change.'
+            ),
+            (
+                "- One stated fact can change more than one field. Propose each field it "
+                + "changes, citing the same lines."
+            ),
+            (
+                "- The medications the client takes now, and any medication started, stopped "
+                + "or changed this visit, are kept on the chart's medication list, not in these "
+                + "fields: never propose them to a history field. medication_trials is the "
+                + "history of psychiatric medications tried before, as the client recounts it."
+            ),
         ]
 
     def current_text(self, chart: ChartContext, ref: FieldRef) -> str | None:
@@ -241,14 +252,16 @@ class AllergyFamily(FieldFamily):
 
     def rules(self) -> list[str]:
         return [
-            '- Allergies (field_key "allergies") are only ever added to. For an allergy '
-            "stated this visit that the chart does not list, put the substance in entry "
-            "and the reaction as stated in proposed_text, whatever the chart says, NKDA "
-            "included. For something said about an allergy the chart lists (that it was "
-            "a mistake, or that the client has taken it since without a reaction), put "
-            "that allergy's substance in entry and the statement in proposed_text, as a "
-            "note kept with the entry. Never propose removing an allergy or saying the "
-            "client is not allergic.",
+            (
+                '- Allergies (field_key "allergies") are only ever added to. For an allergy '
+                + "stated this visit that the chart does not list, put the substance in entry "
+                + "and the reaction as stated in proposed_text, whatever the chart says, NKDA "
+                + "included. For something said about an allergy the chart lists (that it was "
+                + "a mistake, or that the client has taken it since without a reaction), put "
+                + "that allergy's substance in entry and the statement in proposed_text, as a "
+                + "note kept with the entry. Never propose removing an allergy or saying the "
+                + "client is not allergic."
+            ),
         ]
 
     def current_text(self, chart: ChartContext, ref: FieldRef) -> str | None:

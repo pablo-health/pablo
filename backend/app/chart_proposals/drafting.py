@@ -137,8 +137,10 @@ def build_prompt(
         parts.extend(
             [
                 "",
-                "The draft of this visit's note marks these as stated this visit. Each is "
-                "expected to need a proposal, citing the transcript lines it came from:",
+                (
+                    "The draft of this visit's note marks these as stated this visit. Each is "
+                    + "expected to need a proposal, citing the transcript lines it came from:"
+                ),
                 *stated,
             ]
         )

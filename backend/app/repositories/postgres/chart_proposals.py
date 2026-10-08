@@ -13,16 +13,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import delete, select
 
-from ...chart_proposals.models import (
-    ChartProposal,
-    Decision,
-    Evidence,
-    MedicationAction,
-    MedicationChange,
-    Origin,
-    ProposalRun,
-    RunStatus,
-)
+from ...chart_proposals.models import ChartProposal, Evidence, MedicationChange, ProposalRun
 from ...db.models import NoteChartProposalRow, NoteChartProposalRunRow
 from ..chart_proposals import ChartProposalRepository
 
@@ -31,6 +22,8 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from sqlalchemy.orm import Session
+
+    from ...chart_proposals.models import Decision, MedicationAction, Origin, RunStatus
 
 
 def _change(raw: dict[str, Any] | None) -> MedicationChange | None:
