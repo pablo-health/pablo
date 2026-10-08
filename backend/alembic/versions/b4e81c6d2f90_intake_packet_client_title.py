@@ -12,7 +12,7 @@ wording the portal has always used. Idempotent, like every revision in
 this chain.
 
 Revision ID: b4e81c6d2f90
-Revises: a7d3f2c18e64
+Revises: b3e9c6d4f217
 Create Date: 2026-10-08
 """
 
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "b4e81c6d2f90"
-down_revision: str | Sequence[str] | None = "a7d3f2c18e64"
+down_revision: str | Sequence[str] | None = "b3e9c6d4f217"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
