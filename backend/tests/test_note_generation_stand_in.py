@@ -11,14 +11,19 @@ as the backend would validate a model's.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
 from app.models import Patient, Transcript
 from app.notes import NoteTypeRegistry, register_builtin_note_types
-from app.notes.chart_context import ChartContext, ChartMedication, ChartProblem
+from app.notes.chart_context import (
+    ChartContext,
+    ChartHistoryField,
+    ChartMedication,
+    ChartProblem,
+)
 from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
 from app.routes.notes import get_note_generation_service
 from app.services import dictation_transcription, http_structured_llm_gateway
@@ -370,3 +375,40 @@ def test_the_prescriber_templates_take_current_medications_from_the_chart(templa
     assert hints["current_medications"] == (
         "From the chart; write it exactly as given, or 'None recorded'"
     )
+
+
+def test_a_follow_up_writes_the_charts_history_word_for_word(stand_in: list[str]) -> None:
+    """Each history field is the chart's text for its key; the substance screen is not."""
+    definition = _follow_up()
+    chart = ChartContext(
+        history=(
+            ChartHistoryField(
+                "prior_diagnoses", "ADHD, combined type, diagnosed 2019.", date(2026, 7, 14)
+            ),
+            ChartHistoryField(
+                "living_situation",
+                "Separated in August; lives alone.\nSees the children on weekends.",
+                date(2026, 9, 2),
+            ),
+            ChartHistoryField("alcohol", "Two glasses of wine on weekends.", date(2026, 7, 14)),
+        ),
+    )
+
+    generated = _service().generate_note(
+        definition.key,
+        TRANSCRIPT,
+        PATIENT,
+        NOW,
+        inputs={"place_of_service": "In office"},
+        definition=definition,
+        chart=chart,
+    )
+
+    content = generated.content
+    assert content["psychiatric_history"]["prior_diagnoses"] == (
+        "ADHD, combined type, diagnosed 2019."
+    )
+    assert content["social_history"]["living_situation"] == (
+        "Separated in August; lives alone.\nSees the children on weekends."
+    )
+    assert content["substance_use"]["alcohol"] != "Two glasses of wine on weekends."

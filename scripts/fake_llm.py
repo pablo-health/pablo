@@ -210,6 +210,12 @@ class _Chart:
     allergies: str | None = None
     medications: list[str] | None = None
     """``None`` when the block has no medication list; ``[]`` when it says none recorded."""
+    history: dict[str, str] = field(default_factory=dict)
+    """Chart history text by field key, as recorded (the substance baseline excluded)."""
+
+
+#: How the backend renders one chart-history field: ``  - key (Label, recorded date): text``.
+_HISTORY_LINE = re.compile(r"^  - ([a-z_]+) \([^)]*, recorded [0-9-]+\): (.*)$")
 
 
 def _chart(user_prompt: str) -> _Chart | None:
@@ -221,7 +227,18 @@ def _chart(user_prompt: str) -> _Chart | None:
         return None
     chart = _Chart()
     listing: list[str] | None = None
+    history_key: str | None = None
+    in_history = False
     for line in user_prompt.splitlines():
+        if in_history and (match := _HISTORY_LINE.match(line)):
+            history_key = match.group(1)
+            chart.history[history_key] = match.group(2)
+            continue
+        if history_key is not None and line.startswith("    "):
+            chart.history[history_key] += "\n" + line.removeprefix("    ")
+            continue
+        history_key = None
+        in_history = line == "- Chart history:"
         if line.startswith("- Problem list:"):
             rest = line.removeprefix("- Problem list:").strip()
             chart.problems.extend([rest] if rest else [])
@@ -244,17 +261,20 @@ def _with_chart(content: dict[str, Any], chart: _Chart) -> dict[str, Any]:
 
     A diagnosis field (or SOAP's clinical impression) names the listed
     problems; an allergies field states the chart's allergies; a current
-    medications field is the chart's list, line for line, or "None recorded".
-    So a spec can see that a draft was written against the chart it was
-    handed.
+    medications field is the chart's list, line for line, or "None recorded";
+    a history field is the chart's text for its key, word for word. So a spec
+    can see that a draft was written against the chart it was handed.
     """
-    for section in content.values():
+    for section_key, section in content.items():
         if not isinstance(section, dict):
             continue
         for key, value in section.items():
             if key == "current_medications" and chart.medications is not None:
                 section[key] = chart.medications or ["None recorded"]
             if not isinstance(value, str):
+                continue
+            if key in chart.history and section_key != "substance_use":
+                section[key] = chart.history[key]
                 continue
             if "diagnos" in key or key == "clinical_impression":
                 section[key] = f"{value} Problem list: {'; '.join(chart.problems)}."

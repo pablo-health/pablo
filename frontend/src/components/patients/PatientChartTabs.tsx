@@ -8,6 +8,7 @@ import {
   ClipboardList,
   CreditCard,
   FileText,
+  History as HistoryIcon,
   ListChecks,
   Folder,
   Pill,
@@ -23,6 +24,7 @@ import { PatientDocuments } from "@/components/patients/PatientDocuments"
 import { OutcomeMeasuresTab } from "@/components/outcomeMeasures/OutcomeMeasuresTab"
 import { DiagnosesTab } from "@/components/diagnoses/DiagnosesTab"
 import { ProblemListTab } from "@/components/problems/ProblemListTab"
+import { ChartHistoryTab } from "@/components/chartHistory/ChartHistoryTab"
 import { MedicationsTab } from "@/components/medications/MedicationsTab"
 import { PaymentsTab } from "@/components/payments/PaymentsTab"
 import { BalanceTab } from "@/components/payments/BalanceTab"
@@ -53,6 +55,7 @@ const TABS = [
   "documents",
   "measures",
   "problems",
+  "history",
   "diagnoses",
   "medications",
   "payments",
@@ -203,6 +206,10 @@ export function PatientChartTabs({ patientId, initialTab }: PatientChartTabsProp
             Problems
             <CountBadge count={problemCount} />
           </TabsTrigger>
+          <TabsTrigger value="history">
+            <HistoryIcon className="h-4 w-4" />
+            History
+          </TabsTrigger>
           <TabsTrigger value="diagnoses">
             <Stethoscope className="h-4 w-4" />
             Diagnoses
@@ -241,6 +248,9 @@ export function PatientChartTabs({ patientId, initialTab }: PatientChartTabsProp
         </TabsContent>
         <TabsContent value="problems" className="pt-4">
           <ProblemListTab patientId={patientId} />
+        </TabsContent>
+        <TabsContent value="history" className="pt-4">
+          <ChartHistoryTab patientId={patientId} />
         </TabsContent>
         <TabsContent value="diagnoses" className="pt-4">
           <DiagnosesTab patientId={patientId} />

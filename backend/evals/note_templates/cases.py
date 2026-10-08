@@ -18,7 +18,12 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
-from app.notes.chart_context import ChartContext, ChartMedication, ChartProblem
+from app.notes.chart_context import (
+    ChartContext,
+    ChartHistoryField,
+    ChartMedication,
+    ChartProblem,
+)
 from app.notes.practice_types import PracticeNoteTypeSpec
 
 TEMPLATES_DIR = (
@@ -83,10 +88,14 @@ class TemplateCase:
     """The chart's problem list the visit is drafted against."""
     medications: tuple[ChartMedication, ...] = ()
     """The chart's active medications, as the clinician last recorded them."""
+    history: tuple[ChartHistoryField, ...] = ()
+    """The chart's recorded history fields. Every other history field is "Not recorded"."""
 
     @property
     def chart(self) -> ChartContext:
-        return ChartContext(problems=self.problems, medications=self.medications)
+        return ChartContext(
+            problems=self.problems, medications=self.medications, history=self.history
+        )
 
     @property
     def spec(self) -> PracticeNoteTypeSpec:
@@ -127,6 +136,23 @@ FOLLOW_UP_WITH_THERAPY = TemplateCase(
     medications=(
         ChartMedication("Adderall XR", "20 mg", "every morning", "psychiatric"),
         ChartMedication("Sertraline", "50 mg", "every morning", "psychiatric"),
+    ),
+    # The visit mentions work stress and a partner: the chart's text still stands.
+    history=(
+        ChartHistoryField(
+            "prior_diagnoses",
+            "ADHD, predominantly inattentive, diagnosed in college; GAD diagnosed 2024.",
+            date(2025, 11, 3),
+        ),
+        ChartHistoryField(
+            "work_school", "Financial analyst, full time, since 2022.", date(2025, 11, 3)
+        ),
+        ChartHistoryField(
+            "family_psychiatric",
+            "Mother: generalized anxiety.\nFather: none known.",
+            date(2025, 11, 3),
+        ),
+        ChartHistoryField("alcohol", "One to two drinks on weekends.", date(2025, 11, 3)),
     ),
     expected=Expected(
         therapy=True,

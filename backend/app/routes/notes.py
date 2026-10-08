@@ -61,6 +61,7 @@ from ..notes.chart_context import chart_context_for
 from ..notes.practice_types import validate_note_inputs
 from ..problems.dependencies import get_problem_service
 from ..repositories import (
+    ChartHistoryRepository,
     MedicationRepository,
     NotesRepository,
     PatientProblemRepository,
@@ -72,6 +73,9 @@ from ..repositories import (
 )
 from ..repositories import (
     get_appointment_repository as _appt_repo_factory,
+)
+from ..repositories import (
+    get_chart_history_repository as _history_repo_factory,
 )
 from ..repositories import (
     get_medication_repository as _medication_repo_factory,
@@ -231,6 +235,11 @@ def get_worker_problem_repository() -> PatientProblemRepository:
 def get_worker_medication_repository() -> MedicationRepository:
     """The medication list, for the same worker."""
     return _medication_repo_factory()
+
+
+def get_worker_history_repository() -> ChartHistoryRepository:
+    """Chart history, for the same worker."""
+    return _history_repo_factory()
 
 
 @router.get("/{note_id}")
@@ -741,6 +750,7 @@ def generate_standalone_note_job(
     patient_repo: PatientRepository = Depends(get_worker_patient_repository),
     problem_repo: PatientProblemRepository = Depends(get_worker_problem_repository),
     medication_repo: MedicationRepository = Depends(get_worker_medication_repository),
+    history_repo: ChartHistoryRepository = Depends(get_worker_history_repository),
     note_generation_service: NoteGenerationService = Depends(get_note_generation_service),
     user_repo: UserRepository = Depends(get_user_repository),
     audit: AuditService = Depends(get_audit_service),
@@ -805,6 +815,7 @@ def generate_standalone_note_job(
         patient,
         problem_repo.list_by_patient(patient.id),
         medication_repo.list_by_patient(patient.id, payload.user_id),
+        history_repo.entries(patient.id),
     )
     # Release the pooled connection before the multi-second LLM call — same
     # seam ``upload_session`` and the old inline dictation path used.

@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""What the chart tells a draft: listed diagnoses with codes, and allergies.
+"""What the chart tells a draft: diagnoses with codes, allergies, medications, history.
 
 The prompt is the part of generation a unit test can hold steady: the chart
 block has to be there, in the right place, for the right note types, and the
@@ -10,16 +10,18 @@ allergy have to travel with it.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
+from app.chart_history.models import HistoryEntry
 from app.models import Patient, Transcript
 from app.notes import NoteTypeRegistry, register_builtin_note_types
 from app.notes.chart_context import (
     STATED_THIS_VISIT,
     ChartContext,
+    ChartHistoryField,
     ChartMedication,
     ChartProblem,
     allergies_line,
@@ -92,7 +94,7 @@ def test_chart_carries_active_and_rule_out_problems_but_not_resolved() -> None:
 
 
 def test_block_names_codes_and_marks_rule_outs_and_uncoded() -> None:
-    block = render_chart_block(CHART, include_prescribing=False)
+    block = render_chart_block(CHART, full_chart=False)
     assert "  - F41.1 Generalized anxiety disorder" in block
     assert "  - Insomnia (no code recorded)" in block
     assert "  - Bipolar II disorder — rule-out, not a diagnosis" in block
@@ -102,7 +104,7 @@ def test_block_names_codes_and_marks_rule_outs_and_uncoded() -> None:
 
 
 def test_an_empty_list_reads_none_recorded() -> None:
-    block = render_chart_block(ChartContext(), include_prescribing=True)
+    block = render_chart_block(ChartContext(), full_chart=True)
     assert "- Problem list: none recorded" in block
     assert "- Allergies: Not recorded" in block
 
@@ -124,7 +126,7 @@ def test_allergies_line_for_each_state(chart: ChartContext, line: str) -> None:
 
 
 def test_the_chart_value_wins_over_the_transcript() -> None:
-    block = render_chart_block(CHART, include_prescribing=True)
+    block = render_chart_block(CHART, full_chart=True)
     assert "write the chart's value even if the transcript differs" in block
 
 
@@ -251,7 +253,7 @@ def test_each_medication_is_listed_with_dose_and_frequency() -> None:
             ChartMedication("Bupropion XL", "150 mg"),
         )
     )
-    block = render_chart_block(chart, include_prescribing=True)
+    block = render_chart_block(chart, full_chart=True)
     assert (
         "- Current medications:\n  - Sertraline 100 mg, every morning\n  - Bupropion XL 150 mg\n"
         in (block)
@@ -267,7 +269,7 @@ def test_psychiatric_and_other_medications_are_listed_apart() -> None:
             ChartMedication("Melatonin", "3 mg", "at bedtime"),
         )
     )
-    block = render_chart_block(chart, include_prescribing=True)
+    block = render_chart_block(chart, full_chart=True)
     assert (
         "- Current medications:\n"
         "  - Psychiatric:\n"
@@ -280,12 +282,12 @@ def test_psychiatric_and_other_medications_are_listed_apart() -> None:
 
 
 def test_no_medications_read_none_recorded() -> None:
-    block = render_chart_block(ChartContext(), include_prescribing=True)
+    block = render_chart_block(ChartContext(), full_chart=True)
     assert "- Current medications: none recorded" in block
 
 
 def test_medications_carry_the_as_written_rule_and_the_plan_line() -> None:
-    block = render_chart_block(ChartContext(), include_prescribing=True)
+    block = render_chart_block(ChartContext(), full_chart=True)
     assert block.startswith("Chart (entered by the clinician; use these values as written):")
     assert (
         "- The medications field states the chart's list as given. A medication the "
@@ -296,7 +298,7 @@ def test_medications_carry_the_as_written_rule_and_the_plan_line() -> None:
 
 def test_a_note_with_no_place_for_medications_is_not_handed_them() -> None:
     chart = ChartContext(medications=(ChartMedication("Sertraline", "100 mg"),))
-    block = render_chart_block(chart, include_prescribing=False)
+    block = render_chart_block(chart, full_chart=False)
     assert "Sertraline" not in block
     assert "medications" not in block
 
@@ -339,3 +341,84 @@ def test_a_session_draft_reads_the_medication_list() -> None:
     assert chart.medications == (ChartMedication("Sertraline", "100 mg"),)
     assert outsider is not None
     assert outsider.medications == ()
+
+
+# --- Chart history ----------------------------------------------------------------
+
+
+def _entry(key: str, text: str | None, when: datetime = NOW) -> HistoryEntry:
+    return HistoryEntry(
+        id=key, patient_id="p1", field_key=key, text=text, updated_at=when, updated_by="u1"
+    )
+
+
+def test_the_chart_carries_recorded_history_in_chart_order_and_not_removed_values() -> None:
+    chart = chart_context_for(
+        _patient(),
+        [],
+        history=[
+            _entry("medical_history", "Hypertension, treated."),
+            _entry("trauma_history", None),
+            _entry("prior_diagnoses", "ADHD, diagnosed 2019.", datetime(2026, 7, 14, tzinfo=UTC)),
+        ],
+    )
+    assert chart.history == (
+        ChartHistoryField("prior_diagnoses", "ADHD, diagnosed 2019.", date(2026, 7, 14)),
+        ChartHistoryField("medical_history", "Hypertension, treated.", date(2026, 10, 6)),
+    )
+
+
+def test_each_history_field_is_listed_with_its_text_and_date() -> None:
+    chart = ChartContext(
+        history=(
+            ChartHistoryField(
+                "living_situation", "Lives alone since the separation.", date(2026, 9, 2)
+            ),
+            ChartHistoryField(
+                "family_psychiatric", "Mother: bipolar I.\nBrother: ADHD.", date(2026, 7, 14)
+            ),
+        )
+    )
+    block = render_chart_block(chart, full_chart=True)
+    assert (
+        "- Chart history:\n"
+        "  - living_situation (Living situation, recorded 2026-09-02): "
+        "Lives alone since the separation.\n"
+        "  - family_psychiatric (Psychiatric, recorded 2026-07-14): Mother: bipolar I.\n"
+        "    Brother: ADHD.\n"
+    ) in block
+    assert block.startswith("Chart (entered by the clinician; use these values as written):")
+    assert (
+        "write the chart history text for the field with the same key exactly as recorded" in block
+    )
+    assert "Substance use baseline" not in block
+
+
+def test_the_substance_baseline_is_listed_apart_with_the_screen_rule() -> None:
+    chart = ChartContext(
+        history=(
+            ChartHistoryField("alcohol", "Two glasses of wine on weekends.", date(2026, 7, 14)),
+        )
+    )
+    block = render_chart_block(chart, full_chart=True)
+    assert (
+        "- Substance use baseline (what the client uses, as recorded):\n"
+        "  - alcohol (Alcohol, recorded 2026-07-14): Two glasses of wine on weekends.\n"
+    ) in block
+    assert "- Chart history:" not in block
+    assert "asked \u2014 no change" in block
+    assert "Not asked" in block
+
+
+def test_an_empty_history_renders_no_history_block() -> None:
+    block = render_chart_block(ChartContext(), full_chart=True)
+    assert "Chart history" not in block
+    assert "Substance use baseline" not in block
+    assert "same key" not in block
+
+
+def test_a_note_with_no_place_for_history_is_not_handed_it() -> None:
+    chart = ChartContext(
+        history=(ChartHistoryField("trauma_history", "Denies.", date(2026, 7, 14)),)
+    )
+    assert "trauma_history" not in render_chart_block(chart, full_chart=False)

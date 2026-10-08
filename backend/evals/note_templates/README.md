@@ -29,6 +29,7 @@ Any problem from any check fails the case.
 | `diagnoses_only_stated` | the diagnosis list is empty, or names a diagnosis neither on the chart's problem list nor named by the clinician; anywhere in the note, a diagnosis code from neither | no diagnosis or code is invented |
 | `measures_undated` | the measures field carries a calendar date (the visit says "on Friday") | a weekday is never converted into a date |
 | `medications_from_chart` | the current medications leave out a line the chart has, word for word, or add one it does not; a change made in this visit appears in the current list | the current list is the chart's, and a start, stop or change stays in the plan |
+| `history_from_chart` | a history field (psychiatric, trauma, social, medical, family) is not the chart's text word for word, or does not read "Not recorded" when the chart has nothing for it | history comes from the chart as the clinician recorded it, never from the visit |
 
 The checks are unit-tested on hand-made drafts, passing and failing, in
 `backend/tests/test_note_template_eval_scorers.py`.
@@ -40,8 +41,8 @@ entered before the visit are invented in `cases.py`.
 
 | Case | Sample | Entered | The draft must carry |
 |---|---|---|---|
-| `follow-up-with-therapy` | `with_therapy` | telehealth, both locations, two coded problems and two psychiatric medications on the chart | the chart's medications as listed, with sertraline still at 50 mg (the visit raises it to 75); 99214 and 90836, 10:14 to 10:55 and 41 minutes, the PDMP check dated 2026-03-12 (the clinician said "today") with its finding, both locations, a psychotherapy section |
-| `follow-up-medication-only` | `medication_only` | in office, one uncategorized medication on the chart | the chart's bupropion line as listed; no code, time, minutes or PDMP claim; an empty psychotherapy section; "Not asked" for tobacco and cannabis; only the depression the clinician named, with no code |
+| `follow-up-with-therapy` | `with_therapy` | telehealth, both locations, two coded problems, two psychiatric medications, three history fields and an alcohol baseline on the chart | the three history fields word for word and every other one "Not recorded"; the chart's medications as listed, with sertraline still at 50 mg (the visit raises it to 75); 99214 and 90836, 10:14 to 10:55 and 41 minutes, the PDMP check dated 2026-03-12 (the clinician said "today") with its finding, both locations, a psychotherapy section |
+| `follow-up-medication-only` | `medication_only` | in office, one uncategorized medication and no history on the chart | every history field "Not recorded"; the chart's bupropion line as listed; no code, time, minutes or PDMP claim; an empty psychotherapy section; "Not asked" for tobacco and cannabis; only the depression the clinician named, with no code |
 
 In the medication-only sample the clinician asks "Any alcohol or anything
 else?" and the client answers only about alcohol. Other substances are

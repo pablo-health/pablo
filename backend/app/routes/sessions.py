@@ -75,6 +75,9 @@ from ..repositories import (
     get_user_repository,
 )
 from ..repositories import (
+    get_chart_history_repository as _history_repo_factory,
+)
+from ..repositories import (
     get_medication_repository as _medication_repo_factory,
 )
 from ..repositories import (
@@ -296,6 +299,7 @@ def get_worker_session_service(
         NoteService(_notes_repo_factory()),
         _problem_repo_factory(),
         _medication_repo_factory(),
+        _history_repo_factory(),
     )
 
 

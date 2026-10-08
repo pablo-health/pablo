@@ -43,6 +43,10 @@ from .booking_link import (
     BookingLinkRepository,
     InMemoryBookingLinkRepository,
 )
+from .chart_history import (
+    ChartHistoryRepository,
+    InMemoryChartHistoryRepository,
+)
 from .chat import (
     ChatRepository,
     InMemoryChatRepository,
@@ -492,6 +496,12 @@ def get_medication_repository() -> MedicationRepository:
     return PostgresMedicationRepository(_get_pg_session())
 
 
+def get_chart_history_repository() -> ChartHistoryRepository:
+    from .postgres.chart_history import PostgresChartHistoryRepository
+
+    return PostgresChartHistoryRepository(_get_pg_session())
+
+
 def get_patient_problem_repository() -> PatientProblemRepository:
     from .postgres.patient_problem import PostgresPatientProblemRepository
 
@@ -516,6 +526,7 @@ __all__ = [
     "AllowlistRepository",
     "ArtifactSlotTakenError",
     "BookingLinkRepository",
+    "ChartHistoryRepository",
     "ChatRepository",
     "ClinicianProfile",
     "ClinicianProfileRepository",
@@ -525,6 +536,7 @@ __all__ = [
     "IdentityRepository",
     "InMemoryAllowlistRepository",
     "InMemoryBookingLinkRepository",
+    "InMemoryChartHistoryRepository",
     "InMemoryChatRepository",
     "InMemoryClinicianProfileRepository",
     "InMemoryEhrPromptRepository",
@@ -577,6 +589,7 @@ __all__ = [
     "get_appointment_type_repository",
     "get_availability_rule_repository",
     "get_booking_link_repository",
+    "get_chart_history_repository",
     "get_chat_repository",
     "get_claim_receipt_repository",
     "get_claim_repository",

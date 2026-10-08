@@ -2,14 +2,15 @@
 
 """What the chart says, handed to note generation beside the transcript.
 
-The problem list, the allergy record and the medication list are the
-clinician's own entries, so a draft takes them as written: it names each
-listed diagnosis with its code, never adds a diagnosis that is neither listed
-nor stated by the clinician, never lets the transcript overrule a recorded
-allergy, and states the current medications as the chart lists them. What the
-clinician states that the chart does not have yet is marked "stated this
-visit" so it can be added at review; a medication started, stopped or changed
-in the visit belongs to the plan, not to the current list.
+The problem list, the allergy record, the medication list and the chart
+history are the clinician's own entries, so a draft takes them as written: it
+names each listed diagnosis with its code, never adds a diagnosis that is
+neither listed nor stated by the clinician, never lets the transcript overrule
+a recorded allergy, states the current medications as the chart lists them,
+and writes each history field word for word. What the clinician states that
+the chart does not have yet is marked "stated this visit" so it can be added
+at review; a medication started, stopped or changed in the visit belongs to
+the plan, not to the current list.
 
 Read while the caller still holds its database connection, then passed in:
 generation itself runs with nothing checked out.
@@ -20,11 +21,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from ..chart_history.fields import HISTORY_KEYS, SUBSTANCE_KEYS, field_label
 from ..problems.models import ProblemStatus
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
+    from datetime import date
 
+    from ..chart_history.models import HistoryEntry
     from ..models import Patient
     from ..problems.models import Problem
 
@@ -48,22 +52,34 @@ class ChartMedication:
 
 
 @dataclass(frozen=True)
+class ChartHistoryField:
+    key: str
+    """The chart-history key, which is also the key of the note field it fills."""
+    text: str
+    recorded_on: date
+
+
+@dataclass(frozen=True)
 class ChartContext:
-    """The listed diagnoses (active and rule-out, in order), the allergy record
-    and the active medications."""
+    """The listed diagnoses (active and rule-out, in order), the allergy record,
+    the active medications and the recorded history fields (in chart order)."""
 
     problems: tuple[ChartProblem, ...] = ()
     allergy_status: str = "not_recorded"
     allergies: tuple[dict[str, str], ...] = ()
     medications: tuple[ChartMedication, ...] = ()
+    history: tuple[ChartHistoryField, ...] = ()
 
 
 def chart_context_for(
     patient: Patient,
     problems: Iterable[Problem],
     medications: Iterable[Mapping[str, object]] = (),
+    history: Iterable[HistoryEntry] = (),
 ) -> ChartContext:
-    """``medications`` are medication-repository rows; only active ones are current."""
+    """``medications`` are medication-repository rows; only active ones are current.
+    ``history`` is the chart-history fields; a removed value is not passed on."""
+    recorded = {e.field_key: e for e in history if e.text}
     return ChartContext(
         problems=tuple(
             ChartProblem(label=p.label, icd10_code=p.icd10_code, status=p.status)
@@ -81,6 +97,11 @@ def chart_context_for(
             )
             for m in medications
             if m.get("status") == "active"
+        ),
+        history=tuple(
+            ChartHistoryField(key, str(entry.text), entry.updated_at.date())
+            for key in HISTORY_KEYS
+            if (entry := recorded.get(key)) is not None
         ),
     )
 
@@ -130,11 +151,31 @@ def _medication_lines(chart: ChartContext) -> list[str]:
     return lines
 
 
-def render_chart_block(chart: ChartContext, *, include_prescribing: bool) -> str:
+def _history_line(field: ChartHistoryField) -> str:
+    head = f"  - {field.key} ({field_label(field.key)}, recorded {field.recorded_on.isoformat()}):"
+    first, *rest = field.text.splitlines() or [""]
+    return "\n".join([f"{head} {first}", *(f"    {line}" for line in rest)])
+
+
+def _history_lines(chart: ChartContext) -> list[str]:
+    """The recorded history, with the substance-use baseline listed apart; empty when none."""
+    history = [f for f in chart.history if f.key not in SUBSTANCE_KEYS]
+    baseline = [f for f in chart.history if f.key in SUBSTANCE_KEYS]
+    lines: list[str] = []
+    if history:
+        lines.append("- Chart history:")
+        lines.extend(_history_line(f) for f in history)
+    if baseline:
+        lines.append("- Substance use baseline (what the client uses, as recorded):")
+        lines.extend(_history_line(f) for f in baseline)
+    return lines
+
+
+def render_chart_block(chart: ChartContext, *, full_chart: bool) -> str:
     """The chart as prompt text, with the rules for using it.
 
-    ``include_prescribing`` adds the allergies and the current medications,
-    which only a note with a place for them is handed.
+    ``full_chart`` adds the allergies, the current medications and the
+    history, which only a note with a place for them is handed.
     """
     lines = ["Chart (entered by the clinician; use these values as written):"]
     if chart.problems:
@@ -142,9 +183,10 @@ def render_chart_block(chart: ChartContext, *, include_prescribing: bool) -> str
         lines.extend(_problem_line(p) for p in chart.problems)
     else:
         lines.append("- Problem list: none recorded")
-    if include_prescribing:
+    if full_chart:
         lines.append(f"- Allergies: {allergies_line(chart)}")
         lines.extend(_medication_lines(chart))
+        lines.extend(_history_lines(chart))
     lines.extend(
         [
             "",
@@ -160,7 +202,7 @@ def render_chart_block(chart: ChartContext, *, include_prescribing: bool) -> str
             "- A rule-out is not a diagnosis; mention it only as a rule-out.",
         ]
     )
-    if include_prescribing:
+    if full_chart:
         lines.append(
             "- Allergies come from the chart. When the chart records allergies or "
             "NKDA, write the chart's value even if the transcript differs. Only when "
@@ -172,4 +214,26 @@ def render_chart_block(chart: ChartContext, *, include_prescribing: bool) -> str
             "the clinician starts, stops or changes in this visit is written in the "
             "plan, not in the current list."
         )
+        lines.extend(_history_rules(chart))
     return "\n".join(lines)
+
+
+def _history_rules(chart: ChartContext) -> list[str]:
+    keys = {f.key for f in chart.history}
+    rules = []
+    if keys - set(SUBSTANCE_KEYS):
+        rules.append(
+            "- Where a field's instructions say it comes from the chart, write the chart "
+            "history text for the field with the same key exactly as recorded: never "
+            "rewrite, summarize, merge or drop it. A key with no chart history above is "
+            '"Not recorded". What the client says this visit that differs is written in '
+            "the visit's own fields, not in a history field."
+        )
+    if keys & set(SUBSTANCE_KEYS):
+        rules.append(
+            "- The substance use baseline is what the chart records. A substance field in "
+            'the note is this visit\'s screen, not the baseline: "asked \u2014 no change" '
+            "when the client was asked and described no change, the change as stated, or "
+            '"Not asked" when it did not come up.'
+        )
+    return rules
