@@ -54,6 +54,13 @@ CODE = re.compile(r"\b(?:9\d{4}|G\d{4})\b")
 """Procedure codes: E/M and psychotherapy (9xxxx) and add-on (Gxxxx) codes."""
 DIAGNOSIS_CODE = re.compile(r"\b[A-TV-Z]\d{2}(?:\.[0-9A-Z]{1,4})?\b")
 CLOCK = re.compile(r"\b\d{1,2}:\d{2}\b")
+TIME_FIELDS = frozenset({"encounter.visit_details", "psychotherapy.psychotherapy_time"})
+"""Where a note states when the visit or its psychotherapy took place."""
+SESSION_TIME = re.compile(
+    r"\b(?:start(?:ed|s)?|end(?:ed|s)?|began|session|visit (?:from|time))\b", re.IGNORECASE
+)
+"""Wording that makes a clock time elsewhere a claim about the visit's own
+times. A time the client mentions ("it wears off by 9:00 AM") is not one."""
 MINUTES = re.compile(r"\b(\d+)\s*-?\s*min(?:ute)?s?\b", re.IGNORECASE)
 PSYCHOTHERAPY_TIME_LINE = re.compile(r"psychotherapy[^\n.:]*\b(?:time|minutes)\b", re.IGNORECASE)
 QUOTED = re.compile('["\u201c\u201d]([^"\u201c\u201d]+)["\u201c\u201d]')
@@ -192,6 +199,8 @@ def codes_only_dictated(draft: Draft, case: TemplateCase) -> list[str]:
         problems += [
             f"{path}: code {c} was not dictated" for c in CODE.findall(text) if c not in e.codes
         ]
+        if path not in TIME_FIELDS and not SESSION_TIME.search(text):
+            continue
         problems += [
             f"{path}: time {t} was not dictated" for t in CLOCK.findall(text) if t not in e.times
         ]

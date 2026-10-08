@@ -211,7 +211,16 @@ def test_a_medication_the_client_reports_may_follow_the_charts_list() -> None:
             "99215 + 90836, 10:14-10:55, 41 minutes",
             "codes_only_dictated",
         ),
-        ("plan", "follow_up", "Return 2026-04-09 at 10:00.", "codes_only_dictated"),
+        # A session time nobody dictated, outside the time fields.
+        (
+            "plan",
+            "follow_up",
+            "Session started at 10:05; return in four weeks.",
+            "codes_only_dictated",
+        ),
+        ("subjective", "interval_history", "Visit from 10:00 to 10:55.", "codes_only_dictated"),
+        # A procedure code anywhere in the note.
+        ("subjective", "interval_history", "Discussed 90837 eligibility.", "codes_only_dictated"),
         # A dictated code or time left out.
         ("encounter", "visit_details", "E/M 99214.", "codes_only_dictated"),
         # The visit details restate the psychotherapy time, even as dictated.
@@ -868,6 +877,27 @@ def test_risk_failures_are_caught(key: str, value: str, check: Any) -> None:
 # ---------------------------------------------------------------------------
 # Shapes the model returns
 # ---------------------------------------------------------------------------
+
+
+def test_a_time_the_client_mentions_is_not_a_session_time() -> None:
+    """The client said "wears off by nine": the draft may write it as a clock time."""
+    draft = _with(
+        THERAPY_DRAFT,
+        "subjective",
+        "side_effects",
+        'Reports feeling "a little groggy" after trazodone, which wears off by 9:00 AM.',
+    )
+
+    assert _failed(draft, FOLLOW_UP_WITH_THERAPY) == {}
+
+
+def test_a_session_time_nobody_dictated_is_caught_in_the_time_fields() -> None:
+    for section, key, text in (
+        ("encounter", "visit_details", "Date of service: 2026-03-12. 99214, 90836. 10:00."),
+        ("psychotherapy", "psychotherapy_time", "10:10 to 10:55, 41 minutes."),
+    ):
+        failed = _failed(_with(THERAPY_DRAFT, section, key, text), FOLLOW_UP_WITH_THERAPY)
+        assert list(failed) == ["codes_only_dictated"], failed
 
 
 def test_a_chart_line_under_its_heading_on_one_line_is_the_charts_line() -> None:
