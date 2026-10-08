@@ -81,7 +81,25 @@ _MAX_CONNECT_TIMEOUT_SECONDS = 5.0
 #: rather than building one per call.
 _TIMEOUT_STEP_SECONDS = 0.5
 
+#: A cached client unused for this long is rebuilt before its next call.
+#:
+#: Its pooled connections may already be dead. A NAT or proxy between the
+#: service and Bedrock drops a TCP connection that has been idle past its own
+#: timeout (Cloud NAT's default is 1200 s) without telling either end, and the
+#: next request written to that socket is never answered: it hangs until the
+#: read timeout. For an interactive call that is the whole attempt; for a long
+#: call it is minutes before the fallback even starts. Rebuilding costs one TLS
+#: handshake. Half the most common NAT default leaves margin for clock drift
+#: and for a NAT configured a little tighter.
+_MAX_CLIENT_IDLE_SECONDS = 600.0
+
 _TOOL_NAME = "emit_structured_output"
+
+
+def _now() -> float:
+    """Monotonic seconds; a function so a test can move the clock."""
+    return time.monotonic()
+
 
 #: Bedrock's own error codes for a model that did not answer in time.
 _TIMEOUT_CODES = frozenset({"ModelTimeoutException"})
@@ -203,8 +221,9 @@ class BedrockStructuredLLMGateway(StructuredLLMGateway):
         self._session: Any = None
         # One client per bound: botocore fixes timeouts when a client is
         # built, and building one costs tens of milliseconds. Hedged legs
-        # run on worker threads, hence the lock.
-        self._clients: dict[float, Any] = {}
+        # run on worker threads, hence the lock. Each entry carries when it
+        # was last handed out, so an idle one is rebuilt (_MAX_CLIENT_IDLE_SECONDS).
+        self._clients: dict[float, tuple[Any, float]] = {}
         self._lock = threading.Lock()
 
     def client(self, timeout_seconds: float) -> Any:
@@ -217,11 +236,24 @@ class BedrockStructuredLLMGateway(StructuredLLMGateway):
 
     def _client(self, timeout_seconds: float) -> Any:
         bound = math.ceil(timeout_seconds / _TIMEOUT_STEP_SECONDS) * _TIMEOUT_STEP_SECONDS
+        now = _now()
         with self._lock:
-            if bound not in self._clients:
+            cached = self._clients.get(bound)
+            if cached is None or now - cached[1] > _MAX_CLIENT_IDLE_SECONDS:
+                if cached is not None:
+                    logger.info(
+                        "Bedrock client idle %.0fs; rebuilding it (bound=%.1fs)",
+                        now - cached[1],
+                        bound,
+                    )
+                # The replaced client is not closed here: a call still running
+                # on it keeps its own reference, and its pool goes with it.
                 factory = self._client_factory or self._build_client
-                self._clients[bound] = factory(bound)
-            return self._clients[bound]
+                client = factory(bound)
+            else:
+                client = cached[0]
+            self._clients[bound] = (client, now)
+            return client
 
     def _build_client(self, timeout_seconds: float) -> Any:
         from botocore.config import Config
