@@ -850,6 +850,32 @@ CREATE TABLE __TENANT_SCHEMA__.patient_charges (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.patient_chart_history (
+    id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    field_key character varying(64) NOT NULL,
+    text text,
+    source_note_id uuid,
+    updated_by uuid,
+    updated_at timestamp with time zone NOT NULL
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.patient_chart_history_revisions (
+    id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    field_key character varying(64) NOT NULL,
+    text text,
+    source_note_id uuid,
+    written_by uuid,
+    written_at timestamp with time zone NOT NULL,
+    replaced_by uuid NOT NULL,
+    replaced_at timestamp with time zone NOT NULL
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.patient_clinicians (
     patient_id uuid NOT NULL,
     user_id uuid NOT NULL,
@@ -1750,6 +1776,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_charges
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_chart_history
+    ADD CONSTRAINT patient_chart_history_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_chart_history_revisions
+    ADD CONSTRAINT patient_chart_history_revisions_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_clinicians
     ADD CONSTRAINT patient_clinicians_pkey PRIMARY KEY (patient_id, user_id);
 
@@ -1962,6 +1998,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.intake_packet_versions
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.note_signatures
     ADD CONSTRAINT uq_note_signatures_note_version UNIQUE (note_id, version);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_chart_history
+    ADD CONSTRAINT uq_patient_chart_history_field UNIQUE (patient_id, field_key);
 
 
 
@@ -2311,6 +2352,10 @@ CREATE INDEX ix_patient_charges_claim_id ON __TENANT_SCHEMA__.patient_charges US
 
 
 CREATE INDEX ix_patient_charges_patient_created ON __TENANT_SCHEMA__.patient_charges USING btree (patient_id, created_at);
+
+
+
+CREATE INDEX ix_patient_chart_history_revisions_patient_field ON __TENANT_SCHEMA__.patient_chart_history_revisions USING btree (patient_id, field_key);
 
 
 
@@ -2876,6 +2921,26 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.outcome_measures
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.outcome_measures
     ADD CONSTRAINT outcome_measures_session_id_fkey FOREIGN KEY (session_id) REFERENCES __TENANT_SCHEMA__.therapy_sessions(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_chart_history
+    ADD CONSTRAINT patient_chart_history_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_chart_history_revisions
+    ADD CONSTRAINT patient_chart_history_revisions_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_chart_history_revisions
+    ADD CONSTRAINT patient_chart_history_revisions_source_note_id_fkey FOREIGN KEY (source_note_id) REFERENCES __TENANT_SCHEMA__.notes(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_chart_history
+    ADD CONSTRAINT patient_chart_history_source_note_id_fkey FOREIGN KEY (source_note_id) REFERENCES __TENANT_SCHEMA__.notes(id) ON DELETE SET NULL;
 
 
 

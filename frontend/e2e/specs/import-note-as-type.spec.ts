@@ -21,7 +21,7 @@ type Template = { spec: { label: string } }
 type Imported = { id: string; note: { note_type: string } | null }
 
 const TEMPLATE = new URL(
-  "../../src/components/settings/noteTypes/templates/psychiatric_follow_up.json",
+  "../../../backend/app/notes/templates/psychiatric_follow_up.json",
   import.meta.url,
 )
 
@@ -40,7 +40,7 @@ test("a clinician imports a note as the practice's follow-up type and sees its f
     const document = [
       "Psychiatric medication management follow-up",
       `Chief complaint: Still waking at 4 a.m. ${marker}`,
-      "Interval history: Mood steadier since the dose increase; back at work full time.",
+      "Depression: Mood steadier since the dose increase; back at work full time.",
       "Current medications: Sertraline 100 mg by mouth daily",
       "Allergies: Penicillin (rash).",
       "Follow up: Return in 6 weeks.",
@@ -83,8 +83,10 @@ test("a clinician imports a note as the practice's follow-up type and sees its f
     await expect(note.getByText("Sertraline 100 mg by mouth daily")).toBeVisible()
     await expect(note.getByText("Penicillin (rash).")).toBeVisible()
     await expect(note.getByText("Return in 6 weeks.")).toBeVisible()
-    await expect(note.getByText("Interval history", { exact: true })).toBeVisible()
-    await expect(note.getByText("Medical decision making", { exact: true })).toBeVisible()
+    await expect(note.getByText("Depression", { exact: true })).toBeVisible()
+    await expect(note.getByText("Mental status exam", { exact: true })).toBeVisible()
+    // Reviewed beside the note, not part of it.
+    await expect(note.getByText("Medical decision making", { exact: true })).toHaveCount(0)
   } finally {
     await api.request("DELETE", `/api/note-types/custom/${slug}`)
   }

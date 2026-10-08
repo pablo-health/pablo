@@ -210,6 +210,21 @@ class _Chart:
     allergies: str | None = None
     medications: list[str] | None = None
     """``None`` when the block has no medication list; ``[]`` when it says none recorded."""
+    history: dict[str, str] = field(default_factory=dict)
+    """Chart history text by field key, as recorded, the substance baseline included."""
+
+
+#: How a client line names what they take: "Client: I'm taking A, B and C."
+_STATED_MEDICATIONS = ("Client: I'm taking ", "Client: I am taking ")
+
+#: How a client line changes a history field: "Client: Update on work_school: laid off."
+_STATED_UPDATE = "Client: Update on "
+
+#: How a client line answers a substance screen with no change: "Client: No change in alcohol."
+_NO_CHANGE = "Client: No change in "
+
+#: How the backend renders one chart-history field: ``  - key (Label, recorded date): text``.
+_HISTORY_LINE = re.compile(r"^  - ([a-z_]+) \([^)]*, recorded [0-9-]+\): (.*)$")
 
 
 def _chart(user_prompt: str) -> _Chart | None:
@@ -221,7 +236,18 @@ def _chart(user_prompt: str) -> _Chart | None:
         return None
     chart = _Chart()
     listing: list[str] | None = None
+    history_key: str | None = None
+    in_history = False
     for line in user_prompt.splitlines():
+        if in_history and (match := _HISTORY_LINE.match(line)):
+            history_key = match.group(1)
+            chart.history[history_key] = match.group(2)
+            continue
+        if history_key is not None and line.startswith("    "):
+            chart.history[history_key] += "\n" + line.removeprefix("    ")
+            continue
+        history_key = None
+        in_history = line == "- Chart history:" or line.startswith("- Substance use baseline")
         if line.startswith("- Problem list:"):
             rest = line.removeprefix("- Problem list:").strip()
             chart.problems.extend([rest] if rest else [])
@@ -239,22 +265,92 @@ def _chart(user_prompt: str) -> _Chart | None:
     return chart
 
 
-def _with_chart(content: dict[str, Any], chart: _Chart) -> dict[str, Any]:
+def _stated_updates(user_prompt: str) -> dict[str, str]:
+    """What client lines say changed, by history key. String operations only: the
+    prompt is caller text, so no regex runs over it."""
+    updates: dict[str, str] = {}
+    for line in user_prompt.splitlines():
+        _, found, rest = line.partition(_STATED_UPDATE)
+        key, sep, text = rest.partition(": ")
+        if found and sep and text.strip():
+            updates[key.strip()] = text.strip()
+    return updates
+
+
+def _unchanged(user_prompt: str) -> set[str]:
+    """The substance keys a client line says did not change."""
+    keys = set()
+    for line in user_prompt.splitlines():
+        _, found, rest = line.partition(_NO_CHANGE)
+        if found:
+            keys.add(rest.strip().removesuffix("."))
+    return keys
+
+
+def _screened(chart: _Chart, key: str, updates: dict[str, str], unchanged: set[str]) -> str:
+    """A substance field: the chart's baseline, then this visit's screen."""
+    if key in updates:
+        screen = f'(stated this visit: "{updates[key]}")'
+    elif key in unchanged:
+        screen = "(asked this visit: no change)"
+    else:
+        screen = "(not asked this visit)"
+    return f"{chart.history.get(key, 'Not recorded')} {screen}"
+
+
+def _current_medications(chart_lines: list[str], user_prompt: str) -> list[str]:
+    """The chart's list as written, then what the client says they take that it lacks.
+
+    A stated medication is matched to the chart by its first word, the drug's
+    name, and is added as ``(stated this visit: "...")`` only when the chart does
+    not list it.
+    """
+    listed = chart_lines or ["None recorded"]
+    on_chart = {line.split()[0].lower() for line in chart_lines if not line.endswith(":")}
+    # Plain string splitting: the prompt is caller text, so no regex runs over it.
+    stated: list[str] = []
+    for line in user_prompt.splitlines():
+        for opener in _STATED_MEDICATIONS:
+            _, found, named = line.partition(opener)
+            if found:
+                named = named.strip().removesuffix(".").replace(" and ", ",")
+                stated.extend(item.strip() for item in named.split(",") if item.strip())
+    return listed + [
+        f'(stated this visit: "{item}")'
+        for item in stated
+        if item.split()[0].lower() not in on_chart
+    ]
+
+
+def _with_chart(content: dict[str, Any], chart: _Chart, user_prompt: str = "") -> dict[str, Any]:
     """Echo the chart into the fields a model would put it in.
 
     A diagnosis field (or SOAP's clinical impression) names the listed
     problems; an allergies field states the chart's allergies; a current
-    medications field is the chart's list, line for line, or "None recorded".
-    So a spec can see that a draft was written against the chart it was
-    handed.
+    medications field is the chart's list, line for line, or "None recorded",
+    then any medication a client line says they take that the chart lacks;
+    a history field is the chart's text for its key, word for word, then what
+    a client line says changed; a substance field is the chart's baseline,
+    then the visit's screen. So a spec can see that a draft was written
+    against the chart it was handed.
     """
-    for section in content.values():
+    updates = _stated_updates(user_prompt)
+    unchanged = _unchanged(user_prompt)
+    for section_key, section in content.items():
         if not isinstance(section, dict):
             continue
         for key, value in section.items():
             if key == "current_medications" and chart.medications is not None:
-                section[key] = chart.medications or ["None recorded"]
+                section[key] = _current_medications(chart.medications, user_prompt)
             if not isinstance(value, str):
+                continue
+            if section_key == "substance_use":
+                section[key] = _screened(chart, key, updates, unchanged)
+                continue
+            if (key in chart.history or key in updates) and section_key != "substance_use":
+                section[key] = chart.history.get(key, "Not recorded")
+                if key in updates:
+                    section[key] += f' (stated this visit: "{updates[key]}")'
                 continue
             if "diagnos" in key or key == "clinical_impression":
                 section[key] = f"{value} Problem list: {'; '.join(chart.problems)}."
@@ -314,6 +410,8 @@ async def draft_note(call: NoteCall) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail="model unavailable")
     if call.response_schema.get("title") == "PracticeNoteTypeSpec":
         return {"data": DERIVED_PROPOSAL, "finish_reason": "stop"}
+    if "runs" in call.response_schema.get("properties", {}):
+        return {"data": _turn_labels(call.user_prompt), "finish_reason": "stop"}
     note = _source_note(call.user_prompt)
     if note is not None:
         return {"data": _extracted(call.response_schema, note), "finish_reason": "stop"}
@@ -322,9 +420,9 @@ async def draft_note(call: NoteCall) -> dict[str, Any]:
     _fill_named(draft, _dictated(call.user_prompt))
     chart = _chart(call.user_prompt)
     if chart is not None:
-        draft = _with_chart(draft, chart)
-    if "psychotherapy_start" in call.response_schema.get("properties", {}):
-        draft["psychotherapy_start"] = _therapy_start(call.user_prompt)
+        draft = _with_chart(draft, chart, call.user_prompt)
+    if "psychotherapy_time_stated" in call.response_schema.get("properties", {}):
+        draft["psychotherapy_time_stated"] = _stated_time(call.user_prompt)
     return {"data": draft, "finish_reason": "stop"}
 
 
@@ -394,20 +492,51 @@ def _fill_named(draft: dict[str, Any], values: dict[str, str]) -> None:
                 section[key] = values[key]
 
 
-#: The clinician's spoken cue the stand-in recognizes as the therapy portion starting.
-THERAPY_CUE = re.compile(
-    r"^\[(\d+(?::\d{2}){1,2})\][^\n]*let's get into", re.IGNORECASE | re.MULTILINE
+#: Minutes of psychotherapy the clinician dictated, as the stand-in hears them.
+STATED_MINUTES = re.compile(r"Psychotherapy (\d+) minutes", re.IGNORECASE)
+
+
+def _stated_time(user_prompt: str) -> dict[str, Any]:
+    """The psychotherapy time the clinician dictated: only minutes, when said."""
+    said = STATED_MINUTES.search(user_prompt)
+    if said is None:
+        return {"start": "", "end": "", "as_dictated": ""}
+    return {"start": "", "end": "", "minutes": int(said.group(1)), "as_dictated": said.group(0)}
+
+
+#: The turns a labeling call numbers ("[S3] Therapist: ...").
+LABELED_TURN = re.compile(r"^\[S(\d+)\] (\w+): (.*)$", re.MULTILINE)
+
+#: What the stand-in reads a turn as, by its words; the first match wins.
+TURN_WORDS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"medication|dose|side effect", re.IGNORECASE), "medication_management"),
+    (re.compile(r"hurting yourself|better off dead", re.IGNORECASE), "screening_risk"),
+    (re.compile(r"next month|see you", re.IGNORECASE), "admin"),
 )
+THERAPY_CUE = "let's get into"
 
 
-def _therapy_start(user_prompt: str) -> dict[str, Any]:
-    """Where the therapy portion began: the turn with the clinician's cue, if any."""
-    cue = THERAPY_CUE.search(user_prompt)
-    return {
-        "transcript_time": cue.group(1) if cue else "",
-        "cued_by_clinician": cue is not None,
-        "stated_clock_time": "",
-    }
+def _turn_labels(user_prompt: str) -> dict[str, Any]:
+    """Every turn labeled, one run each.
+
+    A clinician's turn is read by its words; before the spoken cue ("let's
+    get into") it is admin, from the cue on therapy. A client's turn answers
+    the turn before it and takes its label unless its own words say otherwise.
+    """
+    runs: list[dict[str, Any]] = []
+    cue = -1
+    label = "admin"
+    for match in LABELED_TURN.finditer(user_prompt):
+        index, speaker, text = int(match.group(1)), match.group(2), match.group(3)
+        if THERAPY_CUE in text.lower():
+            cue = index
+        said = next((name for words, name in TURN_WORDS if words.search(text)), None)
+        if said is not None:
+            label = said
+        elif speaker != "Client":
+            label = "therapy" if cue >= 0 else "admin"
+        runs.append({"first_segment": index, "last_segment": index, "label": label})
+    return {"runs": runs, "cue_segment": cue}
 
 
 @app.get("/_fake/health")

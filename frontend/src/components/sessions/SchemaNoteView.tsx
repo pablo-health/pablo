@@ -34,7 +34,7 @@ import {
 import { useNoteType } from "@/hooks/useNoteTypes"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { schemaNotePdf } from "@/lib/notePdf"
-import { isEmptyValue, listItems, textValue } from "@/lib/schemaNoteValues"
+import { inTheNote, isEmptyValue, listItems, textValue } from "@/lib/schemaNoteValues"
 import { statedDiagnoses, type StatedDiagnosis } from "@/lib/statedDiagnoses"
 import { exportNoteToPDF, type PDFExportMetadata } from "@/lib/utils/pdfExport"
 import type { NoteFieldSchema, NoteTypeSchema } from "@/types/noteTypes"
@@ -259,7 +259,7 @@ export function SchemaNoteBody({
       </div>
 
       <div className="divide-y divide-neutral-200">
-        {definition.sections.map((section) => {
+        {inTheNote(definition.sections).map((section) => {
           const values = displaySections[section.key] ?? {}
           const shown = editMode
             ? section.fields

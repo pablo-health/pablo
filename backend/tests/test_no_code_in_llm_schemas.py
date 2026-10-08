@@ -13,25 +13,17 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
 from typing import Any
 
 import pytest
 from app.notes import NoteTypeDefinition, NoteTypeRegistry, register_builtin_note_types
 from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
+from app.notes.spec_templates import TEMPLATES_DIR
 from app.services.note_generation_service import _build_registry_response_schema
 from app.services.note_import_service import _build_extract_schema
-from app.services.psychotherapy_start import START_SCHEMA
+from app.services.therapy_labels import LABEL_SCHEMA, TIME_SCHEMA, build_label_prompt
 
-TEMPLATES = (
-    Path(__file__).resolve().parents[2]
-    / "frontend"
-    / "src"
-    / "components"
-    / "settings"
-    / "noteTypes"
-    / "templates"
-)
+TEMPLATES = TEMPLATES_DIR
 
 # A CPT code (five digits starting 9, the E/M and psychiatry range) or a HCPCS G code.
 BILLING_CODE = re.compile(r"\b(?:9\d{4}|G\d{4})\b")
@@ -74,7 +66,9 @@ def test_no_schema_or_field_hint_names_a_code(definition: NoteTypeDefinition) ->
     asked = [
         *_strings(_build_registry_response_schema(definition)),
         *_strings(_build_extract_schema(definition)),
-        *_strings(START_SCHEMA),
+        *_strings(TIME_SCHEMA),
+        *_strings(LABEL_SCHEMA),
+        build_label_prompt({}, []),
         *(f.ai_hint for s in definition.sections for f in s.fields),
     ]
     named = [text for text in asked if BILLING_CODE.search(text)]

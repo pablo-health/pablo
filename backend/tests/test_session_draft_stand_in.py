@@ -143,6 +143,7 @@ def test_the_in_process_draft_runs_the_worker_job_in_the_tenant(
     monkeypatch.setattr(sessions_routes, "_notes_repo_factory", MagicMock)
     monkeypatch.setattr(sessions_routes, "_problem_repo_factory", MagicMock)
     monkeypatch.setattr(sessions_routes, "_medication_repo_factory", MagicMock)
+    monkeypatch.setattr(sessions_routes, "_history_repo_factory", MagicMock)
     monkeypatch.setattr(sessions_routes, "get_user_repository", MagicMock)
     monkeypatch.setattr(sessions_routes, "get_audit_service", MagicMock)
     job = GenerateSoapJob(session_id="s-1", user_id="u-1")

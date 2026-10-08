@@ -13,7 +13,6 @@ import {
   specFromDraft,
 } from "../editorModel"
 import { importSpec } from "../importSpec"
-import { NOTE_TYPE_TEMPLATES } from "../templates"
 
 const SPEC: PracticeNoteTypeSpec = {
   label: "Check-in",
@@ -25,10 +24,8 @@ const SPEC: PracticeNoteTypeSpec = {
 }
 
 describe("note-type editor model", () => {
-  it("round-trips every template unchanged", () => {
-    for (const template of NOTE_TYPE_TEMPLATES) {
-      expect(specFromDraft(draftFromSpec(template.spec, null, template.slug))).toEqual(template.spec)
-    }
+  it("round-trips a loaded spec unchanged", () => {
+    expect(specFromDraft(draftFromSpec(SPEC, "check_in"))).toEqual(SPEC)
   })
 
   it("derives keys for added parts from their names, unique among siblings", () => {

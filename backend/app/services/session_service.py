@@ -36,6 +36,7 @@ from ..notes.chart_context import ChartContext, chart_context_for
 from ..notes.client_present import client_present_end, is_call, segments_from_transcript
 from ..notes.practice_types import validate_note_inputs
 from ..repositories import (
+    ChartHistoryRepository,
     MedicationRepository,
     PatientProblemRepository,
     PatientRepository,
@@ -225,6 +226,7 @@ class SessionService:
         note_service: NoteService,
         problem_repo: PatientProblemRepository | None = None,
         medication_repo: MedicationRepository | None = None,
+        history_repo: ChartHistoryRepository | None = None,
     ) -> None:
         self.session_repo = session_repo
         self.patient_repo = patient_repo
@@ -232,6 +234,7 @@ class SessionService:
         self.note_service = note_service
         self.problem_repo = problem_repo
         self.medication_repo = medication_repo
+        self.history_repo = history_repo
 
     def _chart_for(self, patient: Patient, user_id: str) -> ChartContext | None:
         """The chart a draft is written against; ``None`` when this service can't read it."""
@@ -242,8 +245,9 @@ class SessionService:
             if self.medication_repo is not None
             else []
         )
+        history = self.history_repo.entries(patient.id) if self.history_repo is not None else []
         return chart_context_for(
-            patient, self.problem_repo.list_by_patient(patient.id), medications
+            patient, self.problem_repo.list_by_patient(patient.id), medications, history
         )
 
     def _get_patient_or_raise(self, patient_id: str, user_id: str) -> Patient:
@@ -291,7 +295,7 @@ class SessionService:
             content=result.content,
             user_id=user_id,
             note_type_version=result.note_type_version,
-            psychotherapy_start=result.psychotherapy_start,
+            psychotherapy_proposal=result.psychotherapy_proposal,
         )
 
     def create_session_for_generation(

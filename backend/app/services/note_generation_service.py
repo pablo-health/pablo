@@ -46,17 +46,15 @@ from ..notes.diagnoses import DIAGNOSES_KIND_LABEL, DIAGNOSES_SCHEMA, coerce_dia
 from ..notes.practice_types import PromptBlocks, render_user_prompt
 from ..notes.prompts.soap import SOAP_SYSTEM_PROMPT
 from ..notes.registry import is_practice_key
-from ..notes.visit_times import PSYCHOTHERAPY_SECTION_KEY, client_present_turns
+from ..notes.visit_times import (
+    PSYCHOTHERAPY_SECTION_KEY,
+    PSYCHOTHERAPY_TIME_FIELD,
+    client_present_turns,
+    dictated_time_text,
+)
 from ..settings import get_settings
 from .ai_features import AIFeature
 from .hedged_structured_llm_gateway import generation_gateway
-from .psychotherapy_start import (
-    START_INSTRUCTIONS,
-    START_KEY,
-    START_SCHEMA,
-    attributed_start,
-    propose_start,
-)
 from .source_attribution_service import (
     build_attribution_prompt,
     build_claims_from_soap,
@@ -67,6 +65,16 @@ from .structured_llm_gateway import (
     StructuredCompletion,
     StructuredLLMGateway,
     StructuredOutputTruncatedError,
+)
+from .therapy_labels import (
+    LABEL_SCHEMA,
+    LABEL_SYSTEM_PROMPT,
+    TIME_INSTRUCTIONS,
+    TIME_KEY,
+    TIME_SCHEMA,
+    label_turns,
+    propose,
+    stated_time,
 )
 
 logger = logging.getLogger(__name__)
@@ -167,9 +175,10 @@ class GeneratedNote:
     soap_note: SOAPNote | None = None
     #: Version of a practice-defined type the content was generated from.
     note_type_version: int | None = None
-    #: Where the psychotherapy portion may have begun, for a type with a
-    #: psychotherapy section (see :mod:`app.services.psychotherapy_start`).
-    psychotherapy_start: dict[str, Any] | None = None
+    #: The psychotherapy time the clinician dictated and the proposed turn
+    #: labels, for a type with a psychotherapy section (see
+    #: :mod:`app.services.therapy_labels`).
+    psychotherapy_proposal: dict[str, Any] | None = None
 
 
 class RestrictedNoteGenerationError(ValueError):
@@ -279,7 +288,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
         asks_start = client_present_end_seconds != 0 and any(
             s.key == PSYCHOTHERAPY_SECTION_KEY for s in definition.sections
         )
-        content, start_mark = self._generate_via_registry(
+        content, time_reply = self._generate_via_registry(
             definition,
             transcript,
             patient,
@@ -300,16 +309,20 @@ class RegistryNoteGenerationService(NoteGenerationService):
                 content=soap_note.to_dict(),
                 soap_note=soap_note,
             )
-        start = None
+        proposal = None
         if asks_start:
+            said = stated_time(time_reply)
+            # The field states the dictated time as rendered from its parts,
+            # so what the clinician said is compared by parts, never re-read.
+            content[PSYCHOTHERAPY_SECTION_KEY][PSYCHOTHERAPY_TIME_FIELD] = dictated_time_text(said)
             turns = client_present_turns(segments, client_present_end_seconds)
-            attributed = attributed_start(content, turns, self._complete_attribution)
-            start = propose_start(start_mark, attributed, turns)
+            labels, cue = label_turns(content, turns, self._complete_labels)
+            proposal = propose(said, labels, cue)
         return GeneratedNote(
             note_type=note_type,
             content=content,
             note_type_version=definition.version,
-            psychotherapy_start=start,
+            psychotherapy_proposal=proposal,
         )
 
     def _generate_via_registry(
@@ -327,7 +340,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
         chart: ChartContext | None = None,
         current_note: Mapping[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any] | None]:
-        """The drafted content, and the model's mark of where therapy began."""
+        """The drafted content, and the psychotherapy time the clinician stated."""
         full_definition = definition
         addendum = ""
         if client_present_end_seconds is not None and segments:
@@ -345,11 +358,11 @@ class RegistryNoteGenerationService(NoteGenerationService):
         else:
             system_prompt = _DEFAULT_GENERATION_PROMPT_SYSTEM
 
-        # Allergies and medications go to the types a practice defines for
-        # itself — the prescriber's notes, which must state them — and not to
-        # the built-in therapy formats, which have no place to put them.
+        # Allergies, medications and history go to the types a practice
+        # defines for itself — the prescriber's notes, which must state them —
+        # and not to the built-in therapy formats, which have no place for them.
         chart_block = (
-            render_chart_block(chart, include_prescribing=is_practice_key(definition.key))
+            render_chart_block(chart, full_chart=is_practice_key(definition.key))
             if chart is not None and definition.reads_chart
             else None
         )
@@ -377,8 +390,8 @@ class RegistryNoteGenerationService(NoteGenerationService):
 
         schema = _build_registry_response_schema(definition)
         if asks_start:
-            user_prompt = f"{user_prompt}\n\n{START_INSTRUCTIONS}"
-            schema["properties"][START_KEY] = START_SCHEMA
+            user_prompt = f"{user_prompt}\n\n{TIME_INSTRUCTIONS}"
+            schema["properties"][TIME_KEY] = TIME_SCHEMA
         completion = self._complete_structured_with_retry(
             note_key=definition.key,
             system_prompt=system_prompt,
@@ -389,17 +402,18 @@ class RegistryNoteGenerationService(NoteGenerationService):
         # Coerced against what was asked for, then against the whole type, so
         # a section left out of the request comes back present and empty.
         asked = _coerce_registry_response(definition, completion.data)
-        mark = completion.data.get(START_KEY) if asks_start else None
-        return _coerce_registry_response(full_definition, asked), mark
+        stated = completion.data.get(TIME_KEY) if asks_start else None
+        return _coerce_registry_response(full_definition, asked), stated
 
-    def _complete_attribution(self, prompt: str) -> dict[str, Any]:
-        """One structured source-attribution call; see :meth:`_run_source_attribution`."""
+    def _complete_labels(self, prompt: str) -> dict[str, Any]:
+        """One structured turn-labeling call; see :func:`.therapy_labels.label_turns`."""
         settings = get_settings()
+        # The attribution call's budgets: both map turns, nearly mechanically.
         return self._llm_gateway.complete_structured(
             model=self._resolve_model(),
-            system_prompt=_ATTRIBUTION_SYSTEM_PROMPT,
+            system_prompt=LABEL_SYSTEM_PROMPT,
             user_prompt=prompt,
-            response_schema=_SOAP_ATTRIBUTION_SCHEMA,
+            response_schema=LABEL_SCHEMA,
             max_output_tokens=settings.note_source_attribution_max_output_tokens,
             thinking_budget=settings.note_source_attribution_thinking_budget,
             temperature=0.0,
