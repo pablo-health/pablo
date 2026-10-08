@@ -180,7 +180,7 @@ class _RecordingParse:
     def __init__(self) -> None:
         self.source_texts: list[str] = []
 
-    def parse_soap_note(self, source_text: str) -> ParsedImportedNote:
+    def parse_note(self, source_text: str, definition: object = None) -> ParsedImportedNote:
         self.source_texts.append(source_text)
         return _PARSED
 

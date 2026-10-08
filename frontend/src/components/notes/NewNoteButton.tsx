@@ -143,8 +143,8 @@ export function NewNoteButton({ patientId }: NewNoteButtonProps) {
                   Import existing notes
                 </div>
                 <div className="text-sm text-neutral-600">
-                  Upload one or many existing SOAP notes (PDF, Word, or TXT) —
-                  we extract the date and S/O/A/P sections for your review.
+                  Upload one or many notes you&apos;ve already written (PDF,
+                  Word, or TXT) for your review.
                 </div>
               </div>
             </div>
