@@ -44,7 +44,9 @@ def exactly_the_expected_fields(
     got = [_name(p.field_key, p.item_key) for p in proposals]
     want = {_name(e.field_key, e.entry) for e in case.expected}
     problems = [f"missing a proposal for {key}" for key in sorted(want - set(got))]
-    problems += [f"unexpected proposal for {key}" for key in sorted(set(got) - want)]
+    problems += [
+        f"unexpected proposal for {key}" for key in sorted(set(got) - want - set(case.allowed))
+    ]
     problems += [
         f"more than one proposal for {key}" for key in sorted({k for k in got if got.count(k) > 1})
     ]
