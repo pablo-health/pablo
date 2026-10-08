@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import copy
+import re
 from datetime import date
 from typing import Any
 
@@ -13,10 +14,31 @@ from app.chart_history.fields import HISTORY_GROUPS, SUBSTANCE_USE
 from app.notes.practice_types import practice_key, to_definition, validate_note_inputs
 from evals.note_templates.cases import (
     ALL_CASES,
+    EVALUATION_EMPTY_CHART,
+    FOLLOW_UP_ALLERGY_DISPUTED,
+    FOLLOW_UP_ALLERGY_STATED,
+    FOLLOW_UP_EMPTY_CHART,
+    FOLLOW_UP_FULL_CHART,
     FOLLOW_UP_MEDICATION_ONLY,
+    FOLLOW_UP_RISK_LANGUAGE,
+    FOLLOW_UP_STATED_CHANGE,
     FOLLOW_UP_WITH_THERAPY,
 )
-from evals.note_templates.scorers import calendar_dates, grade
+from evals.note_templates.scorers import (
+    allergies_never_dropped,
+    calendar_dates,
+    chart_fed_fields,
+    diagnoses_only_stated,
+    grade,
+    history_from_chart,
+    history_from_visit,
+    intake_states_meds,
+    medications_from_chart,
+    risk_quoted,
+    safety_plan_only_with_ideation,
+    substances,
+    suffix_only_where_stated,
+)
 
 THERAPY_DRAFT: dict[str, dict[str, Any]] = {
     "encounter": {
@@ -53,6 +75,7 @@ THERAPY_DRAFT: dict[str, dict[str, Any]] = {
             "Adderall XR 20 mg, every morning",
             "Sertraline 50 mg, every morning",
         ],
+        "allergies": "Not recorded",
     },
     "assessment": {
         "diagnoses": [
@@ -61,6 +84,10 @@ THERAPY_DRAFT: dict[str, dict[str, Any]] = {
         ],
     },
     "plan": {
+        "medication_plan": [
+            "Continue Adderall XR 20 mg every morning.",
+            "Increase sertraline from 50 mg to 75 mg every morning for worsening anxiety.",
+        ],
         "pdmp": (
             "State prescription monitoring program (PDMP) reviewed on 2026-03-12: "
             "no early fills, no other prescribers."
@@ -115,7 +142,10 @@ MEDICATION_ONLY_DRAFT: dict[str, dict[str, Any]] = {
         "safety_plan": "",
     },
     "measures": {"measures_reviewed": ""},
-    "medications": {"current_medications": ["Bupropion XL 150 mg, every morning"]},
+    "medications": {
+        "current_medications": ["Bupropion XL 150 mg, every morning"],
+        "allergies": "Not recorded",
+    },
     "assessment": {"diagnoses": ["Depression, in remission"]},
     "plan": {"pdmp": ""},
     "psychotherapy": {
@@ -165,7 +195,10 @@ def test_a_medication_the_client_reports_may_follow_the_charts_list() -> None:
         "current_medications",
         ["Bupropion XL 150 mg, every morning", "(stated this visit: melatonin 3 mg)"],
     )
-    assert _failed(draft, FOLLOW_UP_MEDICATION_ONLY) == {}
+    # The list itself is sound; the mark is wrong only because this visit's
+    # client named no other medication.
+    assert medications_from_chart(draft, FOLLOW_UP_MEDICATION_ONLY) == []
+    assert list(_failed(draft, FOLLOW_UP_MEDICATION_ONLY)) == ["suffix_only_where_stated"]
 
 
 @pytest.mark.parametrize(
@@ -282,6 +315,22 @@ def test_a_medication_the_client_reports_may_follow_the_charts_list() -> None:
         ("psychiatric_history", "prior_diagnoses", "", "history_from_chart"),
         # Nothing on the chart, but the draft fills it from the visit.
         ("social_history", "relationships", "Supportive partner.", "history_from_chart"),
+        # The chart's text kept, but marked as changed when nothing was.
+        (
+            "social_history",
+            "work_school",
+            'Financial analyst, full time, since 2022. (stated this visit: "quarterly review")',
+            "suffix_only_where_stated",
+        ),
+        # The increase left out of the plan.
+        (
+            "plan",
+            "medication_plan",
+            ["Continue Adderall XR 20 mg.", "Continue sertraline."],
+            "medications_from_chart",
+        ),
+        # The chart's "Not recorded" dropped.
+        ("medications", "allergies", "", "allergies_never_dropped"),
     ],
 )
 def test_therapy_draft_failures_are_caught(section: str, key: str, value: Any, check: str) -> None:
@@ -358,12 +407,490 @@ def test_a_weekday_is_not_a_calendar_date() -> None:
     assert calendar_dates("completed on Friday") == []
 
 
+TURN = re.compile(r"^\[\d{2}:\d{2}:\d{2}\] (?:Therapist|Client): \S")
+
+
 @pytest.mark.parametrize("case", ALL_CASES, ids=lambda c: c.name)
-def test_cases_draft_a_real_template_sample(case: Any) -> None:
-    """Each case names a template and sample that exist, with inputs the route accepts."""
+def test_cases_draft_a_real_template(case: Any) -> None:
+    """Each case names a template that exists, a visit in its samples' format,
+    inputs the route accepts, and only fields the template has."""
     definition = to_definition(practice_key(case.template), 0, case.spec)
 
     assert validate_note_inputs(definition, case.inputs)
-    assert case.transcript.strip()
+    lines = case.transcript.strip().splitlines()
+    assert lines
+    assert all(TURN.match(line) for line in lines), case.name
     fields = {(s.key, f.key) for s in definition.sections for f in s.fields}
-    assert {("plan", "pdmp"), ("risk", "overall_risk"), ("encounter", "place_of_service")} <= fields
+    assert {("risk", "overall_risk"), ("encounter", "place_of_service")} <= fields
+    assert ("medications", "current_medications") in chart_fed_fields(case)
+    named = {f"{s}.{k}" for s, k in fields}
+    assert set(case.expected.stated_this_visit) <= named
+    assert set(case.expected.may_state) <= named
+
+
+@pytest.mark.parametrize("case", ALL_CASES, ids=lambda c: c.name)
+def test_every_visit_ends_with_the_clinicians_dictation(case: Any) -> None:
+    """The risk, codes and findings each case grades come from the dictated tail."""
+    last = case.transcript.strip().splitlines()[-1]
+
+    assert "] Therapist: Note" in last, case.name
+
+
+def test_the_follow_up_takes_history_from_the_chart_and_the_evaluation_from_the_visit() -> None:
+    follow_up = {k for _, k in chart_fed_fields(FOLLOW_UP_FULL_CHART)}
+    evaluation = {k for _, k in chart_fed_fields(EVALUATION_EMPTY_CHART)}
+
+    assert {"work_school", "trauma_history", "allergies", "current_medications"} <= follow_up
+    assert evaluation == {"allergies", "current_medications"}
+
+
+# ---------------------------------------------------------------------------
+# The chart-fed field rule: the chart's value, then what was stated, marked
+# ---------------------------------------------------------------------------
+
+
+def _chart_history(case: Any, stated: dict[str, str] | None = None) -> dict[str, Any]:
+    """Every history field as the case's chart has it, with any stated mark after."""
+    recorded = {f.key: f.text for f in case.history}
+    draft = _history(recorded)
+    for key, mark in (stated or {}).items():
+        section = next(g.key for g in HISTORY_GROUPS if key in {f.key for f in g.fields})
+        draft[section][key] = f"{draft[section][key]} {mark}"
+    return draft
+
+
+FULL_CHART_DRAFT: dict[str, dict[str, Any]] = {
+    **_chart_history(FOLLOW_UP_FULL_CHART),
+    "medications": {
+        "current_medications": [
+            "Psychiatric:",
+            "Sertraline 100 mg, every morning",
+            "Trazodone 50 mg, at bedtime as needed",
+            "Other:",
+            "Lisinopril 10 mg, every morning",
+        ],
+        "allergies": "Sulfa drugs (hives)",
+    },
+    "substance_use": {
+        "alcohol": "Asked — no change.",
+        "cannabis": "Asked — no change.",
+        "tobacco_nicotine": "Asked — no change.",
+        "stimulants": "Not asked",
+        "cocaine": "Not asked",
+        "opioids": "Not asked",
+        "benzodiazepines": "Not asked",
+        "other_substances": "Not asked",
+    },
+}
+
+
+def test_a_full_chart_written_as_recorded_passes() -> None:
+    for check in (
+        history_from_chart,
+        medications_from_chart,
+        allergies_never_dropped,
+        suffix_only_where_stated,
+        substances,
+    ):
+        assert check(FULL_CHART_DRAFT, FOLLOW_UP_FULL_CHART) == [], check.__name__
+
+
+@pytest.mark.parametrize(
+    ("section", "key", "value", "check"),
+    [
+        # Nothing changed, yet a chart-fed field is marked.
+        (
+            "social_history",
+            "supports",
+            'Spouse, two close friends, a sister nearby. (stated this visit: "my husband")',
+            "suffix_only_where_stated",
+        ),
+        (
+            "medications",
+            "allergies",
+            'Sulfa drugs (hives) (stated this visit: "no new allergies")',
+            "suffix_only_where_stated",
+        ),
+        # A history field summarized, or one line of a multi-line field dropped.
+        ("family_history", "family_psychiatric", "Father: depression.", "history_from_chart"),
+        ("psychiatric_history", "hospitalizations", "Denies.", "history_from_chart"),
+        # The recorded allergy dropped.
+        ("medications", "allergies", "NKDA", "allergies_never_dropped"),
+        # The chart's baseline written as this visit's screen.
+        (
+            "substance_use",
+            "alcohol",
+            "Two to three drinks a week, wine with dinner.",
+            "substances",
+        ),
+    ],
+)
+def test_full_chart_failures_are_caught(section: str, key: str, value: Any, check: str) -> None:
+    draft = _with(FULL_CHART_DRAFT, section, key, value)
+
+    assert grade(draft, FOLLOW_UP_FULL_CHART)[check], check
+
+
+STATED_CHANGE_DRAFT: dict[str, dict[str, Any]] = {
+    **_chart_history(
+        FOLLOW_UP_STATED_CHANGE,
+        {"work_school": '(stated this visit: "I got laid off from the bank three weeks ago")'},
+    ),
+    "medications": {
+        "current_medications": [
+            "Escitalopram 10 mg, every morning",
+            '"omeprazole, 20 milligrams every morning" (stated this visit)',
+        ],
+        "allergies": "No known drug allergies (NKDA)",
+    },
+    "plan": {
+        "medication_plan": [
+            "Continue escitalopram 10 mg every morning.",
+            "Start bupropion XL 150 mg every morning for energy and motivation.",
+        ],
+    },
+}
+
+
+def test_a_stated_change_kept_after_the_charts_text_passes() -> None:
+    for check in (
+        history_from_chart,
+        medications_from_chart,
+        intake_states_meds,
+        allergies_never_dropped,
+        suffix_only_where_stated,
+    ):
+        assert check(STATED_CHANGE_DRAFT, FOLLOW_UP_STATED_CHANGE) == [], check.__name__
+
+
+@pytest.mark.parametrize(
+    ("section", "key", "value", "check"),
+    [
+        # The chart's text replaced by what was said.
+        (
+            "social_history",
+            "work_school",
+            "Laid off from the bank three weeks ago.",
+            "history_from_chart",
+        ),
+        # The chart's text kept, and the change not marked at all.
+        (
+            "social_history",
+            "work_school",
+            "Bank teller, full time, since 2021.",
+            "suffix_only_where_stated",
+        ),
+        # The change written after the chart's text, but not marked.
+        (
+            "social_history",
+            "work_school",
+            "Bank teller, full time, since 2021. Laid off three weeks ago.",
+            "history_from_chart",
+        ),
+        # The reported medication left out, or added without the mark.
+        (
+            "medications",
+            "current_medications",
+            ["Escitalopram 10 mg, every morning"],
+            "intake_states_meds",
+        ),
+        (
+            "medications",
+            "current_medications",
+            ["Escitalopram 10 mg, every morning", "Omeprazole 20 mg every morning"],
+            "intake_states_meds",
+        ),
+        # The medication started today put in the current list.
+        (
+            "medications",
+            "current_medications",
+            [
+                "Escitalopram 10 mg, every morning",
+                '"omeprazole, 20 milligrams every morning" (stated this visit)',
+                "Bupropion XL 150 mg, every morning (stated this visit)",
+            ],
+            "medications_from_chart",
+        ),
+        # ...or missing from the plan.
+        (
+            "plan",
+            "medication_plan",
+            ["Continue escitalopram 10 mg."],
+            "medications_from_chart",
+        ),
+    ],
+)
+def test_stated_change_failures_are_caught(section: str, key: str, value: Any, check: str) -> None:
+    draft = _with(STATED_CHANGE_DRAFT, section, key, value)
+
+    assert grade(draft, FOLLOW_UP_STATED_CHANGE)[check], check
+
+
+@pytest.mark.parametrize(
+    ("case", "allergies", "passes"),
+    [
+        # NKDA on the chart, an allergy stated: both, the statement marked.
+        (
+            FOLLOW_UP_ALLERGY_STATED,
+            'NKDA; "I\'m allergic to amoxicillin" (stated this visit)',
+            True,
+        ),
+        (
+            FOLLOW_UP_ALLERGY_STATED,
+            'No known drug allergies (NKDA) (stated this visit: "allergic to amoxicillin")',
+            True,
+        ),
+        (FOLLOW_UP_ALLERGY_STATED, "Amoxicillin (rash), reported this visit.", False),
+        (FOLLOW_UP_ALLERGY_STATED, "NKDA", False),
+        # A recorded allergy disputed: still there, the dispute quoted or not.
+        (FOLLOW_UP_ALLERGY_DISPUTED, "Penicillin (hives)", True),
+        (
+            FOLLOW_UP_ALLERGY_DISPUTED,
+            'Penicillin (hives) (stated this visit: "that was actually my brother")',
+            True,
+        ),
+        (FOLLOW_UP_ALLERGY_DISPUTED, "No known drug allergies.", False),
+        (FOLLOW_UP_ALLERGY_DISPUTED, "Not recorded", False),
+        # Nothing on the chart, a denial stated: "Not recorded", the denial marked.
+        (
+            EVALUATION_EMPTY_CHART,
+            'Not recorded (stated this visit: "No, none that I know of.")',
+            True,
+        ),
+        (EVALUATION_EMPTY_CHART, "No known drug allergies.", False),
+        (EVALUATION_EMPTY_CHART, "Not recorded", False),
+    ],
+)
+def test_allergies_keep_the_chart_and_mark_what_was_said(
+    case: Any, allergies: str, passes: bool
+) -> None:
+    draft = {"medications": {"allergies": allergies}}
+    problems = allergies_never_dropped(draft, case) + [
+        p for p in suffix_only_where_stated(draft, case) if "allergies" in p
+    ]
+
+    assert (problems == []) is passes, problems
+
+
+EVALUATION_DRAFT: dict[str, dict[str, Any]] = {
+    "medications": {
+        "current_medications": [
+            "None recorded",
+            '"Levothyroxine, 75 micrograms every morning" (stated this visit)',
+            '"omeprazole, 20 milligrams before breakfast" (stated this visit)',
+        ],
+        "allergies": 'Not recorded (stated this visit: "No, none that I know of.")',
+    },
+    "treatment_plan": {
+        "plan_items": ["Start escitalopram 5 mg daily for seven days, then 10 mg daily."],
+    },
+    "assessment": {
+        "diagnoses": [
+            "F41.0 Panic disorder (stated this visit)",
+            "F41.1 Generalized anxiety disorder (stated this visit)",
+        ],
+    },
+    "psychiatric_history": {
+        "prior_diagnoses": "Panic disorder, diagnosed by primary care in 2019.",
+        "psychotherapy_history": "CBT for about six months in 2020; helped a lot.",
+        "medication_trials": ["Sertraline 25 mg: nausea, stopped after two weeks."],
+        "hospitalizations": "Denied.",
+        "past_self_harm": 'Denied: "No, never."',
+        "legal_custody": "Denied.",
+    },
+    "trauma_history": {"trauma_history": "Car accident at seventeen; avoids highways."},
+    "social_history": {
+        "living_situation": "Lives with a roommate in an apartment.",
+        "relationships": "Single; close with father.",
+        "work_school": "Nurse, night shifts at the hospital.",
+        "supports": "Father and roommate.",
+        "cultural_considerations": "Catholic; church on Sundays matters to the client.",
+    },
+    "medical_history": {"medical_history": "Hypothyroidism."},
+    "family_history": {
+        "family_psychiatric": "Aunt: panic attacks.",
+        "family_medical": "Father: heart disease.",
+    },
+}
+
+
+def test_an_intake_on_an_empty_chart_passes() -> None:
+    for check in (
+        medications_from_chart,
+        intake_states_meds,
+        allergies_never_dropped,
+        suffix_only_where_stated,
+        history_from_chart,
+        history_from_visit,
+        diagnoses_only_stated,
+    ):
+        assert check(EVALUATION_DRAFT, EVALUATION_EMPTY_CHART) == [], check.__name__
+
+
+@pytest.mark.parametrize(
+    ("section", "key", "value", "check"),
+    [
+        # The client listed what they take; the draft says there is nothing.
+        ("medications", "current_medications", ["None recorded"], "intake_states_meds"),
+        # The client's medications listed, but "None recorded" left out.
+        (
+            "medications",
+            "current_medications",
+            [
+                '"Levothyroxine 75 mcg" (stated this visit)',
+                '"omeprazole 20 mg" (stated this visit)',
+            ],
+            "medications_from_chart",
+        ),
+        # Listed as if the chart had them.
+        (
+            "medications",
+            "current_medications",
+            ["Levothyroxine 75 mcg every morning", "Omeprazole 20 mg before breakfast"],
+            "intake_states_meds",
+        ),
+        # The escitalopram started today written as current.
+        (
+            "medications",
+            "current_medications",
+            [
+                "None recorded",
+                '"Levothyroxine" (stated this visit)',
+                '"omeprazole" (stated this visit)',
+                "Escitalopram 5 mg daily",
+            ],
+            "medications_from_chart",
+        ),
+        # A history field the visit covered, left as if from an empty chart.
+        ("social_history", "work_school", "Not recorded", "history_from_visit"),
+        ("trauma_history", "trauma_history", "Denies trauma.", "history_from_visit"),
+        # A diagnosis named without the code the clinician gave, or one never named.
+        ("assessment", "diagnoses", ["Panic disorder", "F41.1 GAD"], "diagnoses_only_stated"),
+        (
+            "assessment",
+            "diagnoses",
+            ["F41.0 Panic disorder", "F41.1 Generalized anxiety disorder", "F90.0 ADHD"],
+            "diagnoses_only_stated",
+        ),
+    ],
+)
+def test_intake_failures_are_caught(section: str, key: str, value: Any, check: str) -> None:
+    draft = _with(EVALUATION_DRAFT, section, key, value)
+
+    assert grade(draft, EVALUATION_EMPTY_CHART)[check], check
+
+
+EMPTY_CHART_DRAFT: dict[str, dict[str, Any]] = {
+    **_history({}),
+    "medications": {"current_medications": ["None recorded"], "allergies": "Not recorded"},
+    "assessment": {"diagnoses": []},
+}
+
+
+@pytest.mark.parametrize(
+    "diagnoses", [[], ["No diagnoses recorded."], ["None recorded"]], ids=["empty", "no", "none"]
+)
+def test_an_empty_chart_names_no_diagnosis(diagnoses: list[str]) -> None:
+    draft = _with(EMPTY_CHART_DRAFT, "assessment", "diagnoses", diagnoses)
+    for check in (
+        diagnoses_only_stated,
+        medications_from_chart,
+        allergies_never_dropped,
+        history_from_chart,
+        suffix_only_where_stated,
+    ):
+        assert check(draft, FOLLOW_UP_EMPTY_CHART) == [], check.__name__
+
+
+@pytest.mark.parametrize(
+    ("section", "key", "value", "check"),
+    [
+        ("assessment", "diagnoses", ["Insomnia, improving"], "diagnoses_only_stated"),
+        ("assessment", "diagnoses", ["G47.00 Insomnia"], "diagnoses_only_stated"),
+        ("medications", "current_medications", [], "medications_from_chart"),
+        ("medications", "allergies", "NKDA", "allergies_never_dropped"),
+        ("social_history", "living_situation", "Not stated.", "history_from_chart"),
+    ],
+)
+def test_empty_chart_failures_are_caught(section: str, key: str, value: Any, check: str) -> None:
+    draft = _with(EMPTY_CHART_DRAFT, section, key, value)
+
+    assert grade(draft, FOLLOW_UP_EMPTY_CHART)[check], check
+
+
+RISK_DRAFT: dict[str, dict[str, Any]] = {
+    "risk": {
+        "suicidal_homicidal_ideation": (
+            'Client: "Some nights I think everyone would be better off without me." '
+            'Clinician: "Passive suicidal ideation, no intent, no plan." "Denies HI."'
+        ),
+        "self_harm_violence": '"No, I haven\'t done anything like that."',
+        "overall_risk": '"Overall acute risk is moderate."',
+        "safety_plan": (
+            "Warning sign: late-night rumination. Coping: walking the dog, calling their "
+            "sister. Crisis contacts: 988 and the office."
+        ),
+    },
+}
+
+
+def test_risk_stated_by_the_clinician_and_quoted_passes() -> None:
+    assert risk_quoted(RISK_DRAFT, FOLLOW_UP_RISK_LANGUAGE) == []
+    assert safety_plan_only_with_ideation(RISK_DRAFT, FOLLOW_UP_RISK_LANGUAGE) == []
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "check"),
+    [
+        # The level written outside the clinician's words, or not at all.
+        ("overall_risk", "Moderate.", risk_quoted),
+        ("overall_risk", 'Moderate ("Overall acute risk is moderate.")', risk_quoted),
+        ("overall_risk", "Not stated.", risk_quoted),
+        # A quotation that is not the finding.
+        ("overall_risk", '"Let\'s go up."', risk_quoted),
+        # The ideation paraphrased, or a level judged beside it.
+        ("suicidal_homicidal_ideation", "Passive SI without plan.", risk_quoted),
+        (
+            "suicidal_homicidal_ideation",
+            '"Some nights I think everyone would be better off without me." Low lethality.',
+            risk_quoted,
+        ),
+        # Ideation was reported and a plan described, but none written.
+        ("safety_plan", "", safety_plan_only_with_ideation),
+    ],
+)
+def test_risk_failures_are_caught(key: str, value: str, check: Any) -> None:
+    draft = _with(RISK_DRAFT, "risk", key, value)
+
+    assert check(draft, FOLLOW_UP_RISK_LANGUAGE)
+
+
+# ---------------------------------------------------------------------------
+# Shapes the model returns
+# ---------------------------------------------------------------------------
+
+
+def test_a_chart_line_under_its_heading_on_one_line_is_the_charts_line() -> None:
+    draft = {
+        "medications": {"current_medications": ["Psychiatric: Lamotrigine 100 mg, twice daily"]}
+    }
+
+    assert medications_from_chart(draft, FOLLOW_UP_ALLERGY_STATED) == []
+    rewritten = {"medications": {"current_medications": ["Psychiatric: Lamotrigine 100 mg BID"]}}
+    assert medications_from_chart(rewritten, FOLLOW_UP_ALLERGY_STATED)
+
+
+def test_a_diagnosis_returned_as_label_code_and_status_is_read_whole() -> None:
+    named = [
+        {"label": "Panic disorder", "code": "F41.0", "status": None},
+        {"label": "Generalized anxiety disorder", "code": "F41.1", "status": "stated this visit"},
+    ]
+    draft = _with(EVALUATION_DRAFT, "assessment", "diagnoses", named)
+    assert diagnoses_only_stated(draft, EVALUATION_EMPTY_CHART) == []
+
+    invented = [*named, {"label": "Insomnia disorder", "code": None, "status": None}]
+    draft = _with(EVALUATION_DRAFT, "assessment", "diagnoses", invented)
+    assert diagnoses_only_stated(draft, EVALUATION_EMPTY_CHART)
+
+    none = {"assessment": {"diagnoses": [{"label": "No diagnoses recorded", "code": None}]}}
+    assert diagnoses_only_stated(none, FOLLOW_UP_EMPTY_CHART) == []

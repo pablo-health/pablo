@@ -15,7 +15,8 @@ import re
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
 
-from app.chart_history.fields import HISTORY_GROUPS, SUBSTANCE_USE
+from app.chart_history.fields import HISTORY_GROUPS, is_history_key
+from app.notes.chart_context import allergies_line
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -29,7 +30,24 @@ RISK_QUOTED = (
     ("risk", "self_harm_violence"),
     ("risk", "overall_risk"),
 )
-"""Fields that must quote what was said, or read "Not stated."."""
+"""Fields that must quote what was said, or read "Not stated."; a template
+without one of them is not graded on it."""
+
+STATED_MARK = "(stated this visit"
+"""What marks a value stated this visit, "(stated this visit)" or
+"(stated this visit: ...)", after the chart's value in a chart-fed field."""
+ALLERGIES = ("medications", "allergies")
+CURRENT_MEDICATIONS = ("medications", "current_medications")
+FROM_THE_CHART = "from the chart"
+"""How a template's hint opens for a field it fills from the chart."""
+PLAN_MEDICATION_FIELDS = (
+    ("plan", "medication_plan"),
+    ("treatment_plan", "plan_items"),
+    ("prescriptions", "prescriptions"),
+)
+"""Where each template writes the medications started or changed in a visit."""
+NO_DIAGNOSES = re.compile(r"^(?:no|none)\b.*\brecorded\b|^none$")
+"""What a diagnosis list may say when there is none to name."""
 
 THERAPY_SECTION = "psychotherapy"
 CODE = re.compile(r"\b(?:9\d{4}|G\d{4})\b")
@@ -118,6 +136,44 @@ def _quote_in_transcript(quote: str, transcript: str) -> bool:
     return all(p in said for p in parts if p)
 
 
+def is_marked(text: str) -> bool:
+    return STATED_MARK in text.lower()
+
+
+def _item_text(item: Any) -> str:
+    """A list item as text: a diagnosis comes back as {label, code, status}."""
+    if isinstance(item, dict):
+        return " ".join(str(item[k]) for k in ("code", "label", "status") if item.get(k))
+    return str(item)
+
+
+def _items(draft: Draft, section: str, key: str) -> list[str]:
+    """A list field's items, or a text field as one item; blanks left out."""
+    value = _value(draft, section, key)
+    items = [_item_text(i) for i in value] if isinstance(value, list) else [str(value or "")]
+    return [i for i in items if i.strip()]
+
+
+def _spec_fields(case: TemplateCase) -> list[tuple[str, str, str]]:
+    """The template's fields as (section, key, hint)."""
+    return [(s.key, f.key, f.ai_hint) for s in case.spec.sections for f in s.fields]
+
+
+def _section_of(case: TemplateCase, key: str) -> str | None:
+    return next((s for s, k, _ in _spec_fields(case) if k == key), None)
+
+
+def chart_fed_fields(case: TemplateCase) -> list[tuple[str, str]]:
+    """The fields the template fills from the chart: its hint says so, and the
+    allergies, which carry the chart's value in every prescriber template."""
+    fields = [
+        (s, k) for s, k, hint in _spec_fields(case) if hint.lower().startswith(FROM_THE_CHART)
+    ]
+    if ALLERGIES not in fields and ALLERGIES in {(s, k) for s, k, _ in _spec_fields(case)}:
+        fields.append(ALLERGIES)
+    return fields
+
+
 # ---------------------------------------------------------------------------
 # Checks
 # ---------------------------------------------------------------------------
@@ -179,15 +235,23 @@ def psychotherapy_section(draft: Draft, case: TemplateCase) -> list[str]:
 def risk_quoted(draft: Draft, case: TemplateCase) -> list[str]:
     """Each risk field quotes what was said, or reads "Not stated."; never a judgment."""
     problems: list[str] = []
+    fields = {(s, k) for s, k, _ in _spec_fields(case)}
     for section, key in RISK_QUOTED:
+        if (section, key) not in fields:
+            continue
         text = _text(draft, section, key)
         path = f"{section}.{key}"
+        wanted = case.expected.risk_quotes.get(key, ())
         if is_not_stated(text):
+            if wanted:
+                problems.append(f"{path}: the clinician stated it, but the field is not stated")
             continue
         quotes = QUOTED.findall(text)
         if not quotes:
             problems.append(f'{path}: neither a quotation nor "Not stated."')
             continue
+        if wanted and not any(w in normalize(q) for q in quotes for w in wanted):
+            problems.append(f"{path}: no quotation carries {' or '.join(map(repr, wanted))}")
         problems += [
             f"{path}: quoted {q!r} was not said"
             for q in quotes
@@ -201,35 +265,37 @@ def risk_quoted(draft: Draft, case: TemplateCase) -> list[str]:
 
 
 def safety_plan_only_with_ideation(draft: Draft, case: TemplateCase) -> list[str]:
-    """No ideation, self-harm or violence was reported in any case here."""
-    del case
+    """Written when ideation was reported (the clinician described one); never otherwise."""
     text = _text(draft, "risk", "safety_plan")
-    if is_blank(text) or is_not_stated(text):
-        return []
-    return ["risk.safety_plan: written though no ideation was reported"]
+    written = not (is_blank(text) or is_not_stated(text))
+    if case.expected.ideation:
+        return [] if written else ["risk.safety_plan: ideation was reported, but no plan written"]
+    return ["risk.safety_plan: written though no ideation was reported"] if written else []
 
 
 def pdmp_line(draft: Draft, case: TemplateCase) -> list[str]:
     """A dictated check carries the calendar date and the finding; else no claim."""
-    text = _text(draft, "plan", "pdmp")
+    section = _section_of(case, "pdmp") or "plan"
+    path = f"{section}.pdmp"
+    text = _text(draft, section, "pdmp")
     findings = case.expected.pdmp_findings
     if findings is None:
         if is_blank(text) or is_not_stated(text):
             return []
-        return [f"plan.pdmp: claims a check the clinician did not dictate: {text!r}"]
+        return [f"{path}: claims a check the clinician did not dictate: {text!r}"]
     problems: list[str] = []
     if TODAY.search(text):
-        problems.append('plan.pdmp: says "today" instead of a date')
+        problems.append(f'{path}: says "today" instead of a date')
     dates = calendar_dates(text)
     if not dates:
-        problems.append("plan.pdmp: no calendar date")
+        problems.append(f"{path}: no calendar date")
     problems += [
-        f"plan.pdmp: date {d} is not the date of service {case.session_date}"
+        f"{path}: date {d} is not the date of service {case.session_date}"
         for d in dates
         if d != case.session_date
     ]
     said = normalize(text)
-    problems += [f"plan.pdmp: finding {f!r} missing" for f in findings if f not in said]
+    problems += [f"{path}: finding {f!r} missing" for f in findings if f not in said]
     return problems
 
 
@@ -252,7 +318,8 @@ def telehealth_attestation(draft: Draft, case: TemplateCase) -> list[str]:
 
 
 def substances(draft: Draft, case: TemplateCase) -> list[str]:
-    """Not asked reads "Not asked"; asked records the answer."""
+    """Not asked reads "Not asked"; asked records the answer; the chart's
+    baseline is never copied in as this visit's screen."""
     e = case.expected
     problems = [
         f'substance_use.{k}: should read "Not asked"'
@@ -263,25 +330,37 @@ def substances(draft: Draft, case: TemplateCase) -> list[str]:
         text = _text(draft, "substance_use", k)
         if is_blank(text) or is_not_asked(text) or is_not_stated(text):
             problems.append(f"substance_use.{k}: asked, but no answer recorded")
+    problems += [
+        f"substance_use.{f.key}: the chart's baseline copied in as this visit's screen"
+        for f in case.history
+        if normalize(_text(draft, "substance_use", f.key)) == normalize(f.text)
+    ]
     return problems
 
 
 def diagnoses_only_stated(draft: Draft, case: TemplateCase) -> list[str]:
-    """Each diagnosis is one the clinician entered or named; no invented codes."""
+    """Each diagnosis is one the clinician entered or named, a coded one with its
+    code; no invented codes. With none entered or named, the list names none."""
     allowed = case.expected.diagnoses
     codes = {d.code for d in allowed if d.code}
     problems: list[str] = []
-    items = _value(draft, "assessment", "diagnoses") or []
-    if not items:
+    items = _items(draft, "assessment", "diagnoses")
+    if allowed and not items:
         problems.append("assessment.diagnoses: empty")
     for item in items:
-        said = normalize(str(item))
+        said = normalize(item)
         named = any(
             (d.code and normalize(d.code) in said) or any(t in said for t in d.terms)
             for d in allowed
         )
-        if not named:
+        if not named and not (not allowed and NO_DIAGNOSES.search(said)):
             problems.append(f"assessment.diagnoses: {item!r} was not entered or named")
+    listed = normalize(" ".join(items))
+    problems += [
+        f"assessment.diagnoses: {d.code} not named with its code"
+        for d in allowed
+        if d.code and normalize(d.code) not in listed
+    ]
     for path, text in _all_text(draft):
         problems += [
             f"{path}: diagnosis code {c} was not entered"
@@ -293,85 +372,154 @@ def diagnoses_only_stated(draft: Draft, case: TemplateCase) -> list[str]:
 
 def measures_undated(draft: Draft, case: TemplateCase) -> list[str]:
     """A measure keeps the words used for when it was taken, never a converted date."""
-    del case
-    text = _text(draft, "measures", "measures_reviewed")
-    return [f"measures.measures_reviewed: calendar date {d} not said" for d in calendar_dates(text)]
+    return [
+        f"measures.{key}: calendar date {d} not said"
+        for section, key, _ in _spec_fields(case)
+        if section == "measures"
+        for d in calendar_dates(_text(draft, section, key))
+    ]
 
 
 MEDICATION_HEADINGS = frozenset({"psychiatric:", "other:", "not categorized:"})
 
 
-STATED_PREFIX = "(stated this visit:"
+def _is_heading(item: str) -> bool:
+    return item.strip().lower() in MEDICATION_HEADINGS
 
 
-def is_stated_this_visit(item: str) -> bool:
-    """A list item the visit added after the chart's list: ``(stated this visit: ...)``."""
-    item = item.strip()
-    return item.startswith(STATED_PREFIX) and item.endswith(")")
-
-
-def split_stated(text: str) -> tuple[str, str | None]:
-    """A chart-fed field's chart text, and what the visit appended after it, if anything."""
-    head, sep, tail = text.partition(STATED_PREFIX)
-    if not sep:
-        return text, None
-    return head.rstrip(), tail.rstrip().removesuffix(")")
+def _without_heading(item: str) -> str:
+    """A chart line written under its category's heading on one line
+    ("Psychiatric: Sertraline 50 mg") is still the chart's line."""
+    text = item.strip()
+    heading = next((h for h in MEDICATION_HEADINGS if text.lower().startswith(h)), "")
+    return text[len(heading) :].strip() or item
 
 
 def medications_from_chart(draft: Draft, case: TemplateCase) -> list[str]:
-    """The current list is the chart's, word for word, and holds nothing changed today.
+    """The current list is the chart's, word for word, and holds nothing changed today;
+    what was started or changed is in the plan.
 
     A medication the client reports taking is allowed after it, marked as stated.
     """
     expected = case.expected.current_medications
     if expected is None:
         return []
-    value = _value(draft, "medications", "current_medications")
-    items = [str(i) for i in value] if isinstance(value, list) else [str(value or "")]
-    listed = {normalize(i) for i in items if i.strip().lower() not in MEDICATION_HEADINGS}
-    wanted = {normalize(line) for line in expected}
+    path = "medications.current_medications"
+    items = [_without_heading(i) for i in _items(draft, *CURRENT_MEDICATIONS) if not _is_heading(i)]
+    chart_lines = expected or ("None recorded",)
+    listed = {normalize(i) for i in items}
+    wanted = {normalize(line) for line in chart_lines}
     problems = [
-        f"medications.current_medications: {line!r} is on the chart but not listed as written"
-        for line in expected
+        f"{path}: {line!r} is on the chart but not listed as written"
+        for line in chart_lines
         if normalize(line) not in listed
     ]
     problems += [
-        f"medications.current_medications: {item!r} is not on the chart"
+        f"{path}: {item!r} is not on the chart"
         for item in items
-        if item.strip()
-        and item.strip().lower() not in MEDICATION_HEADINGS
-        and normalize(item) not in wanted
-        and not is_stated_this_visit(item)
+        if normalize(item) not in wanted and not is_marked(item)
     ]
     problems += [
-        f"medications.current_medications: {word!r} was changed this visit; it belongs to the plan"
+        f"{path}: {word!r} was changed this visit; it belongs to the plan"
         for word in case.expected.not_current
         if any(word in normalize(i).split() for i in items)
+    ]
+    plan = normalize(" ".join(_text(draft, s, k) for s, k in PLAN_MEDICATION_FIELDS))
+    problems += [
+        f"plan: {word!r} was started or changed this visit, but the plan does not say so"
+        for word in case.expected.in_plan
+        if word not in plan.split()
     ]
     return problems
 
 
-def history_from_chart(draft: Draft, case: TemplateCase) -> list[str]:
-    """Each history field is the chart's text, word for word, or "Not recorded".
+def intake_states_meds(draft: Draft, case: TemplateCase) -> list[str]:
+    """Each medication the client said they take, and the chart lacks, is in the
+    current list and marked as stated this visit: never left out, never unmarked."""
+    items = _items(draft, *CURRENT_MEDICATIONS)
+    problems: list[str] = []
+    for name in case.expected.stated_medications:
+        naming = [i for i in items if name in normalize(i)]
+        if not naming:
+            problems.append(f"medications.current_medications: {name!r} was stated but not listed")
+        problems += [
+            f"medications.current_medications: {i!r} is not on the chart and not marked as stated"
+            for i in naming
+            if not is_marked(i)
+        ]
+    return problems
 
-    What the visit changed or added may follow, as ``(stated this visit: ...)``.
-    """
+
+def allergies_never_dropped(draft: Draft, case: TemplateCase) -> list[str]:
+    """The allergies field carries the chart's value, whatever was said, and then
+    what was said this visit."""
+    chart = case.chart
+    path = "medications.allergies"
+    said = normalize(_text(draft, *ALLERGIES))
+    if chart.allergy_status == "nkda":
+        kept = "nkda" in said.split() or "no known drug allergies" in said
+    elif chart.allergy_status == "recorded" and chart.allergies:
+        kept = all(normalize(a["substance"]) in said for a in chart.allergies)
+    else:
+        kept = "not recorded" in said
+    problems = [] if kept else [f"{path}: the chart's {allergies_line(chart)!r} was dropped"]
+    problems += [
+        f"{path}: what was said, {words!r}, is missing"
+        for words in case.expected.allergies_stated
+        if words not in said
+    ]
+    return problems
+
+
+def suffix_only_where_stated(draft: Draft, case: TemplateCase) -> list[str]:
+    """A chart-fed field carries the "(stated this visit" mark when, and only when,
+    the visit said something new about it."""
+    e = case.expected
+    problems = []
+    for section, key in chart_fed_fields(case):
+        path = f"{section}.{key}"
+        marked = is_marked(_text(draft, section, key))
+        if path in e.stated_this_visit and not marked:
+            problems.append(f"{path}: the visit stated a change, but nothing is marked")
+        elif marked and path not in e.stated_this_visit and path not in e.may_state:
+            problems.append(f"{path}: marked as stated this visit, but nothing new was stated")
+    return problems
+
+
+def history_from_chart(draft: Draft, case: TemplateCase) -> list[str]:
+    """Each history field the template fills from the chart starts with the chart's
+    text, word for word, or "Not recorded"; anything after it is marked as stated."""
     recorded = {f.key: f.text for f in case.history}
     problems = []
-    for group in HISTORY_GROUPS:
-        if group.key == SUBSTANCE_USE:
+    for section, key in chart_fed_fields(case):
+        if not is_history_key(key):
             continue
-        for field in group.fields:
-            text = _text(draft, group.key, field.key)
-            path = f"{group.key}.{field.key}"
-            chart_text, stated = split_stated(text)
-            if stated is not None and not stated.strip():
-                problems.append(f"{path}: an empty (stated this visit: ...) suffix")
-            if field.key in recorded:
-                if normalize(chart_text) != normalize(recorded[field.key]):
-                    problems.append(f"{path}: not the chart's text as recorded")
-            elif normalize(chart_text) != "not recorded":
-                problems.append(f'{path}: nothing on the chart, so it should read "Not recorded"')
+        text = normalize(_text(draft, section, key))
+        path = f"{section}.{key}"
+        chart = normalize(recorded.get(key, "Not recorded"))
+        rest = text.removeprefix(chart).strip() if text.startswith(chart) else None
+        if rest is None or (rest and not rest.startswith("stated this visit")):
+            problems.append(
+                f"{path}: not the chart's text as recorded"
+                if key in recorded
+                else f'{path}: nothing on the chart, so it should read "Not recorded"'
+            )
+    return problems
+
+
+def history_from_visit(draft: Draft, case: TemplateCase) -> list[str]:
+    """For a template that takes history from the visit: each field the visit
+    covered says what the client said, never "Not recorded" or "Not stated."."""
+    covered = case.expected.history_from_visit or {}
+    problems = []
+    for key, words in covered.items():
+        section = next((g.key for g in HISTORY_GROUPS if key in {f.key for f in g.fields}), "")
+        text = normalize(_text(draft, section, key))
+        path = f"{section}.{key}"
+        if text in {"", "not recorded", "not stated", "not asked"}:
+            problems.append(f"{path}: covered in the visit, but not written")
+        elif not any(w in text for w in words):
+            problems.append(f"{path}: carries none of {words!r}")
     return problems
 
 
@@ -386,7 +534,11 @@ CHECKS: dict[str, Callable[[Draft, TemplateCase], list[str]]] = {
     "diagnoses_only_stated": diagnoses_only_stated,
     "measures_undated": measures_undated,
     "medications_from_chart": medications_from_chart,
+    "intake_states_meds": intake_states_meds,
+    "allergies_never_dropped": allergies_never_dropped,
+    "suffix_only_where_stated": suffix_only_where_stated,
     "history_from_chart": history_from_chart,
+    "history_from_visit": history_from_visit,
 }
 
 
