@@ -42,7 +42,7 @@ test.describe("A packet writes its own document", () => {
 
     // The link opens the packet: its name field is there without a click.
     await page.goto(`/dashboard/settings/portal?packet=${template.id}`)
-    const packets = page.getByRole("region", { name: "Packets" })
+    const packets = page.getByRole("region", { name: "Packets", exact: true })
     await expect(packets.getByLabel("Packet name")).toHaveValue(packetName)
 
     await packets.getByRole("combobox", { name: "Kind of question" }).click()
@@ -54,7 +54,7 @@ test.describe("A packet writes its own document", () => {
     await packets.getByRole("button", { name: "Publish and use it" }).click()
     await expect(packets.getByText("Give the document a name.")).toBeVisible()
 
-    await packets.getByLabel("Name", { exact: true }).fill(documentTitle)
+    await packets.getByLabel("Document name", { exact: true }).fill(documentTitle)
     await packets.getByLabel("What they read").fill("We meet weekly. What is said in group stays in group.")
     await packets.getByRole("button", { name: "Publish and use it" }).click()
     await expect(packets.getByRole("button", { name: "Write a new one" })).toBeVisible()
@@ -104,7 +104,7 @@ test.describe("A packet writes its own document", () => {
       name: `Wording packet ${suffix}`,
     })
     await page.goto(`/dashboard/settings/portal?packet=${template.id}`)
-    const packets = page.getByRole("region", { name: "Packets" })
+    const packets = page.getByRole("region", { name: "Packets", exact: true })
 
     await packets.getByRole("combobox", { name: "Kind of question" }).click()
     await page.getByRole("option", { name: "Consent to sign", exact: true }).click()
