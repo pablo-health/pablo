@@ -239,6 +239,22 @@ def create_document(
     return _response(created, values)
 
 
+@router.get("/keys/{document_key}/published", response_model=list[IntakeDocumentResponse])
+def list_published_versions(
+    document_key: str,
+    service: DocumentService,
+    values: DocumentValues,
+    _user: User = Depends(require_baa_acceptance),
+) -> list[IntakeDocumentResponse]:
+    """Every published version of one document, newest first.
+
+    What a consent question can be pointed at when a practice wants a
+    particular wording rather than the newest. Drafts are left out: nobody
+    can be asked to sign words that were never published.
+    """
+    return [_response(row, values) for row in service.versions(document_key) if row["published_at"]]
+
+
 @router.get("/{document_id}", response_model=IntakeDocumentResponse)
 def get_document(
     document_id: str,

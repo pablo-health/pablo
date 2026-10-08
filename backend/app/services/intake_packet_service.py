@@ -53,7 +53,12 @@ from ..intake.items import (
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
-    from ..intake.items import InstrumentAttested, ItemConfig, PublishedDocumentLookup
+    from ..intake.items import (
+        InstrumentAttested,
+        ItemConfig,
+        PublishedDocumentLookup,
+        PublishedVersionsLookup,
+    )
     from ..repositories.intake_packet import IntakePacketRepository
 
 
@@ -79,8 +84,10 @@ class IntakePacketService:
         repo: IntakePacketRepository,
         published_document: PublishedDocumentLookup | None = None,
         instrument_attested: InstrumentAttested | None = None,
+        published_versions: PublishedVersionsLookup | None = None,
     ) -> None:
         self._repo = repo
+        self._published_versions = published_versions
         self._published_document = published_document
         self._instrument_attested = instrument_attested
 
@@ -261,6 +268,7 @@ class IntakePacketService:
             ],
             published_document=self._published_document,
             instrument_attested=self._instrument_attested,
+            published_versions=self._published_versions,
         )
         self._pin_documents(rows, configs)
 
@@ -282,7 +290,9 @@ class IntakePacketService:
         for row, config in zip(rows, configs, strict=True):
             if not isinstance(config, ConsentDocumentConfig):
                 continue
-            version_id = self._published_document(config.document_key)
+            # The version the practice chose, checked above to be one of
+            # this document's published versions; otherwise the newest.
+            version_id = config.chosen_version_id or self._published_document(config.document_key)
             if version_id is None:  # pragma: no cover — validation refused this already
                 continue
             self._repo.set_item_config(

@@ -432,4 +432,44 @@ describe("ItemConfigForm: the consent document picker", () => {
     expect(screen.getByText(NO_PUBLISHED_DOCUMENTS)).toBeInTheDocument()
     expect(screen.queryByLabelText(DOCUMENT_PICKER_LABEL)).not.toBeInTheDocument()
   })
+
+  it("picking another document drops a wording chosen for the last one", async () => {
+    // Left behind, the old document's version would be checked against the
+    // new document at publish and refused.
+    const user = userEvent.setup()
+    consentForm({ document_key: "key-1", chosen_version_id: "rev-of-key-1" })
+
+    await user.click(screen.getByLabelText(DOCUMENT_PICKER_LABEL))
+    await user.click(screen.getByRole("option", { name: "Telehealth agreement" }))
+
+    expect(lastConfig()).toEqual({ document_key: "key-2" })
+    expect(lastConfig()).not.toHaveProperty("chosen_version_id", "rev-of-key-1")
+  })
+
+  it("writes a new document in place and points the question at it", async () => {
+    const user = userEvent.setup()
+    render(
+      <ItemConfigForm
+        itemType="consent_document"
+        config={{}}
+        onChange={onChange}
+        idPrefix="test"
+        documents={[]}
+        renderNewDocument={(choose) => (
+          <button type="button" onClick={() => choose("key-new")}>
+            Publish the stand-in
+          </button>
+        )}
+      />
+    )
+
+    // Nothing published, and no dead end: the way forward is right here.
+    expect(screen.queryByText(NO_PUBLISHED_DOCUMENTS)).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Write a new one" }))
+    await user.click(screen.getByRole("button", { name: "Publish the stand-in" }))
+
+    expect(lastConfig()).toEqual({ document_key: "key-new" })
+    // Done writing: the button is back for the next one.
+    expect(screen.getByRole("button", { name: "Write a new one" })).toBeInTheDocument()
+  })
 })

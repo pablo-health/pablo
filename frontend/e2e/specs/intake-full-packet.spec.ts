@@ -534,12 +534,11 @@ test.describe("intake, assignment through accepted export", () => {
     const forms = page.getByRole("region", { name: "Packets" })
     await expect(forms).toBeVisible()
 
-    // Every packet this card creates starts as "New packet", so the one just
-    // added is the last one.
+    // Every packet this card creates starts as "New packet" and opens as it
+    // is added, so the one just added is the last one and already open.
     await forms.getByRole("button", { name: "Add a packet" }).click()
     const added = forms.getByRole("button", { name: "New packet" }).last()
-    await expect(added).toBeVisible()
-    await added.click()
+    await expect(added).toHaveAttribute("aria-expanded", "true")
 
     // Named in place, so a practice with two packets can tell them apart.
     // The name is unique per run: earlier runs leave their packets behind.

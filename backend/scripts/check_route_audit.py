@@ -268,6 +268,8 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("get", "/api/intake/documents"),  # lists the practice's own documents
         ("post", "/api/intake/documents"),  # starts a document, no patient data
         ("get", "/api/intake/documents/{document_id}"),  # one version and its rendering
+        # the practice's published versions of one document, for a picker
+        ("get", "/api/intake/documents/keys/{document_key}/published"),
         ("put", "/api/intake/documents/{document_id}"),  # edits an unpublished draft
         ("post", "/api/intake/documents/{document_id}/new-version"),  # starts the next draft
         ("get", "/api/intake/starters"),  # the built-in documents a practice can start from

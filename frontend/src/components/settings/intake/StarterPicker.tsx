@@ -6,7 +6,7 @@ import { FileText } from "lucide-react"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import type { IntakeStarter } from "@/types/intakeDocuments"
-import { START_FROM_TEMPLATE } from "./intakeCopy"
+import { START_FROM_TEMPLATE, STARTER_ADDS_DOCUMENT } from "./intakeCopy"
 
 interface StarterPickerProps {
   starters: IntakeStarter[]
@@ -38,6 +38,9 @@ export function StarterPicker({ starters, onPick, busy }: StarterPickerProps) {
         <FileText className="mr-1 h-4 w-4" aria-hidden="true" />
         {START_FROM_TEMPLATE}
       </Button>
+      {open && (
+        <p className="text-[12px] text-muted-foreground">{STARTER_ADDS_DOCUMENT}</p>
+      )}
       {open && (
         <ul aria-label={START_FROM_TEMPLATE} className="space-y-1">
           {starters.map((starter) => (

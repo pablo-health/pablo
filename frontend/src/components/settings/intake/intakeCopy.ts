@@ -141,9 +141,14 @@ export const NO_QUESTIONS = "Nothing in this packet yet."
 export const PUBLISHED_NOTICE =
   "This version has been published. Start a new version to change the questions."
 
-export const DOCUMENTS_TITLE = "Documents"
-export const DOCUMENTS_DESCRIPTION = "What people read and sign before you see them."
+export const DOCUMENTS_TITLE = "Documents in your packets"
+export const DOCUMENTS_DESCRIPTION =
+  "What your packets ask people to read and sign. Editing one starts a new version."
 export const DOCUMENTS_EMPTY = "No documents yet."
+export const HIDE_DOCUMENTS = "Hide documents"
+export function showDocuments(count: number): string {
+  return count === 1 ? "Show 1 document" : `Show ${count} documents`
+}
 export const NEW_DOCUMENT_NAME = "New document"
 export const ADD_DOCUMENT = "Add a document"
 export const DOCUMENT_NAME_LABEL = "Name"
@@ -163,6 +168,27 @@ export const DOCUMENT_PUBLISHED_NOTICE =
 
 /** Shown under the picker when the practice has nothing published to pick. */
 export const NO_PUBLISHED_DOCUMENTS = "Publish a document first, then you can ask for it here."
+/** Which published wording of a document a consent question asks for. */
+export const VERSION_PICKER_LABEL = "Which wording"
+export function NEWEST_VERSION(version: number): string {
+  return `The newest when you publish (now version ${version})`
+}
+export function versionChoice(version: number, publishedAt: string | null): string {
+  if (!publishedAt) return `Version ${version}`
+  const date = new Date(publishedAt).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  })
+  return `Version ${version}, published ${date}`
+}
+
+/** Writing a document from the question that asks for it. */
+export const WRITE_NEW_DOCUMENT = "Write a new one"
+export const PUBLISH_AND_USE = "Publish and use it"
+/** Said under "Start from a template": picking one also adds its document. */
+export const STARTER_ADDS_DOCUMENT =
+  "A template with a document also adds it to Documents in your packets, to edit like any other."
 
 export const DOCUMENT_PICKER_LABEL = "Which document"
 

@@ -216,6 +216,17 @@ describe("IntakeFormsCard", () => {
 
     await user.click(screen.getByRole("button", { name: "Add a packet" }))
 
-    expect(mockCreateTemplate).toHaveBeenCalledWith("New packet")
+    expect(mockCreateTemplate).toHaveBeenCalledWith("New packet", expect.anything())
+  })
+
+  it("opens the packet a link names", () => {
+    window.history.pushState({}, "", "/dashboard/settings/portal?packet=template-1")
+    try {
+      render(<IntakeFormsCard />)
+      expect(mockUseVersion).toHaveBeenCalledWith("template-1", "version-2")
+      expect(screen.getByLabelText("Packet name")).toHaveValue("Intake")
+    } finally {
+      window.history.pushState({}, "", "/")
+    }
   })
 })
