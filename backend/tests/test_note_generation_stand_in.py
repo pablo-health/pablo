@@ -426,6 +426,9 @@ def test_a_follow_up_writes_the_charts_history_word_for_word(stand_in: list[str]
     assert content["substance_use"]["alcohol"] == (
         "Two glasses of wine on weekends. (not asked this visit)"
     )
+    # A field the chart has nothing for reads as a model writes it, not as a draft of the visit.
+    assert content["social_history"]["relationships"] == "Not recorded"
+    assert content["family_history"]["family_medical"] == "Not recorded"
 
 
 def _draft_current_medications(chart: ChartContext, transcript: str) -> list[str]:

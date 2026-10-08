@@ -265,6 +265,25 @@ def _chart(user_prompt: str) -> _Chart | None:
     return chart
 
 
+#: How a field's hint says the draft prints it from the chart.
+_FROM_THE_CHART = "From the chart"
+
+
+def _chart_fed_fields(user_prompt: str) -> set[str]:
+    """The fields the prompt says are printed from the chart (``* key (kind) — From the chart``).
+
+    A model writes "Not recorded" in such a field when the chart has nothing
+    for it, rather than drafting it from the visit. String operations only:
+    the prompt is caller text, so no regex runs over it.
+    """
+    fields: set[str] = set()
+    for line in user_prompt.splitlines():
+        head, dash, hint = line.partition(" — ")
+        if dash and hint.startswith(_FROM_THE_CHART) and head.lstrip().startswith("* "):
+            fields.add(head.lstrip()[2:].partition(" ")[0])
+    return fields
+
+
 def _stated_updates(user_prompt: str) -> dict[str, str]:
     """What client lines say changed, by history key. String operations only: the
     prompt is caller text, so no regex runs over it."""
@@ -329,13 +348,16 @@ def _with_chart(content: dict[str, Any], chart: _Chart, user_prompt: str = "") -
     problems; an allergies field states the chart's allergies; a current
     medications field is the chart's list, line for line, or "None recorded",
     then any medication a client line says they take that the chart lacks;
-    a history field is the chart's text for its key, word for word, then what
+    a history field is the chart's text for its key, word for word ("Not
+    recorded" where the chart has none and the hint says it comes from the
+    chart), then what
     a client line says changed; a substance field is the chart's baseline,
     then the visit's screen. So a spec can see that a draft was written
     against the chart it was handed.
     """
     updates = _stated_updates(user_prompt)
     unchanged = _unchanged(user_prompt)
+    chart_fed = _chart_fed_fields(user_prompt)
     for section_key, section in content.items():
         if not isinstance(section, dict):
             continue
@@ -347,7 +369,7 @@ def _with_chart(content: dict[str, Any], chart: _Chart, user_prompt: str = "") -
             if section_key == "substance_use":
                 section[key] = _screened(chart, key, updates, unchanged)
                 continue
-            if (key in chart.history or key in updates) and section_key != "substance_use":
+            if key in chart.history or key in updates or key in chart_fed:
                 section[key] = chart.history.get(key, "Not recorded")
                 if key in updates:
                     section[key] += f' (stated this visit: "{updates[key]}")'
