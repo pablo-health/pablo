@@ -25,8 +25,12 @@ from evals.note_type_templates.run import grade, grade_redraft
 
 CASE = INTAKE_NEW_CLIENT
 
-# A start inside the therapy-start case's bounds, so only the window is graded.
-_ANY_START = {"candidates": [{"seconds": 725.0, "source": "marked"}]}
+# Therapy labeled from inside the therapy-start case's bounds, and the 52
+# minutes the clinician dictated, so only the window is graded.
+_ANY_START: dict[str, Any] = {
+    "labels": [{"seconds": 725.0, "label": "therapy"}],
+    "dictated": {"minutes": 52, "as_dictated": "52 minutes"},
+}
 
 
 def _faithful_draft() -> dict[str, Any]:
@@ -151,20 +155,20 @@ def test_an_unquoted_paraphrase_or_a_filled_gap_fails() -> None:
 
 
 def test_the_confirmed_window_completes_a_time_that_states_only_its_minutes() -> None:
-    # The shape the model drafts when the clinician dictated only the minutes.
-    stated = "Start time: Not stated. End time: Not stated. Minutes: 52."
-    draft = {"psychotherapy": {"psychotherapy_time": stated}}
+    # The line a draft renders when the clinician dictated only the minutes.
+    draft = {"psychotherapy": {"psychotherapy_time": "52 minutes"}}
 
     assert grade(FOLLOW_UP_THERAPY_START, draft, _ANY_START)["failures"] == []
 
 
 def test_a_time_the_window_cannot_complete_fails() -> None:
-    draft = {"psychotherapy": {"psychotherapy_time": "Minutes: 45."}}
+    draft = {"psychotherapy": {"psychotherapy_time": "45 minutes"}}
+    proposal = {**_ANY_START, "dictated": {"minutes": 45, "as_dictated": "45 minutes"}}
 
-    failures = grade(FOLLOW_UP_THERAPY_START, draft, _ANY_START)["failures"]
+    failures = grade(FOLLOW_UP_THERAPY_START, draft, proposal)["failures"]
 
     assert failures == [
-        "psychotherapy.psychotherapy_time reads 'Minutes: 45.' after confirming "
+        "psychotherapy.psychotherapy_time reads '45 minutes' after confirming "
         "'11:12 AM to 12:04 PM, 52 minutes'"
     ]
 
@@ -174,7 +178,7 @@ def test_a_psychotherapy_time_left_not_stated_elsewhere_fails() -> None:
         "encounter": {
             "visit_details": "E/M code: Not stated.\nPsychotherapy start time: Not stated."
         },
-        "psychotherapy": {"psychotherapy_time": "Minutes: 52."},
+        "psychotherapy": {"psychotherapy_time": "52 minutes"},
     }
 
     failures = grade(FOLLOW_UP_THERAPY_START, draft, _ANY_START)["failures"]

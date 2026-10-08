@@ -6,26 +6,21 @@ import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { useConfirmPsychotherapyWindow } from "@/hooks/useVisitTimes"
+import { addOnBand, wholeMinutes } from "@/lib/visitTimes"
 import {
-  addOnBand,
-  minutesBetween,
-  placeStatedTime,
-  pointInRecording,
-  wholeMinutes,
-} from "@/lib/visitTimes"
+  LEVEL_NAME,
+  isThin,
+  remainderMinutes,
+  therapyMinutes,
+  type Labels,
+  type MdmLevel,
+} from "@/lib/therapyTimeline"
 import type {
   ConfirmPsychotherapyWindowRequest,
   PsychotherapyWindow as Window,
-  StartSource,
+  TurnLabel,
 } from "@/types/visitTimes"
-
-const SOURCE_LABEL: Record<StartSource, string> = {
-  spoken_cue: "you said so here",
-  marked: "where the draft puts it",
-  attributed: "where the interventions begin",
-}
-
-const SNIPPET_CHARS = 70
+import { TherapyTimeline } from "./TherapyTimeline"
 
 export interface PsychotherapyWindowProps {
   sessionId: string
@@ -33,21 +28,17 @@ export interface PsychotherapyWindowProps {
   startedAt: string | null
   timeZone: string
   readonly?: boolean
-}
-
-interface Option {
-  key: string
-  seconds: number
-  label: string
+  /** The MDM level chosen for the visit, when there is one, to flag a thin medical visit. */
+  mdmLevel?: MdmLevel | null
 }
 
 /**
- * Where the therapy portion started, confirmed by the clinician, and the
- * minutes that follow from it: from that start to when the client left.
+ * The therapy minutes of a visit, confirmed by the clinician.
  *
- * The draft proposes starts (see app.notes.visit_times); the clinician picks
- * one, picks another turn, or types the minutes. A start time the clinician
- * said aloud is offered first.
+ * Every turn while the client was present carries a proposed label (see
+ * app.notes.visit_times); the minutes are the therapy turns added up. The
+ * clinician relabels runs or moves a boundary on the timeline, keeps the
+ * minutes they dictated, or types the minutes.
  */
 export function PsychotherapyWindow({
   sessionId,
@@ -55,53 +46,46 @@ export function PsychotherapyWindow({
   startedAt,
   timeZone,
   readonly,
+  mdmLevel,
 }: PsychotherapyWindowProps) {
   const confirm = useConfirmPsychotherapyWindow(sessionId)
   const people = usePeopleTerm()
   const confirmed = window.confirmed_minutes !== null
   const [editing, setEditing] = useState(!confirmed)
+  const [labels, setLabels] = useState<Labels>(() => window.turns.map((t) => t.label))
+  const [typing, setTyping] = useState(window.turns.length === 0)
+  const [typed, setTyped] = useState("")
   const end = window.end_seconds ?? 0
   const maxMinutes = wholeMinutes(end)
+  const dictatedMinutes = window.dictated?.minutes ?? null
 
-  const turnAt = (seconds: number) => window.turns.find((t) => t.seconds === seconds)
-  const describe = (seconds: number, note: string) => {
-    const turn = turnAt(seconds)
-    const said = turn ? ` ${turn.speaker}: “${turn.text.slice(0, SNIPPET_CHARS)}”` : ""
-    return `${pointInRecording(seconds, startedAt, timeZone)} (${note})${said}`
-  }
-
-  const options: Option[] = []
-  const stated = window.stated_clock_time
-    ? placeStatedTime(window.stated_clock_time, startedAt, timeZone, end)
-    : null
-  if (stated !== null) {
-    options.push({ key: "stated", seconds: stated, label: describe(stated, `you said “${window.stated_clock_time}”`) })
-  }
-  window.candidates.forEach((c, i) =>
-    options.push({ key: `c${i}`, seconds: c.seconds, label: describe(c.seconds, SOURCE_LABEL[c.source]) }),
-  )
-
-  const [choice, setChoice] = useState(options[0]?.key ?? "turn")
-  const [turnSeconds, setTurnSeconds] = useState<number | null>(window.turns[0]?.seconds ?? null)
-  const [typed, setTyped] = useState("")
-
-  const chosenStart =
-    choice === "turn" ? turnSeconds : (options.find((o) => o.key === choice)?.seconds ?? null)
+  const labeled = therapyMinutes(window.turns, labels)
   const typedMinutes = typed.trim() === "" ? null : Number(typed)
-  const minutes = choice === "typed" ? typedMinutes : chosenStart === null ? null : minutesBetween(chosenStart, end)
-  const tooLong = choice === "typed" && typedMinutes !== null && typedMinutes > maxMinutes
+  const minutes = typing ? typedMinutes : labeled
+  const tooLong = typing && typedMinutes !== null && typedMinutes > maxMinutes
   const invalid = minutes === null || Number.isNaN(minutes) || minutes < 0 || tooLong
+  const remainder = minutes === null || Number.isNaN(minutes) ? null : remainderMinutes(end, minutes)
 
-  const submit = (resolution?: ConfirmPsychotherapyWindowRequest["resolution"]) => {
-    const body: ConfirmPsychotherapyWindowRequest =
-      resolution && window.confirmed_minutes !== null
-        ? window.confirmed_start_seconds !== null
-          ? { start_seconds: window.confirmed_start_seconds, time_zone: timeZone, resolution }
-          : { minutes: window.confirmed_minutes, time_zone: timeZone, resolution }
-        : choice === "typed"
-          ? { minutes: typedMinutes ?? 0, time_zone: timeZone }
-          : { start_seconds: chosenStart ?? 0, time_zone: timeZone }
+  const labeledTurns = () =>
+    window.turns.flatMap((t, i) => {
+      const label: TurnLabel | null = labels[i]
+      return label ? [{ seconds: t.seconds, label }] : []
+    })
+
+  const save = (body: ConfirmPsychotherapyWindowRequest) =>
     confirm.mutate(body, { onSuccess: () => setEditing(false) })
+
+  // Settling a disagreement re-sends what was confirmed, with the clinician's pick.
+  const resolve = (resolution: NonNullable<ConfirmPsychotherapyWindowRequest["resolution"]>) => {
+    const base = { time_zone: timeZone, resolution }
+    if (window.labels_confirmed) {
+      const kept = window.turns.flatMap((t) => (t.label ? [{ seconds: t.seconds, label: t.label }] : []))
+      save({ ...base, labels: kept })
+    } else if (window.confirmed_start_seconds !== null) {
+      save({ ...base, start_seconds: window.confirmed_start_seconds })
+    } else {
+      save({ ...base, minutes: window.confirmed_minutes ?? 0 })
+    }
   }
 
   return (
@@ -135,10 +119,10 @@ export function PsychotherapyWindow({
           </p>
           {!readonly && (
             <div className="mt-2 flex gap-2">
-              <Button size="sm" onClick={() => submit("use_confirmed")} disabled={confirm.isPending}>
+              <Button size="sm" onClick={() => resolve("use_confirmed")} disabled={confirm.isPending}>
                 Use {window.confirmed_minutes} minutes
               </Button>
-              <Button size="sm" variant="outline" onClick={() => submit("keep_dictated")} disabled={confirm.isPending}>
+              <Button size="sm" variant="outline" onClick={() => resolve("keep_dictated")} disabled={confirm.isPending}>
                 Keep what you said
               </Button>
             </div>
@@ -147,52 +131,31 @@ export function PsychotherapyWindow({
       )}
 
       {editing && !readonly && (
-        <fieldset className="space-y-2 text-sm">
-          <legend className="text-neutral-600">Where did the therapy portion start?</legend>
-          {options.map((o) => (
-            <label key={o.key} className="flex items-start gap-2">
-              <input type="radio" name="therapy-start" checked={choice === o.key} onChange={() => setChoice(o.key)} />
-              <span>{o.label}</span>
-            </label>
-          ))}
-          {window.turns.length > 0 && (
-            <label className="flex items-start gap-2">
-              <input type="radio" name="therapy-start" checked={choice === "turn"} onChange={() => setChoice("turn")} />
-              <span className="flex flex-col gap-1">
-                Another point in the transcript
-                {choice === "turn" && (
-                  <select
-                    aria-label="Therapy started at"
-                    className="rounded border border-neutral-300 px-2 py-1"
-                    value={turnSeconds ?? ""}
-                    onChange={(e) => setTurnSeconds(Number(e.target.value))}
-                  >
-                    {window.turns.map((t) => (
-                      <option key={t.seconds} value={t.seconds}>
-                        {pointInRecording(t.seconds, startedAt, timeZone)} {t.speaker}: {t.text.slice(0, SNIPPET_CHARS)}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </span>
+        <div className="space-y-2 text-sm">
+          {window.turns.length > 0 && !typing && (
+            <TherapyTimeline
+              turns={window.turns}
+              labels={labels}
+              onChange={setLabels}
+              endSeconds={end}
+              startedAt={startedAt}
+              timeZone={timeZone}
+            />
+          )}
+
+          {typing && (
+            <label className="flex items-center gap-2">
+              Therapy minutes
+              <input
+                aria-label="Psychotherapy minutes"
+                type="number"
+                min={0}
+                className="w-20 rounded border border-neutral-300 px-2 py-1"
+                value={typed}
+                onChange={(e) => setTyped(e.target.value)}
+              />
             </label>
           )}
-          <label className="flex items-start gap-2">
-            <input type="radio" name="therapy-start" checked={choice === "typed"} onChange={() => setChoice("typed")} />
-            <span className="flex items-center gap-2">
-              Type the minutes
-              {choice === "typed" && (
-                <input
-                  aria-label="Psychotherapy minutes"
-                  type="number"
-                  min={0}
-                  className="w-20 rounded border border-neutral-300 px-2 py-1"
-                  value={typed}
-                  onChange={(e) => setTyped(e.target.value)}
-                />
-              )}
-            </span>
-          </label>
 
           {tooLong ? (
             <p role="alert" className="text-red-600">
@@ -202,14 +165,55 @@ export function PsychotherapyWindow({
             minutes !== null &&
             !Number.isNaN(minutes) && (
               <p data-testid="psychotherapy-preview" className="text-neutral-700">
-                {minutes} minutes · {addOnBand(minutes)}
+                {minutes} therapy minutes of {maxMinutes} · {addOnBand(minutes)}
               </p>
             )
           )}
-          <div className="flex gap-2">
-            <Button size="sm" onClick={() => submit()} disabled={invalid || confirm.isPending}>
+          {remainder !== null && !tooLong && (
+            <p data-testid="em-remainder" className="text-neutral-600">
+              Medical visit: {remainder} min
+              {isThin(remainder, mdmLevel) && mdmLevel && (
+                <span data-testid="em-remainder-flag" className="text-amber-700">
+                  {" "}
+                  · short for a {LEVEL_NAME[mdmLevel]} visit
+                </span>
+              )}
+            </p>
+          )}
+
+          {dictatedMinutes !== null && (
+            <p className="text-neutral-700">You said {dictatedMinutes} minutes.</p>
+          )}
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              onClick={() =>
+                save(
+                  typing
+                    ? { minutes: typedMinutes ?? 0, time_zone: timeZone }
+                    : { labels: labeledTurns(), time_zone: timeZone },
+                )
+              }
+              disabled={invalid || confirm.isPending}
+            >
               Confirm
             </Button>
+            {dictatedMinutes !== null && dictatedMinutes <= maxMinutes && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => save({ minutes: dictatedMinutes, time_zone: timeZone })}
+                disabled={confirm.isPending}
+              >
+                Use my minutes
+              </Button>
+            )}
+            {window.turns.length > 0 && (
+              <Button size="sm" variant="outline" onClick={() => setTyping(!typing)}>
+                {typing ? "Use the timeline" : "Type the minutes"}
+              </Button>
+            )}
             {confirmed && (
               <Button size="sm" variant="outline" onClick={() => setEditing(false)}>
                 Cancel
@@ -221,7 +225,7 @@ export function PsychotherapyWindow({
               That wasn&apos;t saved. Try again.
             </p>
           )}
-        </fieldset>
+        </div>
       )}
     </div>
   )

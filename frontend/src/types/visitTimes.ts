@@ -2,27 +2,45 @@
 
 /** Mirrors backend/app/models/visit_times.py. */
 
+export type TurnLabel = "therapy" | "medication_management" | "screening_risk" | "admin"
+export type RunLabel = TurnLabel | "unattributed"
+
 export interface RecordingTurn {
   seconds: number
+  /** Where the turn's span ends: the next turn's start, or where the client left. */
+  end_seconds: number
   speaker: string
   text: string
+  /** The confirmed label, else the proposed one; null is unattributed. */
+  label: TurnLabel | null
 }
 
-export type StartSource = "spoken_cue" | "marked" | "attributed"
+export interface TurnRun {
+  label: RunLabel
+  start_seconds: number
+  end_seconds: number
+}
 
-export interface StartCandidate {
-  seconds: number
-  source: StartSource
+export interface DictatedTime {
+  start: string | null
+  end: string | null
+  minutes: number | null
+  as_dictated: string
 }
 
 export interface PsychotherapyWindow {
   offered: boolean
   end_seconds: number | null
   turns: RecordingTurn[]
-  candidates: StartCandidate[]
-  stated_clock_time: string | null
+  runs: TurnRun[]
+  labeled_minutes: number | null
+  cue_seconds: number | null
+  dictated: DictatedTime | null
   confirmed_start_seconds: number | null
   confirmed_minutes: number | null
+  contiguous: boolean | null
+  /** The clinician confirmed the turn labels (rather than a start or minutes). */
+  labels_confirmed: boolean
   window_text: string | null
   dictated_time: string | null
   disagrees: boolean
@@ -41,6 +59,7 @@ export interface VisitTimes {
 }
 
 export interface ConfirmPsychotherapyWindowRequest {
+  labels?: { seconds: number; label: TurnLabel }[]
   start_seconds?: number
   minutes?: number
   time_zone: string

@@ -205,10 +205,14 @@ describe("visitPdfLines", () => {
     offered: true,
     end_seconds: 3000,
     turns: [],
-    candidates: [],
-    stated_clock_time: null,
+    runs: [],
+    labeled_minutes: null,
+    cue_seconds: null,
+    dictated: null,
     confirmed_start_seconds: 720,
     confirmed_minutes: 38,
+    contiguous: true,
+    labels_confirmed: false,
     window_text: "11:12 AM to 11:50 AM, 38 minutes",
     dictated_time: null,
     disagrees: false,
@@ -218,6 +222,7 @@ describe("visitPdfLines", () => {
     expect(visitPdfLines({ ...base, psychotherapy: window }, "America/New_York", people)).toEqual([
       "Started 11:00 AM · Ended 11:55 AM · 55 min",
       "Client present until 11:50 AM · Your dictated addendum: 3 min",
+      "Total duration: 55 min · Psychotherapy duration: 38 min",
       "Psychotherapy time: 11:12 AM to 11:50 AM, 38 minutes · 38–52 minutes",
     ])
   })

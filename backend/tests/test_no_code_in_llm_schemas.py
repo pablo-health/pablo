@@ -21,7 +21,7 @@ from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
 from app.notes.spec_templates import TEMPLATES_DIR
 from app.services.note_generation_service import _build_registry_response_schema
 from app.services.note_import_service import _build_extract_schema
-from app.services.psychotherapy_start import START_SCHEMA
+from app.services.therapy_labels import LABEL_SCHEMA, TIME_SCHEMA, build_label_prompt
 
 TEMPLATES = TEMPLATES_DIR
 
@@ -66,7 +66,9 @@ def test_no_schema_or_field_hint_names_a_code(definition: NoteTypeDefinition) ->
     asked = [
         *_strings(_build_registry_response_schema(definition)),
         *_strings(_build_extract_schema(definition)),
-        *_strings(START_SCHEMA),
+        *_strings(TIME_SCHEMA),
+        *_strings(LABEL_SCHEMA),
+        build_label_prompt({}, []),
         *(f.ai_hint for s in definition.sections for f in s.fields),
     ]
     named = [text for text in asked if BILLING_CODE.search(text)]

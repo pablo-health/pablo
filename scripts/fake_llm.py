@@ -410,6 +410,8 @@ async def draft_note(call: NoteCall) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail="model unavailable")
     if call.response_schema.get("title") == "PracticeNoteTypeSpec":
         return {"data": DERIVED_PROPOSAL, "finish_reason": "stop"}
+    if "runs" in call.response_schema.get("properties", {}):
+        return {"data": _turn_labels(call.user_prompt), "finish_reason": "stop"}
     note = _source_note(call.user_prompt)
     if note is not None:
         return {"data": _extracted(call.response_schema, note), "finish_reason": "stop"}
@@ -419,8 +421,8 @@ async def draft_note(call: NoteCall) -> dict[str, Any]:
     chart = _chart(call.user_prompt)
     if chart is not None:
         draft = _with_chart(draft, chart, call.user_prompt)
-    if "psychotherapy_start" in call.response_schema.get("properties", {}):
-        draft["psychotherapy_start"] = _therapy_start(call.user_prompt)
+    if "psychotherapy_time_stated" in call.response_schema.get("properties", {}):
+        draft["psychotherapy_time_stated"] = _stated_time(call.user_prompt)
     return {"data": draft, "finish_reason": "stop"}
 
 
@@ -490,20 +492,51 @@ def _fill_named(draft: dict[str, Any], values: dict[str, str]) -> None:
                 section[key] = values[key]
 
 
-#: The clinician's spoken cue the stand-in recognizes as the therapy portion starting.
-THERAPY_CUE = re.compile(
-    r"^\[(\d+(?::\d{2}){1,2})\][^\n]*let's get into", re.IGNORECASE | re.MULTILINE
+#: Minutes of psychotherapy the clinician dictated, as the stand-in hears them.
+STATED_MINUTES = re.compile(r"Psychotherapy (\d+) minutes", re.IGNORECASE)
+
+
+def _stated_time(user_prompt: str) -> dict[str, Any]:
+    """The psychotherapy time the clinician dictated: only minutes, when said."""
+    said = STATED_MINUTES.search(user_prompt)
+    if said is None:
+        return {"start": "", "end": "", "as_dictated": ""}
+    return {"start": "", "end": "", "minutes": int(said.group(1)), "as_dictated": said.group(0)}
+
+
+#: The turns a labeling call numbers ("[S3] Therapist: ...").
+LABELED_TURN = re.compile(r"^\[S(\d+)\] (\w+): (.*)$", re.MULTILINE)
+
+#: What the stand-in reads a turn as, by its words; the first match wins.
+TURN_WORDS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"medication|dose|side effect", re.IGNORECASE), "medication_management"),
+    (re.compile(r"hurting yourself|better off dead", re.IGNORECASE), "screening_risk"),
+    (re.compile(r"next month|see you", re.IGNORECASE), "admin"),
 )
+THERAPY_CUE = "let's get into"
 
 
-def _therapy_start(user_prompt: str) -> dict[str, Any]:
-    """Where the therapy portion began: the turn with the clinician's cue, if any."""
-    cue = THERAPY_CUE.search(user_prompt)
-    return {
-        "transcript_time": cue.group(1) if cue else "",
-        "cued_by_clinician": cue is not None,
-        "stated_clock_time": "",
-    }
+def _turn_labels(user_prompt: str) -> dict[str, Any]:
+    """Every turn labeled, one run each.
+
+    A clinician's turn is read by its words; before the spoken cue ("let's
+    get into") it is admin, from the cue on therapy. A client's turn answers
+    the turn before it and takes its label unless its own words say otherwise.
+    """
+    runs: list[dict[str, Any]] = []
+    cue = -1
+    label = "admin"
+    for match in LABELED_TURN.finditer(user_prompt):
+        index, speaker, text = int(match.group(1)), match.group(2), match.group(3)
+        if THERAPY_CUE in text.lower():
+            cue = index
+        said = next((name for words, name in TURN_WORDS if words.search(text)), None)
+        if said is not None:
+            label = said
+        elif speaker != "Client":
+            label = "therapy" if cue >= 0 else "admin"
+        runs.append({"first_segment": index, "last_segment": index, "label": label})
+    return {"runs": runs, "cue_segment": cue}
 
 
 @app.get("/_fake/health")

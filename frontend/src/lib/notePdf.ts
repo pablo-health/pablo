@@ -11,7 +11,7 @@ import type { PeopleWords } from "@/lib/peopleTerm"
 import { inTheNote, isEmptyValue, listItems, textValue } from "@/lib/schemaNoteValues"
 import { diagnosisText, statedDiagnoses } from "@/lib/statedDiagnoses"
 import type { PDFBlock, PDFNote } from "@/lib/utils/pdfExport"
-import { addOnBand, clientPresentLineText, visitLineText } from "@/lib/visitTimes"
+import { addOnBand, clientPresentLineText, durationsLineText, visitLineText } from "@/lib/visitTimes"
 import type { NoteFieldKind } from "@/types/noteTypes"
 import type { SchemaSectionValues } from "@/types/sessions"
 import type { VisitTimes } from "@/types/visitTimes"
@@ -93,6 +93,8 @@ export function visitPdfLines(
     people,
   )
   if (present) lines.push(present)
+  const durations = durationsLineText(times)
+  if (durations) lines.push(durations)
   const window = times.psychotherapy
   if (window?.offered && window.confirmed_minutes !== null && window.window_text) {
     lines.push(`Psychotherapy time: ${window.window_text} · ${addOnBand(window.confirmed_minutes)}`)
