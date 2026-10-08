@@ -1777,6 +1777,12 @@ class PatientMedicationRow(Base):
     patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
     drug_name: Mapped[str] = mapped_column(String(200), nullable=False)
     dose: Mapped[str] = mapped_column(String(100), nullable=False)
+    # How often and when it is taken, as written ("every morning", "50 mg AM /
+    # 25 mg PM"), kept apart from the dose so either can change on its own.
+    frequency: Mapped[str | None] = mapped_column(Text)
+    # 'psychiatric' or 'other': a prescriber's note lists the two separately.
+    # NULL when nobody has said which.
+    category: Mapped[str | None] = mapped_column(String(16))
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     started_at: Mapped[date | None] = mapped_column(Date)
     stopped_at: Mapped[date | None] = mapped_column(Date)
@@ -1793,6 +1799,10 @@ class PatientMedicationRow(Base):
         CheckConstraint(
             "status IN ('active','discontinued','on_hold')",
             name="ck_patient_medications_status",
+        ),
+        CheckConstraint(
+            "category IN ('psychiatric','other')",
+            name="ck_patient_medications_category",
         ),
         Index(
             "ix_patient_medications_patient_status",

@@ -141,6 +141,25 @@ class TestCreateMedication:
         assert resp.status_code == 201, resp.text
         assert resp.json()["status"] == "active"
 
+    def test_create_with_frequency_and_category(self, client_with_repo: TestClient) -> None:
+        body = _create_med(
+            client_with_repo, dose="50 mg", frequency="every morning", category="psychiatric"
+        )
+        assert body["frequency"] == "every morning"
+        assert body["category"] == "psychiatric"
+
+    def test_frequency_and_category_default_to_none(self, client_with_repo: TestClient) -> None:
+        body = _create_med(client_with_repo)
+        assert body["frequency"] is None
+        assert body["category"] is None
+
+    def test_an_unknown_category_is_refused(self, client_with_repo: TestClient) -> None:
+        resp = client_with_repo.post(
+            f"/api/patients/{_PATIENT_ID}/medications",
+            json=_med_body(category="supplement"),
+        )
+        assert resp.status_code == 422
+
 
 # ---------------------------------------------------------------------------
 # List
@@ -260,6 +279,41 @@ class TestUpdateMedication:
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["started_at"] == new_date
+
+    def test_update_frequency_without_touching_the_dose(self, client_with_repo: TestClient) -> None:
+        created = _create_med(client_with_repo, dose="50 mg", frequency="every morning")
+        resp = client_with_repo.patch(
+            f"/api/patients/{_PATIENT_ID}/medications/{created['id']}",
+            json={"frequency": "50 mg AM / 25 mg PM", "category": "psychiatric"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["dose"] == "50 mg"
+        assert body["frequency"] == "50 mg AM / 25 mg PM"
+        assert body["category"] == "psychiatric"
+
+    def test_frequency_and_category_clear_when_sent_as_null(
+        self, client_with_repo: TestClient
+    ) -> None:
+        created = _create_med(client_with_repo, frequency="daily", category="other")
+        resp = client_with_repo.patch(
+            f"/api/patients/{_PATIENT_ID}/medications/{created['id']}",
+            json={"frequency": None, "category": None},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["frequency"] is None
+        assert resp.json()["category"] is None
+
+    def test_a_patch_without_them_keeps_frequency_and_category(
+        self, client_with_repo: TestClient
+    ) -> None:
+        created = _create_med(client_with_repo, frequency="daily", category="other")
+        resp = client_with_repo.patch(
+            f"/api/patients/{_PATIENT_ID}/medications/{created['id']}",
+            json={"dose": "20 mg"},
+        )
+        assert resp.json()["frequency"] == "daily"
+        assert resp.json()["category"] == "other"
 
     def test_update_unknown_id_returns_404(self, client_with_repo: TestClient) -> None:
         resp = client_with_repo.patch(

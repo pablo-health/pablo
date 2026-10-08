@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+from unittest.mock import MagicMock
 
 import pytest
 from app.models import Patient, Transcript
@@ -19,6 +20,7 @@ from app.notes import NoteTypeRegistry, register_builtin_note_types
 from app.notes.chart_context import (
     STATED_THIS_VISIT,
     ChartContext,
+    ChartMedication,
     ChartProblem,
     allergies_line,
     chart_context_for,
@@ -26,7 +28,9 @@ from app.notes.chart_context import (
 )
 from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
 from app.problems.models import Problem
+from app.repositories import InMemoryMedicationRepository, InMemoryPatientProblemRepository
 from app.services.note_generation_service import RegistryNoteGenerationService
+from app.services.session_service import SessionService
 from app.services.structured_llm_gateway import FakeStructuredLLMGateway, StructuredCompletion
 
 if TYPE_CHECKING:
@@ -88,7 +92,7 @@ def test_chart_carries_active_and_rule_out_problems_but_not_resolved() -> None:
 
 
 def test_block_names_codes_and_marks_rule_outs_and_uncoded() -> None:
-    block = render_chart_block(CHART, include_allergies=False)
+    block = render_chart_block(CHART, include_prescribing=False)
     assert "  - F41.1 Generalized anxiety disorder" in block
     assert "  - Insomnia (no code recorded)" in block
     assert "  - Bipolar II disorder — rule-out, not a diagnosis" in block
@@ -98,7 +102,7 @@ def test_block_names_codes_and_marks_rule_outs_and_uncoded() -> None:
 
 
 def test_an_empty_list_reads_none_recorded() -> None:
-    block = render_chart_block(ChartContext(), include_allergies=True)
+    block = render_chart_block(ChartContext(), include_prescribing=True)
     assert "- Problem list: none recorded" in block
     assert "- Allergies: Not recorded" in block
 
@@ -120,7 +124,7 @@ def test_allergies_line_for_each_state(chart: ChartContext, line: str) -> None:
 
 
 def test_the_chart_value_wins_over_the_transcript() -> None:
-    block = render_chart_block(CHART, include_allergies=True)
+    block = render_chart_block(CHART, include_prescribing=True)
     assert "write the chart's value even if the transcript differs" in block
 
 
@@ -203,3 +207,135 @@ def test_a_practice_type_gets_problems_and_allergies(
     assert "- Allergies: Penicillin (Hives, moderate)" in prompt
     assert prompt.index("Penicillin") < prompt.index("How has the week been?")
     assert "{chart}" not in prompt
+
+
+# --- The medication list ---------------------------------------------------------
+
+
+def _medication(
+    name: str,
+    dose: str,
+    *,
+    status: str = "active",
+    frequency: str | None = None,
+    category: str | None = None,
+) -> dict[str, object]:
+    return {
+        "drug_name": name,
+        "dose": dose,
+        "status": status,
+        "frequency": frequency,
+        "category": category,
+    }
+
+
+def test_the_chart_carries_only_active_medications() -> None:
+    chart = chart_context_for(
+        _patient(),
+        [],
+        [
+            _medication("Sertraline", "100 mg", frequency="every morning", category="psychiatric"),
+            _medication("Hydroxyzine", "25 mg", status="discontinued"),
+            _medication("Lithium", "300 mg", status="on_hold"),
+        ],
+    )
+    assert chart.medications == (
+        ChartMedication("Sertraline", "100 mg", "every morning", "psychiatric"),
+    )
+
+
+def test_each_medication_is_listed_with_dose_and_frequency() -> None:
+    chart = ChartContext(
+        medications=(
+            ChartMedication("Sertraline", "100 mg", "every morning"),
+            ChartMedication("Bupropion XL", "150 mg"),
+        )
+    )
+    block = render_chart_block(chart, include_prescribing=True)
+    assert (
+        "- Current medications:\n  - Sertraline 100 mg, every morning\n  - Bupropion XL 150 mg\n"
+        in (block)
+    )
+    assert "Psychiatric:" not in block
+
+
+def test_psychiatric_and_other_medications_are_listed_apart() -> None:
+    chart = ChartContext(
+        medications=(
+            ChartMedication("Lisinopril", "10 mg", "daily", "other"),
+            ChartMedication("Sertraline", "50 mg AM / 25 mg PM", None, "psychiatric"),
+            ChartMedication("Melatonin", "3 mg", "at bedtime"),
+        )
+    )
+    block = render_chart_block(chart, include_prescribing=True)
+    assert (
+        "- Current medications:\n"
+        "  - Psychiatric:\n"
+        "    - Sertraline 50 mg AM / 25 mg PM\n"
+        "  - Other:\n"
+        "    - Lisinopril 10 mg, daily\n"
+        "  - Not categorized:\n"
+        "    - Melatonin 3 mg, at bedtime\n"
+    ) in block
+
+
+def test_no_medications_read_none_recorded() -> None:
+    block = render_chart_block(ChartContext(), include_prescribing=True)
+    assert "- Current medications: none recorded" in block
+
+
+def test_medications_carry_the_as_written_rule_and_the_plan_line() -> None:
+    block = render_chart_block(ChartContext(), include_prescribing=True)
+    assert block.startswith("Chart (entered by the clinician; use these values as written):")
+    assert (
+        "- The medications field states the chart's list as given. A medication the "
+        "clinician starts, stops or changes in this visit is written in the plan, not in "
+        "the current list."
+    ) in block
+
+
+def test_a_note_with_no_place_for_medications_is_not_handed_them() -> None:
+    chart = ChartContext(medications=(ChartMedication("Sertraline", "100 mg"),))
+    block = render_chart_block(chart, include_prescribing=False)
+    assert "Sertraline" not in block
+    assert "medications" not in block
+
+
+def test_soap_never_sees_the_medication_list(registry: NoteTypeRegistry) -> None:
+    chart = ChartContext(medications=(ChartMedication("Sertraline", "100 mg"),))
+    assert "Sertraline" not in _generate(registry, "soap", chart)
+
+
+def test_a_practice_type_is_written_against_the_medication_list(
+    registry: NoteTypeRegistry,
+) -> None:
+    chart = ChartContext(medications=(ChartMedication("Sertraline", "100 mg", "every morning"),))
+    prompt = _generate(registry, "custom.follow_up", chart, definition=_practice_definition(None))
+    assert "  - Sertraline 100 mg, every morning" in prompt
+    assert prompt.index("Sertraline") < prompt.index("How has the week been?")
+
+
+def test_a_session_draft_reads_the_medication_list() -> None:
+    """The session worker's chart carries the medications its clinician can see."""
+    patient = _patient()
+    medications = InMemoryMedicationRepository()
+    medications.grant_access(patient.id, "u1")
+    medications.create(
+        {"id": "m1", "patient_id": patient.id, **_medication("Sertraline", "100 mg")}, "u1"
+    )
+    service = SessionService(
+        MagicMock(),
+        MagicMock(),
+        MagicMock(),
+        MagicMock(),
+        InMemoryPatientProblemRepository(),
+        medications,
+    )
+
+    chart = service._chart_for(patient, "u1")
+    outsider = service._chart_for(patient, "someone-else")
+
+    assert chart is not None
+    assert chart.medications == (ChartMedication("Sertraline", "100 mg"),)
+    assert outsider is not None
+    assert outsider.medications == ()

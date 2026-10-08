@@ -10,11 +10,16 @@
 
 export type MedicationStatus = "active" | "discontinued" | "on_hold"
 
+/** A prescriber's note lists psychiatric and other medications separately. */
+export type MedicationCategory = "psychiatric" | "other"
+
 export interface Medication {
   id: string
   patient_id: string
   drug_name: string
   dose: string
+  frequency: string | null
+  category: MedicationCategory | null
   status: MedicationStatus
   started_at: string | null
   stopped_at: string | null
@@ -33,6 +38,8 @@ export interface MedicationListResponse {
 export interface CreateMedicationRequest {
   drug_name: string
   dose: string
+  frequency?: string | null
+  category?: MedicationCategory | null
   status?: MedicationStatus
   started_at?: string | null
   stop_reason?: string | null
@@ -42,6 +49,8 @@ export interface CreateMedicationRequest {
 export interface UpdateMedicationRequest {
   drug_name?: string
   dose?: string
+  frequency?: string | null
+  category?: MedicationCategory | null
   status?: MedicationStatus
   started_at?: string | null
   stopped_at?: string | null

@@ -34,6 +34,8 @@ def _row_to_dict(row: PatientMedicationRow) -> dict[str, object]:
         "patient_id": row.patient_id,
         "drug_name": row.drug_name,
         "dose": row.dose,
+        "frequency": row.frequency,
+        "category": row.category,
         "status": row.status,
         "started_at": row.started_at,
         "stopped_at": row.stopped_at,
@@ -113,6 +115,8 @@ class PostgresMedicationRepository(MedicationRepository):
             patient_id=patient_id,
             drug_name=str(row["drug_name"]),
             dose=str(row["dose"]),
+            frequency=row.get("frequency"),  # type: ignore[arg-type]
+            category=row.get("category"),  # type: ignore[arg-type]
             status=str(row["status"]),
             started_at=row.get("started_at"),  # type: ignore[arg-type]
             stopped_at=row.get("stopped_at"),  # type: ignore[arg-type]
@@ -136,6 +140,8 @@ class PostgresMedicationRepository(MedicationRepository):
             return self.create(row, user_id)
         orm_row.drug_name = str(row["drug_name"])
         orm_row.dose = str(row["dose"])
+        orm_row.frequency = row.get("frequency")  # type: ignore[assignment]
+        orm_row.category = row.get("category")  # type: ignore[assignment]
         orm_row.status = str(row["status"])
         orm_row.started_at = row.get("started_at")  # type: ignore[assignment]
         orm_row.stopped_at = row.get("stopped_at")  # type: ignore[assignment]

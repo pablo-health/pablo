@@ -296,6 +296,38 @@ def measures_undated(draft: Draft, case: TemplateCase) -> list[str]:
     return [f"measures.measures_reviewed: calendar date {d} not said" for d in calendar_dates(text)]
 
 
+MEDICATION_HEADINGS = frozenset({"psychiatric:", "other:", "not categorized:"})
+
+
+def medications_from_chart(draft: Draft, case: TemplateCase) -> list[str]:
+    """The current list is the chart's, word for word, and holds nothing changed today."""
+    expected = case.expected.current_medications
+    if expected is None:
+        return []
+    value = _value(draft, "medications", "current_medications")
+    items = [str(i) for i in value] if isinstance(value, list) else [str(value or "")]
+    listed = {normalize(i) for i in items if i.strip().lower() not in MEDICATION_HEADINGS}
+    wanted = {normalize(line) for line in expected}
+    problems = [
+        f"medications.current_medications: {line!r} is on the chart but not listed as written"
+        for line in expected
+        if normalize(line) not in listed
+    ]
+    problems += [
+        f"medications.current_medications: {item!r} is not on the chart"
+        for item in items
+        if item.strip()
+        and item.strip().lower() not in MEDICATION_HEADINGS
+        and normalize(item) not in wanted
+    ]
+    problems += [
+        f"medications.current_medications: {word!r} was changed this visit; it belongs to the plan"
+        for word in case.expected.not_current
+        if any(word in normalize(i).split() for i in items)
+    ]
+    return problems
+
+
 CHECKS: dict[str, Callable[[Draft, TemplateCase], list[str]]] = {
     "codes_only_dictated": codes_only_dictated,
     "psychotherapy_section": psychotherapy_section,
@@ -306,6 +338,7 @@ CHECKS: dict[str, Callable[[Draft, TemplateCase], list[str]]] = {
     "substances": substances,
     "diagnoses_only_stated": diagnoses_only_stated,
     "measures_undated": measures_undated,
+    "medications_from_chart": medications_from_chart,
 }
 
 

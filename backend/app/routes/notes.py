@@ -61,6 +61,7 @@ from ..notes.chart_context import chart_context_for
 from ..notes.practice_types import validate_note_inputs
 from ..problems.dependencies import get_problem_service
 from ..repositories import (
+    MedicationRepository,
     NotesRepository,
     PatientProblemRepository,
     PatientRepository,
@@ -71,6 +72,9 @@ from ..repositories import (
 )
 from ..repositories import (
     get_appointment_repository as _appt_repo_factory,
+)
+from ..repositories import (
+    get_medication_repository as _medication_repo_factory,
 )
 from ..repositories import (
     get_notes_repository as _notes_repo_factory,
@@ -222,6 +226,11 @@ def get_worker_patient_repository() -> PatientRepository:
 def get_worker_problem_repository() -> PatientProblemRepository:
     """The problem list, for the same worker: the chart a draft is written against."""
     return _problem_repo_factory()
+
+
+def get_worker_medication_repository() -> MedicationRepository:
+    """The medication list, for the same worker."""
+    return _medication_repo_factory()
 
 
 @router.get("/{note_id}")
@@ -731,6 +740,7 @@ def generate_standalone_note_job(
     note_service: NoteService = Depends(get_worker_note_service),
     patient_repo: PatientRepository = Depends(get_worker_patient_repository),
     problem_repo: PatientProblemRepository = Depends(get_worker_problem_repository),
+    medication_repo: MedicationRepository = Depends(get_worker_medication_repository),
     note_generation_service: NoteGenerationService = Depends(get_note_generation_service),
     user_repo: UserRepository = Depends(get_user_repository),
     audit: AuditService = Depends(get_audit_service),
@@ -791,7 +801,11 @@ def generate_standalone_note_job(
         definition: NoteTypeDefinition | None = registry.get(payload.note_type)
     except KeyError:
         definition = None
-    chart = chart_context_for(patient, problem_repo.list_by_patient(patient.id))
+    chart = chart_context_for(
+        patient,
+        problem_repo.list_by_patient(patient.id),
+        medication_repo.list_by_patient(patient.id, payload.user_id),
+    )
     # Release the pooled connection before the multi-second LLM call — same
     # seam ``upload_session`` and the old inline dictation path used.
     release_db_connection()
