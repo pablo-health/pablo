@@ -75,14 +75,23 @@ def test_e2e_gates_its_work_on_the_classifier(e2e: dict) -> None:
         "every docs-only PR pay for the full browser suite"
     )
 
-    for name in ("e2e-shards", "hosted-address"):
+    for name in (
+        "e2e-shards",
+        "hosted-address",
+        "portal-accessibility-webkit",
+    ):
         job = e2e["jobs"][name]
         assert job["needs"] == "classify"
         assert "needs.classify.outputs.run == 'true'" in job["if"]
 
     gate = e2e["jobs"]["e2e"]
     assert gate["if"] == "always()"
-    assert set(gate["needs"]) == {"classify", "e2e-shards", "hosted-address"}
+    assert set(gate["needs"]) == {
+        "classify",
+        "e2e-shards",
+        "hosted-address",
+        "portal-accessibility-webkit",
+    }
 
 
 def test_the_gate_fails_open(e2e: dict) -> None:
