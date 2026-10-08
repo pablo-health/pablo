@@ -31,7 +31,7 @@ describe("NewDocumentInline", () => {
     const onCreated = vi.fn()
     render(<NewDocumentInline idPrefix="t" onCreated={onCreated} />)
 
-    await user.type(screen.getByLabelText("Name"), "Privacy notice")
+    await user.type(screen.getByLabelText("Document name"), "Privacy notice")
     await user.type(screen.getByLabelText("What they read"), "How we keep your records.")
     await user.click(screen.getByRole("button", { name: "Publish and use it" }))
 
@@ -53,7 +53,7 @@ describe("NewDocumentInline", () => {
     await user.click(publish)
 
     expect(mockCreate).not.toHaveBeenCalled()
-    expect(screen.getByLabelText("Name")).toHaveFocus()
+    expect(screen.getByLabelText("Document name")).toHaveFocus()
     expect(screen.getByText("Give the document a name.")).toBeInTheDocument()
     expect(screen.getByText("Write what they read.")).toBeInTheDocument()
   })

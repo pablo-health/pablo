@@ -15,7 +15,7 @@ like ``patient_chart_history``. Idempotent, like every revision in this
 chain.
 
 Revision ID: c5a1e8d2b394
-Revises: b3e9c6d4f217
+Revises: b4e81c6d2f90
 Create Date: 2026-10-08
 """
 
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "c5a1e8d2b394"
-down_revision: str | Sequence[str] | None = "b3e9c6d4f217"
+down_revision: str | Sequence[str] | None = "b4e81c6d2f90"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

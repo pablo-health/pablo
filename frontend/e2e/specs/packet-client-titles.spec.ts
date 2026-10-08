@@ -51,7 +51,7 @@ test("two packets reach one client under the titles written for them @portal", a
 
   // The first title is written where a practice writes it: the Packets card.
   await page.goto(`/dashboard/settings/portal?packet=${first.id}`)
-  const packets = page.getByRole("region", { name: "Packets" })
+  const packets = page.getByRole("region", { name: "Packets", exact: true })
   await packets.getByLabel("Title clients see").fill(firstTitle)
   await packets.getByRole("button", { name: "Save title" }).click()
   await expect
