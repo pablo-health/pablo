@@ -268,3 +268,99 @@ crisis contacts 988 and the office. Major depression, recurrent, worsening. Incr
 sertraline to 200 milligrams every morning; side effects and the alternative of a light box \
 discussed, client agreed. Return in two weeks.
 """
+
+
+# Therapy, a medication check in the middle of it, more therapy, then the
+# risk screen near the end, where it fits the visit. The therapy runs from
+# 0:14 to 7:40 and from 10:05 to 24:50: 1331 seconds, 22 minutes. The
+# clinician dictates the codes but no minutes.
+INTERLEAVED_MEDICATION_CHECK = """\
+[00:00:04] Therapist: Hi Riley, good to see you. Are you at home today?
+[00:00:09] Client: Yes, at home, in my kitchen.
+[00:00:14] Therapist: Last time you were going to try the activity schedule. How did that go?
+[00:00:22] Client: I did it four days out of seven. I walked twice and called my sister once.
+[00:01:30] Therapist: What did you notice about your mood on the days you walked?
+[00:01:41] Client: It was better in the afternoon. I didn't expect that.
+[00:03:10] Therapist: And on the days you skipped it?
+[00:03:18] Client: I told myself it wouldn't help, so why bother.
+[00:05:02] Therapist: That's the thought we've been tracking. How much did you believe it \
+right then?
+[00:05:12] Client: Maybe eighty percent.
+[00:07:40] Therapist: Let me pause there and check on the medication. Are you taking the \
+sertraline 100 every morning?
+[00:07:49] Client: Every morning. I missed one day last week.
+[00:08:05] Therapist: Any nausea, headaches, trouble sleeping?
+[00:08:11] Client: Some trouble falling asleep, but that's been better.
+[00:09:30] Therapist: Okay. We'll keep the sertraline at 100 milligrams. I'll send the refill today.
+[00:09:42] Client: Thank you, that works for me.
+[00:10:05] Therapist: Back to that thought, "it won't help." What would you say to a friend \
+who told you that?
+[00:10:20] Client: I'd tell them to try it anyway and see.
+[00:13:45] Therapist: So what's a more balanced version you could tell yourself?
+[00:13:58] Client: Maybe it helps a little, and a little is still something.
+[00:17:30] Therapist: How much do you believe the original thought now?
+[00:17:38] Client: Maybe forty percent now.
+[00:20:15] Therapist: Let's plan the coming week. Which days could you schedule the walk?
+[00:20:25] Client: Monday, Wednesday and Saturday, before lunch.
+[00:24:50] Therapist: Before we finish, I ask this every time. Any thoughts of hurting \
+yourself, or that you'd be better off dead?
+[00:25:00] Client: No. Nothing like that.
+[00:25:10] Therapist: And the PHQ-9 you filled in this morning was 11, down from 16.
+[00:25:20] Client: That sounds about right to me.
+[00:27:00] Therapist: Good. I'll see you in four weeks. Call the office if anything changes.
+[00:27:10] Client: Okay, thanks. See you then.
+[00:27:30] Therapist: Note for the record. Client alert and oriented, casually dressed, \
+good eye contact. Speech normal. Mood "better", affect brighter than last visit. Thought \
+process linear. No hallucinations or delusions. Denies SI and HI. Insight and judgment \
+fair. Major depression, recurrent, improving. Continue sertraline 100 milligrams every \
+morning, refill sent. Return in four weeks. Billing 99214 plus 90833.
+"""
+
+# Therapy, a screen, therapy, a medication check, therapy: four portions
+# besides the greeting. The therapy runs 0:18-7:55, 9:40-18:40 and
+# 21:10-29:30: 1497 seconds, 24 minutes. The clinician dictates thirty
+# minutes, which the note carries.
+INTERLEAVED_DICTATED_MINUTES = """\
+[00:00:05] Therapist: Hello Sam. You're at home and okay to talk by video?
+[00:00:12] Client: Yes, at home, and that's fine.
+[00:00:18] Therapist: You said on the phone the panic came back at work. Tell me about the last one.
+[00:00:30] Client: Tuesday, in a meeting. My chest got tight and I was sure everyone could see.
+[00:02:40] Therapist: What did you do when it started?
+[00:02:48] Client: I left the room and sat in my car for twenty minutes.
+[00:05:15] Therapist: Leaving brought the fear down fast, and that teaches your body the \
+meeting was dangerous.
+[00:05:30] Client: So staying would have been better?
+[00:07:55] Therapist: Let me ask the screening questions now. The GAD-7 you did today was 15. \
+Does that fit?
+[00:08:05] Client: Yes, the last two weeks were bad.
+[00:08:20] Therapist: Any thoughts of hurting yourself, or that you'd be better off dead?
+[00:08:28] Client: No, never. I just want it to stop.
+[00:09:40] Therapist: Thanks. Back to the meeting. If you had stayed, what did you expect \
+would happen?
+[00:09:52] Client: That I'd pass out or have to run out in front of everyone.
+[00:12:30] Therapist: Has that ever happened in a panic attack?
+[00:12:36] Client: No. Not once, actually.
+[00:15:10] Therapist: Let's try something now. Breathe through a straw for one minute and \
+notice the tightness without leaving.
+[00:15:22] Client: Okay. It's uncomfortable, but I can stay with it.
+[00:18:40] Therapist: Before we keep going, the propranolol. Are you using it before meetings?
+[00:18:48] Client: I took it twice. It helped my hands stop shaking.
+[00:19:30] Therapist: Any dizziness or feeling faint with it?
+[00:19:36] Client: No, nothing like that.
+[00:20:20] Therapist: Then keep the propranolol 10 milligrams as needed before meetings, and \
+continue the escitalopram 10 every morning.
+[00:20:35] Client: Got it, both the same.
+[00:21:10] Therapist: For practice this week, stay in one meeting through the tightness, and \
+write down what you predicted and what happened.
+[00:21:25] Client: I can do that on Thursday, there's a team meeting.
+[00:26:40] Therapist: Good. How confident are you, zero to ten?
+[00:26:46] Client: About a six. That's better than I'd have said an hour ago.
+[00:29:30] Therapist: I'll see you in three weeks. Call the office if the panic gets worse.
+[00:29:38] Client: Thanks, I will call if I need to.
+[00:30:05] Therapist: Note for the record. Client alert and oriented, well groomed. Speech \
+normal rate. Mood "anxious", affect anxious and congruent. Thought process linear. No \
+hallucinations or delusions. Denies SI and HI. Insight and judgment good. Panic disorder, \
+worsening at work. Continue escitalopram 10 milligrams every morning and propranolol 10 \
+milligrams as needed before meetings. Return in three weeks. Psychotherapy thirty minutes. \
+Billing 99214 plus 90833.
+"""

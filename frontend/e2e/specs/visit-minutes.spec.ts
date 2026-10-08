@@ -5,11 +5,10 @@
  * clinician confirms.
  *
  * The stack drafts through its stand-in (scripts/fake_llm.py): every field
- * reads "Stand-in draft for <section>.<field>.", and the stand-in marks the
- * therapy portion's start at the clinician's spoken cue ("let's get into").
- * Its psychotherapy time field is therefore a stated value that disagrees
- * with the confirmed window, which is exactly the conflict the clinician
- * settles here.
+ * reads "Stand-in draft for <section>.<field>.", and the stand-in labels each
+ * turn by its words: a medication or screening question as such, the rest
+ * therapy from the clinician's spoken cue ("let's get into"). It hears
+ * "Psychotherapy N minutes" in the addendum as dictated minutes.
  */
 
 import { randomBytes } from "node:crypto"
@@ -53,20 +52,30 @@ const withoutPsychotherapy = {
   sections: [{ key: "plan", label: "Plan", fields: [{ key: "follow_up", label: "Follow-up" }] }],
 }
 
-// A twelve-minute medication check, the clinician's cue at 12:30, the client
-// leaving at 50:00 (six words: client time ends at 50:02), then a dictated
-// addendum. 12:30 to 50:02 is 37 whole minutes: the top of the 16-37 band.
-const VISIT = [
-  "[00:00:05] Therapist: How has the medication been since the dose change?",
-  "[00:03:00] Client: Better sleep, and no side effects I have noticed.",
-  "[00:11:50] Therapist: Good, we will keep the dose where it is for now.",
-  "[00:12:30] Therapist: Now let's get into the session work you wanted.",
-  "[00:30:00] Client: I keep replaying the argument with my sister every night.",
-  "[00:50:00] Client: Thank you, see you next month.",
-  "[00:51:00] Therapist: Addendum for the note. Client denies suicidal ideation.",
-].join("\n")
+// Therapy from the clinician's cue at 1:00, a medication check from 15:00 to
+// 20:00, therapy again to 40:00, a risk question, and the client leaving at
+// 45:00 (six words: client time ends at 45:02), then a dictated addendum.
+// The therapy is 14 + 20 = 34 minutes, interleaved; read as therapy too, the
+// medication check makes one run of 39.
+const TURNS = [
+  "[00:00:05] Therapist: Hi, good to see you today.",
+  "[00:01:00] Therapist: Now let's get into the session work you wanted.",
+  "[00:01:30] Client: I keep replaying the argument with my sister every night.",
+  "[00:15:00] Therapist: Quick check: any side effects since the dose change?",
+  "[00:16:00] Client: No, sleep is better than it was before.",
+  "[00:20:00] Therapist: Back to the argument. What did you tell yourself afterwards?",
+  "[00:40:00] Therapist: Any thoughts of hurting yourself?",
+  "[00:40:30] Client: No, none at all, not even close.",
+  "[00:45:00] Client: Thank you, see you next month then.",
+]
+const VISIT = [...TURNS, "[00:46:00] Therapist: Addendum for the note. Client denies suicidal ideation."].join(
+  "\n",
+)
+const VISIT_WITH_MINUTES = [...TURNS, "[00:46:00] Therapist: Addendum for the note. Psychotherapy 30 minutes."].join(
+  "\n",
+)
 
-async function recordedVisit(api: ApiClient, noteType: string): Promise<Session> {
+async function recordedVisit(api: ApiClient, noteType: string, content = VISIT): Promise<Session> {
   const patient = await givePatient(api)
   const session = await api.post<Session>("/api/sessions/schedule", {
     patient_id: patient.id,
@@ -77,7 +86,7 @@ async function recordedVisit(api: ApiClient, noteType: string): Promise<Session>
   })
   await api.patch(`/api/sessions/${session.id}/status`, { status: "in_progress" })
   await api.patch(`/api/sessions/${session.id}/status`, { status: "recording_complete" })
-  await api.post(`/api/sessions/${session.id}/transcript`, { format: "txt", content: VISIT })
+  await api.post(`/api/sessions/${session.id}/transcript`, { format: "txt", content })
   await expect
     .poll(async () => (await api.get<Session>(`/api/sessions/${session.id}`)).status, {
       timeout: 30_000,
@@ -101,7 +110,7 @@ async function withNoteType<T>(
 }
 
 test.describe("visit minutes", () => {
-  test("the clinician confirms the therapy start and the note states the window", async ({
+  test("the clinician confirms interleaved therapy, relabels a run, and the note states the time", async ({
     api,
     signedInPage: page,
   }) => {
@@ -117,39 +126,48 @@ test.describe("visit minutes", () => {
       // No E/M time beside a psychotherapy add-on.
       await expect(times.getByTestId("documentation-total")).toHaveCount(0)
 
-      // The clinician's cue is proposed, and minutes run to when the client left.
-      await expect(page.getByRole("radio", { name: /\(you said so here\)/ })).toBeChecked()
-      await expect(page.getByTestId("psychotherapy-preview")).toHaveText(
-        "37 minutes · 16–37 minutes",
+      // Every turn while the client was present is labeled; the therapy adds up.
+      const runs = times.getByTestId("timeline-run")
+      await expect(runs).toHaveCount(6)
+      await expect(runs.nth(2)).toHaveAttribute("data-label", "medication_management")
+      const preview = times.getByTestId("psychotherapy-preview")
+      await expect(preview).toHaveText("34 therapy minutes of 45 · 16–37 minutes")
+      await expect(times.getByTestId("em-remainder")).toHaveText("Medical visit: 11 min")
+
+      // Confirmed as labeled: the minutes, and that they interleaved.
+      await times.getByRole("button", { name: "Confirm" }).click()
+      const confirmed = times.getByTestId("psychotherapy-confirmed")
+      await expect(confirmed).toHaveText(
+        "34 minutes (interleaved with medication management; time accounted separately)",
+      )
+      await expect(times.getByTestId("add-on-band")).toHaveText("16–37 minutes")
+      await expect(times.getByTestId("durations-line")).toHaveText(
+        /^Total duration: \d+ min · Psychotherapy duration: 34 min$/,
       )
 
-      // Typing more minutes than the client was present is refused.
-      await page.getByRole("radio", { name: "Type the minutes" }).check()
-      await page.getByLabel("Psychotherapy minutes").fill("51")
-      await expect(times.getByRole("alert")).toContainText("the 50 minutes the client was present")
-      await expect(page.getByRole("button", { name: "Confirm" })).toBeDisabled()
+      // The medication check was therapy after all: one run, a window, the next band.
+      await times.getByRole("button", { name: "Change" }).click()
+      await runs.nth(2).click()
+      await times.getByRole("group", { name: /^Label / }).getByRole("button", { name: "Therapy" }).click()
+      await expect(runs).toHaveCount(4)
+      await expect(preview).toHaveText("39 therapy minutes of 45 · 38–52 minutes")
+      await expect(times.getByTestId("em-remainder")).toHaveText("Medical visit: 6 min")
+      await times.getByRole("button", { name: "Confirm" }).click()
+      await expect(confirmed).toHaveText(/^\d{1,2}:\d{2} [AP]M to \d{1,2}:\d{2} [AP]M, 39 minutes$/)
+      await expect(times.getByTestId("add-on-band")).toHaveText("38–52 minutes")
+      await expect(times.getByTestId("durations-line")).toContainText("Psychotherapy duration: 39 min")
+      // Nothing was dictated, so there is nothing to settle.
+      await expect(times.getByRole("alert")).toHaveCount(0)
 
-      await page.getByRole("radio", { name: /\(you said so here\)/ }).check()
-      await page.getByRole("button", { name: "Confirm" }).click()
-      await expect(page.getByTestId("psychotherapy-confirmed")).toHaveText(
-        /^\d{1,2}:\d{2} [AP]M to \d{1,2}:\d{2} [AP]M, 37 minutes$/,
-      )
-      await expect(page.getByTestId("add-on-band")).toHaveText("16–37 minutes")
-
-      // The draft already holds a stated time; the clinician picks the window.
-      const conflict = times.getByRole("alert")
-      await expect(conflict).toContainText("You said “Stand-in draft for psychotherapy.psychotherapy_time.”")
-      await conflict.getByRole("button", { name: "Use 37 minutes" }).click()
-      await expect(conflict).toHaveCount(0)
-      const windowText = await page.getByTestId("psychotherapy-confirmed").innerText()
-      // Confirming is not an edit: the window goes into the draft.
+      const windowText = await confirmed.innerText()
+      // Confirming is not an edit: the time goes into the draft.
       const saved = await api.get<NoteOnSession>(`/api/sessions/${session.id}`)
       expect(saved.note.content?.psychotherapy?.psychotherapy_time).toBe(windowText)
       expect(saved.note.content_edited).toBeNull()
       // On the note itself as well as in the panel above it.
       await expect(page.getByText(windowText, { exact: true })).toHaveCount(2)
 
-      // So dictating more redrafts without asking about edits, and keeps the window.
+      // So dictating more redrafts without asking about edits, and keeps the time.
       const panel = page.getByRole("region", { name: "Dictate more" })
       await panel.getByRole("button", { name: "Dictate more" }).click()
       await expect(panel.getByText(/Recording 0:0[1-9]/)).toBeVisible({ timeout: 10_000 })
@@ -174,39 +192,26 @@ test.describe("visit minutes", () => {
     })
   })
 
-  test("a time that states only matching minutes takes the confirmed window without a conflict", async ({
+  test("minutes the clinician dictated win over the labeled turns", async ({
     api,
     signedInPage: page,
   }) => {
     await withNoteType(api, withPsychotherapy, async (key) => {
-      const session = await recordedVisit(api, key)
-      // How a draft states a time the clinician gave only as minutes. The
-      // stand-in can't draft it, so it goes in as the note's text.
-      const { note } = await api.get<{ note: { id: string } }>(`/api/sessions/${session.id}`)
-      await api.patch(`/api/notes/${note.id}`, {
-        content_edited: {
-          plan: { follow_up: "Return in four weeks." },
-          psychotherapy: {
-            psychotherapy_time: "Start time: Not stated. End time: Not stated. Minutes: 37.",
-            modality_interventions: "Cognitive behavioral therapy.",
-          },
-        },
-      })
+      const session = await recordedVisit(api, key, VISIT_WITH_MINUTES)
       await page.goto(`/dashboard/sessions/${session.id}`)
 
       const times = page.getByTestId("visit-times")
-      await expect(page.getByRole("radio", { name: /\(you said so here\)/ })).toBeChecked()
-      await page.getByRole("button", { name: "Confirm" }).click()
-      const confirmed = page.getByTestId("psychotherapy-confirmed")
-      await expect(confirmed).toHaveText(/^\d{1,2}:\d{2} [AP]M to \d{1,2}:\d{2} [AP]M, 37 minutes$/)
+      await expect(times.getByTestId("psychotherapy-preview")).toHaveText(
+        "34 therapy minutes of 45 · 16–37 minutes",
+      )
+      await expect(times.getByText("You said 30 minutes.")).toBeVisible()
+      await times.getByRole("button", { name: "Use my minutes" }).click()
 
-      // The minutes agree, so there is nothing to pick: the window completes the time.
+      await expect(times.getByTestId("psychotherapy-confirmed")).toHaveText("30 minutes")
+      await expect(times.getByTestId("add-on-band")).toHaveText("16–37 minutes")
       await expect(times.getByRole("alert")).toHaveCount(0)
-      const windowText = await confirmed.innerText()
       const saved = await api.get<NoteOnSession>(`/api/sessions/${session.id}`)
-      expect(saved.note.content_edited?.psychotherapy?.psychotherapy_time).toBe(windowText)
-      await expect(page.getByText(windowText, { exact: true })).toHaveCount(2)
-      await expect(page.getByText(/Start time: Not stated/)).toHaveCount(0)
+      expect(saved.note.content?.psychotherapy?.psychotherapy_time).toBe("30 minutes")
     })
   })
 

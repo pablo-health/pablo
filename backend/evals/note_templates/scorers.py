@@ -16,10 +16,22 @@ from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
 
 from app.chart_history.fields import HISTORY_GROUPS, is_history_key
+from app.models import Transcript
 from app.notes.chart_context import allergies_line
+from app.notes.client_present import client_present_end, segments_from_transcript
+from app.notes.visit_times import (
+    DictatedTime,
+    TurnLabel,
+    client_present_turns,
+    labels_from_stored,
+    therapy_seconds,
+    turn_spans,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from app.notes.client_present import TimedSegment
 
     from evals.note_templates.cases import TemplateCase
 
@@ -605,3 +617,82 @@ CHECKS: dict[str, Callable[[Draft, TemplateCase], list[str]]] = {
 def grade(draft: Draft, case: TemplateCase) -> dict[str, list[str]]:
     """Every check's problems, by check name; all empty means the draft passes."""
     return {name: check(draft, case) for name, check in CHECKS.items()}
+
+
+def recorded_boundary(case: TemplateCase) -> float | None:
+    """Where the client left a case drafted as a recorded visit; ``None`` otherwise."""
+    if not case.recorded:
+        return None
+    segments = segments_from_transcript(Transcript(format="txt", content=case.transcript))
+    return client_present_end(segments, client_channel_expected=False)
+
+
+def _seconds(stamp: str) -> float:
+    hours, minutes, seconds = (int(part) for part in stamp.split(":"))
+    return float(hours * 3600 + minutes * 60 + seconds)
+
+
+def _present_turns(case: TemplateCase, end: float) -> list[TimedSegment]:
+    segments = segments_from_transcript(Transcript(format="txt", content=case.transcript))
+    return client_present_turns(segments, end)
+
+
+def truth_labels(case: TemplateCase, turns: list[TimedSegment]) -> dict[float, TurnLabel]:
+    """The case's runs as a label for every client-present turn."""
+    runs = sorted((_seconds(stamp), label) for stamp, label in case.segment_labels or ())
+    labels: dict[float, TurnLabel] = {}
+    for turn in turns:
+        held = [label for start, label in runs if start <= turn.start]
+        if not held:
+            raise ValueError(f"{case.name}: the turn at {turn.start:.0f}s has no label")
+        labels[turn.start] = held[-1]
+    return labels
+
+
+def therapy_minutes_table(case: TemplateCase, proposal: dict[str, Any] | None) -> dict[str, Any]:
+    """Proposed and labeled therapy, in seconds, and how far apart one turn allows."""
+    end = recorded_boundary(case)
+    if end is None or case.segment_labels is None:
+        return {}
+    turns = _present_turns(case, end)
+    proposed = labels_from_stored((proposal or {}).get("labels"))
+    return {
+        "end": end,
+        "proposed": therapy_seconds(proposed, turns, end),
+        "labeled": therapy_seconds(truth_labels(case, turns), turns, end),
+        "one_turn": max((stop - start for start, stop in turn_spans(turns, end)), default=0.0),
+        "tail_labeled": sorted(s for s in proposed if s >= end),
+        "unlabeled": sum(1 for t in turns if t.start not in proposed),
+    }
+
+
+def therapy_minutes(case: TemplateCase, proposal: dict[str, Any] | None) -> list[str]:
+    """The proposed turn labels add up to the labeled therapy, within one turn.
+
+    Never a turn after the client left, never more than the client was
+    present, and nothing for a visit with no therapy. Where the clinician
+    dictated minutes, the draft returns them as dictated.
+    """
+    problems: list[str] = []
+    wanted = case.expected.minutes
+    if wanted:
+        stated = DictatedTime.from_reply((proposal or {}).get("dictated"))
+        got = stated.minutes if stated else None
+        if str(got) not in wanted:
+            problems.append(f"dictated minutes read as {got}, not {' or '.join(wanted)}")
+    table = therapy_minutes_table(case, proposal)
+    if not table:
+        return problems
+    proposed, labeled = table["proposed"], table["labeled"]
+    if table["tail_labeled"]:
+        problems.append(f"turns after the client left are labeled: {table['tail_labeled']}")
+    if proposed > table["end"]:
+        problems.append(f"{proposed:.0f}s of therapy is more than the client was present")
+    if labeled == 0 and proposed > 0:
+        problems.append(f"{proposed:.0f}s of therapy proposed for a visit with none")
+    elif abs(proposed - labeled) > table["one_turn"]:
+        problems.append(
+            f"{proposed / 60:.1f} therapy minutes proposed, {labeled / 60:.1f} labeled: "
+            f"more than one turn ({table['one_turn']:.0f}s) apart"
+        )
+    return problems

@@ -10,7 +10,7 @@
  * The stack drafts through its stand-in (scripts/fake_llm.py): every text
  * field reads "Stand-in draft for <section>.<field>.", a diagnoses field
  * holds one "Stand-in diagnosis for <section>.<field>" coded F00.0, and the
- * therapy portion starts at the clinician's spoken cue. The PDF is read from
+ * turns from the clinician's spoken cue are labeled therapy. The PDF is read from
  * the bytes the browser saved; jsPDF writes its text uncompressed, with "("
  * and ")" escaped, so the checks avoid parentheses.
  */
@@ -76,12 +76,10 @@ test("a signed note of a practice's own type exports its fields, visit times and
     const body = page.getByTestId("session-note")
     await expect(body.getByText("Stand-in draft for subjective.chief_complaint.")).toBeVisible()
 
-    // Confirm the therapy start the clinician cued, and use it over the
-    // time the draft stated.
+    // Confirm the therapy turns as labeled: one run, from the clinician's cue.
     const times = page.getByTestId("visit-times")
-    await expect(page.getByRole("radio", { name: /\(you said so here\)/ })).toBeChecked()
-    await page.getByRole("button", { name: "Confirm" }).click()
-    await times.getByRole("alert").getByRole("button", { name: "Use 37 minutes" }).click()
+    await expect(times.getByTestId("psychotherapy-preview")).toHaveText(/^37 therapy minutes /)
+    await times.getByRole("button", { name: "Confirm" }).click()
     const windowText = await page.getByTestId("psychotherapy-confirmed").innerText()
     expect(windowText).toMatch(/^\d{1,2}:\d{2} [AP]M to \d{1,2}:\d{2} [AP]M, 37 minutes$/)
     const visitLine = await times.getByTestId("visit-line").innerText()
@@ -120,6 +118,7 @@ test("a signed note of a practice's own type exports its fields, visit times and
 
     // The visit's times and the confirmed minutes, above the note.
     expect(at(`Psychotherapy time: ${windowText}`)).toBeLessThan(at("Chief complaint:"))
+    expect(at("Psychotherapy duration: 37 min")).toBeLessThan(at("Chief complaint:"))
     expect(at(visitLine.split(" · ")[0])).toBeLessThan(at("Chief complaint:"))
 
     // The signature block, after the note.
