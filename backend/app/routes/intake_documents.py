@@ -403,7 +403,10 @@ def list_starters(
     _user: User = Depends(require_baa_acceptance),
 ) -> list[StarterSummary]:
     """The documents a practice can start from, in the order to list them."""
-    return [StarterSummary(key=s.key, title=s.title) for s in intake_starters()]
+    return [
+        StarterSummary(key=s.key, title=s.title, has_document=s.body_markdown is not None)
+        for s in intake_starters()
+    ]
 
 
 @starter_router.post("/{starter_key}", response_model=StarterAdoptedResponse)

@@ -20,8 +20,8 @@ import {
 interface NewDocumentInlineProps {
   /** Prefix for the field ids, so two open items do not collide. */
   idPrefix: string
-  /** Called with the new document's key once it is published. */
-  onCreated: (documentKey: string) => void
+  /** Called with the new document's key and title once it is published. */
+  onCreated: (documentKey: string, title: string) => void
 }
 
 /**
@@ -55,7 +55,7 @@ export function NewDocumentInline({ idPrefix, onCreated }: NewDocumentInlineProp
     }
     const created = await create.mutateAsync({ title: title.trim(), body_markdown: body })
     const published = await publish.mutateAsync(created.id)
-    onCreated(published.document_key)
+    onCreated(published.document_key, published.title)
   }
 
   return (

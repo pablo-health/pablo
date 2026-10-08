@@ -58,7 +58,7 @@ interface ItemConfigFormProps {
    * pick from `documents`. The card that owns the packet supplies it, since
    * writing one means calling the server.
    */
-  renderNewDocument?: (choose: (documentKey: string) => void) => ReactNode
+  renderNewDocument?: (choose: (documentKey: string, title?: string) => void) => ReactNode
   /**
    * Which published wording of the chosen document to ask for, newest by
    * default. Supplied by the card that owns the packet, since the versions

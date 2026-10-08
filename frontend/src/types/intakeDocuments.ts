@@ -53,6 +53,8 @@ export interface UpdateDocumentInput {
 export interface IntakeStarter {
   key: string
   title: string
+  /** Adds a document to sign (offered under Add a document), or only questions. */
+  has_document: boolean
 }
 
 /**

@@ -16,9 +16,13 @@ import userEvent from "@testing-library/user-event"
 
 import { IntakeItemEditor } from "../IntakeItemEditor"
 import {
+  ADD_DOCUMENT_TO_PACKET,
+  BUILT_IN_DOCUMENTS,
+  DOCUMENT_TAG,
   HELP_TEXT_FIELD,
   LABEL_FIELD,
   LABEL_FIELD_OVERRIDE,
+  NO_DOCUMENTS_TO_ADD,
   NO_QUESTIONS,
   PUBLISHED_NOTICE,
   START_FROM_TEMPLATE,
@@ -136,7 +140,7 @@ describe("IntakeItemEditor", () => {
     const user = userEvent.setup()
     editor(version({ items: [item("about", "section", { title: "About you" })] }))
 
-    await user.click(screen.getByRole("button", { expanded: false }))
+    await user.click(screen.getByRole("button", { name: /about/, expanded: false }))
 
     expect(screen.queryByText("They have to answer this")).not.toBeInTheDocument()
     expect(screen.getByLabelText("Heading")).toHaveValue("About you")
@@ -146,7 +150,7 @@ describe("IntakeItemEditor", () => {
     const user = userEvent.setup()
     editor(version({ items: [item("mood", "free_text")] }))
 
-    await user.click(screen.getByRole("button", { expanded: false }))
+    await user.click(screen.getByRole("button", { name: /mood/, expanded: false }))
     await user.click(screen.getByRole("switch", { name: "mood has to be answered" }))
     await user.click(screen.getByRole("button", { name: "Save" }))
 
@@ -342,18 +346,112 @@ describe("IntakeItemEditor", () => {
     expect(screen.getByText("How have you been sleeping?")).toBeInTheDocument()
   })
 
-  it("offers every kind of question, consent documents included", async () => {
+  it("offers documents under their own button, not among the kinds of question", async () => {
     const user = userEvent.setup()
     editor(version())
+    expect(screen.getByRole("button", { name: ADD_DOCUMENT_TO_PACKET })).toBeInTheDocument()
 
     await user.click(screen.getByRole("combobox", { name: "Kind of question" }))
 
-    expect(screen.getByRole("option", { name: "Consent to sign" })).toBeInTheDocument()
     expect(screen.getByRole("option", { name: "Measure" })).toBeInTheDocument()
+    expect(screen.queryByRole("option", { name: "Consent to sign" })).not.toBeInTheDocument()
   })
 
-  describe("starting from a template", () => {
-    const starters = [{ key: "ai_tools_consent", title: "Consent for the use of AI tools" }]
+  describe("adding a document", () => {
+    const documents = [
+      { document_key: "fees-key", title: "Fee agreement" },
+      { document_key: "privacy-key", title: "Notice of privacy practices" },
+    ]
+
+    it("puts the chosen document on the packet, named after it", async () => {
+      const user = userEvent.setup()
+      editor(version(), { documents })
+
+      await user.click(screen.getByRole("button", { name: ADD_DOCUMENT_TO_PACKET }))
+      await user.click(screen.getByRole("button", { name: "Fee agreement" }))
+      await user.click(screen.getByRole("button", { name: "Save" }))
+
+      expect(onSave).toHaveBeenCalledWith([
+        expect.objectContaining({
+          key: "fee_agreement",
+          item_type: "consent_document",
+          label: "Fee agreement",
+          config: { document_key: "fees-key" },
+        }),
+      ])
+    })
+
+    it("does not add the same document twice", async () => {
+      const user = userEvent.setup()
+      editor(
+        version({ items: [item("fees", "consent_document", { document_key: "fees-key" })] }),
+        { documents },
+      )
+
+      await user.click(screen.getByRole("button", { name: ADD_DOCUMENT_TO_PACKET }))
+      await user.click(screen.getByRole("button", { name: "Fee agreement" }))
+
+      expect(screen.getByText(TEMPLATE_ALREADY_ON_FORM)).toBeInTheDocument()
+      await user.click(screen.getByRole("button", { name: "Save" }))
+      expect(onSave.mock.calls[0][0]).toHaveLength(1)
+    })
+
+    it("names an unworded document item by its document, not by its type", () => {
+      // Two documents on one packet must not read as two identical rows.
+      editor(
+        version({
+          items: [
+            item("fees", "consent_document", { document_key: "fees-key" }),
+            item("privacy", "consent_document", { document_key: "privacy-key" }),
+          ],
+        }),
+        { documents },
+      )
+
+      const list = within(screen.getByRole("list"))
+      expect(list.getByText("Fee agreement")).toBeInTheDocument()
+      expect(list.getByText("Notice of privacy practices")).toBeInTheDocument()
+      expect(list.getAllByText(DOCUMENT_TAG)).toHaveLength(2)
+    })
+
+    it("says where to write one when the practice has none", async () => {
+      const user = userEvent.setup()
+      editor(version(), { documents: [] })
+
+      await user.click(screen.getByRole("button", { name: ADD_DOCUMENT_TO_PACKET }))
+
+      expect(screen.getByText(NO_DOCUMENTS_TO_ADD)).toBeInTheDocument()
+    })
+  })
+
+  describe("built-ins", () => {
+    const starters = [
+      { key: "ai_tools_consent", title: "Consent for the use of AI tools", has_document: true },
+      { key: "previous_care", title: "Previous care", has_document: false },
+    ]
+
+    it("offers a built-in document under Add a document and built-in questions apart", async () => {
+      const user = userEvent.setup()
+      editor(version(), { starters })
+
+      await user.click(screen.getByRole("button", { name: START_FROM_TEMPLATE }))
+      const questionsList = within(screen.getByRole("list", { name: START_FROM_TEMPLATE }))
+      expect(questionsList.getByRole("button", { name: "Previous care" })).toBeInTheDocument()
+      expect(
+        questionsList.queryByRole("button", { name: "Consent for the use of AI tools" }),
+      ).not.toBeInTheDocument()
+
+      await user.click(screen.getByRole("button", { name: ADD_DOCUMENT_TO_PACKET }))
+      const builtIns = within(screen.getByRole("list", { name: BUILT_IN_DOCUMENTS }))
+      expect(builtIns.getByRole("button", { name: "Consent for the use of AI tools" })).toBeInTheDocument()
+      expect(builtIns.queryByRole("button", { name: "Previous care" })).not.toBeInTheDocument()
+    })
+  })
+
+  describe("adding a built-in document", () => {
+    const starters = [
+      { key: "ai_tools_consent", title: "Consent for the use of AI tools", has_document: true },
+    ]
     const adopted = [
       {
         key: "ai_tools_consent",
@@ -385,7 +483,7 @@ describe("IntakeItemEditor", () => {
       const onAdoptStarter = vi.fn().mockResolvedValue(adopted)
       editor(version({ items: [item("reason", "reason")] }), { starters, onAdoptStarter })
 
-      await user.click(screen.getByRole("button", { name: START_FROM_TEMPLATE }))
+      await user.click(screen.getByRole("button", { name: ADD_DOCUMENT_TO_PACKET }))
       await user.click(screen.getByRole("button", { name: "Consent for the use of AI tools" }))
 
       expect(onAdoptStarter).toHaveBeenCalledWith("ai_tools_consent")
@@ -407,16 +505,16 @@ describe("IntakeItemEditor", () => {
         { starters, onAdoptStarter },
       )
 
-      await user.click(screen.getByRole("button", { name: START_FROM_TEMPLATE }))
+      await user.click(screen.getByRole("button", { name: ADD_DOCUMENT_TO_PACKET }))
       await user.click(screen.getByRole("button", { name: "Consent for the use of AI tools" }))
 
       expect(onSave).not.toHaveBeenCalled()
       expect(screen.getByText(TEMPLATE_ALREADY_ON_FORM)).toBeInTheDocument()
     })
 
-    it("offers no templates on a published version", () => {
+    it("offers nothing to add on a published version", () => {
       editor(version({ published_at: "2026-09-02T09:00:00Z" }), { starters })
-      expect(screen.queryByRole("button", { name: START_FROM_TEMPLATE })).not.toBeInTheDocument()
+      expect(screen.queryByRole("button", { name: ADD_DOCUMENT_TO_PACKET })).not.toBeInTheDocument()
     })
   })
 })
