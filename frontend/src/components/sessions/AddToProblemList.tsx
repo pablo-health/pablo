@@ -39,7 +39,7 @@ export function isListed(dx: StatedDiagnosis, problems: Problem[]): boolean {
 
 type Outcome = "added" | "bad_code" | "failed"
 
-function AddDiagnosisButton({
+export function AddDiagnosisButton({
   patientId,
   noteId,
   dx,

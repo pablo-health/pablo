@@ -36,6 +36,7 @@ import {
   type RatingFeedback,
 } from "@/components/sessions/QualityRatingWithFeedback"
 import { FinalizeButton } from "@/components/sessions/FinalizeButton"
+import { ChartUpdatesPanel } from "@/components/notes/chartUpdates/ChartUpdatesPanel"
 import { NoteSignaturePanel } from "@/components/notes/signing/NoteSignaturePanel"
 import { ChargeCardSection } from "@/components/payments/ChargeCardSection"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -404,6 +405,7 @@ export default function SessionDetailPage({ params }: PageProps) {
                     qualityRating={localRatingFeedback.rating}
                     qualityRatingReason={localRatingFeedback.reason}
                     qualityRatingSections={localRatingFeedback.sections}
+                    note={note ?? undefined}
                   />
                 </div>
               </div>
@@ -421,6 +423,8 @@ export default function SessionDetailPage({ params }: PageProps) {
               }
             />
           )}
+
+          {note && session.status === "finalized" && <ChartUpdatesPanel note={note} />}
 
           {noteIsSigned && (
             <div className="border-t border-neutral-200 pt-6">

@@ -372,6 +372,13 @@ const baseQueryKeys = {
       [...baseQueryKeys.chartHistory.all, "byPatient", patientId] as const,
   },
 
+  // The chart updates a note proposes
+  chartProposals: {
+    all: ["chartProposals"] as const,
+    byNote: (noteId: string) =>
+      [...baseQueryKeys.chartProposals.all, "byNote", noteId] as const,
+  },
+
   // Availability rule query keys
   availabilityRules: {
     all: ["availabilityRules"] as const,
