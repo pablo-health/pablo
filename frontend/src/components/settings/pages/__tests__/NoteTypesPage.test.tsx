@@ -2,12 +2,12 @@
 
 /**
  * Settings > Note types: listing, retiring and editing the practice's own
- * types, starting one from a template or from the clinician's own notes, and
- * trying a draft before saving.
+ * types, starting one by adjusting a built-in or from the clinician's own
+ * notes, and trying a draft before saving.
  *
  * The API layer is mocked at its functions, so each test pins what the page
- * sends — above all that a template saved untouched is the template file, and
- * that trying a draft calls only the preview route.
+ * sends — above all that a type started from a built-in saves only its base
+ * and its changes, and that trying a draft calls only the preview route.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -17,10 +17,18 @@ import userEvent from "@testing-library/user-event"
 import { NoteTypesPage } from "../NoteTypesPage"
 import { renderWithProviders } from "@/test/renderWithProviders"
 import { ApiError } from "@/lib/api/client"
-import type { DeriveNoteTypeResponse, NoteTypeSchema, PracticeNoteTypeSpec } from "@/types/noteTypes"
-import template from "../../noteTypes/templates/psychiatric_follow_up.json"
-import evaluationTemplate from "../../noteTypes/templates/psychiatric_evaluation.json"
+import builtinNoteTypes from "@/test/fixtures/builtinNoteTypes.json"
+import type {
+  DeriveNoteTypeResponse,
+  NoteTypeBase,
+  NoteTypePatch,
+  NoteTypeSchema,
+  PracticeFieldKind,
+  PracticeNoteTypeSpec,
+} from "@/types/noteTypes"
 
+const mockBases = vi.fn()
+const mockResolve = vi.fn()
 const mockList = vi.fn()
 const mockGet = vi.fn()
 const mockSave = vi.fn()
@@ -38,6 +46,8 @@ vi.mock("@/lib/api/noteTypes", () => ({
   previewNoteDraft: (...a: unknown[]) => mockPreview(...a),
   deriveNoteType: (...a: unknown[]) => mockDerive(...a),
   listDeriveReferences: (...a: unknown[]) => mockReferences(...a),
+  listNoteTypeBases: (...a: unknown[]) => mockBases(...a),
+  resolveNoteTypeSpec: (...a: unknown[]) => mockResolve(...a),
 }))
 
 vi.mock("@/hooks/useSessions", () => ({
@@ -75,10 +85,60 @@ function schema(key: string, spec: PracticeNoteTypeSpec, version: number | null)
 const SOAP = schema("soap", { ...COACH_SPEC, label: "SOAP" }, null)
 const COACH = schema("custom.coach", COACH_SPEC, 3)
 
-const TEMPLATE_SPEC = template.spec as PracticeNoteTypeSpec
-const EVALUATION_SPEC = evaluationTemplate.spec as PracticeNoteTypeSpec
+/** A base built from the server's own serialization of the built-in (prompts aside). */
+function baseFor(key: string): NoteTypeBase {
+  const entry = (builtinNoteTypes as unknown as NoteTypeSchema[]).find((t) => t.key === key)!
+  return {
+    key,
+    label: entry.label,
+    description: entry.description,
+    slug: key,
+    spec: {
+      label: entry.label,
+      description: entry.description,
+      system_prompt: "",
+      user_template: null,
+      sections: entry.sections.map((s) => ({
+        ...s,
+        fields: s.fields.map((f) => ({ ...f, kind: f.kind as PracticeFieldKind })),
+      })),
+      inputs: entry.inputs,
+    },
+    required_fields: entry.sections
+      .filter((s) => s.key === "risk")
+      .flatMap((s) => s.fields.map((f) => `risk.${f.key}`)),
+    samples: [{ id: "sample", label: "Sample visit", transcript: "[00:00:01] Client: Sleeping better." }],
+  }
+}
+
+const FOLLOW_UP = baseFor("psychiatric_follow_up")
+const EVALUATION = baseFor("psychiatric_evaluation")
+
+/** What the editor saves for a type on `base` with `patch`'s changes. */
+function based(base: NoteTypeBase, patch: Partial<NoteTypePatch>): PracticeNoteTypeSpec {
+  return {
+    label: base.label,
+    description: base.description,
+    system_prompt: "",
+    user_template: null,
+    sections: [],
+    inputs: [],
+    base: base.key,
+    patch: {
+      add_sections: [],
+      add_fields: [],
+      hide_fields: [],
+      hide_sections: [],
+      override: [],
+      add_inputs: [],
+      system_prompt_append: null,
+      ...patch,
+    },
+  }
+}
 
 beforeEach(() => {
+  mockBases.mockResolvedValue({ bases: [EVALUATION, FOLLOW_UP] })
   mockList.mockResolvedValue({ note_types: [SOAP, COACH] })
   mockGet.mockResolvedValue({ ...COACH, spec: COACH_SPEC })
   mockSave.mockImplementation((slug: string, spec: PracticeNoteTypeSpec) =>
@@ -169,32 +229,108 @@ describe("NoteTypesPage editor", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Fix the highlighted parts")
   })
 
-  it("starting from the follow-up template and saving stores the template unchanged", async () => {
+  it("starting from a template and saving it untouched stores only its base", async () => {
     const user = userEvent.setup()
     renderWithProviders(<NoteTypesPage />)
 
-    await user.click(
-      await screen.findByRole("button", { name: "Start from Psychiatric follow-up (E/M + psychotherapy)" }),
-    )
+    await user.click(await screen.findByRole("button", { name: `Start from ${FOLLOW_UP.label}` }))
     await user.click(screen.getByRole("button", { name: "Save note type" }))
 
     await waitFor(() => expect(mockSave).toHaveBeenCalledTimes(1))
-    expect(mockSave).toHaveBeenCalledWith("psychiatric_follow_up", TEMPLATE_SPEC, undefined)
+    expect(mockSave).toHaveBeenCalledWith("psychiatric_follow_up", based(FOLLOW_UP, {}), undefined)
   })
 
-  it("starting from the initial evaluation template and saving stores it unchanged", async () => {
+  it("hiding a field and adding one save as a patch on the base", async () => {
     const user = userEvent.setup()
     renderWithProviders(<NoteTypesPage />)
 
-    await user.click(await screen.findByRole("button", { name: "Start from Psychiatric initial evaluation" }))
-    // The assessment's diagnoses field is the one whose shape reads Diagnoses.
-    const shapes = screen.getAllByLabelText("Shape") as HTMLSelectElement[]
-    expect(shapes.filter((s) => s.value === "diagnoses")).toHaveLength(1)
-    expect(within(shapes[0]).getByRole("option", { name: "Diagnoses" })).toBeInTheDocument()
+    await user.click(await screen.findByRole("button", { name: `Start from ${EVALUATION.label}` }))
+    // The base is shown, not edited: no name boxes for its parts.
+    expect(screen.queryByLabelText("Section name")).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Hide Eating" }))
+    expect(screen.getByRole("button", { name: "Show Eating" })).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Add a field to Treatment plan" }))
+    const added = within(screen.getByRole("group", { name: "Your field 1 in Treatment plan" }))
+    await user.type(added.getByLabelText("Field name"), "Education provided")
+    await user.type(screen.getByLabelText(/^Instructions to add/), "Keep the formulation to three paragraphs.")
     await user.click(screen.getByRole("button", { name: "Save note type" }))
 
     await waitFor(() => expect(mockSave).toHaveBeenCalledTimes(1))
-    expect(mockSave).toHaveBeenCalledWith("psychiatric_evaluation", EVALUATION_SPEC, undefined)
+    expect(mockSave).toHaveBeenCalledWith(
+      "psychiatric_evaluation",
+      based(EVALUATION, {
+        hide_fields: ["psychiatric_ros.eating"],
+        add_fields: [
+          {
+            section: "treatment_plan",
+            field: { key: "education_provided", label: "Education provided", kind: "text", ai_hint: "" },
+            after: null,
+          },
+        ],
+        system_prompt_append: "Keep the formulation to three paragraphs.",
+      }),
+      undefined,
+    )
+  })
+
+  it("never offers to hide a field the base requires", async () => {
+    const user = userEvent.setup()
+    renderWithProviders(<NoteTypesPage />)
+
+    await user.click(await screen.findByRole("button", { name: `Start from ${FOLLOW_UP.label}` }))
+    const risk = within(screen.getByRole("group", { name: "Risk assessment" }))
+
+    expect(risk.queryByRole("button", { name: /^Hide/ })).not.toBeInTheDocument()
+    expect(risk.getAllByText("Always included")).toHaveLength(FOLLOW_UP.spec.sections.find((s) => s.key === "risk")!.fields.length)
+  })
+
+  it("lists a based type with its base and how much it changes", async () => {
+    mockList.mockResolvedValue({
+      note_types: [
+        SOAP,
+        { ...COACH, based_on: { key: FOLLOW_UP.key, label: FOLLOW_UP.label, additions: 2, hidden: 1 } },
+      ],
+    })
+    renderWithProviders(<NoteTypesPage />)
+
+    expect(
+      await screen.findByText(`Version 3 · Based on ${FOLLOW_UP.label}; 2 additions, 1 hidden`),
+    ).toBeInTheDocument()
+  })
+
+  it("edits a saved based type against its base and saves the same patch back", async () => {
+    const saved = based(FOLLOW_UP, { hide_fields: ["subjective.side_effects"] })
+    mockGet.mockResolvedValue({ ...COACH, spec: { ...saved, label: "Coaching check-in" } })
+    const user = userEvent.setup()
+    renderWithProviders(<NoteTypesPage />)
+
+    await user.click(await screen.findByRole("button", { name: "Edit Coaching check-in" }))
+    expect(await screen.findByRole("button", { name: "Show Side effects" })).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Save note type" }))
+
+    await waitFor(() => expect(mockSave).toHaveBeenCalledTimes(1))
+    expect(mockSave).toHaveBeenCalledWith("coach", { ...saved, label: "Coaching check-in" }, undefined)
+  })
+
+  it("detaching asks first, then opens the resolved type as a full copy", async () => {
+    const resolved: PracticeNoteTypeSpec = { ...FOLLOW_UP.spec, label: FOLLOW_UP.label, system_prompt: "Resolved." }
+    mockResolve.mockResolvedValue({ spec: resolved })
+    const user = userEvent.setup()
+    renderWithProviders(<NoteTypesPage />)
+
+    await user.click(await screen.findByRole("button", { name: `Start from ${FOLLOW_UP.label}` }))
+    await user.click(screen.getByRole("button", { name: "Hide Side effects" }))
+    await user.click(screen.getByRole("button", { name: `Detach from ${FOLLOW_UP.label}` }))
+    expect(mockResolve).not.toHaveBeenCalled()
+    await user.click(within(screen.getByRole("group", { name: "Detach" })).getByRole("button", { name: "Detach" }))
+
+    await waitFor(() =>
+      expect(mockResolve).toHaveBeenCalledWith(based(FOLLOW_UP, { hide_fields: ["subjective.side_effects"] }), undefined),
+    )
+    // Now every part is editable.
+    expect((await screen.findAllByLabelText("Section name")).length).toBe(FOLLOW_UP.spec.sections.length)
+    await user.click(screen.getByRole("button", { name: "Save note type" }))
+    await waitFor(() => expect(mockSave).toHaveBeenCalledWith("psychiatric_follow_up", resolved, undefined))
   })
 
   it("opens imported JSON in the editor, and refuses what isn't a note type", async () => {
@@ -226,9 +362,7 @@ describe("NoteTypesPage try it", () => {
     const user = userEvent.setup()
     renderWithProviders(<NoteTypesPage />)
 
-    await user.click(
-      await screen.findByRole("button", { name: "Start from Psychiatric follow-up (E/M + psychotherapy)" }),
-    )
+    await user.click(await screen.findByRole("button", { name: `Start from ${FOLLOW_UP.label}` }))
     await user.selectOptions(screen.getByLabelText(/^Place of service/), "Telehealth")
     await user.click(screen.getByRole("button", { name: "Draft a note" }))
 
@@ -236,8 +370,8 @@ describe("NoteTypesPage try it", () => {
     expect(within(draft).getByText("Stand-in draft for subjective.chief_complaint.")).toBeInTheDocument()
     expect(mockPreview).toHaveBeenCalledWith(
       {
-        spec: TEMPLATE_SPEC,
-        transcript: { format: "txt", content: template.samples[0].transcript },
+        spec: based(FOLLOW_UP, {}),
+        transcript: { format: "txt", content: FOLLOW_UP.samples[0].transcript },
         inputs: { place_of_service: "Telehealth" },
       },
       undefined,

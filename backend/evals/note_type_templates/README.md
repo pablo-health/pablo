@@ -1,7 +1,7 @@
 # Note-type template eval
 
 Settings > Note types offers templates a practice can start from
-(`frontend/src/components/settings/noteTypes/templates/`). Each ships with a
+(`backend/app/notes/templates/`). Each ships with a
 synthetic sample visit for "Try it". This eval drafts each case's sample with
 the real model, through the same path a preview uses, and checks the draft
 against what that visit actually contained.

@@ -411,6 +411,8 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("get", "/api/note-types/{key}"),  # single note-type definition
         ("put", "/api/note-types/custom/{slug}"),  # saves a practice's own note format
         ("delete", "/api/note-types/custom/{slug}"),  # retires a practice's own note format
+        ("get", "/api/note-types/bases"),  # built-in note formats a practice can adjust
+        ("post", "/api/note-types/resolve"),  # a note format applied to its base; no client data
         ("get", "/api/note-types/derive/references"),  # names of comparison references
         # scheduling.py — therapist's own availability/OAuth, no client attached
         ("get", "/api/availability/rules"),  # therapist availability rules

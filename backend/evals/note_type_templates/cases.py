@@ -12,18 +12,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
-TEMPLATES = (
-    Path(__file__).resolve().parents[3]
-    / "frontend"
-    / "src"
-    / "components"
-    / "settings"
-    / "noteTypes"
-    / "templates"
-)
+from app.notes.spec_templates import TEMPLATES_DIR
+
+TEMPLATES = TEMPLATES_DIR
 
 NOT_COVERED = ("not stated", "not asked")
 """What a field the visit did not cover must say (compared without case or full stop)."""

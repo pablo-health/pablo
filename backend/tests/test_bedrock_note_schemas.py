@@ -12,13 +12,13 @@ accept an answer of the shape a model gives, which then parses into the note.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 import pytest
 from app.notes import NoteTypeDefinition, NoteTypeRegistry, register_builtin_note_types
 from app.notes.diagnoses import DIAGNOSES_SCHEMA
 from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
+from app.notes.spec_templates import TEMPLATES_DIR
 from app.notes.visit_times import PSYCHOTHERAPY_SECTION_KEY
 from app.services.bedrock_structured_llm_gateway import to_json_schema
 from app.services.note_generation_service import (
@@ -34,15 +34,7 @@ from jsonschema import Draft202012Validator
 from .test_generation_fallback import instance
 from .test_note_type_derive import PROPOSAL
 
-TEMPLATES = (
-    Path(__file__).resolve().parents[2]
-    / "frontend"
-    / "src"
-    / "components"
-    / "settings"
-    / "noteTypes"
-    / "templates"
-)
+TEMPLATES = TEMPLATES_DIR
 
 
 def _builtin() -> list[NoteTypeDefinition]:

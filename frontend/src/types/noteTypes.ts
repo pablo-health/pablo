@@ -78,6 +78,8 @@ export interface NoteTypeSchema {
    * Only the single-type read returns it; null for built-in types.
    */
   spec?: PracticeNoteTypeSpec | null
+  /** For a practice type built on a base: the base and how much it changes. */
+  based_on?: BasedOn | null
 }
 
 export interface NoteTypeListResponse {
@@ -115,7 +117,13 @@ export interface PracticeInputSpec {
   required: boolean
 }
 
-/** The body `PUT /api/note-types/custom/{slug}` takes: a practice's own note type. */
+/**
+ * The body `PUT /api/note-types/custom/{slug}` takes: a practice's own note type.
+ *
+ * Either full (its own sections, inputs and prompts) or based on a built-in:
+ * then `base` and `patch` are set, and the sections, inputs and prompts are
+ * empty because the server takes them from the base each time it reads the type.
+ */
 export interface PracticeNoteTypeSpec {
   label: string
   description: string
@@ -123,6 +131,51 @@ export interface PracticeNoteTypeSpec {
   user_template: string | null
   sections: PracticeSectionSpec[]
   inputs: PracticeInputSpec[]
+  base?: string
+  patch?: NoteTypePatch
+}
+
+/** What a based type changes about its base. Paths are `section` or `section.field`. */
+export interface NoteTypePatch {
+  add_sections: { section: PracticeSectionSpec; after: string | null }[]
+  add_fields: { section: string; field: PracticeFieldSpec; after: string | null }[]
+  hide_fields: string[]
+  hide_sections: string[]
+  override: { path: string; label?: string | null; ai_hint?: string | null }[]
+  add_inputs: PracticeInputSpec[]
+  system_prompt_append: string | null
+}
+
+/** A practice type's base, and how much it changes. */
+export interface BasedOn {
+  key: string
+  label: string
+  additions: number
+  hidden: number
+}
+
+/** A synthetic visit transcript to try a draft on. */
+export interface SampleVisit {
+  id: string
+  label: string
+  transcript: string
+}
+
+/** A built-in a practice can base its own type on (`GET /api/note-types/bases`). */
+export interface NoteTypeBase {
+  key: string
+  label: string
+  description: string
+  /** The slug a type based on this one saves under, when it is free. */
+  slug: string
+  spec: PracticeNoteTypeSpec
+  /** Fields (`section.field`) a based type cannot hide. */
+  required_fields: string[]
+  samples: SampleVisit[]
+}
+
+export interface NoteTypeBaseListResponse {
+  bases: NoteTypeBase[]
 }
 
 export interface NoteDraftPreviewRequest {
