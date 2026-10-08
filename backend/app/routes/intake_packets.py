@@ -130,12 +130,17 @@ def _optional_str(value: object) -> str | None:
     return str(value) if value is not None else None
 
 
+def _optional_text(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
 def _template_response(
     service: IntakePacketService, row: dict[str, object]
 ) -> IntakeTemplateResponse:
     return IntakeTemplateResponse(
         id=str(row["id"]),
         name=str(row["name"]),
+        client_title=_optional_text(row.get("client_title")),
         created_at=row["created_at"],  # type: ignore[arg-type]
         archived_at=row["archived_at"],  # type: ignore[arg-type]
         versions=[_version_response(v) for v in service.list_versions(str(row["id"]))],
@@ -217,6 +222,8 @@ def update_template(
     _require_template(service, template_id)
     if body.name is not None:
         service.rename_template(template_id, body.name)
+    if "client_title" in body.model_fields_set:
+        service.set_client_title(template_id, body.client_title)
     if body.archived is not None:
         service.set_archived(template_id, body.archived)
     return _template_response(service, _require_template(service, template_id))

@@ -34,11 +34,18 @@ export const LIST_CORRECTION = "Your practice has a question"
 /**
  * What a row on the list is called.
  *
- * Not the form's name: that is the name the clinician filed it under in
- * settings ("New client intake 2026-10-07"), written for their own list and
- * never meant for a client. A form has no client-facing title to show
- * instead, so the row says whose forms these are.
+ * The title the practice wrote for the person filling it in, when it wrote
+ * one. Never the packet's name: that is the name the clinician filed it
+ * under in settings ("New client intake 2026-10-07"), written for their own
+ * list, and the server does not send it here. With no title, the row says
+ * whose forms these are.
  */
+export function rowTitle(clientTitle: string | null, practiceName: string | null): string {
+  const title = clientTitle?.trim()
+  return title ? title : formsFrom(practiceName)
+}
+
+/** The row's title when the practice wrote none: whose forms these are. */
 export function formsFrom(practiceName: string | null): string {
   return `Forms from ${practiceName ?? "your practice"}`
 }

@@ -85,7 +85,11 @@ export interface IntakeProgress {
 export interface IntakeAssignment {
   id: string
   version_id: string
-  packet_name: string
+  /**
+   * The title the practice wrote for the person filling this in, or null.
+   * The practice's own name for the packet is not on this surface at all.
+   */
+  client_title: string | null
   version: number
   status: string
   assigned_at: string

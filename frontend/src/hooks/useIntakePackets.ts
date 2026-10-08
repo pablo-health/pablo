@@ -10,6 +10,7 @@ import {
   publishIntakeVersion,
   replaceIntakeItems,
   updateIntakeTemplate,
+  type UpdateTemplateInput,
 } from "@/lib/api/intakePackets"
 import { queryKeys } from "@/lib/api/queryKeys"
 import type { IntakeItemInput, IntakeTemplate, IntakeVersionDetail } from "@/types/intakePackets"
@@ -45,7 +46,7 @@ export function useCreateIntakeTemplate(token?: string) {
 
 export function useUpdateIntakeTemplate(token?: string) {
   return useAuthMutation({
-    mutationFn: ({ id, data }: { id: string; data: { name?: string; archived?: boolean } }) =>
+    mutationFn: ({ id, data }: { id: string; data: UpdateTemplateInput }) =>
       updateIntakeTemplate(id, data, token),
     invalidateKeys: [queryKeys.intakeTemplates.all],
   })

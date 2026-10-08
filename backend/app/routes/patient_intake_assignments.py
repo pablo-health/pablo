@@ -97,6 +97,7 @@ from ..models.patient_intake_assignment_api import (
     IntakeCorrectionResponse,
     IntakeProgressResponse,
     IntakeSubmissionResponse,
+    PatientIntakeAssignmentResponse,
     SaveAnswerRequest,
     SavedAnswerResponse,
     SaveIntakeCoverageResponse,
@@ -303,11 +304,12 @@ def _assignment_response(
     patient_id: str,
 ) -> IntakeAssignmentResponse:
     """One assignment with its form's name and the progress on it."""
-    name, number = _version_label(service, str(assignment["version_id"]))
+    name, number, client_title = _version_label(service, str(assignment["version_id"]))
     return IntakeAssignmentResponse(
         id=str(assignment["id"]),
         version_id=str(assignment["version_id"]),
         packet_name=name,
+        client_title=client_title,
         version=number,
         status=str(assignment["status"]),
         assigned_at=assignment["assigned_at"],  # type: ignore[arg-type]
@@ -317,12 +319,24 @@ def _assignment_response(
     )
 
 
+def _patient_view(assignment: IntakeAssignmentResponse) -> PatientIntakeAssignmentResponse:
+    """The same assignment without the practice's own name for the packet.
+
+    The name is written for the practice's list and never meant for the
+    person filling the packet in; they see ``client_title``, or the
+    portal's own wording when there is none.
+    """
+    return PatientIntakeAssignmentResponse(**assignment.model_dump(exclude={"packet_name"}))
+
+
 def _optional_str(value: object) -> str | None:
     return str(value) if value is not None else None
 
 
-def _version_label(service: IntakeAssignmentService, version_id: str) -> tuple[str, int]:
-    """The form's name and version number, read defensively.
+def _version_label(
+    service: IntakeAssignmentService, version_id: str
+) -> tuple[str, int, str | None]:
+    """The form's name, version number and client-facing title, read defensively.
 
     A version whose template has been archived is still perfectly readable
     — archiving takes a form out of circulation without touching what was
@@ -331,10 +345,12 @@ def _version_label(service: IntakeAssignmentService, version_id: str) -> tuple[s
     """
     version = service.version(version_id)
     if version is None:  # pragma: no cover — the assignment's foreign key holds it
-        return "Intake", 1
+        return "Intake", 1, None
     template = service.template(str(version["template_id"]))
     name = str(template["name"]) if template else "Intake"
-    return name, int(version["version"])  # type: ignore[call-overload]
+    title = template.get("client_title") if template else None
+    client_title = title if isinstance(title, str) and title else None
+    return name, int(version["version"]), client_title  # type: ignore[call-overload]
 
 
 # ---------------------------------------------------------------------------
@@ -342,12 +358,12 @@ def _version_label(service: IntakeAssignmentService, version_id: str) -> tuple[s
 # ---------------------------------------------------------------------------
 
 
-@router.get("/assignments", response_model=list[IntakeAssignmentResponse])
+@router.get("/assignments", response_model=list[PatientIntakeAssignmentResponse])
 def list_my_assignments(
     patient: CurrentPatient,
     service: PatientAssignments,
     _: None = Depends(subscription_exempt),
-) -> list[IntakeAssignmentResponse]:
+) -> list[PatientIntakeAssignmentResponse]:
     """The forms this patient has been asked to fill in, newest first.
 
     Not audited. A patient reading their own record is not a disclosure —
@@ -360,7 +376,7 @@ def list_my_assignments(
     """
     _require_stepped_up(patient)
     return [
-        _assignment_response(service, row, patient.patient_id)
+        _patient_view(_assignment_response(service, row, patient.patient_id))
         for row in service.list_for_patient(patient.patient_id)
     ]
 
@@ -388,7 +404,7 @@ def get_my_assignment(
     _require_stepped_up(patient)
     assignment = _own_assignment(service, assignment_id, patient.patient_id)
     saved = service.answers(assignment_id, patient.patient_id)
-    base = _assignment_response(service, assignment, patient.patient_id)
+    base = _patient_view(_assignment_response(service, assignment, patient.patient_id))
     return IntakeAssignmentDetailResponse(
         **base.model_dump(),
         correction=_correction_response(service, assignment, patient.patient_id),

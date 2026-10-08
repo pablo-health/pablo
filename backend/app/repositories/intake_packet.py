@@ -59,6 +59,17 @@ class IntakePacketRepository(ABC):
         single nullable argument could not say "clear this".
         """
 
+    @abstractmethod
+    def set_client_title(
+        self, template_id: str, client_title: str | None
+    ) -> dict[str, object] | None:
+        """Set the title a patient sees, or clear it with ``None``.
+
+        Its own method rather than another ``update_template`` argument:
+        here ``None`` means "clear", which that method's arguments cannot
+        say.
+        """
+
     # --- versions ---
 
     @abstractmethod
@@ -160,6 +171,15 @@ class InMemoryIntakePacketRepository(IntakePacketRepository):
             row["archived_at"] = archived_at
         if unarchive:
             row["archived_at"] = None
+        return dict(row)
+
+    def set_client_title(
+        self, template_id: str, client_title: str | None
+    ) -> dict[str, object] | None:
+        row = self.templates.get(template_id)
+        if row is None:
+            return None
+        row["client_title"] = client_title
         return dict(row)
 
     # --- versions ---

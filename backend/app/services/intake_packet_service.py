@@ -105,6 +105,7 @@ class IntakePacketService:
             {
                 "id": str(uuid.uuid4()),
                 "name": name,
+                "client_title": None,
                 "created_by": created_by,
                 "created_at": now,
                 "archived_at": None,
@@ -135,6 +136,18 @@ class IntakePacketService:
         patient answered, so renaming is not an edit to a frozen version.
         """
         return self._repo.update_template(template_id, name=name)
+
+    def set_client_title(self, template_id: str, title: str | None) -> dict[str, object] | None:
+        """Set or clear the title a patient sees in their portal.
+
+        Separate from the name, which is the practice's own label: a name
+        like "New client intake 2026-10-07" is written for the practice's
+        list and was never meant to be read by the person filling it in.
+        An empty title clears it, and the portal falls back to its own
+        wording. Like the name, it is not part of a frozen version.
+        """
+        cleaned = (title or "").strip()
+        return self._repo.set_client_title(template_id, cleaned or None)
 
     def set_archived(self, template_id: str, archived: bool) -> dict[str, object] | None:
         """Take a template out of circulation, or put it back.

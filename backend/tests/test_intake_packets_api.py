@@ -130,6 +130,31 @@ class TestTemplates:
         assert response.json()["name"] == "New patient intake"
         assert len(response.json()["versions"]) == 1
 
+    def test_a_client_title_is_set_trimmed_and_cleared_without_touching_the_name(
+        self, intake_client: TestClient
+    ) -> None:
+        template = _create(intake_client, "New patients")
+        url = f"{BASE}/{template['id']}"
+
+        set_ = intake_client.patch(url, json={"client_title": "  Before your first visit "})
+        assert set_.status_code == 200, set_.text
+        assert set_.json()["client_title"] == "Before your first visit"
+        assert set_.json()["name"] == "New patients"
+
+        # Left out, it stays; a rename doesn't clear it.
+        renamed = intake_client.patch(url, json={"name": "New patients 2026"})
+        assert renamed.json()["client_title"] == "Before your first visit"
+
+        # Null and empty both clear it.
+        assert intake_client.patch(url, json={"client_title": None}).json()["client_title"] is None
+        intake_client.patch(url, json={"client_title": "Again"})
+        assert intake_client.patch(url, json={"client_title": "   "}).json()["client_title"] is None
+
+    def test_a_client_title_over_120_characters_is_refused(self, intake_client: TestClient) -> None:
+        template = _create(intake_client)
+        response = intake_client.patch(f"{BASE}/{template['id']}", json={"client_title": "x" * 121})
+        assert response.status_code == 422
+
     def test_archiving_hides_it_from_the_list_without_deleting_it(
         self, intake_client: TestClient
     ) -> None:

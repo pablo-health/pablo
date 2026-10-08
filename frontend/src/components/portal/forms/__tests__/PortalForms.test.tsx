@@ -75,10 +75,8 @@ describe("PortalForms", () => {
     expect(screen.getByTestId("forms-list-state")).toHaveTextContent("4 questions left")
   })
 
-  it("titles a form by whose it is, never by the clinician's name for it", async () => {
-    vi.mocked(api.listAssignments).mockResolvedValue([
-      { ...ASSIGNMENT, packet_name: "New client intake 2026-10-07" },
-    ])
+  it("titles an untitled form by whose it is", async () => {
+    vi.mocked(api.listAssignments).mockResolvedValue([{ ...ASSIGNMENT, client_title: null }])
 
     renderModule()
 
@@ -87,7 +85,24 @@ describe("PortalForms", () => {
         "Forms from Example Therapy",
       ),
     )
-    expect(screen.queryByText(/New client intake/)).not.toBeInTheDocument()
+  })
+
+  it("titles each form by the title written for the client, so two can be told apart", async () => {
+    vi.mocked(api.listAssignments).mockResolvedValue([
+      { ...ASSIGNMENT, id: "a-1", client_title: "Before your first visit" },
+      { ...ASSIGNMENT, id: "a-2", client_title: "Yearly check-in" },
+      { ...ASSIGNMENT, id: "a-3", client_title: "   " },
+    ])
+
+    renderModule()
+
+    await waitFor(() => expect(screen.getAllByTestId("forms-list-title")).toHaveLength(3))
+    expect(screen.getAllByTestId("forms-list-title").map((row) => row.textContent)).toEqual([
+      "Before your first visit",
+      "Yearly check-in",
+      // A blank title is no title.
+      "Forms from Example Therapy",
+    ])
   })
 
   it("says your practice when the practice's name cannot be read", async () => {

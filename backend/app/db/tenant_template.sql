@@ -700,7 +700,8 @@ CREATE TABLE __TENANT_SCHEMA__.intake_packet_templates (
     name character varying(120) NOT NULL,
     created_by uuid,
     created_at timestamp with time zone NOT NULL,
-    archived_at timestamp with time zone
+    archived_at timestamp with time zone,
+    client_title character varying(120)
 );
 
 

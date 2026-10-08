@@ -66,16 +66,19 @@ class CreateTemplateRequest(BaseModel):
 
 
 class UpdateTemplateRequest(BaseModel):
-    """Rename a template, archive it, or bring it back.
+    """Rename a template, retitle it, archive it, or bring it back.
 
-    Both fields are optional and an empty body is a no-op that returns the
-    template unchanged.
+    Every field is optional and an empty body is a no-op that returns the
+    template unchanged. ``client_title`` is the one field where null means
+    something: sent as null or as an empty string it clears the title, and
+    left out it leaves the title alone.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=120)
     archived: bool | None = None
+    client_title: str | None = Field(default=None, max_length=120)
 
 
 class IntakeItemResponse(BaseModel):
@@ -117,6 +120,8 @@ class IntakeTemplateResponse(BaseModel):
 
     id: str
     name: str
+    #: The title a patient sees; null when the portal uses its own wording.
+    client_title: str | None = None
     created_at: datetime
     archived_at: datetime | None
     versions: list[IntakeVersionResponse]
