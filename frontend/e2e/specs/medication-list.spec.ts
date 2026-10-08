@@ -138,7 +138,7 @@ test.describe("the medication list", () => {
       await expect(page.getByText("Other:")).toBeVisible()
       await expect(page.getByText(/Hydroxyzine/)).toHaveCount(0)
       // What the client says they take that the chart lacks follows the list, marked.
-      await expect(page.getByText('"melatonin 3 mg" (stated this visit)')).toBeVisible()
+      await expect(page.getByText("(stated this visit: melatonin 3 mg)")).toBeVisible()
     } finally {
       if (appointmentId) await api.delete(`/api/appointments/${appointmentId}`)
       await api.request("DELETE", `/api/note-types/custom/${slug}`)

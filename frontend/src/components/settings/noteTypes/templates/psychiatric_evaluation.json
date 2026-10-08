@@ -327,13 +327,13 @@
             "key": "current_medications",
             "label": "Current medications",
             "kind": "list",
-            "ai_hint": "From the chart: its list exactly as given, or 'None recorded'. Then each medication the client reports currently taking that is not on the chart, quoted with the dose as stated, followed by \"(stated this visit)\". A medication started, stopped or changed in this visit goes in the plan, not here."
+            "ai_hint": "From the chart, exactly as given, or 'None recorded'. Then each medication the client reports currently taking that the chart lacks, with the dose as stated, appended as \"(stated this visit: ...)\". A medication started, stopped or changed in this visit goes in the plan, not here."
           },
           {
             "key": "allergies",
             "label": "Allergies",
             "kind": "text",
-            "ai_hint": "The entered allergies value; if not provided, what the client or clinician said (with the reaction, or \"No known drug allergies\"); otherwise \"Not stated.\""
+            "ai_hint": "From the chart, exactly as given (a list, NKDA, or 'Not recorded'). Then any allergy, or denial of allergies, the client or clinician states in this visit, appended as \"(stated this visit: ...)\". Never write NKDA unless the chart says it."
           }
         ]
       },

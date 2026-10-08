@@ -68,7 +68,8 @@ def test_the_follow_up_reads_history_from_the_chart_and_screens_substances() -> 
         for field in group.fields:
             hint = hints[(group.key, field.key)]
             if field.key in history:
-                assert hint == "From the chart; write it exactly as given, or 'Not recorded'"
+                assert hint.startswith("From the chart, exactly as given, or 'Not recorded'.")
+                assert "(stated this visit: ...)" in hint
             else:
                 assert "asked — no change" in hint
                 assert "Not asked" in hint

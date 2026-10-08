@@ -145,12 +145,25 @@ def test_good_medication_only_draft_passes() -> None:
     assert _failed(MEDICATION_ONLY_DRAFT, FOLLOW_UP_MEDICATION_ONLY) == {}
 
 
+def test_what_the_visit_changed_may_follow_a_history_fields_chart_text() -> None:
+    draft = _with(
+        THERAPY_DRAFT,
+        "social_history",
+        "work_school",
+        "Financial analyst, full time, since 2022. (stated this visit: on leave this month.)",
+    )
+    draft = _with(
+        draft, "trauma_history", "trauma_history", "Not recorded (stated this visit: denies.)"
+    )
+    assert _failed(draft, FOLLOW_UP_WITH_THERAPY) == {}
+
+
 def test_a_medication_the_client_reports_may_follow_the_charts_list() -> None:
     draft = _with(
         MEDICATION_ONLY_DRAFT,
         "medications",
         "current_medications",
-        ["Bupropion XL 150 mg, every morning", '"melatonin 3 mg" (stated this visit)'],
+        ["Bupropion XL 150 mg, every morning", "(stated this visit: melatonin 3 mg)"],
     )
     assert _failed(draft, FOLLOW_UP_MEDICATION_ONLY) == {}
 

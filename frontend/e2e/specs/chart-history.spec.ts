@@ -62,13 +62,16 @@ test.describe("chart history", () => {
     await expect(field.getByText("Earlier values (2)")).toBeVisible()
   })
 
-  test("a prescriber's draft writes the chart's history as recorded", async ({
+  test("a prescriber's draft writes the chart's history as recorded, and marks what the visit changed", async ({
     api,
     signedInPage: page,
   }) => {
     const patient = await givePatient(api)
     await api.put(`/api/patients/${patient.id}/chart-history/trauma_history`, {
       text: "Car accident at 19; no ongoing symptoms.",
+    })
+    await api.put(`/api/patients/${patient.id}/chart-history/work_school`, {
+      text: "Employed at a logistics firm.",
     })
 
     const slug = `e2e_history_${randomBytes(3).toString("hex")}`
@@ -80,6 +83,11 @@ test.describe("chart history", () => {
           key: "trauma_history",
           label: "Trauma history",
           fields: [{ key: "trauma_history", label: "Trauma history" }],
+        },
+        {
+          key: "social_history",
+          label: "Social history",
+          fields: [{ key: "work_school", label: "Work or school" }],
         },
       ],
     })
@@ -102,14 +110,22 @@ test.describe("chart history", () => {
       await api.patch(`/api/sessions/${session.id}/status`, { status: "recording_complete" })
       await api.post(`/api/sessions/${session.id}/transcript`, {
         format: "txt",
-        content: "[00:00:05] Therapist: How has sleep been since the last visit?",
+        content:
+          "[00:00:05] Therapist: How has sleep been since the last visit?\n" +
+          "[00:00:09] Client: Update on work_school: laid off last week.",
       })
       await expect
         .poll(async () => (await api.get<Session>(`/api/sessions/${session.id}`)).status)
         .toBe("pending_review")
 
       await page.goto(`/dashboard/sessions/${session.id}`)
-      await expect(page.getByText("Car accident at 19; no ongoing symptoms.")).toBeVisible()
+      // Unchanged: the chart's text alone. Changed: the chart's text, then the visit's, marked.
+      await expect(
+        page.getByText("Car accident at 19; no ongoing symptoms.", { exact: true }),
+      ).toBeVisible()
+      await expect(
+        page.getByText("Employed at a logistics firm. (stated this visit: laid off last week.)"),
+      ).toBeVisible()
     } finally {
       if (appointmentId) await api.delete(`/api/appointments/${appointmentId}`)
       await api.request("DELETE", `/api/note-types/custom/${slug}`)

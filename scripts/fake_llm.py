@@ -217,6 +217,9 @@ class _Chart:
 #: How a client line names what they take: "Client: I'm taking A, B and C."
 _STATED_MEDICATIONS = ("Client: I'm taking ", "Client: I am taking ")
 
+#: How a client line changes a history field: "Client: Update on work_school: laid off."
+_STATED_UPDATE = "Client: Update on "
+
 #: How the backend renders one chart-history field: ``  - key (Label, recorded date): text``.
 _HISTORY_LINE = re.compile(r"^  - ([a-z_]+) \([^)]*, recorded [0-9-]+\): (.*)$")
 
@@ -259,11 +262,24 @@ def _chart(user_prompt: str) -> _Chart | None:
     return chart
 
 
+def _stated_updates(user_prompt: str) -> dict[str, str]:
+    """What client lines say changed, by history key. String operations only: the
+    prompt is caller text, so no regex runs over it."""
+    updates: dict[str, str] = {}
+    for line in user_prompt.splitlines():
+        _, found, rest = line.partition(_STATED_UPDATE)
+        key, sep, text = rest.partition(": ")
+        if found and sep and text.strip():
+            updates[key.strip()] = text.strip()
+    return updates
+
+
 def _current_medications(chart_lines: list[str], user_prompt: str) -> list[str]:
     """The chart's list as written, then what the client says they take that it lacks.
 
     A stated medication is matched to the chart by its first word, the drug's
-    name, and is added quoted and marked only when the chart does not list it.
+    name, and is added as ``(stated this visit: ...)`` only when the chart does
+    not list it.
     """
     listed = chart_lines or ["None recorded"]
     on_chart = {line.split()[0].lower() for line in chart_lines if not line.endswith(":")}
@@ -276,9 +292,7 @@ def _current_medications(chart_lines: list[str], user_prompt: str) -> list[str]:
                 named = named.strip().removesuffix(".").replace(" and ", ",")
                 stated.extend(item.strip() for item in named.split(",") if item.strip())
     return listed + [
-        f'"{item}" (stated this visit)'
-        for item in stated
-        if item.split()[0].lower() not in on_chart
+        f"(stated this visit: {item})" for item in stated if item.split()[0].lower() not in on_chart
     ]
 
 
@@ -289,9 +303,11 @@ def _with_chart(content: dict[str, Any], chart: _Chart, user_prompt: str = "") -
     problems; an allergies field states the chart's allergies; a current
     medications field is the chart's list, line for line, or "None recorded",
     then any medication a client line says they take that the chart lacks;
-    a history field is the chart's text for its key, word for word. So a spec
-    can see that a draft was written against the chart it was handed.
+    a history field is the chart's text for its key, word for word, then what
+    a client line says changed. So a spec can see that a draft was written
+    against the chart it was handed.
     """
+    updates = _stated_updates(user_prompt)
     for section_key, section in content.items():
         if not isinstance(section, dict):
             continue
@@ -300,8 +316,10 @@ def _with_chart(content: dict[str, Any], chart: _Chart, user_prompt: str = "") -
                 section[key] = _current_medications(chart.medications, user_prompt)
             if not isinstance(value, str):
                 continue
-            if key in chart.history and section_key != "substance_use":
-                section[key] = chart.history[key]
+            if (key in chart.history or key in updates) and section_key != "substance_use":
+                section[key] = chart.history.get(key, "Not recorded")
+                if key in updates:
+                    section[key] += f" (stated this visit: {updates[key]})"
                 continue
             if "diagnos" in key or key == "clinical_impression":
                 section[key] = f"{value} Problem list: {'; '.join(chart.problems)}."

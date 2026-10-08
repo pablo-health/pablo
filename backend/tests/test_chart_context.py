@@ -19,6 +19,7 @@ from app.chart_history.models import HistoryEntry
 from app.models import Patient, Transcript
 from app.notes import NoteTypeRegistry, register_builtin_note_types
 from app.notes.chart_context import (
+    STATED_SUFFIX,
     STATED_THIS_VISIT,
     ChartContext,
     ChartHistoryField,
@@ -125,27 +126,47 @@ def test_allergies_line_for_each_state(chart: ChartContext, line: str) -> None:
     assert allergies_line(chart) == line
 
 
-def test_a_stated_allergy_is_added_after_nkda_not_dropped() -> None:
+def _the_chart_fed_rule(block: str) -> str:
+    [rule] = [line for line in block.splitlines() if line.startswith("- Fields fed from the chart")]
+    return rule
+
+
+def test_one_rule_covers_every_chart_fed_field() -> None:
+    rule = _the_chart_fed_rule(render_chart_block(CHART, full_chart=True))
+    assert "the allergies, the current medications, and any field whose instructions" in rule
+    assert "prints the chart's text exactly as recorded above" in rule
+    assert f'append it after the chart\'s text as a quotation marked "{STATED_SUFFIX}"' in rule
+    assert "Never replace, drop, contradict or silently merge the chart's text." in rule
+    assert "is written in the plan, not in the current list" in rule
+    block = render_chart_block(CHART, full_chart=True)
+    assert "write the chart's value even if the transcript differs" not in block
+    assert sum(line.startswith("- Fields fed from the chart") for line in block.splitlines()) == 1
+
+
+def test_a_stated_allergy_is_appended_after_nkda_not_dropped() -> None:
     """Chart NKDA, client names an allergy: the draft is told to keep both."""
     block = render_chart_block(ChartContext(allergy_status="nkda"), full_chart=True)
     assert "- Allergies: No known drug allergies (NKDA)" in block
-    assert "always carries the chart's value as written above" in block
-    assert (
-        "add any allergy the client or clinician states in this visit, quoted, "
-        f'followed by "{STATED_THIS_VISIT}", whatever the chart says, NKDA included'
-    ) in block
+    assert "an allergy stated whatever the chart says, NKDA included" in _the_chart_fed_rule(block)
 
 
 def test_a_recorded_allergy_stays_when_the_client_disowns_it() -> None:
     """Chart Penicillin, client says it was a mistake: the chart's entry is not removed."""
     block = render_chart_block(CHART, full_chart=True)
     assert "- Allergies: Penicillin (Hives, moderate)" in block
-    assert "never drop it or contradict it" in block
-    assert (
-        "A statement that a recorded allergy was a mistake does not remove it: the "
-        "chart's entry stays, and the statement may be quoted after it."
-    ) in block
-    assert "write the chart's value even if the transcript differs" not in block
+    assert "a statement that a recorded allergy was a mistake, which never removes it" in (
+        _the_chart_fed_rule(block)
+    )
+
+
+def test_a_stated_denial_is_appended_to_not_recorded_never_written_as_nkda() -> None:
+    """Chart not recorded, client says no allergies: NKDA is the clinician's to set."""
+    block = render_chart_block(ChartContext(), full_chart=True)
+    assert "- Allergies: Not recorded" in block
+    rule = _the_chart_fed_rule(block)
+    assert '"Not recorded (stated this visit: no known drug allergies)"' in rule
+    assert "never as a bare NKDA" in rule
+    assert "- Allergies: No known drug allergies (NKDA)" not in block
 
 
 # --- Where the block lands, per note type --------------------------------------
@@ -307,13 +328,16 @@ def test_no_medications_read_none_recorded() -> None:
 def test_medications_carry_the_as_written_rule_and_the_plan_line() -> None:
     block = render_chart_block(ChartContext(), full_chart=True)
     assert block.startswith("Chart (entered by the clinician; use these values as written):")
+    rule = _the_chart_fed_rule(block)
+    assert '"None recorded" for medications' in rule
     assert (
-        "- The current medications field always carries the chart's list exactly as "
-        'written above, or "None recorded". After it, add each medication the client '
-        "reports currently taking that is not on the chart, quoted with the dose as "
-        f'stated, followed by "{STATED_THIS_VISIT}". A medication the clinician starts, '
-        "stops or changes in this visit is written in the plan, not in the current list."
-    ) in block
+        "each medication the client reports currently taking that the chart does not "
+        "list, with the dose as stated"
+    ) in rule
+    assert (
+        "A medication the clinician starts, stops or changes in this visit is written in "
+        "the plan, not in the current list."
+    ) in rule
 
 
 def test_a_note_with_no_place_for_medications_is_not_handed_them() -> None:
@@ -408,9 +432,7 @@ def test_each_history_field_is_listed_with_its_text_and_date() -> None:
         "    Brother: ADHD.\n"
     ) in block
     assert block.startswith("Chart (entered by the clinician; use these values as written):")
-    assert (
-        "write the chart history text for the field with the same key exactly as recorded" in block
-    )
+    assert "matched to the chart history above by key" in _the_chart_fed_rule(block)
     assert "Substance use baseline" not in block
 
 
@@ -434,7 +456,7 @@ def test_an_empty_history_renders_no_history_block() -> None:
     block = render_chart_block(ChartContext(), full_chart=True)
     assert "Chart history" not in block
     assert "Substance use baseline" not in block
-    assert "same key" not in block
+    assert "- Chart history:" not in block
 
 
 def test_a_note_with_no_place_for_history_is_not_handed_it() -> None:
