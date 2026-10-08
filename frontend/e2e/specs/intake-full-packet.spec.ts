@@ -528,18 +528,26 @@ test.describe("intake, assignment through accepted export", () => {
     await page.setViewportSize(DESK)
     await page.goto("/dashboard/settings/portal")
 
-    // Everything below is scoped to the Forms card: the documents card and
+    // Everything below is scoped to the Packets card: the documents card and
     // the licensed-instruments card are on this page too, and all three have
     // a "Name" field and a "Save" button.
-    const forms = page.getByRole("region", { name: "Forms" })
+    const forms = page.getByRole("region", { name: "Packets" })
     await expect(forms).toBeVisible()
 
-    // Every form this card creates is called "New form" and there is no
-    // rename on this screen, so the one just added is the last one.
-    await forms.getByRole("button", { name: "Add a form" }).click()
-    const added = forms.getByRole("button", { name: "New form" }).last()
+    // Every packet this card creates starts as "New packet", so the one just
+    // added is the last one.
+    await forms.getByRole("button", { name: "Add a packet" }).click()
+    const added = forms.getByRole("button", { name: "New packet" }).last()
     await expect(added).toBeVisible()
     await added.click()
+
+    // Named in place, so a practice with two packets can tell them apart.
+    // The name is unique per run: earlier runs leave their packets behind.
+    const ownName = `Full packet ${Date.now()}`
+    const nameField = forms.getByLabel("Packet name")
+    await nameField.fill(ownName)
+    await forms.getByRole("button", { name: "Save name" }).click()
+    await expect(forms.getByRole("button", { name: ownName })).toBeVisible()
 
     /** Add one question of this kind. The editor opens it for us. */
     const addQuestion = async (kind: string) => {
@@ -584,7 +592,7 @@ test.describe("intake, assignment through accepted export", () => {
     await forms.getByLabel("Also ask them to type the plan details").check()
 
     // Anything else the practice needs back.
-    await addQuestion("Document upload")
+    await addQuestion("Ask for a file")
     await questionBox().fill(RECORDS_QUESTION)
 
     // A question the practice wrote, with answers it wrote.
@@ -738,7 +746,7 @@ test.describe("intake, assignment through accepted export", () => {
 
     const invitation = await invitationFrom(email, phone, async () => {
       await page.getByTestId("send-forms-send").click()
-      await expect(page.getByTestId("send-forms-heading")).toHaveText("Forms and invitation sent")
+      await expect(page.getByTestId("send-forms-heading")).toHaveText("Packet and invitation sent")
     })
     await page.getByRole("button", { name: "Done" }).click()
 

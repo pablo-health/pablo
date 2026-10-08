@@ -188,7 +188,7 @@ const baseGroups: SettingsGroup[] = [
         icon: Users,
         page: PatientPortalPage,
         feature: "patient_portal",
-        desc: "Intake forms, self-report measures and {person} sign-in.",
+        desc: "Intake packets, self-report measures and {person} sign-in.",
       },
       {
         id: DOMAINS_SETTINGS_ID,

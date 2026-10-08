@@ -50,8 +50,8 @@ export function intakeStatusText(people: PeopleWords) {
  * is finished, so nothing here computes that.
  */
 const COPY = {
-  loading: "Loading this form…",
-  loadError: "We couldn't load this form. Try again in a moment.",
+  loading: "Loading their answers…",
+  loadError: "We couldn't load their answers. Try again in a moment.",
   actionError: "That didn't go through. Try again.",
   progressComplete: "Every question has an answer.",
   outstanding: (n: number) => (n === 1 ? "1 question has no answer." : `${n} questions have no answer.`),

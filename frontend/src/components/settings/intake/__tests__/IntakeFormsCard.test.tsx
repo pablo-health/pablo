@@ -19,6 +19,7 @@ import type { IntakeTemplate, IntakeVersionDetail } from "@/types/intakePackets"
 const mockUseTemplates = vi.fn()
 const mockUseVersion = vi.fn()
 const mockCreateTemplate = vi.fn()
+const mockUpdateTemplate = vi.fn()
 const mockCreateVersion = vi.fn()
 const mockSaveItems = vi.fn()
 const mockPublish = vi.fn()
@@ -55,6 +56,7 @@ vi.mock("@/hooks/useIntakePackets", () => ({
   useCreateIntakeVersion: () => ({ mutate: mockCreateVersion, isPending: false, error: null }),
   useSaveIntakeItems: () => ({ mutate: mockSaveItems, isPending: false, error: null }),
   usePublishIntakeVersion: () => ({ mutate: mockPublish, isPending: false, error: null }),
+  useUpdateIntakeTemplate: () => ({ mutate: mockUpdateTemplate, isPending: false, error: null }),
 }))
 
 const DRAFT: IntakeVersionDetail = {
@@ -176,12 +178,44 @@ describe("IntakeFormsCard", () => {
     expect(mockCreateVersion).toHaveBeenCalledWith("template-1", expect.anything())
   })
 
-  it("adding a form asks for one", async () => {
+  it("renames an open packet", async () => {
+    const user = userEvent.setup()
+    render(<IntakeFormsCard />)
+    await user.click(screen.getByRole("button", { name: TEMPLATE.name }))
+
+    const name = await screen.findByLabelText("Packet name")
+    expect(screen.queryByRole("button", { name: "Save name" })).not.toBeInTheDocument()
+    await user.clear(name)
+    await user.type(name, "New client intake")
+    await user.click(screen.getByRole("button", { name: "Save name" }))
+
+    expect(mockUpdateTemplate).toHaveBeenCalledWith({
+      id: TEMPLATE.id,
+      data: { name: "New client intake" },
+    })
+  })
+
+  it("says a packet needs a name instead of saving an empty one", async () => {
+    const user = userEvent.setup()
+    render(<IntakeFormsCard />)
+    await user.click(screen.getByRole("button", { name: TEMPLATE.name }))
+
+    const name = await screen.findByLabelText("Packet name")
+    await user.clear(name)
+    await user.click(screen.getByRole("button", { name: "Save name" }))
+
+    expect(mockUpdateTemplate).not.toHaveBeenCalled()
+    expect(name).toHaveAttribute("aria-invalid", "true")
+    expect(name).toHaveFocus()
+    expect(screen.getByText("Give the packet a name.")).toBeInTheDocument()
+  })
+
+  it("adding a packet asks for one", async () => {
     const user = userEvent.setup()
     render(<IntakeFormsCard />)
 
-    await user.click(screen.getByRole("button", { name: "Add a form" }))
+    await user.click(screen.getByRole("button", { name: "Add a packet" }))
 
-    expect(mockCreateTemplate).toHaveBeenCalledWith("New form")
+    expect(mockCreateTemplate).toHaveBeenCalledWith("New packet")
   })
 })

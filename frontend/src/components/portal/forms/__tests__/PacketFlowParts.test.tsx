@@ -22,7 +22,7 @@ import type { IntakeAssignmentItem } from "@/lib/api/patientIntake"
 import { ItemScreen } from "../ItemScreen"
 import { PacketFlow } from "../PacketFlow"
 import { ReviewScreen } from "../ReviewScreen"
-import { narrowParts, notesFor, partsOf, placeOf } from "../parts"
+import { narrowParts, notesFor, partsOf, placeOf, verbOf } from "../parts"
 import { ASSIGNMENT_ID, INTAKE_FORM, ITEM_IDS, SEEDED_ITEMS, assignmentDetail } from "./formFixtures"
 
 vi.mock("@/lib/api/patientIntake", async (importOriginal) => {
@@ -389,10 +389,24 @@ describe("partsOf", () => {
     const medications = sorted.find((item) => item.id === IDS.medications)!
     expect(placeOf(parts, medications)).toEqual({
       title: "Medical history",
+      verb: "Answer",
       part: 1,
       parts: 1,
       question: { index: 1, total: 1 },
     })
+  })
+
+  it("names what a part asks them to do, only when it holds one kind", () => {
+    const parts = partsOf([
+      row(IDS.medical, "consent_head", 0, "section", { title: "Informed consent" }),
+      row(IDS.conditions, "consent", 1, "consent_document", { document_key: "informed_consent" }),
+      row(IDS.note, "card_head", 2, "section", { title: "Insurance" }),
+      row(IDS.medications, "card", 3, "insurance_card", {}),
+      row(IDS.substance, "mixed_head", 4, "section", { title: "Paperwork" }),
+      row(IDS.alcohol, "upload", 5, "document_request", {}, "Your referral letter"),
+      row(IDS.empty, "note", 6, "free_text", {}, "Anything else?"),
+    ])
+    expect(parts.map(verbOf)).toEqual(["Read and sign", "Send a photo", null])
   })
 })
 
@@ -419,12 +433,19 @@ describe("ItemScreen header", () => {
   }
 
   it("names the part and counts within it", () => {
-    renderItem({ title: "Consent to telehealth", part: 3, parts: 8, question: { index: 2, total: 3 } })
+    renderItem({ title: "Consent to telehealth", verb: null, part: 3, parts: 8, question: { index: 2, total: 3 } })
     expect(header()).toEqual({
       count: "Part 3 of 8",
       title: "Consent to telehealth",
       progress: "2 of 3",
     })
+    expect(screen.queryByTestId("forms-part-verb")).not.toBeInTheDocument()
+  })
+
+  it("says what the part asks them to do before its name", () => {
+    renderItem({ title: "Informed consent", verb: "Read and sign", part: 2, parts: 4, question: { index: 1, total: 1 } })
+    expect(screen.getByTestId("forms-part-verb")).toHaveTextContent("Read and sign:")
+    expect(screen.getByTestId("forms-part-title")).toHaveTextContent("Informed consent")
   })
 
   it("shows nothing when it has no place", () => {

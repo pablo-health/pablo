@@ -556,7 +556,7 @@ describe("PatientForm", () => {
         modules: { intake: true, messaging: true, appointments: false, refills: true },
       })
       const next = await screen.findByTestId("new-client-next-step")
-      expect(next).toHaveTextContent("Choose forms to send and whether to invite them to the portal.")
+      expect(next).toHaveTextContent("Choose packets to send and whether to invite them to the portal.")
     })
 
     it("does not ask where the deployment serves no part a practice can choose", async () => {
