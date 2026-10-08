@@ -241,7 +241,7 @@ def _run_redraft_in_process(
             job,
             http_request,
             None,
-            get_worker_note_redraft_service(note_generation_service),
+            get_worker_note_redraft_service(note_generation_service, get_worker_proposal_step()),
             get_user_repository(),
             get_audit_service(),
         )
