@@ -97,34 +97,41 @@ class ChartProposalService:
         ``drafted`` is the proposal call's answer after a draft or a redraft,
         and replaces the drafted proposals still pending; ``None`` (an edit
         saved) keeps them. The proposals from the note's own text are
-        recomputed from ``content`` either way, and win over a drafted one
-        for the same field. A decided proposal is never replaced or offered
-        again.
+        recomputed from ``content`` either way, and win over one drafted from
+        a transcript for the same field. One drafted from an imported note's
+        document wins over them instead: the note's text is the other
+        system's, possibly a stale carried block, and the drafted one cites
+        the document's paragraphs, the conflicting one included. A decided
+        proposal is never replaced or offered again.
         """
         existing = self._repo.list_for_note(note.id)
         seeds = {
             _identity(p.field_key, p.item_key): p
             for p in recorded_proposals(content, (f.key for f in chart.history))
         }
+        documented = [p for p in drafted or () if p.origin == "document"]
+        cited = {_identity(p.field_key, p.item_key) for p in documented}
         decided = {_identity(p.field_key, p.item_key) for p in existing if not p.pending}
         pending = {_identity(p.field_key, p.item_key): p for p in existing if p.pending}
 
         stale = [
             p
             for key, p in pending.items()
-            if (p.origin == "note" and key not in seeds)
+            if (p.origin == "note" and (key not in seeds or key in cited))
             or (p.origin == "transcript" and (drafted is not None or key in seeds))
+            or (p.origin == "document" and drafted is not None)
         ]
         self._repo.delete(p.id for p in stale)
         kept = {key: p for key, p in pending.items() if p not in stale}
 
         for key, seed in seeds.items():
-            if key in kept and kept[key].proposed_text != seed.proposed_text:
-                self._repo.set_pending_text(kept[key].id, seed.proposed_text)
+            held = kept.get(key)
+            if held and held.origin == "note" and held.proposed_text != seed.proposed_text:
+                self._repo.set_pending_text(held.id, seed.proposed_text)
         taken = decided | set(kept)
-        added = [self._new(note, seed) for key, seed in seeds.items() if key not in taken]
-        taken |= set(seeds)
-        for proposal in drafted or ():
+        added = []
+        others = [p for p in drafted or () if p.origin != "document"]
+        for proposal in [*documented, *seeds.values(), *others]:
             key = _identity(proposal.field_key, proposal.item_key)
             if key not in taken:
                 added.append(self._new(note, proposal))

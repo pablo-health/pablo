@@ -102,6 +102,39 @@ describe("catalog-driven note view", () => {
     expect(screen.queryByText("Subjective")).not.toBeInTheDocument()
   })
 
+  it("flags a field of an imported note that the document does not contain", async () => {
+    vi.mocked(getNoteType).mockResolvedValue(DAP)
+    // Everything but the impression and the second observation is in the document.
+    const document = "Client report: Reports sleeping better.\nObserved: Calm.\nPlan: Continue CBT."
+    render(
+      <NoteViewer
+        note={createMockNote({ note_type: "dap", content: DAP_CONTENT })}
+        groundingSource={document}
+      />,
+      { wrapper },
+    )
+
+    const field = async (label: string) =>
+      (await screen.findByRole("heading", { name: new RegExp(`^${label}`) })).textContent
+    expect(await field("Client report")).toContain("from your note")
+    expect(await field("Next steps")).toContain("from your note")
+    expect(await field("Clinical impression")).toContain("review")
+    // A list is found only when every item is.
+    expect(await field("Observations")).toContain("review")
+    // Shown read-only; nothing to check against the document.
+    expect(await field("Measures")).not.toMatch(/review|from your note/)
+  })
+
+  it("shows no document check on a note that was not imported", async () => {
+    vi.mocked(getNoteType).mockResolvedValue(DAP)
+    render(<NoteViewer note={createMockNote({ note_type: "dap", content: DAP_CONTENT })} />, {
+      wrapper,
+    })
+    await screen.findByRole("heading", { name: "DAP" })
+    expect(screen.queryByText("review")).not.toBeInTheDocument()
+    expect(screen.queryByText("from your note")).not.toBeInTheDocument()
+  })
+
   it("asks for the definition at the version the note records", async () => {
     vi.mocked(getNoteType).mockResolvedValue({ ...DAP, key: "custom.coach", version: 3 })
     render(

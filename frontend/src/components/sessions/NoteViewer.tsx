@@ -17,7 +17,7 @@
 "use client"
 
 import { useState } from "react"
-import { AlertTriangle, Check, Download, Edit, X, Save } from "lucide-react"
+import { Download, Edit, X, Save } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
@@ -66,6 +66,7 @@ import {
   formatClinicalObservation,
 } from "./ClinicalObservationForm"
 import { parseNarrativeBlocks } from "@/lib/utils/narrativeParser"
+import { GroundingBadge } from "./GroundingBadge"
 import { SourceBadge, SourceHighlight } from "./SourceBadge"
 import { SchemaNoteView } from "./SchemaNoteView"
 import { addToProblemListAction } from "./AddToProblemList"
@@ -80,9 +81,9 @@ export interface NoteViewerProps {
   onSave?: (editedNote: NoteContent) => void
   onClaimClick?: (sourceSegmentIds: number[]) => void
   /**
-   * Original document text for an imported note. When set, each SOAP field
-   * shows whether its text was found verbatim in the source ("from your
-   * note" vs "review"). Omit for recorded/generated notes.
+   * Original document text for an imported note. When set, each field, of
+   * whatever note type, shows whether its text was found verbatim in the
+   * source ("from your note" vs "review"). Omit for recorded/generated notes.
    */
   groundingSource?: string
   className?: string
@@ -134,6 +135,7 @@ export function NoteViewer({
         // A signed note still offers it: the chart changes, not the note. An
         // account in read-only mode changes nothing.
         diagnosisAction={readOnly ? undefined : addToProblemListAction(note.patient_id, note.id)}
+        groundingSource={groundingSource}
         className={className}
       />
     )
@@ -433,26 +435,6 @@ function SOAPNoteView({
  * Renders structured SOAP sub-fields with source verification indicators.
  * Uses the structured data model to show verified/unverified badges per claim.
  */
-function GroundingBadge({ grounded }: { grounded: boolean }) {
-  return grounded ? (
-    <span
-      className="ml-2 inline-flex items-center gap-1 rounded px-1.5 py-0.5 align-middle text-[11px] font-medium text-green-700 bg-green-50"
-      title="Found in the original document"
-    >
-      <Check className="h-3 w-3" />
-      from your note
-    </span>
-  ) : (
-    <span
-      className="ml-2 inline-flex items-center gap-1 rounded px-1.5 py-0.5 align-middle text-[11px] font-medium text-amber-700 bg-amber-50"
-      title="Not found verbatim in the original document — please review"
-    >
-      <AlertTriangle className="h-3 w-3" />
-      review
-    </span>
-  )
-}
-
 function StructuredContent({
   sectionKey,
   structured,

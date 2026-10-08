@@ -9,7 +9,7 @@ export type ChartProposalDecision = "pending" | "accepted" | "edited" | "discard
 
 export interface ProposalEvidence {
   segment_id: number
-  /** The cited transcript line as the transcript has it. */
+  /** The cited transcript line (or imported document's paragraph) as written there. */
   text: string
 }
 
@@ -41,7 +41,10 @@ export interface ChartProposal {
   proposed_text: string
   what_changed: string
   evidence: ProposalEvidence[]
-  /** "transcript": drafted from the visit; "note": the note's own text (an intake). */
+  /**
+   * "transcript": drafted from the visit; "document": drafted from an imported
+   * note's document; "note": the note's own text (an intake).
+   */
   origin: string
   decision: ChartProposalDecision
   decided_text: string | null

@@ -83,7 +83,8 @@ test("a clinician imports a note as the practice's follow-up type and sees its f
     await expect(note.getByText("Sertraline 100 mg by mouth daily")).toBeVisible()
     await expect(note.getByText("Penicillin (rash).")).toBeVisible()
     await expect(note.getByText("Return in 6 weeks.")).toBeVisible()
-    await expect(note.getByText("Depression", { exact: true })).toBeVisible()
+    // Each field also says whether the document has it.
+    await expect(note.getByRole("heading", { name: /^Depression/ })).toContainText("from your note")
     await expect(note.getByText("Mental status exam", { exact: true })).toBeVisible()
     // Reviewed beside the note, not part of it.
     await expect(note.getByText("Medical decision making", { exact: true })).toHaveCount(0)

@@ -36,6 +36,7 @@ import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { schemaNotePdf } from "@/lib/notePdf"
 import { inTheNote, isEmptyValue, listItems, textValue } from "@/lib/schemaNoteValues"
 import { statedDiagnoses, type StatedDiagnosis } from "@/lib/statedDiagnoses"
+import { areAllGrounded } from "@/lib/utils/grounding"
 import { exportNoteToPDF, type PDFExportMetadata } from "@/lib/utils/pdfExport"
 import type { NoteFieldSchema, NoteTypeSchema } from "@/types/noteTypes"
 import type {
@@ -44,6 +45,7 @@ import type {
   SchemaSectionValues,
 } from "@/types/sessions"
 import { DiagnosesEditor, DiagnosesList, type DiagnosisAction } from "./DiagnosesField"
+import { GroundingBadge } from "./GroundingBadge"
 
 export interface SchemaNoteViewProps {
   noteTypeKey: string
@@ -57,6 +59,11 @@ export interface SchemaNoteViewProps {
   diagnosisAction?: DiagnosisAction
   /** Header of the note's PDF. Export PDF is offered only when given. */
   pdfMetadata?: PDFExportMetadata
+  /**
+   * Original document text for an imported note. When set, each field shows
+   * whether its text was found in the document, so one that wasn't is checked.
+   */
+  groundingSource?: string
   className?: string
 }
 
@@ -161,6 +168,7 @@ export function SchemaNoteBody({
   onSave,
   diagnosisAction,
   pdfMetadata,
+  groundingSource,
   className,
 }: SchemaNoteBodyProps) {
   const people = usePeopleTerm()
@@ -280,6 +288,7 @@ export function SchemaNoteBody({
                       value={values[field.key]}
                       editing={editMode}
                       diagnosisAction={diagnosisAction}
+                      groundingSource={groundingSource}
                       draft={drafts[draftKey(section.key, field.key)] ?? ""}
                       onDraftChange={(next) =>
                         setDrafts((prev) => ({
@@ -336,11 +345,26 @@ export function SchemaNoteBody({
 const TEXTAREA_CLASS =
   "w-full min-h-[96px] p-3 border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm"
 
+/**
+ * The words a field states, item by item, as the server's grounding check
+ * reads them: a stated diagnosis is its label, code and status.
+ */
+function statedTexts(field: NoteFieldSchema, value: unknown): string[] {
+  if (field.kind === "list") return listItems(value)
+  if (field.kind === "diagnoses") {
+    return statedDiagnoses(value).map((d) =>
+      [d.label, d.code, d.status].filter(Boolean).join(" "),
+    )
+  }
+  return [textValue(value)]
+}
+
 function FieldBlock({
   field,
   value,
   editing,
   diagnosisAction,
+  groundingSource,
   draft,
   onDraftChange,
 }: {
@@ -348,11 +372,22 @@ function FieldBlock({
   value: unknown
   editing: boolean
   diagnosisAction?: DiagnosisAction
+  groundingSource?: string
   draft: string
   onDraftChange: (next: string) => void
 }) {
+  const showGrounding =
+    groundingSource !== undefined &&
+    !editing &&
+    field.kind !== "structured" &&
+    !isEmptyValue(value)
   const label = (
-    <h5 className="text-sm font-medium text-neutral-600 mb-1">{field.label}</h5>
+    <h5 className="text-sm font-medium text-neutral-600 mb-1">
+      {field.label}
+      {showGrounding && (
+        <GroundingBadge grounded={areAllGrounded(statedTexts(field, value), groundingSource)} />
+      )}
+    </h5>
   )
 
   if (field.kind === "structured") {

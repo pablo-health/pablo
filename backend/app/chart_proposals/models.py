@@ -11,9 +11,10 @@ if TYPE_CHECKING:
     from datetime import datetime
 
 Decision = Literal["pending", "accepted", "edited", "discarded"]
-Origin = Literal["transcript", "note"]
-"""``transcript``: drafted from what was said. ``note``: the note's own text, for a
-field the chart had nothing for."""
+Origin = Literal["transcript", "document", "note"]
+"""``transcript``: drafted from what was said. ``document``: drafted from an imported
+note's document, citing its paragraphs. ``note``: the note's own text, for a field the
+chart had nothing for."""
 
 #: What a proposal from the note's own text says changed: the chart had nothing.
 RECORDED_THIS_VISIT = "Recorded this visit"

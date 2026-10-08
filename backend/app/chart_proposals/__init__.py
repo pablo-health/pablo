@@ -17,4 +17,8 @@ signed note keeps the chart it was drafted against.
 
 A note also proposes, as written, each history field it states that the
 chart has no value for. That is how an intake fills the chart.
+
+A note imported from another records system proposes from its document,
+each proposal citing the document's paragraphs; that is how a client who
+arrives with a note and no intake here has their chart filled.
 """

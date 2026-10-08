@@ -12,6 +12,10 @@ have, is dropped: an unsupported proposal never reaches the clinician. No
 text is matched against the transcript; the evidence kept is the cited
 lines' own text.
 
+A note imported from another records system has no transcript; the
+document is read in its place, each paragraph numbered as a line is, so a
+proposal from it cites the paragraphs that say it, checked the same way.
+
 The call never fails the draft. An error leaves the note with no proposals
 and is recorded as the note's run having failed, so the clinician is told
 the note was not checked rather than shown an empty list.
@@ -21,12 +25,13 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from ..notes.chart_context import STATED_THIS_VISIT
 from ..services.source_attribution_service import format_transcript_with_segment_ids
 from .families import FAMILIES, NOTE_FIELD_CHART_KEYS, chart_key_for, family_for
-from .models import Drafted, DraftedProposal, Evidence
+from .models import Drafted, DraftedProposal, Evidence, Origin
 from .recorded import field_text
 
 if TYPE_CHECKING:
@@ -94,6 +99,35 @@ change. Cite only lines that say it. A change no line states is not a change.
 - entry: only for a list field, the entry the change is about (for allergies, the \
 substance)."""
 
+_DOCUMENT_INSTRUCTIONS = """\
+The document is a note about this client written in another records system and imported \
+here. Propose an update to a chart field for each thing the document states that the chart \
+does not already say. A field the document says nothing about, or says only what the chart \
+already says, needs no proposal.
+
+A note often carries forward blocks written at earlier visits, and a carried block can be \
+out of date. Where two parts of the document disagree about the same thing (a carried list \
+of current medications and the plan, say), propose what the plan states, or else the part \
+written for this visit, and cite the paragraph that disagrees as well, so the clinician \
+sees the conflict. Such a proposal always cites at least two paragraphs: the one it follows \
+and the one that disagrees with it.
+
+The diagnoses in the document's assessment are this visit's and reach the chart's problem \
+list from the note itself: never propose them to a history field. prior_diagnoses is for \
+diagnoses the document says were given before.
+
+Refer to the person seen as "the {term}" or with they/them; never he, she, his or her, \
+unless the chart records their pronouns, whatever the document uses.
+
+For each change give:
+- field_key: the field's key as listed above.
+- proposed_text: the text the field should hold once updated, in the document's words.
+- what_changed: one short line saying what is new.
+- evidence_segment_ids: the numbers (n in [Sn]) of the document paragraphs that state it. \
+Cite only paragraphs that say it. A change no paragraph states is not a change.
+- entry: only for a list field, the entry the change is about (for allergies, the \
+substance)."""
+
 
 def _stated_this_visit(draft: Mapping[str, Any]) -> list[str]:
     """The draft's chart-fed fields that mark something as stated this visit."""
@@ -116,6 +150,19 @@ def _stated_this_visit(draft: Mapping[str, Any]) -> list[str]:
     return found
 
 
+def _chart_and_rules(chart: ChartContext, instructions: str) -> list[str]:
+    parts = ["The client's chart, as the clinician recorded it:", ""]
+    for family in FAMILIES:
+        parts.extend(family.chart_lines(chart))
+        parts.append("")
+    parts.append(instructions.format(term=chart.person))
+    parts.append("")
+    parts.append("Rules for the fields:")
+    for family in FAMILIES:
+        parts.extend(family.rules())
+    return parts
+
+
 def build_prompt(
     chart: ChartContext,
     indexed_transcript: str,
@@ -123,15 +170,7 @@ def build_prompt(
     draft: Mapping[str, Any] | None = None,
 ) -> str:
     """The proposal prompt: the chart, the rules, and the numbered transcript."""
-    parts = ["The client's chart, as the clinician recorded it:", ""]
-    for family in FAMILIES:
-        parts.extend(family.chart_lines(chart))
-        parts.append("")
-    parts.append(_INSTRUCTIONS.format(term=chart.person))
-    parts.append("")
-    parts.append("Rules for the fields:")
-    for family in FAMILIES:
-        parts.extend(family.rules())
+    parts = _chart_and_rules(chart, _INSTRUCTIONS)
     stated = _stated_this_visit(draft or {})
     if stated:
         parts.extend(
@@ -145,6 +184,40 @@ def build_prompt(
             ]
         )
     parts.extend(["", "Transcript (each line numbered [Sn]):", indexed_transcript])
+    return "\n".join(parts)
+
+
+def document_segments(text: str) -> dict[int, str]:
+    """An imported document's paragraphs, numbered from 0.
+
+    Paragraphs are separated by blank lines. A document with none (a Word
+    export puts each paragraph on its own line) has a paragraph a line.
+    """
+    lines = [line.strip() for line in text.strip().splitlines()]
+    if "" not in lines:
+        return dict(enumerate(line for line in lines if line))
+    paragraphs: list[str] = []
+    current: list[str] = []
+    for line in [*lines, ""]:
+        if line:
+            current.append(line)
+        elif current:
+            paragraphs.append("\n".join(current))
+            current = []
+    return dict(enumerate(paragraphs))
+
+
+def _indexed(segments: Mapping[int, str]) -> str:
+    """Each paragraph as ``[Sn]`` and its first line, its other lines indented beneath."""
+    return "\n".join(
+        f"[S{n}] " + text.replace("\n", "\n    ") for n, text in sorted(segments.items())
+    )
+
+
+def build_document_prompt(chart: ChartContext, segments: Mapping[int, str]) -> str:
+    """The proposal prompt for an imported note: the chart, the rules, the numbered document."""
+    parts = _chart_and_rules(chart, _DOCUMENT_INSTRUCTIONS)
+    parts.extend(["", "Document (each paragraph numbered [Sn]):", _indexed(segments)])
     return "\n".join(parts)
 
 
@@ -173,8 +246,10 @@ def parse_proposals(
     reply: Mapping[str, Any],
     chart: ChartContext,
     segments: Mapping[int, str],
+    *,
+    origin: Origin = "transcript",
 ) -> list[DraftedProposal]:
-    """The reply's proposals that cite this transcript and that their field can take."""
+    """The reply's proposals that cite these segments and that their field can take."""
     kept: list[DraftedProposal] = []
     seen: set[tuple[str, str]] = set()
     raw = reply.get("proposals")
@@ -194,6 +269,7 @@ def parse_proposals(
             proposed_text=str(item.get("proposed_text") or "").strip(),
             what_changed=str(item.get("what_changed") or "").strip(),
             evidence=evidence,
+            origin=origin,
         )
         identity = (proposal.field_key, proposal.item_key.lower())
         if identity in seen or not family.admits(proposal, proposal.proposed_text, chart):
@@ -213,7 +289,7 @@ def parse_proposals(
             if identity in seen or not family.admits(drafted, drafted.proposed_text, chart):
                 continue
             seen.add(identity)
-            kept.append(drafted)
+            kept.append(replace(drafted, origin=origin))
     return kept
 
 
@@ -229,9 +305,28 @@ def propose_chart_updates(
     indexed = format_transcript_with_segment_ids(transcript.content)
     if not indexed:
         return Drafted([])
+    prompt = build_prompt(chart, indexed, draft=draft)
+    return _ask(complete, prompt, chart, _segment_texts(indexed), "transcript")
+
+
+def propose_from_document(complete: CompleteStructured, chart: ChartContext, text: str) -> Drafted:
+    """Ask what an imported note adds to the chart, citing its paragraphs. Never raises."""
+    segments = document_segments(text)
+    if not segments:
+        return Drafted([])
+    return _ask(complete, build_document_prompt(chart, segments), chart, segments, "document")
+
+
+def _ask(
+    complete: CompleteStructured,
+    prompt: str,
+    chart: ChartContext,
+    segments: Mapping[int, str],
+    origin: Origin,
+) -> Drafted:
     try:
-        reply = complete(SYSTEM_PROMPT, build_prompt(chart, indexed, draft=draft), RESPONSE_SCHEMA)
-        return Drafted(parse_proposals(reply, chart, _segment_texts(indexed)))
+        reply = complete(SYSTEM_PROMPT, prompt, RESPONSE_SCHEMA)
+        return Drafted(parse_proposals(reply, chart, segments, origin=origin))
     except Exception as exc:
         logger.warning("Chart proposal call failed; the note has no proposals", exc_info=True)
         return Drafted([], error_class=type(exc).__name__)

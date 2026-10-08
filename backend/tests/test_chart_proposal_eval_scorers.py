@@ -4,15 +4,18 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from app.chart_proposals.models import DraftedProposal, Evidence, MedicationChange
 from evals.chart_proposals.cases import (
     ANOTHER_PRESCRIBER,
+    CARRIED_BLOCK_IS_STALE,
     CLIENT_STOPPED,
     DIVORCE_FINALIZED,
     START_AND_STOP,
     STOPPED_WORKING,
+    TRANSFER_NOTE,
     UNCHANGED,
 )
 
@@ -76,6 +79,41 @@ def test_evidence_from_the_wrong_lines_fails() -> None:
     off = _proposal("legal_custody", "Divorce finalized; shared custody.", 0, 3)
     assert grade([RELATIONSHIPS, off], DIVORCE_FINALIZED)["cites_the_lines_that_say_it"] == [
         "legal_custody cites [0, 3], none of [7, 8]"
+    ]
+
+
+LAID_OFF = "Worked full time as a dental hygienist until August; laid off."
+
+
+def test_a_proposal_from_a_stale_document_must_cite_the_paragraph_that_disagrees() -> None:
+    both = _proposal("work_school", LAID_OFF, 1, 3)
+    assert not any(grade([both], CARRIED_BLOCK_IS_STALE).values())
+    plan_only = _proposal("work_school", LAID_OFF, 3)
+    assert grade([plan_only], CARRIED_BLOCK_IS_STALE)["cites_the_lines_that_say_it"] == [
+        "work_school does not cite 1, which disagrees"
+    ]
+
+
+def test_a_medication_in_a_history_field_fails() -> None:
+    trials = _proposal("medication_trials", "Buspirone 15 mg twice daily.", 5)
+    work = _proposal("work_school", LAID_OFF, 1, 3)
+    problems = grade([work, trials], CARRIED_BLOCK_IS_STALE)
+    assert problems["says_nothing_it_never_should"] == ["medication_trials says 'buspirone'"]
+
+
+def test_a_field_either_reading_allows_may_be_proposed_or_not() -> None:
+    expected = [
+        _proposal("alcohol", "Two glasses of wine per week.", 6),
+        _proposal("tobacco_nicotine", "None.", 6),
+        _proposal("work_school", "Returned to full-time work.", 2),
+        replace(_proposal("allergies", "rash", 8), item_key="Penicillin"),
+    ]
+    assert not any(grade(expected, TRANSFER_NOTE).values())
+    sister = _proposal("supports", "Close relationship with sister.", 9)
+    assert not any(grade([*expected, sister], TRANSFER_NOTE).values())
+    trials = _proposal("medication_trials", "Sertraline.", 7)
+    assert grade([*expected, trials], TRANSFER_NOTE)["exactly_the_expected_fields"] == [
+        "unexpected proposal for medication_trials"
     ]
 
 

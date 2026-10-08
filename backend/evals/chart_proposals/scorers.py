@@ -90,11 +90,30 @@ def cites_the_lines_that_say_it(
     """Each proposal cites at least one of the lines that state its change."""
     problems = []
     for expected, proposal in _matching(proposals, case):
+        name = _name(expected.field_key, expected.entry)
         cited = {e.segment_id for e in proposal.evidence}
         if expected.evidence and not cited & set(expected.evidence):
-            name = _name(expected.field_key, expected.entry)
             problems.append(f"{name} cites {sorted(cited)}, none of {list(expected.evidence)}")
+        problems += [
+            f"{name} does not cite {line}, which disagrees"
+            for line in expected.also_cites
+            if line not in cited
+        ]
     return problems
+
+
+def says_nothing_it_never_should(
+    proposals: Sequence[DraftedProposal], case: ProposalCase
+) -> list[str]:
+    """No free-text proposal carries what belongs elsewhere (a medication, into a history
+    field); a medication's own proposals are the medication list's."""
+    return [
+        f"{p.field_key} says {term!r}"
+        for p in proposals
+        if p.change is None
+        for term in case.never_said
+        if normalize(term) in normalize(p.proposed_text)
+    ]
 
 
 _GENDERED = re.compile(r"\b(he|she|him|his|her|hers|himself|herself)\b", re.IGNORECASE)
@@ -115,6 +134,7 @@ CHECKS: dict[str, Callable[[Sequence[DraftedProposal], ProposalCase], list[str]]
     "the_stated_action": the_stated_action,
     "text_kept_and_changed": text_kept_and_changed,
     "cites_the_lines_that_say_it": cites_the_lines_that_say_it,
+    "says_nothing_it_never_should": says_nothing_it_never_should,
 }
 
 
