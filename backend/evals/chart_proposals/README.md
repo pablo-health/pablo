@@ -46,11 +46,11 @@ The history cases' charts list the medication the client mentions taking, as
 a follow-up's chart would; without it, that mention is a medication the list
 lacks and is rightly proposed as an add.
 
-| `transfer-note` | empty | an imported follow-up note from another records system (`backend/tests/fixtures/notes/transfer_psychiatric_follow_up.txt`) | `alcohol`, `tobacco_nicotine`, `work_school` and the penicillin allergy, each citing its paragraph; `supports` and `relationships` may be proposed or not; no medication in a history field |
-| `carried-block-is-stale` | full time as a dental hygienist | an imported note whose carried social history says the client works and whose interval history says they were laid off; its carried medication list disagrees with its plan | `work_school` following the interval history and citing the carried paragraph too; no medication in a history field |
+| `transfer-note` | empty | an imported follow-up note from another records system (`backend/tests/fixtures/notes/transfer_psychiatric_follow_up.txt`) | `alcohol`, `tobacco_nicotine`, `work_school` and the penicillin allergy, each citing its paragraph; the sertraline and hydroxyzine the plan continues as adds; `supports` and `relationships` may be proposed or not; no medication in a history field |
+| `carried-block-is-stale` | full time as a dental hygienist; sertraline 50 mg | an imported note whose carried social history says the client works and whose interval history says they were laid off; its carried medication list (sertraline 50 mg, trazodone) disagrees with its plan (sertraline 100 mg, start buspirone) | `work_school` following the interval history and citing the carried paragraph too; the sertraline change to 100 mg citing the plan and the carried list; the buspirone start citing the plan; nothing for the trazodone only the carried list names; no medication in a history field |
 
 These two read the document a paragraph at a time, as an imported note's
-proposals do. Their medication proposals are not graded yet.
+proposals do.
 
 ## Running it
 
@@ -65,6 +65,23 @@ scripts/run-chart-proposal-eval.sh --case unchanged
 ```
 
 ## Recorded runs — 2026-10-08
+
+### Imported notes and the medication list
+
+Configured note model, against a development project, three runs of each of
+the nine cases: 27 of 27 passed, and six further runs of
+`carried-block-is-stale` passed.
+
+Before the document's prompt said anything about medications, every run of
+`carried-block-is-stale` added the trazodone that only the carried list
+names; the medication list's own rules, written for a visit, read a listed
+medication the chart lacks as one the client takes. The document's prompt
+now says its plan is the clinician's decision, that a medication the plan
+continues and the list lacks is an add, and that one only a carried block
+names needs nothing. With that added, the stale-block case cited only the
+interval history for `work_school` in four runs of six; the prompt now says
+the rule about citing the disagreeing paragraph holds for every field.
+With the pronoun rule below merged in, a run of all nine cases passed.
 
 ### Pronouns
 

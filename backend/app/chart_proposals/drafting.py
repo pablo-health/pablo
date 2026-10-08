@@ -110,7 +110,17 @@ out of date. Where two parts of the document disagree about the same thing (a ca
 of current medications and the plan, say), propose what the plan states, or else the part \
 written for this visit, and cite the paragraph that disagrees as well, so the clinician \
 sees the conflict. Such a proposal always cites at least two paragraphs: the one it follows \
-and the one that disagrees with it.
+and the one that disagrees with it. This holds for every field: a history field whose \
+carried block says one thing and whose interval history says another cites both, as a \
+medication whose carried list and plan differ does.
+
+For the medication list, the document's plan is the clinician's decision at that visit. A \
+medication the plan starts is a start, one it stops is a stop, and one whose dose or \
+frequency it changes is a change, citing the plan's paragraph, and the carried list's too \
+where it shows the medication otherwise. A medication the client takes that the list lacks \
+and the plan continues is an add. A medication only a carried block lists, which the plan \
+and the part written for this visit do not mention, needs nothing: it may have been \
+stopped since that block was written.
 
 The diagnoses in the document's assessment are this visit's and reach the chart's problem \
 list from the note itself: never propose them to a history field. prior_diagnoses is for \

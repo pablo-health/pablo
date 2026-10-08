@@ -184,23 +184,34 @@ TRANSFER_NOTE = ProposalCase(
         ExpectedProposal(
             field_key="allergies", entry="Penicillin", must_contain=("rash",), evidence=(8,)
         ),
+        ExpectedProposal(
+            field_key="medications",
+            entry="sertraline",
+            action="add",
+            must_contain=("100 mg",),
+            evidence=(7, 13),
+        ),
+        ExpectedProposal(
+            field_key="medications",
+            entry="hydroxyzine",
+            action="add",
+            must_contain=("25 mg",),
+            must_contain_any=("bedtime", "as needed"),
+            evidence=(7, 13),
+        ),
     ),
-    # The medication list's proposals are graded by the imported-medication cases.
-    allowed=(
-        "supports",
-        "relationships",
-        "medications: sertraline",
-        "medications: hydroxyzine",
-    ),
+    allowed=("supports", "relationships"),
     never_said=("sertraline", "hydroxyzine"),
 )
 """A follow-up note from another records system, for a client whose chart is empty: each
 history field it states and the allergy it records are proposed, citing the paragraph that
-says it. Its medications are not history; they belong to the medication list."""
+says it. The medications the client takes, which the plan continues, are added to the
+medication list, never to a history field."""
 
 CARRIED_BLOCK_IS_STALE = ProposalCase(
     name="carried-block-is-stale",
     chart=_chart(
+        ChartMedication("sertraline", "50 mg", "once daily", "psychiatric"),
         work_school="Works full time as a dental hygienist at a family dental practice.",
         living_situation="Lives with husband and two children.",
     ),
@@ -212,8 +223,9 @@ SOCIAL HISTORY (carried forward from 03/02/2026)
 Lives with husband and two children. Works full time as a dental hygienist at a family \
 dental practice.
 
-CURRENT MEDICATIONS (carried forward)
-Buspirone 10 mg by mouth twice daily
+CURRENT MEDICATIONS (carried forward from 03/02/2026)
+Sertraline 50 mg by mouth once daily
+Trazodone 50 mg by mouth at bedtime
 
 INTERVAL HISTORY
 Laid off from the dental practice at the end of August when the hygiene schedule was cut. \
@@ -223,7 +235,8 @@ ASSESSMENT
 Generalized anxiety disorder (F41.1), worse with the job loss.
 
 PLAN
-Increase buspirone to 15 mg by mouth twice daily.
+Increase sertraline to 100 mg by mouth once daily.
+Start buspirone 5 mg by mouth twice daily.
 Return in 4 weeks.
 """,
     document=True,
@@ -235,14 +248,30 @@ Return in 4 weeks.
             evidence=(3,),
             also_cites=(1,),
         ),
+        ExpectedProposal(
+            field_key="medications",
+            entry="sertraline",
+            action="change",
+            must_contain=("100 mg",),
+            evidence=(5,),
+            also_cites=(2,),
+        ),
+        ExpectedProposal(
+            field_key="medications",
+            entry="buspirone",
+            action="start",
+            must_contain=("5 mg", "twice"),
+            evidence=(5,),
+        ),
     ),
-    allowed=("medications: buspirone",),
-    never_said=("buspirone",),
+    never_said=("sertraline", "buspirone", "trazodone"),
 )
 """The note's carried social history says the client works; this visit's interval history
 says they were laid off. The proposal follows this visit and cites the carried paragraph
-too, so the clinician sees the conflict. The carried medication list disagrees with the
-plan the same way; medications are the medication list's, never a history field's."""
+too, so the clinician sees the conflict. The carried medication list disagrees with the plan
+the same way: the sertraline change follows the plan and cites the carried list as well, the
+buspirone the plan starts is a start, and the trazodone that only the carried list names,
+and the plan does not continue, is proposed nothing. No medication reaches a history field."""
 
 START_AND_STOP = ProposalCase(
     name="medication-start-and-stop",
