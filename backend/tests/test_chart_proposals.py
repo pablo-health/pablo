@@ -408,6 +408,21 @@ def test_the_notes_own_proposals_follow_its_text_until_decided(chart_parts: Any)
     }
 
 
+def test_the_visits_own_fields_and_the_review_only_mdm_propose_nothing() -> None:
+    """Only a field keyed as a chart field is recorded: the HPI domains and the
+    medical decision making are the visit's, never the chart's."""
+    content = {
+        "subjective": {"depression": "Low mood most days.", "insomnia_sleep": "Wakes at 3."},
+        "mdm": {
+            "problems_addressed": "One chronic illness with exacerbation.",
+            "data_reviewed": "Not stated.",
+            "management_risk": "Prescription drug management.",
+        },
+        "plan": {"education_provided": "Sleep hygiene."},
+    }
+    assert recorded_proposals(content, recorded_keys=[]) == []
+
+
 def test_a_field_the_chart_already_has_proposes_nothing_of_its_own(chart_parts: Any) -> None:
     """A follow-up's history field prints the chart; only a drafted change is proposed."""
     patients, _, service = chart_parts
