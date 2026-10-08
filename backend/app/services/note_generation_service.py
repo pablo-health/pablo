@@ -45,7 +45,6 @@ from ..notes.client_present import (
 from ..notes.diagnoses import DIAGNOSES_KIND_LABEL, DIAGNOSES_SCHEMA, coerce_diagnoses
 from ..notes.practice_types import PromptBlocks, render_user_prompt
 from ..notes.prompts.soap import SOAP_SYSTEM_PROMPT
-from ..notes.registry import is_practice_key
 from ..notes.visit_times import PSYCHOTHERAPY_SECTION_KEY, client_present_turns
 from ..settings import get_settings
 from .ai_features import AIFeature
@@ -356,11 +355,11 @@ class RegistryNoteGenerationService(NoteGenerationService):
         else:
             system_prompt = _DEFAULT_GENERATION_PROMPT_SYSTEM
 
-        # Allergies, medications and history go to the types a practice
-        # defines for itself — the prescriber's notes, which must state them —
-        # and not to the built-in therapy formats, which have no place for them.
+        # Allergies, medications and history go to the types that ask for them
+        # (the prescriber's notes, which must state them) and not to the
+        # built-in therapy formats, which have no place for them.
         chart_block = (
-            render_chart_block(chart, full_chart=is_practice_key(definition.key))
+            render_chart_block(chart, full_chart=definition.full_chart)
             if chart is not None and definition.reads_chart
             else None
         )

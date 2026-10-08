@@ -7,8 +7,8 @@ chart is read while the caller holds its connection, the proposal call runs
 with nothing checked out, and the result is stored once the note is, with a
 record of how the call ended. After a clinician's edit is saved only the
 proposals from the note's own text are recomputed; the proposal call is not
-run again. Only the types a practice defines for itself read the full chart,
-so only they propose updates to it; for the rest the run is ``skipped``.
+run again. Only the types drafted against the full chart propose updates to
+it; for the rest the run is ``skipped``.
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..notes.chart_context import chart_context_for
-from ..notes.registry import is_practice_key
 from ..utcnow import utc_now
 from .drafting import propose_chart_updates
 from .models import ProposalRun, RunStatus
@@ -36,7 +35,7 @@ if TYPE_CHECKING:
 
 def proposes_chart_updates(definition: NoteTypeDefinition | None) -> bool:
     """Whether notes of this type propose chart updates: those drafted against the full chart."""
-    return definition is not None and definition.reads_chart and is_practice_key(definition.key)
+    return definition is not None and definition.reads_chart and definition.full_chart
 
 
 class ChartProposalStep:

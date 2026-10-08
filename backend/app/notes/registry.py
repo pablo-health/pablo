@@ -160,6 +160,15 @@ class NoteTypeDefinition:
     Off for a format with no client in it, such as meeting minutes, so a
     chart is never handed to a draft that has no business reading it.
     """
+    full_chart: bool = field(default=False, compare=False)
+    """Whether a draft also gets the allergies, the current medications and the
+    chart history, and proposes updates to them at sign.
+
+    On for every type written as a spec: the prescriber notes registered from
+    ``notes/templates`` and every type a practice saves, a based one taking its
+    base's value. Off for the built-in formats written in code (SOAP and the
+    other therapy formats, the psychotherapy note), which have no place for them.
+    """
 
     required_fields: tuple[str, ...] = ()
     """Fields (``section.field``) a type based on this one cannot hide.
