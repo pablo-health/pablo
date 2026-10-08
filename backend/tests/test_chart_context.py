@@ -308,9 +308,11 @@ def test_medications_carry_the_as_written_rule_and_the_plan_line() -> None:
     block = render_chart_block(ChartContext(), full_chart=True)
     assert block.startswith("Chart (entered by the clinician; use these values as written):")
     assert (
-        "- The medications field states the chart's list as given. A medication the "
-        "clinician starts, stops or changes in this visit is written in the plan, not in "
-        "the current list."
+        "- The current medications field always carries the chart's list exactly as "
+        'written above, or "None recorded". After it, add each medication the client '
+        "reports currently taking that is not on the chart, quoted with the dose as "
+        f'stated, followed by "{STATED_THIS_VISIT}". A medication the clinician starts, '
+        "stops or changes in this visit is written in the plan, not in the current list."
     ) in block
 
 

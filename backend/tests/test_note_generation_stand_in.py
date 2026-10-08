@@ -372,9 +372,11 @@ def test_a_follow_up_with_no_medications_on_the_chart_says_none_recorded(
 def test_the_prescriber_templates_take_current_medications_from_the_chart(template: str) -> None:
     spec = json.loads(FOLLOW_UP_TEMPLATE.with_name(f"{template}.json").read_text())["spec"]
     hints = {f["key"]: f.get("ai_hint") for section in spec["sections"] for f in section["fields"]}
-    assert hints["current_medications"] == (
-        "From the chart; write it exactly as given, or 'None recorded'"
+    assert hints["current_medications"].startswith(
+        "From the chart: its list exactly as given, or 'None recorded'. Then each medication "
+        "the client reports currently taking that is not on the chart"
     )
+    assert "(stated this visit)" in hints["current_medications"]
 
 
 def test_a_follow_up_writes_the_charts_history_word_for_word(stand_in: list[str]) -> None:
@@ -412,3 +414,44 @@ def test_a_follow_up_writes_the_charts_history_word_for_word(stand_in: list[str]
         "Separated in August; lives alone.\nSees the children on weekends."
     )
     assert content["substance_use"]["alcohol"] != "Two glasses of wine on weekends."
+
+
+def _draft_current_medications(chart: ChartContext, transcript: str) -> list[str]:
+    definition = _follow_up()
+    generated = _service().generate_note(
+        definition.key,
+        Transcript(format="txt", content=transcript),
+        PATIENT,
+        NOW,
+        inputs={"place_of_service": "In office"},
+        definition=definition,
+        chart=chart,
+    )
+    current: list[str] = generated.content["medications"]["current_medications"]
+    return current
+
+
+def test_medications_the_client_reports_are_added_after_an_empty_chart(
+    stand_in: list[str],
+) -> None:
+    """Chart empty, client lists two: the draft never says none while they take two."""
+    current = _draft_current_medications(
+        ChartContext(),
+        "[00:01] Therapist: What are you taking right now?\n"
+        "[00:04] Client: I'm taking sertraline 50 mg and trazodone 50 mg at night.",
+    )
+    assert current == [
+        "None recorded",
+        '"sertraline 50 mg" (stated this visit)',
+        '"trazodone 50 mg at night" (stated this visit)',
+    ]
+
+
+def test_a_reported_medication_already_on_the_chart_is_listed_once_unmarked(
+    stand_in: list[str],
+) -> None:
+    current = _draft_current_medications(
+        ChartContext(medications=(ChartMedication("Sertraline", "100 mg", "every morning"),)),
+        "[00:04] Client: I'm taking sertraline 100 mg.",
+    )
+    assert current == ["Sertraline 100 mg, every morning"]

@@ -145,6 +145,16 @@ def test_good_medication_only_draft_passes() -> None:
     assert _failed(MEDICATION_ONLY_DRAFT, FOLLOW_UP_MEDICATION_ONLY) == {}
 
 
+def test_a_medication_the_client_reports_may_follow_the_charts_list() -> None:
+    draft = _with(
+        MEDICATION_ONLY_DRAFT,
+        "medications",
+        "current_medications",
+        ["Bupropion XL 150 mg, every morning", '"melatonin 3 mg" (stated this visit)'],
+    )
+    assert _failed(draft, FOLLOW_UP_MEDICATION_ONLY) == {}
+
+
 @pytest.mark.parametrize(
     ("section", "key", "value", "check"),
     [

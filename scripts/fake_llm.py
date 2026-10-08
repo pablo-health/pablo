@@ -214,6 +214,9 @@ class _Chart:
     """Chart history text by field key, as recorded (the substance baseline excluded)."""
 
 
+#: A client line naming what they take: "Client: I'm taking A, B and C."
+_STATED_MEDICATIONS = re.compile(r"Client: I(?:'m| am) taking (.+?)\.?$", re.MULTILINE)
+
 #: How the backend renders one chart-history field: ``  - key (Label, recorded date): text``.
 _HISTORY_LINE = re.compile(r"^  - ([a-z_]+) \([^)]*, recorded [0-9-]+\): (.*)$")
 
@@ -256,12 +259,34 @@ def _chart(user_prompt: str) -> _Chart | None:
     return chart
 
 
-def _with_chart(content: dict[str, Any], chart: _Chart) -> dict[str, Any]:
+def _current_medications(chart_lines: list[str], user_prompt: str) -> list[str]:
+    """The chart's list as written, then what the client says they take that it lacks.
+
+    A stated medication is matched to the chart by its first word, the drug's
+    name, and is added quoted and marked only when the chart does not list it.
+    """
+    listed = chart_lines or ["None recorded"]
+    on_chart = {line.split()[0].lower() for line in chart_lines if not line.endswith(":")}
+    stated = [
+        item.strip()
+        for match in _STATED_MEDICATIONS.finditer(user_prompt)
+        for item in re.split(r",\s*|\s+and\s+", match.group(1))
+        if item.strip()
+    ]
+    return listed + [
+        f'"{item}" (stated this visit)'
+        for item in stated
+        if item.split()[0].lower() not in on_chart
+    ]
+
+
+def _with_chart(content: dict[str, Any], chart: _Chart, user_prompt: str = "") -> dict[str, Any]:
     """Echo the chart into the fields a model would put it in.
 
     A diagnosis field (or SOAP's clinical impression) names the listed
     problems; an allergies field states the chart's allergies; a current
-    medications field is the chart's list, line for line, or "None recorded";
+    medications field is the chart's list, line for line, or "None recorded",
+    then any medication a client line says they take that the chart lacks;
     a history field is the chart's text for its key, word for word. So a spec
     can see that a draft was written against the chart it was handed.
     """
@@ -270,7 +295,7 @@ def _with_chart(content: dict[str, Any], chart: _Chart) -> dict[str, Any]:
             continue
         for key, value in section.items():
             if key == "current_medications" and chart.medications is not None:
-                section[key] = chart.medications or ["None recorded"]
+                section[key] = _current_medications(chart.medications, user_prompt)
             if not isinstance(value, str):
                 continue
             if key in chart.history and section_key != "substance_use":
@@ -342,7 +367,7 @@ async def draft_note(call: NoteCall) -> dict[str, Any]:
     _fill_named(draft, _dictated(call.user_prompt))
     chart = _chart(call.user_prompt)
     if chart is not None:
-        draft = _with_chart(draft, chart)
+        draft = _with_chart(draft, chart, call.user_prompt)
     if "psychotherapy_start" in call.response_schema.get("properties", {}):
         draft["psychotherapy_start"] = _therapy_start(call.user_prompt)
     return {"data": draft, "finish_reason": "stop"}

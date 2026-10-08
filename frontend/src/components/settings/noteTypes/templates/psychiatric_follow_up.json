@@ -123,7 +123,7 @@
             "key": "current_medications",
             "label": "Current medications",
             "kind": "list",
-            "ai_hint": "From the chart; write it exactly as given, or 'None recorded'"
+            "ai_hint": "From the chart: its list exactly as given, or 'None recorded'. Then each medication the client reports currently taking that is not on the chart, quoted with the dose as stated, followed by \"(stated this visit)\". A medication started, stopped or changed in this visit goes in the plan, not here."
           },
           {
             "key": "allergies",

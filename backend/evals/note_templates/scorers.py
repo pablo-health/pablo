@@ -302,7 +302,10 @@ MEDICATION_HEADINGS = frozenset({"psychiatric:", "other:", "not categorized:"})
 
 
 def medications_from_chart(draft: Draft, case: TemplateCase) -> list[str]:
-    """The current list is the chart's, word for word, and holds nothing changed today."""
+    """The current list is the chart's, word for word, and holds nothing changed today.
+
+    A medication the client reports taking is allowed after it, marked as stated.
+    """
     expected = case.expected.current_medications
     if expected is None:
         return []
@@ -321,6 +324,7 @@ def medications_from_chart(draft: Draft, case: TemplateCase) -> list[str]:
         if item.strip()
         and item.strip().lower() not in MEDICATION_HEADINGS
         and normalize(item) not in wanted
+        and not item.rstrip().endswith("(stated this visit)")
     ]
     problems += [
         f"medications.current_medications: {word!r} was changed this visit; it belongs to the plan"

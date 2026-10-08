@@ -5,13 +5,14 @@
 The problem list, the allergy record, the medication list and the chart
 history are the clinician's own entries, so a draft takes them as written: it
 names each listed diagnosis with its code, never adds a diagnosis that is
-neither listed nor stated by the clinician, never lets the transcript overrule
-a recorded allergy (one stated in the visit is added after it, never in its place),
-states the current medications as the chart lists them,
-and writes each history field word for word. What the clinician states that
-the chart does not have yet is marked "stated this visit" so it can be added
-at review; a medication started, stopped or changed in the visit belongs to
-the plan, not to the current list.
+neither listed nor stated by the clinician, keeps a recorded allergy whatever
+the transcript says, states the current medications as the chart lists them,
+and writes each history field word for word. An allergy or a current
+medication stated in the visit that the chart does not have is added after the
+chart's value, marked "stated this visit", never in its place; a diagnosis
+stated that way is marked the same, so it can be added at review. A
+medication started, stopped or changed in the visit belongs to the plan, not
+to the current list.
 
 Read while the caller still holds its database connection, then passed in:
 generation itself runs with nothing checked out.
@@ -213,9 +214,11 @@ def render_chart_block(chart: ChartContext, *, full_chart: bool) -> str:
             "chart's entry stays, and the statement may be quoted after it."
         )
         lines.append(
-            "- The medications field states the chart's list as given. A medication "
-            "the clinician starts, stops or changes in this visit is written in the "
-            "plan, not in the current list."
+            "- The current medications field always carries the chart's list exactly as "
+            'written above, or "None recorded". After it, add each medication the client '
+            "reports currently taking that is not on the chart, quoted with the dose as "
+            f'stated, followed by "{STATED_THIS_VISIT}". A medication the clinician starts, '
+            "stops or changes in this visit is written in the plan, not in the current list."
         )
         lines.extend(_history_rules(chart))
     return "\n".join(lines)
