@@ -32,10 +32,10 @@ THERAPY_DRAFT: dict[str, dict[str, Any]] = {
     },
     "subjective": {"chief_complaint": '"The worry has been bad."'},
     "substance_use": {
-        "alcohol": "A glass of wine on weekends, maybe two.",
-        "tobacco_nicotine": "Denied.",
-        "cannabis": "Denied.",
-        "other_substances": "Denied.",
+        "alcohol": "One to two drinks on weekends. (asked this visit: no change)",
+        "tobacco_nicotine": "Not recorded (stated this visit: denies.)",
+        "cannabis": "Not recorded (stated this visit: denies.)",
+        "other_substances": "Not recorded (stated this visit: denies.)",
     },
     "risk": {
         "suicidal_homicidal_ideation": (
@@ -102,10 +102,10 @@ MEDICATION_ONLY_DRAFT: dict[str, dict[str, Any]] = {
         "place_of_service": "In-office visit.",
     },
     "substance_use": {
-        "alcohol": 'Denies ("No, I don\'t drink").',
-        "tobacco_nicotine": "Not asked.",
-        "cannabis": "Not asked.",
-        "other_substances": "Not asked.",
+        "alcohol": 'Not recorded (stated this visit: "No, I don\'t drink")',
+        "tobacco_nicotine": "Not recorded (not asked this visit)",
+        "cannabis": "Not recorded (not asked this visit)",
+        "other_substances": "Not recorded (not asked this visit)",
     },
     "risk": {
         "suicidal_homicidal_ideation": 'Client: "No." Clinician: "denies SI and HI".',
@@ -231,9 +231,17 @@ def test_a_medication_the_client_reports_may_follow_the_charts_list() -> None:
             "Client's home in Faketown, AA; Clinic office at 123 Test St, Faketown, AA.",
             "telehealth_attestation",
         ),
-        # An asked substance with no answer.
-        ("substance_use", "cannabis", "Not asked.", "substances"),
-        ("substance_use", "alcohol", "", "substances"),
+        # An asked substance with no screen, or the baseline lost or rewritten.
+        ("substance_use", "cannabis", "Not recorded (not asked this visit)", "substances"),
+        ("substance_use", "alcohol", "One to two drinks on weekends.", "substances"),
+        ("substance_use", "alcohol", "(asked this visit: no change)", "substances"),
+        (
+            "substance_use",
+            "alcohol",
+            "A glass of wine on weekends. (asked this visit: no change)",
+            "substances",
+        ),
+        ("substance_use", "cannabis", "Not recorded (stated this visit: )", "substances"),
         # A diagnosis or code nobody entered.
         (
             "assessment",
@@ -306,7 +314,13 @@ def test_therapy_draft_failures_are_caught(section: str, key: str, value: Any, c
         # An office visit is not attested as telehealth.
         ("encounter", "place_of_service", "Telehealth visit.", "telehealth_attestation"),
         # Never asked: not a denial.
-        ("substance_use", "tobacco_nicotine", "Denied.", "substances"),
+        (
+            "substance_use",
+            "tobacco_nicotine",
+            "Not recorded (stated this visit: denies)",
+            "substances",
+        ),
+        ("substance_use", "cannabis", "Not recorded (asked this visit: no change)", "substances"),
         ("substance_use", "cannabis", "", "substances"),
         # Only the diagnosis the clinician named, with no invented code.
         (

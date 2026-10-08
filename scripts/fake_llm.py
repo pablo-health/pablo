@@ -211,7 +211,7 @@ class _Chart:
     medications: list[str] | None = None
     """``None`` when the block has no medication list; ``[]`` when it says none recorded."""
     history: dict[str, str] = field(default_factory=dict)
-    """Chart history text by field key, as recorded (the substance baseline excluded)."""
+    """Chart history text by field key, as recorded, the substance baseline included."""
 
 
 #: How a client line names what they take: "Client: I'm taking A, B and C."
@@ -219,6 +219,9 @@ _STATED_MEDICATIONS = ("Client: I'm taking ", "Client: I am taking ")
 
 #: How a client line changes a history field: "Client: Update on work_school: laid off."
 _STATED_UPDATE = "Client: Update on "
+
+#: How a client line answers a substance screen with no change: "Client: No change in alcohol."
+_NO_CHANGE = "Client: No change in "
 
 #: How the backend renders one chart-history field: ``  - key (Label, recorded date): text``.
 _HISTORY_LINE = re.compile(r"^  - ([a-z_]+) \([^)]*, recorded [0-9-]+\): (.*)$")
@@ -244,7 +247,7 @@ def _chart(user_prompt: str) -> _Chart | None:
             chart.history[history_key] += "\n" + line.removeprefix("    ")
             continue
         history_key = None
-        in_history = line == "- Chart history:"
+        in_history = line == "- Chart history:" or line.startswith("- Substance use baseline")
         if line.startswith("- Problem list:"):
             rest = line.removeprefix("- Problem list:").strip()
             chart.problems.extend([rest] if rest else [])
@@ -272,6 +275,27 @@ def _stated_updates(user_prompt: str) -> dict[str, str]:
         if found and sep and text.strip():
             updates[key.strip()] = text.strip()
     return updates
+
+
+def _unchanged(user_prompt: str) -> set[str]:
+    """The substance keys a client line says did not change."""
+    keys = set()
+    for line in user_prompt.splitlines():
+        _, found, rest = line.partition(_NO_CHANGE)
+        if found:
+            keys.add(rest.strip().removesuffix("."))
+    return keys
+
+
+def _screened(chart: _Chart, key: str, updates: dict[str, str], unchanged: set[str]) -> str:
+    """A substance field: the chart's baseline, then this visit's screen."""
+    if key in updates:
+        screen = f"(stated this visit: {updates[key]})"
+    elif key in unchanged:
+        screen = "(asked this visit: no change)"
+    else:
+        screen = "(not asked this visit)"
+    return f"{chart.history.get(key, 'Not recorded')} {screen}"
 
 
 def _current_medications(chart_lines: list[str], user_prompt: str) -> list[str]:
@@ -304,10 +328,12 @@ def _with_chart(content: dict[str, Any], chart: _Chart, user_prompt: str = "") -
     medications field is the chart's list, line for line, or "None recorded",
     then any medication a client line says they take that the chart lacks;
     a history field is the chart's text for its key, word for word, then what
-    a client line says changed. So a spec can see that a draft was written
+    a client line says changed; a substance field is the chart's baseline,
+    then the visit's screen. So a spec can see that a draft was written
     against the chart it was handed.
     """
     updates = _stated_updates(user_prompt)
+    unchanged = _unchanged(user_prompt)
     for section_key, section in content.items():
         if not isinstance(section, dict):
             continue
@@ -315,6 +341,9 @@ def _with_chart(content: dict[str, Any], chart: _Chart, user_prompt: str = "") -
             if key == "current_medications" and chart.medications is not None:
                 section[key] = _current_medications(chart.medications, user_prompt)
             if not isinstance(value, str):
+                continue
+            if section_key == "substance_use":
+                section[key] = _screened(chart, key, updates, unchanged)
                 continue
             if (key in chart.history or key in updates) and section_key != "substance_use":
                 section[key] = chart.history.get(key, "Not recorded")

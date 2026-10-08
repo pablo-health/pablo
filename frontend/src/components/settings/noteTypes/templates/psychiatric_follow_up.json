@@ -69,49 +69,49 @@
             "key": "alcohol",
             "label": "Alcohol",
             "kind": "text",
-            "ai_hint": "This visit's screen for alcohol, against the chart's baseline: \"asked — no change\" if the client was asked and described no change; the change, as stated, if they described one; \"Not asked\" if it did not come up."
+            "ai_hint": "The chart's substance use baseline for alcohol, exactly as given, or 'Not recorded'. Then this visit's screen: \"(asked this visit: no change)\", \"(stated this visit: ...)\" with the change as stated, or \"(not asked this visit)\"."
           },
           {
             "key": "cannabis",
             "label": "Cannabis",
             "kind": "text",
-            "ai_hint": "This visit's screen for cannabis, against the chart's baseline: \"asked — no change\" if the client was asked and described no change; the change, as stated, if they described one; \"Not asked\" if it did not come up."
+            "ai_hint": "The chart's substance use baseline for cannabis, exactly as given, or 'Not recorded'. Then this visit's screen: \"(asked this visit: no change)\", \"(stated this visit: ...)\" with the change as stated, or \"(not asked this visit)\"."
           },
           {
             "key": "stimulants",
             "label": "Stimulants",
             "kind": "text",
-            "ai_hint": "This visit's screen for stimulants not prescribed to the client, against the chart's baseline: \"asked — no change\" if the client was asked and described no change; the change, as stated, if they described one; \"Not asked\" if it did not come up."
+            "ai_hint": "The chart's substance use baseline for stimulants not prescribed to the client, exactly as given, or 'Not recorded'. Then this visit's screen: \"(asked this visit: no change)\", \"(stated this visit: ...)\" with the change as stated, or \"(not asked this visit)\"."
           },
           {
             "key": "cocaine",
             "label": "Cocaine",
             "kind": "text",
-            "ai_hint": "This visit's screen for cocaine, against the chart's baseline: \"asked — no change\" if the client was asked and described no change; the change, as stated, if they described one; \"Not asked\" if it did not come up."
+            "ai_hint": "The chart's substance use baseline for cocaine, exactly as given, or 'Not recorded'. Then this visit's screen: \"(asked this visit: no change)\", \"(stated this visit: ...)\" with the change as stated, or \"(not asked this visit)\"."
           },
           {
             "key": "opioids",
             "label": "Opioids",
             "kind": "text",
-            "ai_hint": "This visit's screen for opioids, prescribed or not, against the chart's baseline: \"asked — no change\" if the client was asked and described no change; the change, as stated, if they described one; \"Not asked\" if it did not come up."
+            "ai_hint": "The chart's substance use baseline for opioids, prescribed or not, exactly as given, or 'Not recorded'. Then this visit's screen: \"(asked this visit: no change)\", \"(stated this visit: ...)\" with the change as stated, or \"(not asked this visit)\"."
           },
           {
             "key": "benzodiazepines",
             "label": "Benzodiazepines",
             "kind": "text",
-            "ai_hint": "This visit's screen for benzodiazepines or other sedatives, prescribed or not, against the chart's baseline: \"asked — no change\" if the client was asked and described no change; the change, as stated, if they described one; \"Not asked\" if it did not come up."
+            "ai_hint": "The chart's substance use baseline for benzodiazepines or other sedatives, prescribed or not, exactly as given, or 'Not recorded'. Then this visit's screen: \"(asked this visit: no change)\", \"(stated this visit: ...)\" with the change as stated, or \"(not asked this visit)\"."
           },
           {
             "key": "tobacco_nicotine",
             "label": "Tobacco / nicotine",
             "kind": "text",
-            "ai_hint": "This visit's screen for tobacco, vaping or other nicotine, against the chart's baseline: \"asked — no change\" if the client was asked and described no change; the change, as stated, if they described one; \"Not asked\" if it did not come up."
+            "ai_hint": "The chart's substance use baseline for tobacco, vaping or other nicotine, exactly as given, or 'Not recorded'. Then this visit's screen: \"(asked this visit: no change)\", \"(stated this visit: ...)\" with the change as stated, or \"(not asked this visit)\"."
           },
           {
             "key": "other_substances",
             "label": "Other substances",
             "kind": "text",
-            "ai_hint": "This visit's screen for any other substance, against the chart's baseline: \"asked — no change\" if the client was asked and described no change; the change, as stated, if they described one; \"Not asked\" if it did not come up."
+            "ai_hint": "The chart's substance use baseline for any other substance, exactly as given, or 'Not recorded'. Then this visit's screen: \"(asked this visit: no change)\", \"(stated this visit: ...)\" with the change as stated, or \"(not asked this visit)\"."
           }
         ]
       },

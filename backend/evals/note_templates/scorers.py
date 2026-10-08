@@ -41,6 +41,8 @@ PSYCHOTHERAPY_TIME_LINE = re.compile(r"psychotherapy[^\n.:]*\b(?:time|minutes)\b
 QUOTED = re.compile('["\u201c\u201d]([^"\u201c\u201d]+)["\u201c\u201d]')
 RISK_LEVEL = re.compile(r"\b(?:low|moderate|high|minimal|elevated|imminent)\b", re.IGNORECASE)
 TODAY = re.compile(r"\btoday\b", re.IGNORECASE)
+STATED_PREFIX = "(stated this visit:"
+"""How a chart-fed field marks what the visit stated after the chart's own text."""
 
 _MONTHS = [m.lower() for m in calendar.month_name[1:]]
 _DATE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -87,10 +89,6 @@ def is_blank(text: str) -> bool:
 
 def is_not_stated(text: str) -> bool:
     return normalize(text) == "not stated"
-
-
-def is_not_asked(text: str) -> bool:
-    return normalize(text).startswith("not asked")
 
 
 def calendar_dates(text: str) -> list[date]:
@@ -251,18 +249,38 @@ def telehealth_attestation(draft: Draft, case: TemplateCase) -> list[str]:
     return problems
 
 
+ASKED_NO_CHANGE = "(asked this visit: no change)"
+NOT_ASKED = "(not asked this visit)"
+_SCREEN_MARKS = (ASKED_NO_CHANGE, STATED_PREFIX, NOT_ASKED)
+
+
+def split_screen(text: str) -> tuple[str, str]:
+    """A substance field's baseline text, and the screen suffix that follows it."""
+    at = min((i for m in _SCREEN_MARKS if (i := text.find(m)) >= 0), default=len(text))
+    return text[:at].rstrip(), text[at:].strip()
+
+
 def substances(draft: Draft, case: TemplateCase) -> list[str]:
-    """Not asked reads "Not asked"; asked records the answer."""
+    """Each substance field is the chart's baseline, then this visit's screen.
+
+    Not asked ends "(not asked this visit)"; asked ends "(asked this visit: no
+    change)" or "(stated this visit: ...)" with what was said.
+    """
     e = case.expected
-    problems = [
-        f'substance_use.{k}: should read "Not asked"'
-        for k in e.substances_not_asked
-        if not is_not_asked(_text(draft, "substance_use", k))
-    ]
-    for k in e.substances_asked:
-        text = _text(draft, "substance_use", k)
-        if is_blank(text) or is_not_asked(text) or is_not_stated(text):
-            problems.append(f"substance_use.{k}: asked, but no answer recorded")
+    baseline = {f.key: f.text for f in case.history}
+    problems = []
+    for k in (*e.substances_asked, *e.substances_not_asked):
+        path = f"substance_use.{k}"
+        chart_text, screen = split_screen(_text(draft, "substance_use", k))
+        if normalize(chart_text) != normalize(baseline.get(k, "Not recorded")):
+            problems.append(f"{path}: not the chart's baseline as recorded")
+        if k in e.substances_not_asked and screen != NOT_ASKED:
+            problems.append(f'{path}: should end "{NOT_ASKED}"')
+        if k in e.substances_asked and not (
+            screen == ASKED_NO_CHANGE
+            or (screen.startswith(STATED_PREFIX) and screen.removeprefix(STATED_PREFIX).strip(" )"))
+        ):
+            problems.append(f"{path}: asked, but no screen recorded")
     return problems
 
 
@@ -299,9 +317,6 @@ def measures_undated(draft: Draft, case: TemplateCase) -> list[str]:
 
 
 MEDICATION_HEADINGS = frozenset({"psychiatric:", "other:", "not categorized:"})
-
-
-STATED_PREFIX = "(stated this visit:"
 
 
 def is_stated_this_visit(item: str) -> bool:

@@ -71,8 +71,10 @@ def test_the_follow_up_reads_history_from_the_chart_and_screens_substances() -> 
                 assert hint.startswith("From the chart, exactly as given, or 'Not recorded'.")
                 assert "(stated this visit: ...)" in hint
             else:
-                assert "asked — no change" in hint
-                assert "Not asked" in hint
+                assert hint.startswith("The chart's substance use baseline for ")
+                assert "(asked this visit: no change)" in hint
+                assert "(stated this visit: ...)" in hint
+                assert "(not asked this visit)" in hint
 
 
 def test_the_follow_up_places_history_after_medications_and_before_risk() -> None:

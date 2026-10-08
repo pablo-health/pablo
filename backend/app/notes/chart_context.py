@@ -6,7 +6,8 @@ The problem list, the allergy record, the medication list and the chart
 history are the clinician's own entries, so a draft takes them as written: it
 names each listed diagnosis with its code and never adds one that is neither
 listed nor stated by the clinician. Every other field fed from the chart
-(allergies, current medications, history) prints the chart's text as recorded;
+(allergies, current medications, history, the substance-use baseline) prints
+the chart's text as recorded;
 what the visit states that changes or adds to it follows as a marked quotation,
 "(stated this visit: ...)", so the note never contradicts itself and never
 loses what the chart said. A medication started, stopped or changed in the
@@ -220,19 +221,10 @@ def render_chart_block(chart: ChartContext, *, full_chart: bool) -> str:
             "allergy was a mistake, which never removes it; and each medication the client "
             "reports currently taking that the chart does not list, with the dose as stated. "
             "A medication the clinician starts, stops or changes in this visit is written in "
-            "the plan, not in the current list."
+            "the plan, not in the current list. A substance-use field prints the substance "
+            'use baseline above for its key, or "Not recorded", then this visit\'s screen '
+            'as its suffix: "(asked this visit: no change)" when the client was asked and '
+            'described no change, "(stated this visit: ...)" with the change as stated, or '
+            '"(not asked this visit)" when it did not come up.'
         )
-        lines.extend(_substance_rule(chart))
     return "\n".join(lines)
-
-
-def _substance_rule(chart: ChartContext) -> list[str]:
-    rules = []
-    if any(f.key in SUBSTANCE_KEYS for f in chart.history):
-        rules.append(
-            "- The substance use baseline is what the chart records. A substance field in "
-            'the note is this visit\'s screen, not the baseline: "asked \u2014 no change" '
-            "when the client was asked and described no change, the change as stated, or "
-            '"Not asked" when it did not come up.'
-        )
-    return rules

@@ -436,7 +436,7 @@ def test_each_history_field_is_listed_with_its_text_and_date() -> None:
     assert "Substance use baseline" not in block
 
 
-def test_the_substance_baseline_is_listed_apart_with_the_screen_rule() -> None:
+def test_the_substance_baseline_is_listed_apart_and_screened_by_suffix() -> None:
     chart = ChartContext(
         history=(
             ChartHistoryField("alcohol", "Two glasses of wine on weekends.", date(2026, 7, 14)),
@@ -448,8 +448,15 @@ def test_the_substance_baseline_is_listed_apart_with_the_screen_rule() -> None:
         "  - alcohol (Alcohol, recorded 2026-07-14): Two glasses of wine on weekends.\n"
     ) in block
     assert "- Chart history:" not in block
-    assert "asked \u2014 no change" in block
-    assert "Not asked" in block
+    rule = _the_chart_fed_rule(block)
+    for suffix in (
+        '"(asked this visit: no change)"',
+        '"(stated this visit: ...)"',
+        '"(not asked this visit)"',
+    ):
+        assert suffix in rule
+    assert "asked \u2014 no change" not in block
+    assert "The substance use baseline is what the chart records" not in block
 
 
 def test_an_empty_history_renders_no_history_block() -> None:
