@@ -110,6 +110,8 @@ test("a form's sections are walked as named parts", async ({ api, page }) => {
     await expect(page.getByRole("heading", { name: CONDITIONS })).toBeVisible()
     await expect(page.getByTestId("forms-item-section")).toHaveCount(0)
     await expect(page.getByTestId("forms-part-count")).toHaveText("Part 1 of 2")
+    // A part of questions says so before its name.
+    await expect(page.getByTestId("forms-part-verb")).toHaveText("Answer:")
     await expect(page.getByTestId("forms-part-title")).toHaveText(MEDICAL)
     await expect(page.getByTestId("forms-progress")).toHaveText("1 of 2")
 

@@ -113,7 +113,7 @@ test.describe("A new client's intake", () => {
     await page.getByTestId("send-forms-send").click()
     // The acknowledgment replaces the whole dialog: its heading says what
     // went, and the question the dialog opened with is gone.
-    await expect(page.getByTestId("send-forms-heading")).toHaveText("Forms and invitation sent")
+    await expect(page.getByTestId("send-forms-heading")).toHaveText("Packet and invitation sent")
     await expect(page.getByTestId("send-forms-outcome")).toContainText(`link by email at ${email}`)
     await expect(page.getByTestId("send-forms-sent-list")).toHaveText(SEEDED_FORM)
     await expect(next).not.toContainText("What should Robin do next?")
@@ -153,7 +153,7 @@ test.describe("A new client's intake", () => {
     await page.goto(`/dashboard/patients/${client.id}`)
     await page.getByRole("tab", { name: "Intake" }).click()
     await expect(page.getByTestId("intake-empty")).toHaveText(
-      "No forms have been sent to this client yet.",
+      "No packets have been sent to this client yet.",
     )
 
     await page.getByTestId("send-intake-form-button").click()

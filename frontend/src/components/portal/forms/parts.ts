@@ -29,7 +29,7 @@
 
 import type { IntakeAssignmentItem } from "@/lib/api/patientIntake"
 import { ruleOf } from "@/lib/intake/visibility"
-import { OPENING_PART_TITLE } from "./formsCopy"
+import { OPENING_PART_TITLE, PART_VERBS } from "./formsCopy"
 import { rendererFor } from "./renderers/registry"
 
 export interface FormPart {
@@ -121,9 +121,54 @@ export function notesFor(parts: FormPart[], item: IntakeAssignmentItem): IntakeA
   return part?.notes[item.id] ?? []
 }
 
+/** What a part asks the patient to do, by the one kind of item it holds. */
+const VERB_BY_TYPE: Record<string, string> = {
+  consent_document: PART_VERBS.sign,
+  insurance_card: PART_VERBS.photo,
+  document_request: PART_VERBS.file,
+}
+
+/** Item types that are questions to answer, however they are asked. */
+const ANSWER_TYPES = new Set([
+  "free_text",
+  "single_choice",
+  "multi_choice",
+  "yes_no",
+  "scale",
+  "number",
+  "date",
+  "instrument",
+  "emergency_contact",
+  "guardian",
+])
+
+/**
+ * What a part asks the patient to do: read and sign, answer, send a photo
+ * or send a file. Only when every item in it collecting something is the
+ * same kind; a part that mixes them gets no verb rather than a wrong one.
+ */
+export function verbOf(part: FormPart): string | null {
+  const kinds = new Set(
+    part.screens
+      .filter(collectsAnswer)
+      .map((item) =>
+        item.item_type in VERB_BY_TYPE
+          ? VERB_BY_TYPE[item.item_type]
+          : ANSWER_TYPES.has(item.item_type)
+            ? PART_VERBS.answer
+            : null,
+      ),
+  )
+  if (kinds.size !== 1) return null
+  const [only] = kinds
+  return only
+}
+
 /** Where one screen sits: which part, and which question within it. */
 export interface PartPlace {
   title: string | null
+  /** What the part asks them to do ("Read and sign"), or null when it mixes kinds. */
+  verb: string | null
   /** 1-based, among the parts of this walk. */
   part: number
   parts: number
@@ -155,6 +200,7 @@ export function placeOf(parts: FormPart[], item: IntakeAssignmentItem): PartPlac
   const index = collectsAnswer(item) ? counted.indexOf(rootOf(part, item)) : -1
   return {
     title: part.title,
+    verb: verbOf(part),
     part: partIndex + 1,
     parts: parts.length,
     question: index < 0 ? null : { index: index + 1, total: counted.length },

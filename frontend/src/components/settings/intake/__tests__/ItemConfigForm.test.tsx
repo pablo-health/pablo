@@ -331,7 +331,7 @@ describe("ItemConfigForm", () => {
     expect(onChange).toHaveBeenCalledWith({ sides: "front" })
   })
 
-  it("a document request says to upload a blank form before it can offer one", () => {
+  it("a document request with no blank copies on file offers nothing to pick", () => {
     render(
       <ItemConfigForm
         itemType="document_request"
@@ -341,9 +341,8 @@ describe("ItemConfigForm", () => {
       />,
     )
 
-    expect(
-      screen.getByText("Upload a blank form first, then you can offer it here."),
-    ).toBeInTheDocument()
+    expect(screen.queryByRole("combobox", { name: /Offer a blank copy/i })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Upload a blank/i)).not.toBeInTheDocument()
   })
 
   it("and offers the practice's own forms when it has some", async () => {
@@ -359,7 +358,7 @@ describe("ItemConfigForm", () => {
       />,
     )
 
-    await user.click(screen.getByRole("combobox", { name: /Offer a form to download/i }))
+    await user.click(screen.getByRole("combobox", { name: /Offer a blank copy to download/i }))
     await user.click(screen.getByRole("option", { name: "Release of records" }))
 
     expect(onChange).toHaveBeenCalledWith({ blank_form_id: "form-1" })
@@ -378,7 +377,7 @@ describe("ItemConfigForm", () => {
       />,
     )
 
-    await user.click(screen.getByRole("combobox", { name: /Offer a form to download/i }))
+    await user.click(screen.getByRole("combobox", { name: /Offer a blank copy to download/i }))
     await user.click(screen.getByRole("option", { name: "Don't offer one" }))
 
     // Absent rather than empty: an empty string is not a form id, and the

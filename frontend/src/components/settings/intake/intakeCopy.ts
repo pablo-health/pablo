@@ -27,7 +27,7 @@ export const ITEM_TYPE_LABELS: Record<string, string> = {
   guardian: "Parent or guardian",
   consent_document: "Consent to sign",
   insurance_card: "Insurance card",
-  document_request: "Document upload",
+  document_request: "Ask for a file",
 }
 
 export const ITEM_TYPE_HINTS: Record<string, string> = {
@@ -104,10 +104,19 @@ export const HELP_TEXT_PLACEHOLDER = "Anything that helps them answer it"
 export const LABEL_FIELD_OVERRIDE = "Heading (optional)"
 export const LABEL_OVERRIDE_PLACEHOLDER = "Leave empty to ask it as Pablo words it"
 
-export const FORMS_TITLE = "Forms"
-export const FORMS_DESCRIPTION = "What your intake asks, and who it asks it of."
-export const EMPTY_STATE = "No forms yet."
-export const NEW_FORM_NAME = "New form"
+/**
+ * A packet is what a practice sends: things to read and sign, questions to
+ * answer, and files to send back. The clinician's word for it; the person
+ * filling it in sees "forms" in the portal.
+ */
+export const FORMS_TITLE = "Packets"
+export const FORMS_DESCRIPTION = "What you send people to read, sign and answer."
+export const EMPTY_STATE = "No packets yet."
+export const NEW_FORM_NAME = "New packet"
+export const ADD_PACKET = "Add a packet"
+export const RENAME_PACKET = "Rename"
+export const PACKET_NAME_LABEL = "Packet name"
+export const SAVE_NAME = "Save name"
 export const DRAFT_BADGE = "Draft"
 export const PUBLISHED_BADGE = "Published"
 export const PUBLISH_BUTTON = "Publish"
@@ -119,9 +128,9 @@ export const ADD_QUESTION = "Add question"
  */
 export const START_FROM_TEMPLATE = "Start from a template"
 /** Shown when every item a template adds is already on the form. */
-export const TEMPLATE_ALREADY_ON_FORM = "This form already has it."
+export const TEMPLATE_ALREADY_ON_FORM = "This packet already has it."
 export const NEW_VERSION_BUTTON = "Start a new version"
-export const NO_QUESTIONS = "Nothing on this form yet."
+export const NO_QUESTIONS = "Nothing in this packet yet."
 
 /**
  * Shown on a published version instead of the editor.
@@ -177,9 +186,8 @@ export function cardCollectFieldsHelp(people: PeopleWords): string {
  * Optional, and described as what it is: the question works without one,
  * and most of what it asks for is something the client already has.
  */
-export const BLANK_FORM_PICKER_LABEL = "Offer a form to download (optional)"
+export const BLANK_FORM_PICKER_LABEL = "Offer a blank copy to download (optional)"
 export const NO_BLANK_FORM_CHOICE = "Don't offer one"
-export const NO_BLANK_FORMS = "Upload a blank form first, then you can offer it here."
 
 /**
  * Asking a question only of the people it applies to.
