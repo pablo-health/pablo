@@ -83,8 +83,20 @@ jobs:
         working-directory: frontend
         run: npx playwright install --with-deps chromium
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Build the stack
+        uses: docker/bake-action@018cb6412ab401ebaa809aa5f85966b74628600f # v7
+        with:
+          source: .
+          files: |
+            docker-compose.e2e.yml
+            docker-bake.e2e.hcl
+          load: true
+
       - name: Start the stack
-        run: docker compose -f docker-compose.e2e.yml up --build --wait
+        run: docker compose -f docker-compose.e2e.yml up --no-build --wait
 
       - name: Run shard
         working-directory: frontend
@@ -137,8 +149,20 @@ jobs:
         working-directory: frontend
         run: npx playwright install --with-deps chromium
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Build the stack
+        uses: docker/bake-action@018cb6412ab401ebaa809aa5f85966b74628600f # v7
+        with:
+          source: .
+          files: |
+            docker-compose.e2e.yml
+            docker-bake.e2e.hcl
+          load: true
+
       - name: Start the hosted-address stack
-        run: docker compose -f docker-compose.e2e.yml -f docker-compose.e2e-hosted.yml up --build --wait
+        run: docker compose -f docker-compose.e2e.yml -f docker-compose.e2e-hosted.yml up --no-build --wait
 
       - name: Run the hosted-address specs
         working-directory: frontend

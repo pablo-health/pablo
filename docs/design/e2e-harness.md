@@ -136,8 +136,11 @@ Three Playwright shards run concurrently in CI, each with its own Compose
 stack and one Playwright worker. The independent stacks preserve the suite's
 shared-state assumptions while reducing wall-clock time. Hosted-address specs
 run in a fourth isolated lane, and an aggregate job preserves the required
-check name. Each lane uploads its HTML report and traces on failure and tears
-its stack down. The workflow runs nightly on
+check name. Before starting Compose, each lane uses BuildKit to restore and
+update a GitHub Actions cache for every distinct local image. The Bake overlay
+builds shared service images only once and applies every tag Compose expects.
+Each lane uploads its HTML report and traces on failure and tears its stack
+down. The workflow runs nightly on
 `main`, on demand, and on pull requests that change the frontend, the
 backend routes, the compose files, the fake clearinghouse, or
 `frontend/e2e/`. Not on every push: a full-stack run costs minutes and

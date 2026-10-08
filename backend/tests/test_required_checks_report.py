@@ -31,12 +31,14 @@ They should not be the same switch.
 from __future__ import annotations
 
 import pathlib
+import re
 
 import pytest
 import yaml
 
 WORKFLOWS = pathlib.Path(__file__).resolve().parents[2] / ".github" / "workflows"
 E2E = WORKFLOWS / "e2e.yml"
+E2E_BAKE = WORKFLOWS.parents[1] / "docker-bake.e2e.hcl"
 
 
 def _triggers(doc: dict) -> dict:
@@ -96,3 +98,18 @@ def test_the_classifier_ignores_the_beads_export() -> None:
     by tooling and cannot affect lint, types, migrations, the image or a test."""
     script = (WORKFLOWS.parents[1] / "scripts" / "ci_classify_diff.sh").read_text()
     assert r"^\.beads/" in script
+
+
+def test_e2e_builds_with_an_isolated_github_actions_cache(e2e: dict) -> None:
+    """Parallel lanes share per-image cache entries instead of one global scope."""
+    for job_name in ("e2e-shards", "hosted-address"):
+        steps = e2e["jobs"][job_name]["steps"]
+        assert any("docker/setup-buildx-action@" in step.get("uses", "") for step in steps)
+        assert any("docker/bake-action@" in step.get("uses", "") for step in steps)
+        start = next(step for step in steps if step.get("name", "").startswith("Start the"))
+        assert "--no-build" in start["run"]
+
+    bake = E2E_BAKE.read_text()
+    scopes = re.findall(r"cache-to = \[\"type=gha,mode=max,scope=([^\"]+)", bake)
+    assert len(scopes) == len(set(scopes))
+    assert len(scopes) >= 2
