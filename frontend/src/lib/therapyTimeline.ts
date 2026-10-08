@@ -83,36 +83,21 @@ export function nearestTurn(turns: RecordingTurn[], seconds: number, min: number
   return best
 }
 
-export const MDM_LEVELS = ["straightforward", "low", "moderate", "high"] as const
-export type MdmLevel = (typeof MDM_LEVELS)[number]
-
 /**
- * Fewest minutes left for the medical visit before the split is flagged.
+ * Fewer minutes than this left for the medical visit is flagged.
  *
- * A note billing a medical visit and therapy minutes on one date reads as
- * implausible when the therapy leaves little time for the visit's level (a
- * moderate-complexity visit with eight minutes beside the therapy, say).
- * This is a prompt to look again, never a rule: the clinician decides.
+ * Whether the time beside the therapy fits the visit's level is the
+ * clinician's judgment, so no level enters here. This is one floor below
+ * which almost no medical visit happened at all: a prompt to look again,
+ * never a rule.
  */
-export const THIN_REMAINDER_MINUTES: Record<MdmLevel, number> = {
-  straightforward: 5,
-  low: 5,
-  moderate: 10,
-  high: 15,
-}
-
-export const LEVEL_NAME: Record<MdmLevel, string> = {
-  straightforward: "straightforward",
-  low: "low-complexity",
-  moderate: "moderate-complexity",
-  high: "high-complexity",
-}
+export const THIN_REMAINDER_MINUTES = 5
 
 /** Minutes with the client that were not therapy: the medical visit's share. */
 export function remainderMinutes(presentSeconds: number, therapy: number): number {
   return Math.max(Math.floor(presentSeconds / SECONDS_PER_MINUTE) - therapy, 0)
 }
 
-export function isThin(remainder: number, level: MdmLevel | null | undefined): boolean {
-  return level != null && remainder < THIN_REMAINDER_MINUTES[level]
+export function isThin(remainder: number): boolean {
+  return remainder < THIN_REMAINDER_MINUTES
 }

@@ -9,7 +9,6 @@ import { peopleWords } from "@/lib/peopleTerm"
 import type { VisitTimes } from "@/types/visitTimes"
 
 const mockTimes = vi.fn()
-const mockLevel = vi.fn()
 
 vi.mock("@/hooks/usePeopleTerm", () => ({ usePeopleTerm: () => peopleWords("clients") }))
 vi.mock("@/hooks/useVisitTimes", () => ({
@@ -17,7 +16,6 @@ vi.mock("@/hooks/useVisitTimes", () => ({
   useConfirmPsychotherapyWindow: () => ({ mutate: vi.fn(), isPending: false, isError: false }),
 }))
 vi.mock("@/hooks/usePreferences", () => ({ useUserTimeZone: () => "America/New_York" }))
-vi.mock("@/hooks/useMdmReview", () => ({ useMdmLevel: () => mockLevel() }))
 
 function times(overrides: Partial<VisitTimes> = {}): VisitTimes {
   return {
@@ -34,10 +32,7 @@ function times(overrides: Partial<VisitTimes> = {}): VisitTimes {
 }
 
 describe("VisitTimesPanel", () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    mockLevel.mockReturnValue(null)
-  })
+  beforeEach(() => vi.clearAllMocks())
 
   it("shows the visit's start, end and minutes, and when the client left", () => {
     mockTimes.mockReturnValue(times())
@@ -88,8 +83,7 @@ describe("VisitTimesPanel", () => {
     expect(screen.queryByTestId("psychotherapy-window")).not.toBeInTheDocument()
   })
 
-  it("states both durations once the therapy minutes are confirmed, and flags a thin medical visit for the note's level", async () => {
-    mockLevel.mockReturnValue("high")
+  it("states both durations once the therapy minutes are confirmed, and flags a medical visit left under five minutes", async () => {
     mockTimes.mockReturnValue(
       times({
         psychotherapy: {
@@ -119,7 +113,7 @@ describe("VisitTimesPanel", () => {
     )
     await userEvent.click(screen.getByRole("button", { name: "Change" }))
     expect(screen.getByTestId("em-remainder-flag")).toHaveTextContent(
-      "short for a high-complexity visit",
+      "Under 5 minutes left for the medical visit.",
     )
   })
 })

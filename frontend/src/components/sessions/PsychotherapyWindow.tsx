@@ -8,12 +8,11 @@ import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { useConfirmPsychotherapyWindow } from "@/hooks/useVisitTimes"
 import { addOnBand, wholeMinutes } from "@/lib/visitTimes"
 import {
-  LEVEL_NAME,
+  THIN_REMAINDER_MINUTES,
   isThin,
   remainderMinutes,
   therapyMinutes,
   type Labels,
-  type MdmLevel,
 } from "@/lib/therapyTimeline"
 import type {
   ConfirmPsychotherapyWindowRequest,
@@ -28,8 +27,6 @@ export interface PsychotherapyWindowProps {
   startedAt: string | null
   timeZone: string
   readonly?: boolean
-  /** The MDM level chosen for the visit, when there is one, to flag a thin medical visit. */
-  mdmLevel?: MdmLevel | null
 }
 
 /**
@@ -46,7 +43,6 @@ export function PsychotherapyWindow({
   startedAt,
   timeZone,
   readonly,
-  mdmLevel,
 }: PsychotherapyWindowProps) {
   const confirm = useConfirmPsychotherapyWindow(sessionId)
   const people = usePeopleTerm()
@@ -172,10 +168,10 @@ export function PsychotherapyWindow({
           {remainder !== null && !tooLong && (
             <p data-testid="em-remainder" className="text-neutral-600">
               Medical visit: {remainder} min
-              {isThin(remainder, mdmLevel) && mdmLevel && (
+              {isThin(remainder) && (
                 <span data-testid="em-remainder-flag" className="text-amber-700">
                   {" "}
-                  · short for a {LEVEL_NAME[mdmLevel]} visit
+                  · Under {THIN_REMAINDER_MINUTES} minutes left for the medical visit.
                 </span>
               )}
             </p>
