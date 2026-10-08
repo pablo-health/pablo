@@ -143,15 +143,22 @@ export function specFromDraft(draft: NoteTypeDraft): PracticeNoteTypeSpec {
         kind: f.kind,
         ai_hint: f.ai_hint,
       })),
+      // Not edited here, but kept: a copied built-in's review-only section stays out of the note.
+      ...(s.review_only ? { review_only: true } : {}),
     })),
-    inputs: withKeys(draft.inputs, "input").map((i) => ({
-      key: i.key,
-      label: i.label,
-      kind: i.kind,
+    inputs: withKeys(draft.inputs, "input").map((i) => {
       // Edited one per line, so blank lines are dropped here rather than while typing.
-      options: i.kind === "choice" ? i.options.map((o) => o.trim()).filter(Boolean) : [],
-      required: i.required,
-    })),
+      const options = i.kind === "choice" ? i.options.map((o) => o.trim()).filter(Boolean) : []
+      return {
+        key: i.key,
+        label: i.label,
+        kind: i.kind,
+        options,
+        required: i.required,
+        // A default the options no longer offer is dropped rather than refused.
+        ...(i.default && options.includes(i.default) ? { default: i.default } : {}),
+      }
+    }),
   }
 }
 

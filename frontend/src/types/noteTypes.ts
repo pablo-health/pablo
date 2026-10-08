@@ -33,6 +33,11 @@ export interface NoteSectionSchema {
   key: string
   label: string
   fields: NoteFieldSchema[]
+  /**
+   * Drafted for review beside the note (the evidence for the medical
+   * decision making), never shown or printed as part of the note.
+   */
+  review_only?: boolean
 }
 
 export type NoteInputKind = "text" | "choice"
@@ -47,6 +52,8 @@ export interface NoteInputSchema {
   kind: NoteInputKind
   options: string[]
   required: boolean
+  /** The value a note takes when none was chosen. */
+  default?: string | null
 }
 
 export interface NoteTypeSchema {
@@ -107,6 +114,7 @@ export interface PracticeSectionSpec {
   key: string
   label: string
   fields: PracticeFieldSpec[]
+  review_only?: boolean
 }
 
 export interface PracticeInputSpec {
@@ -115,6 +123,7 @@ export interface PracticeInputSpec {
   kind: NoteInputKind
   options: string[]
   required: boolean
+  default?: string | null
 }
 
 /**

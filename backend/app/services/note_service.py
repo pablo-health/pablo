@@ -324,6 +324,19 @@ class NoteService:
         note.updated_at = utc_now()
         return self._notes.update(note, user_id)
 
+    def update_note_inputs(self, note_id: str, note_inputs: dict[str, str], user_id: str) -> Note:
+        """Replace a note's inputs without drafting it again.
+
+        For inputs the draft never reads, such as the medical decision making
+        choices. Refused on a locked note.
+        """
+        note = self.get_note(note_id, user_id)
+        if note.finalized_at is not None:
+            raise NoteLockedError(f"Note {note_id} is signed and locked", {"note_id": note_id})
+        note.note_inputs = note_inputs
+        note.updated_at = utc_now()
+        return self._notes.update(note, user_id)
+
     def confirm_psychotherapy_window(
         self,
         note_id: str,

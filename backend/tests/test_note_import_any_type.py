@@ -41,14 +41,18 @@ _RELOCATED: dict[str, Any] = {
     },
     "subjective": {
         "chief_complaint": "The new dose is helping but I still wake up at 4 a.m.",
-        "interval_history": "Since the last visit in July, Jordan reports mood is steadier "
-        "and they have returned to full-time work. Early-morning waking persists three to "
-        "four nights a week. No panic attacks in the past month.",
+        "depression": "Since the last visit in July, Jordan reports mood is steadier. Energy fair.",
+        "anxiety": "No panic attacks in the past month.",
+        "insomnia_sleep": "Early-morning waking persists three to four nights a week.",
+        "inattention_hyperactivity": "",
+        "mania": "Denies manic symptoms.",
+        "appetite_eating": "Appetite normal.",
+        "onset_duration_course": "",
+        "recent_stressors": "",
+        "functioning": "they have returned to full-time work.",
         "adherence": "Taking sertraline daily as prescribed; missed two doses while traveling.",
         "side_effects": "Mild nausea in the first week after the increase, now resolved. "
         "Denies sexual side effects.",
-        "psychiatric_ros": "Denies manic symptoms, psychosis, or obsessive symptoms. "
-        "Appetite normal. Energy fair.",
     },
     "substance_use": {
         "alcohol": "two glasses of wine per week.",
@@ -103,6 +107,8 @@ _RELOCATED: dict[str, Any] = {
         ],
         "pdmp": "",
         "informed_consent": "",
+        "education_provided": [],
+        "lifestyle_counseling": [],
         "labs": "",
         "referrals_coordination": "",
         "follow_up": "Return in 6 weeks, sooner if needed.",

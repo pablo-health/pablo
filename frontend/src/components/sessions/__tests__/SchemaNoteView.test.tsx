@@ -167,6 +167,38 @@ describe("catalog-driven note view", () => {
     })
   })
 
+  it("leaves a review-only section out of the note and keeps it through an edit", async () => {
+    const withReview: NoteTypeSchema = {
+      ...DAP,
+      sections: [
+        ...DAP.sections,
+        {
+          key: "mdm",
+          label: "Medical decision making",
+          review_only: true,
+          fields: [{ key: "problems_addressed", label: "Problems addressed", kind: "text", ai_hint: "" }],
+        },
+      ],
+    }
+    vi.mocked(getNoteType).mockResolvedValue(withReview)
+    const onSave = vi.fn<(content: NoteContent) => void>()
+    const content = { ...DAP_CONTENT, mdm: { problems_addressed: "Anxiety, worse." } }
+    render(<NoteViewer note={createMockNote({ note_type: "dap", content })} onSave={onSave} />, {
+      wrapper,
+    })
+
+    expect(await screen.findByRole("heading", { name: "Plan" })).toBeInTheDocument()
+    expect(screen.queryByRole("heading", { name: "Medical decision making" })).not.toBeInTheDocument()
+    expect(screen.queryByText("Anxiety, worse.")).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: /edit/i }))
+    expect(screen.queryByLabelText("Problems addressed")).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }))
+    expect(noteContentToJson(onSave.mock.calls[0][0]).mdm).toEqual({
+      problems_addressed: "Anxiety, worse.",
+    })
+  })
+
   it("opens a blank note straight in the editor", async () => {
     vi.mocked(getNoteType).mockResolvedValue(DAP)
     const onSave = vi.fn<(content: NoteContent) => void>()

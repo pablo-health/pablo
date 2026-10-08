@@ -52,7 +52,16 @@ THERAPY_DRAFT: dict[str, dict[str, Any]] = {
             "to receive care by telehealth."
         ),
     },
-    "subjective": {"chief_complaint": '"The worry has been bad."'},
+    "subjective": {
+        "chief_complaint": '"The worry has been bad."',
+        "anxiety": "Worry worse over the last two weeks, lying in bed going over work.",
+        "inattention_hyperactivity": "Focus better on Adderall; finishing reports at work.",
+        "insomnia_sleep": "Sleep disrupted by worry, not by the medication.",
+        "appetite_eating": "Appetite a little lower at lunch; eats a big dinner.",
+        "mania": "Denies decreased need for sleep, racing thoughts or spending.",
+        "onset_duration_course": "Worry worse for the last couple of weeks.",
+        "functioning": "Getting through reports at work.",
+    },
     "substance_use": {
         "alcohol": "One to two drinks on weekends. (asked this visit: no change)",
         "tobacco_nicotine": 'Not recorded (stated this visit: "denies.")',
@@ -92,6 +101,10 @@ THERAPY_DRAFT: dict[str, dict[str, Any]] = {
             "State prescription monitoring program (PDMP) reviewed on 2026-03-12: "
             "no early fills, no other prescribers."
         ),
+        "education_provided": [
+            "Sertraline increase may cause stomach upset or jitteriness the first week.",
+            "It can take a few weeks to see the change.",
+        ],
     },
     "psychotherapy": {
         "psychotherapy_time": "10:14 to 10:55, 41 minutes.",
@@ -147,7 +160,14 @@ MEDICATION_ONLY_DRAFT: dict[str, dict[str, Any]] = {
         "allergies": "Not recorded",
     },
     "assessment": {"diagnoses": ["Depression, in remission"]},
-    "plan": {"pdmp": ""},
+    "subjective": {
+        "depression": "Mood good on bupropion.",
+        "insomnia_sleep": "Denies trouble sleeping.",
+        "inattention_hyperactivity": "Not discussed.",
+        "mania": "Not discussed.",
+        "appetite_eating": "Not discussed.",
+    },
+    "plan": {"pdmp": "", "education_provided": [], "lifestyle_counseling": []},
     "psychotherapy": {
         "psychotherapy_time": "",
         "issues_addressed": "",
@@ -230,9 +250,9 @@ def test_a_medication_the_client_reports_may_follow_the_charts_list() -> None:
             "Session started at 10:05; return in four weeks.",
             "codes_only_dictated",
         ),
-        ("subjective", "interval_history", "Visit from 10:00 to 10:55.", "codes_only_dictated"),
+        ("subjective", "recent_stressors", "Visit from 10:00 to 10:55.", "codes_only_dictated"),
         # A procedure code anywhere in the note.
-        ("subjective", "interval_history", "Discussed 90837 eligibility.", "codes_only_dictated"),
+        ("subjective", "recent_stressors", "Discussed 90837 eligibility.", "codes_only_dictated"),
         # A dictated code or time left out.
         ("encounter", "visit_details", "E/M 99214.", "codes_only_dictated"),
         # The visit details restate the psychotherapy time, even as dictated.
@@ -355,10 +375,11 @@ def test_a_medication_the_client_reports_may_follow_the_charts_list() -> None:
         # Nothing on the chart, but the draft fills it from the visit.
         ("social_history", "relationships", "Supportive partner.", "history_from_chart"),
         # The chart's text kept, but marked as changed when nothing was.
+        # (Being at home for a telehealth visit says nothing about where the client lives.)
         (
             "social_history",
-            "work_school",
-            'Financial analyst, full time, since 2022. (stated this visit: "quarterly review")',
+            "living_situation",
+            'Not recorded (stated this visit: "I\'m at home")',
             "suffix_only_where_stated",
         ),
         # The increase left out of the plan.
@@ -370,6 +391,11 @@ def test_a_medication_the_client_reports_may_follow_the_charts_list() -> None:
         ),
         # The chart's "Not recorded" dropped.
         ("medications", "allergies", "", "allergies_never_dropped"),
+        # The worry the visit was about, left out of its domain.
+        ("subjective", "anxiety", "Not discussed.", "hpi_by_domain"),
+        ("subjective", "anxiety", "Mood okay.", "hpi_by_domain"),
+        # What the clinician explained about the increase, lost.
+        ("plan", "education_provided", [], "counseling_only_as_stated"),
     ],
 )
 def test_therapy_draft_failures_are_caught(section: str, key: str, value: Any, check: str) -> None:
@@ -425,6 +451,25 @@ def test_therapy_draft_failures_are_caught(section: str, key: str, value: Any, c
             ["Bupropion XL 150 mg, every morning", "Sertraline 50 mg"],
             "medications_from_chart",
         ),
+        # A domain that never came up, written as if it had, or as a denial.
+        ("subjective", "mania", "Denies manic symptoms.", "hpi_by_domain"),
+        ("subjective", "appetite_eating", "", "hpi_by_domain"),
+        # A domain the visit covered, left as not discussed.
+        ("subjective", "insomnia_sleep", "Not discussed.", "hpi_by_domain"),
+        # Nothing was taught or advised, so nothing is recorded.
+        (
+            "plan",
+            "education_provided",
+            ["Reviewed bupropion side effects."],
+            "counseling_only_as_stated",
+        ),
+        (
+            "plan",
+            "lifestyle_counseling",
+            ["Encouraged regular exercise."],
+            "counseling_only_as_stated",
+        ),
+        ("plan", "education_provided", ["None."], "counseling_only_as_stated"),
     ],
 )
 def test_medication_only_draft_failures_are_caught(

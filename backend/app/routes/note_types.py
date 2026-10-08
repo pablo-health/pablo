@@ -91,6 +91,14 @@ class NoteSectionSchema(BaseModel):
     key: str
     label: str
     fields: list[NoteFieldSchema]
+    review_only: bool = Field(
+        default=False,
+        exclude_if=lambda value: value is False,
+        description=(
+            "Drafted for review beside the note; never shown or printed as part of it. "
+            "Left out when false, as a spec stores it."
+        ),
+    )
 
     @classmethod
     def from_def(cls, section: NoteSectionDef) -> NoteSectionSchema:
@@ -98,6 +106,7 @@ class NoteSectionSchema(BaseModel):
             key=section.key,
             label=section.label,
             fields=[NoteFieldSchema.from_def(f) for f in section.fields],
+            review_only=section.review_only,
         )
 
 
@@ -109,6 +118,11 @@ class NoteInputSchema(BaseModel):
     kind: str = Field(description="'text' or 'choice'.")
     options: list[str] = Field(default_factory=list)
     required: bool = False
+    default: str | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description="The value a note takes when none was chosen. Left out when there is none.",
+    )
 
     @classmethod
     def from_def(cls, input_def: NoteInputDef) -> NoteInputSchema:
@@ -118,6 +132,7 @@ class NoteInputSchema(BaseModel):
             kind=input_def.kind,
             options=list(input_def.options),
             required=input_def.required,
+            default=input_def.default,
         )
 
 

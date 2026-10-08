@@ -23,6 +23,14 @@ _MIN_CHOICE_OPTIONS = 2
 _INPUT_PLACEHOLDER = re.compile(r"\{inputs\.([a-z][a-z0-9_]*)\}")
 
 
+def _omit_when_none(value: object) -> bool:
+    return value is None
+
+
+def _omit_when_false(value: object) -> bool:
+    return value is False
+
+
 class PracticeFieldSpec(BaseModel):
     key: str = Field(pattern=_PART_KEY)
     label: str = Field(min_length=1, max_length=80)
@@ -34,6 +42,8 @@ class PracticeSectionSpec(BaseModel):
     key: str = Field(pattern=_PART_KEY)
     label: str = Field(min_length=1, max_length=80)
     fields: list[PracticeFieldSpec] = Field(min_length=1, max_length=40)
+    review_only: bool = Field(default=False, exclude_if=_omit_when_false)
+    """Drafted for the clinician to review beside the note, never part of the note itself."""
 
     @model_validator(mode="after")
     def _unique_field_keys(self) -> Self:
@@ -47,6 +57,8 @@ class PracticeInputSpec(BaseModel):
     kind: Literal["text", "choice"] = "text"
     options: list[str] = Field(default_factory=list, max_length=20)
     required: bool = False
+    default: str | None = Field(default=None, max_length=200, exclude_if=_omit_when_none)
+    """The value a note of this type takes when the clinician has not chosen one."""
 
     @model_validator(mode="after")
     def _options_match_kind(self) -> Self:
@@ -55,6 +67,8 @@ class PracticeInputSpec(BaseModel):
         if self.kind == "text" and self.options:
             raise ValueError(f"input {self.key!r} is free text and takes no options")
         require_unique(self.options, f"options of input {self.key!r}")
+        if self.kind == "choice" and self.default is not None and self.default not in self.options:
+            raise ValueError(f"the default of input {self.key!r} is not one of its options")
         return self
 
 
@@ -127,10 +141,6 @@ class NoteTypePatch(BaseModel):
         return len(self.hide_sections) + len(self.hide_fields)
 
 
-def _omit_when_none(value: object) -> bool:
-    return value is None
-
-
 class PracticeNoteTypeSpec(BaseModel):
     """The stored, practice-authored body of a note type.
 
@@ -142,8 +152,9 @@ class PracticeNoteTypeSpec(BaseModel):
     description: str = Field(default="", max_length=1000)
     system_prompt: str = Field(default="", max_length=20_000)
     user_template: str | None = Field(default=None, max_length=20_000)
-    sections: list[PracticeSectionSpec] = Field(default_factory=list, max_length=20)
-    inputs: list[PracticeInputSpec] = Field(default_factory=list, max_length=10)
+    # Room for a base's own sections and inputs and as many as a patch may add.
+    sections: list[PracticeSectionSpec] = Field(default_factory=list, max_length=40)
+    inputs: list[PracticeInputSpec] = Field(default_factory=list, max_length=20)
     base: str | None = Field(default=None, max_length=30, exclude_if=_omit_when_none)
     patch: NoteTypePatch | None = Field(default=None, exclude_if=_omit_when_none)
 

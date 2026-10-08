@@ -114,6 +114,20 @@ class TestSpecValidation:
                 "at least two options",
             ),
             ({"inputs": [{"key": "a", "label": "A", "options": ["x", "y"]}]}, "takes no options"),
+            (
+                {
+                    "inputs": [
+                        {
+                            "key": "a",
+                            "label": "A",
+                            "kind": "choice",
+                            "options": ["x", "y"],
+                            "default": "z",
+                        }
+                    ]
+                },
+                "default of input 'a' is not one of its options",
+            ),
             ({"sections": []}, "at least one section"),
         ],
     )
