@@ -19,7 +19,6 @@ import {
   DOCUMENT_PICKER_LABEL,
   MEASURE_NEEDS_PERMISSION,
   NO_BLANK_FORM_CHOICE,
-  NO_BLANK_FORMS,
   NO_PUBLISHED_DOCUMENTS,
   cardCollectFieldsHelp,
 } from "./intakeCopy"
@@ -462,31 +461,31 @@ export function ItemConfigForm({
       // What to ask for is the item's own question. What is settable is the
       // paper fallback: a practice that still works from paper can offer
       // its own form to download before asking for the filled-in copy back.
+      // With no blank copies on file there is nothing to offer, so the
+      // setting stays out of the way rather than pointing at an upload this
+      // screen doesn't have.
+      if (blankForms.length === 0) return null
       return (
         <div>
           <Label htmlFor={`${idPrefix}-blank-form`}>{BLANK_FORM_PICKER_LABEL}</Label>
-          {blankForms.length === 0 ? (
-            <p className="text-[12.5px] text-muted-foreground">{NO_BLANK_FORMS}</p>
-          ) : (
-            <Select
-              value={text(config, "blank_form_id") || NO_BLANK_FORM}
-              onValueChange={(value) =>
-                set("blank_form_id", value === NO_BLANK_FORM ? undefined : value)
-              }
-            >
-              <SelectTrigger id={`${idPrefix}-blank-form`} aria-label={BLANK_FORM_PICKER_LABEL}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NO_BLANK_FORM}>{NO_BLANK_FORM_CHOICE}</SelectItem>
-                {blankForms.map((form) => (
-                  <SelectItem key={form.id} value={form.id}>
-                    {form.title}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
+          <Select
+            value={text(config, "blank_form_id") || NO_BLANK_FORM}
+            onValueChange={(value) =>
+              set("blank_form_id", value === NO_BLANK_FORM ? undefined : value)
+            }
+          >
+            <SelectTrigger id={`${idPrefix}-blank-form`} aria-label={BLANK_FORM_PICKER_LABEL}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_BLANK_FORM}>{NO_BLANK_FORM_CHOICE}</SelectItem>
+              {blankForms.map((form) => (
+                <SelectItem key={form.id} value={form.id}>
+                  {form.title}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       )
 

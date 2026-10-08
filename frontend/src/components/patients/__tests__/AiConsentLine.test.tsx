@@ -202,7 +202,7 @@ describe("AiConsentLine", () => {
     const items = screen.getByTestId("ai-consent-history").querySelectorAll("li")
     expect(items).toHaveLength(2)
     expect(items[0]).toHaveTextContent("Declined Nov 2, 2026")
-    expect(items[0]).toHaveTextContent("On the intake form")
+    expect(items[0]).toHaveTextContent("On their intake packet")
     expect(items[1]).toHaveTextContent("Agreed Oct 6, 2026")
     expect(items[1]).toHaveTextContent("Recorded by Dr. Rivera")
   })

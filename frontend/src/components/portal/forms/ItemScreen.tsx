@@ -144,6 +144,9 @@ function PartHeader({ place }: { place: PartPlace }) {
       )}
       {(title !== null || question !== null) && (
         <p className="text-sm font-medium text-neutral-700">
+          {title !== null && place.verb !== null && (
+            <span data-testid="forms-part-verb">{`${place.verb}: `}</span>
+          )}
           {title !== null && <span data-testid="forms-part-title">{title}</span>}
           {title !== null && question !== null && (
             <span aria-hidden="true" className="text-neutral-400">

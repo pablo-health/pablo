@@ -89,7 +89,7 @@ function HistoryList({ history }: { history: AiConsentEntry[] }) {
               </span>
               <span className="text-neutral-500">
                 {entry.source === "intake_form"
-                  ? "On the intake form"
+                  ? "On their intake packet"
                   : entry.recorded_by_name
                     ? `Recorded by ${entry.recorded_by_name}`
                     : null}

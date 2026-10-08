@@ -36,7 +36,7 @@ export function NewClientNextStep({
             <DialogTitle>What should {patient.first_name} do next?</DialogTitle>
             <DialogDescription>
               {patient.first_name} {patient.last_name} is added.{" "}
-              {portalNote ?? "Choose forms to send and whether to invite them to the portal."}
+              {portalNote ?? "Choose packets to send and whether to invite them to the portal."}
             </DialogDescription>
           </DialogHeader>
         }

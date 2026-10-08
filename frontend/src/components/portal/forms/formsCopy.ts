@@ -103,6 +103,14 @@ export function partPosition(index: number, total: number): string {
  */
 export const OPENING_PART_TITLE = "About you"
 
+/** What a part asks them to do, shown before its name: "Read and sign: Informed consent". */
+export const PART_VERBS = {
+  sign: "Read and sign",
+  answer: "Answer",
+  photo: "Send a photo",
+  file: "Send a file",
+} as const
+
 /** Navigation through one form. */
 export const BACK = "Back"
 export const CONTINUE = "Continue"
