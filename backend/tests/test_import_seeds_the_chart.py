@@ -25,12 +25,13 @@ from app.chart_proposals.drafting import (
     document_segments,
     propose_from_document,
 )
+from app.chart_proposals.families import MEDICATIONS
 from app.chart_proposals.models import RECORDED_THIS_VISIT
 from app.chart_proposals.service import ChartProposalService
 from app.main import app
 from app.models import Note, Patient
 from app.notes import NoteTypeDefinition, NoteTypeRegistry, register_builtin_note_types
-from app.notes.chart_context import ChartContext, ChartHistoryField
+from app.notes.chart_context import ChartContext, ChartHistoryField, ChartMedication
 from app.notes.practice_types import RepositoryPracticeNoteTypeSource
 from app.notes.spec_templates import TEMPLATES_DIR
 from app.repositories import (
@@ -163,6 +164,50 @@ def test_the_plan_wins_over_a_carried_block_and_the_conflict_is_cited() -> None:
     assert "cite the paragraph that disagrees as well" in prompts[0]
     # Medications are the medication list's; the prompt keeps them out of history fields.
     assert "are kept on the chart's medication list, not in these fields" in prompts[0]
+
+
+P_CARRIED_MEDICATIONS, P_PLAN = 2, 5
+MEDICATION_REPLY = "medication_changes"
+BUSPIRONE = ChartContext(medications=(ChartMedication("Buspirone", "10 mg", "twice daily"),))
+
+
+def _medication_change(ids: list[Any]) -> dict[str, Any]:
+    return {
+        "action": "change",
+        "drug_name": "buspirone",
+        "dose": "15 mg",
+        "what_changed": "Dose increased to 15 mg",
+        "evidence_segment_ids": ids,
+    }
+
+
+def test_a_medication_change_follows_the_plan_and_cites_the_carried_list() -> None:
+    prompts: list[str] = []
+
+    def complete(system: str, user: str, schema: dict[str, Any]) -> dict[str, Any]:
+        prompts.append(user)
+        change = _medication_change([P_PLAN, P_CARRIED_MEDICATIONS])
+        return {"proposals": [], MEDICATION_REPLY: [change]}
+
+    (proposal,) = propose_from_document(complete, BUSPIRONE, DOCUMENT).proposals
+
+    assert (proposal.field_key, proposal.item_key, proposal.origin) == (
+        MEDICATIONS,
+        "Buspirone",
+        "document",
+    )
+    assert proposal.change is not None
+    assert (proposal.change.action, proposal.change.dose) == ("change", "15 mg")
+    assert [e.text for e in proposal.evidence] == [CARRIED_MEDICATIONS, PLAN]
+    assert "the document's plan is the clinician's decision" in prompts[0]
+    assert "only a carried block lists" in prompts[0]
+
+
+def test_a_medication_citing_a_paragraph_the_document_lacks_is_dropped() -> None:
+    def complete(_system: str, _user: str, _schema: dict[str, Any]) -> dict[str, Any]:
+        return {"proposals": [], MEDICATION_REPLY: [_medication_change([P_PLAN, 99])]}
+
+    assert propose_from_document(complete, BUSPIRONE, DOCUMENT).proposals == []
 
 
 def test_a_failed_call_proposes_nothing_and_says_so() -> None:

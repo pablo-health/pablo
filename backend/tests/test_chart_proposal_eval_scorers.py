@@ -74,19 +74,40 @@ def test_evidence_from_the_wrong_lines_fails() -> None:
 LAID_OFF = "Worked full time as a dental hygienist until August; laid off."
 
 
+def _plan() -> list[DraftedProposal]:
+    """What the stale-block document's plan proposes for the medication list."""
+    return [
+        _medication("change", "sertraline", "sertraline 100 mg, once daily", 2, 5),
+        _medication("start", "buspirone", "buspirone 5 mg, twice daily", 5),
+    ]
+
+
 def test_a_proposal_from_a_stale_document_must_cite_the_paragraph_that_disagrees() -> None:
     both = _proposal("work_school", LAID_OFF, 1, 3)
-    assert not any(grade([both], CARRIED_BLOCK_IS_STALE).values())
+    assert not any(grade([both, *_plan()], CARRIED_BLOCK_IS_STALE).values())
     plan_only = _proposal("work_school", LAID_OFF, 3)
-    assert grade([plan_only], CARRIED_BLOCK_IS_STALE)["cites_the_lines_that_say_it"] == [
+    assert grade([plan_only, *_plan()], CARRIED_BLOCK_IS_STALE)["cites_the_lines_that_say_it"] == [
         "work_school does not cite 1, which disagrees"
     ]
+    sertraline_plan_only = _medication("change", "sertraline", "sertraline 100 mg", 5)
+    problems = grade([both, sertraline_plan_only, _plan()[1]], CARRIED_BLOCK_IS_STALE)
+    assert problems["cites_the_lines_that_say_it"] == [
+        "medications: sertraline does not cite 2, which disagrees"
+    ]
+
+
+def test_a_medication_only_a_stale_block_lists_is_not_proposed() -> None:
+    both = _proposal("work_school", LAID_OFF, 1, 3)
+    trazodone = _medication("add", "Trazodone", "Trazodone 50 mg, at bedtime", 2)
+    assert grade([both, *_plan(), trazodone], CARRIED_BLOCK_IS_STALE)[
+        "exactly_the_expected_fields"
+    ] == ["unexpected proposal for medications: trazodone"]
 
 
 def test_a_medication_in_a_history_field_fails() -> None:
     trials = _proposal("medication_trials", "Buspirone 15 mg twice daily.", 5)
     work = _proposal("work_school", LAID_OFF, 1, 3)
-    problems = grade([work, trials], CARRIED_BLOCK_IS_STALE)
+    problems = grade([work, trials, *_plan()], CARRIED_BLOCK_IS_STALE)
     assert problems["says_nothing_it_never_should"] == ["medication_trials says 'buspirone'"]
 
 
@@ -96,6 +117,8 @@ def test_a_field_either_reading_allows_may_be_proposed_or_not() -> None:
         _proposal("tobacco_nicotine", "None.", 6),
         _proposal("work_school", "Returned to full-time work.", 2),
         replace(_proposal("allergies", "rash", 8), item_key="Penicillin"),
+        _medication("add", "Sertraline", "Sertraline 100 mg, daily", 13),
+        _medication("add", "Hydroxyzine", "Hydroxyzine 25 mg, at bedtime as needed", 7),
     ]
     assert not any(grade(expected, TRANSFER_NOTE).values())
     sister = _proposal("supports", "Close relationship with sister.", 9)

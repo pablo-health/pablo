@@ -4,15 +4,18 @@
  * A client arriving from another records system: their last note is imported
  * as the practice's follow-up type, and signing it fills their empty chart.
  * The note shows which fields were found in the document; at sign it
- * proposes each history field it states, and the document's own paragraph
- * where one says what changed; accepting them all fills the chart, and the
- * next follow-up prints it.
+ * proposes each history field it states, the document's own paragraph where
+ * one says what changed, and the medication its plan starts; accepting them
+ * all fills the chart, and the next follow-up prints it.
  *
  * The stack reads imports through its stand-in (scripts/fake_llm.py): the
  * parse relocates each "Label: text" line into the field of that name, and
  * the proposal call answers a numbered "Client: Update on <key>: <text>"
- * paragraph with a proposal for that field citing it. Its drafts fill a
- * field whose key is a chart-history key with the chart's text.
+ * paragraph with a proposal for that field citing it, and a numbered
+ * "Clinician: Medication <action>: <name>; <dose>; <frequency>" paragraph
+ * with that medication change. Its drafts fill a field whose key is a
+ * chart-history key with the chart's text, and the current medications
+ * field with the chart's list.
  */
 
 import { randomBytes } from "node:crypto"
@@ -58,6 +61,7 @@ test("an imported note fills an empty chart when it is signed, and the next foll
       "Relationships: Married, two children.",
       "Work school: Teaches fourth grade.",
       "Client: Update on supports: Sister and a neighbor.",
+      "Clinician: Medication start: buspirone; 5 mg; twice daily",
       "Follow up: Return in 6 weeks.",
     ].join("\n\n")
 
@@ -99,14 +103,19 @@ test("an imported note fills an empty chart when it is signed, and the next foll
       name: "Social history and supports: Relationships",
     })
     await expect(relationships).toContainText("Recorded this visit")
+    // The medication the document's plan starts, citing the plan's paragraph.
+    const buspirone = sign.getByRole("listitem", { name: "Medications: Start buspirone" })
+    await expect(buspirone).toContainText("buspirone 5 mg, twice daily")
+    await expect(buspirone).toContainText("Clinician: Medication start: buspirone")
     const rows = sign.getByTestId("chart-proposal")
-    await expect(rows).toHaveCount(3)
+    await expect(rows).toHaveCount(4)
     for (const name of ["Relationships", "Work or school", "Supports"]) {
       await sign
         .getByRole("listitem", { name: `Social history and supports: ${name}` })
         .getByRole("button", { name: "Accept" })
         .click()
     }
+    await buspirone.getByRole("button", { name: "Accept" }).click()
     await sign.getByRole("button", { name: "Sign and lock" }).click()
     await expect
       .poll(async () => (await api.get<Session>(`/api/sessions/${session.id}`)).status)
@@ -115,6 +124,10 @@ test("an imported note fills an empty chart when it is signed, and the next foll
     expect(await historyText(api, patient.id, "relationships")).toBe("Married, two children.")
     expect(await historyText(api, patient.id, "work_school")).toBe("Teaches fourth grade.")
     expect(await historyText(api, patient.id, "supports")).toBe("Sister and a neighbor.")
+    await page.goto(`/dashboard/patients/${patient.id}?tab=medications`)
+    const started = page.getByRole("listitem").filter({ hasText: "buspirone" })
+    await expect(started).toContainText("5 mg, twice daily")
+    await expect(started).toContainText("Active")
 
     // The next follow-up is drafted against the chart the import filled.
     const startAt = new Date(Date.now() - 2 * 60 * 60 * 1000)
@@ -146,6 +159,7 @@ test("an imported note fills an empty chart when it is signed, and the next foll
     for (const text of ["Married, two children.", "Teaches fourth grade.", "Sister and a neighbor."]) {
       await expect(followUp.getByText(text, { exact: true })).toBeVisible()
     }
+    await expect(followUp.getByText(/buspirone 5 mg/)).toBeVisible()
   } finally {
     for (const id of appointments) await api.delete(`/api/appointments/${id}`)
     await api.request("DELETE", `/api/note-types/custom/${slug}`)
