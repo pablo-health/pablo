@@ -151,7 +151,9 @@ test.describe("visit minutes", () => {
       await times.getByRole("group", { name: /^Label / }).getByRole("button", { name: "Therapy" }).click()
       await expect(runs).toHaveCount(4)
       await expect(preview).toHaveText("39 therapy minutes of 45 · 38–52 minutes")
+      // Six minutes is above the five-minute floor: shown, not flagged.
       await expect(times.getByTestId("em-remainder")).toHaveText("Medical visit: 6 min")
+      await expect(times.getByTestId("em-remainder-flag")).toHaveCount(0)
       await times.getByRole("button", { name: "Confirm" }).click()
       await expect(confirmed).toHaveText(/^\d{1,2}:\d{2} [AP]M to \d{1,2}:\d{2} [AP]M, 39 minutes$/)
       await expect(times.getByTestId("add-on-band")).toHaveText("38–52 minutes")

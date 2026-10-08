@@ -12,7 +12,6 @@ import userEvent from "@testing-library/user-event"
 
 import { PsychotherapyWindow } from "../PsychotherapyWindow"
 import { peopleWords } from "@/lib/peopleTerm"
-import type { MdmLevel } from "@/lib/therapyTimeline"
 import type { PsychotherapyWindow as Window, RecordingTurn, TurnLabel } from "@/types/visitTimes"
 
 const mutate = vi.fn()
@@ -63,7 +62,7 @@ function window(overrides: Partial<Window> = {}): Window {
   }
 }
 
-function renderWindow(w: Window, { readonly = false, mdmLevel = null as MdmLevel | null } = {}) {
+function renderWindow(w: Window, { readonly = false } = {}) {
   return render(
     <PsychotherapyWindow
       sessionId="s1"
@@ -71,7 +70,6 @@ function renderWindow(w: Window, { readonly = false, mdmLevel = null as MdmLevel
       startedAt={STARTED}
       timeZone={TZ}
       readonly={readonly}
-      mdmLevel={mdmLevel}
     />,
   )
 }
@@ -142,20 +140,21 @@ describe("PsychotherapyWindow", () => {
     expect(screen.getByRole("slider", { name: "Boundary at 10:30 AM" })).toBeInTheDocument()
   })
 
-  it("flags a thin medical visit for the level chosen, without blocking", () => {
+  it("flags under five minutes left for the medical visit, without blocking", () => {
     const allTherapy = TURNS.map((t) => ({ ...t, label: "therapy" as const }))
-    renderWindow(window({ turns: allTherapy }), { mdmLevel: "moderate" })
+    renderWindow(window({ turns: allTherapy }))
 
     expect(screen.getByTestId("em-remainder")).toHaveTextContent("Medical visit: 0 min")
     expect(screen.getByTestId("em-remainder-flag")).toHaveTextContent(
-      "short for a moderate-complexity visit",
+      "Under 5 minutes left for the medical visit.",
     )
     expect(screen.getByRole("button", { name: "Confirm" })).toBeEnabled()
   })
 
-  it("does not flag a medical visit with room for its level", () => {
-    renderWindow(window(), { mdmLevel: "moderate" })
+  it("shows the medical visit's minutes without a flag from five minutes up", () => {
+    renderWindow(window())
 
+    expect(screen.getByTestId("em-remainder")).toHaveTextContent("Medical visit: 16 min")
     expect(screen.queryByTestId("em-remainder-flag")).not.toBeInTheDocument()
   })
 

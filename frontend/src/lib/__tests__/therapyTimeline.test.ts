@@ -75,8 +75,8 @@ describe("therapy timeline", () => {
   it("leaves the rest of the time with the client to the medical visit, and flags it when thin", () => {
     expect(remainderMinutes(50 * 60, 34)).toBe(16)
     expect(remainderMinutes(20 * 60, 34)).toBe(0)
-    expect(isThin(8, "moderate")).toBe(true)
-    expect(isThin(10, "moderate")).toBe(false)
-    expect(isThin(0, null)).toBe(false)
+    expect(isThin(4)).toBe(true)
+    expect(isThin(5)).toBe(false)
+    expect(isThin(16)).toBe(false)
   })
 })

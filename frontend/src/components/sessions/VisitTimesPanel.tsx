@@ -4,9 +4,7 @@
 
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { useVisitTimes } from "@/hooks/useVisitTimes"
-import { useMdmLevel } from "@/hooks/useMdmReview"
 import { useUserTimeZone } from "@/hooks/usePreferences"
-import type { Note } from "@/types/notes"
 import { clientPresentLineText, durationsLineText, visitLineText } from "@/lib/visitTimes"
 import { PsychotherapyWindow } from "./PsychotherapyWindow"
 
@@ -24,14 +22,10 @@ import { PsychotherapyWindow } from "./PsychotherapyWindow"
 export function VisitTimesPanel({
   sessionId,
   readonly,
-  note,
 }: {
   sessionId: string
   readonly?: boolean
-  /** The session's note: its chosen MDM level flags a thin medical visit. */
-  note?: Note | null
 }) {
-  const mdmLevel = useMdmLevel(note)
   const timeZone = useUserTimeZone()
   const people = usePeopleTerm()
   const { data: times } = useVisitTimes(sessionId)
@@ -73,7 +67,6 @@ export function VisitTimesPanel({
           startedAt={times.recording_started_at}
           timeZone={timeZone}
           readonly={readonly}
-          mdmLevel={mdmLevel}
         />
       )}
       {times.total_with_documentation_minutes !== null && (
