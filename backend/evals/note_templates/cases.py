@@ -542,6 +542,9 @@ FOLLOW_UP_INTERLEAVED = TemplateCase(
         codes=("99214", "90833"),
         telehealth=TELEHEALTH_LOCATIONS,
         diagnoses=(Diagnosis(None, ("depress",)),),
+        # The chart is empty, and the visit states the sertraline the client
+        # takes and the sister they called: marking either is allowed.
+        may_state=("medications.current_medications", "social_history.relationships"),
     ),
 )
 
@@ -567,6 +570,13 @@ FOLLOW_UP_INTERLEAVED_DICTATED = TemplateCase(
         minutes=("30",),
         telehealth=TELEHEALTH_LOCATIONS,
         diagnoses=(Diagnosis(None, ("panic",)),),
+        # The chart is empty, and the visit states the two medications, the
+        # panic disorder and the panic at work: marking any of them is allowed.
+        may_state=(
+            "medications.current_medications",
+            "psychiatric_history.prior_diagnoses",
+            "social_history.work_school",
+        ),
     ),
 )
 
