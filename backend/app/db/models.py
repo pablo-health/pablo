@@ -270,9 +270,10 @@ class NoteRow(Base):
     # Values the clinician supplied for the note type's declared inputs,
     # kept so generation sees the same context every time it runs.
     note_inputs: Mapped[dict | None] = mapped_column(JSONB)
-    # The visit's psychotherapy window: the start the draft proposed and the
-    # one the clinician confirmed (see app.notes.visit_times). Kept apart from
-    # content so a redraft keeps the confirmation.
+    # The visit's psychotherapy time: what the draft proposed (the time the
+    # clinician dictated, a label per turn) and what the clinician confirmed
+    # (see app.notes.visit_times). Kept apart from content so a redraft keeps
+    # the confirmation.
     psychotherapy_window: Mapped[dict | None] = mapped_column(JSONB)
     # AI-generated and clinician-edited note bodies. Shape varies by
     # note_type; the registry owns validation. Mirrors the existing
@@ -1859,6 +1860,70 @@ class PatientProblemRow(Base):
             "status IN ('active', 'rule_out', 'resolved')",
             name="ck_patient_problems_status",
         ),
+    )
+
+
+class PatientChartHistoryRow(Base):
+    """One chart-history field's current value for a client (``app.chart_history``).
+
+    One row per patient per ``field_key``; the keys are a constant in
+    ``app.chart_history.fields``, so a new field needs no migration. ``text``
+    is NULL once a value is removed. ``source_note_id`` is the note the value
+    was accepted from, when it was. The value a write replaces goes to
+    ``patient_chart_history_revisions``.
+
+    Access is governed by ``has_patient_access``, like ``patient_problems``.
+    """
+
+    __tablename__ = "patient_chart_history"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    field_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    text: Mapped[str | None] = mapped_column(Text)
+    source_note_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("notes.id", ondelete="SET NULL")
+    )
+    updated_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("patient_id", "field_key", name="uq_patient_chart_history_field"),
+    )
+
+
+class PatientChartHistoryRevisionRow(Base):
+    """A value a chart-history field held, appended when a write replaced it.
+
+    ``written_*`` say who recorded the value and when; ``replaced_*`` who
+    changed or removed it and when, so the chart's text on any date can be
+    read back. Rows are only ever inserted. Access as ``patient_chart_history``.
+    """
+
+    __tablename__ = "patient_chart_history_revisions"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    field_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    text: Mapped[str | None] = mapped_column(Text)
+    source_note_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("notes.id", ondelete="SET NULL")
+    )
+    written_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    written_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    replaced_by: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    replaced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_patient_chart_history_revisions_patient_field", "patient_id", "field_key"),
     )
 
 

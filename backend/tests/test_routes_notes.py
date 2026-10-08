@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from app.chart_history.service import ChartHistoryService
 from app.main import app
 from app.medications.schemas import CreateMedicationRequest
 from app.medications.service import MedicationService
@@ -27,6 +28,7 @@ from app.notes.chart_context import ChartMedication
 from app.problems.schemas import AddProblemRequest
 from app.problems.service import ProblemService
 from app.repositories import (
+    InMemoryChartHistoryRepository,
     InMemoryMedicationRepository,
     InMemoryNotesRepository,
     InMemoryPatientProblemRepository,
@@ -482,6 +484,10 @@ class TestGenerateStandaloneNoteJob:
             mock_user_id,
             AddProblemRequest(label="Generalized anxiety disorder", icd10_code="F41.1"),
         )
+        history = InMemoryChartHistoryRepository()
+        ChartHistoryService(history).set(
+            patient.id, "trauma_history", mock_user_id, "Denies a history of trauma."
+        )
         medications = InMemoryMedicationRepository()
         medications.grant_access(patient.id, mock_user_id)
         medication_service = MedicationService(medications)
@@ -512,6 +518,7 @@ class TestGenerateStandaloneNoteJob:
             patient_repo=mock_repo,
             problem_repo=problems,
             medication_repo=medications,
+            history_repo=history,
             note_generation_service=stub,
             user_repo=mock_user_repo,
             audit=audit,
@@ -535,6 +542,9 @@ class TestGenerateStandaloneNoteJob:
         assert chart.medications == (
             ChartMedication(name="Sertraline", dose="100 mg", frequency="every morning"),
         )
+        assert [(h.key, h.text) for h in chart.history] == [
+            ("trauma_history", "Denies a history of trauma.")
+        ]
         audit.log_note_action.assert_called_once()
         assert audit.log_note_action.call_args.kwargs["note_id"] == note.id
 
@@ -572,6 +582,7 @@ class TestGenerateStandaloneNoteJob:
             patient_repo=mock_repo,
             problem_repo=InMemoryPatientProblemRepository(),
             medication_repo=InMemoryMedicationRepository(),
+            history_repo=InMemoryChartHistoryRepository(),
             note_generation_service=_FailingGenerator(),
             user_repo=mock_user_repo,
             audit=MagicMock(),
@@ -620,6 +631,7 @@ class TestGenerateStandaloneNoteJob:
                 patient_repo=mock_repo,
                 problem_repo=InMemoryPatientProblemRepository(),
                 medication_repo=InMemoryMedicationRepository(),
+                history_repo=InMemoryChartHistoryRepository(),
                 note_generation_service=_TransientGenerator(),
                 user_repo=mock_user_repo,
                 audit=MagicMock(),
@@ -635,6 +647,7 @@ class TestGenerateStandaloneNoteJob:
             patient_repo=mock_repo,
             problem_repo=InMemoryPatientProblemRepository(),
             medication_repo=InMemoryMedicationRepository(),
+            history_repo=InMemoryChartHistoryRepository(),
             note_generation_service=_TransientGenerator(),
             user_repo=mock_user_repo,
             audit=MagicMock(),

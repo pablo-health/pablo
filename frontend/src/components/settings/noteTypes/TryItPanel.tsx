@@ -10,17 +10,19 @@ import { SchemaNoteBody } from "@/components/sessions/SchemaNoteView"
 import { usePreviewNoteDraft } from "@/hooks/useNoteTypes"
 import { useSessionList } from "@/hooks/useSessions"
 import { ApiError } from "@/lib/api/client"
-import type { NoteDraftPreviewRequest, PracticeNoteTypeSpec } from "@/types/noteTypes"
+import { isReviewInput } from "@/lib/mdm"
+import type { NoteDraftPreviewRequest, PracticeNoteTypeSpec, SampleVisit } from "@/types/noteTypes"
 import { SegmentedControl, type SegmentedOption } from "../ui"
 import { Labelled, SELECT_CLASS } from "./EditorParts"
 import { definitionFromDraft, fieldErrorsFrom, type FieldErrors } from "./editorModel"
-import type { SampleVisit } from "./templates"
 
 type Source = "sample" | "session" | "paste"
 
 interface TryItPanelProps {
   /** The type as it stands in the editor, saved or not. */
   spec: PracticeNoteTypeSpec
+  /** Its sections and inputs, when `spec` takes them from a base. */
+  shape?: PracticeNoteTypeSpec
   samples: SampleVisit[]
   /** A definition the server refused, by field, for the editor to show. */
   onInvalid: (errors: FieldErrors) => void
@@ -31,12 +33,16 @@ interface TryItPanelProps {
  * clinician's recorded sessions, or pasted text. The preview route writes
  * nothing, so this never touches a session or its note.
  */
-export function TryItPanel({ spec, samples, onInvalid }: TryItPanelProps) {
+export function TryItPanel({ spec, shape = spec, samples, onInvalid }: TryItPanelProps) {
+  /** The shape as it was when the shown draft was made, so later edits don't relabel it. */
+  const [drafted, setDrafted] = useState<PracticeNoteTypeSpec | null>(null)
   const [source, setSource] = useState<Source>(samples.length > 0 ? "sample" : "paste")
   const [sampleId, setSampleId] = useState(samples[0]?.id ?? "")
   const [sessionId, setSessionId] = useState("")
   const [pasted, setPasted] = useState("")
   const [inputs, setInputs] = useState<Record<string, string>>({})
+  // The medical decision making choices are made at review and never reach a draft.
+  const draftInputs = shape.inputs.filter((input) => !isReviewInput(input.key))
   const preview = usePreviewNoteDraft()
   const { data: sessionList } = useSessionList(undefined, { enabled: source === "session" })
 
@@ -62,8 +68,9 @@ export function TryItPanel({ spec, samples, onInvalid }: TryItPanelProps) {
   const run = () => {
     if (!transcript) return
     const filled = Object.fromEntries(
-      spec.inputs.map((i) => [i.key, (inputs[i.key] ?? "").trim()]).filter(([, v]) => v),
+      draftInputs.map((i) => [i.key, (inputs[i.key] ?? "").trim()]).filter(([, v]) => v),
     )
+    setDrafted(shape)
     preview.mutate(
       { spec, transcript, inputs: filled },
       {
@@ -120,9 +127,9 @@ export function TryItPanel({ spec, samples, onInvalid }: TryItPanelProps) {
         </Labelled>
       )}
 
-      {spec.inputs.length > 0 && (
+      {draftInputs.length > 0 && (
         <div className="grid gap-3 sm:grid-cols-2">
-          {spec.inputs.map((input) => (
+          {draftInputs.map((input) => (
             <Labelled key={input.key} label={input.label || "Untitled detail"} hint={input.required ? "Required" : undefined} messages={[]}>
               {(props) =>
                 input.kind === "choice" ? (
@@ -166,7 +173,7 @@ export function TryItPanel({ spec, samples, onInvalid }: TryItPanelProps) {
       {preview.data && !preview.isPending && (
         <div data-testid="try-it-draft">
           <SchemaNoteBody
-            definition={definitionFromDraft(preview.variables?.spec ?? spec)}
+            definition={definitionFromDraft(drafted ?? shape)}
             note={{ note_type: "schema", key: preview.data.key, sections: preview.data.sections }}
             noteEdited={null}
             readonly

@@ -82,6 +82,7 @@ from .routes import (
     internal_transcription,
     launch,
     migration,
+    note_mdm,
     note_redraft,
     note_type_derive,
     note_types,
@@ -91,6 +92,7 @@ from .routes import (
     patient_allergies,
     patient_appointments,
     patient_booking,
+    patient_chart_history,
     patient_chat,
     patient_documents,
     patient_intake,
@@ -288,6 +290,7 @@ app.include_router(practice_ai_notes_consent.router)
 app.include_router(patients.router)
 app.include_router(patient_allergies.router)
 app.include_router(patient_problems.router)
+app.include_router(patient_chart_history.router)
 app.include_router(practice_billing.router)
 app.include_router(practice_domains.router)
 # The practice's website: managed in Settings > Website, served to its hosts.
@@ -393,6 +396,7 @@ app.include_router(notes.router)
 app.include_router(notes.patient_notes_router)
 app.include_router(notes.internal_jobs_router)
 app.include_router(note_redraft.router)
+app.include_router(note_mdm.router)
 app.include_router(session_dictations.router)
 app.include_router(patient_documents.patient_documents_router)
 app.include_router(patient_documents.documents_router)

@@ -64,6 +64,8 @@ export function draftFromSpec(
   }
 }
 
+export const draftField = (field: PracticeFieldSpec): DraftField => ({ ...field, uid: uid() })
+
 export const blankField = (): DraftField => ({ uid: uid(), key: "", label: "", kind: "text", ai_hint: "" })
 
 export const blankSection = (): DraftSection => ({ uid: uid(), key: "", label: "", fields: [blankField()] })
@@ -110,9 +112,13 @@ function unique(base: string, taken: Set<string>, max: number): string {
   }
 }
 
-/** Keys for parts added in the editor, unique among their siblings. */
-function withKeys<T extends { key: string; label: string }>(parts: T[], fallback: string): T[] {
-  const taken = new Set(parts.map((p) => p.key).filter(Boolean))
+/** Keys for parts added in the editor, unique among their siblings and any `reserved` keys. */
+export function withKeys<T extends { key: string; label: string }>(
+  parts: T[],
+  fallback: string,
+  reserved: string[] = [],
+): T[] {
+  const taken = new Set([...reserved, ...parts.map((p) => p.key).filter(Boolean)])
   return parts.map((part, index) => {
     if (part.key) return part
     const key = unique(keyFromLabel(part.label) || `${fallback}_${index + 1}`, taken, PART_KEY_MAX)
@@ -137,20 +143,27 @@ export function specFromDraft(draft: NoteTypeDraft): PracticeNoteTypeSpec {
         kind: f.kind,
         ai_hint: f.ai_hint,
       })),
+      // Not edited here, but kept: a copied built-in's review-only section stays out of the note.
+      ...(s.review_only ? { review_only: true } : {}),
     })),
-    inputs: withKeys(draft.inputs, "input").map((i) => ({
-      key: i.key,
-      label: i.label,
-      kind: i.kind,
+    inputs: withKeys(draft.inputs, "input").map((i) => {
       // Edited one per line, so blank lines are dropped here rather than while typing.
-      options: i.kind === "choice" ? i.options.map((o) => o.trim()).filter(Boolean) : [],
-      required: i.required,
-    })),
+      const options = i.kind === "choice" ? i.options.map((o) => o.trim()).filter(Boolean) : []
+      return {
+        key: i.key,
+        label: i.label,
+        kind: i.kind,
+        options,
+        required: i.required,
+        // A default the options no longer offer is dropped rather than refused.
+        ...(i.default && options.includes(i.default) ? { default: i.default } : {}),
+      }
+    }),
   }
 }
 
 /** The slug a type saves under: its own once saved, else one free for its name. */
-export function slugFor(draft: NoteTypeDraft, takenKeys: string[]): string {
+export function slugFor(draft: Pick<NoteTypeDraft, "slug" | "preferredSlug" | "label">, takenKeys: string[]): string {
   if (draft.slug) return draft.slug
   const taken = new Set(takenKeys.map((k) => k.replace(/^custom\./, "")))
   const base = draft.preferredSlug || keyFromLabel(draft.label, SLUG_MAX) || "note_type"

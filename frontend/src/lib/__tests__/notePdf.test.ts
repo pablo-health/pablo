@@ -1,15 +1,14 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
- * What a note's PDF prints, for every built-in type, the shipped templates
- * and a practice's own type. Built-in layouts come from
+ * What a note's PDF prints, for every built-in type (the ones written as
+ * specs included) and a practice's own type. Built-in layouts come from
  * `src/test/fixtures/builtinNoteTypes.json`, which the server's serializer
  * writes (backend `scripts/regen_builtin_note_types.py`).
  */
 
 import { describe, expect, it } from "vitest"
 import builtinNoteTypes from "@/test/fixtures/builtinNoteTypes.json"
-import { NOTE_TYPE_TEMPLATES } from "@/components/settings/noteTypes/templates"
 import { narrativeNotePdf, schemaNotePdf, visitPdfLines, type PDFNoteLayout } from "../notePdf"
 import { peopleWords } from "../peopleTerm"
 import { soapNotePdf } from "../utils/pdfExport"
@@ -41,11 +40,13 @@ function filled(layout: PDFNoteLayout): Record<string, SchemaSectionValues> {
   return sections
 }
 
+/** Every section of the note itself: a review-only one is printed nowhere. */
 function expectEveryFieldInOrder(layout: PDFNoteLayout) {
   const pdf = schemaNotePdf(layout, filled(layout))
+  const printed = layout.sections.filter((s) => !s.review_only)
   expect(pdf.title).toBe(layout.label)
-  expect(pdf.sections.map((s) => s.title)).toEqual(layout.sections.map((s) => s.label))
-  layout.sections.forEach((section, i) => {
+  expect(pdf.sections.map((s) => s.title)).toEqual(printed.map((s) => s.label))
+  printed.forEach((section, i) => {
     const blocks = pdf.sections[i].blocks
     expect(blocks.map((b) => b.label)).toEqual(section.fields.map((f) => f.label))
     section.fields.forEach((field, j) => {
@@ -64,9 +65,18 @@ function expectEveryFieldInOrder(layout: PDFNoteLayout) {
 }
 
 describe("schemaNotePdf", () => {
-  it("has every built-in schema type to render", () => {
+  it("has every built-in schema type to render, the ones written as specs included", () => {
     expect(SCHEMA_BUILTINS.map((t) => t.key)).toEqual(
-      expect.arrayContaining(["dap", "birp", "girp", "intake", "treatment_plan", "safety_plan"]),
+      expect.arrayContaining([
+        "dap",
+        "birp",
+        "girp",
+        "intake",
+        "treatment_plan",
+        "safety_plan",
+        "psychiatric_evaluation",
+        "psychiatric_follow_up",
+      ]),
     )
   })
 
@@ -75,9 +85,23 @@ describe("schemaNotePdf", () => {
     (_key, layout) => expectEveryFieldInOrder(layout),
   )
 
-  it.each(NOTE_TYPE_TEMPLATES.map((t) => [t.id, t] as const))(
-    "prints every section and field of the %s template in order",
-    (_id, template) => expectEveryFieldInOrder(template.spec),
+  it.each(["psychiatric_follow_up", "psychiatric_evaluation"])(
+    "prints no medical decision making section for %s, only the codes in the visit details",
+    (key) => {
+      const layout = BUILTINS.find((t) => t.key === key)!
+      const values = filled(layout)
+      values.encounter.visit_details = "E/M code: 99214. Psychotherapy add-on code: 90833."
+
+      const pdf = schemaNotePdf(layout, values)
+
+      expect(layout.sections.map((s) => s.key)).toContain("mdm")
+      expect(pdf.sections.map((s) => s.title)).not.toContain("Medical decision making")
+      expect(JSON.stringify(pdf)).not.toContain("mdm.problems_addressed")
+      expect(pdf.sections[0].blocks[0]).toEqual({
+        label: "Visit details",
+        content: "E/M code: 99214. Psychotherapy add-on code: 90833.",
+      })
+    },
   )
 
   it("prints a practice type's stated diagnoses one per line, each as stated", () => {
@@ -181,10 +205,14 @@ describe("visitPdfLines", () => {
     offered: true,
     end_seconds: 3000,
     turns: [],
-    candidates: [],
-    stated_clock_time: null,
+    runs: [],
+    labeled_minutes: null,
+    cue_seconds: null,
+    dictated: null,
     confirmed_start_seconds: 720,
     confirmed_minutes: 38,
+    contiguous: true,
+    labels_confirmed: false,
     window_text: "11:12 AM to 11:50 AM, 38 minutes",
     dictated_time: null,
     disagrees: false,
@@ -194,6 +222,7 @@ describe("visitPdfLines", () => {
     expect(visitPdfLines({ ...base, psychotherapy: window }, "America/New_York", people)).toEqual([
       "Started 11:00 AM · Ended 11:55 AM · 55 min",
       "Client present until 11:50 AM · Your dictated addendum: 3 min",
+      "Total duration: 55 min · Psychotherapy duration: 38 min",
       "Psychotherapy time: 11:12 AM to 11:50 AM, 38 minutes · 38–52 minutes",
     ])
   })
