@@ -16,65 +16,63 @@ on:
   workflow_dispatch:
   pull_request:
     branches: [main]
-    # NO paths: filter, deliberately. This job owns a REQUIRED check, and a
-    # filtered workflow does not report a skipped result — it reports nothing
-    # at all, so branch protection waits for a run that will never start. The
-    # only ways out are an admin merge or an unrelated commit that happens to
-    # match, and per ENGINEERING-STANDARD.md §3 the first of those is an
-    # incident rather than a process.
-    #
-    # It had already happened twice by the time it was fixed here: a change to
-    # backend/app/models/ (#1288) sat green on all nineteen checks that ran and
-    # could not merge, and #1294 — a beads export, one line of .beads/ — sat
-    # blocked for a day for the same reason with auto-merge armed and nothing
-    # to arm against.
-    #
-    # Skipping WORK is a cost decision; skipping a required CHECK is a merge
-    # policy. scripts/ci_classify_diff.sh separates the two, exactly as the
-    # four jobs in ci.yml already use it. The directory list that used to live
-    # here is gone rather than moved: the classifier's ignorable set is the
-    # single place that decides, so there is no second list to drift.
+    # NO paths filter: this workflow owns a required check. The classify job
+    # skips expensive work for ignorable changes while the gate still reports.
 
 permissions:
   contents: read
 
-# ``e2e-`` prefix: see the matching note in ci.yml. deploy.yml calls both of us
-# from one run, where ``github.workflow`` and ``github.run_id`` are identical for
-# each, so an unprefixed group makes the two siblings cancel each other.
+# The prefix keeps this reusable workflow from cancelling its CI sibling when
+# both are called by the same deploy or release run.
 concurrency:
   group: e2e-${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:
-  e2e:
-    name: End-to-end (compose + Playwright)
+  classify:
+    name: Classify end-to-end changes
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    outputs:
+      run: ${{ steps.result.outputs.run }}
     steps:
       - uses: actions/checkout@v7
         with:
-          # Need history back to the PR base for the classify step below.
           fetch-depth: 0
 
       - id: classify
-        # Self-contained rather than a shared `needs:` job, matching ci.yml: a
-        # skipped dependency skips its dependents, and the classification only
-        # makes sense for a pull request. When this step does not run,
-        # `substantive` is '' and every gate below fails open to the full
-        # suite — so workflow_call (release, deploy), schedule and dispatch all
-        # run everything, unchanged.
         if: github.event_name == 'pull_request'
         run: bash scripts/ci_classify_diff.sh "origin/${{ github.base_ref }}"
 
+      - id: result
+        env:
+          SUBSTANTIVE: ${{ steps.classify.outputs.substantive }}
+        run: |
+          if [[ "$SUBSTANTIVE" == "false" ]]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  e2e-shards:
+    name: End-to-end shard (${{ matrix.shard }}/3)
+    needs: classify
+    if: needs.classify.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v7
+
       - uses: actions/setup-node@v7
-        if: steps.classify.outputs.substantive != 'false'
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
-        if: steps.classify.outputs.substantive != 'false'
         working-directory: frontend
         run: npm ci
         env:
@@ -82,35 +80,17 @@ jobs:
           npm_config_fetch_retry_mintimeout: 20000
 
       - name: Install the Playwright browser
-        if: steps.classify.outputs.substantive != 'false'
         working-directory: frontend
         run: npx playwright install --with-deps chromium
 
       - name: Start the stack
-        if: steps.classify.outputs.substantive != 'false'
         run: docker compose -f docker-compose.e2e.yml up --build --wait
 
-      - name: Run the suite
-        if: steps.classify.outputs.substantive != 'false'
+      - name: Run shard
         working-directory: frontend
-        run: npm run test:e2e
+        run: npm run test:e2e -- --shard=${{ matrix.shard }}/3
         env:
           CI: "1"
-
-      # A hosted domain moves every practice's portal links onto its hosted
-      # address, so the specs about it run in a second pass, on a fresh stack
-      # whose backend names one (docker-compose.e2e-hosted.yml). In the pass
-      # above they skip. The Makefile target owns the steps, so changing them
-      # needs no change here.
-      - name: Run the hosted-address specs
-        if: steps.classify.outputs.substantive != 'false'
-        run: make e2e-hosted
-        env:
-          CI: "1"
-
-      - name: Nothing to exercise
-        if: steps.classify.outputs.substantive == 'false'
-        run: echo "Diff touches only the ignorable set (see scripts/ci_classify_diff.sh) - the stack cannot be affected, so the suite is skipped and this check reports green."
 
       - name: Stack logs
         if: failure()
@@ -120,7 +100,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-report
+          name: playwright-report-shard-${{ matrix.shard }}
           path: |
             frontend/e2e/playwright-report/
             frontend/e2e/test-results/
@@ -130,3 +110,83 @@ jobs:
       - name: Stop the stack
         if: always()
         run: docker compose -f docker-compose.e2e.yml down --volumes --remove-orphans
+
+  hosted-address:
+    name: End-to-end hosted addresses
+    needs: classify
+    if: needs.classify.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+        env:
+          npm_config_fetch_retries: 5
+          npm_config_fetch_retry_mintimeout: 20000
+
+      - name: Install the Playwright browser
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Start the hosted-address stack
+        run: docker compose -f docker-compose.e2e.yml -f docker-compose.e2e-hosted.yml up --build --wait
+
+      - name: Run the hosted-address specs
+        working-directory: frontend
+        run: npx playwright test --config e2e/playwright.config.ts --grep @hosted
+        env:
+          CI: "1"
+
+      - name: Stack logs
+        if: failure()
+        run: docker compose -f docker-compose.e2e.yml -f docker-compose.e2e-hosted.yml logs --no-color --timestamps
+
+      - name: Upload report and traces
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-hosted-address
+          path: |
+            frontend/e2e/playwright-report/
+            frontend/e2e/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Stop the stack
+        if: always()
+        run: docker compose -f docker-compose.e2e.yml -f docker-compose.e2e-hosted.yml down --volumes --remove-orphans
+
+  e2e:
+    name: End-to-end (compose + Playwright)
+    if: always()
+    needs: [classify, e2e-shards, hosted-address]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify end-to-end result
+        env:
+          CLASSIFY_RESULT: ${{ needs.classify.result }}
+          SHOULD_RUN: ${{ needs.classify.outputs.run }}
+          SHARDS_RESULT: ${{ needs.e2e-shards.result }}
+          HOSTED_RESULT: ${{ needs.hosted-address.result }}
+        run: |
+          if [[ "$CLASSIFY_RESULT" != "success" ]]; then
+            echo "Change classification failed."
+            exit 1
+          fi
+          if [[ "$SHOULD_RUN" == "false" ]]; then
+            echo "Diff touches only the ignorable set; the end-to-end check reports green."
+            exit 0
+          fi
+          if [[ "$SHARDS_RESULT" != "success" || "$HOSTED_RESULT" != "success" ]]; then
+            echo "One or more end-to-end lanes failed or were cancelled."
+            exit 1
+          fi

@@ -132,8 +132,12 @@ e2e user; the flag that requires it is off in the e2e compose profile.
 
 ### CI
 
-One `e2e` job in `ci.yml`: compose up, `npx playwright test`, upload the
-HTML report and traces on failure, compose down. It runs nightly on
+Three Playwright shards run concurrently in CI, each with its own Compose
+stack and one Playwright worker. The independent stacks preserve the suite's
+shared-state assumptions while reducing wall-clock time. Hosted-address specs
+run in a fourth isolated lane, and an aggregate job preserves the required
+check name. Each lane uploads its HTML report and traces on failure and tears
+its stack down. The workflow runs nightly on
 `main`, on demand, and on pull requests that change the frontend, the
 backend routes, the compose files, the fake clearinghouse, or
 `frontend/e2e/`. Not on every push: a full-stack run costs minutes and
@@ -165,7 +169,8 @@ and never reaches a real payer.
   wiring (signed URLs, real auth, real vendors). That suite stays where the
   deployment lives.
 - Not visual regression.
-- Not a load test; one worker, serial specs, deterministic fakes.
+- Not a load test; one worker per isolated stack, serial specs, deterministic
+  fakes.
 
 ## Rollout
 

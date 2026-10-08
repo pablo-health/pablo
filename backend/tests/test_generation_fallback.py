@@ -375,7 +375,9 @@ class TestNoteDrafting:
         self, serve: Callable[[Provider], Provider]
     ) -> None:
         def answer(schema: dict[str, Any]) -> dict[str, Any]:
-            data: dict[str, Any] = instance(schema)
+            data = instance(schema)
+            # A note's response schema is an object, so its instance is a dict.
+            assert isinstance(data, dict)
             if TIME_KEY in data:
                 data[TIME_KEY] = {
                     "start": "10:14",

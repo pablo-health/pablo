@@ -80,7 +80,7 @@ export const LICENSED_ON_FILE = "On file"
  */
 export const SOLD_TITLE = "Measures you buy from their publisher"
 export const SOLD_GUIDANCE =
-  "Ask for your own copy as a document upload, and record the score yourself."
+  "Add an Ask for a file question for your own copy, and record the score yourself."
 
 /** Shown under the measure picker beside one the practice has not licensed. */
 export const MEASURE_NEEDS_PERMISSION =

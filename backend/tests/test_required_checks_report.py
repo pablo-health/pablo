@@ -66,27 +66,29 @@ def test_e2e_still_runs_on_pull_requests(e2e: dict) -> None:
 
 
 def test_e2e_gates_its_work_on_the_classifier(e2e: dict) -> None:
-    steps = e2e["jobs"]["e2e"]["steps"]
+    classify = e2e["jobs"]["classify"]
+    steps = classify["steps"]
     assert any("ci_classify_diff.sh" in str(s.get("run", "")) for s in steps), (
         "no classify step — without it, dropping the paths filter just makes "
         "every docs-only PR pay for the full browser suite"
     )
-    gated = [s for s in steps if "substantive" in str(s.get("if", ""))]
-    assert len(gated) >= 4, f"only {len(gated)} steps gated; the expensive ones must be"
+
+    for name in ("e2e-shards", "hosted-address"):
+        job = e2e["jobs"][name]
+        assert job["needs"] == "classify"
+        assert "needs.classify.outputs.run == 'true'" in job["if"]
+
+    gate = e2e["jobs"]["e2e"]
+    assert gate["if"] == "always()"
+    assert set(gate["needs"]) == {"classify", "e2e-shards", "hosted-address"}
 
 
 def test_the_gate_fails_open(e2e: dict) -> None:
-    """``!= 'false'`` not ``== 'true'``.
-
-    The classify step only runs for a pull request, so on workflow_call
-    (release, deploy), schedule and dispatch the output is the empty string.
-    Fail-open means those all still run the full suite; fail-closed would
-    silently skip the suite on the paths that gate a release.
-    """
-    for step in e2e["jobs"]["e2e"]["steps"]:
-        cond = str(step.get("if", ""))
-        if "substantive" in cond and "== 'false'" not in cond:
-            assert "!= 'false'" in cond, f"fail-closed gate: {cond}"
+    """A skipped classifier step must still run release and scheduled suites."""
+    result = next(step for step in e2e["jobs"]["classify"]["steps"] if step.get("id") == "result")
+    script = str(result["run"])
+    assert 'if [[ "$SUBSTANTIVE" == "false" ]]' in script
+    assert 'echo "run=true"' in script
 
 
 def test_the_classifier_ignores_the_beads_export() -> None:

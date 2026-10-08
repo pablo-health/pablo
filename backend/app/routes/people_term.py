@@ -17,25 +17,21 @@ from pydantic import BaseModel
 from ..auth.route_access import subscription_exempt
 from ..auth.service import get_current_user_no_mfa
 from ..people_term import (
-    DEFAULT_PEOPLE_TERM,
     PeopleTerm,
     PeopleWords,
     SuggestionSource,
-    as_people_term,
     people_words,
-    resolve_people_term,
-    suggest_people_term,
 )
+from ..people_term_lookup import PeopleTermLookup, people_term_facts
 from ..repositories import (
     ClinicianProfileRepository,
     UserRepository,
     get_clinician_profile_repository,
     get_user_repository,
 )
-from .users import _get_own_practice_as_owner, _is_practice_owner, _resolve_practice_id_for
+from .users import _get_own_practice_as_owner, _is_practice_owner
 
 if TYPE_CHECKING:
-    from ..db.platform_models import PracticeRow
     from ..models import User
 
 router = APIRouter(prefix="/api/users", tags=["users"])
@@ -66,42 +62,21 @@ class UpdatePeopleTermRequest(BaseModel):
     people_term: PeopleTerm | None
 
 
-def _practice_row(user: User) -> PracticeRow | None:
-    from ..db import get_db_session
-    from ..db.platform_models import PracticeRow
-
-    practice_id = _resolve_practice_id_for(user)
-    if practice_id is None:
-        return None
-    return get_db_session().get(PracticeRow, practice_id)
-
-
 def load_people_term(
     user: User,
     user_repo: UserRepository,
     profile_repo: ClinicianProfileRepository,
 ) -> PeopleTermResponse:
     """Everything that decides the word for ``user``."""
-    choice = user_repo.get_preferences(user.id).people_term
-    profile = profile_repo.get(user.id)
-    suggestion = suggest_people_term(
-        provider_type=user.provider_type,
-        credential_titles=profile.credential_titles if profile else None,
-        credentials=profile.credentials if profile else None,
-        dea_number=profile.dea_number if profile else None,
-    )
-    suggested = suggestion.term if suggestion else None
-    practice = _practice_row(user)
-    practice_default = as_people_term(practice.people_term if practice else None)
+    facts = people_term_facts(user, user_repo, profile_repo)
     return PeopleTermResponse(
-        people_term=resolve_people_term(
-            choice=choice, suggested=suggested, practice_default=practice_default
-        ),
-        choice=choice,
-        suggested=suggested,
-        suggested_from=suggestion.source if suggestion else None,
-        practice_default=practice_default,
-        can_set_practice_default=practice is not None and _is_practice_owner(practice, user),
+        people_term=facts.term,
+        choice=facts.choice,
+        suggested=facts.suggestion.term if facts.suggestion else None,
+        suggested_from=facts.suggestion.source if facts.suggestion else None,
+        practice_default=facts.practice_default,
+        can_set_practice_default=facts.practice is not None
+        and _is_practice_owner(facts.practice, user),
     )
 
 
@@ -111,10 +86,7 @@ def people_words_for(
     profile_repo: ClinicianProfileRepository,
 ) -> PeopleWords:
     """The words for backend copy ``user_id`` reads: ``words.many`` and friends."""
-    user = user_repo.get(user_id)
-    if user is None:
-        return people_words(DEFAULT_PEOPLE_TERM)
-    return people_words(load_people_term(user, user_repo, profile_repo).people_term)
+    return people_words(PeopleTermLookup(user_repo, profile_repo).term(user_id))
 
 
 @router.get("/me/people-term")
