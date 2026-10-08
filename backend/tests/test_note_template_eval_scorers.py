@@ -19,9 +19,12 @@ from evals.note_templates.cases import (
     FOLLOW_UP_ALLERGY_STATED,
     FOLLOW_UP_EMPTY_CHART,
     FOLLOW_UP_FULL_CHART,
+    FOLLOW_UP_INTERLEAVED,
     FOLLOW_UP_MEDICATION_ONLY,
     FOLLOW_UP_RISK_LANGUAGE,
     FOLLOW_UP_STATED_CHANGE,
+    FOLLOW_UP_SUPPORTIVE_ONLY,
+    FOLLOW_UP_THERAPY_PLAN_NOT_STATED,
     FOLLOW_UP_WITH_THERAPY,
 )
 from evals.note_templates.scorers import (
@@ -34,10 +37,13 @@ from evals.note_templates.scorers import (
     history_from_visit,
     intake_states_meds,
     medications_from_chart,
+    numbers,
     risk_quoted,
     safety_plan_only_with_ideation,
     substances,
     suffix_only_where_stated,
+    techniques_named,
+    therapy_grounded,
 )
 
 THERAPY_DRAFT: dict[str, dict[str, Any]] = {
@@ -111,6 +117,9 @@ THERAPY_DRAFT: dict[str, dict[str, Any]] = {
         "issues_addressed": "Night-time worry about work performance.",
         "modality_interventions": "CBT: thought record, worry window.",
         "response": "Engaged; belief fell from 90 to 40.",
+        "goal_plan": "Worry window daily and a thought record twice this week.",
+        "progress": "Used the time blocks four out of five workdays.",
+        "therapy_cadence": "This work at each visit.",
     },
 }
 
@@ -1033,3 +1042,188 @@ def test_substances_are_graded_the_way_each_template_writes_them() -> None:
     assert "substance_use.alcohol: asked, but no screen recorded" in substances(
         unscreened, FOLLOW_UP_FULL_CHART
     )
+
+
+# ---------------------------------------------------------------------------
+# therapy_grounded: the psychotherapy block claims only what the visit shows
+# ---------------------------------------------------------------------------
+
+SUPPORTIVE_BLOCK: dict[str, dict[str, Any]] = {
+    "psychotherapy": {
+        "psychotherapy_time": "3:02 to 3:41.",
+        "issues_addressed": "Grief after the death of their mother; nights spent going over "
+        "the hospital.",
+        "modality_interventions": "Listened; reflected the client's loneliness and the Sunday "
+        "calls; two open questions about their mother.",
+        "response": 'Tearful, then smiled talking about her laugh: "It felt good to talk '
+        'about her today."',
+        "goal_plan": "Not stated.",
+        "progress": "Not stated.",
+        "therapy_cadence": "Some time for this at each visit.",
+    }
+}
+
+PLAN_NOT_STATED_BLOCK: dict[str, dict[str, Any]] = {
+    "psychotherapy": {
+        "psychotherapy_time": "18 minutes.",
+        "issues_addressed": "Trouble falling asleep; phone in bed; sleeping in on weekends.",
+        "modality_interventions": "Psychoeducation on sleep hygiene: wake time sets the body "
+        "clock, phone light keeps the brain alert, the bed only for sleep.",
+        "response": 'Asked what to do if unable to fall asleep; "Okay. I\'ll try it."',
+        "goal_plan": "Get up at the same time every day, weekends too; leave the phone "
+        "charging in the kitchen.",
+        "progress": "Not stated.",
+        "therapy_cadence": "Not stated.",
+    }
+}
+
+
+def test_a_grounded_psychotherapy_block_passes() -> None:
+    """The three visits written as they happened: CBT named from its steps, a
+    listening visit described in plain words, psychoeducation with one thing
+    to try and no plan for therapy beyond it."""
+    assert therapy_grounded(THERAPY_DRAFT, FOLLOW_UP_WITH_THERAPY) == []
+    assert therapy_grounded(SUPPORTIVE_BLOCK, FOLLOW_UP_SUPPORTIVE_ONLY) == []
+    assert therapy_grounded(PLAN_NOT_STATED_BLOCK, FOLLOW_UP_THERAPY_PLAN_NOT_STATED) == []
+
+
+def test_a_visit_with_no_therapy_is_not_graded_here() -> None:
+    """An empty block on a medication visit is psychotherapy_section's to judge."""
+    assert therapy_grounded(MEDICATION_ONLY_DRAFT, FOLLOW_UP_MEDICATION_ONLY) == []
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "problem"),
+    [
+        # A technique the visit never shows, named alongside real ones: the
+        # false claim an auditor pulls a 90836 note for.
+        (
+            "modality_interventions",
+            "CBT: Socratic questioning, cognitive reframing, behavioral activation.",
+            "which the visit does not show",
+        ),
+        # The time-blocking the client mentioned, renamed as a technique the
+        # clinician did not use.
+        ("progress", "Behavioral activation: time blocks most days.", "does not show"),
+        # Interventions written so vaguely that none of the work is on record.
+        ("modality_interventions", "Discussed worry; provided support.", "names none of"),
+        # A belief rating nobody gave.
+        ("response", "Belief fell from 90 to 30.", "30 is not a number the client gave"),
+        # A rating scale the visit never used.
+        ("response", "Rated anxiety 7/10 by the end.", "7 is not a number"),
+        # The response left without anything the client said or did.
+        ("response", "Engaged and receptive.", "carries none of"),
+        # A cadence the clinician never set.
+        ("therapy_cadence", "Weekly psychotherapy.", "carries none of"),
+    ],
+)
+def test_ungrounded_therapy_claims_are_caught(key: str, value: str, problem: str) -> None:
+    draft = _with(THERAPY_DRAFT, "psychotherapy", key, value)
+    found = therapy_grounded(draft, FOLLOW_UP_WITH_THERAPY)
+    assert any(problem in p for p in found), found
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "problem"),
+    [
+        # Listening relabeled as a named therapy.
+        ("modality_interventions", "Supportive psychotherapy.", "no named technique"),
+        # A structured technique invented for a visit that had none.
+        ("response", "Responded well to cognitive reframing.", "no named technique"),
+        # A mood rating the clinician never asked for.
+        ("response", "Mood rated 4/10, tearful.", "4 is not a number"),
+        ("response", "Rated sadness at eight.", "8 is not a number"),
+        # A goal nobody set.
+        ("goal_plan", "Process grief and build supports.", 'should read "Not stated."'),
+        # Progress judged on a visit with no goal and no assignment.
+        ("progress", "Meaningful progress in processing grief.", 'should read "Not stated."'),
+    ],
+)
+def test_a_listening_visit_is_not_written_up_as_a_technique(
+    key: str, value: str, problem: str
+) -> None:
+    draft = _with(SUPPORTIVE_BLOCK, "psychotherapy", key, value)
+    found = therapy_grounded(draft, FOLLOW_UP_SUPPORTIVE_ONLY)
+    assert any(problem in p for p in found), found
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "problem"),
+    [
+        # The next visit's interval passed off as a plan for therapy.
+        ("therapy_cadence", "Every six weeks.", 'should read "Not stated."'),
+        # A goal nobody set, written as an improvement.
+        (
+            "goal_plan",
+            "Improve sleep onset; same wake time every day.",
+            "judges progress the visit does not show",
+        ),
+        ("goal_plan", "Fall asleep faster: same wake time daily.", "'faster' was not said"),
+        # Sleep hygiene relabeled as a protocol the clinician did not deliver.
+        ("modality_interventions", "CBT-I with psychoeducation.", "does not show"),
+        # Progress judged where nothing moved yet.
+        ("progress", "Significant improvement in insight.", "judges progress"),
+    ],
+)
+def test_a_plan_nobody_stated_is_caught(key: str, value: str, problem: str) -> None:
+    draft = _with(PLAN_NOT_STATED_BLOCK, "psychotherapy", key, value)
+    found = therapy_grounded(draft, FOLLOW_UP_THERAPY_PLAN_NOT_STATED)
+    assert any(problem in p for p in found), found
+
+
+def test_an_outcome_word_is_allowed_inside_a_quotation_of_what_was_said() -> None:
+    """The clinician dictated "Depression improving": quoting it is the
+    clinician's judgment, not the draft's. The same word unquoted, or in a
+    quotation nobody said, is the draft's."""
+    quoted = _with(
+        PLAN_NOT_STATED_BLOCK, "psychotherapy", "progress", 'Clinician: "Depression improving."'
+    )
+    assert therapy_grounded(quoted, FOLLOW_UP_THERAPY_PLAN_NOT_STATED) == []
+
+    invented = _with(PLAN_NOT_STATED_BLOCK, "psychotherapy", "progress", '"Sleep has improved."')
+    assert therapy_grounded(invented, FOLLOW_UP_THERAPY_PLAN_NOT_STATED)
+
+
+def test_outcome_words_are_allowed_where_the_visit_shows_progress() -> None:
+    """The belief rating fell from 90 to 40 and the time blocks were kept:
+    calling that improvement is supported."""
+    draft = _with(
+        THERAPY_DRAFT, "psychotherapy", "progress", "Improved: belief fell from 90 to 40."
+    )
+    assert therapy_grounded(draft, FOLLOW_UP_WITH_THERAPY) == []
+
+
+def test_a_number_said_in_the_visit_passes_where_the_case_lists_none() -> None:
+    """Without a case's list, a number in the response must be in the
+    transcript: the interleaved visit's eighty and forty are, thirty is not."""
+    said = {"psychotherapy": {"response": "Belief fell from 80% to 40%."}}
+    assert therapy_grounded(said, FOLLOW_UP_INTERLEAVED) == []
+
+    unsaid = {"psychotherapy": {"response": "Belief fell from 80% to 30%."}}
+    assert therapy_grounded(unsaid, FOLLOW_UP_INTERLEAVED) == [
+        "psychotherapy.response: 30 is not a number the client gave"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("text", "found"),
+    [
+        ("In the moment, like ninety. Maybe forty.", {90, 40}),
+        ("Four out of five workdays", {4, 5}),
+        ("90→40 on a 0-100 scale", {90, 40, 0, 100}),
+        ("zero to a hundred", {0, 100}),
+        ("twenty-five minutes, seventeen days, twenty-one", {25, 17, 21}),
+        ("no one; one of them; attention; weighted", set()),
+    ],
+)
+def test_numbers_are_read_in_digits_and_words(text: str, found: set[int]) -> None:
+    assert numbers(text) == found
+
+
+def test_plain_descriptions_name_no_technique() -> None:
+    """Listening and reflecting are what the clinician did, not a technique."""
+    assert techniques_named("Listened; reflected the client's worry; one open question.") == set()
+    assert techniques_named("CBT-informed reframing of the thought") == {
+        "CBT",
+        "cognitive reframing",
+    }
