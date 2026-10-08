@@ -2,7 +2,7 @@
 
 """The proposal step, run whenever a note's content changes.
 
-After a draft, a redraft or a retry it is split the way a draft is: the
+After a draft, a redraft, a retry or an import it is split the way a draft is: the
 chart is read while the caller holds its connection, the proposal call runs
 with nothing checked out, and the result is stored once the note is, with a
 record of how the call ended. After a clinician's edit is saved only the
@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 from ..notes.chart_context import chart_context_for
 from ..utcnow import utc_now
-from .drafting import propose_chart_updates
+from .drafting import propose_chart_updates, propose_from_document
 from .models import ProposalRun, RunStatus
 from .service import ChartProposalService
 
@@ -60,6 +60,19 @@ class ChartProposalStep:
         if complete is None or chart is None or not proposes_chart_updates(definition):
             return None
         return propose_chart_updates(complete, chart, transcript, draft=content)
+
+    def draft_from_document(
+        self,
+        generator: NoteGenerationService,
+        definition: NoteTypeDefinition | None,
+        chart: ChartContext | None,
+        document: str,
+    ) -> Drafted | None:
+        """The proposal call for an imported note: its document, read a paragraph at a time."""
+        complete = generator.chart_proposal_completion()
+        if complete is None or chart is None or not proposes_chart_updates(definition):
+            return None
+        return propose_from_document(complete, chart, document)
 
     def store(
         self,

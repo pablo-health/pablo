@@ -47,6 +47,7 @@ from ..chart_proposals.service import (
 from ..chart_proposals.step import ChartProposalStep, proposes_chart_updates
 from ..db import release_db_connection
 from ..models import AuditAction, Note, Patient, User
+from ..models.enums import SessionSource
 from ..notes import (  # noqa: TC001 — FastAPI resolves at runtime
     NoteTypeDefinition,
     NoteTypeRegistry,
@@ -206,7 +207,12 @@ def retry_chart_proposals(
     shown = as_shown(note.note_type, note.content, note.content_edited)
     # Nothing is held open across the model call, as in the draft worker.
     release_db_connection()
-    drafted = step.draft(generator, definition, chart, transcript, shown)
+    # An imported note's document is kept as its session's transcript.
+    drafted = (
+        step.draft_from_document(generator, definition, chart, transcript.content)
+        if session.source == SessionSource.IMPORTED
+        else step.draft(generator, definition, chart, transcript, shown)
+    )
     step.store(note, definition, chart, drafted, shown)
     response = _listing(note, chart, proposals)
     audit.log_note_action(

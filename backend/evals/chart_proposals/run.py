@@ -23,7 +23,7 @@ import time
 from dataclasses import asdict
 from typing import Any
 
-from app.chart_proposals.drafting import propose_chart_updates
+from app.chart_proposals.drafting import propose_chart_updates, propose_from_document
 from app.models import Transcript
 from app.services.note_generation_service import RegistryNoteGenerationService
 from app.services.structured_llm_gateway import (
@@ -43,10 +43,13 @@ def run_case(case: ProposalCase, model: str | None, run: int) -> dict[str, Any]:
         model=model,
     )
     started = time.monotonic()
-    drafted = propose_chart_updates(
-        generator.chart_proposal_completion(),
-        case.chart,
-        Transcript(format="txt", content=case.transcript),
+    complete = generator.chart_proposal_completion()
+    drafted = (
+        propose_from_document(complete, case.chart, case.transcript)
+        if case.document
+        else propose_chart_updates(
+            complete, case.chart, Transcript(format="txt", content=case.transcript)
+        )
     )
     proposals = drafted.proposals
     problems = grade(proposals, case)

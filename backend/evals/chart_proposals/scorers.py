@@ -28,7 +28,9 @@ def exactly_the_expected_fields(
     got = [p.field_key for p in proposals]
     want = {e.field_key for e in case.expected}
     problems = [f"missing a proposal for {key}" for key in sorted(want - set(got))]
-    problems += [f"unexpected proposal for {key}" for key in sorted(set(got) - want)]
+    problems += [
+        f"unexpected proposal for {key}" for key in sorted(set(got) - want - set(case.allowed))
+    ]
     problems += [
         f"more than one proposal for {key}" for key in sorted({k for k in got if got.count(k) > 1})
     ]
@@ -72,13 +74,31 @@ def cites_the_lines_that_say_it(
                 problems.append(
                     f"{expected.field_key} cites {sorted(cited)}, none of {list(expected.evidence)}"
                 )
+            problems += [
+                f"{expected.field_key} does not cite {line}, which disagrees"
+                for line in expected.also_cites
+                if line not in cited
+            ]
     return problems
+
+
+def says_nothing_it_never_should(
+    proposals: Sequence[DraftedProposal], case: ProposalCase
+) -> list[str]:
+    """No proposal carries what belongs elsewhere (a medication, into a history field)."""
+    return [
+        f"{p.field_key} says {term!r}"
+        for p in proposals
+        for term in case.never_said
+        if normalize(term) in normalize(p.proposed_text)
+    ]
 
 
 CHECKS: dict[str, Callable[[Sequence[DraftedProposal], ProposalCase], list[str]]] = {
     "exactly_the_expected_fields": exactly_the_expected_fields,
     "text_kept_and_changed": text_kept_and_changed,
     "cites_the_lines_that_say_it": cites_the_lines_that_say_it,
+    "says_nothing_it_never_should": says_nothing_it_never_should,
 }
 
 

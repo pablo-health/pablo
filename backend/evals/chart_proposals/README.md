@@ -19,7 +19,8 @@ Any problem from any check fails the case.
 |---|---|---|
 | `exactly_the_expected_fields` | a field the visit changed has no proposal; a field nothing changed has one; a field has two | review costs nothing on an ordinary visit, and a change stated once reaches every field it changes |
 | `text_kept_and_changed` | the proposed text leaves out what the chart said, or does not say what changed | a proposal amends and appends, never removes: what stopped being true is kept and said to no longer apply |
-| `cites_the_lines_that_say_it` | the proposal cites none of the lines that state the change | the evidence the clinician sees is the sentence that says it |
+| `cites_the_lines_that_say_it` | the proposal cites none of the lines that state the change, or, from a document, leaves out the paragraph that disagrees | the evidence the clinician sees is the sentence that says it, and a conflict in the document is shown |
+| `says_nothing_it_never_should` | a proposal carries what belongs elsewhere, such as a medication in a history field | the medication list stays the place medications are kept |
 
 The checks are unit-tested on hand-made proposals in
 `backend/tests/test_chart_proposal_eval_scorers.py`.
@@ -31,6 +32,13 @@ The checks are unit-tested on hand-made proposals in
 | `divorce-finalized` | separated, divorce in progress; custody shared | the divorce was finalized; everything else restated | `relationships` and `legal_custody`, each keeping its text and adding that the divorce was finalized, citing the client's lines |
 | `unchanged` | the same chart | every field restated, nothing new | no proposal |
 | `stopped-working` | full time as a dental hygienist | stopped working there at the end of August | `work_school` still naming the dental practice and saying it no longer applies |
+| `transfer-note` | empty | an imported follow-up note from another records system (`backend/tests/fixtures/notes/transfer_psychiatric_follow_up.txt`) | `alcohol`, `tobacco_nicotine`, `work_school` and the penicillin allergy, each citing its paragraph; `supports` and `relationships` may be proposed or not; no medication in any proposal |
+| `carried-block-is-stale` | full time as a dental hygienist | an imported note whose carried social history says the client works and whose interval history says they were laid off; its carried medication list disagrees with its plan | `work_school` following the interval history and citing the carried paragraph too; no medication in any proposal |
+
+The last two read the document a paragraph at a time, as an imported note's
+proposals do. Medications are not yet a proposable field; when they are, the
+stale-block case gains the medication the plan states, citing the carried
+list as the conflict.
 
 ## Running it
 
@@ -54,3 +62,11 @@ proposed a `medication_trials` entry from the medication the client takes
 now in both the divorce and the stopped-working visits. The prompt now says
 a current medication, or one started, stopped or changed this visit, is
 never proposed to a history field.
+
+With the two imported-note cases added, three runs of each of the five
+cases: 15 of 15 passed, and five further runs of `carried-block-is-stale`
+passed. Two earlier runs failed and changed the prompt. The stale-block
+case proposed the assessment's diagnosis to `prior_diagnoses`; the prompt
+now says an assessment's diagnoses reach the problem list from the note.
+One run in three cited only the interval history; the prompt now says a
+proposal following one part over another cites both.

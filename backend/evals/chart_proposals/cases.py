@@ -2,17 +2,19 @@
 
 """Cases for the chart-proposal eval.
 
-Each case is a chart and one follow-up visit's transcript, both invented
-here for the eval and about no one. The expectation is the whole set of
-proposals: which fields, what each must and must not say, and which
-transcript lines it may cite. Segment ids are the ones the proposal call
-numbers the transcript with, counting from 0.
+Each case is a chart and one follow-up visit's transcript, or a note
+imported from another records system, all invented for the eval and about
+no one. The expectation is the whole set of proposals: which fields, what
+each must and must not say, and which transcript lines (or document
+paragraphs) it may cite. Segment ids are the ones the proposal call numbers
+the transcript or document with, counting from 0.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
+from pathlib import Path
 
 from app.notes.chart_context import ChartContext, ChartHistoryField
 
@@ -26,6 +28,8 @@ class ExpectedProposal:
     must_not_contain: tuple[str, ...] = ()
     evidence: tuple[int, ...] = ()
     """Lines the proposal may cite; it must cite at least one of them."""
+    also_cites: tuple[int, ...] = ()
+    """Lines it must cite as well: the part of a document that disagrees."""
 
 
 @dataclass(frozen=True)
@@ -35,6 +39,12 @@ class ProposalCase:
     transcript: str
     expected: tuple[ExpectedProposal, ...] = field(default_factory=tuple)
     """Exactly these fields are proposed; an empty tuple means no proposal at all."""
+    allowed: tuple[str, ...] = ()
+    """Fields that may be proposed or not, where reading the text either way is fair."""
+    never_said: tuple[str, ...] = ()
+    """Terms no proposal may contain."""
+    document: bool = False
+    """The transcript is an imported note's document, numbered a paragraph at a time."""
 
 
 def _chart(**history: str) -> ChartContext:
@@ -146,4 +156,79 @@ STOPPED_WORKING = ProposalCase(
 )
 """The job ended: the chart keeps that she worked there and adds that she no longer does."""
 
-ALL_CASES: tuple[ProposalCase, ...] = (DIVORCE_FINALIZED, UNCHANGED, STOPPED_WORKING)
+TRANSFER_NOTE = ProposalCase(
+    name="transfer-note",
+    chart=ChartContext(allergy_status="not_recorded"),
+    transcript=(
+        Path(__file__).parents[2] / "tests/fixtures/notes/transfer_psychiatric_follow_up.txt"
+    ).read_text(),
+    document=True,
+    expected=(
+        ExpectedProposal(field_key="alcohol", must_contain=("wine",), evidence=(6,)),
+        ExpectedProposal(
+            field_key="tobacco_nicotine", must_contain_any=("none", "no "), evidence=(6,)
+        ),
+        ExpectedProposal(
+            field_key="work_school", must_contain_any=("full-time", "full time"), evidence=(2,)
+        ),
+        ExpectedProposal(field_key="allergies", must_contain=("rash",), evidence=(8,)),
+    ),
+    allowed=("supports", "relationships"),
+    never_said=("sertraline", "hydroxyzine"),
+)
+"""A follow-up note from another records system, for a client whose chart is empty: each
+history field it states and the allergy it records are proposed, citing the paragraph that
+says it. Its medications are not history; they belong to the medication list."""
+
+CARRIED_BLOCK_IS_STALE = ProposalCase(
+    name="carried-block-is-stale",
+    chart=_chart(
+        work_school="Works full time as a dental hygienist at a family dental practice.",
+        living_situation="Lives with husband and two children.",
+    ),
+    transcript="""\
+PSYCHIATRIC FOLLOW-UP
+Date of service: 09/23/2026
+
+SOCIAL HISTORY (carried forward from 03/02/2026)
+Lives with husband and two children. Works full time as a dental hygienist at a family \
+dental practice.
+
+CURRENT MEDICATIONS (carried forward)
+Buspirone 10 mg by mouth twice daily
+
+INTERVAL HISTORY
+Laid off from the dental practice at the end of August when the hygiene schedule was cut. \
+Applying to other offices. Anxiety worse on days money is tight.
+
+ASSESSMENT
+Generalized anxiety disorder (F41.1), worse with the job loss.
+
+PLAN
+Increase buspirone to 15 mg by mouth twice daily.
+Return in 4 weeks.
+""",
+    document=True,
+    expected=(
+        ExpectedProposal(
+            field_key="work_school",
+            must_contain=("dental",),
+            must_contain_any=("no longer", "laid off", "until", "former", "let go"),
+            evidence=(3,),
+            also_cites=(1,),
+        ),
+    ),
+    never_said=("buspirone",),
+)
+"""The note's carried social history says the client works; this visit's interval history
+says they were laid off. The proposal follows this visit and cites the carried paragraph
+too, so the clinician sees the conflict. The carried medication list disagrees with the
+plan the same way; medications are the medication list's, never a history field's."""
+
+ALL_CASES: tuple[ProposalCase, ...] = (
+    DIVORCE_FINALIZED,
+    UNCHANGED,
+    STOPPED_WORKING,
+    TRANSFER_NOTE,
+    CARRIED_BLOCK_IS_STALE,
+)

@@ -9,6 +9,7 @@ Thin HTTP handlers that delegate business logic to SessionService.
 import contextvars
 import logging
 from datetime import datetime
+from functools import partial
 from typing import Any
 
 from anyio import fail_after, to_thread
@@ -42,7 +43,9 @@ from ..auth.service import (
     require_baa_acceptance,
     require_cloud_tasks_invoker,
 )
-from ..chart_proposals.step import ChartProposalStep
+from ..chart_proposals.dependencies import get_chart_proposal_step
+from ..chart_proposals.models import Drafted
+from ..chart_proposals.step import ChartProposalStep, proposes_chart_updates
 from ..db import release_db_connection
 from ..db.tenant_session import tenant_db_session
 from ..jobs.task_queue import enqueue
@@ -72,6 +75,7 @@ from ..notes import (
     NoteTypeRegistry,
     get_note_type_authorizer,
 )
+from ..notes.chart_context import ChartContext
 from ..rate_limit import get_audio_upload_limiter
 from ..repositories import (
     NotesRepository,
@@ -528,6 +532,29 @@ _MAX_IMPORT_DOC_BYTES = MAX_IMPORT_DOC_BYTES
 # timeout, so a stalled call comes back as "try again" rather than a 500.
 IMPORT_PARSE_TIMEOUT_SECONDS = 90.0
 
+# The chart-proposal call on an imported document is smaller than the parse.
+# Running out of time records the note as not checked; the import still lands.
+IMPORT_PROPOSALS_TIMEOUT_SECONDS = 60.0
+
+
+async def _propose_from_document(
+    step: ChartProposalStep,
+    generator: NoteGenerationService,
+    definition: NoteTypeDefinition,
+    chart: ChartContext | None,
+    text: str,
+) -> Drafted | None:
+    """The chart updates an imported document proposes, off the event loop. Never raises."""
+    if chart is None:
+        return None
+    ask = partial(step.draft_from_document, generator, definition, chart, text)
+    try:
+        with fail_after(IMPORT_PROPOSALS_TIMEOUT_SECONDS):
+            return await to_thread.run_sync(ask, abandon_on_cancel=True)
+    except TimeoutError as exc:
+        logger.warning("Imported-note chart proposals timed out; the note is not checked")
+        return Drafted([], error_class=type(exc).__name__)
+
 
 def _resolve_import_session_date(override: str | None, extracted: datetime | None) -> datetime:
     """Pick the session date for an import: caller override > document > now.
@@ -599,6 +626,8 @@ async def import_session(
     ocr: DocumentAiOcrClient = Depends(get_document_ocr_client),
     registry: NoteTypeRegistry = Depends(get_registry),
     authorizer: NoteTypeAuthorizer = Depends(get_note_type_authorizer),
+    generator: NoteGenerationService = Depends(get_note_generation_service),
+    proposal_step: ChartProposalStep = Depends(get_chart_proposal_step),
     audit: AuditService = Depends(get_audit_service),
 ) -> SessionResponse:
     """Import an existing note (PDF, Word or TXT) as a pending-review session.
@@ -609,9 +638,19 @@ async def import_session(
     caller overrides it. The original text is kept as the session transcript
     so it can be reviewed beside the parsed note. One file per request; the
     client uploads several in parallel for a bulk chart import.
+
+    A type that proposes chart updates proposes them here, from the
+    document, as a drafted note does from its transcript: each cites the
+    paragraphs that state it, and they are decided when the note is signed.
     """
     definition = _importable_note_type(note_type, registry, authorizer, user)
     _gate_trial_session(user.email)
+    chart = None
+    if proposes_chart_updates(definition):
+        charted = session_service.patient_repo.get(patient_id, user.id)
+        if charted is None:
+            raise NotFoundError("Patient not found", {"patient_id": patient_id})
+        chart = proposal_step.chart(charted)
 
     data = await file.read()
     if len(data) > _MAX_IMPORT_DOC_BYTES:
@@ -663,6 +702,7 @@ async def import_session(
         logger.exception("Imported-note parse failed")
         raise ServerError("Could not read the note from this document.") from exc
 
+    drafted = await _propose_from_document(proposal_step, generator, definition, chart, text)
     resolved_date = _resolve_import_session_date(session_date, parsed.session_datetime())
 
     try:
@@ -677,6 +717,8 @@ async def import_session(
         )
     except PatientNotFoundError as exc:
         raise NotFoundError("Patient not found", {"patient_id": patient_id}) from exc
+    if chart is not None:
+        proposal_step.store(note, definition, chart, drafted, parsed.content)
 
     audit.log_session_action(AuditAction.SESSION_CREATED, user, http_request, session, patient)
 
