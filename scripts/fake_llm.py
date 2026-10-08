@@ -214,8 +214,8 @@ class _Chart:
     """Chart history text by field key, as recorded (the substance baseline excluded)."""
 
 
-#: A client line naming what they take: "Client: I'm taking A, B and C."
-_STATED_MEDICATIONS = re.compile(r"Client: I(?:'m| am) taking (.+?)\.?$", re.MULTILINE)
+#: How a client line names what they take: "Client: I'm taking A, B and C."
+_STATED_MEDICATIONS = ("Client: I'm taking ", "Client: I am taking ")
 
 #: How the backend renders one chart-history field: ``  - key (Label, recorded date): text``.
 _HISTORY_LINE = re.compile(r"^  - ([a-z_]+) \([^)]*, recorded [0-9-]+\): (.*)$")
@@ -267,12 +267,14 @@ def _current_medications(chart_lines: list[str], user_prompt: str) -> list[str]:
     """
     listed = chart_lines or ["None recorded"]
     on_chart = {line.split()[0].lower() for line in chart_lines if not line.endswith(":")}
-    stated = [
-        item.strip()
-        for match in _STATED_MEDICATIONS.finditer(user_prompt)
-        for item in re.split(r",\s*|\s+and\s+", match.group(1))
-        if item.strip()
-    ]
+    # Plain string splitting: the prompt is caller text, so no regex runs over it.
+    stated: list[str] = []
+    for line in user_prompt.splitlines():
+        for opener in _STATED_MEDICATIONS:
+            _, found, named = line.partition(opener)
+            if found:
+                named = named.strip().removesuffix(".").replace(" and ", ",")
+                stated.extend(item.strip() for item in named.split(",") if item.strip())
     return listed + [
         f'"{item}" (stated this visit)'
         for item in stated
