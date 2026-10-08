@@ -94,6 +94,16 @@ describe("IntakeDocumentsCard", () => {
     expect(screen.getByRole("button", { name: "Hide documents" })).toHaveAttribute("aria-expanded", "true")
   })
 
+  it("gives no count while the list is still loading", () => {
+    // "Show 0 documents" flashed on dev before the list arrived.
+    mockUseDocuments.mockReturnValue({ data: undefined })
+
+    render(<IntakeDocumentsCard />)
+
+    expect(screen.getByRole("button", { name: "Show documents" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /^Show 0 / })).not.toBeInTheDocument()
+  })
+
   it("says so when the practice has no documents", () => {
     mockUseDocuments.mockReturnValue({ data: [] })
 

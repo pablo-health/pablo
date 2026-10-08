@@ -152,7 +152,9 @@ export const DOCUMENTS_DESCRIPTION =
   "What your packets ask people to read and sign. Editing one starts a new version."
 export const DOCUMENTS_EMPTY = "No documents yet."
 export const HIDE_DOCUMENTS = "Hide documents"
-export function showDocuments(count: number): string {
+/** `null` while the list is still loading: no count is better than a wrong one. */
+export function showDocuments(count: number | null): string {
+  if (count === null) return "Show documents"
   return count === 1 ? "Show 1 document" : `Show ${count} documents`
 }
 export const NEW_DOCUMENT_NAME = "New document"

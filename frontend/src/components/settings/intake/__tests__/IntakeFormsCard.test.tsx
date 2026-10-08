@@ -120,6 +120,16 @@ describe("IntakeFormsCard", () => {
     expect(screen.getByText(EMPTY_STATE)).toBeInTheDocument()
   })
 
+  it("does not say there are no packets while the list is still loading", () => {
+    // Seen on dev: the card said "No packets yet" for a moment on a practice
+    // with dozens, before the list arrived.
+    mockUseTemplates.mockReturnValue({ data: undefined })
+
+    render(<IntakeFormsCard />)
+
+    expect(screen.queryByText(EMPTY_STATE)).not.toBeInTheDocument()
+  })
+
   it("lists each form with the state of its newest version", () => {
     render(<IntakeFormsCard />)
 

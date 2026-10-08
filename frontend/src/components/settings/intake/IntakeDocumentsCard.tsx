@@ -174,7 +174,8 @@ export function IntakeDocumentsCard() {
         onClick={() => setShown(!shown)}
         aria-expanded={shown}
       >
-        {shown ? HIDE_DOCUMENTS : showDocuments(list.length)}
+        {/* No count until the list arrives: "Show 0 documents" while loading is untrue. */}
+        {shown ? HIDE_DOCUMENTS : showDocuments(documents === undefined ? null : list.length)}
       </Button>
       {shown && (
         <div className="mt-2">
