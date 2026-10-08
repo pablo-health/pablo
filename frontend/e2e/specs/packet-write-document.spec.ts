@@ -54,7 +54,7 @@ test.describe("A packet writes its own document", () => {
     await packets.getByRole("button", { name: "Publish and use it" }).click()
     await expect(packets.getByText("Give the document a name.")).toBeVisible()
 
-    await packets.getByLabel("Name", { exact: true }).fill(documentTitle)
+    await packets.getByLabel("Document name", { exact: true }).fill(documentTitle)
     await packets.getByLabel("What they read").fill("We meet weekly. What is said in group stays in group.")
     await packets.getByRole("button", { name: "Publish and use it" }).click()
     await expect(packets.getByRole("button", { name: "Write a new one" })).toBeVisible()
