@@ -228,6 +228,10 @@ export interface UploadSessionRequest {
   patient_id: string
   session_date: string
   transcript: TranscriptModel
+  /** Note type to draft; SOAP when omitted. */
+  note_type?: string
+  /** Values for that type's declared inputs. */
+  note_inputs?: Record<string, string>
 }
 
 export interface FinalizeSessionRequest {

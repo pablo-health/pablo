@@ -15,6 +15,7 @@ import { ApiError } from "@/lib/api/client"
 import * as patientsApi from "@/lib/api/patients"
 import * as sessionsApi from "@/lib/api/sessions"
 import { createMockPatient, createMockSession } from "@/test/factories"
+import type { NoteTypeSchema } from "@/types/noteTypes"
 
 // Mock pointer capture for Radix UI Select component
 beforeAll(() => {
@@ -32,6 +33,40 @@ vi.mock("next/image", () => ({
     // eslint-disable-next-line @next/next/no-img-element
     <img src={src} alt={alt} {...props} />
   ),
+}))
+
+const mockShowToast = vi.fn()
+vi.mock("@/components/ui/Toast", () => ({
+  useToast: () => ({ showToast: mockShowToast }),
+}))
+
+const noteType = (extra: Partial<NoteTypeSchema> & { key: string; label: string }) =>
+  ({ description: "", context: "session", inputs: [], is_locked: false, ...extra }) as NoteTypeSchema
+
+const mockCatalog = {
+  note_types: [
+    noteType({ key: "soap", label: "SOAP" }),
+    noteType({
+      key: "psychiatric_follow_up",
+      label: "Psychiatric follow-up",
+      inputs: [
+        {
+          key: "place_of_service",
+          label: "Place of service",
+          kind: "choice",
+          options: ["Telehealth", "In office"],
+          required: true,
+        },
+        { key: "mdm_risk", label: "Risk", kind: "choice", options: ["Low"], required: false },
+      ],
+    }),
+    noteType({ key: "dap", label: "DAP", is_locked: true }),
+    noteType({ key: "psychotherapy", label: "Psychotherapy note", restricted: true }),
+    noteType({ key: "safety_plan", label: "Safety plan", context: "patient" }),
+  ],
+}
+vi.mock("@/hooks/useNoteTypes", () => ({
+  useNoteTypes: () => ({ data: mockCatalog, isLoading: false }),
 }))
 
 const mockPush = vi.fn()
@@ -182,7 +217,7 @@ describe("UploadTranscriptDialog", () => {
         expect(screen.getByText("Select a client...")).toBeInTheDocument()
       })
 
-      const selectTrigger = screen.getByRole("combobox")
+      const selectTrigger = screen.getByRole("combobox", { name: /Client/ })
       await user.click(selectTrigger)
 
       // Wait for options to appear (multiple elements with same text due to Radix UI rendering)
@@ -200,7 +235,7 @@ describe("UploadTranscriptDialog", () => {
       await user.click(screen.getByText("Upload Session"))
 
       // Wait for form to be ready
-      const submitButton = await screen.findByText("Upload & Generate SOAP")
+      const submitButton = await screen.findByText("Upload & Draft Note")
       expect(submitButton).toBeInTheDocument()
 
       await user.click(submitButton)
@@ -220,7 +255,7 @@ describe("UploadTranscriptDialog", () => {
       fireEvent.click(screen.getByText("Upload Session"))
 
       waitFor(() => {
-        const selectTrigger = screen.getByRole("combobox")
+        const selectTrigger = screen.getByRole("combobox", { name: /Client/ })
         expect(selectTrigger).toBeDisabled()
       })
     })
@@ -234,10 +269,10 @@ describe("UploadTranscriptDialog", () => {
       await user.click(screen.getByText("Upload Session"))
 
       await waitFor(() => {
-        expect(screen.getByText("Upload & Generate SOAP")).toBeInTheDocument()
+        expect(screen.getByText("Upload & Draft Note")).toBeInTheDocument()
       })
 
-      await user.click(screen.getByText("Upload & Generate SOAP"))
+      await user.click(screen.getByText("Upload & Draft Note"))
 
       await waitFor(() => {
         expect(screen.getByText("Session date is required")).toBeInTheDocument()
@@ -528,10 +563,10 @@ describe("UploadTranscriptDialog", () => {
       await user.click(screen.getByText("Upload Session"))
 
       await waitFor(() => {
-        expect(screen.getByText("Upload & Generate SOAP")).toBeInTheDocument()
+        expect(screen.getByText("Upload & Draft Note")).toBeInTheDocument()
       })
 
-      await user.click(screen.getByText("Upload & Generate SOAP"))
+      await user.click(screen.getByText("Upload & Draft Note"))
 
       await waitFor(() => {
         expect(screen.getByText("Client is required")).toBeInTheDocument()
@@ -557,7 +592,7 @@ describe("UploadTranscriptDialog", () => {
       })
 
       // Select patient
-      const selectTrigger = screen.getByRole("combobox")
+      const selectTrigger = screen.getByRole("combobox", { name: /Client/ })
       await user.click(selectTrigger)
 
       const doeJaneOptions = await screen.findAllByText("Doe, Jane")
@@ -582,7 +617,7 @@ describe("UploadTranscriptDialog", () => {
       })
 
       // Submit
-      await user.click(screen.getByText("Upload & Generate SOAP"))
+      await user.click(screen.getByText("Upload & Draft Note"))
 
       await waitFor(() => {
         expect(sessionsApi.uploadSession).toHaveBeenCalledWith(
@@ -626,7 +661,7 @@ describe("UploadTranscriptDialog", () => {
       })
 
       // Select patient
-      const selectTrigger = screen.getByRole("combobox")
+      const selectTrigger = screen.getByRole("combobox", { name: /Client/ })
       await user.click(selectTrigger)
       const doeJaneOptions = await screen.findAllByText("Doe, Jane")
       await user.click(doeJaneOptions[doeJaneOptions.length - 1])
@@ -648,7 +683,7 @@ describe("UploadTranscriptDialog", () => {
       })
 
       // Submit — dialog closes immediately and overlay appears
-      await user.click(screen.getByText("Upload & Generate SOAP"))
+      await user.click(screen.getByText("Upload & Draft Note"))
 
       await waitFor(() => {
         expect(screen.queryByText("Upload Session Transcript")).not.toBeInTheDocument()
@@ -682,7 +717,7 @@ describe("UploadTranscriptDialog", () => {
         expect(screen.getByText("Select a client...")).toBeInTheDocument()
       })
 
-      const selectTrigger = screen.getByRole("combobox")
+      const selectTrigger = screen.getByRole("combobox", { name: /Client/ })
       await user.click(selectTrigger)
       const doeJaneOptions = await screen.findAllByText("Doe, Jane")
       await user.click(doeJaneOptions[doeJaneOptions.length - 1])
@@ -696,7 +731,7 @@ describe("UploadTranscriptDialog", () => {
       const fileInput = screen.getByLabelText(/Transcript File/)
       await user.upload(fileInput, file)
 
-      await user.click(screen.getByText("Upload & Generate SOAP"))
+      await user.click(screen.getByText("Upload & Draft Note"))
 
       await waitFor(() => {
         expect(mockPush).toHaveBeenCalledWith("/dashboard/sessions/session-123")
@@ -720,7 +755,7 @@ describe("UploadTranscriptDialog", () => {
       })
 
       // Select patient
-      const selectTrigger = screen.getByRole("combobox")
+      const selectTrigger = screen.getByRole("combobox", { name: /Client/ })
       await user.click(selectTrigger)
       const doeJaneOptions = await screen.findAllByText("Doe, Jane")
       await user.click(doeJaneOptions[doeJaneOptions.length - 1])
@@ -736,7 +771,7 @@ describe("UploadTranscriptDialog", () => {
       await user.upload(fileInput, file)
 
       // Submit — dialog closes immediately; overlay is shown
-      await user.click(screen.getByText("Upload & Generate SOAP"))
+      await user.click(screen.getByText("Upload & Draft Note"))
 
       await waitFor(() => {
         expect(screen.queryByText("Upload Session Transcript")).not.toBeInTheDocument()
@@ -761,7 +796,7 @@ describe("UploadTranscriptDialog", () => {
       })
 
       // Select patient
-      const selectTrigger = screen.getByRole("combobox")
+      const selectTrigger = screen.getByRole("combobox", { name: /Client/ })
       await user.click(selectTrigger)
       const doeJaneOptions = await screen.findAllByText("Doe, Jane")
       await user.click(doeJaneOptions[doeJaneOptions.length - 1])
@@ -777,7 +812,7 @@ describe("UploadTranscriptDialog", () => {
       await user.upload(fileInput, file)
 
       // Submit
-      await user.click(screen.getByText("Upload & Generate SOAP"))
+      await user.click(screen.getByText("Upload & Draft Note"))
 
       await waitFor(() => {
         expect(screen.getByText("Uploading...")).toBeInTheDocument()
@@ -801,7 +836,7 @@ describe("UploadTranscriptDialog", () => {
       })
 
       // Select patient
-      const selectTrigger = screen.getByRole("combobox")
+      const selectTrigger = screen.getByRole("combobox", { name: /Client/ })
       await user.click(selectTrigger)
       const doeJaneOptions = await screen.findAllByText("Doe, Jane")
       await user.click(doeJaneOptions[doeJaneOptions.length - 1])
@@ -817,7 +852,7 @@ describe("UploadTranscriptDialog", () => {
       await user.upload(fileInput, file)
 
       // Submit
-      await user.click(screen.getByText("Upload & Generate SOAP"))
+      await user.click(screen.getByText("Upload & Draft Note"))
 
       await waitFor(() => {
         expect(screen.getByText("Upload failed")).toBeInTheDocument()
@@ -841,7 +876,7 @@ describe("UploadTranscriptDialog", () => {
       })
 
       // Select patient
-      const selectTrigger = screen.getByRole("combobox")
+      const selectTrigger = screen.getByRole("combobox", { name: /Client/ })
       await user.click(selectTrigger)
       const doeJaneOptions = await screen.findAllByText("Doe, Jane")
       await user.click(doeJaneOptions[doeJaneOptions.length - 1])
@@ -858,7 +893,7 @@ describe("UploadTranscriptDialog", () => {
       await user.upload(fileInput, file)
 
       // Submit — dialog closes immediately, overlay mounts
-      await user.click(screen.getByText("Upload & Generate SOAP"))
+      await user.click(screen.getByText("Upload & Draft Note"))
 
       // After the upload rejects, overlay should disappear and dialog re-open
       // with the error message surfaced
@@ -888,7 +923,7 @@ describe("UploadTranscriptDialog", () => {
       })
 
       // Select patient
-      const selectTrigger = screen.getByRole("combobox")
+      const selectTrigger = screen.getByRole("combobox", { name: /Client/ })
       await user.click(selectTrigger)
       const doeJaneOptions = await screen.findAllByText("Doe, Jane")
       await user.click(doeJaneOptions[doeJaneOptions.length - 1])
@@ -904,14 +939,14 @@ describe("UploadTranscriptDialog", () => {
       await user.upload(fileInput, file)
 
       // Submit (fails)
-      await user.click(screen.getByText("Upload & Generate SOAP"))
+      await user.click(screen.getByText("Upload & Draft Note"))
 
       await waitFor(() => {
         expect(screen.getByText("Upload failed")).toBeInTheDocument()
       })
 
       // Retry
-      await user.click(screen.getByText("Upload & Generate SOAP"))
+      await user.click(screen.getByText("Upload & Draft Note"))
 
       await waitFor(() => {
         expect(onSuccess).toHaveBeenCalledWith(mockSession)
@@ -934,7 +969,7 @@ describe("UploadTranscriptDialog", () => {
         expect(screen.getByText("Select a client...")).toBeInTheDocument()
       })
 
-      const selectTrigger = screen.getByRole("combobox")
+      const selectTrigger = screen.getByRole("combobox", { name: /Client/ })
       await user.click(selectTrigger)
       const doeJaneOptions = await screen.findAllByText("Doe, Jane")
       await user.click(doeJaneOptions[doeJaneOptions.length - 1])
@@ -946,7 +981,7 @@ describe("UploadTranscriptDialog", () => {
       const fileInput = screen.getByLabelText(/Transcript File/)
       await user.upload(fileInput, file)
 
-      await user.click(screen.getByText("Upload & Generate SOAP"))
+      await user.click(screen.getByText("Upload & Draft Note"))
 
       await waitFor(() => {
         expect(screen.queryByText("Upload Session Transcript")).not.toBeInTheDocument()
@@ -970,7 +1005,7 @@ describe("UploadTranscriptDialog", () => {
         expect(screen.getByText("Select a client...")).toBeInTheDocument()
       })
 
-      const selectTrigger = screen.getByRole("combobox")
+      const selectTrigger = screen.getByRole("combobox", { name: /Client/ })
       await user.click(selectTrigger)
       const doeJaneOptions = await screen.findAllByText("Doe, Jane")
       await user.click(doeJaneOptions[doeJaneOptions.length - 1])
@@ -985,7 +1020,7 @@ describe("UploadTranscriptDialog", () => {
       await user.upload(fileInput, file)
 
       // Submit — dialog closes immediately, overlay mounts
-      await user.click(screen.getByText("Upload & Generate SOAP"))
+      await user.click(screen.getByText("Upload & Draft Note"))
 
       await waitFor(() => {
         expect(screen.queryByText("Pablo is writing your note")).not.toBeInTheDocument()
@@ -1015,7 +1050,7 @@ describe("UploadTranscriptDialog", () => {
         expect(screen.getByText("Select a client...")).toBeInTheDocument()
       })
 
-      const selectTrigger = screen.getByRole("combobox")
+      const selectTrigger = screen.getByRole("combobox", { name: /Client/ })
       await user.click(selectTrigger)
 
       await waitFor(() => {
@@ -1051,7 +1086,7 @@ describe("UploadTranscriptDialog", () => {
       await user.click(screen.getByText("Upload Session"))
 
       // Fill form
-      const selectTrigger = screen.getByRole("combobox")
+      const selectTrigger = screen.getByRole("combobox", { name: /Client/ })
       await user.click(selectTrigger)
       const doeJaneOptions = await screen.findAllByText("Doe, Jane")
       await user.click(doeJaneOptions[doeJaneOptions.length - 1])
@@ -1069,7 +1104,7 @@ describe("UploadTranscriptDialog", () => {
       const fileInput = screen.getByLabelText(/Transcript File/)
       await user.upload(fileInput, file)
 
-      await user.click(screen.getByText("Upload & Generate SOAP"))
+      await user.click(screen.getByText("Upload & Draft Note"))
 
       await waitFor(() => {
         expect(sessionsApi.uploadSession).toHaveBeenCalledWith(
@@ -1093,7 +1128,7 @@ describe("UploadTranscriptDialog", () => {
       )
 
       expect(screen.getByText("Upload Session Transcript")).toBeInTheDocument()
-      expect(screen.queryByRole("combobox")).not.toBeInTheDocument()
+      expect(screen.queryByRole("combobox", { name: /Client/ })).not.toBeInTheDocument()
     })
 
     it("renders no default trigger when controlled", () => {
@@ -1129,7 +1164,7 @@ describe("UploadTranscriptDialog", () => {
       const fileInput = screen.getByLabelText(/Transcript File/)
       await user.upload(fileInput, file)
 
-      await user.click(screen.getByText("Upload & Generate SOAP"))
+      await user.click(screen.getByText("Upload & Draft Note"))
 
       await waitFor(() => {
         expect(sessionsApi.uploadSession).toHaveBeenCalledWith(
@@ -1138,6 +1173,105 @@ describe("UploadTranscriptDialog", () => {
           undefined
         )
       })
+    })
+  })
+
+  describe("Note type", () => {
+    const fillForm = async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.type(screen.getByLabelText(/Session Date/), "2024-01-15T14:30")
+      const file = new File(["WEBVTT\n\nTest content"], "transcript.vtt", { type: "text/vtt" })
+      await user.upload(screen.getByLabelText(/Transcript File/), file)
+    }
+
+    const renderInChart = () =>
+      render(
+        <UploadTranscriptDialog
+          patientId="patient-1"
+          open
+          onOpenChange={() => {}}
+          onSuccess={() => {}}
+        />,
+        { wrapper: createWrapper() },
+      )
+
+    const pickType = async (user: ReturnType<typeof userEvent.setup>, label: string) => {
+      await user.click(screen.getByRole("combobox", { name: "Note type" }))
+      await user.click(await screen.findByRole("option", { name: label }))
+    }
+
+    it("defaults to SOAP and offers only types a transcript can be drafted as", async () => {
+      // Catches the picker offering a hand-written or patient-level type that
+      // the server refuses, or starting on something other than SOAP.
+      const user = userEvent.setup()
+      renderInChart()
+
+      const picker = screen.getByRole("combobox", { name: "Note type" })
+      expect(picker).toHaveTextContent("SOAP")
+      await user.click(picker)
+      const options = (await screen.findAllByRole("option")).map((o) => o.textContent)
+      expect(options).toEqual(["SOAP", "Psychiatric follow-up", "DAP"])
+    })
+
+    it("sends the chosen type with its inputs, and asks for a required one first", async () => {
+      // Catches the choice never reaching the upload (every transcript drafts
+      // SOAP), and a follow-up being sent without its place of service.
+      const user = userEvent.setup()
+      vi.mocked(sessionsApi.uploadSession).mockResolvedValue(mockSession)
+      renderInChart()
+      await fillForm(user)
+
+      await pickType(user, "Psychiatric follow-up")
+      // The MDM choices are made at review, beside the note.
+      expect(screen.queryByRole("combobox", { name: "Risk" })).not.toBeInTheDocument()
+
+      await user.click(screen.getByText("Upload & Draft Note"))
+      expect(await screen.findByText("Place of service is required")).toBeInTheDocument()
+      expect(sessionsApi.uploadSession).not.toHaveBeenCalled()
+
+      await user.click(screen.getByRole("combobox", { name: "Place of service" }))
+      await user.click(await screen.findByRole("option", { name: "In office" }))
+      await user.click(screen.getByText("Upload & Draft Note"))
+
+      await waitFor(() => {
+        expect(sessionsApi.uploadSession).toHaveBeenCalledWith(
+          "patient-1",
+          expect.objectContaining({
+            note_type: "psychiatric_follow_up",
+            note_inputs: { place_of_service: "In office" },
+          }),
+          undefined,
+        )
+      })
+    })
+
+    it("sends no type when SOAP is left as is", async () => {
+      // Catches the default changing the request every existing caller sends.
+      const user = userEvent.setup()
+      vi.mocked(sessionsApi.uploadSession).mockResolvedValue(mockSession)
+      renderInChart()
+      await fillForm(user)
+
+      await user.click(screen.getByText("Upload & Draft Note"))
+
+      await waitFor(() => expect(sessionsApi.uploadSession).toHaveBeenCalled())
+      const sent = vi.mocked(sessionsApi.uploadSession).mock.calls[0][1]
+      expect(sent).not.toHaveProperty("note_type")
+      expect(sent).not.toHaveProperty("note_inputs")
+    })
+
+    it("explains a locked type instead of choosing it", async () => {
+      // Catches a locked type being selected and refused by the server after
+      // the upload, as the blank-note path already avoids.
+      const user = userEvent.setup()
+      renderInChart()
+
+      await pickType(user, "DAP")
+
+      expect(mockShowToast).toHaveBeenCalledWith(
+        "DAP is a Practice tier note format. Upgrade your subscription to enable it.",
+        "info",
+      )
+      expect(screen.getByRole("combobox", { name: "Note type" })).toHaveTextContent("SOAP")
     })
   })
 })

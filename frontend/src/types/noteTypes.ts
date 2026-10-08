@@ -100,6 +100,11 @@ export function isPracticeKey(key: string): boolean {
   return key.startsWith(PRACTICE_KEY_PREFIX)
 }
 
+/** What a picker says when someone chooses a type their subscription doesn't include. */
+export function lockedNoteTypeMessage(label: string): string {
+  return `${label} is a Practice tier note format. Upgrade your subscription to enable it.`
+}
+
 /** The field shapes a practice can give its own types. */
 export type PracticeFieldKind = "text" | "list" | "diagnoses"
 
