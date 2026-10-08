@@ -72,6 +72,7 @@ from ..notes import (
     NoteTypeRegistry,
     get_note_type_authorizer,
 )
+from ..people_term_lookup import worker_people_term_lookup
 from ..rate_limit import get_audio_upload_limiter
 from ..repositories import (
     NotesRepository,
@@ -302,6 +303,7 @@ def get_worker_session_service(
     runs. ``note_generation_service`` stays injected so tests can substitute a
     deterministic mock.
     """
+    people = worker_people_term_lookup()
     return SessionService(
         _session_repo_factory(),
         _patient_repo_factory(),
@@ -311,8 +313,9 @@ def get_worker_session_service(
         _medication_repo_factory(),
         _history_repo_factory(),
         ChartProposalStep(
-            _proposal_repo_factory(), _history_repo_factory(), _medication_repo_factory()
+            _proposal_repo_factory(), _history_repo_factory(), _medication_repo_factory(), people
         ),
+        people,
     )
 
 

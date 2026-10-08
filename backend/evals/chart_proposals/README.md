@@ -21,6 +21,7 @@ Any problem from any check fails the case.
 | `text_kept_and_changed` | the proposed text leaves out what the chart said, or does not say what changed | a proposal amends and appends, never removes: what stopped being true is kept and said to no longer apply |
 | `the_stated_action` | a medication proposal is a different action (a change where the clinician stopped it) | accepting does what the visit decided |
 | `cites_the_lines_that_say_it` | the proposal cites none of the lines that state the change | the evidence the clinician sees is the sentence that says it |
+| `no_gendered_pronouns` | a proposal calls the client he or she (no case's chart records pronouns) | the chart never assumes a client's gender |
 
 A proposal is named by its field and, for a list field, its entry: a
 medication's proposals are `medications: <name>`, one per medication.
@@ -37,7 +38,7 @@ The checks are unit-tested on hand-made proposals in
 | `stopped-working` | full time as a dental hygienist | stopped working there at the end of August | `work_school` still naming the dental practice and saying it no longer applies |
 | `medication-start-and-stop` | sertraline, trazodone | the clinician starts hydroxyzine 25 mg in the afternoon as needed and stops the trazodone because of nausea | a start with its frequency and a stop with its reason; nothing for the sertraline, continued |
 | `medication-only-discussed` | sertraline | a medication asked about, a dose increase considered for next time | no proposal |
-| `medication-another-prescriber-started` | sertraline | the client's primary care doctor started lisinopril 10 mg once a day | an add with the dose and frequency as stated |
+| `medication-another-prescriber-started` | sertraline | the client's primary care doctor started lisinopril 10 mg once a day | an add with the dose and frequency as stated; `medical_history` for the blood pressure is allowed, not required |
 | `medication-client-stopped` | sertraline, buspirone | the client stopped the buspirone; the clinician decides nothing yet | no proposal |
 
 The history cases' charts list the medication the client mentions taking, as
@@ -57,6 +58,15 @@ scripts/run-chart-proposal-eval.sh --case unchanged
 ```
 
 ## Recorded runs — 2026-10-08
+
+### Pronouns
+
+Before the prompt said how to refer to the person seen, every run of
+`stopped-working` wrote "when she was let go". With the rule (in the
+clinician's word, "the client" in every case here), three runs of it
+passed with no gendered pronoun, three runs of
+`medication-another-prescriber-started` passed (one proposing the allowed
+medical history), and a run of all seven cases passed.
 
 ### With the medication list
 

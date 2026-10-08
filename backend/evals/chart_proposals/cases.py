@@ -39,6 +39,8 @@ class ProposalCase:
     transcript: str
     expected: tuple[ExpectedProposal, ...] = field(default_factory=tuple)
     """Exactly these fields are proposed; an empty tuple means no proposal at all."""
+    allowed: tuple[str, ...] = ()
+    """Fields that may be proposed or not, where reading the text either way is fair."""
 
 
 def _chart(*medications: ChartMedication, **history: str) -> ChartContext:
@@ -229,6 +231,9 @@ ANOTHER_PRESCRIBER = ProposalCase(
             evidence=(1, 3),
         ),
     ),
+    # "For my blood pressure" is a medical fact the empty chart lacks, so a
+    # medical_history proposal for it is right, though not required.
+    allowed=("medical_history",),
 )
 """A medication another prescriber started, which the list lacks: an add, with the dose and
 frequency as the client states them."""

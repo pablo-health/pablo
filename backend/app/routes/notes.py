@@ -61,6 +61,7 @@ from ..notes import (
 )
 from ..notes.chart_context import chart_context_for
 from ..notes.practice_types import validate_note_inputs
+from ..people_term_lookup import worker_people_term_lookup
 from ..problems.dependencies import get_problem_service
 from ..repositories import (
     ChartHistoryRepository,
@@ -246,7 +247,10 @@ def get_worker_medication_repository() -> MedicationRepository:
 def get_worker_proposal_step() -> ChartProposalStep:
     """The chart-proposal step after a draft, for the worker (it arms its own tenant)."""
     return ChartProposalStep(
-        _proposal_repo_factory(), _history_repo_factory(), _medication_repo_factory()
+        _proposal_repo_factory(),
+        _history_repo_factory(),
+        _medication_repo_factory(),
+        worker_people_term_lookup(),
     )
 
 
@@ -853,6 +857,7 @@ def generate_standalone_note_job(
         problem_repo.list_by_patient(patient.id),
         medication_repo.list_by_patient(patient.id, payload.user_id),
         history_repo.entries(patient.id),
+        person=proposal_step.person(payload.user_id),
     )
     # Release the pooled connection before the multi-second LLM call — same
     # seam ``upload_session`` and the old inline dictation path used.

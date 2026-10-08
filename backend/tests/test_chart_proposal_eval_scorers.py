@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from app.chart_proposals.models import DraftedProposal, Evidence, MedicationChange
 from evals.chart_proposals.cases import (
+    ANOTHER_PRESCRIBER,
     CLIENT_STOPPED,
     DIVORCE_FINALIZED,
     START_AND_STOP,
@@ -61,6 +62,16 @@ def test_a_removal_fails() -> None:
     ]
 
 
+def test_a_gendered_pronoun_fails() -> None:
+    gendered = _proposal(
+        "work_school", "Worked as a dental hygienist until August, when she was let go.", 1
+    )
+    assert grade([gendered], STOPPED_WORKING)["no_gendered_pronouns"] == ["work_school says 'she'"]
+    # A word that only contains one is fine.
+    other = _proposal("work_school", "Worked as a dental hygienist there until August.", 1)
+    assert grade([other], STOPPED_WORKING)["no_gendered_pronouns"] == []
+
+
 def test_evidence_from_the_wrong_lines_fails() -> None:
     off = _proposal("legal_custody", "Divorce finalized; shared custody.", 0, 3)
     assert grade([RELATIONSHIPS, off], DIVORCE_FINALIZED)["cites_the_lines_that_say_it"] == [
@@ -95,3 +106,14 @@ def test_medication_proposals_are_named_by_the_medication_and_its_action() -> No
     assert grade([STOP], CLIENT_STOPPED)["exactly_the_expected_fields"] == [
         "unexpected proposal for medications: trazodone"
     ]
+
+
+def test_an_allowed_field_may_be_proposed_or_not() -> None:
+    add = _medication("add", "lisinopril", "lisinopril 10 mg, once a day in the morning", 1)
+    history = _proposal("medical_history", "High blood pressure.", 1)
+
+    assert not any(grade([add], ANOTHER_PRESCRIBER).values())
+    assert not any(grade([add, history], ANOTHER_PRESCRIBER).values())
+    assert grade([add, _proposal("supports", "Brother.", 1)], ANOTHER_PRESCRIBER)[
+        "exactly_the_expected_fields"
+    ] == ["unexpected proposal for supports"]

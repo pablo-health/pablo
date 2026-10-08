@@ -10,6 +10,7 @@ its field and, for a list field, its entry.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from evals.note_templates.scorers import normalize
@@ -43,7 +44,9 @@ def exactly_the_expected_fields(
     got = [_name(p.field_key, p.item_key) for p in proposals]
     want = {_name(e.field_key, e.entry) for e in case.expected}
     problems = [f"missing a proposal for {key}" for key in sorted(want - set(got))]
-    problems += [f"unexpected proposal for {key}" for key in sorted(set(got) - want)]
+    problems += [
+        f"unexpected proposal for {key}" for key in sorted(set(got) - want - set(case.allowed))
+    ]
     problems += [
         f"more than one proposal for {key}" for key in sorted({k for k in got if got.count(k) > 1})
     ]
@@ -94,6 +97,19 @@ def cites_the_lines_that_say_it(
     return problems
 
 
+_GENDERED = re.compile(r"\b(he|she|him|his|her|hers|himself|herself)\b", re.IGNORECASE)
+
+
+def no_gendered_pronouns(proposals: Sequence[DraftedProposal]) -> list[str]:
+    """No proposal calls the client he or she: no case's chart records pronouns, so it
+    holds whatever the case."""
+    return [
+        f"{p.field_key} says {found!r}"
+        for p in proposals
+        for found in dict.fromkeys(m.group(0) for m in _GENDERED.finditer(p.proposed_text))
+    ]
+
+
 CHECKS: dict[str, Callable[[Sequence[DraftedProposal], ProposalCase], list[str]]] = {
     "exactly_the_expected_fields": exactly_the_expected_fields,
     "the_stated_action": the_stated_action,
@@ -103,4 +119,5 @@ CHECKS: dict[str, Callable[[Sequence[DraftedProposal], ProposalCase], list[str]]
 
 
 def grade(proposals: Sequence[DraftedProposal], case: ProposalCase) -> dict[str, list[str]]:
-    return {name: check(proposals, case) for name, check in CHECKS.items()}
+    found = {name: check(proposals, case) for name, check in CHECKS.items()}
+    return {**found, "no_gendered_pronouns": no_gendered_pronouns(proposals)}

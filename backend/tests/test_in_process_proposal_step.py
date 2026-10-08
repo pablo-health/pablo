@@ -37,6 +37,7 @@ def _no_database(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(notes_routes, "_proposal_repo_factory", MagicMock)
     monkeypatch.setattr(notes_routes, "_history_repo_factory", MagicMock)
     monkeypatch.setattr(notes_routes, "_medication_repo_factory", MagicMock)
+    monkeypatch.setattr(notes_routes, "worker_people_term_lookup", MagicMock)
     monkeypatch.setattr(dictation_routes, "file_storage_from_settings", MagicMock())
     monkeypatch.setattr(dictation_routes, "get_dictation_transcriber", MagicMock())
 
