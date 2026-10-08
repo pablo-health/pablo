@@ -345,11 +345,11 @@ class RegistryNoteGenerationService(NoteGenerationService):
         else:
             system_prompt = _DEFAULT_GENERATION_PROMPT_SYSTEM
 
-        # Allergies go to the types a practice defines for itself — the
-        # prescriber's notes, which must state them — and not to the built-in
-        # therapy formats, which have no place to put them.
+        # Allergies and medications go to the types a practice defines for
+        # itself — the prescriber's notes, which must state them — and not to
+        # the built-in therapy formats, which have no place to put them.
         chart_block = (
-            render_chart_block(chart, include_allergies=is_practice_key(definition.key))
+            render_chart_block(chart, include_prescribing=is_practice_key(definition.key))
             if chart is not None and definition.reads_chart
             else None
         )

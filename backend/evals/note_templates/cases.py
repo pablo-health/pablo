@@ -18,7 +18,7 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
-from app.notes.chart_context import ChartContext, ChartProblem
+from app.notes.chart_context import ChartContext, ChartMedication, ChartProblem
 from app.notes.practice_types import PracticeNoteTypeSpec
 
 TEMPLATES_DIR = (
@@ -61,6 +61,12 @@ class Expected:
     substances_asked: tuple[str, ...] = ()
     substances_not_asked: tuple[str, ...] = ()
     diagnoses: tuple[Diagnosis, ...] = ()
+    current_medications: tuple[str, ...] | None = None
+    """The chart's medication lines as rendered, which the current list must
+    reproduce word for word; ``None`` leaves the list ungraded."""
+    not_current: tuple[str, ...] = ()
+    """Words of a change made in this visit, which belong to the plan and
+    must not appear in the current list."""
 
 
 @dataclass(frozen=True)
@@ -75,10 +81,12 @@ class TemplateCase:
     inputs: dict[str, str] = field(default_factory=dict)
     problems: tuple[ChartProblem, ...] = ()
     """The chart's problem list the visit is drafted against."""
+    medications: tuple[ChartMedication, ...] = ()
+    """The chart's active medications, as the clinician last recorded them."""
 
     @property
     def chart(self) -> ChartContext:
-        return ChartContext(problems=self.problems)
+        return ChartContext(problems=self.problems, medications=self.medications)
 
     @property
     def spec(self) -> PracticeNoteTypeSpec:
@@ -114,6 +122,12 @@ FOLLOW_UP_WITH_THERAPY = TemplateCase(
             "active",
         ),
     ),
+    # The visit raises sertraline from 50 to 75 mg: the current list still
+    # reads 50, and the increase is the plan's.
+    medications=(
+        ChartMedication("Adderall XR", "20 mg", "every morning", "psychiatric"),
+        ChartMedication("Sertraline", "50 mg", "every morning", "psychiatric"),
+    ),
     expected=Expected(
         therapy=True,
         codes=("99214", "90836"),
@@ -129,6 +143,11 @@ FOLLOW_UP_WITH_THERAPY = TemplateCase(
             Diagnosis("F41.1", ("anxiety",)),
             Diagnosis("F90.0", ("attention", "adhd", "hyperactivity")),
         ),
+        current_medications=(
+            "Adderall XR 20 mg, every morning",
+            "Sertraline 50 mg, every morning",
+        ),
+        not_current=("75",),
     ),
 )
 
@@ -138,6 +157,7 @@ FOLLOW_UP_MEDICATION_ONLY = TemplateCase(
     sample="medication_only",
     session_date=date(2026, 3, 13),
     inputs={"place_of_service": "In office"},
+    medications=(ChartMedication("Bupropion XL", "150 mg", "every morning"),),
     expected=Expected(
         therapy=False,
         # Asked "Any alcohol or anything else?" and answered only about
@@ -146,6 +166,7 @@ FOLLOW_UP_MEDICATION_ONLY = TemplateCase(
         substances_asked=("alcohol",),
         substances_not_asked=("tobacco_nicotine", "cannabis"),
         diagnoses=(Diagnosis(None, ("depress",)),),
+        current_medications=("Bupropion XL 150 mg, every morning",),
     ),
 )
 

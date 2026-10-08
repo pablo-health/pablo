@@ -51,6 +51,8 @@ class MedicationService:
             patient_id=str(row["patient_id"]),
             drug_name=str(row["drug_name"]),
             dose=str(row["dose"]),
+            frequency=str(row["frequency"]) if row.get("frequency") is not None else None,
+            category=row.get("category"),  # type: ignore[arg-type]
             status=str(row["status"]),
             started_at=row.get("started_at"),  # type: ignore[arg-type]
             stopped_at=row.get("stopped_at"),  # type: ignore[arg-type]
@@ -84,6 +86,8 @@ class MedicationService:
             "patient_id": patient_id,
             "drug_name": req.drug_name,
             "dose": req.dose,
+            "frequency": req.frequency or None,
+            "category": req.category,
             "status": req.status,
             "started_at": req.started_at,
             "stopped_at": None,
@@ -120,6 +124,11 @@ class MedicationService:
             existing["drug_name"] = req.drug_name
         if req.dose is not None:
             existing["dose"] = req.dose
+        # Sent as null, these two clear: either can be unknown.
+        if "frequency" in req.model_fields_set:
+            existing["frequency"] = req.frequency or None
+        if "category" in req.model_fields_set:
+            existing["category"] = req.category
         if req.status is not None:
             old_status = existing.get("status")
             existing["status"] = req.status

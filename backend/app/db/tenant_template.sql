@@ -1025,6 +1025,9 @@ CREATE TABLE __TENANT_SCHEMA__.patient_medications (
     updated_at timestamp with time zone NOT NULL,
     deleted_at timestamp with time zone,
     stop_reason text,
+    frequency text,
+    category character varying(16),
+    CONSTRAINT ck_patient_medications_category CHECK (((category)::text = ANY ((ARRAY['psychiatric'::character varying, 'other'::character varying])::text[]))),
     CONSTRAINT ck_patient_medications_status CHECK (((status)::text = ANY ((ARRAY['active'::character varying, 'discontinued'::character varying, 'on_hold'::character varying])::text[])))
 );
 

@@ -12,6 +12,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from app.main import app
+from app.medications.schemas import CreateMedicationRequest
+from app.medications.service import MedicationService
 from app.models import Note, Patient, Transcript, TranscriptModel, User
 from app.models.audit import AuditAction
 from app.models.enums import TranscriptFormat
@@ -21,9 +23,11 @@ from app.notes import (
     get_default_registry,
     get_note_type_authorizer,
 )
+from app.notes.chart_context import ChartMedication
 from app.problems.schemas import AddProblemRequest
 from app.problems.service import ProblemService
 from app.repositories import (
+    InMemoryMedicationRepository,
     InMemoryNotesRepository,
     InMemoryPatientProblemRepository,
     InMemoryPatientRepository,
@@ -478,6 +482,21 @@ class TestGenerateStandaloneNoteJob:
             mock_user_id,
             AddProblemRequest(label="Generalized anxiety disorder", icd10_code="F41.1"),
         )
+        medications = InMemoryMedicationRepository()
+        medications.grant_access(patient.id, mock_user_id)
+        medication_service = MedicationService(medications)
+        medication_service.create(
+            patient.id,
+            mock_user_id,
+            CreateMedicationRequest(
+                drug_name="Sertraline", dose="100 mg", frequency="every morning"
+            ),
+        )
+        medication_service.create(
+            patient.id,
+            mock_user_id,
+            CreateMedicationRequest(drug_name="Hydroxyzine", dose="25 mg", status="discontinued"),
+        )
 
         result = generate_standalone_note_job(
             GenerateStandaloneNoteJob(
@@ -492,6 +511,7 @@ class TestGenerateStandaloneNoteJob:
             note_service=note_service,
             patient_repo=mock_repo,
             problem_repo=problems,
+            medication_repo=medications,
             note_generation_service=stub,
             user_repo=mock_user_repo,
             audit=audit,
@@ -511,6 +531,10 @@ class TestGenerateStandaloneNoteJob:
             ("Generalized anxiety disorder", "F41.1")
         ]
         assert chart.allergy_status == "not_recorded"
+        # Only what the client takes now: a stopped medication is not current.
+        assert chart.medications == (
+            ChartMedication(name="Sertraline", dose="100 mg", frequency="every morning"),
+        )
         audit.log_note_action.assert_called_once()
         assert audit.log_note_action.call_args.kwargs["note_id"] == note.id
 
@@ -547,6 +571,7 @@ class TestGenerateStandaloneNoteJob:
             note_service=note_service,
             patient_repo=mock_repo,
             problem_repo=InMemoryPatientProblemRepository(),
+            medication_repo=InMemoryMedicationRepository(),
             note_generation_service=_FailingGenerator(),
             user_repo=mock_user_repo,
             audit=MagicMock(),
@@ -594,6 +619,7 @@ class TestGenerateStandaloneNoteJob:
                 note_service=note_service,
                 patient_repo=mock_repo,
                 problem_repo=InMemoryPatientProblemRepository(),
+                medication_repo=InMemoryMedicationRepository(),
                 note_generation_service=_TransientGenerator(),
                 user_repo=mock_user_repo,
                 audit=MagicMock(),
@@ -608,6 +634,7 @@ class TestGenerateStandaloneNoteJob:
             note_service=note_service,
             patient_repo=mock_repo,
             problem_repo=InMemoryPatientProblemRepository(),
+            medication_repo=InMemoryMedicationRepository(),
             note_generation_service=_TransientGenerator(),
             user_repo=mock_user_repo,
             audit=MagicMock(),

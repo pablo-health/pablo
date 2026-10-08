@@ -46,6 +46,13 @@ THERAPY_DRAFT: dict[str, dict[str, Any]] = {
         "safety_plan": "",
     },
     "measures": {"measures_reviewed": "GAD-7 completed on Friday: 13, up from 8."},
+    "medications": {
+        "current_medications": [
+            "Psychiatric:",
+            "Adderall XR 20 mg, every morning",
+            "Sertraline 50 mg, every morning",
+        ],
+    },
     "assessment": {
         "diagnoses": [
             "F41.1 Generalized anxiety disorder",
@@ -85,6 +92,7 @@ MEDICATION_ONLY_DRAFT: dict[str, dict[str, Any]] = {
         "safety_plan": "",
     },
     "measures": {"measures_reviewed": ""},
+    "medications": {"current_medications": ["Bupropion XL 150 mg, every morning"]},
     "assessment": {"diagnoses": ["Depression, in remission"]},
     "plan": {"pdmp": ""},
     "psychotherapy": {
@@ -198,6 +206,25 @@ def test_good_medication_only_draft_passes() -> None:
         ("measures", "measures_reviewed", "GAD-7 on 03/06/2026: 13.", "measures_undated"),
         # A safety plan for a visit with no ideation.
         ("risk", "safety_plan", "Call 988 if thoughts arise.", "safety_plan"),
+        # The current list takes today's increase, or drops what the chart has.
+        (
+            "medications",
+            "current_medications",
+            ["Adderall XR 20 mg, every morning", "Sertraline 75 mg, every morning"],
+            "medications_from_chart",
+        ),
+        (
+            "medications",
+            "current_medications",
+            ["Adderall XR 20 mg, every morning"],
+            "medications_from_chart",
+        ),
+        (
+            "medications",
+            "current_medications",
+            ["Adderall XR 20mg qAM", "Sertraline 50 mg, every morning"],
+            "medications_from_chart",
+        ),
     ],
 )
 def test_therapy_draft_failures_are_caught(section: str, key: str, value: Any, check: str) -> None:
@@ -236,6 +263,14 @@ def test_therapy_draft_failures_are_caught(section: str, key: str, value: Any, c
             "diagnoses",
             ["Depression, in remission", "Generalized anxiety disorder"],
             "diagnoses_only_stated",
+        ),
+        # The chart has bupropion; the list says none, or adds what it does not have.
+        ("medications", "current_medications", ["None recorded"], "medications_from_chart"),
+        (
+            "medications",
+            "current_medications",
+            ["Bupropion XL 150 mg, every morning", "Sertraline 50 mg"],
+            "medications_from_chart",
         ),
     ],
 )

@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import re
 from collections import Counter
+from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -201,48 +202,64 @@ DERIVED_PROPOSAL: dict[str, Any] = {
 }
 
 
-def _chart(user_prompt: str) -> tuple[list[str], str | None] | None:
-    """The chart block a draft prompt carries: its problem lines and allergies line.
+@dataclass
+class _Chart:
+    """What a draft prompt's chart block says, line by line as rendered."""
+
+    problems: list[str] = field(default_factory=list)
+    allergies: str | None = None
+    medications: list[str] | None = None
+    """``None`` when the block has no medication list; ``[]`` when it says none recorded."""
+
+
+def _chart(user_prompt: str) -> _Chart | None:
+    """The chart block a draft prompt carries.
 
     ``None`` when the prompt has no chart (a preview, a meeting).
     """
     if "- Problem list:" not in user_prompt:
         return None
-    problems: list[str] = []
-    allergies: str | None = None
-    listing = False
+    chart = _Chart()
+    listing: list[str] | None = None
     for line in user_prompt.splitlines():
         if line.startswith("- Problem list:"):
             rest = line.removeprefix("- Problem list:").strip()
-            problems.extend([rest] if rest else [])
-            listing = not rest
-        elif listing and line.startswith("  - "):
-            problems.append(line.removeprefix("  - "))
+            chart.problems.extend([rest] if rest else [])
+            listing = None if rest else chart.problems
+        elif line.startswith("- Current medications:"):
+            chart.medications = []
+            listing = chart.medications
+        elif listing is not None and line.startswith("  "):
+            # A medication group heading ("Psychiatric:") is part of the list as written.
+            listing.append(line.strip().removeprefix("- "))
         else:
-            listing = False
+            listing = None
             if line.startswith("- Allergies: "):
-                allergies = line.removeprefix("- Allergies: ")
-    return problems, allergies
+                chart.allergies = line.removeprefix("- Allergies: ")
+    return chart
 
 
-def _with_chart(content: dict[str, Any], chart: tuple[list[str], str | None]) -> dict[str, Any]:
+def _with_chart(content: dict[str, Any], chart: _Chart) -> dict[str, Any]:
     """Echo the chart into the fields a model would put it in.
 
     A diagnosis field (or SOAP's clinical impression) names the listed
-    problems; an allergies field states the chart's allergies. So a spec can
-    see that a draft was written against the chart it was handed.
+    problems; an allergies field states the chart's allergies; a current
+    medications field is the chart's list, line for line, or "None recorded".
+    So a spec can see that a draft was written against the chart it was
+    handed.
     """
-    problems, allergies = chart
     for section in content.values():
         if not isinstance(section, dict):
             continue
         for key, value in section.items():
+            if key == "current_medications" and chart.medications is not None:
+                section[key] = chart.medications or ["None recorded"]
             if not isinstance(value, str):
                 continue
             if "diagnos" in key or key == "clinical_impression":
-                section[key] = f"{value} Problem list: {'; '.join(problems)}."
-            elif "allerg" in key and allergies is not None:
-                section[key] = f"{value} Allergies: {allergies}."
+                section[key] = f"{value} Problem list: {'; '.join(chart.problems)}."
+            elif "allerg" in key and chart.allergies is not None:
+                section[key] = f"{value} Allergies: {chart.allergies}."
     return content
 
 

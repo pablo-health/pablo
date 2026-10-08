@@ -321,7 +321,7 @@
             "key": "current_medications",
             "label": "Current medications",
             "kind": "list",
-            "ai_hint": "Each medication the client takes now, as named: name, dose, how long taken and why. One per item."
+            "ai_hint": "From the chart; write it exactly as given, or 'None recorded'"
           },
           {
             "key": "allergies",

@@ -21,7 +21,11 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { useCreateMedication, useUpdateMedication } from "@/hooks/useMedications"
-import type { Medication, MedicationStatus } from "@/types/medications"
+import type {
+  Medication,
+  MedicationCategory,
+  MedicationStatus,
+} from "@/types/medications"
 
 interface MedicationModalProps {
   patientId: string
@@ -37,6 +41,16 @@ const STATUS_LABELS: Record<MedicationStatus, string> = {
   on_hold: "On hold",
 }
 
+// The select needs a value for "not said"; it is sent as null.
+const NO_CATEGORY = "none"
+type CategoryChoice = MedicationCategory | typeof NO_CATEGORY
+
+const CATEGORY_LABELS: Record<CategoryChoice, string> = {
+  psychiatric: "Psychiatric",
+  other: "Other",
+  [NO_CATEGORY]: "Not set",
+}
+
 export function MedicationModal({
   patientId,
   open,
@@ -47,6 +61,10 @@ export function MedicationModal({
 
   const [drugName, setDrugName] = useState(initialData?.drug_name ?? "")
   const [dose, setDose] = useState(initialData?.dose ?? "")
+  const [frequency, setFrequency] = useState(initialData?.frequency ?? "")
+  const [category, setCategory] = useState<CategoryChoice>(
+    initialData?.category ?? NO_CATEGORY,
+  )
   const [status, setStatus] = useState<MedicationStatus>(
     initialData?.status ?? "active",
   )
@@ -65,6 +83,8 @@ export function MedicationModal({
   function resetForm() {
     setDrugName(initialData?.drug_name ?? "")
     setDose(initialData?.dose ?? "")
+    setFrequency(initialData?.frequency ?? "")
+    setCategory(initialData?.category ?? NO_CATEGORY)
     setStatus(initialData?.status ?? "active")
     setStartedAt(initialData?.started_at?.slice(0, 10) ?? "")
     setStopReason(initialData?.stop_reason ?? "")
@@ -98,6 +118,8 @@ export function MedicationModal({
           data: {
             drug_name: drugName.trim(),
             dose: dose.trim(),
+            frequency: frequency.trim() || null,
+            category: category === NO_CATEGORY ? null : category,
             status,
             started_at: startedAt || null,
             stop_reason:
@@ -111,6 +133,8 @@ export function MedicationModal({
           data: {
             drug_name: drugName.trim(),
             dose: dose.trim(),
+            frequency: frequency.trim() || null,
+            category: category === NO_CATEGORY ? null : category,
             status,
             started_at: startedAt || null,
             stop_reason:
@@ -152,8 +176,37 @@ export function MedicationModal({
               id="med-dose"
               value={dose}
               onChange={(e) => setDose(e.target.value)}
-              placeholder="e.g. 50 mg daily"
+              placeholder="e.g. 50 mg"
             />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="med-frequency">Frequency</Label>
+            <Input
+              id="med-frequency"
+              value={frequency}
+              onChange={(e) => setFrequency(e.target.value)}
+              placeholder="e.g. every morning"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="med-category">Category</Label>
+            <Select
+              value={category}
+              onValueChange={(v) => setCategory(v as CategoryChoice)}
+            >
+              <SelectTrigger id="med-category" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(Object.keys(CATEGORY_LABELS) as CategoryChoice[]).map((c) => (
+                  <SelectItem key={c} value={c}>
+                    {CATEGORY_LABELS[c]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="space-y-1.5">

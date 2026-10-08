@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
 from app.models import Patient, Transcript
 from app.notes import NoteTypeRegistry, register_builtin_note_types
-from app.notes.chart_context import ChartContext, ChartProblem
+from app.notes.chart_context import ChartContext, ChartMedication, ChartProblem
 from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
 from app.routes.notes import get_note_generation_service
 from app.services import dictation_transcription, http_structured_llm_gateway
@@ -37,6 +38,7 @@ from .test_practice_note_types import COACH_SPEC
 
 if TYPE_CHECKING:
     import httpx
+    from app.notes.registry import NoteTypeDefinition
 
 BASE_URL = "http://fake-llm:8083/notes"
 NOW = datetime(2026, 10, 5, tzinfo=UTC)
@@ -291,3 +293,80 @@ def test_a_draft_echoes_the_chart_it_was_written_against(stand_in: list[str]) ->
             ),
         }
     }
+
+
+FOLLOW_UP_TEMPLATE = (
+    Path(__file__).resolve().parents[2]
+    / "frontend/src/components/settings/noteTypes/templates/psychiatric_follow_up.json"
+)
+
+
+def _follow_up() -> NoteTypeDefinition:
+    spec = PracticeNoteTypeSpec.model_validate(json.loads(FOLLOW_UP_TEMPLATE.read_text())["spec"])
+    return to_definition("custom.psychiatric_follow_up", 1, spec)
+
+
+def test_a_follow_up_states_the_charts_medication_list_not_the_visits_changes(
+    stand_in: list[str],
+) -> None:
+    """The current list is the chart's, verbatim; a medication started today is not on it."""
+    definition = _follow_up()
+    chart = ChartContext(
+        medications=(
+            ChartMedication("Sertraline", "100 mg", "every morning", "psychiatric"),
+            ChartMedication("Lisinopril", "10 mg", "daily", "other"),
+        ),
+    )
+    transcript = Transcript(
+        format="txt",
+        content=(
+            "[00:01] Clinician: Let's start bupropion XL 150 mg every morning.\n"
+            "[00:05] Client: Okay."
+        ),
+    )
+
+    generated = _service().generate_note(
+        definition.key,
+        transcript,
+        PATIENT,
+        NOW,
+        inputs={"place_of_service": "In office"},
+        definition=definition,
+        chart=chart,
+    )
+
+    current = generated.content["medications"]["current_medications"]
+    assert current == [
+        "Psychiatric:",
+        "Sertraline 100 mg, every morning",
+        "Other:",
+        "Lisinopril 10 mg, daily",
+    ]
+    assert not any("bupropion" in line.lower() for line in current)
+
+
+def test_a_follow_up_with_no_medications_on_the_chart_says_none_recorded(
+    stand_in: list[str],
+) -> None:
+    definition = _follow_up()
+
+    generated = _service().generate_note(
+        definition.key,
+        TRANSCRIPT,
+        PATIENT,
+        NOW,
+        inputs={"place_of_service": "In office"},
+        definition=definition,
+        chart=ChartContext(),
+    )
+
+    assert generated.content["medications"]["current_medications"] == ["None recorded"]
+
+
+@pytest.mark.parametrize("template", ["psychiatric_follow_up", "psychiatric_evaluation"])
+def test_the_prescriber_templates_take_current_medications_from_the_chart(template: str) -> None:
+    spec = json.loads(FOLLOW_UP_TEMPLATE.with_name(f"{template}.json").read_text())["spec"]
+    hints = {f["key"]: f.get("ai_hint") for section in spec["sections"] for f in section["fields"]}
+    assert hints["current_medications"] == (
+        "From the chart; write it exactly as given, or 'None recorded'"
+    )
