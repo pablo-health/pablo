@@ -152,9 +152,7 @@ class TestTemplates:
 
     def test_a_client_title_over_120_characters_is_refused(self, intake_client: TestClient) -> None:
         template = _create(intake_client)
-        response = intake_client.patch(
-            f"{BASE}/{template['id']}", json={"client_title": "x" * 121}
-        )
+        response = intake_client.patch(f"{BASE}/{template['id']}", json={"client_title": "x" * 121})
         assert response.status_code == 422
 
     def test_archiving_hides_it_from_the_list_without_deleting_it(

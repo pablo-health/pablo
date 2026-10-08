@@ -51,16 +51,23 @@ class IntakePacketRepository(ABC):
         name: str | None = None,
         archived_at: datetime | None = None,
         unarchive: bool = False,
-        client_title: str | None = None,
-        clear_client_title: bool = False,
     ) -> dict[str, object] | None:
-        """Rename, retitle, archive or restore a template.
+        """Rename, archive or restore a template.
 
         ``archived_at`` archives; ``unarchive`` clears it. They are separate
         arguments because ``None`` already means "leave it alone", and a
-        single nullable argument could not say "clear this". The title a
-        patient sees follows the same pair: ``client_title`` sets it,
-        ``clear_client_title`` clears it.
+        single nullable argument could not say "clear this".
+        """
+
+    @abstractmethod
+    def set_client_title(
+        self, template_id: str, client_title: str | None
+    ) -> dict[str, object] | None:
+        """Set the title a patient sees, or clear it with ``None``.
+
+        Its own method rather than another ``update_template`` argument:
+        here ``None`` means "clear", which that method's arguments cannot
+        say.
         """
 
     # --- versions ---
@@ -154,22 +161,25 @@ class InMemoryIntakePacketRepository(IntakePacketRepository):
         name: str | None = None,
         archived_at: datetime | None = None,
         unarchive: bool = False,
-        client_title: str | None = None,
-        clear_client_title: bool = False,
     ) -> dict[str, object] | None:
         row = self.templates.get(template_id)
         if row is None:
             return None
         if name is not None:
             row["name"] = name
-        if client_title is not None:
-            row["client_title"] = client_title
-        if clear_client_title:
-            row["client_title"] = None
         if archived_at is not None:
             row["archived_at"] = archived_at
         if unarchive:
             row["archived_at"] = None
+        return dict(row)
+
+    def set_client_title(
+        self, template_id: str, client_title: str | None
+    ) -> dict[str, object] | None:
+        row = self.templates.get(template_id)
+        if row is None:
+            return None
+        row["client_title"] = client_title
         return dict(row)
 
     # --- versions ---

@@ -147,9 +147,7 @@ class IntakePacketService:
         wording. Like the name, it is not part of a frozen version.
         """
         cleaned = (title or "").strip()
-        if not cleaned:
-            return self._repo.update_template(template_id, clear_client_title=True)
-        return self._repo.update_template(template_id, client_title=cleaned)
+        return self._repo.set_client_title(template_id, cleaned or None)
 
     def set_archived(self, template_id: str, archived: bool) -> dict[str, object] | None:
         """Take a template out of circulation, or put it back.
