@@ -279,6 +279,31 @@ class TestTheFreeze:
         assert draft["published_at"] is None
 
 
+class TestPublishedVersionsOfOneDocument:
+    """What a consent question's version picker offers."""
+
+    def test_only_published_versions_newest_first(self, practice: TestClient) -> None:
+        first = _publish(practice, _create(practice, title="Consent")["id"])
+        second_draft = practice.post(f"{BASE}/{first['id']}/new-version").json()
+        second = _publish(practice, second_draft["id"])
+        # A third, still a draft: nobody can be asked to sign it yet.
+        practice.post(f"{BASE}/{second['id']}/new-version")
+
+        response = practice.get(f"{BASE}/keys/{first['document_key']}/published")
+        assert response.status_code == 200
+        assert [(row["id"], row["version"]) for row in response.json()] == [
+            (second["id"], 2),
+            (first["id"], 1),
+        ]
+
+    def test_another_documents_versions_are_not_offered(self, practice: TestClient) -> None:
+        consent = _publish(practice, _create(practice, title="Consent")["id"])
+        _publish(practice, _create(practice, title="Telehealth")["id"])
+
+        listed = practice.get(f"{BASE}/keys/{consent['document_key']}/published").json()
+        assert [row["title"] for row in listed] == ["Consent"]
+
+
 class TestTheAuditRow:
     def test_publishing_is_recorded(
         self, practice: TestClient, audit_repo: InMemoryAuditRepository, mock_user_id: str

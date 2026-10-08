@@ -77,8 +77,66 @@ test.describe("A packet writes its own document", () => {
     expect(written, "the written document is published").toBeDefined()
     expect(consent?.config.document_key).toBe(written?.document_key)
 
-    // And it is an ordinary document, listed with the others.
+    // And it is an ordinary document, listed with the others once the list is opened.
     const documents = page.getByRole("region", { name: "Documents in your packets" })
+    await documents.getByRole("button", { name: /^Show \d+ documents?$/ }).click()
     await expect(documents.getByRole("button", { name: new RegExp(documentTitle) })).toBeVisible()
   })
+
+  test("a consent question can ask for an earlier published wording, and that is what publishing pins", async ({
+    page,
+    api,
+  }) => {
+    const suffix = `${Date.now()}`
+    const title = `Fee agreement ${suffix}`
+    // Two published wordings of one document.
+    const draft = await api.post<IntakeDocumentRow>("/api/intake/documents", {
+      title,
+      body_markdown: "The fee is $150 a session.",
+    })
+    const first = await api.post<IntakeDocumentRow>(`/api/intake/documents/${draft.id}/publish`)
+    const next = await api.post<IntakeDocumentRow>(`/api/intake/documents/${first.id}/new-version`)
+    await api.put(`/api/intake/documents/${next.id}`, { body_markdown: "The fee is $165 a session." })
+    const second = await api.post<IntakeDocumentRow>(`/api/intake/documents/${next.id}/publish`)
+    expect(second.version).toBe(2)
+
+    const template = await api.post<IntakeTemplate>("/api/intake/templates", {
+      name: `Wording packet ${suffix}`,
+    })
+    await page.goto(`/dashboard/settings/portal?packet=${template.id}`)
+    const packets = page.getByRole("region", { name: "Packets" })
+
+    await packets.getByRole("combobox", { name: "Kind of question" }).click()
+    await page.getByRole("option", { name: "Consent to sign", exact: true }).click()
+    await packets.getByRole("button", { name: "Add question" }).click()
+    await packets.getByRole("combobox", { name: "Which document" }).click()
+    await page.getByRole("option", { name: title, exact: true }).click()
+
+    // Newest unless told otherwise; told otherwise here.
+    const wording = packets.getByRole("combobox", { name: "Which wording" })
+    await expect(wording).toContainText("The newest when you publish (now version 2)")
+    await wording.click()
+    await page.getByRole("option", { name: /^Version 1, published/ }).click()
+
+    await packets.getByRole("button", { name: "Save", exact: true }).click()
+    const draftUrl = `/api/intake/templates/${template.id}/versions/${template.versions[0].id}`
+    await expect
+      .poll(async () => (await api.get<IntakeVersionDetail>(draftUrl)).items.length)
+      .toBeGreaterThan(0)
+    await packets.getByRole("button", { name: "Publish" }).click()
+
+    // The published packet asks people to sign version 1, by its exact id.
+    await expect
+      .poll(async () => {
+        const items = (await api.get<IntakeVersionDetail>(draftUrl)).items
+        return items.find((i) => i.item_type === "consent_document")?.config.document_version_id
+      })
+      .toBe(first.id)
+  })
 })
+
+interface IntakeDocumentRow {
+  id: string
+  version: number
+  published_at: string | null
+}

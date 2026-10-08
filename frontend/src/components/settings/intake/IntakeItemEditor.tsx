@@ -65,6 +65,12 @@ interface IntakeItemEditorProps {
   blankForms?: OfferableBlankForm[]
   /** Writing a new document from a consent question; see ItemConfigForm. */
   renderNewDocument?: (choose: (documentKey: string) => void) => ReactNode
+  /** Which published wording a consent question asks for; see ItemConfigForm. */
+  renderVersionPicker?: (
+    documentKey: string,
+    chosen: string | undefined,
+    choose: (versionId: string | undefined) => void,
+  ) => ReactNode
   /** Built-in documents the practice can add, with the questions they bring. */
   starters?: IntakeStarter[]
   /** Adopt one: the practice's copy is published and its items come back. */
@@ -202,6 +208,7 @@ export function IntakeItemEditor({
   instruments,
   blankForms,
   renderNewDocument,
+  renderVersionPicker,
   starters,
   onAdoptStarter,
   adopting,
@@ -400,6 +407,7 @@ export function IntakeItemEditor({
                     instruments={instruments}
                     blankForms={blankForms}
                     renderNewDocument={renderNewDocument}
+                    renderVersionPicker={renderVersionPicker}
                   />
                   <VisibilityRuleForm
                     rule={ruleOf(item.config)}

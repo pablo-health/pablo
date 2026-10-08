@@ -59,6 +59,16 @@ interface ItemConfigFormProps {
    * writing one means calling the server.
    */
   renderNewDocument?: (choose: (documentKey: string) => void) => ReactNode
+  /**
+   * Which published wording of the chosen document to ask for, newest by
+   * default. Supplied by the card that owns the packet, since the versions
+   * come from the server.
+   */
+  renderVersionPicker?: (
+    documentKey: string,
+    chosen: string | undefined,
+    choose: (versionId: string | undefined) => void,
+  ) => ReactNode
 }
 
 /** One document a consent item can point at. */
@@ -172,9 +182,14 @@ export function ItemConfigForm({
   instruments = [],
   blankForms = [],
   renderNewDocument,
+  renderVersionPicker,
 }: ItemConfigFormProps) {
   const people = usePeopleTerm()
   const [writing, setWriting] = useState(false)
+  // A chosen wording belongs to one document, so picking another drops it
+  // rather than carrying a version the server would refuse.
+  const pickDocument = (documentKey: string) =>
+    onChange({ ...config, document_key: documentKey, chosen_version_id: undefined })
   const set = (key: string, value: unknown) => onChange({ ...config, [key]: value })
   const setNumber = (key: string, raw: string) =>
     set(key, raw === "" ? undefined : Number(raw))
@@ -411,7 +426,7 @@ export function ItemConfigForm({
           ) : (
             <Select
               value={text(config, "document_key")}
-              onValueChange={(value) => set("document_key", value)}
+              onValueChange={(value) => pickDocument(value)}
             >
               <SelectTrigger id={`${idPrefix}-document`} aria-label={DOCUMENT_PICKER_LABEL}>
                 <SelectValue placeholder="Choose a document" />
@@ -425,10 +440,17 @@ export function ItemConfigForm({
               </SelectContent>
             </Select>
           )}
+          {renderVersionPicker &&
+            text(config, "document_key") &&
+            renderVersionPicker(
+              text(config, "document_key"),
+              text(config, "chosen_version_id") || undefined,
+              (versionId) => set("chosen_version_id", versionId),
+            )}
           {renderNewDocument &&
             (writing ? (
               renderNewDocument((documentKey) => {
-                set("document_key", documentKey)
+                pickDocument(documentKey)
                 setWriting(false)
               })
             ) : (
