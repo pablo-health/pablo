@@ -38,7 +38,7 @@ test("a practice adjusts the follow-up: one field hidden, one added, both in the
     await page
       .getByRole("group", { name: "Your field 1 in Plan" })
       .getByLabel("Field name")
-      .fill("Education provided")
+      .fill("Shared decision")
 
     await expect(page.getByRole("radio", { name: "Sample visit" })).toHaveAttribute("aria-checked", "true")
     await page.getByLabel(/^Place of service/).selectOption("Telehealth")
@@ -48,7 +48,7 @@ test("a practice adjusts the follow-up: one field hidden, one added, both in the
     await page.getByRole("button", { name: "Draft a note" }).click()
     expect((await previewed).status()).toBe(200)
     const draft = page.getByTestId("try-it-draft")
-    await expect(draft.getByText("Stand-in draft for plan.education_provided.")).toBeVisible()
+    await expect(draft.getByText("Stand-in draft for plan.shared_decision.")).toBeVisible()
     await expect(draft.getByText("Stand-in draft for subjective.chief_complaint.")).toBeVisible()
     await expect(draft.getByText("Stand-in draft for subjective.side_effects.")).toHaveCount(0)
 

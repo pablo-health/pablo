@@ -38,6 +38,7 @@ import type { PatientResponse } from "@/types/patients"
 import type { UserPreferences } from "@/lib/api/users"
 import { DEFAULT_NOTE_TYPE, type NoteInputSchema } from "@/types/noteTypes"
 import { ApiError } from "@/lib/api/client"
+import { isReviewInput } from "@/lib/mdm"
 import { filledInputs } from "@/lib/noteInputs"
 import { isTelehealth } from "@/lib/telehealth"
 import type { EditorialTheme } from "./editorial/EditorialSidebar"
@@ -451,7 +452,10 @@ function AppointmentForm({
     appointment?.note_inputs ?? {},
   )
   const [noteInputsRejected, setNoteInputsRejected] = useState(false)
-  const declaredInputs = noteTypes.find((t) => t.key === noteType)?.inputs ?? []
+  // The medical decision making choices are made at review, beside the note.
+  const declaredInputs = (noteTypes.find((t) => t.key === noteType)?.inputs ?? []).filter(
+    (input) => !isReviewInput(input.key),
+  )
   // Creating a series has no field for inputs, so nothing is collected (or
   // required) there; each occurrence can take them once it's booked.
   const bookingSeries = !isEditing && repeat !== "none"

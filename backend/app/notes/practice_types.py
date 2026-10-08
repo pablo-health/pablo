@@ -119,6 +119,7 @@ def to_definition(
                 kind=i.kind,
                 options=tuple(i.options),
                 required=i.required,
+                default=i.default,
             )
             for i in spec.inputs
         ),
@@ -130,6 +131,7 @@ def to_definition(
                     NoteFieldDef(key=f.key, label=f.label, kind=f.kind, ai_hint=f.ai_hint)
                     for f in s.fields
                 ),
+                review_only=s.review_only,
             )
             for s in spec.sections
         ),

@@ -87,6 +87,17 @@ class Expected:
     """For a template whose history comes from the visit, not the chart: the
     history fields the visit covered, each with words one of which the field
     must carry. ``None`` when the template's history comes from the chart."""
+    hpi: dict[str, tuple[str, ...]] | None = None
+    """For a template that takes the history by symptom domain: the domains the
+    visit covered, each with words one of which the field must carry. ``None``
+    leaves the domains ungraded."""
+    hpi_not_discussed: tuple[str, ...] = ()
+    """Symptom domains that never came up, which must read "Not discussed."."""
+    education: tuple[str, ...] | None = None
+    """Words one of which the plan's education must carry. Empty: the clinician
+    explained nothing, so it is empty. ``None`` leaves it ungraded."""
+    lifestyle: tuple[str, ...] | None = None
+    """The same for the plan's lifestyle counseling."""
     ideation: bool = False
     """Suicidal ideation was reported, so the safety plan the clinician
     described must be written."""
@@ -203,10 +214,27 @@ FOLLOW_UP_WITH_THERAPY = TemplateCase(
         ),
         not_current=("75",),
         in_plan=("75",),
-        # The clinician dictates "supportive partner" as a protective factor;
-        # whether that adds to an empty relationships or supports field is a
-        # judgment.
-        may_state=("social_history.relationships", "social_history.supports"),
+        # Depression ("mood is okay"), the stressors and the worry window are
+        # judgments of where a line belongs, so they are left ungraded.
+        hpi={
+            "anxiety": ("worry", "worries", "worried", "anxi"),
+            "inattention_hyperactivity": ("focus", "adderall", "reports", "attention"),
+            "insomnia_sleep": ("sleep", "bed", "night"),
+            "appetite_eating": ("appetite", "lunch", "dinner"),
+            "mania": ("denie", "no ", "none", "nothing"),
+            "onset_duration_course": ("couple of weeks", "two weeks", "weeks"),
+            "functioning": ("work", "report"),
+        },
+        # The sertraline increase came with its side effects and how long it takes.
+        education=("stomach", "jitter", "few weeks", "side effect"),
+        # The clinician dictates "employed, supportive partner" as protective
+        # factors; whether that adds to the work history or to an empty
+        # relationships or supports field is a judgment.
+        may_state=(
+            "social_history.relationships",
+            "social_history.supports",
+            "social_history.work_school",
+        ),
     ),
 )
 
@@ -226,6 +254,12 @@ FOLLOW_UP_MEDICATION_ONLY = TemplateCase(
         substances_not_asked=("tobacco_nicotine", "cannabis"),
         diagnoses=(Diagnosis(None, ("depress",)),),
         current_medications=("Bupropion XL 150 mg, every morning",),
+        hpi={"depression": ("mood",), "insomnia_sleep": ("sleep",)},
+        hpi_not_discussed=("inattention_hyperactivity", "mania", "appetite_eating"),
+        # The clinician keeps the dose and says to call if anything changes:
+        # nothing taught, no advice given.
+        education=(),
+        lifestyle=(),
     ),
 )
 
