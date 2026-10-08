@@ -358,6 +358,87 @@ class TestPinningAConsentDocument:
             "document_version_id": "revision-3",
         }
 
+    @staticmethod
+    def _choosing(
+        repo: InMemoryIntakePacketRepository, live: dict[str, str], published: dict[str, list[str]]
+    ) -> IntakePacketService:
+        return IntakePacketService(repo, live.get, None, lambda key: published.get(key, []))
+
+    def test_a_chosen_published_version_is_the_one_pinned(
+        self, repo: InMemoryIntakePacketRepository
+    ) -> None:
+        """A practice may keep asking for an earlier wording while it reviews a new one."""
+        service = self._choosing(
+            repo, {"doc-1": "revision-3"}, {"doc-1": ["revision-3", "revision-2"]}
+        )
+        version_id = self._consent_version(service, "doc-1")
+        consent = next(i for i in service.list_items(version_id) if i["key"] == "consent")
+        service.replace_items(
+            version_id,
+            [
+                ItemDraft(key="reason", item_type="reason"),
+                ItemDraft(
+                    key="consent",
+                    item_type="consent_document",
+                    config={**consent["config"], "chosen_version_id": "revision-2"},
+                ),
+            ],
+        )
+
+        service.publish(version_id, _AUTHOR)
+
+        consent = next(i for i in service.list_items(version_id) if i["key"] == "consent")
+        assert consent["config"]["document_version_id"] == "revision-2"
+
+    def test_a_chosen_version_that_is_not_published_refuses_the_publish(
+        self, repo: InMemoryIntakePacketRepository
+    ) -> None:
+        """A signature must name words somebody could have been shown."""
+        service = self._choosing(repo, {"doc-1": "revision-3"}, {"doc-1": ["revision-3"]})
+        version_id = self._consent_version(service, "doc-1")
+        service.replace_items(
+            version_id,
+            [
+                ItemDraft(key="reason", item_type="reason"),
+                ItemDraft(
+                    key="consent",
+                    item_type="consent_document",
+                    # A draft revision, or another document's: not this one's published.
+                    config={"document_key": "doc-1", "chosen_version_id": "revision-4-draft"},
+                ),
+            ],
+        )
+
+        with pytest.raises(ItemConfigError, match="isn't published"):
+            service.publish(version_id, _AUTHOR)
+
+        version = service.get_version(version_id)
+        assert version is not None
+        assert version["published_at"] is None
+
+    def test_a_new_version_with_no_choice_takes_the_newest_revision(
+        self, repo: InMemoryIntakePacketRepository
+    ) -> None:
+        """A copied pin must not freeze a packet on old wording.
+
+        A new version starts as a copy of the last, pin included. Without a
+        choice, publishing it re-pins whatever is newest now, so a revised
+        document reaches people the next time the packet is published.
+        """
+        live = {"doc-1": "revision-3"}
+        service = self._choosing(repo, live, {"doc-1": ["revision-3"]})
+        first = self._consent_version(service, "doc-1")
+        service.publish(first, _AUTHOR)
+        template_id = str(service.get_version(first)["template_id"])  # type: ignore[index]
+
+        live["doc-1"] = "revision-4"
+        draft = service.create_version(template_id)
+        assert draft is not None
+        service.publish(str(draft["id"]), _AUTHOR)
+
+        consent = next(i for i in service.list_items(str(draft["id"])) if i["key"] == "consent")
+        assert consent["config"]["document_version_id"] == "revision-4"
+
     def test_item_ids_survive_the_pin(self, repo: InMemoryIntakePacketRepository) -> None:
         """A saved answer points at an item id, so publishing must not reissue them."""
         service = self._with_documents(repo, {"doc-1": "revision-3"})

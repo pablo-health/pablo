@@ -93,7 +93,10 @@ def get_intake_packet_service(
     def instrument_attested(instrument_code: str) -> bool:
         return licenses.active_for_code(instrument_code) is not None
 
-    return IntakePacketService(repo, published_document, instrument_attested)
+    def published_versions(document_key: str) -> list[str]:
+        return [str(row["id"]) for row in documents.versions(document_key) if row["published_at"]]
+
+    return IntakePacketService(repo, published_document, instrument_attested, published_versions)
 
 
 PacketService = Annotated[IntakePacketService, Depends(get_intake_packet_service)]

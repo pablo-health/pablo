@@ -251,6 +251,8 @@ const baseQueryKeys = {
     list: () => [...baseQueryKeys.intakeDocuments.all, "list"] as const,
     published: () => [...baseQueryKeys.intakeDocuments.all, "published"] as const,
     starters: () => [...baseQueryKeys.intakeDocuments.all, "starters"] as const,
+    publishedVersions: (documentKey: string) =>
+      [...baseQueryKeys.intakeDocuments.all, "published-versions", documentKey] as const,
   },
 
   // The instrument catalogue and what this practice is licensed to ask.

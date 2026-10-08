@@ -27,6 +27,7 @@ import {
 } from "@/hooks/useIntakePackets"
 import type { IntakeItemInput, IntakeTemplate } from "@/types/intakePackets"
 import { IntakeItemEditor } from "./IntakeItemEditor"
+import { DocumentVersionPicker } from "./DocumentVersionPicker"
 import { NewDocumentInline } from "./NewDocumentInline"
 import { PacketClientTitle } from "./PacketClientTitle"
 import {
@@ -249,6 +250,14 @@ export function IntakeFormsCard() {
                     blankForms={offerableBlankForms}
                     renderNewDocument={(choose) => (
                       <NewDocumentInline idPrefix={`packet-${template.id}`} onCreated={choose} />
+                    )}
+                    renderVersionPicker={(documentKey, chosen, choose) => (
+                      <DocumentVersionPicker
+                        documentKey={documentKey}
+                        chosen={chosen}
+                        onChoose={choose}
+                        idPrefix={`packet-${template.id}-${documentKey}`}
+                      />
                     )}
                     starters={starters ?? []}
                     onAdoptStarter={async (key) => (await adoptStarter.mutateAsync(key)).items}

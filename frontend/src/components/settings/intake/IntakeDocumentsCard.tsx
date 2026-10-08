@@ -1,22 +1,22 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"use client"
+"use client";
 
-import { Plus } from "lucide-react"
-import { useState } from "react"
-import { SettingsBadge, SettingsCard } from "@/components/settings/ui"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
+import { Plus } from "lucide-react";
+import { useState } from "react";
+import { SettingsBadge, SettingsCard } from "@/components/settings/ui";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   useCreateIntakeDocument,
   useIntakeDocuments,
   useNewIntakeDocumentVersion,
   usePublishIntakeDocument,
   useSaveIntakeDocument,
-} from "@/hooks/useIntakeDocuments"
-import type { IntakeDocument } from "@/types/intakeDocuments"
+} from "@/hooks/useIntakeDocuments";
+import type { IntakeDocument } from "@/types/intakeDocuments";
 import {
   ADD_DOCUMENT,
   DOCUMENTS_DESCRIPTION,
@@ -27,25 +27,27 @@ import {
   DOCUMENT_PREVIEW_LABEL,
   DOCUMENT_PUBLISHED_NOTICE,
   DRAFT_BADGE,
+  HIDE_DOCUMENTS,
   NEW_DOCUMENT_NAME,
   NEW_DOCUMENT_VERSION_BUTTON,
   PUBLISHED_BADGE,
   PUBLISH_BUTTON,
-} from "./intakeCopy"
+  showDocuments,
+} from "./intakeCopy";
 
 /** What the server said, or a plain fallback if it said nothing readable. */
 function messageOf(error: unknown): string | null {
-  if (!error) return null
-  if (error instanceof Error && error.message) return error.message
-  return "That could not be saved."
+  if (!error) return null;
+  if (error instanceof Error && error.message) return error.message;
+  return "That could not be saved.";
 }
 
 interface DocumentEditorProps {
-  document: IntakeDocument
-  onSave: (input: { title: string; body_markdown: string }) => void
-  onPublish: () => void
-  saving?: boolean
-  publishing?: boolean
+  document: IntakeDocument;
+  onSave: (input: { title: string; body_markdown: string }) => void;
+  onPublish: () => void;
+  saving?: boolean;
+  publishing?: boolean;
 }
 
 /**
@@ -64,18 +66,18 @@ function DocumentEditor({
   saving,
   publishing,
 }: DocumentEditorProps) {
-  const [title, setTitle] = useState(document.title)
-  const [body, setBody] = useState(document.body_markdown)
-  const [shownId, setShownId] = useState(document.id)
+  const [title, setTitle] = useState(document.title);
+  const [body, setBody] = useState(document.body_markdown);
+  const [shownId, setShownId] = useState(document.id);
 
   // A different version is different wording, so switching between two of
   // them starts over rather than leaving the previous one's text on screen
   // under the new one's heading. Adjusted during render rather than in an
   // effect, which is React's own answer for state derived from a prop.
   if (shownId !== document.id) {
-    setShownId(document.id)
-    setTitle(document.title)
-    setBody(document.body_markdown)
+    setShownId(document.id);
+    setTitle(document.title);
+    setBody(document.body_markdown);
   }
 
   return (
@@ -123,12 +125,17 @@ function DocumentEditor({
         >
           Save
         </Button>
-        <Button type="button" variant="outline" onClick={onPublish} disabled={publishing}>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={onPublish}
+          disabled={publishing}
+        >
           {PUBLISH_BUTTON}
         </Button>
       </div>
     </div>
-  )
+  );
 }
 
 /**
@@ -144,109 +151,141 @@ function DocumentEditor({
  * records that point at them rather than through this screen.
  */
 export function IntakeDocumentsCard() {
-  const { data: documents } = useIntakeDocuments()
-  const createDocument = useCreateIntakeDocument()
-  const saveDocument = useSaveIntakeDocument()
-  const publish = usePublishIntakeDocument()
-  const newVersion = useNewIntakeDocumentVersion()
+  const { data: documents } = useIntakeDocuments();
+  const createDocument = useCreateIntakeDocument();
+  const saveDocument = useSaveIntakeDocument();
+  const publish = usePublishIntakeDocument();
+  const newVersion = useNewIntakeDocumentVersion();
 
-  const [openId, setOpenId] = useState<string | null>(null)
+  const [openId, setOpenId] = useState<string | null>(null);
+  // Closed until asked for: a packet's own editor picks and writes documents,
+  // so this list is for revising one, not a step everybody has to pass.
+  const [shown, setShown] = useState(false);
 
-  const list = documents ?? []
-  const error = messageOf(publish.error) ?? messageOf(saveDocument.error)
+  const list = documents ?? [];
+  const error = messageOf(publish.error) ?? messageOf(saveDocument.error);
 
   return (
     <SettingsCard title={DOCUMENTS_TITLE} description={DOCUMENTS_DESCRIPTION}>
-      {list.length === 0 && (
-        <p className="text-[13px] text-muted-foreground">{DOCUMENTS_EMPTY}</p>
-      )}
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        onClick={() => setShown(!shown)}
+        aria-expanded={shown}
+      >
+        {shown ? HIDE_DOCUMENTS : showDocuments(list.length)}
+      </Button>
+      {shown && (
+        <div className="mt-2">
+          {list.length === 0 && (
+            <p className="text-[13px] text-muted-foreground">
+              {DOCUMENTS_EMPTY}
+            </p>
+          )}
 
-      <ul className="space-y-2">
-        {list.map((document) => {
-          const open = openId === document.id
-          const published = document.published_at !== null
-          return (
-            <li key={document.id} className="rounded-xl border border-border p-3">
-              <div className="flex items-center justify-between gap-3">
-                <button
-                  type="button"
-                  className="min-w-0 flex-1 text-left"
-                  onClick={() => setOpenId(open ? null : document.id)}
-                  aria-expanded={open}
+          <ul className="space-y-2">
+            {list.map((document) => {
+              const open = openId === document.id;
+              const published = document.published_at !== null;
+              return (
+                <li
+                  key={document.id}
+                  className="rounded-xl border border-border p-3"
                 >
-                  <span className="text-sm font-semibold text-foreground">{document.title}</span>
-                  <span className="ml-2 text-[12.5px] text-muted-foreground">
-                    {`Version ${document.version}`}
-                  </span>
-                </button>
-                <SettingsBadge>{published ? PUBLISHED_BADGE : DRAFT_BADGE}</SettingsBadge>
-              </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 text-left"
+                      onClick={() => setOpenId(open ? null : document.id)}
+                      aria-expanded={open}
+                    >
+                      <span className="text-sm font-semibold text-foreground">
+                        {document.title}
+                      </span>
+                      <span className="ml-2 text-[12.5px] text-muted-foreground">
+                        {`Version ${document.version}`}
+                      </span>
+                    </button>
+                    <SettingsBadge>
+                      {published ? PUBLISHED_BADGE : DRAFT_BADGE}
+                    </SettingsBadge>
+                  </div>
 
-              {open && (
-                <div className="mt-3 space-y-3 border-t border-border pt-3">
-                  {published ? (
-                    <>
-                      <p className="text-[13px] text-muted-foreground">
-                        {DOCUMENT_PUBLISHED_NOTICE}
-                      </p>
-                      <div
-                        className="prose-sm max-h-[22rem] overflow-y-auto rounded-xl border border-border p-3 text-sm text-foreground"
-                        // Server-rendered from this version's markdown; see
-                        // the note in DocumentEditor.
-                        dangerouslySetInnerHTML={{ __html: document.rendered_html }}
-                      />
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() =>
-                          newVersion.mutate(document.id, {
-                            onSuccess: (draft) => setOpenId(draft.id),
-                          })
-                        }
-                        disabled={newVersion.isPending}
-                      >
-                        {NEW_DOCUMENT_VERSION_BUTTON}
-                      </Button>
-                    </>
-                  ) : (
-                    <DocumentEditor
-                      document={document}
-                      onSave={(input) => saveDocument.mutate({ id: document.id, input })}
-                      onPublish={() => publish.mutate(document.id)}
-                      saving={saveDocument.isPending}
-                      publishing={publish.isPending}
-                    />
+                  {open && (
+                    <div className="mt-3 space-y-3 border-t border-border pt-3">
+                      {published ? (
+                        <>
+                          <p className="text-[13px] text-muted-foreground">
+                            {DOCUMENT_PUBLISHED_NOTICE}
+                          </p>
+                          <div
+                            className="prose-sm max-h-[22rem] overflow-y-auto rounded-xl border border-border p-3 text-sm text-foreground"
+                            // Server-rendered from this version's markdown; see
+                            // the note in DocumentEditor.
+                            dangerouslySetInnerHTML={{
+                              __html: document.rendered_html,
+                            }}
+                          />
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              newVersion.mutate(document.id, {
+                                onSuccess: (draft) => setOpenId(draft.id),
+                              })
+                            }
+                            disabled={newVersion.isPending}
+                          >
+                            {NEW_DOCUMENT_VERSION_BUTTON}
+                          </Button>
+                        </>
+                      ) : (
+                        <DocumentEditor
+                          document={document}
+                          onSave={(input) =>
+                            saveDocument.mutate({ id: document.id, input })
+                          }
+                          onPublish={() => publish.mutate(document.id)}
+                          saving={saveDocument.isPending}
+                          publishing={publish.isPending}
+                        />
+                      )}
+                      {error && (
+                        <p
+                          role="alert"
+                          className="text-[13px] text-destructive"
+                        >
+                          {error}
+                        </p>
+                      )}
+                    </div>
                   )}
-                  {error && (
-                    <p role="alert" className="text-[13px] text-destructive">
-                      {error}
-                    </p>
-                  )}
-                </div>
-              )}
-            </li>
-          )
-        })}
-      </ul>
+                </li>
+              );
+            })}
+          </ul>
 
-      <div className="mt-3">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() =>
-            createDocument.mutate(
-              { title: NEW_DOCUMENT_NAME, body_markdown: "" },
-              { onSuccess: (created) => setOpenId(created.id) }
-            )
-          }
-          disabled={createDocument.isPending}
-        >
-          <Plus className="mr-1 h-4 w-4" aria-hidden="true" />
-          {ADD_DOCUMENT}
-        </Button>
-      </div>
+          <div className="mt-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                createDocument.mutate(
+                  { title: NEW_DOCUMENT_NAME, body_markdown: "" },
+                  { onSuccess: (created) => setOpenId(created.id) },
+                )
+              }
+              disabled={createDocument.isPending}
+            >
+              <Plus className="mr-1 h-4 w-4" aria-hidden="true" />
+              {ADD_DOCUMENT}
+            </Button>
+          </div>
+        </div>
+      )}
     </SettingsCard>
-  )
+  );
 }
