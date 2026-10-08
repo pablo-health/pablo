@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import Mock
 
@@ -21,6 +20,7 @@ from app.main import app
 from app.models import Patient
 from app.notes import NoteTypeDefinition, NoteTypeRegistry, register_builtin_note_types
 from app.notes.practice_types import RepositoryPracticeNoteTypeSource
+from app.notes.spec_templates import TEMPLATES_DIR
 from app.repositories import InMemoryPracticeNoteTypeRepository
 from app.routes import notes as notes_routes
 from app.routes import sessions as sessions_routes
@@ -37,10 +37,7 @@ if TYPE_CHECKING:
         InMemoryTherapySessionRepository,
     )
 
-_TEMPLATE = (
-    Path(__file__).resolve().parents[2]
-    / "frontend/src/components/settings/noteTypes/templates/psychiatric_follow_up.json"
-)
+_TEMPLATE = TEMPLATES_DIR / "psychiatric_follow_up.json"
 _FOLLOW_UP = "custom.psychiatric_follow_up"
 
 

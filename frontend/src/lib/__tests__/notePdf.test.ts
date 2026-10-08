@@ -1,15 +1,14 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
- * What a note's PDF prints, for every built-in type, the shipped templates
- * and a practice's own type. Built-in layouts come from
+ * What a note's PDF prints, for every built-in type (the ones written as
+ * specs included) and a practice's own type. Built-in layouts come from
  * `src/test/fixtures/builtinNoteTypes.json`, which the server's serializer
  * writes (backend `scripts/regen_builtin_note_types.py`).
  */
 
 import { describe, expect, it } from "vitest"
 import builtinNoteTypes from "@/test/fixtures/builtinNoteTypes.json"
-import { NOTE_TYPE_TEMPLATES } from "@/components/settings/noteTypes/templates"
 import { narrativeNotePdf, schemaNotePdf, visitPdfLines, type PDFNoteLayout } from "../notePdf"
 import { peopleWords } from "../peopleTerm"
 import { soapNotePdf } from "../utils/pdfExport"
@@ -64,20 +63,24 @@ function expectEveryFieldInOrder(layout: PDFNoteLayout) {
 }
 
 describe("schemaNotePdf", () => {
-  it("has every built-in schema type to render", () => {
+  it("has every built-in schema type to render, the ones written as specs included", () => {
     expect(SCHEMA_BUILTINS.map((t) => t.key)).toEqual(
-      expect.arrayContaining(["dap", "birp", "girp", "intake", "treatment_plan", "safety_plan"]),
+      expect.arrayContaining([
+        "dap",
+        "birp",
+        "girp",
+        "intake",
+        "treatment_plan",
+        "safety_plan",
+        "psychiatric_evaluation",
+        "psychiatric_follow_up",
+      ]),
     )
   })
 
   it.each(SCHEMA_BUILTINS.map((t) => [t.key, t] as const))(
     "prints every section and field of %s in order, with its labels",
     (_key, layout) => expectEveryFieldInOrder(layout),
-  )
-
-  it.each(NOTE_TYPE_TEMPLATES.map((t) => [t.id, t] as const))(
-    "prints every section and field of the %s template in order",
-    (_id, template) => expectEveryFieldInOrder(template.spec),
   )
 
   it("prints a practice type's stated diagnoses one per line, each as stated", () => {

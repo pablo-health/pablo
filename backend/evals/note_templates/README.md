@@ -2,7 +2,7 @@
 
 Settings offers starting templates for note types: the psychiatric
 follow-up and the psychiatric initial evaluation, in
-`frontend/src/components/settings/noteTypes/templates/`. Each comes with
+`backend/app/notes/templates/`. Each comes with
 sample visits a clinician can draft under "Try it". This eval drafts those
 samples with the real model, through the same path a preview takes, along
 with visits written for the eval to test the chart rules. A set of

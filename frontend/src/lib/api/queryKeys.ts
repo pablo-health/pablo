@@ -275,6 +275,7 @@ const baseQueryKeys = {
     detail: (key: string, version?: number | null) =>
       [...baseQueryKeys.noteTypes.all, "detail", key, version ?? null] as const,
     deriveReferences: () => [...baseQueryKeys.noteTypes.all, "derive-references"] as const,
+    bases: () => [...baseQueryKeys.noteTypes.all, "bases"] as const,
   },
 
   // Compliance query keys (therapist-owned reminders)

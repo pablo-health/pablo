@@ -11,7 +11,7 @@ import pytest
 from app.models import Patient, Transcript
 from app.notes import NoteFieldDef, NoteSectionDef, NoteTypeDefinition
 from app.notes.diagnoses import DIAGNOSES_SCHEMA, coerce_diagnoses, diagnosis_text
-from app.notes.practice_types import PracticeFieldSpec
+from app.notes.practice_spec import PracticeFieldSpec
 from app.services.export_pdf import note_paragraphs
 from app.services.note_generation_service import (
     RegistryNoteGenerationService,

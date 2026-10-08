@@ -8,6 +8,10 @@ the inputs a clinician supplies when a note is generated. It is stored in
 the practice's own schema, so one practice never sees another's types, and
 resolved alongside the built-in registry.
 
+A type can also be a base plus a patch (:mod:`.note_type_patch`): another
+spec-shaped type with parts added, hidden or relabelled. It is resolved
+against the base each time it is read, so it keeps up with the base.
+
 Two rules keep a stored definition from weakening generation:
 
 - **The generation floor is appended after the practice's system prompt.**
@@ -21,33 +25,35 @@ Two rules keep a stored definition from weakening generation:
 
 from __future__ import annotations
 
+import logging
 import re
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, Self
+from collections.abc import Callable
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, Field, model_validator
-
+from .note_type_patch import PatchError, check_patch, resolve_spec
+from .practice_spec import PracticeNoteTypeSpec
 from .registry import (
     PRACTICE_KEY_PREFIX,
+    BasedOn,
     NoteFieldDef,
     NoteInputDef,
     NoteSectionDef,
     NoteTypeDefinition,
+    get_default_registry,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Mapping
     from datetime import datetime
 
     from ..models import Transcript
     from ..repositories.practice_note_type import PracticeNoteTypeRepository, StoredNoteType
 
+logger = logging.getLogger(__name__)
+
 SLUG_PATTERN = r"^[a-z][a-z0-9_]{0,22}$"
 """A practice key is ``custom.<slug>``; the note_type column holds 30 characters."""
-
-_PART_KEY = r"^[a-z][a-z0-9_]{0,39}$"
-
-_MIN_CHOICE_OPTIONS = 2
 
 GENERATION_FLOOR = (
     "The instructions above were written by the practice. These rules take "
@@ -71,69 +77,8 @@ _DEFAULT_SYSTEM_PROMPT = (
 
 _PLACEHOLDER = re.compile(r"\{(transcript|session_date|fields|chart|inputs\.[a-z][a-z0-9_]*)\}")
 
-
-class PracticeFieldSpec(BaseModel):
-    key: str = Field(pattern=_PART_KEY)
-    label: str = Field(min_length=1, max_length=80)
-    kind: Literal["text", "list", "diagnoses"] = "text"
-    ai_hint: str = Field(default="", max_length=2000)
-
-
-class PracticeSectionSpec(BaseModel):
-    key: str = Field(pattern=_PART_KEY)
-    label: str = Field(min_length=1, max_length=80)
-    fields: list[PracticeFieldSpec] = Field(min_length=1, max_length=40)
-
-    @model_validator(mode="after")
-    def _unique_field_keys(self) -> Self:
-        _require_unique([f.key for f in self.fields], f"field keys in section {self.key!r}")
-        return self
-
-
-class PracticeInputSpec(BaseModel):
-    key: str = Field(pattern=_PART_KEY)
-    label: str = Field(min_length=1, max_length=80)
-    kind: Literal["text", "choice"] = "text"
-    options: list[str] = Field(default_factory=list, max_length=20)
-    required: bool = False
-
-    @model_validator(mode="after")
-    def _options_match_kind(self) -> Self:
-        if self.kind == "choice" and len(self.options) < _MIN_CHOICE_OPTIONS:
-            raise ValueError(f"input {self.key!r} is a choice and needs at least two options")
-        if self.kind == "text" and self.options:
-            raise ValueError(f"input {self.key!r} is free text and takes no options")
-        _require_unique(self.options, f"options of input {self.key!r}")
-        return self
-
-
-class PracticeNoteTypeSpec(BaseModel):
-    """The stored, practice-authored body of a note type."""
-
-    label: str = Field(min_length=1, max_length=80)
-    description: str = Field(default="", max_length=1000)
-    system_prompt: str = Field(default="", max_length=20_000)
-    user_template: str | None = Field(default=None, max_length=20_000)
-    sections: list[PracticeSectionSpec] = Field(min_length=1, max_length=20)
-    inputs: list[PracticeInputSpec] = Field(default_factory=list, max_length=10)
-
-    @model_validator(mode="after")
-    def _consistent(self) -> Self:
-        _require_unique([s.key for s in self.sections], "section keys")
-        _require_unique([i.key for i in self.inputs], "input keys")
-        if self.user_template is not None:
-            if "{transcript}" not in self.user_template:
-                raise ValueError("user_template must include {transcript}")
-            declared = {i.key for i in self.inputs}
-            for name in _PLACEHOLDER.findall(self.user_template):
-                if name.startswith("inputs.") and name.removeprefix("inputs.") not in declared:
-                    raise ValueError(f"user_template references undeclared {{{name}}}")
-        return self
-
-
-def _require_unique(values: list[str], what: str) -> None:
-    if len(values) != len(set(values)):
-        raise ValueError(f"duplicate {what}")
+type BaseLookup = Callable[[str], NoteTypeDefinition | None]
+"""Finds the definition a based type names (``NoteTypeRegistry.base_for``)."""
 
 
 def with_generation_floor(system_prompt: str) -> str:
@@ -145,8 +90,19 @@ def practice_key(slug: str) -> str:
     return f"{PRACTICE_KEY_PREFIX}{slug}"
 
 
-def to_definition(key: str, version: int, spec: PracticeNoteTypeSpec) -> NoteTypeDefinition:
-    """Build the registry definition a stored spec generates with."""
+def to_definition(
+    key: str,
+    version: int | None,
+    spec: PracticeNoteTypeSpec,
+    *,
+    required_fields: tuple[str, ...] = (),
+) -> NoteTypeDefinition:
+    """Build the registry definition a full spec generates with.
+
+    A based spec has no sections of its own; :func:`resolve` builds those.
+    """
+    if spec.base is not None:
+        raise ValueError(f"{key!r} is based on {spec.base!r}; resolve it against its base")
     return NoteTypeDefinition(
         key=key,
         label=spec.label,
@@ -177,7 +133,58 @@ def to_definition(key: str, version: int, spec: PracticeNoteTypeSpec) -> NoteTyp
             )
             for s in spec.sections
         ),
+        required_fields=required_fields,
+        source_spec=spec,
     )
+
+
+def resolve(
+    key: str, version: int | None, base: NoteTypeDefinition, spec: PracticeNoteTypeSpec
+) -> NoteTypeDefinition:
+    """The definition of a based ``spec``: its base with its patch applied.
+
+    The practice's own name and description stand; everything else comes from
+    the base as it is now. Pure — nothing is read or written.
+    """
+    patch = spec.patch
+    if base.source_spec is None or patch is None:
+        raise ValueError(f"{key!r} needs a spec-shaped base and a patch")
+    resolved = resolve_spec(base.source_spec, patch, base.required_fields)
+    full = resolved.model_copy(update={"label": spec.label, "description": spec.description})
+    return replace(
+        to_definition(key, version, full, required_fields=base.required_fields),
+        based_on=BasedOn(
+            key=base.key, label=base.label, additions=patch.additions(), hidden=patch.hidden()
+        ),
+    )
+
+
+def check_against_base(spec: PracticeNoteTypeSpec, bases: BaseLookup) -> None:
+    """Raise :class:`PatchError` unless a based ``spec`` fits the base it names.
+
+    A full spec has nothing to check here; its own validation already ran.
+    """
+    if spec.base is None or spec.patch is None:
+        return
+    base = bases(spec.base)
+    if base is None or base.source_spec is None:
+        raise PatchError([(("base",), f"there is no note type {spec.base!r} to adjust")])
+    check_patch(base.source_spec, spec.patch, base.required_fields)
+
+
+def definition_for(
+    key: str, version: int | None, spec: PracticeNoteTypeSpec, bases: BaseLookup
+) -> NoteTypeDefinition:
+    """The definition ``spec`` generates with, resolving it against its base if it has one.
+
+    Raises :class:`LookupError` when the base it names no longer exists.
+    """
+    if spec.base is None:
+        return to_definition(key, version, spec)
+    base = bases(spec.base)
+    if base is None:
+        raise LookupError(f"{key!r} is based on {spec.base!r}, which is not a note type now")
+    return resolve(key, version, base, spec)
 
 
 def validate_note_inputs(
@@ -275,27 +282,48 @@ class RepositoryPracticeNoteTypeSource:
 
     Takes a repository factory rather than a repository: the source is set
     once at startup, and each lookup must use the request's own session.
+    A based type is resolved against ``bases`` on every read; without it,
+    against the process-wide registry.
     """
 
-    def __init__(self, repository: Callable[[], PracticeNoteTypeRepository]) -> None:
+    def __init__(
+        self,
+        repository: Callable[[], PracticeNoteTypeRepository],
+        bases: BaseLookup | None = None,
+    ) -> None:
         self._repository = repository
+        self._bases = bases
+
+    def _base_lookup(self) -> BaseLookup:
+        return self._bases or get_default_registry().base_for
 
     def get(self, key: str, version: int | None = None) -> NoteTypeDefinition | None:
         stored = self._repository().get(key, version)
-        return stored_to_definition(stored) if stored else None
+        if stored is None:
+            return None
+        try:
+            return stored_to_definition(stored, self._base_lookup())
+        except LookupError:
+            logger.warning("Practice note type %s names a base that is gone", key)
+            return None
 
     def is_active(self, key: str) -> bool:
         stored = self._repository().get(key)
         return stored is not None and stored.retired_at is None
 
     def all_active(self) -> list[NoteTypeDefinition]:
-        return [
-            stored_to_definition(stored)
-            for stored in self._repository().list_latest()
-            if stored.retired_at is None
-        ]
+        bases = self._base_lookup()
+        definitions = []
+        for stored in self._repository().list_latest():
+            if stored.retired_at is not None:
+                continue
+            try:
+                definitions.append(stored_to_definition(stored, bases))
+            except LookupError:
+                logger.warning("Practice note type %s names a base that is gone", stored.key)
+        return definitions
 
 
-def stored_to_definition(stored: StoredNoteType) -> NoteTypeDefinition:
+def stored_to_definition(stored: StoredNoteType, bases: BaseLookup) -> NoteTypeDefinition:
     spec = PracticeNoteTypeSpec.model_validate(stored.definition)
-    return to_definition(stored.key, stored.version, spec)
+    return definition_for(stored.key, stored.version, spec, bases)
