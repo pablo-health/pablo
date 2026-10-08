@@ -117,6 +117,7 @@ def test_both_shapes_seed_by_the_same_rule_without_a_note_type() -> None:
         "Denies.",
         "NKDA",
         "I'm not allergic to any medications.",
+        "No. None I know of. I've never had a reaction to anything.",
     ],
 )
 def test_a_statement_of_no_allergies_is_a_denial(text: str) -> None:
@@ -130,6 +131,8 @@ def test_a_statement_of_no_allergies_is_a_denial(text: str) -> None:
         "No, but sulfa gives me hives.",
         "No drug allergies; allergic to peanuts.",
         "Took codeine since without a reaction.",
+        "No, I had a reaction to it once.",
+        "I don't know.",
         "",
     ],
 )

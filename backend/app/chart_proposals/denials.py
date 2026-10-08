@@ -15,30 +15,35 @@ import re
 NKDA = "NKDA"
 NKDA_TEXT = "No known drug allergies (NKDA)"
 
+#: The words that make a statement a denial.
+_NEGATIONS = frozenset(
+    ["no", "nope", "none", "nothing", "never", "nkda", "nka", "not", "denies", "denied"]
+)
+
 #: Every word an allergy denial is made of. A statement with any other word in it
 #: ("No, but penicillin gives me a rash") names something, and is not a denial.
-_DENIAL_WORDS = frozenset(
-    {
-        "no",
-        "nope",
-        "none",
-        "nothing",
-        "nkda",
-        "nka",
-        "not",
-        "denies",
-        "denied",
+_DENIAL_WORDS = _NEGATIONS | frozenset(
+    [
         "any",
+        "anything",
         "known",
         "i",
         "im",
+        "ive",
         "am",
+        "do",
+        "dont",
         "that",
         "know",
         "of",
         "to",
         "my",
         "knowledge",
+        "had",
+        "have",
+        "a",
+        "reaction",
+        "reactions",
         "allergic",
         "allergy",
         "allergies",
@@ -59,10 +64,8 @@ _DENIAL_WORDS = frozenset(
         "and",
         "or",
         "other",
-    }
+    ]
 )
-#: The words that make it a denial; the rest only say of what.
-_NEGATIONS = frozenset({"no", "nope", "none", "nothing", "nkda", "nka", "not", "denies", "denied"})
 
 
 def is_allergy_denial(text: str) -> bool:
