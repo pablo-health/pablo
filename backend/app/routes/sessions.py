@@ -337,9 +337,10 @@ def upload_session(
     session_service: SessionService = Depends(get_session_service),
     note_generation_service: NoteGenerationService = Depends(get_note_generation_service),
     audit: AuditService = Depends(get_audit_service),
+    authorizer: NoteTypeAuthorizer = Depends(get_note_type_authorizer),
 ) -> SessionResponse:
     """
-    Upload a transcript and start SOAP generation asynchronously.
+    Upload a transcript and start note generation asynchronously.
 
     Persists the session in ``processing`` and returns ``202`` immediately;
     the multi-second LLM generation runs on a Cloud Tasks worker
@@ -351,7 +352,15 @@ def upload_session(
     - **patient_id**: Patient ID for this session
     - **session_date**: ISO 8601 datetime of session
     - **transcript**: Transcript data (format and content)
+    - **note_type**: Note type to draft (SOAP when omitted)
     """
+    # Same gate as /api/sessions/schedule: an explicitly requested type must
+    # be allowed; falling back to the default always is.
+    if request.note_type is not None and not authorizer.is_allowed(user, request.note_type):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Note type {request.note_type!r} not allowed for this subscription",
+        )
     _gate_trial_session(user.email)
     try:
         session, patient = session_service.create_session_for_generation(

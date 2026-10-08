@@ -66,6 +66,25 @@ class InvalidNoteTypeError(BadRequestError):
     code = "INVALID_NOTE_TYPE"
 
 
+def _resolve_note_type(
+    note_type: str, note_inputs: dict[str, str] | None
+) -> tuple[NoteTypeDefinition, dict[str, str]]:
+    """The definition a session's note is written against, and its kept inputs.
+
+    Raises:
+        InvalidNoteTypeError: For a key the practice's catalog lacks, or inputs
+            the type does not accept.
+    """
+    registry = get_default_registry()
+    if not registry.has(note_type):
+        raise InvalidNoteTypeError(f"Unknown note_type: {note_type!r}")
+    definition = registry.get(note_type)
+    try:
+        return definition, validate_note_inputs(definition, note_inputs)
+    except ValueError as e:
+        raise InvalidNoteTypeError(str(e)) from e
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -342,14 +361,32 @@ class SessionService:
         counting once at creation is idempotent — a generation retry can't
         double-count it.
 
+        A requested ``note_type`` and its inputs are remembered the way
+        ``schedule_session`` remembers them, on an empty Note row, so the
+        worker drafts that type through the same path a recorded session
+        takes. Without a type the worker falls back to the default.
+
         Returns ``(session, patient)``.
 
         Raises:
             PatientNotFoundError: If patient doesn't exist or doesn't belong to user.
+            InvalidNoteTypeError: If the requested note type can't be drafted
+                from a transcript.
         """
         patient = self.patient_repo.get(patient_id, user_id)
         if not patient:
             raise PatientNotFoundError(f"Patient {patient_id} not found")
+
+        note_type = request.note_type
+        definition: NoteTypeDefinition | None = None
+        note_inputs: dict[str, str] = {}
+        if note_type is not None:
+            definition, note_inputs = _resolve_note_type(note_type, request.note_inputs)
+            # A restricted note is written by hand; a draft never fills one.
+            if definition.context != "session" or definition.restricted:
+                raise InvalidNoteTypeError(
+                    f"{definition.label} notes can't be drafted from a transcript."
+                )
 
         now = _now()
         session_number = self.session_repo.get_session_number_for_patient(patient_id)
@@ -369,6 +406,16 @@ class SessionService:
         )
         session.client_present_end_seconds = _client_present_end(session)
         session = self.session_repo.create(session)
+        if note_type is not None and definition is not None:
+            self.note_service.create_or_update_for_session(
+                session_id=session.id,
+                patient_id=patient_id,
+                note_type=note_type,
+                content=None,
+                user_id=user_id,
+                note_type_version=definition.version,
+                note_inputs=note_inputs or None,
+            )
 
         patient.session_count += 1
         if patient.last_session_date is None or request.session_date > patient.last_session_date:
@@ -732,14 +779,7 @@ class SessionService:
             raise PatientNotFoundError(f"Patient {request.patient_id} not found")
 
         note_type = request.note_type or DEFAULT_NOTE_TYPE
-        registry = get_default_registry()
-        if not registry.has(note_type):
-            raise InvalidNoteTypeError(f"Unknown note_type: {note_type!r}")
-        definition = registry.get(note_type)
-        try:
-            note_inputs = validate_note_inputs(definition, request.note_inputs)
-        except ValueError as e:
-            raise InvalidNoteTypeError(str(e)) from e
+        definition, note_inputs = _resolve_note_type(note_type, request.note_inputs)
 
         now = _now()
         session_number = self.session_repo.get_session_number_for_patient(request.patient_id)
