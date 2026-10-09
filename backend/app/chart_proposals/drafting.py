@@ -29,7 +29,10 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from ..notes.chart_context import STATED_THIS_VISIT
+from ..notes.chart_fields import chart_text, restates_chart_medication
+from ..notes.field_sources import MEDICATIONS
 from ..services.source_attribution_service import format_transcript_with_segment_ids
+from .evidence import cited_evidence, segment_texts
 from .families import (
     FAMILIES,
     HEADING,
@@ -44,12 +47,13 @@ from .medication_mentions import (
     kept_medications,
     medications_to_decide,
 )
-from .models import Drafted, DraftedProposal, Evidence, Origin
+from .models import Drafted, DraftedProposal, Origin
 from .recorded import field_text
 
 if TYPE_CHECKING:
     from ..models import Transcript
     from ..notes.chart_context import ChartContext
+    from ..notes.chart_fields import Statements
     from ..services.note_generation_service import CompleteStructured
 
 logger = logging.getLogger(__name__)
@@ -214,6 +218,35 @@ def _stated_this_visit(draft: Mapping[str, Any]) -> list[str]:
     return found
 
 
+def _proposable_key(note_field_key: str) -> str | None:
+    """The chart field a note field prints, when a proposal can name it."""
+    return (
+        chart_key_for(note_field_key)
+        or NOTE_FIELD_CHART_KEYS.get(note_field_key)
+        or (note_field_key if family_for(note_field_key) else None)
+    )
+
+
+def _said_this_visit(statements: Statements, chart: ChartContext) -> list[str]:
+    """What the extraction found said this visit about the chart's fields, each beside
+    the chart's text for it, as the draft prints it, and with the lines that say it.
+    A substance the client denied is said too; one asked about with no change, and a
+    medication the chart already lists at that dose, are not, as the draft marks
+    neither. The medication list is shown in full above, so its line is not repeated."""
+    found = []
+    for s in statements.fields:
+        chart_key = _proposable_key(s.field_key)
+        if chart_key is None or s.screen == "asked_no_change":
+            continue
+        if s.screen == "stated" and (not s.stated or restates_chart_medication(s, chart)):
+            continue
+        said = "denied" if s.screen == "denied" else f'"{s.stated}"'
+        lines = ", ".join(f"S{n}" for n in s.segment_ids)
+        has = "" if chart_key == MEDICATIONS else f"chart has {chart_text(chart_key, chart)}; "
+        found.append(f"- {chart_key}: {has}said {said}" + (f" [{lines}]" if lines else ""))
+    return found
+
+
 def _chart_and_rules(chart: ChartContext, instructions: str) -> list[str]:
     parts = ["The client's chart, as the clinician recorded it:", ""]
     for family in FAMILIES:
@@ -233,11 +266,30 @@ def build_prompt(
     *,
     draft: Mapping[str, Any] | None = None,
     to_decide: Sequence[str] = (),
+    statements: Statements | None = None,
 ) -> str:
     """The proposal prompt: the chart, the rules, and the numbered transcript.
-    ``to_decide`` are listed medications the call must decide on, one by one."""
+    ``to_decide`` are listed medications the call must decide on, one by one.
+
+    What was said this visit about the chart's fields comes from ``statements``,
+    the draft's extraction, with the lines that say it. Without it the fields
+    ``draft`` marks as stated this visit are listed instead."""
     parts = _chart_and_rules(chart, _INSTRUCTIONS)
-    stated = _stated_this_visit(draft or {})
+    said = _said_this_visit(statements, chart) if statements is not None else []
+    if said:
+        parts.extend(
+            [
+                "",
+                (
+                    "What this visit said about these chart fields, beside what the chart "
+                    + "has, with the lines that say it. Most only repeat or fill in the chart, "
+                    + "or are details for the note, not changes to it: propose one only where "
+                    + "it is a change by the rules above, citing those lines:"
+                ),
+                *said,
+            ]
+        )
+    stated = _stated_this_visit(draft or {}) if statements is None else []
     if stated:
         parts.extend(
             [
@@ -303,27 +355,6 @@ def build_document_prompt(chart: ChartContext, segments: Mapping[int, str]) -> s
     return "\n".join(parts)
 
 
-def segment_texts(indexed_transcript: str) -> dict[int, str]:
-    texts = {}
-    for line in indexed_transcript.splitlines():
-        head, _, rest = line.partition("] ")
-        texts[int(head.removeprefix("[S"))] = rest
-    return texts
-
-
-def cited_evidence(raw: Any, segments: Mapping[int, str]) -> tuple[Evidence, ...] | None:
-    """The cited segments, or ``None`` when the proposal cites none or one this visit lacks."""
-    if not isinstance(raw, list) or not raw:
-        return None
-    ids: list[int] = []
-    for value in raw:
-        if not isinstance(value, int) or isinstance(value, bool) or value not in segments:
-            return None
-        if value not in ids:
-            ids.append(value)
-    return tuple(Evidence(segment_id=i, text=segments[i]) for i in sorted(ids))
-
-
 def parse_proposals(
     reply: Mapping[str, Any],
     chart: ChartContext,
@@ -381,9 +412,11 @@ def propose_chart_updates(
     transcript: Transcript,
     *,
     draft: Mapping[str, Any] | None = None,
+    statements: Statements | None = None,
 ) -> Drafted:
     """Ask what this visit changes on the chart. Never raises: a failure is
     returned with its exception type, so the note can say it was not checked.
+    ``statements`` is the draft's extraction (see :func:`build_prompt`).
 
     The listed medications the transcript names near a different dose or a word
     saying they were stopped are put to the call to decide one by one."""
@@ -398,7 +431,8 @@ def propose_chart_updates(
         kept = kept_medications(reply, chart, to_decide, proposals)
         return Drafted(proposals, to_decide=tuple(to_decide), kept=kept)
 
-    return _ask(complete, build_prompt(chart, indexed, draft=draft, to_decide=to_decide), parse)
+    prompt = build_prompt(chart, indexed, draft=draft, to_decide=to_decide, statements=statements)
+    return _ask(complete, prompt, parse)
 
 
 def propose_from_document(complete: CompleteStructured, chart: ChartContext, text: str) -> Drafted:

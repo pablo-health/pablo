@@ -21,10 +21,13 @@ import os
 import sys
 import time
 from dataclasses import asdict
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.chart_proposals.drafting import propose_chart_updates, propose_from_document
 from app.models import Transcript
+from app.notes.chart_fields import rendered_fields
+from app.notes.spec_templates import spec_template
+from app.services.chart_field_extraction import extract_statements
 from app.services.note_generation_service import RegistryNoteGenerationService
 from app.services.structured_llm_gateway import (
     get_default_structured_llm_gateway,
@@ -33,6 +36,19 @@ from app.services.structured_llm_gateway import (
 
 from evals.chart_proposals.cases import ALL_CASES, ProposalCase
 from evals.chart_proposals.scorers import grade
+
+if TYPE_CHECKING:
+    from app.notes import NoteTypeDefinition
+
+#: The built-in type whose chart-fed fields a case's extraction is asked about.
+FOLLOW_UP = "psychiatric_follow_up"
+
+
+def _follow_up() -> NoteTypeDefinition:
+    template = spec_template(FOLLOW_UP)
+    if template is None:
+        raise KeyError(FOLLOW_UP)
+    return template.definition()
 
 
 def run_case(case: ProposalCase, model: str | None, run: int) -> dict[str, Any]:
@@ -44,11 +60,25 @@ def run_case(case: ProposalCase, model: str | None, run: int) -> dict[str, Any]:
     )
     started = time.monotonic()
     complete = generator.chart_proposal_completion()
+    statements = (
+        extract_statements(
+            complete,
+            rendered_fields(_follow_up()),
+            case.chart,
+            {},
+            case.transcript,
+        )
+        if case.extracted
+        else None
+    )
     drafted = (
         propose_from_document(complete, case.chart, case.transcript)
         if case.document
         else propose_chart_updates(
-            complete, case.chart, Transcript(format="txt", content=case.transcript)
+            complete,
+            case.chart,
+            Transcript(format="txt", content=case.transcript),
+            statements=statements,
         )
     )
     proposals = drafted.proposals
@@ -63,6 +93,7 @@ def run_case(case: ProposalCase, model: str | None, run: int) -> dict[str, Any]:
         "failed_checks": {name: found for name, found in problems.items() if found},
         "seconds": round(time.monotonic() - started, 1),
         "proposals": [asdict(p) for p in proposals],
+        "extracted": [asdict(s) for s in statements.fields] if statements is not None else None,
     }
 
 
@@ -71,6 +102,8 @@ def _print(results: list[dict[str, Any]]) -> None:
         print(
             f"{'PASS' if r['passed'] else 'FAIL'}  run {r['run']}  {r['case']}  ({r['seconds']}s)"
         )
+        for s in r["extracted"] or []:
+            print(f"      said: {s['field_key']} {s['screen']} {s['stated']!r} {s['segment_ids']}")
         for p in r["proposals"]:
             entry = f" ({p['item_key']})" if p["item_key"] else ""
             print(f"      {p['field_key']}{entry}: {p['proposed_text']}")

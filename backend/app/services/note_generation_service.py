@@ -201,6 +201,10 @@ class GeneratedNote:
     #: labels, for a type with a psychotherapy section (see
     #: :mod:`app.services.therapy_labels`).
     psychotherapy_proposal: dict[str, Any] | None = None
+    #: What the extraction call found the visit said about the fields printed from
+    #: the chart, with the lines that say it; ``None`` when no extraction ran. The
+    #: proposal call reads it (see :mod:`app.chart_proposals.drafting`).
+    chart_statements: Statements | None = None
 
 
 class RestrictedNoteGenerationError(ValueError):
@@ -320,7 +324,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
         asks_start = client_present_end_seconds != 0 and any(
             s.key == PSYCHOTHERAPY_SECTION_KEY for s in definition.sections
         )
-        content, time_reply = self._generate_via_registry(
+        content, time_reply, statements = self._generate_via_registry(
             definition,
             transcript,
             patient,
@@ -355,6 +359,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
             content=content,
             note_type_version=definition.version,
             psychotherapy_proposal=proposal,
+            chart_statements=statements,
         )
 
     def _generate_via_registry(
@@ -371,8 +376,9 @@ class RegistryNoteGenerationService(NoteGenerationService):
         asks_start: bool = False,
         chart: ChartContext | None = None,
         current_note: Mapping[str, Any] | None = None,
-    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
-        """The drafted content, and the psychotherapy time the clinician stated.
+    ) -> tuple[dict[str, Any], dict[str, Any] | None, Statements | None]:
+        """The drafted content, the psychotherapy time the clinician stated, and what the
+        extraction call found the visit said about the fields printed from the chart.
 
         Fields printed from the chart are written in code (:mod:`app.notes.chart_fields`)
         and left out of the model's request; what the visit said about them comes
@@ -458,7 +464,8 @@ class RegistryNoteGenerationService(NoteGenerationService):
         stated = completion.data.get(TIME_KEY) if asks_start else None
         content = _coerce_registry_response(full_definition, asked)
         content = _with_written(content, full_definition, chart, inputs, statements)
-        return _with_drafted(content, risk_sections), stated
+        found = statements.result() if statements is not None else None
+        return _with_drafted(content, risk_sections), stated, found
 
     def _start_extraction(
         self,

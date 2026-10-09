@@ -896,9 +896,7 @@ def generate_standalone_note_job(
         note_service.fail_generation(payload.note_id, payload.user_id)
         return {"status": "failed"}
 
-    drafted = proposal_step.draft(
-        note_generation_service, definition, chart, transcript, generated.content
-    )
+    drafted = proposal_step.draft(note_generation_service, definition, chart, transcript, generated)
     note = note_service.complete_generation(
         payload.note_id,
         generated.content,

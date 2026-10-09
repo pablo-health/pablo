@@ -35,12 +35,19 @@ The checks are unit-tested on hand-made proposals in
 | Case | Chart | Visit | Expected |
 |---|---|---|---|
 | `divorce-finalized` | separated, divorce in progress; custody shared | the divorce was finalized; everything else restated | `relationships` and `legal_custody`, each keeping its text and adding that the divorce was finalized, citing the client's lines |
+| `petition-signed` | separated, divorce petition filed; temporary shared custody | "The judge signed it on the second", the divorce never named | `relationships` and `legal_custody`, each keeping its text and saying the divorce is final, citing the client's lines; the draft's extraction runs first |
 | `unchanged` | the same chart | every field restated, nothing new | no proposal |
 | `stopped-working` | full time as a dental hygienist | stopped working there at the end of August | `work_school` still naming the dental practice and saying it no longer applies |
 | `medication-start-and-stop` | sertraline, trazodone | the clinician starts hydroxyzine 25 mg in the afternoon as needed and stops the trazodone because of nausea | a start with its frequency and a stop with its reason; nothing for the sertraline, continued |
 | `medication-only-discussed` | sertraline | a medication asked about, a dose increase considered for next time | no proposal |
 | `medication-another-prescriber-started` | sertraline | the client's primary care doctor started lisinopril 10 mg once a day | an add with the dose and frequency as stated; `medical_history` for the blood pressure is allowed, not required |
 | `medication-client-stopped` | sertraline, buspirone | the client stopped the buspirone; the clinician decides nothing yet | no proposal |
+
+A case marked to run the extraction first asks the draft's extraction call
+(`app/services/chart_field_extraction.py`) what the visit said about the
+follow-up's chart-fed fields, and gives what it found, with the lines that say
+it, to the proposal call, as a drafted follow-up does. The other cases run the
+proposal call alone.
 
 The history cases' charts list the medication the client mentions taking, as
 a follow-up's chart would; without it, that mention is a medication the list
@@ -63,6 +70,16 @@ scripts/run-chart-proposal-eval.sh              # every case once
 scripts/run-chart-proposal-eval.sh --runs 3     # every case three times
 scripts/run-chart-proposal-eval.sh --case unchanged
 ```
+
+## Recorded runs — 2026-10-09
+
+### What the extraction found, given to the proposal call
+
+Sonnet 4.6 on Bedrock, three runs of each of the ten cases: 30 of 30 passed,
+`petition-signed` 3 of 3. In every run the extraction reported the client's
+"It's over. The judge signed it on the second." for both `relationships` and
+`legal_custody`, citing the same two lines, and the proposal call amended both
+fields to say the divorce is final.
 
 ## Recorded runs — 2026-10-08
 

@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 from app.chart_history.fields import HISTORY_KEYS, SUBSTANCE_KEYS
+from app.chart_proposals.step import ChartProposalStep
 from app.models import Patient, Transcript
 from app.notes.chart_context import (
     ChartContext,
@@ -40,6 +41,7 @@ from app.notes.note_type_patch import resolve_spec
 from app.notes.practice_spec import NoteTypePatch, PracticeFieldSpec
 from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
 from app.notes.spec_templates import TEMPLATES_DIR
+from app.repositories import InMemoryChartHistoryRepository, InMemoryChartProposalRepository
 from app.services.chart_field_extraction import (
     RISK_LINES,
     SCHEMA_TITLE,
@@ -584,9 +586,9 @@ def test_an_item_citing_no_line_or_a_line_the_visit_lacks_is_dropped() -> None:
     }
     kept = parse(reply, fields, TELEHEALTH, SEGMENTS)
     assert kept.fields == (
-        Statement("alcohol", "asked_no_change", ""),
-        Statement("work_school", "stated", "laid off"),
-        Statement("cannabis", "stated", "weekends"),
+        Statement("alcohol", "asked_no_change", "", segment_ids=(0, 1)),
+        Statement("work_school", "stated", "laid off", segment_ids=(2,)),
+        Statement("cannabis", "stated", "weekends", segment_ids=(1,)),
     )
     assert kept.diagnoses == (NamedDiagnosis("Generalized anxiety disorder"),)
     assert kept.client_at_home is False
@@ -635,8 +637,8 @@ def test_a_history_statement_citing_only_where_the_client_is_today_is_dropped() 
     }
     kept = parse(reply, fields, TELEHEALTH, segments)
     assert kept.fields == (
-        Statement("living_situation", "stated", "We moved."),
-        Statement("alcohol", "denied", ""),
+        Statement("living_situation", "stated", "We moved.", segment_ids=(1, 2)),
+        Statement("alcohol", "denied", "", segment_ids=(1,)),
     )
     assert kept.client_at_home is False
     # In the office nothing is asked about where the client is, so nothing is dropped.
@@ -670,7 +672,9 @@ def test_a_history_statement_citing_only_the_risk_screen_is_dropped() -> None:
         RISK_LINES: [0, 1, 99, True],
     }
     kept = parse(reply, fields, {"place_of_service": "In office"}, segments)
-    assert kept.fields == (Statement("living_situation", "stated", "My sister moved in"),)
+    assert kept.fields == (
+        Statement("living_situation", "stated", "My sister moved in", segment_ids=(2,)),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -815,3 +819,44 @@ def test_a_failed_extraction_fails_the_draft_and_logs_its_own_event(
     assert record.error_class == "ValueError"  # type: ignore[attr-defined]
     # Counts and classes only: nothing the visit said reaches the log.
     assert "Same as always" not in record.getMessage()
+
+
+def test_the_proposal_call_is_given_what_the_extraction_found_on_the_same_lines() -> None:
+    """The draft hands its extraction to the proposal call, whose transcript is
+    numbered as the extraction's was, so a cited line is the same line in both."""
+    gateway = _ScriptedGateway(
+        extraction={
+            "statements": [
+                {
+                    "field_key": "alcohol",
+                    "screen": "stated",
+                    "stated": "Same as always",
+                    "evidence_segment_ids": [1],
+                }
+            ],
+            "diagnoses": [],
+        }
+    )
+    definition = _definition()
+    service = RegistryNoteGenerationService(llm_gateway=gateway, model="scripted")
+    generated = service.generate_note(
+        definition.key,
+        TRANSCRIPT,
+        PATIENT,
+        NOW,
+        inputs={"place_of_service": "In office"},
+        definition=definition,
+        chart=FULL_CHART,
+        client_present_end_seconds=0,
+    )
+    step = ChartProposalStep(InMemoryChartProposalRepository(), InMemoryChartHistoryRepository())
+
+    drafted = step.draft(service, definition, FULL_CHART, TRANSCRIPT, generated)
+
+    assert drafted is not None
+    prompt = gateway.calls[-1]["user_prompt"]
+    assert (
+        '- alcohol: chart has Two glasses of wine on weekends.; said "Same as always" [S1]'
+        in prompt
+    )
+    assert "[S1] [00:03] Client: Same as always." in prompt
