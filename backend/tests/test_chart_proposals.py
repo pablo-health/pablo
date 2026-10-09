@@ -524,8 +524,12 @@ def test_the_step_proposes_only_for_a_practice_type() -> None:
     generator = _Proposing(_reply(_relationships(FINALIZED, [DIVORCE])))
     step = ChartProposalStep(InMemoryChartProposalRepository(), InMemoryChartHistoryRepository())
     chart = _chart(relationships=SEPARATED)
+    # A follow-up's draft prints the chart's relationships with what the visit said.
+    draft = {"social_history": {"relationships": f'{SEPARATED} (stated this visit: "finalized")'}}
 
-    follow_up = step.draft(generator, _definition("psychiatric_follow_up"), chart, TRANSCRIPT, {})
+    follow_up = step.draft(
+        generator, _definition("psychiatric_follow_up"), chart, TRANSCRIPT, draft
+    )
     assert follow_up is not None
     assert [p.field_key for p in follow_up.proposals] == ["relationships"]
 

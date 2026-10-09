@@ -45,6 +45,25 @@ class MedicationChange:
     reason: str | None = None
 
 
+ConsideredReason = Literal["novelty", "transient", "interview", "present-not-past", "elsewhere"]
+"""Why a history proposal was not offered (``materiality``): it says nothing the chart
+does not; it is a passing event, or a lasting change nobody said; it rests on the
+clinician's questions alone; it puts the present visit in a field about the past; or
+the chart keeps it in another field."""
+
+
+@dataclass(frozen=True)
+class Considered:
+    """A history proposal the call made that was considered and not offered."""
+
+    field_key: str
+    proposed_text: str
+    what_changed: str
+    evidence_segment_ids: tuple[int, ...]
+    origin: Origin
+    reason: ConsideredReason
+
+
 @dataclass(frozen=True)
 class ProposalRun:
     """How a note's proposal call last ended.
@@ -52,7 +71,8 @@ class ProposalRun:
     ``failed`` means the call raised and the note has no proposals from it,
     which is not the same as nothing having changed. ``skipped`` is a note
     type the call does not run on. ``error_class`` is the exception's type
-    name, never its message.
+    name, never its message. ``considered`` are the history proposals the call
+    made that were not offered, each with its reason.
     """
 
     note_id: str
@@ -60,6 +80,7 @@ class ProposalRun:
     status: RunStatus
     computed_at: datetime
     error_class: str | None = None
+    considered: tuple[Considered, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -88,6 +109,8 @@ class Drafted:
     error_class: str | None = None
     to_decide: tuple[str, ...] = ()
     kept: tuple[MedicationKept, ...] = ()
+    considered: tuple[Considered, ...] = ()
+    """The history proposals not offered, with their reasons; stored on the run."""
 
 
 @dataclass(frozen=True)

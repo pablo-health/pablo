@@ -13,7 +13,13 @@ from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import delete, select
 
-from ...chart_proposals.models import ChartProposal, Evidence, MedicationChange, ProposalRun
+from ...chart_proposals.models import (
+    ChartProposal,
+    Considered,
+    Evidence,
+    MedicationChange,
+    ProposalRun,
+)
 from ...db.models import NoteChartProposalRow, NoteChartProposalRunRow
 from ..chart_proposals import ChartProposalRepository
 
@@ -23,7 +29,13 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session
 
-    from ...chart_proposals.models import Decision, MedicationAction, Origin, RunStatus
+    from ...chart_proposals.models import (
+        ConsideredReason,
+        Decision,
+        MedicationAction,
+        Origin,
+        RunStatus,
+    )
 
 
 def _change(raw: dict[str, Any] | None) -> MedicationChange | None:
@@ -131,6 +143,7 @@ class PostgresChartProposalRepository(ChartProposalRepository):
             status=cast("RunStatus", row.status),
             computed_at=row.computed_at,
             error_class=row.error_class,
+            considered=tuple(_considered(raw) for raw in row.considered or ()),
         )
 
     def record_run(self, run: ProposalRun) -> None:
@@ -141,4 +154,19 @@ class PostgresChartProposalRepository(ChartProposalRepository):
         row.status = run.status
         row.error_class = run.error_class
         row.computed_at = run.computed_at
+        row.considered = [
+            {**asdict(c), "evidence_segment_ids": list(c.evidence_segment_ids)}
+            for c in run.considered
+        ]
         self._session.flush()
+
+
+def _considered(raw: dict[str, Any]) -> Considered:
+    return Considered(
+        field_key=str(raw["field_key"]),
+        proposed_text=str(raw["proposed_text"]),
+        what_changed=str(raw.get("what_changed") or ""),
+        evidence_segment_ids=tuple(int(i) for i in raw.get("evidence_segment_ids") or ()),
+        origin=cast("Origin", raw["origin"]),
+        reason=cast("ConsideredReason", raw["reason"]),
+    )

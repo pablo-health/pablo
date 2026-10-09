@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -26,6 +27,7 @@ from app.medications.service import MedicationService
 from app.models import Note, Patient, SessionStatus, TherapySession, Transcript
 from app.notes import NoteTypeRegistry, register_builtin_note_types
 from app.notes.chart_context import ChartContext
+from app.notes.chart_fields import Statement, Statements
 from app.notes.practice_types import RepositoryPracticeNoteTypeSource
 from app.repositories import (
     InMemoryChartHistoryRepository,
@@ -34,7 +36,7 @@ from app.repositories import (
     InMemoryPracticeNoteTypeRepository,
 )
 from app.routes import notes as notes_routes
-from app.services.note_generation_service import MockNoteGenerationService
+from app.services.note_generation_service import GeneratedNote, MockNoteGenerationService
 from app.services.note_service import NoteService
 from app.services.session_service import SessionService
 
@@ -216,7 +218,27 @@ def test_a_saved_edit_recomputes_what_the_note_records_and_reading_changes_nothi
     ]
 
 
-class _Proposing(MockNoteGenerationService):
+class _StatesTheDivorce(MockNoteGenerationService):
+    """A draft whose extraction found the divorce said, as a real follow-up's does: in
+    its statements, and in the mark the relationships field prints from them. Without
+    it the proposal check reads the visit as having said nothing about the field."""
+
+    def generate_note(self, *args: Any, **kwargs: Any) -> GeneratedNote:
+        note = super().generate_note(*args, **kwargs)
+        said = "The divorce was finalized on April 2."
+        content = {
+            key: (
+                {**section, "relationships": f'{SEPARATED} (stated this visit: "{said}")'}
+                if isinstance(section, dict) and "relationships" in section
+                else section
+            )
+            for key, section in note.content.items()
+        }
+        statements = Statements(fields=(Statement("relationships", stated=said, segment_ids=(1,)),))
+        return replace(note, content=content, chart_statements=statements)
+
+
+class _Proposing(_StatesTheDivorce):
     def chart_proposal_completion(self) -> Any:
         def complete(system: str, user: str, schema: dict[str, Any]) -> dict[str, Any]:
             return {
@@ -233,7 +255,7 @@ class _Proposing(MockNoteGenerationService):
         return complete
 
 
-class _Failing(MockNoteGenerationService):
+class _Failing(_StatesTheDivorce):
     def chart_proposal_completion(self) -> Any:
         def complete(system: str, user: str, schema: dict[str, Any]) -> dict[str, Any]:
             raise TimeoutError("deadline exceeded")

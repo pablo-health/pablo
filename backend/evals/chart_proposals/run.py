@@ -23,7 +23,15 @@ import time
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
-from app.chart_proposals.drafting import propose_chart_updates, propose_from_document
+from app.chart_proposals.drafting import (
+    document_segments,
+    propose_chart_updates,
+    propose_from_document,
+    said_this_visit,
+    screened,
+    transcript_segments,
+)
+from app.chart_proposals.step import extracted_fields
 from app.models import Transcript
 from app.notes.chart_fields import rendered_fields
 from app.notes.spec_templates import spec_template
@@ -71,16 +79,23 @@ def run_case(case: ProposalCase, model: str | None, run: int) -> dict[str, Any]:
         if case.extracted
         else None
     )
-    drafted = (
-        propose_from_document(complete, case.chart, case.transcript)
-        if case.document
-        else propose_chart_updates(
-            complete,
+    # Screened for materiality as the proposal step screens a reply before storing it.
+    if case.document:
+        drafted = screened(
+            propose_from_document(complete, case.chart, case.transcript),
             case.chart,
-            Transcript(format="txt", content=case.transcript),
-            statements=statements,
+            document_segments(case.transcript),
         )
-    )
+    else:
+        transcript = Transcript(format="txt", content=case.transcript)
+        drafted = screened(
+            propose_chart_updates(complete, case.chart, transcript, statements=statements),
+            case.chart,
+            transcript_segments(transcript),
+            said_this_visit(extracted_fields(_follow_up()), statements, None)
+            if statements is not None
+            else None,
+        )
     proposals = drafted.proposals
     problems = grade(proposals, case)
     if drafted.error_class:

@@ -24,13 +24,16 @@ the note was not checked rather than shown an empty list.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping, Sequence
+import re
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
+from ..chart_history.fields import is_history_key
 from ..drug_names.sound_alikes import unconfirmed
 from ..notes.chart_context import STATED_THIS_VISIT
 from ..notes.chart_fields import chart_text, restates_chart_medication
+from ..notes.client_present import MIN_BOUNDARY_CLIENT_WORDS, is_client_speaker
 from ..notes.field_sources import MEDICATIONS
 from ..services.source_attribution_service import format_transcript_with_segment_ids
 from .evidence import cited_evidence, segment_texts
@@ -42,13 +45,14 @@ from .families import (
     chart_key_for,
     family_for,
 )
+from .materiality import CitedLine, OtherFields, Speaker, admit
 from .medication_mentions import (
     KEPT_REASONS,
     MEDICATIONS_KEPT,
     kept_medications,
     medications_to_decide,
 )
-from .models import Drafted, DraftedProposal, Origin
+from .models import Considered, Drafted, DraftedProposal, Origin
 from .recorded import field_text
 
 if TYPE_CHECKING:
@@ -416,6 +420,134 @@ def parse_proposals(
             seen.add(identity)
             kept.append(replace(drafted, origin=origin))
     return kept
+
+
+_SPEAKER_LINE = re.compile(r"^\[[\d:]+\]\s*([^:]+):\s*(.*)$", re.S)
+
+
+def cited_lines(segments: Mapping[int, str]) -> dict[int, CitedLine]:
+    """Each transcript line's words and who said them: the client; the clinician after
+    the client's last line (their dictation, anything dictated after the recording
+    included); or the clinician before it (the interview). A transcript with no client
+    line of a few words cannot tell the clinician's questions from their dictation, so
+    every line of it is ``unknown``."""
+    parsed: dict[int, tuple[str, str]] = {}
+    for n, text in segments.items():
+        match = _SPEAKER_LINE.match(text.strip())
+        parsed[n] = (match.group(1).strip(), match.group(2)) if match else ("", text)
+    client_lines = [
+        n
+        for n, (speaker, said) in parsed.items()
+        if is_client_speaker(speaker) and len(said.split()) >= MIN_BOUNDARY_CLIENT_WORDS
+    ]
+    last = max(client_lines, default=None)
+    lines: dict[int, CitedLine] = {}
+    for n, (speaker, said) in parsed.items():
+        if last is None:
+            who: Speaker = "unknown"
+        elif is_client_speaker(speaker):
+            who = "client"
+        else:
+            who = "dictated" if n > last else "interview"
+        lines[n] = CitedLine(said, who)
+    return lines
+
+
+def said_this_visit(
+    extracted: Collection[str],
+    statements: Statements | None,
+    draft: Mapping[str, Any] | None,
+) -> dict[str, list[str]]:
+    """What the extraction beside the draft found said this visit, for each chart field
+    it reads the visit for (``extracted``), empty for one it found nothing about: from
+    ``statements``, or without them (a retry) from the marks the draft printed from
+    them. A field asked about with no change has nothing said."""
+    said: dict[str, list[str]] = {key: [] for key in extracted}
+    if statements is not None:
+        for s in statements.fields:
+            key = _proposable_key(s.field_key)
+            if key in said and s.screen != "asked_no_change":
+                said[key].append("denied" if s.screen == "denied" else s.stated)
+        return said
+    for line in _stated_this_visit(draft or {}):
+        key, _, text = line.removeprefix("- ").partition(": ")
+        if key in said:
+            said[key].append(text)
+    return said
+
+
+def material(
+    proposals: Sequence[DraftedProposal],
+    chart: ChartContext,
+    segments: Mapping[int, str],
+    said: Mapping[str, Sequence[str]] | None = None,
+) -> tuple[list[DraftedProposal], tuple[Considered, ...]]:
+    """The proposals worth offering, and the history proposals considered and not
+    offered, each with the reason (:mod:`.materiality`). The medication list and the
+    allergies keep their families' rules and pass through. ``said`` is what the
+    extraction found said this visit (:func:`said_this_visit`), keyed by the fields it
+    reads the visit for; a transcript proposal to one of them is checked against it."""
+    lines = cited_lines(segments)
+    recorded = {f.key: f.text for f in chart.history}
+    medications = [
+        *(m.name for m in chart.medications),
+        *(p.item_key for p in proposals if p.field_key == MEDICATIONS),
+    ]
+    offered: list[DraftedProposal] = []
+    considered: list[Considered] = []
+    for proposal in proposals:
+        if not is_history_key(proposal.field_key):
+            offered.append(proposal)
+            continue
+        others = OtherFields(
+            history={k: t for k, t in recorded.items() if k != proposal.field_key},
+            problems=[p.label for p in chart.problems],
+            medications=medications,
+        )
+        spoken = proposal.origin == "transcript"
+        cited = [
+            lines[e.segment_id] if spoken else CitedLine(e.text, "unknown")
+            for e in proposal.evidence
+            if e.segment_id in lines or not spoken
+        ]
+        heard = (said or {}).get(proposal.field_key) if spoken else None
+        verdict = admit(proposal, recorded.get(proposal.field_key, ""), heard, cited, others)
+        if verdict.reason is None:
+            offered.append(proposal)
+            continue
+        logger.info(
+            "Chart proposal considered, not offered: %s (%s)", proposal.field_key, verdict.reason
+        )
+        considered.append(
+            Considered(
+                field_key=proposal.field_key,
+                proposed_text=proposal.proposed_text,
+                what_changed=proposal.what_changed,
+                evidence_segment_ids=tuple(e.segment_id for e in proposal.evidence),
+                origin=proposal.origin,
+                reason=verdict.reason,
+            )
+        )
+    return offered, tuple(considered)
+
+
+def screened(
+    drafted: Drafted,
+    chart: ChartContext,
+    segments: Mapping[int, str],
+    said: Mapping[str, Sequence[str]] | None = None,
+) -> Drafted:
+    """``drafted`` with its history proposals checked for materiality (:func:`material`),
+    those not offered kept as ``considered``. A failed call is returned as it is."""
+    if drafted.error_class:
+        return drafted
+    offered, considered = material(drafted.proposals, chart, segments, said)
+    return replace(drafted, proposals=offered, considered=considered)
+
+
+def transcript_segments(transcript: Transcript) -> dict[int, str]:
+    """The transcript's lines, numbered as the proposal call numbers them."""
+    return segment_texts(format_transcript_with_segment_ids(transcript.content))
 
 
 def propose_chart_updates(
