@@ -154,49 +154,49 @@
             "key": "alcohol",
             "label": "Alcohol",
             "kind": "text",
-            "ai_hint": "Alcohol: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported. Record a denial as a denial. \"Not asked.\" if it did not come up."
+            "ai_hint": "Alcohol, drafted from the visit, not the chart: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported; a denial as \"Denies.\", or \"Denies\" followed by what was denied; \"Not asked.\" if it did not come up."
           },
           {
             "key": "cannabis",
             "label": "Cannabis",
             "kind": "text",
-            "ai_hint": "Cannabis: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported. Record a denial as a denial. \"Not asked.\" if it did not come up."
+            "ai_hint": "Cannabis, drafted from the visit, not the chart: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported; a denial as \"Denies.\", or \"Denies\" followed by what was denied; \"Not asked.\" if it did not come up."
           },
           {
             "key": "stimulants",
             "label": "Stimulants",
             "kind": "text",
-            "ai_hint": "Stimulants not prescribed to the client, including methamphetamine: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported. Record a denial as a denial. \"Not asked.\" if it did not come up."
+            "ai_hint": "Stimulants not prescribed to the client, including methamphetamine, drafted from the visit, not the chart: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported; a denial as \"Denies.\", or \"Denies\" followed by what was denied; \"Not asked.\" if it did not come up."
           },
           {
             "key": "cocaine",
             "label": "Cocaine",
             "kind": "text",
-            "ai_hint": "Cocaine: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported. Record a denial as a denial. \"Not asked.\" if it did not come up."
+            "ai_hint": "Cocaine, drafted from the visit, not the chart: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported; a denial as \"Denies.\", or \"Denies\" followed by what was denied; \"Not asked.\" if it did not come up."
           },
           {
             "key": "opioids",
             "label": "Opioids",
             "kind": "text",
-            "ai_hint": "Opioids, prescribed or not: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported. Record a denial as a denial. \"Not asked.\" if it did not come up."
+            "ai_hint": "Opioids, prescribed or not, drafted from the visit, not the chart: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported; a denial as \"Denies.\", or \"Denies\" followed by what was denied; \"Not asked.\" if it did not come up."
           },
           {
             "key": "benzodiazepines",
             "label": "Benzodiazepines",
             "kind": "text",
-            "ai_hint": "Benzodiazepines and other sedatives, prescribed or not: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported. Record a denial as a denial. \"Not asked.\" if it did not come up."
+            "ai_hint": "Benzodiazepines and other sedatives, prescribed or not, drafted from the visit, not the chart: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported; a denial as \"Denies.\", or \"Denies\" followed by what was denied; \"Not asked.\" if it did not come up."
           },
           {
             "key": "tobacco_nicotine",
             "label": "Tobacco / nicotine",
             "kind": "text",
-            "ai_hint": "Tobacco, vaping or other nicotine: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported. Record a denial as a denial. \"Not asked.\" if it did not come up."
+            "ai_hint": "Tobacco, vaping or other nicotine, drafted from the visit, not the chart: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported; a denial as \"Denies.\", or \"Denies\" followed by what was denied; \"Not asked.\" if it did not come up."
           },
           {
             "key": "other_substances",
             "label": "Other substances",
             "kind": "text",
-            "ai_hint": "Any other substance: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported. Record a denial as a denial. \"Not asked.\" if it did not come up. A catch-all question (\"anything else?\", \"any other drugs?\") counts as asking: record the answer to it."
+            "ai_hint": "Any other substance, drafted from the visit, not the chart: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported; a denial as \"Denies.\", or \"Denies\" followed by what was denied; \"Not asked.\" if it did not come up. A catch-all question (\"anything else?\", \"any other drugs?\") counts as asking: record the answer to it."
           }
         ]
       },

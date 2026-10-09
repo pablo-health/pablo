@@ -107,7 +107,9 @@ class ChartProposalService:
         existing = self._repo.list_for_note(note.id)
         seeds = {
             _identity(p.field_key, p.item_key): p
-            for p in recorded_proposals(content, (f.key for f in chart.history))
+            for p in recorded_proposals(
+                content, (f.key for f in chart.history), chart.allergy_status
+            )
         }
         documented = [p for p in drafted or () if p.origin == "document"]
         cited = {_identity(p.field_key, p.item_key) for p in documented}
