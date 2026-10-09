@@ -112,7 +112,8 @@ clinician dictated after the client's last line, states something that changes i
 to it. If nothing changed, return an empty list: that is the usual answer.
 
 A history field changes only when the chart would read differently at the next visit in a \
-way that matters: a new lasting fact, a correction, or something that is no longer true \
+way that matters: a new lasting fact (a new treatment the client now has, such as weekly \
+therapy begun since the last visit), a correction, or something that is no longer true \
 (the field still keeps it, and says what replaced it: "Married; separated in January, \
 divorce finalized in May."). These are not changes: a \
 restatement, or a detail that only confirms or fills in what the field already says; an \

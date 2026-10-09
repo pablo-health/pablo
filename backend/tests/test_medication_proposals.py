@@ -243,6 +243,11 @@ def test_the_prompt_lists_the_medications_and_reads_the_drafts_stated_suffix() -
     assert "a stop, start or change another prescriber made that the client reports" in prompt
     assert "with no decision from the clinician this visit, is not an item" in prompt
     assert "exactly as the list names it, without a dose" in prompt
+    # The chart keeps a dose as an amount and a frequency with its purpose.
+    assert "never a tablet count" in prompt
+    assert "keeping any purpose said" in prompt
+    # A new ongoing treatment is a history change, not a passing event.
+    assert "a new treatment the client now has" in prompt
     assert '- medications: lithium 300 mg, twice daily\n(stated this visit: "amlodipine' in prompt
     assert "Medication list: none recorded" in build_prompt(ChartContext(), "[S0] hello")
 

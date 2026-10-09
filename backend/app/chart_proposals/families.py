@@ -448,8 +448,11 @@ class MedicationFamily(FieldFamily):
             ),
             (
                 "- For each item give drug_name, for stop or change exactly as the list names "
-                + "it, without a dose; dose and frequency (how often and when) as stated, and "
-                + "for a change only the ones that change; category, psychiatric or other, "
+                + "it, without a dose; dose, the amount taken each time in its unit (0.75 mg), "
+                + 'never a tablet count, and for a schedule of two amounts each one ("1 mg / '
+                + '0.75 mg"); frequency, how often and when, keeping any purpose said ("with '
+                + 'meals", "as needed for back pain"); for a change only the dose or frequency '
+                + "that changes; category, psychiatric or other, "
                 + "when it is clear; for a stop, the reason and when it stopped as said, if "
                 + "said, as reason; what_changed; evidence_segment_ids, the lines that state "
                 + 'it; stated_in: "a carried block only" for a medication an imported '
