@@ -462,7 +462,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
         context = contextvars.copy_context()
         return _extraction_executor().submit(
             context.run,
-            extract_statements,
+            _extract_logged,
             complete,
             rendered,
             chart,
@@ -895,6 +895,39 @@ def _with_written(
     for section_key, fields in written.items():
         content[section_key].update(fields)
     return content
+
+
+EXTRACTION_FAILED_EVENT = "chart_field_extraction_failed"
+"""Logged when the extraction call fails, apart from the main call's failures, so
+its failure rate can be read on its own. Carries counts and classes only."""
+
+
+def _extract_logged(
+    complete: CompleteStructured,
+    rendered: Sequence[RenderedField],
+    chart: ChartContext,
+    inputs: Mapping[str, str],
+    transcript_content: str,
+) -> Statements:
+    """:func:`extract_statements`, with a failure logged under its own event and re-raised."""
+    try:
+        return extract_statements(complete, rendered, chart, inputs, transcript_content)
+    except Exception as exc:
+        cause = exc.__cause__ or exc.__context__
+        logger.warning(
+            "%s fields=%d error_class=%s cause_class=%s",
+            EXTRACTION_FAILED_EVENT,
+            len(rendered),
+            type(exc).__name__,
+            type(cause).__name__ if cause is not None else "",
+            extra={
+                "event": EXTRACTION_FAILED_EVENT,
+                "field_count": len(rendered),
+                "error_class": type(exc).__name__,
+                "cause_class": type(cause).__name__ if cause is not None else None,
+            },
+        )
+        raise
 
 
 _extraction_executor_holder: list[ThreadPoolExecutor] = []

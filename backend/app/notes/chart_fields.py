@@ -270,8 +270,10 @@ def place_of_service(inputs: Mapping[str, str], person: str, *, at_home: bool = 
         return IN_OFFICE if "office" in place.lower() else f"{place}."
     client_at = (inputs.get("client_location") or "").strip()
     provider_at = (inputs.get("provider_location") or "").strip()
-    # An entered location that already says home is not said twice.
-    home = "at home " if at_home and "home" not in client_at.lower() else ""
+    # An entered location that already says home is printed as given, not
+    # "at home in Client's home in ...".
+    words = "".join(c if c.isalnum() else " " for c in client_at.lower()).split()
+    home = "at home " if at_home and "home" not in words else ""
     if client_at:
         client = f"The {person} was {home}in {client_at}"
     elif at_home:

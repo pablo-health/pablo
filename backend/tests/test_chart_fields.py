@@ -47,7 +47,10 @@ from app.services.chart_field_extraction import (
     parse,
     response_schema,
 )
-from app.services.note_generation_service import RegistryNoteGenerationService
+from app.services.note_generation_service import (
+    EXTRACTION_FAILED_EVENT,
+    RegistryNoteGenerationService,
+)
 from app.services.structured_llm_gateway import StructuredCompletion, StructuredLLMGateway
 from pydantic import ValidationError
 
@@ -449,6 +452,23 @@ TELEHEALTH = {
             "platform. The client was in Home, Columbus, Ohio; the provider was in Michigan. The "
             "client consented to receive care by telehealth.",
         ),
+        (
+            {**TELEHEALTH, "client_location": "Client's home in Faketown, AA"},
+            True,
+            "client",
+            "Visit conducted by synchronous audio and video telehealth on a HIPAA-compliant "
+            "platform. The client was in Client's home in Faketown, AA; the provider was in "
+            "Michigan. The client consented to receive care by telehealth.",
+        ),
+        # "Homestead" is a place, not the word home: the client's own words still count.
+        (
+            {**TELEHEALTH, "client_location": "Homestead, Florida"},
+            True,
+            "client",
+            "Visit conducted by synchronous audio and video telehealth on a HIPAA-compliant "
+            "platform. The client was at home in Homestead, Florida; the provider was in "
+            "Michigan. The client consented to receive care by telehealth.",
+        ),
         ({"place_of_service": "In office"}, True, "client", IN_OFFICE),
         ({}, False, "client", "Not stated."),
         ({"place_of_service": "not provided"}, False, "client", "Not stated."),
@@ -777,7 +797,15 @@ def test_the_chart_fed_fields_are_printed_with_no_model_text_in_them() -> None:
     assert len(gateway.calls) == 2
 
 
-def test_a_failed_extraction_fails_the_draft() -> None:
+def test_a_failed_extraction_fails_the_draft_and_logs_its_own_event(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     gateway = _ScriptedGateway(extraction=ValueError("schema refused"))
-    with pytest.raises(ValueError, match="Note generation failed"):
+    with caplog.at_level("WARNING"), pytest.raises(ValueError, match="Note generation failed"):
         _draft(gateway)
+
+    (record,) = [r for r in caplog.records if getattr(r, "event", None) == EXTRACTION_FAILED_EVENT]
+    assert record.field_count == len(rendered_fields(_definition()))  # type: ignore[attr-defined]
+    assert record.error_class == "ValueError"  # type: ignore[attr-defined]
+    # Counts and classes only: nothing the visit said reaches the log.
+    assert "Same as always" not in record.getMessage()
