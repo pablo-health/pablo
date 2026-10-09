@@ -49,9 +49,10 @@ from app.services.note_generation_service import RegistryNoteGenerationService
 from app.services.note_redraft import has_edits
 from app.services.note_service import NoteService
 from app.services.note_signing import NoteLockedError
-from app.services.structured_llm_gateway import FakeStructuredLLMGateway, StructuredCompletion
 from app.services.therapy_labels import parse_labels
 from app.services.visit_times_service import build_visit_times, confirm_psychotherapy_window
+
+from tests.draft_call_fakes import DraftCallsGateway
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -780,11 +781,13 @@ _FOLLOW_UP = PracticeNoteTypeSpec.model_validate(
 
 
 class TestDraftProposesTheTime:
-    def _draft(self, *responses: dict[str, Any]) -> tuple[Any, FakeStructuredLLMGateway]:
+    def _draft(
+        self, drafted: dict[str, Any], labeled: dict[str, Any] | None = None
+    ) -> tuple[Any, DraftCallsGateway]:
         registry = NoteTypeRegistry()
         register_builtin_note_types(registry)
-        gateway = FakeStructuredLLMGateway(
-            responses=[StructuredCompletion(data=r) for r in responses]
+        gateway = DraftCallsGateway(
+            draft=drafted, labels=labeled if labeled is not None else RuntimeError("refused")
         )
         definition = to_definition("custom.follow_up", 1, _FOLLOW_UP)
         patient = Patient(
@@ -826,14 +829,15 @@ class TestDraftProposesTheTime:
 
         result, gateway = self._draft(drafted, labeled)
 
-        assert "psychotherapy_time_stated" in gateway.calls[0]["response_schema"]["properties"]
+        assert "psychotherapy_time_stated" in gateway.main_call()["response_schema"]["properties"]
         assert "psychotherapy_time_stated" not in result.content
         # The field is rendered from the parts, not the model's own sentence.
         assert result.content["psychotherapy"]["psychotherapy_time"] == "41 minutes"
         # Only the six turns before the client left are labeled; the addendum never is.
-        assert "[S5]" in gateway.calls[1]["user_prompt"]
-        assert "[S6]" not in gateway.calls[1]["user_prompt"]
-        assert "Addendum" not in gateway.calls[1]["user_prompt"]
+        labels_prompt = gateway.labels_call()["user_prompt"]
+        assert "[S5]" in labels_prompt
+        assert "[S6]" not in labels_prompt
+        assert "Addendum" not in labels_prompt
         assert result.psychotherapy_proposal == {
             "dictated": {
                 "start": None,
