@@ -24,9 +24,9 @@ RunStatus = Literal["ok", "failed", "skipped"]
 
 MedicationAction = Literal["start", "stop", "change", "add"]
 """``start``: a medication the clinician started this visit. ``stop``, ``change``: a listed
-medication stopped or taken differently now, as the clinician decided or the client says.
-``add``: a medication the client takes now that the list lacks (one another prescriber
-started)."""
+medication the clinician stopped or changed (or acknowledged as stopped or changed), or one
+another prescriber stopped or changed as the client reports. ``add``: a medication the client
+takes now that the list lacks (one another prescriber started)."""
 
 
 @dataclass(frozen=True)
@@ -68,7 +68,10 @@ class MedicationKept:
 
     drug_name: str
     reason: str
-    """Why the visit leaves it as listed, in the call's words; empty when it gave none."""
+    """Why the visit leaves it as listed, one of the call's fixed reasons
+    (``medication_mentions.KEPT_REASONS``); empty when it gave none."""
+    note: str = ""
+    """What the call said beside the reason, in its words."""
 
 
 @dataclass(frozen=True)

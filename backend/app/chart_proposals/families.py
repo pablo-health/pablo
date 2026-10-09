@@ -351,16 +351,20 @@ def _line(name: str, dose: str | None, frequency: str | None) -> str:
 class MedicationFamily(FieldFamily):
     """The medication list. Each proposal is one action on one medication.
 
-    ``start`` is a medication the clinician starts in the visit; ``stop`` and
-    ``change`` are a listed medication stopped or taken differently now, by
-    the clinician's decision or as the client says; ``add`` is a medication
-    the client takes now that the list lacks. Accepting writes through the
-    medication record with the note as the source: a start or an add creates
-    an active row, a stop marks the row discontinued on the visit's date with
-    the stated reason, a change sets the dose or the frequency (each on its
-    own) and keeps the prior values in the row's notes. Nothing is ever
-    deleted. The proposal is structured, so it is accepted or discarded, not
-    rewritten; the list itself can be edited on the client's page.
+    The list is what is prescribed. ``start`` is a medication the clinician
+    starts in the visit; ``stop`` and ``change`` are a listed medication the
+    clinician stops or changes, or acknowledges stopping or changing, or that
+    another prescriber stopped or changed as the client reports; ``add`` is a
+    medication the client takes now that the list lacks. A client's own stop
+    with no decision from the clinician is not a proposal: the row stays.
+
+    Accepting writes through the medication record with the note as the
+    source: a start or an add creates an active row, a stop marks the row
+    discontinued on the visit's date with the stated reason, a change sets the
+    dose or the frequency (each on its own) and keeps the prior values in the
+    row's notes. Nothing is ever deleted. The proposal is structured, so it is
+    accepted or discarded, not rewritten; the list itself can be edited on the
+    client's page.
     """
 
     itemized = True
@@ -386,19 +390,20 @@ class MedicationFamily(FieldFamily):
         return [
             (
                 "- Changes to the medication list go in medication_changes, never in "
-                + "proposals and never in a history field, one item per medication. Every "
-                + "medication the clinician starts, stops or changes in this visit (anything "
-                + "dictated after the client's last line included), and every one the client "
-                + "says they stopped, take at a different dose or frequency, or take now though "
-                + "the list lacks it, is an item, whoever prescribed it: start for one the "
-                + "clinician starts new; add for one the client already takes that the list "
-                + "does not show; stop for a listed one the client or the clinician stopped; "
-                + "change for a listed one whose dose or frequency is now different in "
-                + "substance, not reworded. The list must not keep a medication the client no "
-                + "longer takes, or a dose they no longer take. The only medications that need "
-                + "nothing are one taken as the list shows, one only discussed or considered "
-                + "for later, and, in an imported document, one named only in a block carried "
-                + "forward from an earlier date."
+                + "proposals and never in a history field, one item per medication. The list "
+                + "is what is prescribed. Each of these is an item: a start, stop or change of "
+                + "dose or frequency the clinician makes or acknowledges in this visit, anything "
+                + "dictated after the client's last line included, citing where it is said; a "
+                + "stop, start or change another prescriber made that the client reports, "
+                + "whoever prescribed it; and a medication the client takes that the list does "
+                + "not show. start is one the clinician starts new; add is one the client "
+                + "already takes that the list lacks; stop is a listed one stopped; change is a "
+                + "listed one whose dose or frequency is now different in substance, not "
+                + "reworded. A client stopping, skipping or cutting back a listed medication on "
+                + "their own, with no decision from the clinician this visit, is not an item: "
+                + "the row stays as listed. Nothing is needed for a medication taken as the "
+                + "list shows, one only discussed or considered for later, or, in an imported "
+                + "document, one named only in a block carried forward from an earlier date."
             ),
             (
                 "- For each item give drug_name, for stop or change exactly as the list names "

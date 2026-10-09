@@ -144,16 +144,10 @@ def _call(reply: dict[str, Any]) -> tuple[list[str], Any]:
 
 
 def test_each_medication_put_to_the_call_is_proposed_or_kept_with_a_reason() -> None:
+    client_stop = "client-reported stop, not addressed by the clinician this visit"
     reply = {
         "proposals": [],
         "medication_changes": [
-            {
-                "action": "stop",
-                "drug_name": "trazodone",
-                "reason": "morning grogginess; stopped in February",
-                "what_changed": "Stopped",
-                "evidence_segment_ids": [1],
-            },
             {
                 "action": "change",
                 "drug_name": "escitalopram 10 mg",
@@ -163,7 +157,12 @@ def test_each_medication_put_to_the_call_is_proposed_or_kept_with_a_reason() -> 
             },
         ],
         "medications_kept": [
-            {"drug_name": "lamotrigine 150 mg", "reason": "Ran out briefly; taking it again."}
+            {"drug_name": "trazodone", "reason": client_stop, "note": "Stopped in February."},
+            {
+                "drug_name": "lamotrigine 150 mg",
+                "reason": "taken as listed",
+                "note": "Ran out briefly; taking it again.",
+            },
         ],
     }
 
@@ -171,16 +170,24 @@ def test_each_medication_put_to_the_call_is_proposed_or_kept_with_a_reason() -> 
 
     assert "- escitalopram\n- trazodone\n- lamotrigine\n" in prompts[0]
     assert [(p.item_key, p.proposed_text) for p in drafted.proposals] == [
-        ("trazodone", "Stopped: morning grogginess; stopped in February"),
         ("escitalopram", "escitalopram 20 mg, every morning"),
     ]
     assert drafted.to_decide == ("escitalopram", "trazodone", "lamotrigine")
-    assert drafted.kept == (MedicationKept("lamotrigine", "Ran out briefly; taking it again."),)
+    assert drafted.kept == (
+        MedicationKept("trazodone", client_stop, "Stopped in February."),
+        MedicationKept("lamotrigine", "taken as listed", "Ran out briefly; taking it again."),
+    )
 
 
 def test_one_the_call_neither_proposed_nor_explained_is_kept_with_no_reason() -> None:
-    _, drafted = _call({"proposals": [], "medication_changes": [], "medications_kept": []})
+    reply = {
+        "proposals": [],
+        "medication_changes": [],
+        "medications_kept": [{"drug_name": "trazodone", "reason": "it seemed fine"}],
+    }
+    _, drafted = _call(reply)
 
+    # A reason outside the fixed set reads as none: it was not decided, only answered.
     assert drafted.kept == (
         MedicationKept("escitalopram", ""),
         MedicationKept("trazodone", ""),

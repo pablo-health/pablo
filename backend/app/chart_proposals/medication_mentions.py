@@ -2,12 +2,13 @@
 
 """Listed medications the visit may have changed, found without a model.
 
-A stopped medication left on the list reads as one the client still takes,
-so the proposal call is not left to notice one on its own. Before it runs,
-the transcript is read for each listed medication's name; where a line
-naming it, or the line after, gives a different dose or says it was
+A stop or a dose change the call misses leaves the list showing what is no
+longer prescribed, so the call is not left to notice one on its own. Before
+it runs, the transcript is read for each listed medication's name; where a
+line naming it, or the line after, gives a different dose or says it was
 stopped, the medication is put to the call to decide. The call may still
-propose nothing for it, but then has to say why.
+propose nothing for it (a client's own stop the clinician has not addressed
+is left as listed), but then has to say why, from a fixed set of reasons.
 
 This only finds candidates. It never proposes anything, and a medication it
 does not find is still the call's to propose as before.
@@ -30,6 +31,15 @@ if TYPE_CHECKING:
 
 #: The reply's list of medications put to the call that the visit leaves as listed.
 MEDICATIONS_KEPT = "medications_kept"
+
+#: Why a medication put to the call is left as listed. A client's own stop the clinician
+#: has not addressed is a reason, not a miss: the list is what is prescribed.
+KEPT_REASONS = (
+    "taken as listed",
+    "client-reported stop, not addressed by the clinician this visit",
+    "only discussed or considered for later",
+    "other",
+)
 
 #: Said near a medication's name, it may no longer be taken.
 _STOPPED = re.compile(
@@ -201,20 +211,22 @@ def kept_medications(
     to_decide: Sequence[str],
     proposals: Sequence[DraftedProposal],
 ) -> tuple[MedicationKept, ...]:
-    """Each medication put to the call that it proposed no change to, with the reason
-    it gave under ``medications_kept``, or an empty reason when it gave none."""
-    reasons: dict[str, str] = {}
+    """Each medication put to the call that it proposed no change to, with the reason it
+    gave under ``medications_kept``. A reason outside ``KEPT_REASONS``, or none, is empty."""
+    given: dict[str, MedicationKept] = {}
     raw = reply.get(MEDICATIONS_KEPT)
     for item in raw if isinstance(raw, list) else []:
         if not isinstance(item, Mapping):
             continue
         listed = listed_medication(chart, str(item.get("drug_name") or ""))
-        reason = str(item.get("reason") or "").strip()
-        if listed is not None and reason:
-            reasons.setdefault(listed.name.lower(), reason)
+        reason = str(item.get("reason") or "")
+        if listed is None or reason not in KEPT_REASONS:
+            continue
+        note = str(item.get("note") or "").strip()
+        given.setdefault(listed.name.lower(), MedicationKept(listed.name, reason, note))
     proposed = {p.item_key.lower() for p in proposals if p.field_key == MEDICATIONS}
     return tuple(
-        MedicationKept(drug_name=name, reason=reasons.get(name.lower(), ""))
+        given.get(name.lower(), MedicationKept(drug_name=name, reason=""))
         for name in to_decide
         if name.lower() not in proposed
     )

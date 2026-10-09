@@ -38,7 +38,12 @@ from .families import (
     chart_key_for,
     family_for,
 )
-from .medication_mentions import MEDICATIONS_KEPT, kept_medications, medications_to_decide
+from .medication_mentions import (
+    KEPT_REASONS,
+    MEDICATIONS_KEPT,
+    kept_medications,
+    medications_to_decide,
+)
 from .models import Drafted, DraftedProposal, Evidence, Origin
 from .recorded import field_text
 
@@ -83,7 +88,11 @@ def _response_schema() -> dict[str, Any]:
         "type": "array",
         "items": {
             "type": "object",
-            "properties": {"drug_name": {"type": "string"}, "reason": {"type": "string"}},
+            "properties": {
+                "drug_name": {"type": "string"},
+                "reason": {"type": "string", "enum": list(KEPT_REASONS)},
+                "note": {"type": "string"},
+            },
             "required": ["drug_name", "reason"],
         },
     }
@@ -247,7 +256,8 @@ def build_prompt(
                     "The transcript names these listed medications near a different dose or a "
                     + "word like stopped. Decide each one: put its change in "
                     + "medication_changes, or, if the visit leaves it as listed, put it in "
-                    + "medications_kept with the reason:"
+                    + "medications_kept with the reason (a client's own stop the clinician has "
+                    + "not addressed this visit is left as listed):"
                 ),
                 *(f"- {name}" for name in to_decide),
             ]
