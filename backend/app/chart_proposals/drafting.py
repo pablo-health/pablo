@@ -45,7 +45,7 @@ from .families import (
     chart_key_for,
     family_for,
 )
-from .materiality import CitedLine, OtherFields, Speaker, admit
+from .materiality import CitedLine, OtherFields, Speaker, admit, heard_about
 from .medication_mentions import (
     KEPT_REASONS,
     MEDICATIONS_KEPT,
@@ -469,10 +469,12 @@ def said_this_visit(
             if key in said and s.screen != "asked_no_change":
                 said[key].append("denied" if s.screen == "denied" else s.stated)
         return said
+    marker = STATED_THIS_VISIT.rstrip(")")
     for line in _stated_this_visit(draft or {}):
         key, _, text = line.removeprefix("- ").partition(": ")
         if key in said:
-            said[key].append(text)
+            # Only what the mark quotes: the chart's own text before it was not said.
+            said[key].append(text.partition(marker)[2].strip(' :")'))
     return said
 
 
@@ -510,8 +512,13 @@ def material(
             for e in proposal.evidence
             if e.segment_id in lines or not spoken
         ]
-        heard = (said or {}).get(proposal.field_key) if spoken else None
-        verdict = admit(proposal, recorded.get(proposal.field_key, ""), heard, cited, others)
+        current = recorded.get(proposal.field_key, "")
+        heard = (
+            heard_about(proposal.field_key, proposal.proposed_text, current, said or {})
+            if spoken
+            else None
+        )
+        verdict = admit(proposal, current, heard, cited, others)
         if verdict.reason is None:
             offered.append(proposal)
             continue

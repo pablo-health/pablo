@@ -25,8 +25,11 @@ there. A history proposal is offered only when all four hold:
    similarity of :data:`PARAPHRASE_JACCARD` or more, what it adds must carry
    a state marker, an entity, a name or a number. Where the extraction beside
    the draft covers the field (a type that prints it from the chart), the
-   extraction must have found something said about it this visit: it leaves
-   out a field the visit only repeated.
+   extraction must have found the fact said this visit: it leaves out a field
+   the visit only repeated. It files a fact by its best guess at the field,
+   so a statement it filed under another field counts when it shares at least
+   :data:`ELSEWHERE_MIN_WORDS` of the words the proposal adds
+   (:func:`heard_about`).
 2. **Lasting state.** The new words include a state-change marker
    (``started``, ``moved``, ``finalized``, ``laid off``, ``no longer``) or a
    new named entity (a person, place, clinician, program, diagnosis or
@@ -279,6 +282,34 @@ def content_words(text: str) -> set[str]:
     """The normalised words of ``text`` with the stop words out."""
     stop = lists().stop
     return {w for w in words(text) if w not in stop}
+
+
+def heard_about(
+    field_key: str,
+    proposed_text: str,
+    chart_field_text: str,
+    said: Mapping[str, Sequence[str]],
+) -> list[str] | None:
+    """What the extraction found said this visit about a proposal's fact: its own
+    field's statements, or, when it filed none there, a statement under another field
+    that has at least :data:`ELSEWHERE_MIN_WORDS` of the words the proposal adds. The
+    extraction files a fact by its best guess at the field (a father's stroke under
+    family psychiatric history), and the question here is whether the visit said the
+    fact at all, not where. ``None`` when the extraction does not read the visit for
+    ``field_key``."""
+    if field_key not in said:
+        return None
+    own = [s for s in said[field_key] if s.strip()]
+    if own:
+        return own
+    added = content_words(proposed_text) - content_words(chart_field_text)
+    return [
+        s
+        for key, statements in said.items()
+        if key != field_key
+        for s in statements
+        if len(added & content_words(s)) >= ELSEWHERE_MIN_WORDS
+    ]
 
 
 def _has_phrase(sequence: Sequence[str], phrase: tuple[str, ...]) -> bool:

@@ -21,6 +21,7 @@ from app.chart_proposals.materiality import (
     Verdict,
     admit,
     content_words,
+    heard_about,
     lists,
     words,
 )
@@ -416,6 +417,26 @@ def test_a_field_the_note_type_drafts_itself_is_not_asked_for_an_extraction() ->
     said = said_this_visit((), Statements(), None)
     offered, considered = material([divorce], _chart(), SEGMENTS, said)
     assert (offered, considered) == ([divorce], ())
+
+
+def test_a_fact_the_extraction_filed_under_a_neighbouring_field_was_still_heard() -> None:
+    said = {
+        "family_medical": [],
+        "family_psychiatric": ["my dad had a stroke, April twentieth. Left side. He can't drive."],
+        "work_school": [],
+    }
+    stroke = heard_about(
+        "family_medical",
+        "Father with hypertension; stroke in April 2026, left side; cannot drive.",
+        "Father with hypertension.",
+        said,
+    )
+    restated = heard_about(
+        "work_school", "Teacher, full time, at the same school.", "Teacher, full time.", said
+    )
+    assert stroke == said["family_psychiatric"]
+    assert restated == []
+    assert heard_about("supports", "Sister.", "", said) is None
 
 
 def test_medications_and_allergies_pass_through_untouched() -> None:
