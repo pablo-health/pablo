@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ..chart_proposals.drafting import segment_texts
+from ..chart_proposals.evidence import segment_texts
 from ..notes.visit_times import THERAPY
 from .hpi_section_call import compose_chief_complaint, uncovered_text
 from .source_attribution_service import format_transcript_with_segment_ids
