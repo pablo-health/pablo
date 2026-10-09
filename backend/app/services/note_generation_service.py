@@ -55,6 +55,13 @@ from ..notes.client_present import (
 from ..notes.diagnoses import DIAGNOSES_KIND_LABEL, DIAGNOSES_SCHEMA, coerce_diagnoses
 from ..notes.practice_types import PromptBlocks, render_system_prompt, render_user_prompt
 from ..notes.prompts.soap import SOAP_SYSTEM_PROMPT
+from ..notes.section_calls import (
+    RISK_MSE,
+    SectionField,
+    model_key,
+    section_call_fields,
+    without_fields,
+)
 from ..notes.visit_times import (
     PSYCHOTHERAPY_SECTION_KEY,
     PSYCHOTHERAPY_TIME_FIELD,
@@ -65,6 +72,8 @@ from ..settings import get_settings
 from .ai_features import AIFeature
 from .chart_field_extraction import SCHEMA_TITLE, extract_statements
 from .hedged_structured_llm_gateway import generation_gateway
+from .risk_section_call import SCHEMA_TITLE as RISK_SCHEMA_TITLE
+from .risk_section_call import draft_sections
 from .source_attribution_service import (
     build_attribution_prompt,
     build_claims_from_soap,
@@ -283,11 +292,13 @@ class RegistryNoteGenerationService(NoteGenerationService):
         self._llm_gateway = llm_gateway or generation_gateway(AIFeature.NOTE_GENERATION)
         self._model = model
 
-    def _resolve_model(self) -> str:
+    def _resolve_model(self, call: str | None = None) -> str:
+        """The note model; for a section call, its own ``AI_MODELS`` key's model when set."""
         if self._model is not None:
             return self._model
         settings = get_settings()
-        return settings.model_for(AIFeature.NOTE_GENERATION, settings.ai_model)
+        note_model = settings.model_for(AIFeature.NOTE_GENERATION, settings.ai_model)
+        return settings.model_for(model_key(call), note_model) if call else note_model
 
     def generate_note(
         self,
@@ -365,7 +376,9 @@ class RegistryNoteGenerationService(NoteGenerationService):
 
         Fields printed from the chart are written in code (:mod:`app.notes.chart_fields`)
         and left out of the model's request; what the visit said about them comes
-        from a small extraction call that runs beside the draft.
+        from a small extraction call that runs beside the draft. The risk, mental
+        status and measures sections are drafted by a call of their own beside it
+        too (:mod:`app.notes.section_calls`), and are left out of the main request.
         """
         full_definition = definition
         rendered = rendered_fields(definition)
@@ -375,6 +388,17 @@ class RegistryNoteGenerationService(NoteGenerationService):
             else None
         )
         definition = without_rendered(definition)
+        # The clinician's word for the person seen, which a type's prompts may
+        # place as {term}; the chart carries it from whoever reads the note.
+        person = chart.person if chart is not None else ChartContext().person
+        routed = section_call_fields(definition, RISK_MSE)
+        risk_sections = (
+            self._start_risk_sections(routed, person, transcript.content, current_note)
+            if routed
+            else None
+        )
+        definition = without_fields(definition, routed)
+        side_calls = [c for c in (statements, risk_sections) if c is not None]
         addendum = ""
         if client_present_end_seconds is not None and segments:
             split = split_at_boundary(segments, client_present_end_seconds)
@@ -384,9 +408,6 @@ class RegistryNoteGenerationService(NoteGenerationService):
             if client_present_end_seconds == 0:
                 definition = _without_psychotherapy(definition)
 
-        # The clinician's word for the person seen, which a type's prompts may
-        # place as {term}; the chart carries it from whoever reads the note.
-        person = chart.person if chart is not None else ChartContext().person
         system_prompt = _system_prompt(definition, person)
         chart_block = _chart_block(definition, chart, rendered)
         if definition.prompt_builder is not None:
@@ -407,9 +428,11 @@ class RegistryNoteGenerationService(NoteGenerationService):
                 definition, transcript, session_date, chart_block
             )
         if addendum:
-            user_prompt = f"{user_prompt}\n\n{_addendum_block(addendum)}"
+            user_prompt = f"{user_prompt}\n\n{_addendum_block(addendum, apart=bool(routed))}"
         if current_note:
-            kept = _without_rendered(current_note, rendered)
+            apart = {(r.section, r.field.key) for r in rendered}
+            apart |= {(f.section, f.field.key) for f in routed}
+            kept = _without_fields(current_note, apart)
             user_prompt = f"{user_prompt}\n\n{_current_note_block(kept)}"
 
         schema = _build_registry_response_schema(definition)
@@ -424,9 +447,9 @@ class RegistryNoteGenerationService(NoteGenerationService):
                 response_schema=schema,
             )
         except BaseException:
-            if statements is not None:
-                # The draft failed; the extraction is not waited for.
-                statements.cancel()
+            # The draft failed; the calls beside it are not waited for.
+            for side_call in side_calls:
+                side_call.cancel()
             raise
 
         # Coerced against what was asked for, then against the whole type, so
@@ -434,7 +457,8 @@ class RegistryNoteGenerationService(NoteGenerationService):
         asked = _coerce_registry_response(definition, completion.data)
         stated = completion.data.get(TIME_KEY) if asks_start else None
         content = _coerce_registry_response(full_definition, asked)
-        return _with_written(content, full_definition, chart, inputs, statements), stated
+        content = _with_written(content, full_definition, chart, inputs, statements)
+        return _with_drafted(content, risk_sections), stated
 
     def _start_extraction(
         self,
@@ -468,6 +492,44 @@ class RegistryNoteGenerationService(NoteGenerationService):
             chart,
             inputs,
             transcript_content,
+        )
+
+    def _start_risk_sections(
+        self,
+        fields: list[SectionField],
+        person: str,
+        transcript_content: str,
+        current_note: Mapping[str, Any] | None,
+    ) -> Future[dict[str, dict[str, Any]]]:
+        """The risk, mental status and measures call, started beside the draft.
+
+        Drafted like the main call (same budgets and retry), on the model its
+        own key names, else the note model. A redraft's current note goes to it
+        for its own fields only, with the same rule the main call gets.
+        """
+
+        def complete(
+            system_prompt: str, user_prompt: str, response_schema: dict[str, Any]
+        ) -> dict[str, Any]:
+            return self._complete_structured_with_retry(
+                note_key=RISK_SCHEMA_TITLE,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_schema=response_schema,
+                call=RISK_MSE,
+            ).data
+
+        paths = {(f.section, f.field.key) for f in fields}
+        current = _current_note_block(_only_fields(current_note, paths)) if current_note else None
+        context = contextvars.copy_context()
+        return _extraction_executor().submit(
+            context.run,
+            _risk_sections_logged,
+            complete,
+            fields,
+            person,
+            transcript_content,
+            current,
         )
 
     def _complete_labels(self, prompt: str) -> dict[str, Any]:
@@ -513,6 +575,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
         temperature: float | None = None,
         max_output_tokens: int | None = None,
         thinking_budget: int | None = None,
+        call: str | None = None,
     ) -> StructuredCompletion:
         """Run a structured note completion, retrying once if truncated.
 
@@ -544,7 +607,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
         for budget in budgets:
             try:
                 return self._llm_gateway.complete_structured(
-                    model=self._resolve_model(),
+                    model=self._resolve_model(call),
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
                     response_schema=response_schema,
@@ -812,20 +875,36 @@ def _mock_registry_content(definition: NoteTypeDefinition, patient: Patient) -> 
 
 _NO_CLIENT_PRESENT = "(The client was not present in this recording.)"
 
-_ADDENDUM_INSTRUCTIONS = (
+_ADDENDUM_HEAD = (
     "Clinician addendum: dictated by the clinician after the session; the "
-    "client was not present. These are the clinician's own statements. Where "
-    "the addendum states risk, mental status, a prescription monitoring "
-    "check, consent, or a decision and its reasons, put it in the matching "
+    "client was not present. These are the clinician's own statements. "
+)
+_ADDENDUM_PLACING = (
+    "Where the addendum states {what}, put it in the matching "
     'field quoted and marked as the clinician\'s, e.g. Clinician stated: "...". '
+)
+_ADDENDUM_TAIL = (
     "The addendum is not session time and is not something the client said. "
     'An item covered by neither the session nor the addendum is "Not stated."; '
     "never fill it in."
 )
+_ADDENDUM_ITEMS = "a prescription monitoring check, consent, or a decision and its reasons"
+_ADDENDUM_INSTRUCTIONS = (
+    _ADDENDUM_HEAD
+    + _ADDENDUM_PLACING.format(what=f"risk, mental status, {_ADDENDUM_ITEMS}")
+    + _ADDENDUM_TAIL
+)
 
 
-def _addendum_block(addendum_lines: str) -> str:
-    return f"{_ADDENDUM_INSTRUCTIONS}\n\n{addendum_lines}"
+def _addendum_block(addendum_lines: str, *, apart: bool = False) -> str:
+    """The addendum and how to place it. ``apart``: risk and mental status are drafted
+    by a call of their own, so this draft has no field to put them in."""
+    instructions = (
+        _ADDENDUM_HEAD + _ADDENDUM_PLACING.format(what=_ADDENDUM_ITEMS) + _ADDENDUM_TAIL
+        if apart
+        else _ADDENDUM_INSTRUCTIONS
+    )
+    return f"{instructions}\n\n{addendum_lines}"
 
 
 # A redraft starts from the note the clinician already has. Regenerating it
@@ -876,6 +955,20 @@ def _chart_block(
     if rendered:
         return render_reference_block(chart, frozenset(r.source for r in rendered))
     return render_chart_block(chart, full_chart=definition.full_chart)
+
+
+def _with_drafted(
+    content: dict[str, Any], drafted: Future[dict[str, dict[str, Any]]] | None
+) -> dict[str, Any]:
+    """``content`` with the sections a call of their own drafted.
+
+    Waits for that call; its failure fails the draft, as the main call's does.
+    """
+    if drafted is None:
+        return content
+    for section_key, fields in drafted.result().items():
+        content[section_key].update(fields)
+    return content
 
 
 def _with_written(
@@ -930,25 +1023,67 @@ def _extract_logged(
         raise
 
 
+RISK_SECTION_FAILED_EVENT = "risk_section_failed"
+"""Logged when the risk, mental status and measures call fails, apart from the main
+call's failures. Carries counts and classes only, never transcript text."""
+
+
+def _risk_sections_logged(
+    complete: CompleteStructured,
+    fields: Sequence[SectionField],
+    person: str,
+    transcript_content: str,
+    current_note: str | None,
+) -> dict[str, dict[str, Any]]:
+    """:func:`draft_sections`, with a failure logged under its own event and re-raised."""
+    try:
+        return draft_sections(complete, fields, person, transcript_content, current_note)
+    except Exception as exc:
+        cause = exc.__cause__ or exc.__context__
+        logger.warning(
+            "%s fields=%d error_class=%s cause_class=%s",
+            RISK_SECTION_FAILED_EVENT,
+            len(fields),
+            type(exc).__name__,
+            type(cause).__name__ if cause is not None else "",
+            extra={
+                "event": RISK_SECTION_FAILED_EVENT,
+                "field_count": len(fields),
+                "error_class": type(exc).__name__,
+                "cause_class": type(cause).__name__ if cause is not None else None,
+            },
+        )
+        raise
+
+
 _extraction_executor_holder: list[ThreadPoolExecutor] = []
 _extraction_executor_lock = threading.Lock()
 
 
 def _extraction_executor() -> ThreadPoolExecutor:
-    """Threads the extraction call runs on beside the draft, made once per process."""
+    """Threads the calls beside the draft run on (the extraction, the risk sections),
+    made once per process."""
     with _extraction_executor_lock:
         if not _extraction_executor_holder:
             _extraction_executor_holder.append(
-                ThreadPoolExecutor(max_workers=8, thread_name_prefix="chart-field-extraction")
+                ThreadPoolExecutor(max_workers=16, thread_name_prefix="draft-side-call")
             )
         return _extraction_executor_holder[0]
 
 
-def _without_rendered(
-    current_note: Mapping[str, Any], rendered: Sequence[RenderedField]
+def _only_fields(current_note: Mapping[str, Any], paths: set[tuple[str, str]]) -> dict[str, Any]:
+    """The note a redraft starts from, ``paths`` (section, field) of it alone."""
+    return {
+        section: {k: v for k, v in fields.items() if (section, k) in paths}
+        for section, fields in current_note.items()
+        if isinstance(fields, Mapping) and any((section, k) in paths for k in fields)
+    }
+
+
+def _without_fields(
+    current_note: Mapping[str, Any], dropped: set[tuple[str, str]]
 ) -> dict[str, Any]:
-    """The note a redraft starts from, less the fields code writes again from the chart."""
-    dropped = {(r.section, r.field.key) for r in rendered}
+    """The note a redraft starts from, less the fields written or drafted apart from it."""
     return {
         section: (
             {k: v for k, v in fields.items() if (section, k) not in dropped}

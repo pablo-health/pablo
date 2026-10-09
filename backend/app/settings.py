@@ -1596,7 +1596,12 @@ class Settings(BaseSettings):
             "of its tier's default (ai_model, or ai_model_flash for the "
             "interactive features); one not named keeps the default. With "
             "ai_fallbacks, a feature can run on any provider and fall back to "
-            "any other, the tier default included. Empty by default."
+            "any other, the tier default included. Empty by default.\n\n"
+            "A section of a note drafted by a call of its own also has a key "
+            "here: ``note_generation.risk_mse`` names the model for the risk, "
+            "mental status and measures sections, and the note model "
+            "(``note_generation``) drafts them when it is not named. Such a "
+            "call falls back as ``note_generation`` does."
         ),
     )
     ai_fallbacks: dict[str, str] = Field(

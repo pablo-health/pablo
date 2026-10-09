@@ -35,6 +35,7 @@ from app.repositories import (
 from app.routes.note_types import get_registry
 from app.routes.notes import get_note_generation_service
 from app.services.note_generation_service import RegistryNoteGenerationService
+from app.services.risk_section_call import SCHEMA_TITLE as RISK_TITLE
 from app.services.structured_llm_gateway import (
     FakeStructuredLLMGateway,
     StructuredCompletion,
@@ -402,6 +403,11 @@ class TestCheck:
         }
 
 
+def _main_call(gateway: FakeStructuredLLMGateway) -> dict[str, Any]:
+    """The main draft's call: the risk section goes to a call of its own beside it."""
+    return next(c for c in gateway.calls if c["response_schema"].get("title") != RISK_TITLE)
+
+
 def _registry(repo: InMemoryPracticeNoteTypeRepository, base: Any = None) -> NoteTypeRegistry:
     registry = NoteTypeRegistry()
     register_builtin_note_types(registry)
@@ -474,24 +480,23 @@ def test_generation_leaves_a_hidden_field_out_of_the_schema_and_the_note() -> No
             add_fields=[{"section": "plan", "field": {"key": "education", "label": "Education"}}],
         ),
     )
+    # The main draft and the risk call each take what they asked for from one reply.
     gateway = FakeStructuredLLMGateway(
-        responses=[
-            StructuredCompletion(
-                data={
-                    "subjective": {
-                        "chief_complaint": "Sleep is better.",
-                        "interval_history": "Started a new job.",
-                        "review_of_systems": "Should not survive.",
-                    },
-                    "risk": {"ideation": "Denied."},
-                    "plan": {
-                        "medication_plan": "Continue.",
-                        "education": "Discussed sleep hygiene.",
-                        "follow_up": "Four weeks.",
-                    },
-                }
-            )
-        ]
+        default_response=StructuredCompletion(
+            data={
+                "subjective": {
+                    "chief_complaint": "Sleep is better.",
+                    "interval_history": "Started a new job.",
+                    "review_of_systems": "Should not survive.",
+                },
+                "risk": {"ideation": "Denied."},
+                "plan": {
+                    "medication_plan": "Continue.",
+                    "education": "Discussed sleep hygiene.",
+                    "follow_up": "Four weeks.",
+                },
+            }
+        )
     )
     service = RegistryNoteGenerationService(registry=_registry(repo), llm_gateway=gateway)
     patient = Patient(id="p-1", first_name="Pat", last_name="Lee", created_at=NOW, updated_at=NOW)
@@ -503,12 +508,14 @@ def test_generation_leaves_a_hidden_field_out_of_the_schema_and_the_note() -> No
         NOW,
     )
 
-    schema = gateway.calls[0]["response_schema"]
+    main = _main_call(gateway)
+    schema = main["response_schema"]
     assert "review_of_systems" not in str(schema)
     assert "education" in str(schema)
     assert "review_of_systems" not in generated.content["subjective"]
     assert generated.content["plan"]["education"] == "Discussed sleep hygiene."
-    assert gateway.calls[0]["system_prompt"].endswith(GENERATION_FLOOR)
+    assert main["system_prompt"].endswith(GENERATION_FLOOR)
+    assert generated.content["risk"]["ideation"] == "Denied."
 
 
 class TestRoutes:
@@ -624,7 +631,7 @@ class TestRoutes:
         self, client: TestClient, repo: InMemoryPracticeNoteTypeRepository
     ) -> None:
         gateway = FakeStructuredLLMGateway(
-            responses=[StructuredCompletion(data={"risk": {"ideation": "Denied."}})]
+            default_response=StructuredCompletion(data={"risk": {"ideation": "Denied."}})
         )
         app.dependency_overrides[get_note_generation_service] = lambda: (
             RegistryNoteGenerationService(registry=_registry(repo), llm_gateway=gateway)
@@ -640,4 +647,4 @@ class TestRoutes:
 
         assert response.status_code == 200, response.text
         assert "review_of_systems" not in response.json()["sections"]["subjective"]
-        assert "review_of_systems" not in str(gateway.calls[0]["response_schema"])
+        assert "review_of_systems" not in str(_main_call(gateway)["response_schema"])

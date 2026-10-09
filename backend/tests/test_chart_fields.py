@@ -51,6 +51,7 @@ from app.services.note_generation_service import (
     EXTRACTION_FAILED_EVENT,
     RegistryNoteGenerationService,
 )
+from app.services.risk_section_call import SCHEMA_TITLE as RISK_SECTIONS_TITLE
 from app.services.structured_llm_gateway import StructuredCompletion, StructuredLLMGateway
 from pydantic import ValidationError
 
@@ -740,7 +741,11 @@ def _draft(gateway: _ScriptedGateway, inputs: dict[str, str] | None = None) -> d
 
 
 def _main_call(gateway: _ScriptedGateway) -> dict[str, Any]:
-    return next(c for c in gateway.calls if c["response_schema"].get("title") != SCHEMA_TITLE)
+    return next(
+        c
+        for c in gateway.calls
+        if c["response_schema"].get("title") not in (SCHEMA_TITLE, RISK_SECTIONS_TITLE)
+    )
 
 
 def test_the_main_call_no_longer_asks_for_or_sees_the_chart_fed_fields() -> None:
@@ -793,8 +798,9 @@ def test_the_chart_fed_fields_are_printed_with_no_model_text_in_them() -> None:
     ]
     assert content["encounter"]["place_of_service"] == IN_OFFICE
     assert content["subjective"]["chief_complaint"] == "Drafted by the model."
-    # Two calls only: the psychotherapy section is dropped with no client present.
-    assert len(gateway.calls) == 2
+    # The draft, the extraction and the risk sections: the psychotherapy section is
+    # dropped with no client present, so no turns are labeled.
+    assert len(gateway.calls) == 3
 
 
 def test_a_failed_extraction_fails_the_draft_and_logs_its_own_event(
