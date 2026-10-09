@@ -28,10 +28,13 @@ import asyncio
 import re
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 app = FastAPI(title="fake-llm")
 
@@ -439,21 +442,9 @@ async def draft_note(call: NoteCall) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail="draft refused")
     if PRIMARY_DOWN in call.user_prompt and call.model != FALLBACK_MODEL:
         raise HTTPException(status_code=503, detail="model unavailable")
-    if call.response_schema.get("title") == "PracticeNoteTypeSpec":
-        return {"data": DERIVED_PROPOSAL, "finish_reason": "stop"}
-    if call.response_schema.get("title") == "ChartFieldStatements":
-        return {
-            "data": _chart_field_statements(call.response_schema, call.user_prompt),
-            "finish_reason": "stop",
-        }
-    if call.response_schema.get("title") == "ChartProposals":
-        return {
-            "data": {
-                "proposals": _chart_proposals(call.user_prompt),
-                "medication_changes": _medication_changes(call.user_prompt),
-            },
-            "finish_reason": "stop",
-        }
+    titled = _TITLED_CALLS.get(call.response_schema.get("title") or "")
+    if titled is not None:
+        return {"data": titled(call), "finish_reason": "stop"}
     if "runs" in call.response_schema.get("properties", {}):
         return {"data": _turn_labels(call.user_prompt), "finish_reason": "stop"}
     note = _source_note(call.user_prompt)
@@ -598,6 +589,46 @@ def _chart_field_statements(schema: dict[str, Any], user_prompt: str) -> dict[st
     if "client_at_home" in properties:
         reply["client_at_home"] = {"at_home": bool(at_home), "evidence_segment_ids": at_home}
     return reply
+
+
+def _risk_sections(schema: dict[str, Any], user_prompt: str) -> dict[str, Any]:
+    """The risk, mental status and measures call, answered as a draft's fields always were.
+
+    Each field reads "Stand-in draft for <section>.<field>.", or what was dictated
+    under its name after the session. A risk field's text comes back with no
+    quotations of the client, which a model may also return.
+    """
+    reply: dict[str, Any] = {}
+    dictated = _dictated(user_prompt)
+    for section, sub in schema.get("properties", {}).items():
+        reply[section] = {}
+        for key, spec in sub.get("properties", {}).items():
+            text = dictated.get(key, f"Stand-in draft for {section}.{key}.")
+            if spec.get("type") == "object":
+                reply[section][key] = {"text": text, "quotes": []}
+            elif spec.get("type") == "array":
+                reply[section][key] = [text]
+            else:
+                reply[section][key] = text
+    return reply
+
+
+def _proposals_reply(call: NoteCall) -> dict[str, Any]:
+    return {
+        "proposals": _chart_proposals(call.user_prompt),
+        "medication_changes": _medication_changes(call.user_prompt),
+    }
+
+
+#: The calls a schema's title names, each answered in its own shape.
+_TITLED_CALLS: dict[str, Callable[[NoteCall], dict[str, Any]]] = {
+    "PracticeNoteTypeSpec": lambda _call: DERIVED_PROPOSAL,
+    "ChartFieldStatements": lambda call: _chart_field_statements(
+        call.response_schema, call.user_prompt
+    ),
+    "RiskMentalStatusSections": lambda call: _risk_sections(call.response_schema, call.user_prompt),
+    "ChartProposals": _proposals_reply,
+}
 
 
 def _chart_proposals(user_prompt: str) -> list[dict[str, Any]]:

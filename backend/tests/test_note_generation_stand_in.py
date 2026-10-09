@@ -374,6 +374,33 @@ def test_a_follow_up_with_no_medications_on_the_chart_says_none_recorded(
     assert generated.content["medications"]["current_medications"] == ["None recorded"]
 
 
+def test_the_stand_in_drafts_risk_mental_status_and_measures_by_their_own_call(
+    stand_in: list[str],
+) -> None:
+    """The local stack drafts those sections in the shape a model returns them."""
+    definition = _follow_up()
+
+    generated = _service().generate_note(
+        definition.key,
+        TRANSCRIPT,
+        PATIENT,
+        NOW,
+        inputs={"place_of_service": "In office"},
+        definition=definition,
+        chart=ChartContext(),
+    )
+
+    content = generated.content
+    assert content["risk"]["overall_risk"] == "Stand-in draft for risk.overall_risk."
+    assert content["mse"]["speech"] == "Stand-in draft for mse.speech."
+    assert (
+        content["measures"]["measures_reviewed"] == "Stand-in draft for measures.measures_reviewed."
+    )
+    assert (
+        content["subjective"]["chief_complaint"] == "Stand-in draft for subjective.chief_complaint."
+    )
+
+
 @pytest.mark.parametrize("template", ["psychiatric_follow_up", "psychiatric_evaluation"])
 def test_the_prescriber_templates_take_current_medications_from_the_chart(template: str) -> None:
     spec = json.loads(FOLLOW_UP_TEMPLATE.with_name(f"{template}.json").read_text())["spec"]
