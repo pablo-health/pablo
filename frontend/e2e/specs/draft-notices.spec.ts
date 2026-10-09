@@ -46,7 +46,7 @@ async function uploadTranscript(page: Page, patientId: string, transcript: strin
     mimeType: "text/plain",
     buffer: Buffer.from(transcript),
   })
-  await page.getByRole("button", { name: "Upload & Generate SOAP" }).click()
+  await page.getByRole("button", { name: "Upload & Draft Note" }).click()
 }
 
 test.describe("draft notices", () => {

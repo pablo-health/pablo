@@ -540,31 +540,31 @@
             "key": "modality_interventions",
             "label": "Modality and interventions",
             "kind": "text",
-            "ai_hint": "The therapy approach and the specific interventions the clinician used (e.g. CBT cognitive reframing, behavioral activation, supportive therapy, skills practice), described concretely."
+            "ai_hint": "The approach and interventions as the transcript shows them. Name a technique only when the clinician named it or did its steps (weighing evidence for and against a thought is Socratic questioning). Where the clinician listened, reflected or asked open questions and named nothing, say that in plain words, with no technique name (not \"supportive therapy\")."
           },
           {
             "key": "response",
             "label": "Response",
             "kind": "text",
-            "ai_hint": "How the client engaged with and responded to the interventions."
+            "ai_hint": "What the client said or did in response, the client's words quoted as theirs. A rating or count only as the client gave it."
           },
           {
             "key": "goal_plan",
             "label": "Goal and plan",
             "kind": "text",
-            "ai_hint": "The psychotherapy goal being worked toward and any assignment or practice agreed for before the next visit."
+            "ai_hint": "The goal as the clinician or client stated it, and any assignment agreed for before the next visit. Never write a goal nobody stated: if only an assignment was given, write only the assignment. \"Not stated.\" if neither was said."
           },
           {
             "key": "progress",
             "label": "Progress toward goal",
             "kind": "text",
-            "ai_hint": "Progress toward the goal as described, with any concrete evidence the client gave."
+            "ai_hint": "What the client reported doing on an earlier goal or assignment, and any rating that changed this visit, with the numbers as given. No judgment of it (\"meaningful\", \"demonstrated\", \"improved\"). \"Not stated.\" if nothing was reported."
           },
           {
             "key": "therapy_cadence",
             "label": "Therapy plan and cadence",
             "kind": "text",
-            "ai_hint": "Ongoing psychotherapy needs and how often, as stated."
+            "ai_hint": "How often therapy continues, only as the clinician said it (e.g. \"at each visit\"). When the next visit is booked is not a therapy plan. \"Not stated.\" if the clinician said nothing about it."
           }
         ]
       }

@@ -59,6 +59,14 @@ class UploadSessionRequest(BaseModel):
     patient_id: str
     session_date: datetime
     transcript: TranscriptModel
+    note_type: str | None = Field(
+        default=None,
+        description="Note-type registry key to draft. Defaults to 'soap'.",
+    )
+    note_inputs: dict[str, str] | None = Field(
+        default=None,
+        description="Values for the note type's declared inputs.",
+    )
 
     @classmethod
     def validate_session_date(cls, v: str) -> str:

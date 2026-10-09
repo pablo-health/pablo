@@ -22,11 +22,11 @@ vi.mock("@/hooks/useIntakeDocuments", () => ({
 describe("NewDocumentInline", () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockCreate.mockResolvedValue({ id: "doc-1", document_key: "privacy" })
-    mockPublish.mockResolvedValue({ id: "doc-1", document_key: "privacy" })
+    mockCreate.mockResolvedValue({ id: "doc-1", document_key: "privacy", title: "Privacy notice" })
+    mockPublish.mockResolvedValue({ id: "doc-1", document_key: "privacy", title: "Privacy notice" })
   })
 
-  it("creates, publishes, then hands back the key", async () => {
+  it("creates, publishes, then hands back the key and title", async () => {
     const user = userEvent.setup()
     const onCreated = vi.fn()
     render(<NewDocumentInline idPrefix="t" onCreated={onCreated} />)
@@ -35,7 +35,7 @@ describe("NewDocumentInline", () => {
     await user.type(screen.getByLabelText("What they read"), "How we keep your records.")
     await user.click(screen.getByRole("button", { name: "Publish and use it" }))
 
-    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("privacy"))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("privacy", "Privacy notice"))
     expect(mockCreate).toHaveBeenCalledWith({
       title: "Privacy notice",
       body_markdown: "How we keep your records.",

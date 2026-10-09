@@ -36,7 +36,8 @@ import type {
 } from "@/types/scheduling"
 import type { PatientResponse } from "@/types/patients"
 import type { UserPreferences } from "@/lib/api/users"
-import { DEFAULT_NOTE_TYPE, type NoteInputSchema } from "@/types/noteTypes"
+import { DEFAULT_NOTE_TYPE } from "@/types/noteTypes"
+import { NoteInputFields } from "@/components/notes/NoteInputFields"
 import { ApiError } from "@/lib/api/client"
 import { isReviewInput } from "@/lib/mdm"
 import { filledInputs } from "@/lib/noteInputs"
@@ -296,50 +297,6 @@ function fieldStyle(): React.CSSProperties {
     backgroundColor: "var(--ed-field-bg)",
     color: "var(--ed-ink)",
   }
-}
-
-/** One control per input the chosen note type declares. */
-function NoteInputFields({
-  inputs,
-  values,
-  onChange,
-}: {
-  inputs: NoteInputSchema[]
-  values: Record<string, string>
-  onChange: (key: string, value: string) => void
-}) {
-  return (
-    <>
-      {inputs.map((input) => (
-        <div key={input.key}>
-          <FieldLabel hint={input.required ? "Required" : undefined}>{input.label}</FieldLabel>
-          {input.kind === "choice" ? (
-            <Select value={values[input.key] ?? ""} onValueChange={(v) => onChange(input.key, v)}>
-              <SelectTrigger aria-label={input.label} aria-required={input.required} className="w-full">
-                <SelectValue placeholder="Choose…" />
-              </SelectTrigger>
-              <SelectContent>
-                {input.options.map((option) => (
-                  <SelectItem key={option} value={option}>
-                    {option}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : (
-            <input
-              value={values[input.key] ?? ""}
-              aria-label={input.label}
-              aria-required={input.required}
-              onChange={(e) => onChange(input.key, e.target.value)}
-              className={FIELD_CLASS}
-              style={fieldStyle()}
-            />
-          )}
-        </div>
-      ))}
-    </>
-  )
 }
 
 function AppointmentForm({
@@ -1089,6 +1046,16 @@ function AppointmentForm({
                   inputs={collectedInputs}
                   values={noteInputs}
                   onChange={changeNoteInput}
+                  renderField={(input, control) => (
+                    <div>
+                      <FieldLabel hint={input.required ? "Required" : undefined}>
+                        {input.label}
+                      </FieldLabel>
+                      {control}
+                    </div>
+                  )}
+                  textClassName={FIELD_CLASS}
+                  textStyle={fieldStyle()}
                 />
               )}
               {bookingSeries && declaredInputs.length > 0 && (

@@ -736,6 +736,210 @@ def counseling_only_as_stated(draft: Draft, case: TemplateCase) -> list[str]:
     return problems
 
 
+TECHNIQUES: dict[str, tuple[str, ...]] = {
+    "CBT": ("cbt", "cognitive behavioral", "cognitive behavioural"),
+    "CBT-I": ("cbt i", "cognitive behavioral therapy for insomnia"),
+    "Socratic questioning": ("socratic",),
+    "cognitive reframing": ("reframing", "reframe", "reframed", "restructuring"),
+    "thought record": ("thought record", "thought log"),
+    "worry window": ("worry window", "worry time", "scheduled worry", "worry postponement"),
+    "behavioral activation": (
+        "behavioral activation",
+        "behavioural activation",
+        "activity scheduling",
+    ),
+    "exposure": ("exposure",),
+    "EMDR": ("emdr", "eye movement desensitization"),
+    "motivational interviewing": ("motivational interviewing",),
+    "psychoeducation": ("psychoeducation", "psycho education", "psychoeducational", "education"),
+    "supportive therapy": ("supportive therapy", "supportive psychotherapy"),
+    "DBT": ("dbt", "dialectical"),
+    "ACT": ("acceptance and commitment",),
+    "mindfulness": ("mindfulness",),
+    "relaxation training": ("relaxation", "progressive muscle", "diaphragmatic breathing"),
+    "sleep restriction": ("sleep restriction",),
+    "stimulus control": ("stimulus control",),
+    "problem-solving therapy": ("problem solving therapy",),
+    "interpersonal therapy": ("interpersonal therapy", "ipt"),
+    "psychodynamic therapy": ("psychodynamic",),
+}
+"""The technique names a psychotherapy block can claim, each with the words
+that name it. A case picks its supported and unsupported techniques from
+these keys, so every case reads a technique the same way. Plain descriptions
+of what a clinician does (listened, reflected, asked about) are not here:
+they name no technique."""
+
+THERAPY_GROUNDED_FIELDS = (
+    "issues_addressed",
+    "modality_interventions",
+    "response",
+    "goal_plan",
+    "progress",
+    "therapy_cadence",
+)
+"""The psychotherapy fields that describe the therapy; the time is
+``codes_only_dictated``'s."""
+THERAPY_NUMBER_FIELDS = ("response", "progress")
+"""Where a number is a rating or a count the client gave."""
+OUTCOME_CLAIMS = re.compile(
+    r"\b(?:meaningful|significant(?:ly)?|substantial(?:ly)?|improv(?:e|es|ed|ing|ement)|"
+    r"demonstrat(?:ed|es|ing))\b",
+    re.IGNORECASE,
+)
+"""Words that judge progress. Allowed only where the case says the visit
+supports them (a rating moved, an assignment done), or inside a quotation of
+what was said."""
+UNITS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+}
+NUMBER_WORDS = {
+    "zero": 0,
+    **{w: n for w, n in UNITS.items() if w != "one"},
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+}
+"""Number words read as numbers on their own. "One" is left out: prose uses
+it as a pronoun ("no one", "one of"), so it cannot be told apart from a
+count. After a tens word ("twenty-one") it is read."""
+TENS = {
+    "twenty": 20,
+    "thirty": 30,
+    "forty": 40,
+    "fifty": 50,
+    "sixty": 60,
+    "seventy": 70,
+    "eighty": 80,
+    "ninety": 90,
+}
+NUMBER = re.compile(
+    rf"\b(?:(?P<tens>{'|'.join(TENS)})(?:[\s-](?P<unit>{'|'.join(UNITS)}))?"
+    rf"|(?P<word>{'|'.join(NUMBER_WORDS)})|(?P<hundred>(?:a|one) hundred)|(?P<digits>\d+))\b",
+    re.IGNORECASE,
+)
+
+
+TURN_STAMP = re.compile(r"^\[\d{2}:\d{2}:\d{2}\]", re.MULTILINE)
+"""A transcript line's timestamp: when a turn began, not a number anyone said."""
+
+
+def numbers(text: str) -> set[int]:
+    """Every number in ``text``, in digits or in words ("ninety" is 90)."""
+    found: set[int] = set()
+    for m in NUMBER.finditer(text):
+        if m["digits"]:
+            found.add(int(m["digits"]))
+        elif m["hundred"]:
+            found.add(100)
+        elif m["word"]:
+            found.add(NUMBER_WORDS[m["word"].lower()])
+        else:
+            unit = UNITS.get((m["unit"] or "").lower(), 0)
+            found.add(TENS[m["tens"].lower()] + unit)
+    return found
+
+
+def _outside_quotes_said(text: str, transcript: str) -> str:
+    """``text`` without its quotations of what was said in the visit; a
+    quotation of words nobody said stays, as the draft's own."""
+    return QUOTED.sub(
+        lambda m: " " if _quote_in_transcript(m[1], transcript) else m[0],
+        text,
+    )
+
+
+def techniques_named(text: str) -> set[str]:
+    """The techniques from ``TECHNIQUES`` that ``text`` names."""
+    said = f" {normalize(text).replace(':', ' ')} "
+    return {
+        name
+        for name, words in TECHNIQUES.items()
+        if any(f" {normalize(w)} " in said for w in words)
+    }
+
+
+def therapy_grounded(draft: Draft, case: TemplateCase) -> list[str]:
+    """Every technique, rating and outcome in the psychotherapy block is one the
+    visit shows.
+
+    A technique the visit supports is named in the interventions, and one it
+    does not support is named nowhere; a visit where the clinician only
+    listened names none. A number in the response or the progress is one the
+    client gave. Progress is judged ("improved", "significant") only where a
+    rating moved or an assignment was done, or in the client's quoted words.
+    Fields the case pins carry what was said, or "Not stated.".
+    """
+    e = case.expected
+    if not e.therapy:
+        return []
+    problems: list[str] = []
+    texts = {k: _text(draft, THERAPY_SECTION, k) for k in THERAPY_GROUNDED_FIELDS}
+    path = f"{THERAPY_SECTION}.{{}}".format
+    named = {k: techniques_named(t) for k, t in texts.items()}
+    if e.techniques is not None and not e.techniques:
+        problems += [
+            f"{path(k)}: names {sorted(n)}, but the clinician used no named technique"
+            for k, n in named.items()
+            if n
+        ]
+    elif e.techniques and not named["modality_interventions"] & set(e.techniques):
+        problems.append(
+            f"{path('modality_interventions')}: names none of {list(e.techniques)} the visit shows"
+        )
+    problems += [
+        f"{path(k)}: names {sorted(n & set(e.techniques_denied))}, which the visit does not show"
+        for k, n in named.items()
+        if n & set(e.techniques_denied)
+    ]
+    allowed = (
+        set(e.therapy_numbers)
+        if e.therapy_numbers is not None
+        else numbers(TURN_STAMP.sub(" ", case.transcript))
+    )
+    for k in THERAPY_NUMBER_FIELDS:
+        problems += [
+            f"{path(k)}: {n} is not a number the client gave"
+            for n in sorted(numbers(texts[k]) - allowed)
+        ]
+    if not e.progress_supported:
+        for k in ("progress", "goal_plan"):
+            outside = _outside_quotes_said(texts[k], case.transcript)
+            problems += [
+                f"{path(k)}: {w!r} judges progress the visit does not show"
+                for w in OUTCOME_CLAIMS.findall(outside)
+            ]
+    for k, words in e.therapy_fields.items():
+        said = normalize(texts.get(k, ""))
+        if said in {"", "not stated"}:
+            problems.append(f"{path(k)}: said in the visit, but not written")
+        elif not any(normalize(w) in said for w in words):
+            problems.append(f"{path(k)}: carries none of {words!r}")
+    for k, words in e.therapy_never.items():
+        said = normalize(texts.get(k, ""))
+        problems += [f"{path(k)}: {w!r} was not said" for w in words if normalize(w) in said]
+    problems += [
+        f'{path(k)}: never stated, so it should read "Not stated."'
+        for k in e.therapy_not_stated
+        if not is_not_stated(texts.get(k, ""))
+    ]
+    return problems
+
+
 CHECKS: dict[str, Callable[[Draft, TemplateCase], list[str]]] = {
     "codes_only_dictated": codes_only_dictated,
     "psychotherapy_section": psychotherapy_section,
@@ -756,6 +960,7 @@ CHECKS: dict[str, Callable[[Draft, TemplateCase], list[str]]] = {
     "history_from_visit": history_from_visit,
     "hpi_by_domain": hpi_by_domain,
     "counseling_only_as_stated": counseling_only_as_stated,
+    "therapy_grounded": therapy_grounded,
 }
 
 

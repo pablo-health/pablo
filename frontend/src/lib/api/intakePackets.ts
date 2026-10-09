@@ -8,6 +8,7 @@
  */
 
 import type {
+  DocumentUsage,
   IntakeItemInput,
   IntakeTemplate,
   IntakeVersionDetail,
@@ -28,6 +29,11 @@ export interface UpdateTemplateInput {
 
 export async function listIntakeTemplates(token?: string): Promise<IntakeTemplate[]> {
   return get<IntakeTemplate[]>(ENDPOINT, token)
+}
+
+/** Which packets ask for each document. A document no packet asks for is absent. */
+export async function listDocumentUsage(token?: string): Promise<DocumentUsage[]> {
+  return get<DocumentUsage[]>("/api/intake/document-usage", token)
 }
 
 export async function createIntakeTemplate(

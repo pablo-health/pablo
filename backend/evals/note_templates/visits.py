@@ -450,3 +450,87 @@ alternative of no change; client agreed. Continue Adderall XR 20. MAPS checked t
 the refill, no early fills, no other prescribers. No labs today. Psychotherapy from 10:14 to \
 10:55, 41 minutes. Billing 99214 plus 90836.
 """
+
+
+# A visit that is mostly listening. After a short medication check and the
+# risk screen, the clinician asks two open questions about the client's
+# mother, who died, and otherwise reflects what the client says. No technique
+# is named, no rating is asked for, no assignment is given. The therapy runs
+# from 1:40 to 40:30: 2330 seconds, 39 minutes. The clinician dictates the
+# window and the codes, no minutes.
+SUPPORTIVE_ONLY = """\
+[00:00:04] Therapist: Hi Casey. Are you at home today?
+[00:00:09] Client: Yes, at home.
+[00:00:12] Therapist: Are you still taking the sertraline every morning?
+[00:00:16] Client: Every morning. No problems with it.
+[00:00:21] Therapist: Any nausea, headaches, trouble sleeping from it?
+[00:00:26] Client: No. Sleep is bad, but that isn't the medicine.
+[00:00:58] Therapist: Okay, we'll keep it the same. Any thoughts of hurting yourself or \
+anyone else, or that you'd be better off dead?
+[00:01:05] Client: No. I miss her, but no.
+[00:01:40] Therapist: You said you miss her. What has it been like since your mother died?
+[00:01:52] Client: Quiet. Too quiet. I keep picking up the phone on Sunday mornings to call \
+her, and then I remember.
+[00:08:30] Therapist: Sunday mornings were your time with her.
+[00:08:38] Client: Every week. She'd tell me about her garden and I'd pretend to care about \
+the tomatoes. Now I'd give anything to hear about the tomatoes.
+[00:15:20] Therapist: It sounds like you're carrying a lot of this on your own.
+[00:15:28] Client: My brother doesn't want to talk about her. He says it's better to keep \
+busy. So I don't bring it up.
+[00:22:10] Therapist: That sounds lonely.
+[00:22:16] Client: It is. Most nights I lie there and go over the hospital, what I should \
+have asked the doctors.
+[00:27:40] Therapist: What do you miss most about her?
+[00:27:48] Client: Her laugh. She laughed at her own jokes before she got to the end of \
+them. Nobody else does that.
+[00:34:50] Therapist: You smiled just now, talking about her laugh.
+[00:34:58] Client: I did. I kept some of her tomato plants going on my balcony. It felt good \
+to talk about her today. I haven't said her name out loud in a while.
+[00:40:30] Therapist: I'm glad you did. Let's keep some time for this at each visit. I'll see \
+you in four weeks, and call the office if anything changes.
+[00:40:40] Client: Thank you. I will.
+[00:41:05] Therapist: Note for the record. Client alert and oriented, casually dressed, \
+tearful at times. Speech normal. Mood "quiet", affect tearful and congruent. Thought process \
+linear. No hallucinations or delusions. Denies SI and HI. Insight and judgment good. Grief \
+after the death of their mother. Depression stable on sertraline. Continue sertraline 50 \
+milligrams every morning. Return in four weeks. Psychotherapy from 3:02 to 3:41. Billing \
+99214 plus 90836.
+"""
+
+# Therapy that is brief psychoeducation on sleep hygiene, named as such, with
+# one thing to try. The clinician says nothing about a goal or about how often
+# therapy will continue.
+THERAPY_PLAN_NOT_STATED = """\
+[00:00:04] Therapist: Hi Alex. Are you at home today?
+[00:00:07] Client: Yes, at home.
+[00:00:10] Therapist: How has the escitalopram been?
+[00:00:13] Client: Fine. Mood is better than it was. It's the sleep that's bad. It takes me \
+forever to fall asleep.
+[00:00:21] Therapist: Any side effects from it, nausea, headaches?
+[00:00:25] Client: No.
+[00:00:28] Therapist: Okay, we'll keep it the same. Tell me about a usual night.
+[00:00:33] Client: I get into bed, scroll on my phone until I'm tired, and then I'm wide \
+awake. On weekends I sleep in until whenever.
+[00:03:10] Therapist: Let me give you some psychoeducation on sleep hygiene, because a few \
+of those habits work against you. Your body clock sets itself by when you get up, so a wake \
+time that moves around on weekends keeps resetting it.
+[00:03:30] Client: So sleeping in makes it worse?
+[00:06:40] Therapist: It can. The light from the phone also tells your brain it's daytime, \
+and scrolling keeps you alert. The bed works best when it's only for sleep.
+[00:06:55] Client: I didn't know the phone thing mattered that much.
+[00:12:20] Therapist: It matters more than most people think. What questions do you have?
+[00:12:28] Client: What if I can't fall asleep without it?
+[00:16:45] Therapist: Then get up, sit somewhere dim, and go back to bed when you feel \
+sleepy. This week, try getting up at the same time every day, weekends too, and leave the \
+phone charging in the kitchen.
+[00:17:02] Client: Okay. I'll try it.
+[00:21:00] Therapist: Good. Any thoughts of hurting yourself or anyone else?
+[00:21:05] Client: No.
+[00:21:08] Therapist: I'll see you in six weeks. Call the office if anything gets worse.
+[00:21:14] Client: Thanks.
+[00:21:40] Therapist: Note for the record. Client alert and oriented, casually dressed. \
+Speech normal. Mood "better", affect full. Thought process linear. No hallucinations or \
+delusions. Denies SI and HI. Insight and judgment good. Depression improving. Insomnia, \
+trouble falling asleep. Continue escitalopram 10 milligrams every morning. Psychoeducation \
+on sleep hygiene, eighteen minutes. Return in six weeks. Billing 99214 plus 90833.
+"""

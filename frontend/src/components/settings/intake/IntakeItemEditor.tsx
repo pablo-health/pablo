@@ -22,6 +22,7 @@ import {
 } from "@/types/intakePackets"
 import {
   ADD_QUESTION,
+  DOCUMENT_TAG,
   HELP_TEXT_FIELD,
   HELP_TEXT_PLACEHOLDER,
   ITEM_TYPE_HINTS,
@@ -35,6 +36,7 @@ import {
   TEMPLATE_ALREADY_ON_FORM,
   labelPlaceholder,
 } from "./intakeCopy"
+import { AddDocumentPicker } from "./AddDocumentPicker"
 import { StarterPicker } from "./StarterPicker"
 import type { IntakeStarter } from "@/types/intakeDocuments"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
@@ -64,14 +66,18 @@ interface IntakeItemEditorProps {
   /** The practice's blank forms, for a document question to offer. */
   blankForms?: OfferableBlankForm[]
   /** Writing a new document from a consent question; see ItemConfigForm. */
-  renderNewDocument?: (choose: (documentKey: string) => void) => ReactNode
+  renderNewDocument?: (choose: (documentKey: string, title?: string) => void) => ReactNode
   /** Which published wording a consent question asks for; see ItemConfigForm. */
   renderVersionPicker?: (
     documentKey: string,
     chosen: string | undefined,
     choose: (versionId: string | undefined) => void,
   ) => ReactNode
-  /** Built-in documents the practice can add, with the questions they bring. */
+  /**
+   * Built-ins the practice can add. The ones with a document are offered
+   * under Add a document; the rest, which are questions alone, beside Add
+   * question.
+   */
   starters?: IntakeStarter[]
   /** Adopt one: the practice's copy is published and its items come back. */
   onAdoptStarter?: (key: string) => Promise<IntakeItemInput[]>
@@ -100,15 +106,40 @@ function toInput(items: IntakeVersionDetail["items"]): IntakeItemInput[] {
 }
 
 /**
- * What one question is called in the list.
+ * The kinds "Add question" offers. A document has its own button, Add a
+ * document, so it is not listed among the questions as well.
+ */
+const QUESTION_ITEM_TYPES = ITEM_TYPES.filter((type) => type !== "consent_document")
+
+/**
+ * What one item is called in the list.
  *
  * The question itself once it has been written, because that is what a
- * practice reading down the form is looking for. Its type until then, which
- * is all there is to say about a question nobody has written yet.
+ * practice reading down the form is looking for. For a document with no
+ * wording of its own, the document's name, so three documents do not read as
+ * three identical rows. Otherwise its type, which is all there is to say
+ * about a question nobody has written yet.
  */
-function itemHeading(item: { label: string | null; item_type: ItemType }): string {
+function itemHeading(
+  item: { label: string | null; item_type: ItemType; config: IntakeItemInput["config"] },
+  documents: PublishedDocument[],
+): string {
   const label = item.label?.trim()
-  return label ? label : (ITEM_TYPE_LABELS[item.item_type] ?? item.item_type)
+  if (label) return label
+  if (item.item_type === "consent_document") {
+    const title = documents.find((d) => d.document_key === item.config.document_key)?.title
+    if (title) return title
+  }
+  return ITEM_TYPE_LABELS[item.item_type] ?? item.item_type
+}
+
+function DocumentTag({ itemType }: { itemType: ItemType }) {
+  if (itemType !== "consent_document") return null
+  return (
+    <span className="ml-2 rounded-full border border-border px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+      {DOCUMENT_TAG}
+    </span>
+  )
 }
 
 /**
@@ -272,6 +303,40 @@ export function IntakeItemEditor({
   }
 
   /**
+   * Put one of the practice's documents on the packet, opened, so which
+   * wording to ask for is right there. A document already on the packet is
+   * not added twice.
+   */
+  function addDocument(document: PublishedDocument) {
+    setStarterNote(null)
+    if (
+      items.some(
+        (item) =>
+          item.item_type === "consent_document" &&
+          item.config.document_key === document.document_key,
+      )
+    ) {
+      setStarterNote(TEMPLATE_ALREADY_ON_FORM)
+      return
+    }
+    const title = document.title.trim()
+    const key = nextKey(title || ITEM_TYPE_LABELS.consent_document, items.map((i) => i.key))
+    setItems((current) => [
+      ...current,
+      {
+        key,
+        item_type: "consent_document",
+        required: true,
+        resign_on_new_version: false,
+        label: title || null,
+        help_text: null,
+        config: { document_key: document.document_key },
+      },
+    ])
+    setOpenIndex(items.length)
+  }
+
+  /**
    * Add a template's items to the end of the form and save it.
    *
    * Saved straight away because adopting the template already published the
@@ -307,7 +372,8 @@ export function IntakeItemEditor({
         <ol className="space-y-1">
           {version.items.map((item) => (
             <li key={item.id} className="text-sm text-foreground">
-              {itemHeading(item)}
+              {itemHeading(item, documents ?? [])}
+              <DocumentTag itemType={item.item_type} />
               <span className="ml-2 text-[12.5px] text-muted-foreground">{item.key}</span>
             </li>
           ))}
@@ -334,7 +400,8 @@ export function IntakeItemEditor({
                   aria-expanded={open}
                 >
                   <div className="text-sm font-semibold text-foreground">
-                    {itemHeading(item)}
+                    {itemHeading(item, documents ?? [])}
+                    <DocumentTag itemType={item.item_type} />
                   </div>
                   <div className="mt-0.5 text-[12.5px] text-muted-foreground">{item.key}</div>
                 </button>
@@ -438,7 +505,7 @@ export function IntakeItemEditor({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {ITEM_TYPES.map((type) => (
+            {QUESTION_ITEM_TYPES.map((type) => (
               <SelectItem key={type} value={type}>
                 {ITEM_TYPE_LABELS[type] ?? type}
               </SelectItem>
@@ -451,8 +518,17 @@ export function IntakeItemEditor({
         </Button>
       </div>
 
+      <AddDocumentPicker
+        documents={documents ?? []}
+        builtIns={(starters ?? []).filter((starter) => starter.has_document)}
+        onPickDocument={addDocument}
+        onPickBuiltIn={(key) => void addStarter(key)}
+        renderNewDocument={renderNewDocument}
+        busy={adopting}
+      />
+
       <StarterPicker
-        starters={starters ?? []}
+        starters={(starters ?? []).filter((starter) => !starter.has_document)}
         onPick={(key) => void addStarter(key)}
         busy={adopting}
       />

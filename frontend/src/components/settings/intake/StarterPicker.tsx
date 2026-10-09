@@ -2,24 +2,25 @@
 
 "use client"
 
-import { FileText } from "lucide-react"
+import { ListPlus } from "lucide-react"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import type { IntakeStarter } from "@/types/intakeDocuments"
-import { START_FROM_TEMPLATE, STARTER_ADDS_DOCUMENT } from "./intakeCopy"
+import { START_FROM_TEMPLATE } from "./intakeCopy"
 
 interface StarterPickerProps {
+  /** Built-in sets of questions. The ones that bring a document are offered under Add a document. */
   starters: IntakeStarter[]
   onPick: (key: string) => void
   busy?: boolean
 }
 
 /**
- * "Start from a template", beside "Add question" on a draft form.
+ * "Add built-in questions", beside "Add question" on a draft form.
  *
  * Two clicks: open the list, pick one. What picking does is the caller's —
- * the form editor asks the server for the practice's copy and adds its items
- * to the draft.
+ * the form editor asks the server for the starter's items and adds them to
+ * the draft.
  */
 export function StarterPicker({ starters, onPick, busy }: StarterPickerProps) {
   const [open, setOpen] = useState(false)
@@ -35,12 +36,9 @@ export function StarterPicker({ starters, onPick, busy }: StarterPickerProps) {
         onClick={() => setOpen(!open)}
         aria-expanded={open}
       >
-        <FileText className="mr-1 h-4 w-4" aria-hidden="true" />
+        <ListPlus className="mr-1 h-4 w-4" aria-hidden="true" />
         {START_FROM_TEMPLATE}
       </Button>
-      {open && (
-        <p className="text-[12px] text-muted-foreground">{STARTER_ADDS_DOCUMENT}</p>
-      )}
       {open && (
         <ul aria-label={START_FROM_TEMPLATE} className="space-y-1">
           {starters.map((starter) => (

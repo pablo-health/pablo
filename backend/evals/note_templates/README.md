@@ -45,6 +45,7 @@ line sits under Prescriptions rather than Plan.
 | `history_from_visit` | in a template that takes history from the visit (the evaluation), a field the visit covered is empty, "Not recorded" or "Not stated.", or leaves out what was said | an intake writes the history it took |
 | `therapy_minutes` | where the clinician dictated minutes, the draft does not return them as dictated; in a case drafted as a recorded visit with every turn labeled: a turn after the client left is labeled, the turns proposed as therapy add up to more than the client was present, to anything for a visit with no therapy, or to a sum more than one turn (the longest turn while the client was present) from the labeled one | the therapy minutes are the therapy turns, wherever they fall in the visit; the dictated tail is never counted; a dictated count is what the note carries |
 | `hpi_by_domain` | in the follow-up, which takes the history by symptom domain: a domain the visit covered is empty or "Not discussed.", or leaves out what was said; a domain that never came up reads anything but "Not discussed." | each domain records this visit's pertinent positives and negatives, and a question never asked is not written up as a denial |
+| `therapy_grounded` | in a visit with therapy: the interventions name none of the techniques the visit shows, or any psychotherapy field names one it does not show; a visit where the clinician only listened, reflected and asked names any technique ("supportive therapy" included); the response or progress carries a number the client did not give (a belief rating, days an assignment was done); the progress or goal judges it ("meaningful", "significant", "improved", "demonstrated") where no rating moved and no assignment was done, outside a quotation of what was said; a field the case pins leaves out what was said, carries words nobody said, or is not "Not stated." where the clinician never spoke to it (a therapy cadence, a goal) | the psychotherapy behind an add-on code is the psychotherapy that happened: every technique named was used, every rating was given, and no goal, cadence or progress is written that nobody stated |
 | `counseling_only_as_stated` | the plan's education or lifestyle counseling is written when the clinician explained or advised nothing (a "None." item included), or leaves out what the clinician did explain | counseling an auditor reads is counseling that happened |
 
 The checks are unit-tested on hand-made drafts, passing and failing, in
@@ -72,6 +73,17 @@ values entered before the visit and the chart behind it are in `cases.py`.
 | `follow-up-interleaved` | recorded: therapy, a medication check in the middle, more therapy, the risk screen near the end; codes dictated, no minutes | telehealth; nothing on the chart | therapy turns adding up to 22 minutes (1331 s), give or take one turn; none of the dictated tail labeled; 99214 and 90833 |
 | `follow-up-interleaved-dictated-minutes` | recorded: therapy, a screen, therapy, a medication check, therapy; the clinician dictates thirty minutes | telehealth; nothing on the chart | therapy turns adding up to 24 minutes (1497 s), give or take one turn; 30 minutes returned as dictated and in the note |
 | `follow-up-no-therapy-recorded` | recorded: the `medication_only` sample | in office; bupropion | no turn labeled therapy; an empty psychotherapy section |
+| `follow-up-supportive-only` | recorded: a medication check and the risk screen, then the clinician listens to a client grieving their mother, reflects, and asks two open questions; the window and codes dictated, no minutes | telehealth; one coded problem, NKDA, sertraline | no technique named anywhere in the psychotherapy section and no number in the response or progress; the goal and the progress "Not stated."; "at each visit" as the cadence; therapy turns adding up to 39 minutes (2330 s), give or take one turn; 99214 and 90836, 3:02 to 3:41 and no minutes |
+| `follow-up-therapy-plan-not-stated` | brief psychoeducation on sleep hygiene, named as such, with one thing to try; nothing said about a goal or how often therapy continues; eighteen minutes dictated | telehealth; one coded problem, NKDA, escitalopram | psychoeducation in the interventions and no CBT, CBT-I, sleep restriction, relaxation, mindfulness or activation; the wake time and phone assignment as the goal and plan, with no goal added; the cadence "Not stated.", since the return visit is not a plan for therapy; 99214, 90833 and 18 minutes |
+
+In the therapy sample, `therapy_grounded` takes CBT, Socratic questioning,
+cognitive reframing, the worry window and the thought record as shown, and
+behavioral activation, exposure, EMDR and motivational interviewing as not.
+The client's numbers are the belief ratings (90, then 40, on a scale of zero
+to a hundred) and the time blocks (four workdays of five), so the progress
+may call that improvement. The interleaved visit may too: the activity
+schedule was done four days of seven and the belief fell from eighty to
+forty.
 
 Both therapy cases also grade the voice. The clinician dictates the mental
 status, "Denies SI and HI", the protective factors and "Overall acute risk is
@@ -106,6 +118,42 @@ A draft takes 15 to 50 seconds. The model is the configured note model,
 and `--model` overrides it. With `BRAINTRUST_API_KEY` set,
 `backend/evals/test_note_templates.py` pushes the cases to the
 `starting-templates` dataset in `pablo-note-generation`.
+
+## Recorded runs — 2026-10-08, the psychotherapy block
+
+Every case once, before and after the psychotherapy hints changed, on the
+production note model (`bedrock:us.anthropic.claude-sonnet-4-6`) and on the
+fallback (`gemini-3.1-pro-preview`), against a development project.
+
+| Model | Before | After | `therapy_grounded` failures, before | After |
+|---|---|---|---|---|
+| production | 6 of 14 | 8 of 14 | supportive-only, plan-not-stated, interleaved-dictated-minutes | supportive-only |
+| fallback | 12 of 14 | 13 of 14 | supportive-only | none |
+
+What the drafts invented before:
+
+- The listening visit's interventions as "Supportive therapy" (both models),
+  and its cadence as "Ongoing grief-focused supportive therapy to continue
+  at each visit".
+- A goal nobody set: "To continue processing grief" for the listening
+  visit, "Goal: improve sleep onset." for the sleep visit.
+- Progress judged: "The client demonstrated capacity to access positive
+  memories alongside grief", "a meaningful connection", "The client
+  demonstrated willingness to engage with exposure rationale".
+- "Sleep restriction guidance" for the advice to get up when sleep does not
+  come, which is not sleep restriction.
+
+After the change, the one failure left on the production model is the
+listening visit's goal and plan. It repeats the clinician's "Let's keep some
+time for this at each visit," which belongs to the cadence, where it also
+appears. The other failures in these runs are in `suffix_only_where_stated`
+and `diagnoses_only_stated`, on cases this change does not touch, and they
+fail the same way before and after.
+
+Seen, not graded: the production model's interventions for the therapy
+sample now describe the steps (rating the belief, weighing evidence for and
+against, a balanced thought) and no longer write "CBT" or "cognitive
+reframing". The worry window is still named, so the check passes.
 
 ## Recorded runs — 2026-10-08, history by symptom domain
 

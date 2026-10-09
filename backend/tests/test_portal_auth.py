@@ -9,6 +9,7 @@ are covered in ``test_portal_auth_routes.py`` and in the integration suite.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import replace
 
@@ -270,9 +271,12 @@ def test_request_code_texts_the_chart_number() -> None:
     assert asked_for == ["pat-1"]
     assert len(sms.sent) == 1
     assert sms.sent[0].to == PHONE
-    # The body carries a six-digit code and no patient identifier.
-    assert "verification code" in sms.sent[0].body
-    assert "pat-1" not in sms.sent[0].body
+    # The body is the code and its expiry and nothing else: no product,
+    # practice or patient name, so whoever sees the phone learns nothing.
+    assert re.fullmatch(
+        r"Your verification code is \d{6}\. It expires in 15 minutes\.",
+        sms.sent[0].body,
+    )
     challenge = store.get_challenge(issued.jti)
     assert challenge is not None
     assert challenge.otp_hash is not None
