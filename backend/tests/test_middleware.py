@@ -267,3 +267,46 @@ class TestMiddlewareIntegration:
         # Request should be rejected
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "HTTPS required" in response.json()["detail"]
+
+
+class TestPlatformProbePath:
+    """A platform health probe speaks plain HTTP and sends no forwarded headers.
+
+    Without the exemption every probe gets 400 and a new instance is never
+    marked ready. The exemption is exact: neighbouring paths stay enforced.
+    """
+
+    @pytest.fixture
+    def probe_client(self, production_settings: Settings) -> TestClient:
+        app = FastAPI()
+        app.add_middleware(SecurityHeadersMiddleware, settings=production_settings)
+        app.add_middleware(HTTPSEnforcementMiddleware, settings=production_settings)
+
+        @app.get("/api/health")
+        def health() -> dict[str, str]:
+            return {"status": "healthy"}
+
+        @app.get("/api/healthz")
+        def healthz() -> dict[str, str]:
+            return {"status": "healthy"}
+
+        @app.get("/api/health/detail")
+        def health_detail() -> dict[str, str]:
+            return {"status": "healthy"}
+
+        @app.get("/api/patients")
+        def patients() -> list[str]:
+            return []
+
+        return TestClient(app, base_url="http://testserver")
+
+    def test_plain_http_probe_reaches_health(self, probe_client: TestClient) -> None:
+        response = probe_client.get("/api/health")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() == {"status": "healthy"}
+
+    @pytest.mark.parametrize("path", ["/api/patients", "/api/healthz", "/api/health/detail"])
+    def test_other_paths_still_require_https(self, probe_client: TestClient, path: str) -> None:
+        response = probe_client.get(path)
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "HTTPS required" in response.json()["detail"]
