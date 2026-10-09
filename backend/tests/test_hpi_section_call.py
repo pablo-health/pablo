@@ -409,17 +409,16 @@ def test_the_main_call_carries_no_history_field_and_no_rule_about_one(
     assert "pertinent positives and negatives" in hpi["user_prompt"]
 
 
-def test_the_main_call_is_told_the_history_is_written_apart_so_it_is_not_taken_for_therapy() -> (
-    None
-):
+def test_the_main_call_is_told_the_history_is_written_apart() -> None:
     """With the history gone from its fields, the main draft once wrote a long symptom
-    review into the psychotherapy block of a visit that had no therapy."""
+    review into the psychotherapy block of a visit that had no therapy. That block is
+    no longer the main draft's either, so it is told nothing about therapy."""
     gateway = _ScriptedGateway()
     _draft(gateway)
     prompt = gateway.call(None)["user_prompt"]
     assert "The note's other sections (Subjective, Risk assessment, Mental status exam, " in prompt
-    assert "does not by itself make a therapy portion" in prompt
     assert "asking how the client has been" in prompt
+    assert "therapy portion" not in prompt
 
 
 def test_the_history_call_drafts_its_fields_into_the_note_with_the_quote_checked() -> None:

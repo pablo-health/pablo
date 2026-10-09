@@ -1600,7 +1600,9 @@ class Settings(BaseSettings):
             "A section of a note drafted by a call of its own also has a key "
             "here: ``note_generation.risk_mse`` names the model for the risk, "
             "mental status and measures sections, ``note_generation.hpi`` the "
-            "model for the history of present illness, and the note model "
+            "model for the history of present illness, "
+            "``note_generation.psychotherapy`` the model for the psychotherapy "
+            "block, and the note model "
             "(``note_generation``) drafts each when it is not named. Such a "
             "call falls back as ``note_generation`` does."
         ),

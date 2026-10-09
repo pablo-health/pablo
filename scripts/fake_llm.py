@@ -593,12 +593,12 @@ def _chart_field_statements(schema: dict[str, Any], user_prompt: str) -> dict[st
 
 def _section_call(schema: dict[str, Any], user_prompt: str) -> dict[str, Any]:
     """A section call (the history of present illness; risk, mental status and
-    measures), answered as a draft's fields always were.
+    measures; the psychotherapy block), answered as a draft's fields always were.
 
     Each field reads "Stand-in draft for <section>.<field>.", or what was dictated
     under its name after the session. A field with quotes (a risk field, the chief
-    complaint) comes back with no quotations of the client, which a model may
-    also return.
+    complaint, the therapy response) comes back with no quotations of the client,
+    which a model may also return.
     """
     reply: dict[str, Any] = {}
     dictated = _dictated(user_prompt)
@@ -632,6 +632,7 @@ _TITLED_CALLS: dict[str, Callable[[NoteCall], dict[str, Any]]] = {
     "HistoryOfPresentIllnessSections": lambda call: _section_call(
         call.response_schema, call.user_prompt
     ),
+    "PsychotherapySections": lambda call: _section_call(call.response_schema, call.user_prompt),
     "ChartProposals": _proposals_reply,
 }
 

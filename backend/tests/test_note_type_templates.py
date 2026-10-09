@@ -105,13 +105,17 @@ def test_the_evaluation_offers_both_ways_to_bill_a_first_visit() -> None:
     assert any("99202-99205" in option for option in visit_code.options)
 
 
-def test_the_evaluation_keeps_psychotherapy_off_a_diagnostic_evaluation() -> None:
+def test_the_evaluations_psychotherapy_rule_is_the_psychotherapy_calls_not_the_main_drafts() -> (
+    None
+):
+    """The block is drafted by a call of its own, which reads the entered visit code
+    (tests/test_psychotherapy_section_call.py); the main draft keeps no rule about it."""
     spec = _evaluation()
 
     assert spec.sections[-1].key == "psychotherapy"
     assert spec.user_template is not None
-    assert "For a psychiatric diagnostic evaluation" in spec.user_template
-    assert "leave every field of the Psychotherapy section empty" in spec.user_template
+    assert "Psychotherapy section" not in spec.user_template
+    assert "its own section" not in spec.system_prompt
 
 
 _PRESCRIBER = ("psychiatric_follow_up", "psychiatric_evaluation")
