@@ -151,6 +151,26 @@ def test_a_change_the_list_cannot_take_or_the_visit_does_not_state_is_dropped(
     assert _parse(item) == []
 
 
+def test_a_stop_the_client_made_alone_is_not_proposed_but_another_prescribers_is() -> None:
+    alone = _item("stop", "lithium", [1], decided_by="the client alone")
+    clinician = _item("stop", "lithium", [1], decided_by="the clinician")
+    elsewhere = _item("change", "sertraline", [3], dose="150 mg", decided_by="another prescriber")
+
+    assert _parse(alone) == []
+    assert [p.item_key for p in _parse(clinician)] == ["lithium"]
+    assert [p.item_key for p in _parse(elsewhere)] == ["sertraline"]
+
+
+def test_a_frequency_restated_with_an_aside_is_not_a_change() -> None:
+    restated = _item("change", "lithium", [1], frequency="twice daily (morning and bedtime)")
+    spaced = _item("change", "lithium", [1], dose="300mg")
+    moved = _item("change", "lithium", [1], frequency="at bedtime")
+
+    assert _parse(restated) == []
+    assert _parse(spaced) == []
+    assert [p.proposed_text for p in _parse(moved)] == ["lithium 300 mg, at bedtime"]
+
+
 def test_a_medication_an_imported_note_names_only_in_a_carried_block_is_never_proposed() -> None:
     carried = _item("add", "trazodone", [2], dose="50 mg", stated_in="a carried block only")
     plan = _item("add", "amlodipine", [2], dose="5 mg", stated_in="this visit")

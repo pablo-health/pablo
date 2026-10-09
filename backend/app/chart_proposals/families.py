@@ -15,6 +15,7 @@ proposal; the evidence is checked the same way for both.
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, cast, override
@@ -332,6 +333,13 @@ and from where): about the visit, not the client, so never proposed."""
 STATED_IN = ("this visit", CARRIED_ONLY, HEADING)
 """Where a proposal's evidence says it, as the call reports it; the last two are dropped."""
 
+CLIENT_ALONE = "the client alone"
+"""Who decided a medication change, when no prescriber did: a client stopping, skipping or
+cutting back on their own. The list is what is prescribed, so such a stop or change is never
+proposed; the row stays as listed until the clinician addresses it."""
+
+DECIDED_BY = ("the clinician", "another prescriber", CLIENT_ALONE)
+
 
 def _optional(value: Any) -> str | None:
     text = str(value).strip() if isinstance(value, str) else ""
@@ -361,6 +369,19 @@ def listed_medication(chart: ChartContext, drug_name: str) -> ChartMedication | 
         and (words[: len(listed)] == listed or listed[: len(words)] == words)
     ]
     return near[0] if len(near) == 1 else None
+
+
+def _differs(stated: str | None, listed: str | None) -> bool:
+    """Whether a change's dose or frequency says something other than the listed one.
+    An aside in parentheses only restates it: "twice daily (morning and bedtime)" is
+    the listed "twice daily"."""
+    if not stated:
+        return False
+
+    def words(text: str) -> list[str]:
+        return _name_words(re.sub(r"(\d)([a-z])", r"\1 \2", text.lower()))
+
+    return words(re.sub(r"\([^)]*\)", " ", stated)) != words(listed or "")
 
 
 def _line(name: str, dose: str | None, frequency: str | None) -> str:
@@ -431,9 +452,11 @@ class MedicationFamily(FieldFamily):
                 + "for a change only the ones that change; category, psychiatric or other, "
                 + "when it is clear; for a stop, the reason and when it stopped as said, if "
                 + "said, as reason; what_changed; evidence_segment_ids, the lines that state "
-                + 'it; and stated_in: "a carried block only" for a medication an imported '
+                + 'it; stated_in: "a carried block only" for a medication an imported '
                 + "document names only in a block carried forward from an earlier visit, "
-                + 'otherwise "this visit".'
+                + 'otherwise "this visit"; and decided_by: who made the change, "the '
+                + 'clinician", "another prescriber", or "the client alone" when the client '
+                + "stopped, skipped or cut back on their own and no prescriber has decided."
             ),
         ]
 
@@ -450,8 +473,15 @@ class MedicationFamily(FieldFamily):
                 "what_changed": {"type": "string"},
                 "evidence_segment_ids": {"type": "array", "items": {"type": "integer"}},
                 "stated_in": {"type": "string", "enum": list(STATED_IN)},
+                "decided_by": {"type": "string", "enum": list(DECIDED_BY)},
             },
-            "required": ["action", "drug_name", "what_changed", "evidence_segment_ids"],
+            "required": [
+                "action",
+                "drug_name",
+                "what_changed",
+                "evidence_segment_ids",
+                "decided_by",
+            ],
         }
 
     def drafted(
@@ -462,6 +492,8 @@ class MedicationFamily(FieldFamily):
         if action not in _ACTION_VERBS or name is None:
             return None
         if item.get("stated_in") in (CARRIED_ONLY, HEADING):
+            return None
+        if action in ("stop", "change") and item.get("decided_by") == CLIENT_ALONE:
             return None
         listed = listed_medication(chart, name)
         category = item.get("category")
@@ -506,9 +538,7 @@ class MedicationFamily(FieldFamily):
             return False
         if change.action == "stop":
             return True
-        return (change.dose or listed.dose) != listed.dose or (
-            change.frequency or listed.frequency
-        ) != listed.frequency
+        return _differs(change.dose, listed.dose) or _differs(change.frequency, listed.frequency)
 
     def current_text(self, chart: ChartContext, ref: FieldRef) -> str | None:
         listed = listed_medication(chart, ref.item_key)

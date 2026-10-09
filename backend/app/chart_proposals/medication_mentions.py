@@ -20,7 +20,7 @@ import re
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
-from .families import MEDICATIONS, listed_medication
+from .families import CLIENT_ALONE, MEDICATIONS, listed_medication
 from .models import MedicationKept
 
 if TYPE_CHECKING:
@@ -32,11 +32,16 @@ if TYPE_CHECKING:
 #: The reply's list of medications put to the call that the visit leaves as listed.
 MEDICATIONS_KEPT = "medications_kept"
 
-#: Why a medication put to the call is left as listed. A client's own stop the clinician
-#: has not addressed is a reason, not a miss: the list is what is prescribed.
+#: The reply's medication changes (the medication family's ``reply_key``).
+MEDICATION_CHANGES = "medication_changes"
+
+#: A client's own stop the clinician has not addressed: a reason, not a miss.
+CLIENT_STOP = "client-reported stop, not addressed by the clinician this visit"
+
+#: Why a medication put to the call is left as listed. The list is what is prescribed.
 KEPT_REASONS = (
     "taken as listed",
-    "client-reported stop, not addressed by the clinician this visit",
+    CLIENT_STOP,
     "only discussed or considered for later",
     "other",
 )
@@ -224,6 +229,16 @@ def kept_medications(
             continue
         note = str(item.get("note") or "").strip()
         given.setdefault(listed.name.lower(), MedicationKept(listed.name, reason, note))
+    # A change the call says the client made alone is not proposed (the family drops
+    # it); it was considered all the same, and that is its reason.
+    changes = reply.get(MEDICATION_CHANGES)
+    for item in changes if isinstance(changes, list) else []:
+        if not isinstance(item, Mapping) or item.get("decided_by") != CLIENT_ALONE:
+            continue
+        listed = listed_medication(chart, str(item.get("drug_name") or ""))
+        if listed is not None:
+            note = str(item.get("what_changed") or "").strip()
+            given.setdefault(listed.name.lower(), MedicationKept(listed.name, CLIENT_STOP, note))
     proposed = {p.item_key.lower() for p in proposals if p.field_key == MEDICATIONS}
     return tuple(
         given.get(name.lower(), MedicationKept(drug_name=name, reason=""))

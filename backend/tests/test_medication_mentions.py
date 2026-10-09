@@ -179,6 +179,29 @@ def test_each_medication_put_to_the_call_is_proposed_or_kept_with_a_reason() -> 
     )
 
 
+def test_a_stop_the_call_says_the_client_made_alone_is_kept_with_that_reason() -> None:
+    client_stop = "client-reported stop, not addressed by the clinician this visit"
+    reply = {
+        "proposals": [],
+        "medication_changes": [
+            {
+                "action": "stop",
+                "drug_name": "trazodone",
+                "what_changed": "Client stopped it in February.",
+                "evidence_segment_ids": [1],
+                "decided_by": "the client alone",
+            }
+        ],
+        "medications_kept": [],
+    }
+    _, drafted = _call(reply)
+
+    assert drafted.proposals == []
+    assert MedicationKept("trazodone", client_stop, "Client stopped it in February.") in (
+        drafted.kept
+    )
+
+
 def test_one_the_call_neither_proposed_nor_explained_is_kept_with_no_reason() -> None:
     reply = {
         "proposals": [],
