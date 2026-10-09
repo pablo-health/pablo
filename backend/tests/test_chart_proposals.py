@@ -24,7 +24,8 @@ from app.chart_proposals.service import (
 from app.chart_proposals.step import ChartProposalStep
 from app.models import Note, Patient, Transcript
 from app.notes import get_default_registry
-from app.notes.chart_context import ChartContext, ChartHistoryField
+from app.notes.chart_context import ChartContext, ChartHistoryField, ChartMedication
+from app.notes.chart_fields import Statement, Statements
 from app.notes.practice_types import PracticeNoteTypeSpec, practice_key, to_definition
 from app.repositories import (
     InMemoryChartHistoryRepository,
@@ -55,6 +56,7 @@ TRANSCRIPT = Transcript(
 DIVORCE = 1
 
 SEPARATED = "Married; separated, divorce in progress since June."
+SERTRALINE_50 = ChartMedication("sertraline", "50 mg", "every morning", "psychiatric")
 
 
 def _definition(template: str) -> NoteTypeDefinition:
@@ -196,6 +198,58 @@ def test_a_field_the_draft_marks_stated_this_visit_is_named_in_the_prompt() -> N
 
     assert f"- relationships: {SEPARATED} (stated this visit: finalized)" in prompt
     assert "- alcohol:" not in prompt
+
+
+def test_what_the_extraction_found_is_said_with_its_lines_and_the_marks_are_not_read() -> None:
+    """The extraction is the one source of what was said: its words and its lines reach
+    the proposal call, so it can cite them, and a draft's marks are not read beside it."""
+    statements = Statements(
+        fields=(
+            Statement("relationships", stated="The divorce was finalized", segment_ids=(1,)),
+            Statement("nicotine", screen="denied", segment_ids=(2,)),
+            Statement("alcohol", screen="asked_no_change", segment_ids=(2,)),
+            Statement(
+                "current_medications",
+                stated="sertraline 50",
+                medication="sertraline",
+                dose="50 mg",
+                segment_ids=(2,),
+            ),
+            Statement(
+                "current_medications",
+                stated="melatonin at night",
+                medication="melatonin",
+                segment_ids=(2,),
+            ),
+        )
+    )
+    chart = replace(_chart(relationships=SEPARATED), medications=(SERTRALINE_50,))
+    draft = {"social_history": {"work_school": "Library. (stated this visit: same)"}}
+
+    prompt = build_prompt(chart, "[S0] hello", draft=draft, statements=statements)
+
+    assert "What this visit said about these chart fields, beside what the chart has" in prompt
+    assert (
+        f'- relationships: chart has {SEPARATED}; said "The divorce was finalized" [S1]'
+    ) in prompt
+    assert "- tobacco_nicotine: chart has Not recorded; said denied [S2]" in prompt
+    assert '- medications: said "melatonin at night" [S2]' in prompt
+    # Asked with no change, and a medication only restated, are not things said.
+    assert "- alcohol:" not in prompt
+    assert '"sertraline 50"' not in prompt
+    assert "- work_school:" not in prompt
+
+
+def test_with_no_extraction_the_draft_marks_are_read_and_an_empty_one_lists_nothing() -> None:
+    draft = {"social_history": {"relationships": f"{SEPARATED} (stated this visit: finalized)"}}
+
+    fallback = build_prompt(_chart(), "[S0] hello", draft=draft)
+    found_nothing = build_prompt(_chart(), "[S0] hello", draft=draft, statements=Statements())
+
+    assert "The draft of this visit's note marks these as stated this visit." in fallback
+    assert "What this visit said" not in fallback
+    assert "(stated this visit: finalized)" not in found_nothing
+    assert "What this visit said" not in found_nothing
 
 
 # --- What a note's own text proposes --------------------------------------------------

@@ -81,6 +81,8 @@ class Statement:
     """For the current medications: the drug's name, as its own field of the reply."""
     dose: str = ""
     """For the current medications: the dose as said, as its own field of the reply."""
+    segment_ids: tuple[int, ...] = ()
+    """The transcript lines that say it, numbered as the proposal call numbers them."""
 
 
 @dataclass(frozen=True)

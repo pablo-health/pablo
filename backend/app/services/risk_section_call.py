@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any
 
-from ..chart_proposals.drafting import cited_evidence, segment_texts
+from ..chart_proposals.evidence import cited_evidence, segment_texts
 from .source_attribution_service import format_transcript_with_segment_ids
 
 if TYPE_CHECKING:
