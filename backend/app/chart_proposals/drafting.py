@@ -113,7 +113,8 @@ to it. If nothing changed, return an empty list: that is the usual answer.
 
 A history field changes only when the chart would read differently at the next visit in a \
 way that matters: a new lasting fact, a correction, or something that is no longer true \
-(the field still keeps it, and says what replaced it). These are not changes: a \
+(the field still keeps it, and says what replaced it: "Married; separated in January, \
+divorce finalized in May."). These are not changes: a \
 restatement, or a detail that only confirms or fills in what the field already says; an \
 event that leaves nothing lasting behind (an appointment, a referral, an interview, a test \
 result, a visit, a meal, a weekend); something considered, discussed or planned for later; \
