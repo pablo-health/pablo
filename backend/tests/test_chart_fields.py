@@ -47,6 +47,7 @@ from app.services.chart_field_extraction import (
     parse,
     response_schema,
 )
+from app.services.hpi_section_call import SCHEMA_TITLE as HPI_SECTIONS_TITLE
 from app.services.note_generation_service import (
     EXTRACTION_FAILED_EVENT,
     RegistryNoteGenerationService,
@@ -744,7 +745,8 @@ def _main_call(gateway: _ScriptedGateway) -> dict[str, Any]:
     return next(
         c
         for c in gateway.calls
-        if c["response_schema"].get("title") not in (SCHEMA_TITLE, RISK_SECTIONS_TITLE)
+        if c["response_schema"].get("title")
+        not in (SCHEMA_TITLE, RISK_SECTIONS_TITLE, HPI_SECTIONS_TITLE)
     )
 
 
@@ -760,7 +762,7 @@ def test_the_main_call_no_longer_asks_for_or_sees_the_chart_fed_fields() -> None
     rendered = {r.field.key for r in rendered_fields(_definition())}
     assert not asked & rendered
     assert "substance_use" not in main["response_schema"]["properties"]
-    assert {"chief_complaint", "formulation", "medication_plan"} <= asked
+    assert {"formulation", "medication_plan", "pdmp"} <= asked
     prompt = main["user_prompt"]
     for chart_only in ("Teaches third grade", "Two glasses of wine", "Sulfa"):
         assert chart_only not in prompt
@@ -798,9 +800,10 @@ def test_the_chart_fed_fields_are_printed_with_no_model_text_in_them() -> None:
     ]
     assert content["encounter"]["place_of_service"] == IN_OFFICE
     assert content["subjective"]["chief_complaint"] == "Drafted by the model."
-    # The draft, the extraction and the risk sections: the psychotherapy section is
-    # dropped with no client present, so no turns are labeled.
-    assert len(gateway.calls) == 3
+    # The draft, the extraction, the history of present illness and the risk
+    # sections: the psychotherapy section is dropped with no client present, so no
+    # turns are labeled.
+    assert len(gateway.calls) == 4
 
 
 def test_a_failed_extraction_fails_the_draft_and_logs_its_own_event(

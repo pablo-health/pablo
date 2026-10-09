@@ -6,9 +6,13 @@ A section is routed by its key. The prescriber notes' risk assessment, mental
 status exam and measures (``risk``, ``mse``, ``measures``, the same keys in the
 follow-up and the evaluation) are drafted together by one small call
 (:mod:`app.services.risk_section_call`), so the rules about whose words are
-quoted live in that call alone. Every field of a routed section goes with it,
-a field a practice added to a based type included; the main draft's schema and
-prompt no longer carry them.
+quoted live in that call alone. The history of present illness is drafted by
+another (:mod:`app.services.hpi_section_call`): the follow-up's ``subjective``
+section (chief complaint, the symptom domains, course, stressors, functioning,
+adherence and side effects) and the evaluation's ``chief_complaint``, ``hpi``
+and ``psychiatric_ros``. Every field of a routed section goes with it, a field
+a practice added to a based type included; the main draft's schema and prompt
+no longer carry them.
 
 Only a type written as a spec is routed (the prescriber templates, a type based
 on one, a practice's own): the formats written in code keep one call.
@@ -27,11 +31,25 @@ if TYPE_CHECKING:
 RISK_MSE = "risk_mse"
 """The call drafting risk, mental status and measures."""
 
-SECTION_CALLS: Mapping[str, str] = {"risk": RISK_MSE, "mse": RISK_MSE, "measures": RISK_MSE}
+HPI = "hpi"
+"""The call drafting the history of present illness, domain by domain."""
+
+SECTION_CALLS: Mapping[str, str] = {
+    "risk": RISK_MSE,
+    "mse": RISK_MSE,
+    "measures": RISK_MSE,
+    "subjective": HPI,
+    "chief_complaint": HPI,
+    "hpi": HPI,
+    "psychiatric_ros": HPI,
+}
 """Section key to the call that drafts it."""
 
 QUOTING_SECTIONS = frozenset({"risk"})
 """Sections whose text fields carry the client's own words, each citing the lines it is from."""
+
+QUOTING_FIELDS = frozenset({"chief_complaint"})
+"""Fields, by key in any routed section, whose text carries the client's own words the same way."""
 
 _ROUTED_KINDS = frozenset({"text", "list"})
 """Field kinds a section call drafts; any other kind stays with the main draft."""
@@ -68,7 +86,8 @@ def section_call_fields(definition: NoteTypeDefinition, call: str) -> list[Secti
         SectionField(
             section.key,
             f,
-            quotes=section.key in QUOTING_SECTIONS and f.kind == "text",
+            quotes=(section.key in QUOTING_SECTIONS or f.key in QUOTING_FIELDS)
+            and f.kind == "text",
         )
         for section in definition.sections
         if SECTION_CALLS.get(section.key) == call

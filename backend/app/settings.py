@@ -1599,8 +1599,9 @@ class Settings(BaseSettings):
             "any other, the tier default included. Empty by default.\n\n"
             "A section of a note drafted by a call of its own also has a key "
             "here: ``note_generation.risk_mse`` names the model for the risk, "
-            "mental status and measures sections, and the note model "
-            "(``note_generation``) drafts them when it is not named. Such a "
+            "mental status and measures sections, ``note_generation.hpi`` the "
+            "model for the history of present illness, and the note model "
+            "(``note_generation``) drafts each when it is not named. Such a "
             "call falls back as ``note_generation`` does."
         ),
     )

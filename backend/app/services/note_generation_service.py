@@ -56,6 +56,7 @@ from ..notes.diagnoses import DIAGNOSES_KIND_LABEL, DIAGNOSES_SCHEMA, coerce_dia
 from ..notes.practice_types import PromptBlocks, render_system_prompt, render_user_prompt
 from ..notes.prompts.soap import SOAP_SYSTEM_PROMPT
 from ..notes.section_calls import (
+    HPI,
     RISK_MSE,
     SectionField,
     model_key,
@@ -69,11 +70,10 @@ from ..notes.visit_times import (
     dictated_time_text,
 )
 from ..settings import get_settings
+from . import hpi_section_call, risk_section_call
 from .ai_features import AIFeature
 from .chart_field_extraction import SCHEMA_TITLE, extract_statements
 from .hedged_structured_llm_gateway import generation_gateway
-from .risk_section_call import SCHEMA_TITLE as RISK_SCHEMA_TITLE
-from .risk_section_call import draft_sections
 from .source_attribution_service import (
     build_attribution_prompt,
     build_claims_from_soap,
@@ -376,9 +376,10 @@ class RegistryNoteGenerationService(NoteGenerationService):
 
         Fields printed from the chart are written in code (:mod:`app.notes.chart_fields`)
         and left out of the model's request; what the visit said about them comes
-        from a small extraction call that runs beside the draft. The risk, mental
-        status and measures sections are drafted by a call of their own beside it
-        too (:mod:`app.notes.section_calls`), and are left out of the main request.
+        from a small extraction call that runs beside the draft. The history of
+        present illness, and the risk, mental status and measures sections, are
+        each drafted by a call of their own beside it too
+        (:mod:`app.notes.section_calls`), and are left out of the main request.
         """
         full_definition = definition
         rendered = rendered_fields(definition)
@@ -391,14 +392,12 @@ class RegistryNoteGenerationService(NoteGenerationService):
         # The clinician's word for the person seen, which a type's prompts may
         # place as {term}; the chart carries it from whoever reads the note.
         person = chart.person if chart is not None else ChartContext().person
-        routed = section_call_fields(definition, RISK_MSE)
-        risk_sections = (
-            self._start_risk_sections(routed, person, transcript.content, current_note)
-            if routed
-            else None
+        routed, drafted = self._start_section_calls(
+            definition, person, transcript.content, current_note
         )
-        definition = without_fields(definition, routed)
-        side_calls = [c for c in (statements, risk_sections) if c is not None]
+        apart = [f for fields in routed.values() for f in fields]
+        definition = without_fields(definition, apart)
+        side_calls: list[Future[Any]] = [*drafted, *([statements] if statements else [])]
         addendum = ""
         if client_present_end_seconds is not None and segments:
             split = split_at_boundary(segments, client_present_end_seconds)
@@ -428,11 +427,12 @@ class RegistryNoteGenerationService(NoteGenerationService):
                 definition, transcript, session_date, chart_block
             )
         if addendum:
-            user_prompt = f"{user_prompt}\n\n{_addendum_block(addendum, apart=bool(routed))}"
+            addendum_block = _addendum_block(addendum, apart=bool(routed[RISK_MSE]))
+            user_prompt = f"{user_prompt}\n\n{addendum_block}"
         if current_note:
-            apart = {(r.section, r.field.key) for r in rendered}
-            apart |= {(f.section, f.field.key) for f in routed}
-            kept = _without_fields(current_note, apart)
+            elsewhere = {(r.section, r.field.key) for r in rendered}
+            elsewhere |= {(f.section, f.field.key) for f in apart}
+            kept = _without_fields(current_note, elsewhere)
             user_prompt = f"{user_prompt}\n\n{_current_note_block(kept)}"
 
         schema = _build_registry_response_schema(definition)
@@ -458,7 +458,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
         stated = completion.data.get(TIME_KEY) if asks_start else None
         content = _coerce_registry_response(full_definition, asked)
         content = _with_written(content, full_definition, chart, inputs, statements)
-        return _with_drafted(content, risk_sections), stated
+        return _with_drafted(content, drafted), stated
 
     def _start_extraction(
         self,
@@ -494,29 +494,47 @@ class RegistryNoteGenerationService(NoteGenerationService):
             transcript_content,
         )
 
-    def _start_risk_sections(
+    def _start_section_calls(
         self,
+        definition: NoteTypeDefinition,
+        person: str,
+        transcript_content: str,
+        current_note: Mapping[str, Any] | None,
+    ) -> tuple[dict[str, list[SectionField]], list[Future[dict[str, dict[str, Any]]]]]:
+        """Each section call's fields for ``definition``, and those with any started."""
+        routed = {call: section_call_fields(definition, call) for call in SECTION_DRAFTS}
+        started = [
+            self._start_section_call(call, fields, person, transcript_content, current_note)
+            for call, fields in routed.items()
+            if fields
+        ]
+        return routed, started
+
+    def _start_section_call(
+        self,
+        call: str,
         fields: list[SectionField],
         person: str,
         transcript_content: str,
         current_note: Mapping[str, Any] | None,
     ) -> Future[dict[str, dict[str, Any]]]:
-        """The risk, mental status and measures call, started beside the draft.
+        """A section call (:data:`SECTION_DRAFTS`), started beside the draft.
 
         Drafted like the main call (same budgets and retry), on the model its
         own key names, else the note model. A redraft's current note goes to it
         for its own fields only, with the same rule the main call gets.
         """
+        section_draft = SECTION_DRAFTS[call]
 
         def complete(
             system_prompt: str, user_prompt: str, response_schema: dict[str, Any]
         ) -> dict[str, Any]:
             return self._complete_structured_with_retry(
-                note_key=RISK_SCHEMA_TITLE,
+                note_key=section_draft.schema_title,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 response_schema=response_schema,
-                call=RISK_MSE,
+                call=call,
             ).data
 
         paths = {(f.section, f.field.key) for f in fields}
@@ -524,7 +542,8 @@ class RegistryNoteGenerationService(NoteGenerationService):
         context = contextvars.copy_context()
         return _extraction_executor().submit(
             context.run,
-            _risk_sections_logged,
+            _section_call_logged,
+            section_draft,
             complete,
             fields,
             person,
@@ -961,16 +980,15 @@ def _chart_block(
 
 
 def _with_drafted(
-    content: dict[str, Any], drafted: Future[dict[str, dict[str, Any]]] | None
+    content: dict[str, Any], drafted: Sequence[Future[dict[str, dict[str, Any]]]]
 ) -> dict[str, Any]:
-    """``content`` with the sections a call of their own drafted.
+    """``content`` with the sections calls of their own drafted.
 
-    Waits for that call; its failure fails the draft, as the main call's does.
+    Waits for those calls; a failure fails the draft, as the main call's does.
     """
-    if drafted is None:
-        return content
-    for section_key, fields in drafted.result().items():
-        content[section_key].update(fields)
+    for call in drafted:
+        for section_key, fields in call.result().items():
+            content[section_key].update(fields)
     return content
 
 
@@ -1030,27 +1048,55 @@ RISK_SECTION_FAILED_EVENT = "risk_section_failed"
 """Logged when the risk, mental status and measures call fails, apart from the main
 call's failures. Carries counts and classes only, never transcript text."""
 
+HPI_SECTION_FAILED_EVENT = "hpi_section_failed"
+"""Logged when the history of present illness call fails, the same way."""
 
-def _risk_sections_logged(
+
+@dataclass(frozen=True)
+class SectionDraft:
+    """How a section call drafts: its schema's title, its drafting, its failure event."""
+
+    schema_title: str
+    draft: Callable[
+        [CompleteStructured, Sequence[SectionField], str, str, str | None],
+        dict[str, dict[str, Any]],
+    ]
+    failed_event: str
+
+
+SECTION_DRAFTS: Mapping[str, SectionDraft] = {
+    HPI: SectionDraft(
+        hpi_section_call.SCHEMA_TITLE, hpi_section_call.draft_sections, HPI_SECTION_FAILED_EVENT
+    ),
+    RISK_MSE: SectionDraft(
+        risk_section_call.SCHEMA_TITLE, risk_section_call.draft_sections, RISK_SECTION_FAILED_EVENT
+    ),
+}
+"""Each call of :mod:`app.notes.section_calls` that drafts sections beside the main draft."""
+
+
+def _section_call_logged(
+    section_draft: SectionDraft,
     complete: CompleteStructured,
     fields: Sequence[SectionField],
     person: str,
     transcript_content: str,
     current_note: str | None,
 ) -> dict[str, dict[str, Any]]:
-    """:func:`draft_sections`, with a failure logged under its own event and re-raised."""
+    """The call's drafting, with a failure logged under its own event and re-raised."""
     try:
-        return draft_sections(complete, fields, person, transcript_content, current_note)
+        return section_draft.draft(complete, fields, person, transcript_content, current_note)
     except Exception as exc:
         cause = exc.__cause__ or exc.__context__
+        event = section_draft.failed_event
         logger.warning(
             "%s fields=%d error_class=%s cause_class=%s",
-            RISK_SECTION_FAILED_EVENT,
+            event,
             len(fields),
             type(exc).__name__,
             type(cause).__name__ if cause is not None else "",
             extra={
-                "event": RISK_SECTION_FAILED_EVENT,
+                "event": event,
                 "field_count": len(fields),
                 "error_class": type(exc).__name__,
                 "cause_class": type(cause).__name__ if cause is not None else None,
@@ -1064,7 +1110,7 @@ _extraction_executor_lock = threading.Lock()
 
 
 def _extraction_executor() -> ThreadPoolExecutor:
-    """Threads the calls beside the draft run on (the extraction, the risk sections),
+    """Threads the calls beside the draft run on (the extraction, the section calls),
     made once per process."""
     with _extraction_executor_lock:
         if not _extraction_executor_holder:
