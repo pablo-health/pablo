@@ -497,6 +497,18 @@ milligrams every morning. Return in four weeks. Psychotherapy from 3:02 to 3:41.
 99214 plus 90836.
 """
 
+# The listening visit, with its dictation as a speech recognizer writes it.
+# The clinician says "Depression, F32.0, stable", "from 3:02 to 3:41, 39
+# minutes" and "99214 plus 90836"; the transcript has the code without its
+# decimal, the window's end run into its minutes, and the two codes run into
+# one number. The draft must carry the codes and the window as dictated.
+SUPPORTIVE_ONLY_AS_HEARD = SUPPORTIVE_ONLY.replace(
+    "Depression stable on sertraline.", "Depression F32 0 stable on sertraline."
+).replace(
+    "Psychotherapy from 3:02 to 3:41. Billing 99214 plus 90836.",
+    "Psychotherapy from 302 to 34139 minutes. Billing 992-149-0836.",
+)
+
 # Therapy that is brief psychoeducation on sleep hygiene, named as such, with
 # one thing to try. The clinician says nothing about a goal or about how often
 # therapy will continue.
