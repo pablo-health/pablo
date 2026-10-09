@@ -34,6 +34,7 @@ from app.notes.section_calls import (
 from app.notes.spec_templates import TEMPLATES_DIR
 from app.services import note_generation_service
 from app.services.chart_field_extraction import SCHEMA_TITLE as EXTRACTION_TITLE
+from app.services.hpi_section_call import SCHEMA_TITLE as HPI_TITLE
 from app.services.note_generation_service import (
     RISK_SECTION_FAILED_EVENT,
     RegistryNoteGenerationService,
@@ -302,6 +303,8 @@ class _ScriptedGateway(StructuredLLMGateway):
         title = schema.get("title")
         if title == EXTRACTION_TITLE:
             return StructuredCompletion(data={"statements": []})
+        if title == HPI_TITLE:
+            return StructuredCompletion(data=_shape(schema))
         if title == SCHEMA_TITLE:
             self.risk_started.set()
             if isinstance(self.risk, Exception):
@@ -318,7 +321,8 @@ class _ScriptedGateway(StructuredLLMGateway):
             if c["response_schema"].get("title") == title
             or (
                 title is None
-                and c["response_schema"].get("title") not in (SCHEMA_TITLE, EXTRACTION_TITLE)
+                and c["response_schema"].get("title")
+                not in (SCHEMA_TITLE, EXTRACTION_TITLE, HPI_TITLE)
             )
         )
 
@@ -355,7 +359,7 @@ def test_the_main_call_no_longer_asks_for_or_sees_risk_mental_status_or_measures
     _draft(gateway)
     main = gateway.call(None)
     assert not ROUTED & set(main["response_schema"]["properties"])
-    assert {"subjective", "assessment", "plan"} <= set(main["response_schema"]["properties"])
+    assert {"assessment", "plan"} <= set(main["response_schema"]["properties"])
     fields_block = main["user_prompt"]
     for hint in ("Only the clinician's own stated judgment of overall acute risk", "Rate, rhythm"):
         assert hint not in fields_block
@@ -390,6 +394,7 @@ def test_the_risk_call_drafts_its_fields_into_the_note_with_quotes_checked() -> 
     assert {c["response_schema"].get("title") for c in gateway.calls} == {
         EXTRACTION_TITLE,
         SCHEMA_TITLE,
+        HPI_TITLE,
         None,
     }
 
@@ -439,7 +444,7 @@ def test_a_redraft_gives_each_call_its_own_fields_of_the_current_note() -> None:
     current = {
         "risk": {"overall_risk": "Overall acute risk is low."},
         "mse": {"speech": "Pressured."},
-        "subjective": {"chief_complaint": "Worse sleep."},
+        "assessment": {"formulation": "Worse sleep."},
     }
     _draft(gateway, current_note=current)
     risk_prompt = gateway.call(SCHEMA_TITLE)["user_prompt"]

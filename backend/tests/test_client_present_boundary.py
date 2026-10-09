@@ -27,7 +27,8 @@ from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
 from app.routes import internal_transcription as it
 from app.services.note_generation_service import RegistryNoteGenerationService
 from app.services.session_service import _client_present_end
-from app.services.structured_llm_gateway import FakeStructuredLLMGateway, StructuredCompletion
+
+from tests.draft_call_fakes import DraftCallsGateway
 
 # A 36-minute session: the client's last line ends at 36:00, then the
 # clinician dictates for three more minutes. Measured to the end of the
@@ -315,18 +316,14 @@ class TestGenerationReceivesTheAddendum:
 
     def _generate(
         self, patient: Patient, content: str, boundary: float | None
-    ) -> tuple[FakeStructuredLLMGateway, dict[str, Any]]:
+    ) -> tuple[DraftCallsGateway, dict[str, Any]]:
         registry = NoteTypeRegistry()
         register_builtin_note_types(registry)
-        gateway = FakeStructuredLLMGateway(
-            responses=[
-                StructuredCompletion(
-                    data={
-                        "assessment": {"impression": "x"},
-                        "psychotherapy": {"interventions": "should not survive"},
-                    }
-                )
-            ]
+        gateway = DraftCallsGateway(
+            draft={
+                "assessment": {"impression": "x"},
+                "psychotherapy": {"interventions": "should not survive"},
+            }
         )
         definition = to_definition("custom.follow_up", 1, _FOLLOW_UP)
         result = RegistryNoteGenerationService(
@@ -344,7 +341,7 @@ class TestGenerationReceivesTheAddendum:
     def test_the_tail_reaches_the_model_as_a_separate_addendum(self, patient: Patient) -> None:
         gateway, _content = self._generate(patient, _SESSION_WITH_TAIL, 2158.4)
 
-        prompt = gateway.calls[0]["user_prompt"]
+        prompt = gateway.main_call()["user_prompt"]
         transcript_part, addendum_part = prompt.split("Clinician addendum:", 1)
         assert "The new dose has helped" in transcript_part
         assert "denies suicidal ideation" not in transcript_part
@@ -360,7 +357,7 @@ class TestGenerationReceivesTheAddendum:
     ) -> None:
         gateway, content = self._generate(patient, _DICTATION_ONLY, 0.0)
 
-        call = gateway.calls[0]
+        call = gateway.main_call()
         assert "psychotherapy" not in call["response_schema"]["properties"]
         assert "Section 'psychotherapy'" not in call["user_prompt"]
         assert "No risk concerns stated." in call["user_prompt"].split("Clinician addendum:")[1]
@@ -375,7 +372,7 @@ class TestGenerationReceivesTheAddendum:
 
         gateway, _content = self._generate(patient, content, 2158.4)
 
-        transcript_part, addendum_part = gateway.calls[0]["user_prompt"].split(
+        transcript_part, addendum_part = gateway.main_call()["user_prompt"].split(
             "Clinician addendum:", 1
         )
         assert "PDMP checked" not in transcript_part
@@ -385,6 +382,6 @@ class TestGenerationReceivesTheAddendum:
     def test_an_unknown_boundary_leaves_the_prompt_as_it_was(self, patient: Patient) -> None:
         gateway, _content = self._generate(patient, _SESSION_WITH_TAIL, None)
 
-        prompt = gateway.calls[0]["user_prompt"]
+        prompt = gateway.main_call()["user_prompt"]
         assert "Clinician addendum:" not in prompt
         assert "Client denies suicidal ideation" in prompt

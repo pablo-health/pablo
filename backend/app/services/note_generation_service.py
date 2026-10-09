@@ -16,6 +16,7 @@ the hand-tuned clinical prompt migrated from the legacy plugin.
 
 import contextvars
 import dataclasses
+import functools
 import json
 import logging
 import threading
@@ -56,8 +57,11 @@ from ..notes.diagnoses import DIAGNOSES_KIND_LABEL, DIAGNOSES_SCHEMA, coerce_dia
 from ..notes.practice_types import PromptBlocks, render_system_prompt, render_user_prompt
 from ..notes.prompts.soap import SOAP_SYSTEM_PROMPT
 from ..notes.section_calls import (
+    HPI,
+    PSYCHOTHERAPY,
     RISK_MSE,
     SectionField,
+    code_written_fields,
     model_key,
     section_call_fields,
     without_fields,
@@ -65,15 +69,15 @@ from ..notes.section_calls import (
 from ..notes.visit_times import (
     PSYCHOTHERAPY_SECTION_KEY,
     PSYCHOTHERAPY_TIME_FIELD,
+    TurnLabel,
     client_present_turns,
     dictated_time_text,
 )
 from ..settings import get_settings
+from . import hpi_section_call, psychotherapy_section_call, risk_section_call
 from .ai_features import AIFeature
 from .chart_field_extraction import SCHEMA_TITLE, extract_statements
 from .hedged_structured_llm_gateway import generation_gateway
-from .risk_section_call import SCHEMA_TITLE as RISK_SCHEMA_TITLE
-from .risk_section_call import draft_sections
 from .source_attribution_service import (
     build_attribution_prompt,
     build_claims_from_soap,
@@ -100,6 +104,22 @@ logger = logging.getLogger(__name__)
 
 #: One structured call: ``(system_prompt, user_prompt, response_schema)`` to the reply.
 CompleteStructured = Callable[[str, str, dict[str, Any]], dict[str, Any]]
+
+Labelled = tuple[dict[float, TurnLabel], float | None]
+"""Turn labels keyed by each turn's start, and the start of the turn the clinician
+cued the therapy with (:func:`.therapy_labels.label_turns`)."""
+
+
+@dataclass(frozen=True)
+class _TherapyLane:
+    """What the psychotherapy lane found: the turn labels, and the block, unless the
+    labels found no therapy and it is left to the caller (``block`` is ``None``)."""
+
+    labels: dict[float, TurnLabel]
+    cue: float | None
+    fields: Sequence[SectionField]
+    draft: Callable[[], dict[str, dict[str, Any]]]
+    block: dict[str, dict[str, Any]] | None
 
 
 class TransientNoteGenerationError(Exception):
@@ -324,7 +344,8 @@ class RegistryNoteGenerationService(NoteGenerationService):
         asks_start = client_present_end_seconds != 0 and any(
             s.key == PSYCHOTHERAPY_SECTION_KEY for s in definition.sections
         )
-        content, time_reply, statements = self._generate_via_registry(
+        turns = client_present_turns(segments, client_present_end_seconds)
+        content, time_reply, labelled, statements = self._generate_via_registry(
             definition,
             transcript,
             patient,
@@ -334,6 +355,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
             segments=segments,
             dictated=dictated,
             asks_start=asks_start,
+            turns=turns,
             chart=chart,
             current_note=current_note,
         )
@@ -351,8 +373,9 @@ class RegistryNoteGenerationService(NoteGenerationService):
             # The field states the dictated time as rendered from its parts,
             # so what the clinician said is compared by parts, never re-read.
             content[PSYCHOTHERAPY_SECTION_KEY][PSYCHOTHERAPY_TIME_FIELD] = dictated_time_text(said)
-            turns = client_present_turns(segments, client_present_end_seconds)
-            labels, cue = label_turns(content, turns, self._complete_labels)
+            # Labelled beside the draft when the psychotherapy call ran (they
+            # decided whether it did); after it, with the draft, otherwise.
+            labels, cue = labelled or label_turns(content, turns, self._complete_labels)
             proposal = propose(said, labels, cue)
         return GeneratedNote(
             note_type=note_type,
@@ -374,17 +397,22 @@ class RegistryNoteGenerationService(NoteGenerationService):
         segments: Sequence[TimedSegment] = (),
         dictated: str = "",
         asks_start: bool = False,
+        turns: Sequence[TimedSegment] = (),
         chart: ChartContext | None = None,
         current_note: Mapping[str, Any] | None = None,
-    ) -> tuple[dict[str, Any], dict[str, Any] | None, Statements | None]:
-        """The drafted content, the psychotherapy time the clinician stated, and what the
-        extraction call found the visit said about the fields printed from the chart.
+    ) -> tuple[dict[str, Any], dict[str, Any] | None, Labelled | None, Statements | None]:
+        """The drafted content, the psychotherapy time the clinician stated, the turn
+        labels when they were made beside the draft, and what the extraction call found
+        the visit said about the fields printed from the chart.
 
         Fields printed from the chart are written in code (:mod:`app.notes.chart_fields`)
         and left out of the model's request; what the visit said about them comes
-        from a small extraction call that runs beside the draft. The risk, mental
-        status and measures sections are drafted by a call of their own beside it
-        too (:mod:`app.notes.section_calls`), and are left out of the main request.
+        from a small extraction call that runs beside the draft. The history of
+        present illness, the risk, mental status and measures sections, and the
+        psychotherapy block are each drafted by a call of their own beside it too
+        (:mod:`app.notes.section_calls`), and are left out of the main request.
+        The psychotherapy block's call runs only when the visit had therapy
+        (:meth:`_start_psychotherapy`).
         """
         full_definition = definition
         rendered = rendered_fields(definition)
@@ -397,14 +425,25 @@ class RegistryNoteGenerationService(NoteGenerationService):
         # The clinician's word for the person seen, which a type's prompts may
         # place as {term}; the chart carries it from whoever reads the note.
         person = chart.person if chart is not None else ChartContext().person
-        routed = section_call_fields(definition, RISK_MSE)
-        risk_sections = (
-            self._start_risk_sections(routed, person, transcript.content, current_note)
-            if routed
-            else None
+        routed, drafted = self._start_section_calls(
+            definition, person, transcript.content, current_note
         )
-        definition = without_fields(definition, routed)
-        side_calls = [c for c in (statements, risk_sections) if c is not None]
+        # No client in the recording, no therapy: the block stays empty, unasked.
+        therapy = self._start_psychotherapy(
+            routed[PSYCHOTHERAPY] if client_present_end_seconds != 0 else [],
+            person,
+            transcript.content,
+            current_note,
+            turns if asks_start else None,
+            _entered_choices(definition, inputs),
+        )
+        apart = [f for fields in routed.values() for f in fields]
+        definition = without_fields(definition, [*apart, *code_written_fields(definition)])
+        side_calls: list[Future[Any]] = [
+            *drafted,
+            *([statements] if statements else []),
+            *([therapy] if therapy else []),
+        ]
         addendum = ""
         if client_present_end_seconds is not None and segments:
             split = split_at_boundary(segments, client_present_end_seconds)
@@ -434,11 +473,13 @@ class RegistryNoteGenerationService(NoteGenerationService):
                 definition, transcript, session_date, chart_block
             )
         if addendum:
-            user_prompt = f"{user_prompt}\n\n{_addendum_block(addendum, apart=bool(routed))}"
+            addendum_block = _addendum_block(addendum, apart=bool(routed[RISK_MSE]))
+            user_prompt = f"{user_prompt}\n\n{addendum_block}"
+        user_prompt += _drafted_apart_block(full_definition, apart, person)
         if current_note:
-            apart = {(r.section, r.field.key) for r in rendered}
-            apart |= {(f.section, f.field.key) for f in routed}
-            kept = _without_fields(current_note, apart)
+            elsewhere = {(r.section, r.field.key) for r in rendered}
+            elsewhere |= {(f.section, f.field.key) for f in apart}
+            kept = _without_fields(current_note, elsewhere)
             user_prompt = f"{user_prompt}\n\n{_current_note_block(kept)}"
 
         schema = _build_registry_response_schema(definition)
@@ -462,10 +503,16 @@ class RegistryNoteGenerationService(NoteGenerationService):
         # a section left out of the request comes back present and empty.
         asked = _coerce_registry_response(definition, completion.data)
         stated = completion.data.get(TIME_KEY) if asks_start else None
-        content = _coerce_registry_response(full_definition, asked)
-        content = _with_written(content, full_definition, chart, inputs, statements)
-        found = statements.result() if statements is not None else None
-        return _with_drafted(content, risk_sections), stated, found
+        content = _with_written(
+            _coerce_registry_response(full_definition, asked),
+            full_definition,
+            chart,
+            inputs,
+            statements,
+        )
+        # The calls beside the draft, waited for in turn; the psychotherapy block last.
+        content, labelled = _with_psychotherapy(_with_drafted(content, drafted), therapy, stated)
+        return content, stated, labelled, statements.result() if statements else None
 
     def _start_extraction(
         self,
@@ -501,42 +548,125 @@ class RegistryNoteGenerationService(NoteGenerationService):
             transcript_content,
         )
 
-    def _start_risk_sections(
+    def _start_section_calls(
+        self,
+        definition: NoteTypeDefinition,
+        person: str,
+        transcript_content: str,
+        current_note: Mapping[str, Any] | None,
+    ) -> tuple[dict[str, list[SectionField]], list[Future[dict[str, dict[str, Any]]]]]:
+        """Each section call's fields for ``definition``, and those with any started.
+
+        The psychotherapy call is not started here: whether it runs is decided
+        first (:meth:`_start_psychotherapy`).
+        """
+        routed = {call: section_call_fields(definition, call) for call in SECTION_DRAFTS}
+        started = [
+            self._start_section_call(call, fields, person, transcript_content, current_note)
+            for call, fields in routed.items()
+            if fields and call != PSYCHOTHERAPY
+        ]
+        return routed, started
+
+    def _start_psychotherapy(
         self,
         fields: list[SectionField],
         person: str,
         transcript_content: str,
         current_note: Mapping[str, Any] | None,
-    ) -> Future[dict[str, dict[str, Any]]]:
-        """The risk, mental status and measures call, started beside the draft.
+        turns: Sequence[TimedSegment] | None,
+        entered: str,
+    ) -> Future[_TherapyLane] | None:
+        """The psychotherapy block's lane, started beside the draft; ``None`` with no fields.
+
+        The client-present turns are labelled first (``None``: not labelled).
+        Where the labels find no therapy, and a redraft's note has nothing in
+        the block, the lane stops there and no model is asked to write the
+        block; the caller then drafts it only if the main draft returns a
+        dictated psychotherapy time, and otherwise leaves it empty
+        (:func:`_with_psychotherapy`). Labels that could not be made decide
+        nothing, and the block is drafted.
+        """
+        if not fields:
+            return None
+        draft = self._section_call_runner(
+            PSYCHOTHERAPY, fields, person, transcript_content, current_note, entered
+        )
+        paths = {(f.section, f.field.key) for f in fields}
+        current_block = any(
+            _has_text(v)
+            for section in (_only_fields(current_note, paths) if current_note else {}).values()
+            if isinstance(section, Mapping)
+            for v in section.values()
+        )
+
+        def run() -> _TherapyLane:
+            labels, cue = (
+                label_turns(None, turns, self._complete_labels) if turns is not None else ({}, None)
+            )
+            gated = psychotherapy_section_call.no_therapy(
+                labels, dictated_time=False, current_block=current_block
+            )
+            return _TherapyLane(labels, cue, fields, draft, None if gated else draft())
+
+        context = contextvars.copy_context()
+        return _extraction_executor().submit(context.run, run)
+
+    def _section_call_runner(
+        self,
+        call: str,
+        fields: list[SectionField],
+        person: str,
+        transcript_content: str,
+        current_note: Mapping[str, Any] | None,
+        entered: str = "",
+    ) -> Callable[[], dict[str, dict[str, Any]]]:
+        """A section call (:data:`SECTION_DRAFTS`) ready to run, on any thread.
 
         Drafted like the main call (same budgets and retry), on the model its
         own key names, else the note model. A redraft's current note goes to it
-        for its own fields only, with the same rule the main call gets.
+        for its own fields only, with the same rule the main call gets; values
+        the clinician entered go with it where given.
         """
+        section_draft = SECTION_DRAFTS[call]
 
         def complete(
             system_prompt: str, user_prompt: str, response_schema: dict[str, Any]
         ) -> dict[str, Any]:
             return self._complete_structured_with_retry(
-                note_key=RISK_SCHEMA_TITLE,
+                note_key=section_draft.schema_title,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 response_schema=response_schema,
-                call=RISK_MSE,
+                call=call,
             ).data
 
         paths = {(f.section, f.field.key) for f in fields}
         current = _current_note_block(_only_fields(current_note, paths)) if current_note else None
-        context = contextvars.copy_context()
-        return _extraction_executor().submit(
-            context.run,
-            _risk_sections_logged,
+        context_note = "\n\n".join(p for p in (entered, current) if p) or None
+        return functools.partial(
+            _section_call_logged,
+            section_draft,
             complete,
             fields,
             person,
             transcript_content,
-            current,
+            context_note,
+        )
+
+    def _start_section_call(
+        self,
+        call: str,
+        fields: list[SectionField],
+        person: str,
+        transcript_content: str,
+        current_note: Mapping[str, Any] | None,
+    ) -> Future[dict[str, dict[str, Any]]]:
+        """A section call (:data:`SECTION_DRAFTS`), started beside the draft."""
+        context = contextvars.copy_context()
+        return _extraction_executor().submit(
+            context.run,
+            self._section_call_runner(call, fields, person, transcript_content, current_note),
         )
 
     def _complete_labels(self, prompt: str) -> dict[str, Any]:
@@ -935,6 +1065,28 @@ _CURRENT_NOTE_INSTRUCTIONS = (
 )
 
 
+def _drafted_apart_block(
+    definition: NoteTypeDefinition, apart: Sequence[SectionField], person: str
+) -> str:
+    """The sections of the note drafted by calls of their own, named for the main draft.
+
+    With those sections gone from its fields, the main draft otherwise sees a
+    note with nowhere for the history, the risk screen or the mental status to
+    go, and writes them into a field it still has. Empty when nothing is
+    drafted apart.
+    """
+    keys = {f.section for f in apart}
+    labels = [s.label for s in definition.sections if s.key in keys]
+    if not labels:
+        return ""
+    return (
+        f"\n\nThe note's other sections ({', '.join(labels)}) are written separately from "
+        f"the same visit, and what the visit said for them goes there. Taking the history "
+        f"(asking how the {person} has been, about symptoms, sleep, side effects or how an "
+        "earlier plan went, and hearing the answers) belongs there however long it ran."
+    )
+
+
 def _current_note_block(current_note: Mapping[str, Any]) -> str:
     note = json.dumps(current_note, indent=2, ensure_ascii=False)
     return f"{_CURRENT_NOTE_INSTRUCTIONS}\n\n{note}"
@@ -968,16 +1120,15 @@ def _chart_block(
 
 
 def _with_drafted(
-    content: dict[str, Any], drafted: Future[dict[str, dict[str, Any]]] | None
+    content: dict[str, Any], drafted: Sequence[Future[dict[str, dict[str, Any]]]]
 ) -> dict[str, Any]:
-    """``content`` with the sections a call of their own drafted.
+    """``content`` with the sections calls of their own drafted.
 
-    Waits for that call; its failure fails the draft, as the main call's does.
+    Waits for those calls; a failure fails the draft, as the main call's does.
     """
-    if drafted is None:
-        return content
-    for section_key, fields in drafted.result().items():
-        content[section_key].update(fields)
+    for call in drafted:
+        for section_key, fields in call.result().items():
+            content[section_key].update(fields)
     return content
 
 
@@ -1037,27 +1188,104 @@ RISK_SECTION_FAILED_EVENT = "risk_section_failed"
 """Logged when the risk, mental status and measures call fails, apart from the main
 call's failures. Carries counts and classes only, never transcript text."""
 
+HPI_SECTION_FAILED_EVENT = "hpi_section_failed"
+"""Logged when the history of present illness call fails, the same way."""
 
-def _risk_sections_logged(
+PSYCHOTHERAPY_SECTION_FAILED_EVENT = "psychotherapy_section_failed"
+"""Logged when the psychotherapy call fails, the same way."""
+
+
+@dataclass(frozen=True)
+class SectionDraft:
+    """How a section call drafts: its schema's title, its drafting, its failure event."""
+
+    schema_title: str
+    draft: Callable[
+        [CompleteStructured, Sequence[SectionField], str, str, str | None],
+        dict[str, dict[str, Any]],
+    ]
+    failed_event: str
+
+
+SECTION_DRAFTS: Mapping[str, SectionDraft] = {
+    HPI: SectionDraft(
+        hpi_section_call.SCHEMA_TITLE, hpi_section_call.draft_sections, HPI_SECTION_FAILED_EVENT
+    ),
+    RISK_MSE: SectionDraft(
+        risk_section_call.SCHEMA_TITLE, risk_section_call.draft_sections, RISK_SECTION_FAILED_EVENT
+    ),
+    PSYCHOTHERAPY: SectionDraft(
+        psychotherapy_section_call.SCHEMA_TITLE,
+        psychotherapy_section_call.draft_sections,
+        PSYCHOTHERAPY_SECTION_FAILED_EVENT,
+    ),
+}
+"""Each call of :mod:`app.notes.section_calls` that drafts sections beside the main draft."""
+
+
+def _with_psychotherapy(
+    content: dict[str, Any], therapy: Future[_TherapyLane] | None, stated: Any
+) -> tuple[dict[str, Any], Labelled | None]:
+    """``content`` with the psychotherapy block, and the turn labels the lane made.
+
+    Waits for the lane. Where its labels found no therapy, the block is drafted
+    now only if the main draft returned a dictated psychotherapy time, and is
+    otherwise left empty with no model asked. A failed call fails the draft.
+    """
+    if therapy is None:
+        return content, None
+    lane = therapy.result()
+    block = lane.block
+    if block is None:
+        block = (
+            lane.draft()
+            if stated_time(stated)
+            else psychotherapy_section_call.empty_block(lane.fields)
+        )
+    for section_key, fields in block.items():
+        content[section_key].update(fields)
+    return content, (lane.labels, lane.cue)
+
+
+def _has_text(value: Any) -> bool:
+    if isinstance(value, list):
+        return any(_has_text(v) for v in value)
+    return bool(str(value or "").strip())
+
+
+def _entered_choices(definition: NoteTypeDefinition, inputs: Mapping[str, str]) -> str:
+    """The choices the clinician entered (the visit code among them), as the
+    psychotherapy call reads them: whether the visit was billed with therapy at all."""
+    lines = [
+        f"- {i.label}: {inputs[i.key]}"
+        for i in definition.inputs
+        if i.kind == "choice" and str(inputs.get(i.key) or "").strip()
+    ]
+    return "Values the clinician entered:\n" + "\n".join(lines) if lines else ""
+
+
+def _section_call_logged(
+    section_draft: SectionDraft,
     complete: CompleteStructured,
     fields: Sequence[SectionField],
     person: str,
     transcript_content: str,
     current_note: str | None,
 ) -> dict[str, dict[str, Any]]:
-    """:func:`draft_sections`, with a failure logged under its own event and re-raised."""
+    """The call's drafting, with a failure logged under its own event and re-raised."""
     try:
-        return draft_sections(complete, fields, person, transcript_content, current_note)
+        return section_draft.draft(complete, fields, person, transcript_content, current_note)
     except Exception as exc:
         cause = exc.__cause__ or exc.__context__
+        event = section_draft.failed_event
         logger.warning(
             "%s fields=%d error_class=%s cause_class=%s",
-            RISK_SECTION_FAILED_EVENT,
+            event,
             len(fields),
             type(exc).__name__,
             type(cause).__name__ if cause is not None else "",
             extra={
-                "event": RISK_SECTION_FAILED_EVENT,
+                "event": event,
                 "field_count": len(fields),
                 "error_class": type(exc).__name__,
                 "cause_class": type(cause).__name__ if cause is not None else None,
@@ -1071,7 +1299,7 @@ _extraction_executor_lock = threading.Lock()
 
 
 def _extraction_executor() -> ThreadPoolExecutor:
-    """Threads the calls beside the draft run on (the extraction, the risk sections),
+    """Threads the calls beside the draft run on (the extraction, the section calls),
     made once per process."""
     with _extraction_executor_lock:
         if not _extraction_executor_holder:

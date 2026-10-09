@@ -591,12 +591,14 @@ def _chart_field_statements(schema: dict[str, Any], user_prompt: str) -> dict[st
     return reply
 
 
-def _risk_sections(schema: dict[str, Any], user_prompt: str) -> dict[str, Any]:
-    """The risk, mental status and measures call, answered as a draft's fields always were.
+def _section_call(schema: dict[str, Any], user_prompt: str) -> dict[str, Any]:
+    """A section call (the history of present illness; risk, mental status and
+    measures; the psychotherapy block), answered as a draft's fields always were.
 
     Each field reads "Stand-in draft for <section>.<field>.", or what was dictated
-    under its name after the session. A risk field's text comes back with no
-    quotations of the client, which a model may also return.
+    under its name after the session. A field with quotes (a risk field, the chief
+    complaint, the therapy response) comes back with no quotations of the client,
+    which a model may also return.
     """
     reply: dict[str, Any] = {}
     dictated = _dictated(user_prompt)
@@ -626,7 +628,11 @@ _TITLED_CALLS: dict[str, Callable[[NoteCall], dict[str, Any]]] = {
     "ChartFieldStatements": lambda call: _chart_field_statements(
         call.response_schema, call.user_prompt
     ),
-    "RiskMentalStatusSections": lambda call: _risk_sections(call.response_schema, call.user_prompt),
+    "RiskMentalStatusSections": lambda call: _section_call(call.response_schema, call.user_prompt),
+    "HistoryOfPresentIllnessSections": lambda call: _section_call(
+        call.response_schema, call.user_prompt
+    ),
+    "PsychotherapySections": lambda call: _section_call(call.response_schema, call.user_prompt),
     "ChartProposals": _proposals_reply,
 }
 

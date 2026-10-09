@@ -401,6 +401,35 @@ def test_the_stand_in_drafts_risk_mental_status_and_measures_by_their_own_call(
     )
 
 
+def test_the_stand_in_drafts_an_evaluations_history_of_present_illness_by_its_own_call(
+    stand_in: list[str],
+) -> None:
+    """The chief complaint, the history and the review of systems, in the shape a model
+    returns them; a list field comes back a list."""
+    spec = json.loads(FOLLOW_UP_TEMPLATE.with_name("psychiatric_evaluation.json").read_text())
+    definition = to_definition(
+        "custom.psychiatric_evaluation", 1, PracticeNoteTypeSpec.model_validate(spec["spec"])
+    )
+
+    generated = _service().generate_note(
+        definition.key,
+        TRANSCRIPT,
+        PATIENT,
+        NOW,
+        inputs={"place_of_service": "In office"},
+        definition=definition,
+        chart=ChartContext(),
+    )
+
+    content = generated.content
+    assert (
+        content["chief_complaint"]["chief_complaint"]
+        == "Stand-in draft for chief_complaint.chief_complaint."
+    )
+    assert content["hpi"]["symptoms"] == ["Stand-in draft for hpi.symptoms."]
+    assert content["psychiatric_ros"]["sleep"] == "Stand-in draft for psychiatric_ros.sleep."
+
+
 @pytest.mark.parametrize("template", ["psychiatric_follow_up", "psychiatric_evaluation"])
 def test_the_prescriber_templates_take_current_medications_from_the_chart(template: str) -> None:
     spec = json.loads(FOLLOW_UP_TEMPLATE.with_name(f"{template}.json").read_text())["spec"]

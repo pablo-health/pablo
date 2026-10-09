@@ -7,10 +7,12 @@ Two parts, both structured, neither read out of free text:
 - the call that drafts the note also returns the psychotherapy time the
   clinician stated, part by part (:data:`TIME_SCHEMA`, :data:`TIME_INSTRUCTIONS`);
 - a second, small call labels every client-present turn as therapy,
-  medication management, screening and risk, or admin, with the draft as
-  context (:func:`label_turns`). Where the clinician said aloud that the
-  therapy was starting, that cue informs the labels and is returned with
-  them.
+  medication management, screening and risk, or admin (:func:`label_turns`).
+  Where the psychotherapy block is drafted by a call of its own, the labels
+  come first, beside the draft, and decide whether that call runs; otherwise
+  they follow the draft and read its psychotherapy section as context. Where
+  the clinician said aloud that the therapy was starting, that cue informs
+  the labels and is returned with them.
 
 Neither is fatal: a reply that cannot be read keeps the draft and proposes
 nothing, and the clinician labels the turns or types the minutes.
@@ -122,14 +124,18 @@ def _draft_context(content: dict[str, Any]) -> str:
     return json.dumps(section, indent=2, ensure_ascii=False)
 
 
-def build_label_prompt(content: dict[str, Any], turns: Sequence[TimedSegment]) -> str:
+def build_label_prompt(content: dict[str, Any] | None, turns: Sequence[TimedSegment]) -> str:
+    """The labeling prompt; with the drafted psychotherapy section as context when
+    there is a draft, and without it when the labels come first (they decide
+    whether the psychotherapy block is drafted at all)."""
     indexed = "\n".join(f"[S{i}] {t.speaker}: {t.text}" for i, t in enumerate(turns))
-    return (
-        f"{_LABEL_GUIDE}\n\n"
+    drafted = (
         "The psychotherapy section of the note drafted from this visit:\n"
         f"{_draft_context(content)}\n\n"
-        f"Transcript, while the client was present:\n{indexed}"
+        if content is not None
+        else ""
     )
+    return f"{_LABEL_GUIDE}\n\n{drafted}Transcript, while the client was present:\n{indexed}"
 
 
 def parse_labels(
@@ -155,7 +161,7 @@ def parse_labels(
 
 
 def label_turns(
-    content: dict[str, Any],
+    content: dict[str, Any] | None,
     turns: Sequence[TimedSegment],
     complete: Callable[[str], dict[str, Any]],
 ) -> tuple[dict[float, TurnLabel], float | None]:
