@@ -49,6 +49,9 @@ class ProposalCase:
     """Terms no proposal may contain."""
     document: bool = False
     """The transcript is an imported note's document, numbered a paragraph at a time."""
+    extracted: bool = False
+    """The draft's extraction call runs first, as a follow-up's draft does, and the
+    proposal call is given what it found said this visit."""
 
 
 def _chart(*medications: ChartMedication, **history: str) -> ChartContext:
@@ -110,6 +113,51 @@ DIVORCE_FINALIZED = ProposalCase(
 )
 """One fact, two fields: the divorce changes the relationship and the legal record, and
 each keeps what it said. A proposal for only one of them fails."""
+
+PETITION_SIGNED = ProposalCase(
+    name="petition-signed",
+    chart=_chart(
+        SERTRALINE,
+        relationships="Married twelve years; separated since February, divorce petition filed "
+        "in May. One daughter, age nine.",
+        legal_custody="Divorce petition filed in May; temporary shared custody of their "
+        "daughter. No other legal involvement.",
+        living_situation="Rents a house with their daughter half the week.",
+        work_school="Works full time as a pharmacy technician.",
+    ),
+    transcript="""\
+[00:00] Therapist: How have the past few weeks gone?
+[00:04] Client: Up and down. Sleep is okay, mornings are still hard.
+[00:11] Therapist: Anything new on the court side?
+[00:14] Client: It's over. The judge signed it on the second.
+[00:19] Client: So that part's done. Custody stays the way it was, week on, week off.
+[00:27] Therapist: How are you feeling about it?
+[00:30] Client: Relieved, mostly. Sad some nights.
+[00:35] Therapist: Same job, same house?
+[00:38] Client: Yes, nothing else has changed.
+[00:43] Therapist: And the sertraline, every morning still?
+[00:47] Client: Every morning, no problems.
+[00:52] Therapist: Good. We'll keep it the same and meet in six weeks.
+""",
+    expected=(
+        ExpectedProposal(
+            field_key="relationships",
+            must_contain=("separated", "daughter"),
+            must_contain_any=("final", "divorced", "signed", "granted", "complete"),
+            evidence=(3, 4),
+        ),
+        ExpectedProposal(
+            field_key="legal_custody",
+            must_contain=("custody",),
+            must_contain_any=("final", "divorced", "signed", "granted", "complete"),
+            evidence=(3, 4),
+        ),
+    ),
+    extracted=True,
+)
+"""A pending status resolves in words that never name it: the judge signed the petition the
+chart records. The draft's extraction runs first, as it does after a follow-up's draft, so
+this is the path a missed state change fails on."""
 
 UNCHANGED = ProposalCase(
     name="unchanged",
@@ -377,6 +425,7 @@ CLIENT_STOPPED = ProposalCase(
 
 ALL_CASES: tuple[ProposalCase, ...] = (
     DIVORCE_FINALIZED,
+    PETITION_SIGNED,
     UNCHANGED,
     STOPPED_WORKING,
     START_AND_STOP,

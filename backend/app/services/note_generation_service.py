@@ -221,6 +221,10 @@ class GeneratedNote:
     #: labels, for a type with a psychotherapy section (see
     #: :mod:`app.services.therapy_labels`).
     psychotherapy_proposal: dict[str, Any] | None = None
+    #: What the extraction call found the visit said about the fields printed from
+    #: the chart, with the lines that say it; ``None`` when no extraction ran. The
+    #: proposal call reads it (see :mod:`app.chart_proposals.drafting`).
+    chart_statements: Statements | None = None
 
 
 class RestrictedNoteGenerationError(ValueError):
@@ -341,7 +345,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
             s.key == PSYCHOTHERAPY_SECTION_KEY for s in definition.sections
         )
         turns = client_present_turns(segments, client_present_end_seconds)
-        content, time_reply, labelled = self._generate_via_registry(
+        content, time_reply, labelled, statements = self._generate_via_registry(
             definition,
             transcript,
             patient,
@@ -378,6 +382,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
             content=content,
             note_type_version=definition.version,
             psychotherapy_proposal=proposal,
+            chart_statements=statements,
         )
 
     def _generate_via_registry(
@@ -395,9 +400,10 @@ class RegistryNoteGenerationService(NoteGenerationService):
         turns: Sequence[TimedSegment] = (),
         chart: ChartContext | None = None,
         current_note: Mapping[str, Any] | None = None,
-    ) -> tuple[dict[str, Any], dict[str, Any] | None, Labelled | None]:
-        """The drafted content, the psychotherapy time the clinician stated, and the
-        turn labels when they were made beside the draft.
+    ) -> tuple[dict[str, Any], dict[str, Any] | None, Labelled | None, Statements | None]:
+        """The drafted content, the psychotherapy time the clinician stated, the turn
+        labels when they were made beside the draft, and what the extraction call found
+        the visit said about the fields printed from the chart.
 
         Fields printed from the chart are written in code (:mod:`app.notes.chart_fields`)
         and left out of the model's request; what the visit said about them comes
@@ -506,7 +512,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
         )
         # The calls beside the draft, waited for in turn; the psychotherapy block last.
         content, labelled = _with_psychotherapy(_with_drafted(content, drafted), therapy, stated)
-        return content, stated, labelled
+        return content, stated, labelled, statements.result() if statements else None
 
     def _start_extraction(
         self,

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ..chart_proposals.drafting import cited_evidence, segment_texts
+from ..chart_proposals.evidence import cited_evidence, segment_texts
 from ..notes.chart_fields import (
     NamedDiagnosis,
     RenderedField,
@@ -122,6 +122,9 @@ _INSTRUCTIONS = """\
 For each field below, report what the {term} or the clinician said in this visit, the \
 dictation after the {term}'s last line included, that changes or adds to the chart's text \
 shown. Leave out a field the visit did not touch or only repeated.
+- A state that changed is new, however briefly said: a status resolved (applied, now "they \
+hired me"), a person's place or availability (now "my brother moved back to town"), a \
+treatment started or ended ("I quit going to group"). Report it for each field it changes.
 - stated: the words as said, copied from the cited line, short; never a summary, never a \
 bare yes or no. \
 evidence_segment_ids: the numbers (n in [Sn]) of the lines that say it; an item no line says \
@@ -214,6 +217,7 @@ def parse(
                 stated=str(item.get("stated") or "").strip(),
                 medication=str(item.get("medication") or "").strip(),
                 dose=str(item.get("dose") or "").strip(),
+                segment_ids=tuple(sorted(cited)),
             )
         )
     named: list[NamedDiagnosis] = []

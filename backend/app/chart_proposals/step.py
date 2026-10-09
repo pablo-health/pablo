@@ -13,6 +13,7 @@ it; for the rest the run is ``skipped``.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from ..notes.chart_context import chart_context_for
@@ -22,7 +23,6 @@ from .models import ProposalRun, RunStatus
 from .service import ChartProposalService
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
     from typing import Any
 
     from ..medications.repository import MedicationRepository
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from ..notes.chart_context import ChartContext
     from ..people_term_lookup import PeopleTermLookup
     from ..repositories import ChartHistoryRepository, ChartProposalRepository
-    from ..services.note_generation_service import NoteGenerationService
+    from ..services.note_generation_service import GeneratedNote, NoteGenerationService
     from .models import Drafted
 
 
@@ -80,13 +80,22 @@ class ChartProposalStep:
         definition: NoteTypeDefinition | None,
         chart: ChartContext | None,
         transcript: Transcript,
-        content: Mapping[str, Any],
+        note: GeneratedNote | Mapping[str, Any],
     ) -> Drafted | None:
-        """The proposal call, holding no connection. ``None`` when it does not run."""
+        """The proposal call, holding no connection. ``None`` when it does not run.
+
+        ``note`` is the draft just generated, whose extraction call says what the
+        visit said about the chart's fields and on which lines. A note's content
+        alone (a retry: the extraction is not kept) is read for what it marks as
+        stated this visit instead."""
         complete = generator.chart_proposal_completion()
         if complete is None or chart is None or not proposes_chart_updates(definition):
             return None
-        return propose_chart_updates(complete, chart, transcript, draft=content)
+        if isinstance(note, Mapping):
+            return propose_chart_updates(complete, chart, transcript, draft=note)
+        return propose_chart_updates(
+            complete, chart, transcript, draft=note.content, statements=note.chart_statements
+        )
 
     def draft_from_document(
         self,
