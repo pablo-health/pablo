@@ -28,6 +28,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
+from ..drug_names.sound_alikes import unconfirmed
 from ..notes.chart_context import STATED_THIS_VISIT
 from ..notes.chart_fields import chart_text, restates_chart_medication
 from ..notes.field_sources import MEDICATIONS
@@ -355,6 +356,17 @@ def build_document_prompt(chart: ChartContext, segments: Mapping[int, str]) -> s
     return "\n".join(parts)
 
 
+def _heard_as_another(proposal: DraftedProposal, chart: ChartContext) -> bool:
+    """A medication change whose drug the transcript may have heard in place of a listed
+    one (:func:`app.drug_names.sound_alikes.unconfirmed`): the draft marks it for the
+    clinician, and it is never proposed. A document is typed, so it is not asked."""
+    change = proposal.change
+    if change is None:
+        return False
+    cited = [e.text for e in proposal.evidence]
+    return unconfirmed(change.drug_name, cited, chart) is not None
+
+
 def parse_proposals(
     reply: Mapping[str, Any],
     chart: ChartContext,
@@ -396,7 +408,7 @@ def parse_proposals(
                 continue
             evidence = cited_evidence(item.get("evidence_segment_ids"), segments)
             drafted = family.drafted(item, evidence, chart) if evidence is not None else None
-            if drafted is None:
+            if drafted is None or (origin == "transcript" and _heard_as_another(drafted, chart)):
                 continue
             identity = (drafted.field_key, drafted.item_key.lower())
             if identity in seen or not family.admits(drafted, drafted.proposed_text, chart):

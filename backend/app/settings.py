@@ -2012,6 +2012,16 @@ class Settings(BaseSettings):
         ),
     )
 
+    assemblyai_chart_keyterms: bool = Field(
+        default=False,
+        description=(
+            "Send each session's vocabulary to AssemblyAI as keyterms_prompt: the "
+            "client's medication and allergy names from the chart, generic and "
+            "brand, at most 200 words (app.drug_names.keyterms). A session whose "
+            "chart names nothing is sent none. Off (default) sends no vocabulary."
+        ),
+    )
+
     @field_validator("assemblyai_speaker_labels_channels", mode="before")
     @classmethod
     def _parse_speaker_labels_channels(cls, v: object) -> object:

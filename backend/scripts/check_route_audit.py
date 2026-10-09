@@ -208,7 +208,8 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
     {
         # internal_transcription.py — Cloud Tasks worker that hands audio already
         # audited at upload (SESSION_AUDIO_UPLOADED) to the transcription
-        # provider; discloses nothing to a user. The transcript that results is
+        # provider, with the chart's medication and allergy names as its
+        # vocabulary when that is on; discloses nothing to a user. The transcript that results is
         # audited on the completion path.
         ("post", "/api/internal/assemblyai-submit"),  # provider submit worker, no disclosure
         # admin.py — operates on therapist accounts / invitees, never patient data

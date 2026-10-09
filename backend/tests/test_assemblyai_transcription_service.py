@@ -441,6 +441,29 @@ class TestSubmitDualChannel:
         assert [job["diarized"] for job in jobs] == [False, True]
 
     @pytest.mark.anyio
+    async def test_the_session_vocabulary_goes_on_both_channels_only_when_given(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[httpx.Request] = []
+        _install_mock_transport(monkeypatch, _channel_handler(calls))
+        service = AssemblyAiTranscriptionService(_settings())
+
+        await service.submit_dual_channel(
+            therapist_audio=_SILENCE_PCM,
+            client_audio=_SILENCE_PCM,
+            keyterms=["sertraline", "Zoloft"],
+        )
+        await service.submit_dual_channel(therapist_audio=_SILENCE_PCM, client_audio=_SILENCE_PCM)
+
+        bodies = [json.loads(c.content) for c in calls if c.url.path.endswith("/transcript")]
+        assert [b.get("keyterms_prompt") for b in bodies] == [
+            ["sertraline", "Zoloft"],
+            ["sertraline", "Zoloft"],
+            None,
+            None,
+        ]
+
+    @pytest.mark.anyio
     async def test_audio_url_factory_bypasses_provider_upload(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

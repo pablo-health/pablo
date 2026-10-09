@@ -20,7 +20,10 @@ The marks:
   ``(stated this visit: "...")`` per medication the client says they take
   that the chart lacks. A stated dose that differs from a chart line is an
   item of its own, so the chart's line is never altered; one that only
-  restates a chart line adds nothing.
+  restates a chart line adds nothing. A drug heard that the chart does not
+  list but that sounds like one it does carries
+  ``(heard as X; the chart lists Y)``, on the item that names it or as an
+  item of its own (:mod:`app.drug_names.sound_alikes`).
 - The diagnoses: the problem list with its codes, then each diagnosis the
   clinician named that it lacks, with the status "stated this visit" and a
   code only when one was said.
@@ -33,6 +36,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
+from ..drug_names.names import names_in, same_drug
 from ..problems.models import ProblemStatus
 from .chart_context import ChartContext, allergies_line, medication_line
 from .field_sources import (
@@ -47,6 +51,7 @@ from .field_sources import (
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from ..drug_names.sound_alikes import SoundAlike
     from .diagnoses import StatedDiagnosis
     from .registry import NoteFieldDef, NoteTypeDefinition
 
@@ -98,6 +103,9 @@ class Statements:
     fields: tuple[Statement, ...] = ()
     diagnoses: tuple[NamedDiagnosis, ...] = ()
     client_at_home: bool = False
+    sound_alikes: tuple[SoundAlike, ...] = ()
+    """Drug names heard that the chart does not list but sound like one it does: each is
+    unconfirmed, marked in the medication list and never proposed (``app.drug_names``)."""
 
     def about(self, field_key: str) -> list[Statement]:
         return [s for s in self.fields if s.field_key == field_key]
@@ -263,6 +271,31 @@ def restates_chart_medication(statement: Statement, chart: ChartContext) -> bool
     )
 
 
+def _names(statement: Statement, heard: SoundAlike) -> bool:
+    said = [statement.medication, *names_in(statement.stated)]
+    return any(same_drug(name, heard.heard) for name in said if name)
+
+
+def _stated_medications(
+    chart: ChartContext, said: list[Statement], sound_alikes: tuple[SoundAlike, ...]
+) -> list[str]:
+    """An item per medication stated that the chart lacks, and a mark for each drug heard
+    that sounds like a listed one: on the item that names it, else an item of its own."""
+    items: list[str] = []
+    marked: list[SoundAlike] = []
+    for s in said:
+        if not s.stated.strip() or restates_chart_medication(s, chart):
+            continue
+        item = stated_suffix([s])
+        heard = next((a for a in sound_alikes if _names(s, a)), None)
+        if heard is not None:
+            item = f"{item} {heard.mark}"
+            marked.append(heard)
+        items.append(item)
+    items.extend(a.mark for a in sound_alikes if a not in marked)
+    return items
+
+
 def place_of_service(inputs: Mapping[str, str], person: str, *, at_home: bool = False) -> str:
     """The attestation from the entered place of service and locations."""
     place = (inputs.get("place_of_service") or "").strip()
@@ -304,13 +337,8 @@ def compose(
         return _diagnoses(chart, statements.diagnoses)
     said = statements.about(rendered.field.key) + _entered(rendered, inputs)
     if source == MEDICATIONS:
-        lines = medication_lines(chart)
-        added = [
-            stated_suffix([s])
-            for s in said
-            if s.stated.strip() and not restates_chart_medication(s, chart)
-        ]
-        return lines + [a for i, a in enumerate(added) if a not in added[:i]]
+        added = _stated_medications(chart, said, statements.sound_alikes)
+        return medication_lines(chart) + [a for i, a in enumerate(added) if a not in added[:i]]
     if is_substance(source):
         return f"{_history_text(chart, source)} {_screen(said)}"
     if source == ALLERGIES:
