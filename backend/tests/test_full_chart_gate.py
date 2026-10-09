@@ -97,7 +97,11 @@ def test_a_prescriber_note_gets_the_full_chart_and_proposes(
 
     prompts = "\n".join(_prompts(definition))
     step = ChartProposalStep(InMemoryChartProposalRepository(), InMemoryChartHistoryRepository())
-    drafted = step.draft(_Proposing(), definition, CHART, TRANSCRIPT, {})
+    # The draft prints the chart's work_school with what the visit said about it.
+    draft = {
+        "social_history": {"work_school": 'Teacher, full time. (stated this visit: "laid off")'}
+    }
+    drafted = step.draft(_Proposing(), definition, CHART, TRANSCRIPT, draft)
 
     assert definition.full_chart
     # Written against the allergies, the medications and the history: the note's
