@@ -420,17 +420,31 @@ def telehealth_attestation(draft: Draft, case: TemplateCase) -> list[str]:
         if "telehealth" in text:
             problems.append("encounter.place_of_service: telehealth for an office visit")
         return problems
+    client, provider = locations
     problems = [] if "telehealth" in text else ["encounter.place_of_service: no telehealth"]
-    problems += [
-        f"encounter.place_of_service: location {loc!r} missing"
-        for loc in locations
-        if normalize(loc) not in text
-    ]
+    # The client's location may arrive as "Client's home in X" and print as
+    # "at home in X": the place is what must survive, not how home is worded.
+    client_part = text.partition("the provider")[0]
+    if _without_home(normalize(client)) not in client_part:
+        problems.append(f"encounter.place_of_service: location {client!r} missing")
+    if normalize(provider) not in text:
+        problems.append(f"encounter.place_of_service: location {provider!r} missing")
     if "located at" in text:
         problems.append('encounter.place_of_service: "located at" a location; write "in" it')
-    if case.expected.client_at_home and "at home" not in text:
+    if case.expected.client_at_home and "home" not in text.split():
         problems.append("encounter.place_of_service: the client said they were at home")
     return problems
+
+
+_HOME_PREFIXES = ("client's home in ", "client s home in ", "at home in ", "home in ", "home ")
+
+
+def _without_home(location: str) -> str:
+    """A normalised location less a leading way of saying it is the client's home."""
+    for prefix in _HOME_PREFIXES:
+        if location.startswith(prefix):
+            return location.removeprefix(prefix).strip()
+    return location
 
 
 ASKED_NO_CHANGE = "(asked this visit: no change)"

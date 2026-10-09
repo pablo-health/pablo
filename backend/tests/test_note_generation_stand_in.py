@@ -350,10 +350,8 @@ def test_a_follow_up_states_the_charts_medication_list_not_the_visits_changes(
 
     current = generated.content["medications"]["current_medications"]
     assert current == [
-        "Psychiatric:",
-        "Sertraline 100 mg, every morning",
-        "Other:",
-        "Lisinopril 10 mg, daily",
+        "Psychiatric: Sertraline 100 mg, every morning",
+        "Other: Lisinopril 10 mg, daily",
     ]
     assert not any("bupropion" in line.lower() for line in current)
 

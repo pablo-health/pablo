@@ -192,6 +192,78 @@ def _history_lines(chart: ChartContext) -> list[str]:
     return lines
 
 
+def _diagnosis_rules() -> list[str]:
+    return [
+        "- Where the note names diagnoses, name each active problem above with "
+        "its code exactly as listed. Never assign a code the chart or the "
+        "clinician did not give.",
+        "- Never add a diagnosis that is neither on the problem list nor stated "
+        "by the clinician in the transcript. If the clinician states one that "
+        f'is not on the list, include it followed by "{STATED_THIS_VISIT}".',
+        "- If the problem list is empty, write that no diagnoses are recorded "
+        "rather than inferring one.",
+        "- A rule-out is not a diagnosis; mention it only as a rule-out.",
+    ]
+
+
+def _written_separately(rendered: frozenset[str]) -> str:
+    parts = [
+        name
+        for source, name in (
+            ("problems", "the diagnoses list"),
+            ("medications", "the current medications"),
+            ("allergies", "the allergies"),
+        )
+        if source in rendered
+    ]
+    if rendered & set(HISTORY_KEYS) - set(SUBSTANCE_KEYS):
+        parts.append("the history fields")
+    if rendered & set(SUBSTANCE_KEYS):
+        parts.append("the substance-use fields")
+    return ", ".join(parts)
+
+
+def render_reference_block(chart: ChartContext, rendered: frozenset[str]) -> str:
+    """The chart for a draft whose chart-fed fields (``rendered``, by source) are
+    written in code.
+
+    The problem list and the medication list stay, as reference for the
+    assessment, the decision making and the plan; an allergy record, a
+    history field or a substance baseline that code writes is left out, so
+    its text reaches no model.
+    """
+    lines = ["Chart (entered by the clinician; use these values as written):"]
+    if chart.problems:
+        lines.append("- Problem list:")
+        lines.extend(_problem_line(p) for p in chart.problems)
+    else:
+        lines.append("- Problem list: none recorded")
+    lines.extend(_medication_lines(chart))
+    if "allergies" not in rendered:
+        lines.append(f"- Allergies: {allergies_line(chart)}")
+    unrendered = ChartContext(history=tuple(f for f in chart.history if f.key not in rendered))
+    lines.extend(_history_lines(unrendered))
+    lines.extend(["", "Rules for the chart:"])
+    if "problems" in rendered:
+        lines.append(
+            "- Never assign a diagnosis code the chart or the clinician did not give. A "
+            "rule-out is not a diagnosis; mention it only as a rule-out."
+        )
+    else:
+        lines.extend(_diagnosis_rules())
+    if separately := _written_separately(rendered):
+        lines.append(
+            f"- The note's {separately} are written from the chart separately and are not "
+            "asked of you. Refer to the chart above where the assessment, the decision making "
+            "and the plan discuss the client's diagnoses and medications."
+        )
+    lines.append(
+        "- The current medications above are the list before this visit: a medication the "
+        "clinician starts, stops or changes in this visit is written in the plan."
+    )
+    return "\n".join(lines)
+
+
 def render_chart_block(chart: ChartContext, *, full_chart: bool) -> str:
     """The chart as prompt text, with the rules for using it.
 
@@ -208,21 +280,7 @@ def render_chart_block(chart: ChartContext, *, full_chart: bool) -> str:
         lines.append(f"- Allergies: {allergies_line(chart)}")
         lines.extend(_medication_lines(chart))
         lines.extend(_history_lines(chart))
-    lines.extend(
-        [
-            "",
-            "Rules for the chart:",
-            "- Where the note names diagnoses, name each active problem above with "
-            "its code exactly as listed. Never assign a code the chart or the "
-            "clinician did not give.",
-            "- Never add a diagnosis that is neither on the problem list nor stated "
-            "by the clinician in the transcript. If the clinician states one that "
-            f'is not on the list, include it followed by "{STATED_THIS_VISIT}".',
-            "- If the problem list is empty, write that no diagnoses are recorded "
-            "rather than inferring one.",
-            "- A rule-out is not a diagnosis; mention it only as a rule-out.",
-        ]
-    )
+    lines.extend(["", "Rules for the chart:", *_diagnosis_rules()])
     if full_chart:
         lines.append(
             "- Fields fed from the chart are the allergies, the current medications, and "

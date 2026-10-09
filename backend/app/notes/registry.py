@@ -65,6 +65,9 @@ class NoteFieldDef:
     label: str
     kind: NoteFieldKind
     ai_hint: str = ""
+    source: str | None = None
+    """What code prints this field from, when the model does not draft it:
+    the chart, or the values entered for the visit (:mod:`.field_sources`)."""
 
 
 NoteInputKind = Literal["text", "choice"]
