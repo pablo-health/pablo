@@ -151,6 +151,50 @@ def test_a_change_the_list_cannot_take_or_the_visit_does_not_state_is_dropped(
     assert _parse(item) == []
 
 
+def test_a_stop_the_client_made_alone_is_not_proposed_but_another_prescribers_is() -> None:
+    alone = _item("stop", "lithium", [1], decided_by="the client alone")
+    clinician = _item("stop", "lithium", [1], decided_by="the clinician")
+    elsewhere = _item("change", "sertraline", [3], dose="150 mg", decided_by="another prescriber")
+
+    assert _parse(alone) == []
+    assert [p.item_key for p in _parse(clinician)] == ["lithium"]
+    assert [p.item_key for p in _parse(elsewhere)] == ["sertraline"]
+
+
+def test_a_frequency_restated_with_an_aside_is_not_a_change() -> None:
+    restated = _item("change", "lithium", [1], frequency="twice daily (morning and bedtime)")
+    spaced = _item("change", "lithium", [1], dose="300mg")
+    moved = _item("change", "lithium", [1], frequency="at bedtime")
+
+    assert _parse(restated) == []
+    assert _parse(spaced) == []
+    assert [p.proposed_text for p in _parse(moved)] == ["lithium 300 mg, at bedtime"]
+
+
+def test_a_medication_an_imported_note_names_only_in_a_carried_block_is_never_proposed() -> None:
+    carried = _item("add", "trazodone", [2], dose="50 mg", stated_in="a carried block only")
+    plan = _item("add", "amlodipine", [2], dose="5 mg", stated_in="this visit")
+
+    assert [p.item_key for p in _parse(carried, plan)] == ["amlodipine"]
+
+
+def test_a_history_fact_only_an_imported_notes_heading_states_is_never_proposed() -> None:
+    def proposal(stated_in: str) -> dict[str, Any]:
+        return {
+            "field_key": "living_situation",
+            "proposed_text": "Lives at home.",
+            "what_changed": "Location",
+            "evidence_segment_ids": [0],
+            "stated_in": stated_in,
+        }
+
+    heading = {"proposals": [proposal("the heading")], "medication_changes": []}
+    body = {"proposals": [proposal("this visit")], "medication_changes": []}
+
+    assert parse_proposals(heading, LISTED, SEGMENTS) == []
+    assert [p.field_key for p in parse_proposals(body, LISTED, SEGMENTS)] == ["living_situation"]
+
+
 def test_a_medication_in_the_text_proposals_is_dropped() -> None:
     reply = {
         "proposals": [
@@ -194,7 +238,16 @@ def test_the_prompt_lists_the_medications_and_reads_the_drafts_stated_suffix() -
 
     assert "- lithium 300 mg, twice daily" in prompt
     assert "medication_changes" in prompt
-    assert "without a decision from the clinician" in prompt
+    # The list is what is prescribed: another prescriber's change is proposed, a client's
+    # own stop with no decision from the clinician is not.
+    assert "a stop, start or change another prescriber made that the client reports" in prompt
+    assert "with no decision from the clinician this visit, is not an item" in prompt
+    assert "exactly as the list names it, without a dose" in prompt
+    # The chart keeps a dose as an amount and a frequency with its purpose.
+    assert "never a tablet count" in prompt
+    assert "keeping any purpose said" in prompt
+    # A new ongoing treatment is a history change, not a passing event.
+    assert "a new treatment the client now has" in prompt
     assert '- medications: lithium 300 mg, twice daily\n(stated this visit: "amlodipine' in prompt
     assert "Medication list: none recorded" in build_prompt(ChartContext(), "[S0] hello")
 

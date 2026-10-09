@@ -61,7 +61,8 @@ def test_a_removal_fails() -> None:
     replaced = _proposal("work_school", "Unemployed; applying to other offices.", 1)
     assert grade([replaced], STOPPED_WORKING)["text_kept_and_changed"] == [
         "work_school leaves out 'dental'",
-        "work_school says none of ['no longer', 'stopped', 'until', 'left', 'former', 'let go']",
+        "work_school says none of "
+        "['no longer', 'stopped', 'until', 'left', 'former', 'let go', 'laid off']",
     ]
 
 

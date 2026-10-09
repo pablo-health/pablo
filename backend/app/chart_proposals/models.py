@@ -23,8 +23,10 @@ RECORDED_THIS_VISIT = "Recorded this visit"
 RunStatus = Literal["ok", "failed", "skipped"]
 
 MedicationAction = Literal["start", "stop", "change", "add"]
-"""``start``, ``stop``, ``change``: what the clinician decided this visit. ``add``: a
-medication the client takes now that the list lacks (one another prescriber started)."""
+"""``start``: a medication the clinician started this visit. ``stop``, ``change``: a listed
+medication the clinician stopped or changed (or acknowledged as stopped or changed), or one
+another prescriber stopped or changed as the client reports. ``add``: a medication the client
+takes now that the list lacks (one another prescriber started)."""
 
 
 @dataclass(frozen=True)
@@ -61,11 +63,31 @@ class ProposalRun:
 
 
 @dataclass(frozen=True)
+class MedicationKept:
+    """A listed medication the call was asked to decide on and proposed no change to."""
+
+    drug_name: str
+    reason: str
+    """Why the visit leaves it as listed, one of the call's fixed reasons
+    (``medication_mentions.KEPT_REASONS``); empty when it gave none."""
+    note: str = ""
+    """What the call said beside the reason, in its words."""
+
+
+@dataclass(frozen=True)
 class Drafted:
-    """The proposal call's answer: what it proposed, or the error it failed with."""
+    """The proposal call's answer: what it proposed, or the error it failed with.
+
+    ``to_decide`` are the listed medications the visit names near a different
+    dose or a word saying they were stopped, which the call was asked to decide
+    on; ``kept`` are those of them it proposed no change to, each with its
+    reason. Neither is stored: they are what an evaluation reads.
+    """
 
     proposals: list[DraftedProposal]
     error_class: str | None = None
+    to_decide: tuple[str, ...] = ()
+    kept: tuple[MedicationKept, ...] = ()
 
 
 @dataclass(frozen=True)

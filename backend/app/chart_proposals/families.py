@@ -15,6 +15,7 @@ proposal; the evidence is checked the same way for both.
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, cast, override
@@ -187,12 +188,15 @@ class HistoryFamily(FieldFamily):
                 + "the existing text, merge the change into it, and never remove a statement: "
                 + "when something stopped being true, keep it and say it no longer applies "
                 + '(for example "Worked full time at the library until March; laid off, no '
-                + 'longer working there."). For an empty field, state what was said.'
+                + 'longer working there."). For an empty field, state the lasting fact that '
+                + "was said; where a visit took place, or where the client joined it from, is "
+                + "not one."
             ),
             (
                 "- A substance-use field records what the client uses. Propose a change only "
                 + "when the client describes a different pattern or amount, or a substance the "
-                + 'field does not record. "No change" or "same as before" is not a change.'
+                + 'field does not record. "No change", "same as before" and an amount within '
+                + "what the field records are not changes."
             ),
             (
                 "- One stated fact can change more than one field. Propose each field it "
@@ -201,7 +205,8 @@ class HistoryFamily(FieldFamily):
             (
                 "- The medications the client takes now, and any medication started, stopped "
                 + "or changed this visit, are kept on the chart's medication list, not in these "
-                + "fields: never propose them to a history field. medication_trials is the "
+                + "fields: never propose them to a history field, and never add a medication, "
+                + "a dose change or a lab value to one. medication_trials is the "
                 + "history of psychiatric medications tried before, as the client recounts it."
             ),
         ]
@@ -317,14 +322,66 @@ _ACTION_VERBS: dict[str, str] = {
 }
 
 
+CARRIED_ONLY = "a carried block only"
+"""Where an imported document names a medication only in a block carried forward from an
+earlier visit. It is not known to be taken now, so such an item is never proposed."""
+
+HEADING = "the heading"
+"""Where an imported document states something only in its heading (who was seen, when,
+and from where): about the visit, not the client, so never proposed."""
+
+STATED_IN = ("this visit", CARRIED_ONLY, HEADING)
+"""Where a proposal's evidence says it, as the call reports it; the last two are dropped."""
+
+CLIENT_ALONE = "the client alone"
+"""Who decided a medication change, when no prescriber did: a client stopping, skipping or
+cutting back on their own. The list is what is prescribed, so such a stop or change is never
+proposed; the row stays as listed until the clinician addresses it."""
+
+DECIDED_BY = ("the clinician", "another prescriber", CLIENT_ALONE)
+
+
 def _optional(value: Any) -> str | None:
     text = str(value).strip() if isinstance(value, str) else ""
     return text or None
 
 
-def _listed(chart: ChartContext, drug_name: str) -> ChartMedication | None:
-    name = drug_name.strip().lower()
-    return next((m for m in chart.medications if m.name.strip().lower() == name), None)
+def _name_words(name: str) -> list[str]:
+    return "".join(c if c.isalnum() or c == "." else " " for c in name.lower()).split()
+
+
+def listed_medication(chart: ChartContext, drug_name: str) -> ChartMedication | None:
+    """The listed medication ``drug_name`` is, by its name or, failing that, the one
+    listed medication whose name it begins or is begun by: a reply that says
+    "escitalopram 10 mg" or "lithium" for the list's "escitalopram" or "lithium
+    carbonate ER". Two such medications listed is no match: which one is meant is
+    not for this code to guess."""
+    words = _name_words(drug_name)
+    if not words:
+        return None
+    exact = next((m for m in chart.medications if _name_words(m.name) == words), None)
+    if exact is not None:
+        return exact
+    near = [
+        m
+        for m in chart.medications
+        if (listed := _name_words(m.name))
+        and (words[: len(listed)] == listed or listed[: len(words)] == words)
+    ]
+    return near[0] if len(near) == 1 else None
+
+
+def _differs(stated: str | None, listed: str | None) -> bool:
+    """Whether a change's dose or frequency says something other than the listed one.
+    An aside in parentheses only restates it: "twice daily (morning and bedtime)" is
+    the listed "twice daily"."""
+    if not stated:
+        return False
+
+    def words(text: str) -> list[str]:
+        return _name_words(re.sub(r"(\d)([a-z])", r"\1 \2", text.lower()))
+
+    return words(re.sub(r"\([^)]*\)", " ", stated)) != words(listed or "")
 
 
 def _line(name: str, dose: str | None, frequency: str | None) -> str:
@@ -335,15 +392,20 @@ def _line(name: str, dose: str | None, frequency: str | None) -> str:
 class MedicationFamily(FieldFamily):
     """The medication list. Each proposal is one action on one medication.
 
-    ``start``, ``stop`` and ``change`` are decisions the clinician states in
-    the visit; ``add`` is a medication the client takes now that the list
-    lacks. Accepting writes through the medication record with the note as
-    the source: a start or an add creates an active row, a stop marks the row
-    discontinued on the visit's date with the stated reason, a change sets
-    the dose or the frequency (each on its own) and keeps the prior values in
-    the row's notes. Nothing is ever deleted. The proposal is structured, so
-    it is accepted or discarded, not rewritten; the list itself can be edited
-    on the client's page.
+    The list is what is prescribed. ``start`` is a medication the clinician
+    starts in the visit; ``stop`` and ``change`` are a listed medication the
+    clinician stops or changes, or acknowledges stopping or changing, or that
+    another prescriber stopped or changed as the client reports; ``add`` is a
+    medication the client takes now that the list lacks. A client's own stop
+    with no decision from the clinician is not a proposal: the row stays.
+
+    Accepting writes through the medication record with the note as the
+    source: a start or an add creates an active row, a stop marks the row
+    discontinued on the visit's date with the stated reason, a change sets the
+    dose or the frequency (each on its own) and keeps the prior values in the
+    row's notes. Nothing is ever deleted. The proposal is structured, so it is
+    accepted or discarded, not rewritten; the list itself can be edited on the
+    client's page.
     """
 
     itemized = True
@@ -369,22 +431,35 @@ class MedicationFamily(FieldFamily):
         return [
             (
                 "- Changes to the medication list go in medication_changes, never in "
-                + "proposals, one item per medication. action is start, stop or change only "
-                + "for a decision the clinician states in this visit, including anything "
-                + "dictated after the client's last line: starting a medication, stopping one, "
-                + "or changing its dose or how often it is taken. A medication discussed, "
-                + "considered or planned for later is not a change, and neither is a client "
-                + "saying they stopped or changed one without a decision from the clinician. "
-                + "action is add for a medication the client says they take now that the list "
-                + "does not show, such as one another prescriber started. A medication taken "
-                + "as the list shows needs nothing."
+                + "proposals and never in a history field, one item per medication. The list "
+                + "is what is prescribed. Each of these is an item: a start, stop or change of "
+                + "dose or frequency the clinician makes or acknowledges in this visit, anything "
+                + "dictated after the client's last line included, citing where it is said; a "
+                + "stop, start or change another prescriber made that the client reports, "
+                + "whoever prescribed it; and a medication the client takes that the list does "
+                + "not show. start is one the clinician starts new; add is one the client "
+                + "already takes that the list lacks; stop is a listed one stopped; change is a "
+                + "listed one whose dose or frequency is now different in substance, not "
+                + "reworded. A client stopping, skipping or cutting back a listed medication on "
+                + "their own, with no decision from the clinician this visit, is not an item: "
+                + "the row stays as listed. Nothing is needed for a medication taken as the "
+                + "list shows, one only discussed or considered for later, or, in an imported "
+                + "document, one named only in a block carried forward from an earlier date."
             ),
             (
-                "- For each item give drug_name (for stop or change, as the list names it); "
-                + "dose and frequency (how often and when) as stated, and for a change only "
-                + "the ones that change; category, psychiatric or other, when it is clear; "
-                + "for a stop, the reason the clinician gives, if any, as reason; "
-                + "what_changed; and evidence_segment_ids, the lines that state it."
+                "- For each item give drug_name, for stop or change exactly as the list names "
+                + "it, without a dose; dose, the amount taken each time in its unit (0.75 mg), "
+                + 'never a tablet count, and for a schedule of two amounts each one ("1 mg / '
+                + '0.75 mg"); frequency, how often and when, keeping any purpose said ("with '
+                + 'meals", "as needed for back pain"); for a change only the dose or frequency '
+                + "that changes; category, psychiatric or other, "
+                + "when it is clear; for a stop, the reason and when it stopped as said, if "
+                + "said, as reason; what_changed; evidence_segment_ids, the lines that state "
+                + 'it; stated_in: "a carried block only" for a medication an imported '
+                + "document names only in a block carried forward from an earlier visit, "
+                + 'otherwise "this visit"; and decided_by: who made the change, "the '
+                + 'clinician", "another prescriber", or "the client alone" when the client '
+                + "stopped, skipped or cut back on their own and no prescriber has decided."
             ),
         ]
 
@@ -400,8 +475,16 @@ class MedicationFamily(FieldFamily):
                 "reason": {"type": "string"},
                 "what_changed": {"type": "string"},
                 "evidence_segment_ids": {"type": "array", "items": {"type": "integer"}},
+                "stated_in": {"type": "string", "enum": list(STATED_IN)},
+                "decided_by": {"type": "string", "enum": list(DECIDED_BY)},
             },
-            "required": ["action", "drug_name", "what_changed", "evidence_segment_ids"],
+            "required": [
+                "action",
+                "drug_name",
+                "what_changed",
+                "evidence_segment_ids",
+                "decided_by",
+            ],
         }
 
     def drafted(
@@ -411,7 +494,11 @@ class MedicationFamily(FieldFamily):
         name = _optional(item.get("drug_name"))
         if action not in _ACTION_VERBS or name is None:
             return None
-        listed = _listed(chart, name)
+        if item.get("stated_in") in (CARRIED_ONLY, HEADING):
+            return None
+        if action in ("stop", "change") and item.get("decided_by") == CLIENT_ALONE:
+            return None
+        listed = listed_medication(chart, name)
         category = item.get("category")
         change = MedicationChange(
             action=cast("MedicationAction", action),
@@ -447,19 +534,17 @@ class MedicationFamily(FieldFamily):
         change = ref.change
         if change is None or not ref.item_key.strip():
             return False
-        listed = _listed(chart, change.drug_name)
+        listed = listed_medication(chart, change.drug_name)
         if change.action in ("start", "add"):
             return listed is None
         if listed is None:
             return False
         if change.action == "stop":
             return True
-        return (change.dose or listed.dose) != listed.dose or (
-            change.frequency or listed.frequency
-        ) != listed.frequency
+        return _differs(change.dose, listed.dose) or _differs(change.frequency, listed.frequency)
 
     def current_text(self, chart: ChartContext, ref: FieldRef) -> str | None:
-        listed = _listed(chart, ref.item_key)
+        listed = listed_medication(chart, ref.item_key)
         return medication_line(listed) if listed is not None else None
 
     @override
