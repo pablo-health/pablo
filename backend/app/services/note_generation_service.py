@@ -880,8 +880,11 @@ _ADDENDUM_HEAD = (
     "client was not present. These are the clinician's own statements. "
 )
 _ADDENDUM_PLACING = (
-    "Where the addendum states {what}, put it in the matching "
-    'field quoted and marked as the clinician\'s, e.g. Clinician stated: "...". '
+    "Where the addendum states {what}, write it in the matching field as a "
+    "finding in the note's own voice: declarative, without quotation marks, "
+    "and without saying who stated, dictated or noted it. Where a field "
+    "records the client's own words, they are quoted and framed as the "
+    "client's. "
 )
 _ADDENDUM_TAIL = (
     "The addendum is not session time and is not something the client said. "
