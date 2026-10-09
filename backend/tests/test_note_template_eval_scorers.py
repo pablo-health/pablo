@@ -26,6 +26,7 @@ from evals.note_templates.cases import (
     FOLLOW_UP_SUPPORTIVE_ONLY,
     FOLLOW_UP_THERAPY_PLAN_NOT_STATED,
     FOLLOW_UP_WITH_THERAPY,
+    FOLLOW_UP_WITH_THERAPY_AT_HOME,
 )
 from evals.note_templates.scorers import (
     allergies_never_dropped,
@@ -37,12 +38,14 @@ from evals.note_templates.scorers import (
     history_from_visit,
     intake_states_meds,
     medications_from_chart,
+    no_attribution_tags,
     numbers,
-    risk_quoted,
+    risk_as_said,
     safety_plan_only_with_ideation,
     substances,
     suffix_only_where_stated,
     techniques_named,
+    telehealth_attestation,
     therapy_grounded,
 )
 
@@ -53,8 +56,8 @@ THERAPY_DRAFT: dict[str, dict[str, Any]] = {
         ),
         "place_of_service": (
             "Visit conducted by synchronous audio and video telehealth on a HIPAA-compliant "
-            "platform. The client was located at Client\u2019s home in Faketown, AA; the provider "
-            "was located at Clinic office at 123 Test St, Faketown, AA. The client consented "
+            "platform. The client was in Client\u2019s home in Faketown, AA; the provider "
+            "was in Clinic office at 123 Test St, Faketown, AA. The client consented "
             "to receive care by telehealth."
         ),
     },
@@ -69,19 +72,40 @@ THERAPY_DRAFT: dict[str, dict[str, Any]] = {
         "functioning": "Getting through reports at work.",
     },
     "substance_use": {
-        "alcohol": "One to two drinks on weekends. (asked this visit: no change)",
-        "tobacco_nicotine": 'Not recorded (stated this visit: "denies.")',
-        "cannabis": 'Not recorded (stated this visit: "denies.")',
-        "other_substances": 'Not recorded (stated this visit: "denies.")',
+        "alcohol": (
+            'One to two drinks on weekends. (stated this visit: "A glass of wine on weekends, '
+            'maybe two.")'
+        ),
+        "tobacco_nicotine": "Not recorded (stated this visit: denied)",
+        "cannabis": "Not recorded (stated this visit: denied)",
+        "other_substances": "Not recorded (stated this visit: denied)",
+        "stimulants": "Not recorded (not asked this visit)",
+        "cocaine": "Not recorded (not asked this visit)",
+        "opioids": "Not recorded (not asked this visit)",
+        "benzodiazepines": "Not recorded (not asked this visit)",
     },
     "risk": {
         "suicidal_homicidal_ideation": (
-            'Client: \u201cNo. Nothing like that.\u201d Clinician: "Denies SI and HI."'
+            "Denies SI and HI. Asked about thoughts of hurting self or others or being better "
+            "off dead, the client said: \u201cNo. Nothing like that.\u201d"
         ),
-        "self_harm_violence": 'Client: "No. Nothing like that."',
+        "self_harm_violence": (
+            'Asked about thoughts of hurting self or others, the client said: "No. Nothing like '
+            'that."'
+        ),
         "risk_protective_factors": "Employed, supportive partner, engaged in treatment.",
-        "overall_risk": '"Overall acute risk is low."',
+        "overall_risk": "Overall acute risk is low.",
         "safety_plan": "",
+    },
+    "mse": {
+        "appearance_behavior": "Well groomed, good eye contact.",
+        "orientation": "Alert and oriented x4.",
+        "speech": "Normal rate and volume.",
+        "mood_affect": "Mood anxious; affect congruent, mildly constricted.",
+        "thought_process": "Linear and goal directed.",
+        "thought_content": "No hallucinations or delusions. Denies SI and HI.",
+        "cognition": "Intact.",
+        "insight_judgment": "Good.",
     },
     "measures": {"measures_reviewed": "GAD-7 completed on Friday: 13, up from 8."},
     "medications": {
@@ -157,7 +181,10 @@ MEDICATION_ONLY_DRAFT: dict[str, dict[str, Any]] = {
         "other_substances": "Not recorded (not asked this visit)",
     },
     "risk": {
-        "suicidal_homicidal_ideation": 'Client: "No." Clinician: "denies SI and HI".',
+        "suicidal_homicidal_ideation": (
+            "Denies SI and HI. Asked about thoughts of hurting self or others, the client said: "
+            '"No."'
+        ),
         "self_harm_violence": "Not stated.",
         "risk_protective_factors": "",
         "overall_risk": "Not stated.",
@@ -287,19 +314,99 @@ def test_a_medication_the_client_reports_may_follow_the_charts_list() -> None:
         # Therapy took place, but the section was left empty.
         ("psychotherapy", "issues_addressed", "", "psychotherapy_section"),
         # A risk field paraphrased, judged, or quoting what nobody said.
-        ("risk", "self_harm_violence", "Client denies self-harm.", "risk_quoted"),
+        ("risk", "self_harm_violence", "Client denies self-harm.", "risk_as_said"),
         # Seen from a real model on this sample: a paraphrase where a quotation belongs.
         (
             "risk",
             "self_harm_violence",
             "The client denied thoughts of hurting themselves or anyone else.",
-            "risk_quoted",
+            "risk_as_said",
         ),
         # Also seen: "anything else?" was asked and answered, but read as never asked.
         ("substance_use", "other_substances", "Not recorded (not asked this visit)", "substances"),
-        ("risk", "overall_risk", 'Risk is low ("Denies SI and HI.").', "risk_quoted"),
-        ("risk", "suicidal_homicidal_ideation", '"I would never hurt myself."', "risk_quoted"),
-        ("risk", "overall_risk", "", "risk_quoted"),
+        ("risk", "overall_risk", "Moderate.", "risk_as_said"),
+        ("risk", "overall_risk", "", "risk_as_said"),
+        # A quotation that is not the client's: never said, or the clinician's question.
+        (
+            "risk",
+            "self_harm_violence",
+            'The client said: "I would never hurt myself."',
+            "risk_as_said",
+        ),
+        (
+            "risk",
+            "self_harm_violence",
+            'The client denied "thoughts of hurting yourself or anyone else".',
+            "risk_as_said",
+        ),
+        # Seen from a real model on this visit: the safety instruction written as a finding.
+        (
+            "risk",
+            "self_harm_violence",
+            'The client said: "No. Nothing like that." Advised to call 988 or 911 if urgent.',
+            "risk_as_said",
+        ),
+        # Also seen: an attribution tag on a chart-fed field's mark, and on the plan.
+        (
+            "social_history",
+            "relationships",
+            'Not recorded (stated this visit: "supportive partner" — as noted by clinician '
+            "in dictated addendum)",
+            "no_attribution_tags",
+        ),
+        (
+            "plan",
+            "emergency_instructions",
+            "Clinician stated: if mood worsens or thoughts of self-harm appear, call the office, "
+            "and if it is urgent, 988 or 911.",
+            "no_attribution_tags",
+        ),
+        # The client's mood quoted where the clinician dictated a finding.
+        ("mse", "mood_affect", 'Mood "okay"; affect congruent.', "findings_unquoted"),
+        (
+            "risk",
+            "risk_protective_factors",
+            '"Employed, supportive partner, engaged in treatment."',
+            "findings_unquoted",
+        ),
+        # The client's answer quoted twice.
+        (
+            "risk",
+            "suicidal_homicidal_ideation",
+            'The client said: "No. Nothing like that." Again: "No. Nothing like that."',
+            "findings_unquoted",
+        ),
+        # Also seen: a grouped denial read as "no change", and a substance never named as asked.
+        ("substance_use", "cannabis", "Not recorded (asked this visit: no change)", "substances"),
+        (
+            "substance_use",
+            "tobacco_nicotine",
+            "Not recorded (asked this visit: no change)",
+            "substances",
+        ),
+        ("substance_use", "stimulants", "Not recorded (asked this visit: no change)", "substances"),
+        (
+            "substance_use",
+            "other_substances",
+            'Not recorded (stated this visit: "No, none of that.")',
+            "substances",
+        ),
+        # The client described their drinking: that is what was said, not "no change".
+        (
+            "substance_use",
+            "alcohol",
+            "One to two drinks on weekends. (asked this visit: no change)",
+            "substances",
+        ),
+        # "Located at" a location.
+        (
+            "encounter",
+            "place_of_service",
+            "Visit conducted by synchronous audio and video telehealth. The client was located at "
+            "Client's home in Faketown, AA; the provider was located at Clinic office at 123 Test "
+            "St, Faketown, AA.",
+            "telehealth_attestation",
+        ),
         # The PDMP line says "today", carries no date, the wrong date, or no finding.
         ("plan", "pdmp", "PDMP reviewed today: no early fills, no other prescribers.", "pdmp_line"),
         ("plan", "pdmp", "PDMP reviewed: no early fills, no other prescribers.", "pdmp_line"),
@@ -423,7 +530,7 @@ def test_therapy_draft_failures_are_caught(section: str, key: str, value: Any, c
         ("psychotherapy", "psychotherapy_time", "Not stated.", "psychotherapy_section"),
         ("psychotherapy", "issues_addressed", "Supportive check-in.", "psychotherapy_section"),
         # No level was stated, so none may be written.
-        ("risk", "overall_risk", "Low.", "risk_quoted"),
+        ("risk", "overall_risk", "Low.", "risk_as_said"),
         # No check was dictated, so the PDMP line claims none.
         ("plan", "pdmp", "PDMP reviewed on 2026-03-13: no concerns.", "pdmp_line"),
         # An office visit is not attested as telehealth.
@@ -525,6 +632,34 @@ def test_cases_draft_a_real_template(case: Any) -> None:
     named = {f"{s}.{k}" for s, k in fields}
     assert set(case.expected.stated_this_visit) <= named
     assert set(case.expected.may_state) <= named
+    assert set(case.expected.findings) <= named
+    assert set(case.expected.quoted_once) <= named
+
+
+@pytest.mark.parametrize(
+    ("attestation", "passes"),
+    [
+        (
+            "Visit conducted by synchronous audio and video telehealth on a HIPAA-compliant "
+            "platform. The client was at home in Michigan; the provider was in Michigan. The "
+            "client consented to receive care by telehealth.",
+            True,
+        ),
+        # Seen from a real model: "located at" a state, and the home the client named, lost.
+        (
+            "Visit conducted by synchronous audio and video telehealth on a HIPAA-compliant "
+            "platform. The client was located at Michigan; the provider was located at Michigan.",
+            False,
+        ),
+        ("Telehealth visit. The client was in Michigan; the provider was in Michigan.", False),
+    ],
+)
+def test_the_attestation_says_where_the_client_said_they_were(
+    attestation: str, passes: bool
+) -> None:
+    draft = {"encounter": {"place_of_service": attestation}}
+
+    assert (telehealth_attestation(draft, FOLLOW_UP_WITH_THERAPY_AT_HOME) == []) is passes
 
 
 @pytest.mark.parametrize("case", ALL_CASES, ids=lambda c: c.name)
@@ -927,11 +1062,12 @@ def test_empty_chart_failures_are_caught(section: str, key: str, value: Any, che
 RISK_DRAFT: dict[str, dict[str, Any]] = {
     "risk": {
         "suicidal_homicidal_ideation": (
-            'Client: "Some nights I think everyone would be better off without me." '
-            'Clinician: "Passive suicidal ideation, no intent, no plan." "Denies HI."'
+            "Asked about thoughts of hurting self or being better off dead, the client said: "
+            '"Some nights I think everyone would be better off without me." Passive suicidal '
+            "ideation, no intent, no plan. Denies HI."
         ),
-        "self_harm_violence": '"No, I haven\'t done anything like that."',
-        "overall_risk": '"Overall acute risk is moderate."',
+        "self_harm_violence": 'The client said: "No, I haven\'t done anything like that."',
+        "overall_risk": "Overall acute risk is moderate.",
         "safety_plan": (
             "Warning sign: late-night rumination. Coping: walking the dog, calling their "
             "sister. Crisis contacts: 988 and the office."
@@ -940,27 +1076,41 @@ RISK_DRAFT: dict[str, dict[str, Any]] = {
 }
 
 
-def test_risk_stated_by_the_clinician_and_quoted_passes() -> None:
-    assert risk_quoted(RISK_DRAFT, FOLLOW_UP_RISK_LANGUAGE) == []
+def test_the_clients_words_quoted_and_the_clinicians_level_stated_passes() -> None:
+    assert risk_as_said(RISK_DRAFT, FOLLOW_UP_RISK_LANGUAGE) == []
+    assert no_attribution_tags(RISK_DRAFT, FOLLOW_UP_RISK_LANGUAGE) == []
     assert safety_plan_only_with_ideation(RISK_DRAFT, FOLLOW_UP_RISK_LANGUAGE) == []
 
 
 @pytest.mark.parametrize(
     ("key", "value", "check"),
     [
-        # The level written outside the clinician's words, or not at all.
-        ("overall_risk", "Moderate.", risk_quoted),
-        ("overall_risk", 'Moderate ("Overall acute risk is moderate.")', risk_quoted),
-        ("overall_risk", "Not stated.", risk_quoted),
-        # A quotation that is not the finding.
-        ("overall_risk", '"Let\'s go up."', risk_quoted),
+        # The clinician's level quoted, judged otherwise, or left out.
+        ("overall_risk", '"Overall acute risk is moderate."', risk_as_said),
+        ("overall_risk", "Low.", risk_as_said),
+        ("overall_risk", "Moderate, possibly high.", risk_as_said),
+        ("overall_risk", "Not stated.", risk_as_said),
         # The ideation paraphrased, or a level judged beside it.
-        ("suicidal_homicidal_ideation", "Passive SI without plan.", risk_quoted),
+        ("suicidal_homicidal_ideation", "Passive SI without plan.", risk_as_said),
         (
             "suicidal_homicidal_ideation",
             '"Some nights I think everyone would be better off without me." Low lethality.',
-            risk_quoted,
+            risk_as_said,
         ),
+        # The clinician's question quoted as if the client had said it.
+        (
+            "suicidal_homicidal_ideation",
+            'The client endorsed "thoughts of hurting yourself or that you\'d be better off dead".',
+            risk_as_said,
+        ),
+        # Seen from a real model: who said what, tagged.
+        (
+            "suicidal_homicidal_ideation",
+            'Clinician asked: "Any thoughts of hurting yourself?" Client responded: "Some nights '
+            'I think everyone would be better off without me."',
+            no_attribution_tags,
+        ),
+        ("overall_risk", "Clinician dictated: overall acute risk moderate.", no_attribution_tags),
         # Ideation was reported and a plan described, but none written.
         ("safety_plan", "", safety_plan_only_with_ideation),
     ],
@@ -986,6 +1136,20 @@ def test_a_time_the_client_mentions_is_not_a_session_time() -> None:
     )
 
     assert _failed(draft, FOLLOW_UP_WITH_THERAPY) == {}
+
+
+def test_the_time_of_a_practice_between_sessions_is_not_a_session_time() -> None:
+    """Seen from a real model: "a worry window at six in the evening" written as a clock time."""
+    draft = _with(
+        THERAPY_DRAFT,
+        "psychotherapy",
+        "goal_plan",
+        "Between-session practice: a worry window daily at 6:00 PM and a thought record twice.",
+    )
+
+    assert _failed(draft, FOLLOW_UP_WITH_THERAPY) == {}
+    claimed = _with(THERAPY_DRAFT, "psychotherapy", "goal_plan", "Session ended at 6:00.")
+    assert "codes_only_dictated" in _failed(claimed, FOLLOW_UP_WITH_THERAPY)
 
 
 def test_a_session_time_nobody_dictated_is_caught_in_the_time_fields() -> None:

@@ -457,6 +457,9 @@ def test_the_substance_baseline_is_listed_apart_and_screened_by_suffix() -> None
         '"(not asked this visit)"',
     ):
         assert suffix in rule
+    # A denial is a denial, and one answer to a question naming several denies each.
+    assert '"(stated this visit: denied)" when the client denied it' in rule
+    assert "denies each one named" in rule
     assert "asked \u2014 no change" not in block
     assert "The substance use baseline is what the chart records" not in block
 
