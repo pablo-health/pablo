@@ -22,6 +22,10 @@ import * as noteTypesApi from "@/lib/api/noteTypes"
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn() }),
 }))
+let authLoading = false
+vi.mock("@/lib/auth-context", () => ({
+  useAuth: () => ({ user: null, loading: authLoading, getIdToken: async () => null }),
+}))
 vi.mock("@/lib/api/notes")
 vi.mock("@/lib/api/patientDocuments")
 vi.mock("@/lib/api/noteTypes")
@@ -42,6 +46,7 @@ const createWrapper = () => {
 describe("PatientChartTabs", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    authLoading = false
     vi.mocked(notesApi.listNotesForPatient).mockResolvedValue({
       data: [
         createMockNote({
@@ -156,6 +161,36 @@ describe("PatientChartTabs", () => {
     await waitFor(() => {
       expect(screen.getByText(/no notes yet/i)).toBeInTheDocument()
     })
+  })
+
+  it("waits for sign-in before saying there are no notes", async () => {
+    // While sign-in resolves the notes query is disabled: no data, not
+    // loading. The empty state (and its New note button) must not show
+    // then, or it is replaced by the skeleton once the fetch starts and a
+    // New note dialog opened in between closes under the clinician.
+    vi.mocked(notesApi.listNotesForPatient).mockResolvedValue({
+      data: [],
+      total: 0,
+    })
+    authLoading = true
+    const { rerender } = render(<PatientChartTabs patientId="p1" />, {
+      wrapper: createWrapper(),
+    })
+    const panel = screen.getByRole("tabpanel")
+
+    expect(screen.queryByText(/no notes yet/i)).not.toBeInTheDocument()
+    expect(
+      within(panel).queryByRole("button", { name: /new note/i }),
+    ).not.toBeInTheDocument()
+    expect(notesApi.listNotesForPatient).not.toHaveBeenCalled()
+
+    authLoading = false
+    rerender(<PatientChartTabs patientId="p1" />)
+
+    expect(await screen.findByText(/no notes yet/i)).toBeInTheDocument()
+    expect(
+      within(panel).getByRole("button", { name: /new note/i }),
+    ).toBeInTheDocument()
   })
 
   it("switches to the Documents tab and mounts the documents panel", async () => {
