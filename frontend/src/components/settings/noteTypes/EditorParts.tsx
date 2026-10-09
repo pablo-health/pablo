@@ -58,6 +58,15 @@ export function Labelled({
   )
 }
 
+/**
+ * In place of a field's shape and "What goes here": the field names a source,
+ * so code prints it and nothing about it is drafted. Its shape is fixed by
+ * that source, so neither is offered.
+ */
+export function FromTheChart() {
+  return <p className="text-[12.5px] text-muted-foreground">From the chart</p>
+}
+
 /** Move up, move down and remove, for one row of a list. */
 export function RowActions({
   name,

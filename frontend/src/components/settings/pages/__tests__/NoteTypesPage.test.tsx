@@ -333,6 +333,27 @@ describe("NoteTypesPage editor", () => {
     await waitFor(() => expect(mockSave).toHaveBeenCalledWith("psychiatric_follow_up", resolved, undefined))
   })
 
+  it("shows a chart-fed field as from the chart, with no hint to edit, before and after detaching", async () => {
+    mockResolve.mockResolvedValue({ spec: { ...FOLLOW_UP.spec, label: FOLLOW_UP.label } })
+    const user = userEvent.setup()
+    renderWithProviders(<NoteTypesPage />)
+
+    await user.click(await screen.findByRole("button", { name: `Start from ${FOLLOW_UP.label}` }))
+    const baseRow = screen.getByRole("button", { name: "Hide Allergies" }).closest("li")!
+    expect(within(baseRow).getByText("From the chart")).toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: `Detach from ${FOLLOW_UP.label}` }))
+    await user.click(within(screen.getByRole("group", { name: "Detach" })).getByRole("button", { name: "Detach" }))
+
+    const allergies = (await screen.findByDisplayValue("Allergies")).closest<HTMLElement>('[role="group"]')!
+    expect(within(allergies).getByText("From the chart")).toBeInTheDocument()
+    expect(within(allergies).queryByLabelText("What goes here")).not.toBeInTheDocument()
+    expect(within(allergies).queryByLabelText("Shape")).not.toBeInTheDocument()
+    const drafted = screen.getByDisplayValue("Chief complaint").closest<HTMLElement>('[role="group"]')!
+    expect(within(drafted).getByLabelText("What goes here")).toBeInTheDocument()
+    expect(within(drafted).queryByText("From the chart")).not.toBeInTheDocument()
+  })
+
   it("opens imported JSON in the editor, and refuses what isn't a note type", async () => {
     const user = userEvent.setup()
     renderWithProviders(<NoteTypesPage />)

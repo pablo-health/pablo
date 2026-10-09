@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import type { PracticeFieldKind } from "@/types/noteTypes"
-import { FieldMessages, Labelled, RowActions, SELECT_CLASS } from "./EditorParts"
+import { FieldMessages, FromTheChart, Labelled, RowActions, SELECT_CLASS } from "./EditorParts"
 import {
   blankField,
   blankSection,
@@ -121,20 +121,22 @@ function FieldsEditor({
                   />
                 )}
               </Labelled>
-              <Labelled label="Shape" className="w-36" messages={errorsAt(errors, `${fieldPath}.kind`)}>
-                {(props) => (
-                  <select
-                    {...props}
-                    value={field.kind}
-                    onChange={(e) => update(fi, { kind: e.target.value as PracticeFieldKind })}
-                    className={SELECT_CLASS}
-                  >
-                    <option value="text">Paragraph</option>
-                    <option value="list">List</option>
-                    <option value="diagnoses">Diagnoses</option>
-                  </select>
-                )}
-              </Labelled>
+              {!field.source && (
+                <Labelled label="Shape" className="w-36" messages={errorsAt(errors, `${fieldPath}.kind`)}>
+                  {(props) => (
+                    <select
+                      {...props}
+                      value={field.kind}
+                      onChange={(e) => update(fi, { kind: e.target.value as PracticeFieldKind })}
+                      className={SELECT_CLASS}
+                    >
+                      <option value="text">Paragraph</option>
+                      <option value="list">List</option>
+                      <option value="diagnoses">Diagnoses</option>
+                    </select>
+                  )}
+                </Labelled>
+              )}
               <div className="pt-5">
                 <RowActions
                   name={field.label || `field ${fi + 1}`}
@@ -146,17 +148,21 @@ function FieldsEditor({
                 />
               </div>
             </div>
-            <Labelled label="What goes here" messages={errorsAt(errors, `${fieldPath}.ai_hint`)}>
-              {(props) => (
-                <Textarea
-                  {...props}
-                  rows={2}
-                  className="min-h-[56px]"
-                  value={field.ai_hint}
-                  onChange={(e) => update(fi, { ai_hint: e.target.value })}
-                />
-              )}
-            </Labelled>
+            {field.source ? (
+              <FromTheChart />
+            ) : (
+              <Labelled label="What goes here" messages={errorsAt(errors, `${fieldPath}.ai_hint`)}>
+                {(props) => (
+                  <Textarea
+                    {...props}
+                    rows={2}
+                    className="min-h-[56px]"
+                    value={field.ai_hint}
+                    onChange={(e) => update(fi, { ai_hint: e.target.value })}
+                  />
+                )}
+              </Labelled>
+            )}
           </div>
         )
       })}

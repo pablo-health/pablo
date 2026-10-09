@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import type { PracticeFieldKind, PracticeSectionSpec } from "@/types/noteTypes"
-import { Labelled, SELECT_CLASS } from "./EditorParts"
+import { FromTheChart, Labelled, SELECT_CLASS } from "./EditorParts"
 import { canHide, canHideSection, type AddedDraftField, type BasedDraft } from "./basedModel"
 import { blankField, blankSection, type DraftField, type DraftSection } from "./editorModel"
 
@@ -130,7 +130,12 @@ function BaseSection({
                 <li key={field.key} className="flex items-start justify-between gap-3 text-muted-foreground">
                   <div className={fieldHidden ? "line-through" : undefined}>
                     <p className="text-[13px]">{field.label}</p>
-                    {!fieldHidden && field.ai_hint && <p className="line-clamp-2 text-[12px]">{field.ai_hint}</p>}
+                    {!fieldHidden &&
+                      (field.source ? (
+                        <FromTheChart />
+                      ) : (
+                        field.ai_hint && <p className="line-clamp-2 text-[12px]">{field.ai_hint}</p>
+                      ))}
                   </div>
                   {canHide(draft.base, path) ? (
                     <Button

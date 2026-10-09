@@ -27,6 +27,8 @@ export interface NoteFieldSchema {
   label: string
   kind: NoteFieldKind
   ai_hint: string
+  /** What code prints the field from instead of drafting it; absent when drafted. */
+  source?: string
 }
 
 export interface NoteSectionSchema {
@@ -113,6 +115,12 @@ export interface PracticeFieldSpec {
   label: string
   kind: PracticeFieldKind
   ai_hint: string
+  /**
+   * What code prints the field from (the chart, or the values entered for the
+   * visit) instead of the model drafting it. Set by the built-ins; the editor
+   * keeps it and never offers it, so a copy prints those fields the same way.
+   */
+  source?: string
 }
 
 export interface PracticeSectionSpec {
