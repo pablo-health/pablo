@@ -1,0 +1,78 @@
+{
+  "_about": "Word lists for app/chart_proposals/materiality.py. Each entry is matched after the same normalising the proposal and the chart's text get (lowercase, numbers as digits, stop words out, a plural s dropped), so write entries in plain words. A phrase matches as consecutive words. Changing a list changes what a clinician is offered at sign: run the proposal evals and the episodes before and after.",
+  "state_markers": {
+    "_about": "Words that say a lasting state began, ended or changed, grouped by kind. A history proposal that adds to a field the chart already holds must bring one of these, or a new named entity, with its new words; and a line it cites from the client or the clinician's dictation must carry a marker of the same kind, or the entity it adds, so the change is one that was said and not one the model inferred. The groups are what lets a client's 'started' ground a note's 'began'.",
+    "groups": {
+      "start": ["started", "start", "starting", "began", "begun", "begin", "beginning", "joined", "join", "took up", "new", "since", "now"],
+      "end": ["stopped", "quit", "ended", "ending", "no longer", "anymore", "left", "gave up", "dropped out", "withdrew", "since", "now"],
+      "move": ["moved", "move", "moving", "moved out", "moved in", "relocated", "lives", "living with", "lived", "cohabiting", "lease", "closed on"],
+      "relationship": ["divorced", "divorce", "separated", "separation", "finalized", "finalised", "married", "engaged", "widowed", "remarried", "broke up", "breakup", "new partner", "new girlfriend", "new boyfriend", "signed"],
+      "work": ["hired", "laid off", "fired", "let go", "resigned", "retired", "promoted", "new job", "new position", "took a job", "took a position", "unemployed", "closed", "shut", "enrolled", "graduated", "got the job", "got it"],
+      "health": ["diagnosed", "hospitalized", "admitted", "discharged", "surgery", "pregnant", "gave birth", "born", "miscarriage", "stroke", "heart attack"],
+      "death": ["died", "passed away", "death", "deceased"],
+      "legal": ["custody", "arrested", "charged", "convicted", "probation", "sentenced", "dismissed", "signed", "deployed"],
+      "care": ["caregiver", "caring for", "cares for", "provides care", "care", "aide"],
+      "harm": ["attempt", "attempted", "overdose", "overdosed"],
+      "use": ["sober", "relapsed", "relapse", "abstinent", "cut down", "cut back", "cut to", "cut", "increased", "decreased", "reduced", "switched", "vaping", "started"]
+    }
+  },
+  "transient": {
+    "_about": "Words for events that leave nothing lasting behind. A proposal whose new words include one of these and no state marker is not offered.",
+    "words": [
+      "appointment", "visit", "meeting", "meal", "dinner", "lunch", "breakfast",
+      "weekend", "this week", "last week", "next week", "this month", "tonight", "today", "yesterday", "tomorrow",
+      "trip", "vacation", "holiday", "party", "game", "concert", "wedding",
+      "review", "interview", "phone screen", "screening", "scheduled", "booked", "planned", "plan", "planning", "considering", "considered", "thinking about", "hoping", "expecting", "upcoming", "pending",
+      "called", "texted", "emailed", "messaged",
+      "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+      "picking up", "extra shift", "covering", "most weeks", "lately", "recently",
+      "applied", "applying", "application"
+    ]
+  },
+  "named_entities": {
+    "_about": "Kinds of person, place and care that make a new fact lasting on their own: a new person in the client's life, a new clinician or program, a new diagnosis or treatment. A capitalised word the chart does not have counts too.",
+    "words": [
+      "mother", "father", "parent", "sister", "brother", "sibling", "son", "daughter", "child", "grandchild", "grandmother", "grandfather", "aunt", "uncle", "cousin", "niece", "nephew",
+      "partner", "spouse", "husband", "wife", "girlfriend", "boyfriend", "fiance", "fiancee", "roommate", "housemate",
+      "friend", "neighbor", "coworker", "colleague", "boss", "manager", "employer", "landlord", "sponsor",
+      "therapist", "psychiatrist", "psychologist", "counselor", "counseling", "aide", "caseworker", "case manager", "nurse", "doctor", "physician", "cardiologist", "neurologist", "endocrinologist", "oncologist", "surgeon",
+      "therapy", "cbt", "dbt", "emdr", "group", "program", "iop", "php", "residential", "rehab", "aa", "na", "cpap", "dialysis", "physical therapy",
+      "apartment", "house", "shelter", "facility", "dorm", "town", "city", "state",
+      "disorder", "disease", "apnea", "diabetes", "hypertension", "cancer", "epilepsy", "seizure", "asthma", "arthritis", "migraine", "injury", "fracture", "concussion"
+    ]
+  },
+  "present_markers": {
+    "_about": "Words that place a statement in this visit's present. A proposal to a field about the past whose new words carry one of these and no past marker is about the present visit, not the past.",
+    "words": [
+      "this visit", "reported this visit", "currently", "current", "at present", "these days", "most mornings", "most days", "most nights", "past 2 weeks", "last 2 weeks", "for 2 weeks", "this week", "lately", "recently", "ongoing", "passive"
+    ]
+  },
+  "past_markers": {
+    "_about": "Words that place a statement in the past, so a proposal carrying them to a field about the past is about the past.",
+    "words": [
+      "ago", "at age", "age", "previously", "prior", "former", "formerly", "history of", "once", "in college", "in high school", "as a child", "as a teen", "childhood", "attempt", "attempted", "overdose", "hospitalized", "admitted", "diagnosed", "was", "were", "had"
+    ]
+  },
+  "past_fields": {
+    "_about": "History fields that record what happened before, not how things are now.",
+    "fields": ["past_self_harm", "hospitalizations", "prior_diagnoses", "medication_trials", "trauma_history"]
+  },
+  "medication_terms": {
+    "_about": "Units and words that make new words a dose or a lab result. A history field never takes either: doses belong to the medication list and results to the chart's labs. The fields in dose_fields record amounts of their own (medications tried before, a substance's amount) and are exempt from the dose rule.",
+    "dose_fields": ["medication_trials", "alcohol", "cannabis", "stimulants", "cocaine", "opioids", "benzodiazepines", "tobacco_nicotine", "other_substances"],
+    "dose_units": ["mg", "mcg", "milligram", "milligrams", "microgram", "ml", "unit", "units", "tablet", "tablets", "pill", "pills", "capsule", "capsules", "dose", "dosage"],
+    "lab_words": ["a1c", "hba1c", "tsh", "lab", "labs", "level", "levels", "result", "results", "panel", "ekg", "ecg", "cbc", "bmp", "cmp", "lipid", "glucose", "creatinine", "platelet", "sodium"]
+  },
+  "diagnosis_filler": {
+    "_about": "Words in a diagnosis label that do not name the diagnosis: dropped before asking whether a proposal names a diagnosis the problem list already has.",
+    "words": ["disorder", "type", "episode", "current", "currently", "recurrent", "single", "mild", "moderate", "severe", "partial", "full", "remission", "in", "with", "without", "unspecified", "specified", "other", "features", "rule", "out", "diagnosed", "diagnosis", "age", "at"]
+  },
+  "stop_words": [
+    "a", "an", "the", "and", "or", "but", "nor", "of", "to", "in", "on", "at", "by", "for", "from", "with", "as", "into", "about", "after", "before", "over", "under", "per", "via",
+    "is", "are", "be", "been", "being", "am", "has", "have", "do", "does", "did", "will", "would", "can", "could", "should", "may", "might", "must", "shall",
+    "it", "its", "this", "that", "these", "those", "there", "here", "which", "who", "whom", "whose", "what", "when", "where", "how", "than", "then", "so", "also", "too", "very", "just", "still", "both", "each", "all", "any", "some", "such", "own", "same", "other",
+    "client", "patient", "they", "them", "their", "theirs", "themselves", "he", "him", "his", "she", "her", "hers", "i", "me", "my", "we", "us", "our", "you", "your",
+    "reports", "reported", "report", "states", "stated", "state", "says", "said", "describes", "described", "notes", "noted", "per", "according", "reporting",
+    "not", "no", "denies", "denied", "none", "yes"
+  ]
+}

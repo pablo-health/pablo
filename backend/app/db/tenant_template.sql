@@ -754,6 +754,7 @@ CREATE TABLE __TENANT_SCHEMA__.note_chart_proposal_runs (
     status character varying(16) NOT NULL,
     error_class character varying(100),
     computed_at timestamp with time zone NOT NULL,
+    considered jsonb DEFAULT '[]'::jsonb NOT NULL,
     CONSTRAINT ck_note_chart_proposal_runs_status CHECK (((status)::text = ANY ((ARRAY['ok'::character varying, 'failed'::character varying, 'skipped'::character varying])::text[])))
 );
 

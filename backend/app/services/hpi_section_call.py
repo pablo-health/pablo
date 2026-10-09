@@ -22,7 +22,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any
 
-from ..chart_proposals.drafting import segment_texts
+from ..chart_proposals.evidence import segment_texts
 from .risk_section_call import verified_words
 from .source_attribution_service import format_transcript_with_segment_ids
 

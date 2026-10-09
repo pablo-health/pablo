@@ -2014,6 +2014,11 @@ class NoteChartProposalRunRow(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     error_class: Mapped[str | None] = mapped_column(String(100))
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    considered: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    """The history proposals the call made that were considered and not offered, each
+    with its reason (``app.chart_proposals.materiality``)."""
 
     __table_args__ = (
         CheckConstraint(

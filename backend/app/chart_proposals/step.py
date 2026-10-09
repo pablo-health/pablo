@@ -16,9 +16,18 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
+from ..chart_history.fields import is_history_key
 from ..notes.chart_context import chart_context_for
+from ..notes.chart_fields import rendered_fields
 from ..utcnow import utc_now
-from .drafting import propose_chart_updates, propose_from_document
+from .drafting import (
+    document_segments,
+    propose_chart_updates,
+    propose_from_document,
+    said_this_visit,
+    screened,
+    transcript_segments,
+)
 from .models import ProposalRun, RunStatus
 from .service import ChartProposalService
 
@@ -38,6 +47,15 @@ if TYPE_CHECKING:
 def proposes_chart_updates(definition: NoteTypeDefinition | None) -> bool:
     """Whether notes of this type propose chart updates: those drafted against the full chart."""
     return definition is not None and definition.reads_chart and definition.full_chart
+
+
+def extracted_fields(definition: NoteTypeDefinition | None) -> frozenset[str]:
+    """The history fields this type prints from the chart, which the extraction beside
+    the draft reads the visit for. A type that drafts a history field itself (an
+    intake) leaves it out: nothing extracts what was said about it."""
+    if definition is None:
+        return frozenset()
+    return frozenset(r.source for r in rendered_fields(definition) if is_history_key(r.source))
 
 
 class ChartProposalStep:
@@ -87,15 +105,21 @@ class ChartProposalStep:
         ``note`` is the draft just generated, whose extraction call says what the
         visit said about the chart's fields and on which lines. A note's content
         alone (a retry: the extraction is not kept) is read for what it marks as
-        stated this visit instead."""
+        stated this visit instead.
+
+        The reply's history proposals are then checked for materiality: one not worth
+        offering is kept on the run as considered, with its reason (:mod:`.materiality`)."""
         complete = generator.chart_proposal_completion()
         if complete is None or chart is None or not proposes_chart_updates(definition):
             return None
-        if isinstance(note, Mapping):
-            return propose_chart_updates(complete, chart, transcript, draft=note)
-        return propose_chart_updates(
-            complete, chart, transcript, draft=note.content, statements=note.chart_statements
+        draft, statements = (
+            (note, None) if isinstance(note, Mapping) else (note.content, note.chart_statements)
         )
+        drafted = propose_chart_updates(
+            complete, chart, transcript, draft=draft, statements=statements
+        )
+        said = said_this_visit(extracted_fields(definition), statements, draft)
+        return screened(drafted, chart, transcript_segments(transcript), said)
 
     def draft_from_document(
         self,
@@ -108,7 +132,8 @@ class ChartProposalStep:
         complete = generator.chart_proposal_completion()
         if complete is None or chart is None or not proposes_chart_updates(definition):
             return None
-        return propose_from_document(complete, chart, document)
+        drafted = propose_from_document(complete, chart, document)
+        return screened(drafted, chart, document_segments(document))
 
     def store(
         self,
@@ -130,6 +155,7 @@ class ChartProposalStep:
                 status=status,
                 computed_at=utc_now(),
                 error_class=drafted.error_class if drafted is not None else None,
+                considered=drafted.considered if drafted is not None else (),
             )
         )
         if chart is not None and proposes_chart_updates(definition):

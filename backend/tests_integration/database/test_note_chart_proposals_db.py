@@ -27,7 +27,13 @@ from typing import TYPE_CHECKING
 import pytest
 from app.chart_history.service import ChartHistoryService
 from app.chart_proposals.families import ChartWriters
-from app.chart_proposals.models import DraftedProposal, Evidence, MedicationChange, ProposalRun
+from app.chart_proposals.models import (
+    Considered,
+    DraftedProposal,
+    Evidence,
+    MedicationChange,
+    ProposalRun,
+)
 from app.chart_proposals.service import ChartProposalService, Choice
 from app.db import PLATFORM_SCHEMA
 from app.db.provisioning import create_practice_schema, ensure_schemas
@@ -188,7 +194,35 @@ def test_a_run_record_is_kept_per_note_and_replaced(engine: Engine, tenant: str)
 
     assert run is not None
     assert (run.status, run.error_class) == ("ok", None)
+    assert run.considered == ()
     assert outsider is None
+
+
+def test_a_proposal_considered_and_not_offered_is_kept_on_the_run(
+    engine: Engine, tenant: str
+) -> None:
+    patient, note = _patient_and_note(engine, tenant)
+    considered = Considered(
+        field_key="psychotherapy_history",
+        proposed_text="None. Therapy intake appointment scheduled for next week.",
+        what_changed="Intake scheduled",
+        evidence_segment_ids=(4, 9),
+        origin="transcript",
+        reason="transient",
+    )
+
+    with _session(engine, tenant, _CLINICIAN_A) as session:
+        repo = PostgresChartProposalRepository(session)
+        repo.record_run(
+            ProposalRun(note.id, patient.id, "ok", datetime.now(UTC), considered=(considered,))
+        )
+        session.commit()
+
+    with _session(engine, tenant, _CLINICIAN_A) as session:
+        run = PostgresChartProposalRepository(session).run(note.id)
+
+    assert run is not None
+    assert run.considered == (considered,)
 
 
 def test_a_medication_change_round_trips_and_accepting_writes_the_list(
