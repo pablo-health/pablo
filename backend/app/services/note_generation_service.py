@@ -429,6 +429,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
         if addendum:
             addendum_block = _addendum_block(addendum, apart=bool(routed[RISK_MSE]))
             user_prompt = f"{user_prompt}\n\n{addendum_block}"
+        user_prompt += _drafted_apart_block(full_definition, apart, person)
         if current_note:
             elsewhere = {(r.section, r.field.key) for r in rendered}
             elsewhere |= {(f.section, f.field.key) for f in apart}
@@ -945,6 +946,29 @@ _CURRENT_NOTE_INSTRUCTIONS = (
     "only where such a line corrects it. A redraft identical to the note below "
     "is wrong whenever such a line is missing from it."
 )
+
+
+def _drafted_apart_block(
+    definition: NoteTypeDefinition, apart: Sequence[SectionField], person: str
+) -> str:
+    """The sections of the note drafted by calls of their own, named for the main draft.
+
+    With those sections gone from its fields, the main draft otherwise sees a
+    note with nowhere for the history, the risk screen or the mental status to
+    go, and writes them into a field it still has, such as the psychotherapy
+    block. Empty when nothing is drafted apart.
+    """
+    keys = {f.section for f in apart}
+    labels = [s.label for s in definition.sections if s.key in keys]
+    if not labels:
+        return ""
+    return (
+        f"\n\nThe note's other sections ({', '.join(labels)}) are written separately from "
+        f"the same visit, and what the visit said for them goes there. Taking the history "
+        f"(asking how the {person} has been, about symptoms, sleep, side effects or how an "
+        "earlier plan went, and hearing the answers) belongs there however long it ran, and "
+        "does not by itself make a therapy portion."
+    )
 
 
 def _current_note_block(current_note: Mapping[str, Any]) -> str:

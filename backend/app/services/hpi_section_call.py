@@ -46,8 +46,14 @@ _INSTRUCTIONS = """\
 Draft each field below from this visit: the history it took, domain by domain.
 - Each domain: this visit's pertinent positives and negatives, in the note's own voice: concise, \
 third person, past tense, "the {term}" or they, never he or she. A denial is recorded as a denial.
-- What the clinician observed or said, during the visit or after the {term}'s last line, is \
-written as a finding: declarative, never saying who said, asked, noted or dictated it.
+- The history only: what the {term} reported and what was screened. The clinician's assessment, \
+risk judgments, plan and teaching (what a new dose may cause) belong to other sections; leave \
+them out.
+- Every field is the note's own statement, its subject the {term} or the symptom, never the \
+clinician, never saying who said, asked, noted or documented anything. A question asked reads as \
+what was screened and the answer ("Screened for nausea and headaches; denied both."); a course \
+or observation stated by the clinician, after the {term}'s last line included, reads as the \
+finding itself ("Course stable since the last visit.").
 - No quotation marks, except that a field with quotes carries the {term}'s words: text is the \
 reason for the visit in the note's voice, and each quote is the {term}'s own words about why they \
 came, copied exactly from one {term} line, segment_ids that line's n in [Sn].
