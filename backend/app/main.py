@@ -11,9 +11,11 @@ import os
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 
-from fastapi import APIRouter, Depends, FastAPI
+from fastapi import APIRouter, Depends, FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 
 from .api_errors import register_exception_handlers
 from .auth.route_security import truly_public
@@ -548,15 +550,24 @@ app.include_router(patient_profile.router)
 
 
 @app.get("/api/health")
-def health_check(_public: None = Depends(truly_public)) -> dict[str, object]:
+def health_check(response: Response, _public: None = Depends(truly_public)) -> dict[str, object]:
     """Health check endpoint.
 
     Returns server status, deployed git SHA, and minimum required
-    client versions. Verifies DB connectivity — a failed SELECT 1
-    bubbles up as 5xx so deploy smoke tests catch broken bindings.
+    client versions. Verifies DB connectivity: when the database cannot be
+    reached, or no pooled connection frees up in time, it answers 503
+    ``{"status": "unavailable"}``. A new instance's first connections can
+    take a while to come up, and a platform health probe reading 503 keeps
+    traffic away until they do. Deploy smoke tests still see a 5xx for a
+    broken binding.
     """
-    with get_engine().connect() as conn:
-        conn.execute(text("SELECT 1"))
+    try:
+        with get_engine().connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except (OperationalError, PoolTimeoutError) as exc:
+        logger.warning("Health check: database unavailable (%s)", type(exc).__name__)
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {"status": "unavailable"}
     return {
         "status": "healthy",
         "server_version": get_server_version(),
