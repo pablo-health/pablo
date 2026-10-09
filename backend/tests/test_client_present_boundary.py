@@ -350,7 +350,9 @@ class TestGenerationReceivesTheAddendum:
         assert "denies suicidal ideation" not in transcript_part
         assert "client was not present" in addendum_part
         assert "Client denies suicidal ideation, intent or plan." in addendum_part
-        assert "Clinician stated:" in addendum_part
+        # Dictated facts are findings in the note's voice, never tagged with who said them.
+        assert "as a finding in the note's own voice" in addendum_part
+        assert "Clinician stated" not in addendum_part
         assert "Not stated." in addendum_part
 
     def test_a_dictation_is_drafted_from_the_addendum_with_no_psychotherapy(
