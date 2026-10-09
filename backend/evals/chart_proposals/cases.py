@@ -159,7 +159,15 @@ STOPPED_WORKING = ProposalCase(
         ExpectedProposal(
             field_key="work_school",
             must_contain=("dental",),
-            must_contain_any=("no longer", "stopped", "until", "left", "former", "let go"),
+            must_contain_any=(
+                "no longer",
+                "stopped",
+                "until",
+                "left",
+                "former",
+                "let go",
+                "laid off",
+            ),
             evidence=(1, 2),
         ),
     ),
