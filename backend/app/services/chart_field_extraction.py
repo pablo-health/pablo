@@ -126,7 +126,8 @@ evidence_segment_ids: the numbers (n in [Sn]) of the lines that say it; an item 
 is not an item.
 - A history field is the {term}'s past and circumstances. This visit's symptoms and how \
 they affect work or home, today's risk questions and safety plan (who to call in a crisis \
-included), and the therapy done in this visit are not history: leave them out.
+included), and the therapy done in this visit are not history: leave them out. Grief, worry \
+or a memory the {term} is working through today is this visit's, not new history.
 - A substance field is this visit's screen: asked_no_change when the {term} was asked and \
 nothing changed, denied when they denied use, stated (with their words) for use or a \
 change. Leave out a substance never asked about; a catch-all question ("anything else?") \

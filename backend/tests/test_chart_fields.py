@@ -332,6 +332,27 @@ def test_a_stated_medication_is_its_own_item_and_never_alters_a_chart_line() -> 
     ]
 
 
+@pytest.mark.parametrize(
+    ("stated", "restates"),
+    [
+        ("escitalopram 10 milligrams every morning", True),
+        ("I'm still on the escitalopram", True),
+        ("Escitalopram, 10", True),
+        ("I take 20 of the escitalopram now", False),
+        ("omeprazole 20 mg", False),
+        ("escitalopram 10 and melatonin 3 at night", False),
+    ],
+)
+def test_a_medication_only_restating_a_chart_line_adds_nothing(stated: str, restates: bool) -> None:
+    chart = ChartContext(
+        medications=(ChartMedication("Escitalopram", "10 mg", "every morning", "psychiatric"),)
+    )
+    said = Statements(fields=(Statement("current_medications", stated=stated),))
+    current = _compose(chart, said)["medications"]["current_medications"]
+    assert current[0] == "Psychiatric: Escitalopram 10 mg, every morning"
+    assert current[1:] == ([] if restates else [f'(stated this visit: "{stated}")'])
+
+
 # ---------------------------------------------------------------------------
 # Diagnoses
 # ---------------------------------------------------------------------------

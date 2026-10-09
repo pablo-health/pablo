@@ -19,7 +19,8 @@ The marks:
 - The current medications: the chart's lines untouched, then one item
   ``(stated this visit: "...")`` per medication the client says they take
   that the chart lacks. A stated dose that differs from a chart line is an
-  item of its own, so the chart's line is never altered.
+  item of its own, so the chart's line is never altered; one that only
+  restates a chart line adds nothing.
 - The diagnoses: the problem list with its codes, then each diagnosis the
   clinician named that it lacks, with the status "stated this visit" and a
   code only when one was said.
@@ -29,6 +30,7 @@ The marks:
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -228,6 +230,25 @@ def _diagnoses(chart: ChartContext, named: tuple[NamedDiagnosis, ...]) -> list[S
     return listed
 
 
+_NUMBER = re.compile(r"\d+(?:\.\d+)?")
+
+
+def restates_chart_medication(stated: str, chart: ChartContext) -> bool:
+    """Whether ``stated`` names a medication on the chart and no number its line lacks.
+
+    "Escitalopram 10 milligrams every morning" against the chart's
+    "Escitalopram 10 mg, every morning" adds nothing; "I take 20 of the
+    escitalopram now" states a dose the chart does not have, so it is kept.
+    """
+    words = set(re.findall(r"[a-z]+", stated.lower()))
+    numbers = set(_NUMBER.findall(stated))
+    for medication in chart.medications:
+        name = medication.name.split()[0].lower() if medication.name.split() else ""
+        if name and name in words and numbers <= set(_NUMBER.findall(medication_line(medication))):
+            return True
+    return False
+
+
 def place_of_service(inputs: Mapping[str, str], person: str, *, at_home: bool = False) -> str:
     """The attestation from the entered place of service and locations."""
     place = (inputs.get("place_of_service") or "").strip()
@@ -268,7 +289,11 @@ def compose(
     said = statements.about(rendered.field.key) + _entered(rendered, inputs)
     if source == MEDICATIONS:
         lines = medication_lines(chart)
-        added = [stated_suffix([s]) for s in said if s.stated.strip()]
+        added = [
+            stated_suffix([s])
+            for s in said
+            if s.stated.strip() and not restates_chart_medication(s.stated, chart)
+        ]
         return lines + [a for i, a in enumerate(added) if a not in added[:i]]
     if is_substance(source):
         return f"{_history_text(chart, source)} {_screen(said)}"
