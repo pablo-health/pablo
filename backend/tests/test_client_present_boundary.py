@@ -288,9 +288,9 @@ _FOLLOW_UP = PracticeNoteTypeSpec.model_validate(
         "user_template": "{fields}\n\nTranscript:\n{transcript}",
         "sections": [
             {
-                "key": "risk",
-                "label": "Risk",
-                "fields": [{"key": "ideation", "label": "Ideation", "ai_hint": "Quote."}],
+                "key": "assessment",
+                "label": "Assessment",
+                "fields": [{"key": "impression", "label": "Impression", "ai_hint": "Summarize."}],
             },
             {
                 "key": "psychotherapy",
@@ -322,7 +322,7 @@ class TestGenerationReceivesTheAddendum:
             responses=[
                 StructuredCompletion(
                     data={
-                        "risk": {"ideation": "x"},
+                        "assessment": {"impression": "x"},
                         "psychotherapy": {"interventions": "should not survive"},
                     }
                 )
