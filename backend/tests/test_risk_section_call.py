@@ -451,6 +451,15 @@ def test_a_redraft_gives_each_call_its_own_fields_of_the_current_note() -> None:
     assert "Pressured." not in main_prompt
 
 
+def test_the_main_calls_addendum_no_longer_places_risk_or_mental_status() -> None:
+    """With those sections drafted apart, the main draft has no field to put them in."""
+    gateway = _ScriptedGateway()
+    _draft(gateway)
+    addendum = gateway.call(None)["user_prompt"].split("Clinician addendum:", 1)[1]
+    assert "Where the addendum states a prescription monitoring check" in addendum
+    assert "risk, mental status" not in addendum
+
+
 def test_section_field_paths_name_section_and_key() -> None:
     f = SectionField("risk", NoteFieldDef("overall_risk", "Overall", "text"), quotes=True)
     assert f.path == "risk.overall_risk"

@@ -428,7 +428,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
                 definition, transcript, session_date, chart_block
             )
         if addendum:
-            user_prompt = f"{user_prompt}\n\n{_addendum_block(addendum)}"
+            user_prompt = f"{user_prompt}\n\n{_addendum_block(addendum, apart=bool(routed))}"
         if current_note:
             apart = {(r.section, r.field.key) for r in rendered}
             apart |= {(f.section, f.field.key) for f in routed}
@@ -875,20 +875,36 @@ def _mock_registry_content(definition: NoteTypeDefinition, patient: Patient) -> 
 
 _NO_CLIENT_PRESENT = "(The client was not present in this recording.)"
 
-_ADDENDUM_INSTRUCTIONS = (
+_ADDENDUM_HEAD = (
     "Clinician addendum: dictated by the clinician after the session; the "
-    "client was not present. These are the clinician's own statements. Where "
-    "the addendum states risk, mental status, a prescription monitoring "
-    "check, consent, or a decision and its reasons, put it in the matching "
+    "client was not present. These are the clinician's own statements. "
+)
+_ADDENDUM_PLACING = (
+    "Where the addendum states {what}, put it in the matching "
     'field quoted and marked as the clinician\'s, e.g. Clinician stated: "...". '
+)
+_ADDENDUM_TAIL = (
     "The addendum is not session time and is not something the client said. "
     'An item covered by neither the session nor the addendum is "Not stated."; '
     "never fill it in."
 )
+_ADDENDUM_ITEMS = "a prescription monitoring check, consent, or a decision and its reasons"
+_ADDENDUM_INSTRUCTIONS = (
+    _ADDENDUM_HEAD
+    + _ADDENDUM_PLACING.format(what=f"risk, mental status, {_ADDENDUM_ITEMS}")
+    + _ADDENDUM_TAIL
+)
 
 
-def _addendum_block(addendum_lines: str) -> str:
-    return f"{_ADDENDUM_INSTRUCTIONS}\n\n{addendum_lines}"
+def _addendum_block(addendum_lines: str, *, apart: bool = False) -> str:
+    """The addendum and how to place it. ``apart``: risk and mental status are drafted
+    by a call of their own, so this draft has no field to put them in."""
+    instructions = (
+        _ADDENDUM_HEAD + _ADDENDUM_PLACING.format(what=_ADDENDUM_ITEMS) + _ADDENDUM_TAIL
+        if apart
+        else _ADDENDUM_INSTRUCTIONS
+    )
+    return f"{instructions}\n\n{addendum_lines}"
 
 
 # A redraft starts from the note the clinician already has. Regenerating it
