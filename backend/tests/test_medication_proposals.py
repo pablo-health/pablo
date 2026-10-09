@@ -151,6 +151,30 @@ def test_a_change_the_list_cannot_take_or_the_visit_does_not_state_is_dropped(
     assert _parse(item) == []
 
 
+def test_a_medication_an_imported_note_names_only_in_a_carried_block_is_never_proposed() -> None:
+    carried = _item("add", "trazodone", [2], dose="50 mg", stated_in="a carried block only")
+    plan = _item("add", "amlodipine", [2], dose="5 mg", stated_in="this visit")
+
+    assert [p.item_key for p in _parse(carried, plan)] == ["amlodipine"]
+
+
+def test_a_history_fact_only_an_imported_notes_heading_states_is_never_proposed() -> None:
+    def proposal(stated_in: str) -> dict[str, Any]:
+        return {
+            "field_key": "living_situation",
+            "proposed_text": "Lives at home.",
+            "what_changed": "Location",
+            "evidence_segment_ids": [0],
+            "stated_in": stated_in,
+        }
+
+    heading = {"proposals": [proposal("the heading")], "medication_changes": []}
+    body = {"proposals": [proposal("this visit")], "medication_changes": []}
+
+    assert parse_proposals(heading, LISTED, SEGMENTS) == []
+    assert [p.field_key for p in parse_proposals(body, LISTED, SEGMENTS)] == ["living_situation"]
+
+
 def test_a_medication_in_the_text_proposals_is_dropped() -> None:
     reply = {
         "proposals": [
@@ -194,7 +218,10 @@ def test_the_prompt_lists_the_medications_and_reads_the_drafts_stated_suffix() -
 
     assert "- lithium 300 mg, twice daily" in prompt
     assert "medication_changes" in prompt
-    assert "without a decision from the clinician" in prompt
+    # A stop the client states is a proposal, whoever prescribed the medication.
+    assert "every one the client says they stopped" in prompt
+    assert "The list must not keep a medication the client no longer takes" in prompt
+    assert "exactly as the list names it, without a dose" in prompt
     assert '- medications: lithium 300 mg, twice daily\n(stated this visit: "amlodipine' in prompt
     assert "Medication list: none recorded" in build_prompt(ChartContext(), "[S0] hello")
 

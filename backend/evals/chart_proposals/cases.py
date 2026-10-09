@@ -364,8 +364,19 @@ CLIENT_STOPPED = ProposalCase(
 [00:19] Clinician: Let's talk about that more next time before we decide anything.
 [00:24] Client: Okay.
 """,
+    expected=(
+        ExpectedProposal(
+            field_key="medications",
+            entry="buspirone",
+            action="stop",
+            must_contain=("dizz",),
+            evidence=(1,),
+        ),
+    ),
 )
-"""The client says they stopped a medication, and the clinician decides nothing: no stop."""
+"""The client says they stopped a medication, and the clinician decides nothing yet: still a
+stop, with the reason they give. The list must not go on showing a medication the client no
+longer takes; the clinician accepts or discards the stop."""
 
 ALL_CASES: tuple[ProposalCase, ...] = (
     DIVORCE_FINALIZED,

@@ -164,8 +164,11 @@ def test_medication_proposals_are_named_by_the_medication_and_its_action() -> No
     assert grade([START, as_change], START_AND_STOP)["the_stated_action"] == [
         "trazodone is a change, not a stop"
     ]
-    assert grade([STOP], CLIENT_STOPPED)["exactly_the_expected_fields"] == [
-        "unexpected proposal for medications: trazodone"
+    # A stop the client states is proposed though the clinician decided nothing yet.
+    client_stop = _medication("stop", "buspirone", "Stopped: made them dizzy", 1)
+    assert not any(grade([client_stop], CLIENT_STOPPED).values())
+    assert grade([], CLIENT_STOPPED)["exactly_the_expected_fields"] == [
+        "missing a proposal for medications: buspirone"
     ]
 
 

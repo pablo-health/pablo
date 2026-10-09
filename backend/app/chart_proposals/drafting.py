@@ -24,13 +24,21 @@ the note was not checked rather than shown an empty list.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from ..notes.chart_context import STATED_THIS_VISIT
 from ..services.source_attribution_service import format_transcript_with_segment_ids
-from .families import FAMILIES, NOTE_FIELD_CHART_KEYS, chart_key_for, family_for
+from .families import (
+    FAMILIES,
+    HEADING,
+    NOTE_FIELD_CHART_KEYS,
+    STATED_IN,
+    chart_key_for,
+    family_for,
+)
+from .medication_mentions import MEDICATIONS_KEPT, kept_medications, medications_to_decide
 from .models import Drafted, DraftedProposal, Evidence, Origin
 from .recorded import field_text
 
@@ -62,6 +70,7 @@ def _response_schema() -> dict[str, Any]:
                     "proposed_text": {"type": "string"},
                     "what_changed": {"type": "string"},
                     "evidence_segment_ids": {"type": "array", "items": {"type": "integer"}},
+                    "stated_in": {"type": "string", "enum": list(STATED_IN)},
                 },
                 "required": ["field_key", "proposed_text", "what_changed", "evidence_segment_ids"],
             },
@@ -70,6 +79,14 @@ def _response_schema() -> dict[str, Any]:
     for family in FAMILIES:
         if family.reply_key is not None:
             properties[family.reply_key] = {"type": "array", "items": family.reply_item_schema()}
+    properties[MEDICATIONS_KEPT] = {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {"drug_name": {"type": "string"}, "reason": {"type": "string"}},
+            "required": ["drug_name", "reason"],
+        },
+    }
     return {
         "type": "object",
         "title": "ChartProposals",
@@ -83,9 +100,23 @@ RESPONSE_SCHEMA: dict[str, Any] = _response_schema()
 _INSTRUCTIONS = """\
 Propose an update to a chart field only when the transcript, including anything the \
 clinician dictated after the client's last line, states something that changes it or adds \
-to it. If nothing changed, return an empty list: that is the usual answer. A client \
-restating what the chart already says, something only considered or discussed, and a plan \
-for later are not changes.
+to it. If nothing changed, return an empty list: that is the usual answer.
+
+A history field changes only when the chart would read differently at the next visit in a \
+way that matters: a new lasting fact, a correction, or something that is no longer true \
+(the field still keeps it, and says what replaced it). These are not changes: a \
+restatement, or a detail that only confirms or fills in what the field already says; an \
+event that leaves nothing lasting behind (an appointment, a referral, an interview, a test \
+result, a visit, a meal, a weekend); something considered, discussed or planned for later; \
+and something said while answering about another field. For example:
+- Change: "The practice closed in March and I've been laid off since." (work_school)
+- Change: "We separated in January and I moved into an apartment." (relationships)
+- Change: "My doctor diagnosed sleep apnea; I use a CPAP every night now." (medical_history)
+- Not a change: "He's been good about it, he keeps saying we're fine." (relationships)
+- Not a change: "My son keeps pushing me, so I booked a therapy intake for next week." \
+(psychotherapy_history)
+- Not a change: "Primary care checked my thyroid in January and it was normal." \
+(medical_history)
 
 Refer to the person seen as "the {term}" or with they/them; never he, she, his or her, \
 unless the chart records their pronouns.
@@ -101,9 +132,10 @@ substance)."""
 
 _DOCUMENT_INSTRUCTIONS = """\
 The document is a note about this client written in another records system and imported \
-here. Propose an update to a chart field for each thing the document states that the chart \
-does not already say. A field the document says nothing about, or says only what the chart \
-already says, needs no proposal.
+here. Propose an update to a chart field for each lasting fact about the client the \
+document states that the chart does not already say. A field the document says nothing \
+about, or says only what the chart already says, needs no proposal, and neither do the \
+visit's own details: where it took place, where each person joined from, how long it was.
 
 A note often carries forward blocks written at earlier visits, and a carried block can be \
 out of date. Where two parts of the document disagree about the same thing (a carried list \
@@ -119,8 +151,8 @@ medication the plan starts is a start, one it stops is a stop, and one whose dos
 frequency it changes is a change, citing the plan's paragraph, and the carried list's too \
 where it shows the medication otherwise. A medication the client takes that the list lacks \
 and the plan continues is an add. A medication only a carried block lists, which the plan \
-and the part written for this visit do not mention, needs nothing: it may have been \
-stopped since that block was written.
+and the part written for this visit do not mention, gets no item at all, not even an add: \
+it may have been stopped since that block was written.
 
 The diagnoses in the document's assessment are this visit's and reach the chart's problem \
 list from the note itself: never propose them to a history field. prior_diagnoses is for \
@@ -137,6 +169,17 @@ For each change give:
 Cite only paragraphs that say it. A change no paragraph states is not a change.
 - entry: only for a list field, the entry the change is about (for allergies, the \
 substance)."""
+
+
+_DOCUMENT_PRECEDENCE = """\
+For a document, where the rules for the fields read otherwise, these hold. A medication \
+named only in a block carried forward, and not in the plan or the part written for this \
+visit, is not known to be taken now: its stated_in is "a carried block only". One the plan \
+continues that the list lacks is an add, never a start. A proposal about a field or a \
+medication that a carried block also states cites that carried paragraph as well as the one \
+it follows. The document's heading paragraph (who was seen, when, how and from where each \
+person joined) is about the visit, not the client: a proposal only it states has stated_in \
+"the heading"."""
 
 
 def _stated_this_visit(draft: Mapping[str, Any]) -> list[str]:
@@ -178,8 +221,10 @@ def build_prompt(
     indexed_transcript: str,
     *,
     draft: Mapping[str, Any] | None = None,
+    to_decide: Sequence[str] = (),
 ) -> str:
-    """The proposal prompt: the chart, the rules, and the numbered transcript."""
+    """The proposal prompt: the chart, the rules, and the numbered transcript.
+    ``to_decide`` are listed medications the call must decide on, one by one."""
     parts = _chart_and_rules(chart, _INSTRUCTIONS)
     stated = _stated_this_visit(draft or {})
     if stated:
@@ -187,10 +232,24 @@ def build_prompt(
             [
                 "",
                 (
-                    "The draft of this visit's note marks these as stated this visit. Each is "
-                    + "expected to need a proposal, citing the transcript lines it came from:"
+                    "The draft of this visit's note marks these as stated this visit. Most are "
+                    + "details for the note, not changes to the chart: propose one only where it "
+                    + "is a change by the rules above, citing the transcript lines it came from:"
                 ),
                 *stated,
+            ]
+        )
+    if to_decide:
+        parts.extend(
+            [
+                "",
+                (
+                    "The transcript names these listed medications near a different dose or a "
+                    + "word like stopped. Decide each one: put its change in "
+                    + "medication_changes, or, if the visit leaves it as listed, put it in "
+                    + "medications_kept with the reason:"
+                ),
+                *(f"- {name}" for name in to_decide),
             ]
         )
     parts.extend(["", "Transcript (each line numbered [Sn]):", indexed_transcript])
@@ -227,6 +286,7 @@ def _indexed(segments: Mapping[int, str]) -> str:
 def build_document_prompt(chart: ChartContext, segments: Mapping[int, str]) -> str:
     """The proposal prompt for an imported note: the chart, the rules, the numbered document."""
     parts = _chart_and_rules(chart, _DOCUMENT_INSTRUCTIONS)
+    parts.extend(["", _DOCUMENT_PRECEDENCE])
     parts.extend(["", "Document (each paragraph numbered [Sn]):", _indexed(segments)])
     return "\n".join(parts)
 
@@ -268,7 +328,7 @@ def parse_proposals(
             continue
         field_key = str(item.get("field_key") or "")
         family = family_for(field_key)
-        if family is None:
+        if family is None or item.get("stated_in") == HEADING:
             continue
         evidence = _evidence(item.get("evidence_segment_ids"), segments)
         if evidence is None:
@@ -311,12 +371,22 @@ def propose_chart_updates(
     draft: Mapping[str, Any] | None = None,
 ) -> Drafted:
     """Ask what this visit changes on the chart. Never raises: a failure is
-    returned with its exception type, so the note can say it was not checked."""
+    returned with its exception type, so the note can say it was not checked.
+
+    The listed medications the transcript names near a different dose or a word
+    saying they were stopped are put to the call to decide one by one."""
     indexed = format_transcript_with_segment_ids(transcript.content)
     if not indexed:
         return Drafted([])
-    prompt = build_prompt(chart, indexed, draft=draft)
-    return _ask(complete, prompt, chart, _segment_texts(indexed), "transcript")
+    segments = _segment_texts(indexed)
+    to_decide = medications_to_decide(chart, segments)
+
+    def parse(reply: Mapping[str, Any]) -> Drafted:
+        proposals = parse_proposals(reply, chart, segments)
+        kept = kept_medications(reply, chart, to_decide, proposals)
+        return Drafted(proposals, to_decide=tuple(to_decide), kept=kept)
+
+    return _ask(complete, build_prompt(chart, indexed, draft=draft, to_decide=to_decide), parse)
 
 
 def propose_from_document(complete: CompleteStructured, chart: ChartContext, text: str) -> Drafted:
@@ -324,19 +394,19 @@ def propose_from_document(complete: CompleteStructured, chart: ChartContext, tex
     segments = document_segments(text)
     if not segments:
         return Drafted([])
-    return _ask(complete, build_document_prompt(chart, segments), chart, segments, "document")
+
+    def parse(reply: Mapping[str, Any]) -> Drafted:
+        return Drafted(parse_proposals(reply, chart, segments, origin="document"))
+
+    return _ask(complete, build_document_prompt(chart, segments), parse)
 
 
 def _ask(
-    complete: CompleteStructured,
-    prompt: str,
-    chart: ChartContext,
-    segments: Mapping[int, str],
-    origin: Origin,
+    complete: CompleteStructured, prompt: str, parse: Callable[[Mapping[str, Any]], Drafted]
 ) -> Drafted:
     try:
         reply = complete(SYSTEM_PROMPT, prompt, RESPONSE_SCHEMA)
-        return Drafted(parse_proposals(reply, chart, segments, origin=origin))
+        return parse(reply)
     except Exception as exc:
         logger.warning("Chart proposal call failed; the note has no proposals", exc_info=True)
         return Drafted([], error_class=type(exc).__name__)

@@ -40,7 +40,7 @@ The checks are unit-tested on hand-made proposals in
 | `medication-start-and-stop` | sertraline, trazodone | the clinician starts hydroxyzine 25 mg in the afternoon as needed and stops the trazodone because of nausea | a start with its frequency and a stop with its reason; nothing for the sertraline, continued |
 | `medication-only-discussed` | sertraline | a medication asked about, a dose increase considered for next time | no proposal |
 | `medication-another-prescriber-started` | sertraline | the client's primary care doctor started lisinopril 10 mg once a day | an add with the dose and frequency as stated; `medical_history` for the blood pressure is allowed, not required |
-| `medication-client-stopped` | sertraline, buspirone | the client stopped the buspirone; the clinician decides nothing yet | no proposal |
+| `medication-client-stopped` | sertraline, buspirone | the client stopped the buspirone because it made them dizzy; the clinician decides nothing yet | a stop with the reason, citing the client's line: the list must not go on showing a medication the client no longer takes |
 
 The history cases' charts list the medication the client mentions taking, as
 a follow-up's chart would; without it, that mention is a medication the list
