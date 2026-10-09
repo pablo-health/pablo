@@ -577,7 +577,7 @@ def _chart_field_statements(schema: dict[str, Any], user_prompt: str) -> dict[st
             )
         if _AT_HOME in rest:
             at_home = evidence
-    reply: dict[str, Any] = {"statements": statements}
+    reply: dict[str, Any] = {"statements": statements, "risk_and_safety_plan_segment_ids": []}
     if "diagnoses" in properties:
         # As a draft's diagnoses field always held one: a coded stand-in, named
         # on the visit's first line, so signing offers it to the problem list.

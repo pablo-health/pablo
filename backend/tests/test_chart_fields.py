@@ -41,6 +41,7 @@ from app.notes.practice_spec import NoteTypePatch, PracticeFieldSpec
 from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
 from app.notes.spec_templates import TEMPLATES_DIR
 from app.services.chart_field_extraction import (
+    RISK_LINES,
     SCHEMA_TITLE,
     build_prompt,
     parse,
@@ -474,7 +475,7 @@ def test_the_schema_asks_only_for_what_the_type_has() -> None:
     follow_up = rendered_fields(_definition())
     schema = response_schema(follow_up, TELEHEALTH)
     assert schema["title"] == SCHEMA_TITLE
-    assert set(schema["properties"]) == {"statements", "diagnoses", "client_at_home"}
+    assert set(schema["properties"]) == {"statements", RISK_LINES, "diagnoses", "client_at_home"}
     keys = schema["properties"]["statements"]["items"]["properties"]["field_key"]["enum"]
     assert "place_of_service" not in keys
     assert "diagnoses" not in keys
@@ -483,7 +484,8 @@ def test_the_schema_asks_only_for_what_the_type_has() -> None:
 
     evaluation = rendered_fields(_definition("psychiatric_evaluation"))
     assert set(response_schema(evaluation, {"place_of_service": "In office"})["properties"]) == {
-        "statements"
+        "statements",
+        RISK_LINES,
     }
 
 
@@ -557,6 +559,72 @@ def test_an_item_citing_no_line_or_a_line_the_visit_lacks_is_dropped() -> None:
         SEGMENTS,
     )
     assert office.client_at_home is False
+
+
+def test_a_history_statement_citing_only_where_the_client_is_today_is_dropped() -> None:
+    """A telehealth client's location for the visit is the attestation's, never history."""
+    fields = rendered_fields(_definition())
+    segments = {
+        0: "Therapist: Are you at your apartment?",
+        1: "Client: Yep.",
+        2: "Client: We moved.",
+    }
+    reply = {
+        "statements": [
+            {
+                "field_key": "living_situation",
+                "screen": "stated",
+                "stated": "Yep.",
+                "evidence_segment_ids": [0, 1],
+            },
+            {
+                "field_key": "living_situation",
+                "screen": "stated",
+                "stated": "We moved.",
+                "evidence_segment_ids": [1, 2],
+            },
+            {"field_key": "alcohol", "screen": "denied", "stated": "", "evidence_segment_ids": [1]},
+        ],
+        "client_at_home": {"at_home": False, "evidence_segment_ids": [0, 1]},
+    }
+    kept = parse(reply, fields, TELEHEALTH, segments)
+    assert kept.fields == (
+        Statement("living_situation", "stated", "We moved."),
+        Statement("alcohol", "denied", ""),
+    )
+    assert kept.client_at_home is False
+    # In the office nothing is asked about where the client is, so nothing is dropped.
+    office = parse(reply, fields, {"place_of_service": "In office"}, segments)
+    assert len(office.fields) == 3
+
+
+def test_a_history_statement_citing_only_the_risk_screen_is_dropped() -> None:
+    """A crisis contact named in the safety plan is not a change to the client's supports."""
+    fields = rendered_fields(_definition())
+    segments = {
+        0: "Therapist: Who would you call if it got bad?",
+        1: "Client: Call my sister, she's always up late.",
+        2: "Client: My sister moved in with me last month.",
+    }
+    reply = {
+        "statements": [
+            {
+                "field_key": "supports",
+                "screen": "stated",
+                "stated": "Call my sister",
+                "evidence_segment_ids": [1],
+            },
+            {
+                "field_key": "living_situation",
+                "screen": "stated",
+                "stated": "My sister moved in",
+                "evidence_segment_ids": [2],
+            },
+        ],
+        RISK_LINES: [0, 1, 99, True],
+    }
+    kept = parse(reply, fields, {"place_of_service": "In office"}, segments)
+    assert kept.fields == (Statement("living_situation", "stated", "My sister moved in"),)
 
 
 # ---------------------------------------------------------------------------

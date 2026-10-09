@@ -26,7 +26,7 @@ from ..notes.chart_fields import (
     Statements,
     chart_text,
 )
-from ..notes.field_sources import PLACE_OF_SERVICE, PROBLEMS, is_substance
+from ..notes.field_sources import PLACE_OF_SERVICE, PROBLEMS, is_history, is_substance
 from .source_attribution_service import format_transcript_with_segment_ids
 
 if TYPE_CHECKING:
@@ -59,6 +59,10 @@ def _asks_diagnoses(fields: Sequence[RenderedField]) -> bool:
     return any(f.source == PROBLEMS for f in fields)
 
 
+#: The lines of today's risk screen and safety plan, which are this visit's and never history.
+RISK_LINES = "risk_and_safety_plan_segment_ids"
+
+
 def is_telehealth(inputs: Mapping[str, str]) -> bool:
     return (inputs.get("place_of_service") or "").strip().lower().startswith("tele")
 
@@ -82,7 +86,8 @@ def response_schema(fields: Sequence[RenderedField], inputs: Mapping[str, str]) 
                 },
                 "required": ["field_key", "screen", "stated", "evidence_segment_ids"],
             },
-        }
+        },
+        RISK_LINES: _EVIDENCE,
     }
     if _asks_diagnoses(fields):
         properties["diagnoses"] = {
@@ -120,9 +125,8 @@ bare yes or no. \
 evidence_segment_ids: the numbers (n in [Sn]) of the lines that say it; an item no line says \
 is not an item.
 - A history field is the {term}'s past and circumstances. This visit's symptoms and how \
-they affect work or home, today's risk questions and safety plan, and the therapy done in \
-this visit are not history: leave them out. living_situation is where the {term} lives, \
-never where they are for this visit.
+they affect work or home, today's risk questions and safety plan (who to call in a crisis \
+included), and the therapy done in this visit are not history: leave them out.
 - A substance field is this visit's screen: asked_no_change when the {term} was asked and \
 nothing changed, denied when they denied use, stated (with their words) for use or a \
 change. Leave out a substance never asked about; a catch-all question ("anything else?") \
@@ -130,15 +134,18 @@ asks only about other_substances. Every other field takes stated.
 - current_medications: one item per medication the {term} says they take that the chart \
 lacks, with the dose as stated. A medication the clinician starts, stops or changes this \
 visit is not one.
-- allergies: an allergy, or a denial of allergies, as said."""
+- allergies: an allergy, or a denial of allergies, as said.
+- risk_and_safety_plan_segment_ids: every line of today's risk questions, their answers and \
+the safety plan."""
 
 _DIAGNOSES = """\
 - diagnoses: each diagnosis the clinician names that the problem list lacks, with a code \
 only if one was said."""
 
 _AT_HOME = """\
-- client_at_home: true only if the {term} said they are at home for this visit. Where the \
-{term} is for a telehealth visit never changes living_situation."""
+- client_at_home: at_home is true only if the {term} said they are at home for this visit; \
+evidence_segment_ids cites every line about where the {term} is for this visit, at home or \
+not. Where the {term} is for this visit is not history."""
 
 
 def build_prompt(
@@ -172,14 +179,28 @@ def parse(
     inputs: Mapping[str, str],
     segments: Mapping[int, str],
 ) -> Statements:
-    """The reply's items that cite this visit's lines and name a field that was asked."""
+    """The reply's items that cite this visit's lines and name a field that was asked.
+
+    A history statement that cites only lines the reply marks as this visit's
+    alone (where a telehealth client is for the visit, today's risk screen and
+    safety plan) is dropped: those belong to the attestation and the risk
+    section, never to the client's history.
+    """
+    sources = {f.field.key: f.source for f in fields}
     keys = set(_statement_keys(fields))
+    whereabouts = _whereabouts(reply, fields, inputs, segments)
+    this_visit_only = whereabouts | _risk_lines(reply, segments)
     kept: list[Statement] = []
     raw = reply.get("statements")
     for item in raw if isinstance(raw, list) else []:
         if not isinstance(item, dict) or item.get("field_key") not in keys:
             continue
-        if cited_evidence(item.get("evidence_segment_ids"), segments) is None:
+        evidence = cited_evidence(item.get("evidence_segment_ids"), segments)
+        if evidence is None:
+            continue
+        cited = {e.segment_id for e in evidence}
+        source = sources[item["field_key"]]
+        if is_history(source) and not is_substance(source) and cited <= this_visit_only:
             continue
         screen: Screen = _SCREEN_BY_NAME.get(str(item.get("screen")), "stated")
         kept.append(
@@ -198,11 +219,33 @@ def parse(
             continue
         code = str(item.get("code") or "").strip() or None
         named.append(NamedDiagnosis(label=str(item["label"]).strip(), code=code))
-    at_home = False
-    home = reply.get("client_at_home") if _asks_at_home(fields, inputs) else None
-    if isinstance(home, dict) and home.get("at_home") is True:
-        at_home = cited_evidence(home.get("evidence_segment_ids"), segments) is not None
+    home = reply.get("client_at_home")
+    at_home = bool(whereabouts) and isinstance(home, dict) and home.get("at_home") is True
     return Statements(fields=tuple(kept), diagnoses=tuple(named), client_at_home=at_home)
+
+
+def _whereabouts(
+    reply: Mapping[str, Any],
+    fields: Sequence[RenderedField],
+    inputs: Mapping[str, str],
+    segments: Mapping[int, str],
+) -> set[int]:
+    """The lines the reply says are about where a telehealth client is for this visit."""
+    home = reply.get("client_at_home") if _asks_at_home(fields, inputs) else None
+    if not isinstance(home, dict):
+        return set()
+    evidence = cited_evidence(home.get("evidence_segment_ids"), segments)
+    return {e.segment_id for e in evidence} if evidence else set()
+
+
+def _risk_lines(reply: Mapping[str, Any], segments: Mapping[int, str]) -> set[int]:
+    """The lines the reply says are today's risk screen and safety plan, those this visit has."""
+    raw = reply.get(RISK_LINES)
+    return {
+        n
+        for n in (raw if isinstance(raw, list) else [])
+        if isinstance(n, int) and not isinstance(n, bool) and n in segments
+    }
 
 
 def extract_statements(
