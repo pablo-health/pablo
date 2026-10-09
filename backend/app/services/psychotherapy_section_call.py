@@ -63,6 +63,8 @@ visit is booked is not a cadence and reads "Not stated.".
 - Never a billing code, a clock time or a number of minutes: the note records those elsewhere.
 - Medications, symptom review, questionnaire scores (a PHQ-9, a GAD-7) and risk questions belong \
 to other sections; leave them out.
+- Taking the history (how the {term} has been, symptoms, sleep, how an earlier plan went) is not \
+psychotherapy however long it runs; psychotherapy is working on thoughts, feelings or behavior.
 - If no psychotherapy took place, or the visit code entered is a psychiatric diagnostic \
 evaluation, leave every field empty. Otherwise "Not stated." for a field the therapy did \
 not cover."""
