@@ -106,6 +106,26 @@ class Expected:
     described must be written."""
     risk_quotes: dict[str, tuple[str, ...]] = field(default_factory=dict)
     """Risk fields whose quotation must carry one of these words."""
+    techniques: tuple[str, ...] | None = None
+    """Techniques (keys of ``scorers.TECHNIQUES``) the visit shows, one of which
+    the interventions must name. Empty: the clinician used no named technique,
+    so no psychotherapy field names one. ``None`` leaves it ungraded."""
+    techniques_denied: tuple[str, ...] = ()
+    """Techniques the visit does not show, which no psychotherapy field may name."""
+    therapy_numbers: tuple[int, ...] | None = None
+    """The numbers the client gave about the therapy (a belief rating, days an
+    assignment was done), the only ones the response and progress may carry.
+    Empty: none was given. ``None``: any number said in the visit."""
+    progress_supported: bool = False
+    """A rating moved or an assignment was done, so the progress and the goal
+    may judge it ("improved", "significant")."""
+    therapy_fields: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    """Psychotherapy fields the visit covered, each with words one of which it
+    must carry."""
+    therapy_never: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    """Psychotherapy fields with words nobody said, which they must not carry."""
+    therapy_not_stated: tuple[str, ...] = ()
+    """Psychotherapy fields the clinician never spoke to: "Not stated."."""
 
 
 @dataclass(frozen=True)
@@ -245,6 +265,31 @@ FOLLOW_UP_WITH_THERAPY = TemplateCase(
             "social_history.supports",
             "social_history.work_school",
         ),
+        # The clinician weighs evidence for and against a thought, asks for a
+        # balanced one, sets a worry window and a thought record: CBT. The
+        # time blocks were the client's earlier assignment, not activation.
+        techniques=(
+            "CBT",
+            "Socratic questioning",
+            "cognitive reframing",
+            "worry window",
+            "thought record",
+        ),
+        techniques_denied=(
+            "behavioral activation",
+            "exposure",
+            "EMDR",
+            "motivational interviewing",
+        ),
+        # Belief 90, then 40, on a zero-to-a-hundred scale; time blocks four
+        # workdays of five.
+        therapy_numbers=(90, 40, 0, 100, 4, 5),
+        progress_supported=True,
+        therapy_fields={
+            "response": ("40", "forty", "balanced", "bigger account", "trusts me"),
+            "goal_plan": ("worry window", "thought record"),
+            "therapy_cadence": ("each visit", "every visit"),
+        },
     ),
 )
 
@@ -545,6 +590,9 @@ FOLLOW_UP_INTERLEAVED = TemplateCase(
         # The chart is empty, and the visit states the sertraline the client
         # takes and the sister they called: marking either is allowed.
         may_state=("medications.current_medications", "social_history.relationships"),
+        # The activity schedule was done four days of seven, and the belief
+        # fell from eighty to forty.
+        progress_supported=True,
     ),
 )
 
@@ -601,6 +649,81 @@ FOLLOW_UP_NO_THERAPY_RECORDED = TemplateCase(
     ),
 )
 
+FOLLOW_UP_SUPPORTIVE_ONLY = TemplateCase(
+    name="follow-up-supportive-only",
+    template="psychiatric_follow_up",
+    visit=visits.SUPPORTIVE_ONLY,
+    session_date=date(2026, 4, 15),
+    inputs=TELEHEALTH,
+    problems=(ChartProblem("Major depressive disorder, single episode, mild", "F32.0", "active"),),
+    allergy_status="nkda",
+    medications=(ChartMedication("Sertraline", "50 mg", "every morning", "psychiatric"),),
+    recorded=True,
+    segment_labels=(
+        ("00:00:04", "admin"),
+        ("00:00:12", "medication_management"),
+        ("00:00:58", "screening_risk"),
+        ("00:01:40", "therapy"),
+        ("00:40:30", "admin"),
+    ),
+    expected=Expected(
+        therapy=True,
+        codes=("99214", "90836"),
+        times=("3:02", "3:41"),
+        telehealth=TELEHEALTH_LOCATIONS,
+        diagnoses=(Diagnosis("F32.0", ("depress",)), Diagnosis(None, ("grief", "bereave"))),
+        current_medications=("Sertraline 50 mg, every morning",),
+        # The clinician listens, reflects and asks two open questions: nothing
+        # to name a technique for, nothing rated, no goal and no assignment.
+        techniques=(),
+        therapy_numbers=(),
+        therapy_fields={
+            "response": ("felt good", "laugh", "tomato", "her name", "smil"),
+            "therapy_cadence": ("each visit", "every visit"),
+        },
+        therapy_not_stated=("goal_plan", "progress"),
+        # The brother who will not talk about her may go into relationships
+        # or supports.
+        may_state=("social_history.relationships", "social_history.supports"),
+    ),
+)
+
+FOLLOW_UP_THERAPY_PLAN_NOT_STATED = TemplateCase(
+    name="follow-up-therapy-plan-not-stated",
+    template="psychiatric_follow_up",
+    visit=visits.THERAPY_PLAN_NOT_STATED,
+    session_date=date(2026, 4, 16),
+    inputs=TELEHEALTH,
+    problems=(ChartProblem("Major depressive disorder, recurrent, mild", "F33.0", "active"),),
+    allergy_status="nkda",
+    medications=(ChartMedication("Escitalopram", "10 mg", "every morning", "psychiatric"),),
+    expected=Expected(
+        therapy=True,
+        codes=("99214", "90833"),
+        minutes=("18",),
+        telehealth=TELEHEALTH_LOCATIONS,
+        diagnoses=(Diagnosis("F33.0", ("depress",)), Diagnosis(None, ("insomnia",))),
+        current_medications=("Escitalopram 10 mg, every morning",),
+        techniques=("psychoeducation",),
+        techniques_denied=(
+            "CBT",
+            "CBT-I",
+            "sleep restriction",
+            "relaxation training",
+            "mindfulness",
+            "behavioral activation",
+        ),
+        # The goal and plan is the one thing to try; nobody set a goal.
+        therapy_fields={
+            "issues_addressed": ("sleep",),
+            "goal_plan": ("same time", "wake", "phone"),
+        },
+        therapy_never={"goal_plan": ("reduce", "decrease", "increase", "faster", "sooner")},
+        # "See you in six weeks" is the next visit, not a plan for therapy.
+        therapy_not_stated=("therapy_cadence",),
+    ),
+)
+
 ALL_CASES: tuple[TemplateCase, ...] = (
     FOLLOW_UP_WITH_THERAPY,
     FOLLOW_UP_MEDICATION_ONLY,
@@ -614,4 +737,6 @@ ALL_CASES: tuple[TemplateCase, ...] = (
     FOLLOW_UP_INTERLEAVED,
     FOLLOW_UP_INTERLEAVED_DICTATED,
     FOLLOW_UP_NO_THERAPY_RECORDED,
+    FOLLOW_UP_SUPPORTIVE_ONLY,
+    FOLLOW_UP_THERAPY_PLAN_NOT_STATED,
 )
