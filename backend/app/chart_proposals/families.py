@@ -23,6 +23,7 @@ from ..chart_history.fields import HISTORY_GROUPS, HISTORY_KEYS, SUBSTANCE_KEYS,
 from ..medications.schemas import CreateMedicationRequest, UpdateMedicationRequest
 from ..notes.chart_context import allergies_line, medication_line
 from ..utcnow import utc_now
+from .denials import NKDA, is_allergy_denial
 from .models import DraftedProposal, MedicationChange
 
 if TYPE_CHECKING:
@@ -236,6 +237,11 @@ class AllergyFamily(FieldFamily):
     have taken the drug since) is kept as a note on that entry; the substance,
     reaction and severity stay as they are. Removing an allergy is done on the
     chart, never from a note.
+
+    A denial is never an entry. While the chart's allergies are not recorded,
+    the note's stated denial is proposed as ``NKDA`` (``recorded``), which
+    sets the record's status and adds nothing; an entry whose substance or
+    text is a denial ("No known allergies") is not offered.
     """
 
     itemized = True
@@ -274,9 +280,23 @@ class AllergyFamily(FieldFamily):
             return _allergy_text(entry)
         return None if chart.allergy_status == "not_recorded" else allergies_line(chart)
 
+    @override
+    def admits(self, ref: FieldRef, proposed_text: str, chart: ChartContext) -> bool:
+        if ref.item_key.strip() == NKDA:
+            return chart.allergy_status == "not_recorded"
+        if is_allergy_denial(ref.item_key) or is_allergy_denial(proposed_text):
+            return False
+        return super().admits(ref, proposed_text, chart)
+
     def apply(
         self, writers: ChartWriters, patient: Patient, ref: FieldRef, text: str, by: WriteSource
     ) -> None:
+        if ref.item_key.strip() == NKDA:
+            if patient.allergies:
+                raise ChartChangedError("the chart lists an allergy now")
+            patient.allergy_status = "nkda"
+            writers.patients.update(patient)
+            return
         allergies = [dict(entry) for entry in patient.allergies]
         entry = next((e for e in allergies if _same_substance(e, ref.item_key)), None)
         if entry is None:
