@@ -14,11 +14,14 @@ A definition may opt out of the auto-built prompt by setting
 the hand-tuned clinical prompt migrated from the legacy plugin.
 """
 
+import contextvars
 import dataclasses
 import json
 import logging
+import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -34,7 +37,14 @@ from ..models import (
     Transcript,
 )
 from ..notes import NoteTypeDefinition, NoteTypeRegistry, get_default_registry
-from ..notes.chart_context import ChartContext, render_chart_block
+from ..notes.chart_context import ChartContext, render_chart_block, render_reference_block
+from ..notes.chart_fields import (
+    RenderedField,
+    Statements,
+    compose_all,
+    rendered_fields,
+    without_rendered,
+)
 from ..notes.client_present import (
     DICTATED_HEADING,
     TimedSegment,
@@ -53,6 +63,7 @@ from ..notes.visit_times import (
 )
 from ..settings import get_settings
 from .ai_features import AIFeature
+from .chart_field_extraction import SCHEMA_TITLE, extract_statements
 from .hedged_structured_llm_gateway import generation_gateway
 from .source_attribution_service import (
     build_attribution_prompt,
@@ -350,8 +361,20 @@ class RegistryNoteGenerationService(NoteGenerationService):
         chart: ChartContext | None = None,
         current_note: Mapping[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any] | None]:
-        """The drafted content, and the psychotherapy time the clinician stated."""
+        """The drafted content, and the psychotherapy time the clinician stated.
+
+        Fields printed from the chart are written in code (:mod:`app.notes.chart_fields`)
+        and left out of the model's request; what the visit said about them comes
+        from a small extraction call that runs beside the draft.
+        """
         full_definition = definition
+        rendered = rendered_fields(definition)
+        statements = (
+            self._start_extraction(rendered, chart or ChartContext(), inputs, transcript.content)
+            if rendered
+            else None
+        )
+        definition = without_rendered(definition)
         addendum = ""
         if client_present_end_seconds is not None and segments:
             split = split_at_boundary(segments, client_present_end_seconds)
@@ -364,21 +387,8 @@ class RegistryNoteGenerationService(NoteGenerationService):
         # The clinician's word for the person seen, which a type's prompts may
         # place as {term}; the chart carries it from whoever reads the note.
         person = chart.person if chart is not None else ChartContext().person
-        if definition.system_prompt is not None:
-            system_prompt = render_system_prompt(definition.system_prompt, person)
-        elif definition.key == SOAP_KEY:
-            system_prompt = SOAP_SYSTEM_PROMPT
-        else:
-            system_prompt = _DEFAULT_GENERATION_PROMPT_SYSTEM
-
-        # Allergies, medications and history go to the types that ask for them
-        # (the prescriber's notes, which must state them) and not to the
-        # built-in therapy formats, which have no place for them.
-        chart_block = (
-            render_chart_block(chart, full_chart=definition.full_chart)
-            if chart is not None and definition.reads_chart
-            else None
-        )
+        system_prompt = _system_prompt(definition, person)
+        chart_block = _chart_block(definition, chart, rendered)
         if definition.prompt_builder is not None:
             user_prompt = definition.prompt_builder(definition, transcript, patient, session_date)
             # A hand-tuned prompt has no place for the chart; it goes first.
@@ -399,24 +409,66 @@ class RegistryNoteGenerationService(NoteGenerationService):
         if addendum:
             user_prompt = f"{user_prompt}\n\n{_addendum_block(addendum)}"
         if current_note:
-            user_prompt = f"{user_prompt}\n\n{_current_note_block(current_note)}"
+            kept = _without_rendered(current_note, rendered)
+            user_prompt = f"{user_prompt}\n\n{_current_note_block(kept)}"
 
         schema = _build_registry_response_schema(definition)
         if asks_start:
             user_prompt = f"{user_prompt}\n\n{TIME_INSTRUCTIONS}"
             schema["properties"][TIME_KEY] = TIME_SCHEMA
-        completion = self._complete_structured_with_retry(
-            note_key=definition.key,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            response_schema=schema,
-        )
+        try:
+            completion = self._complete_structured_with_retry(
+                note_key=definition.key,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_schema=schema,
+            )
+        except BaseException:
+            if statements is not None:
+                # The draft failed; the extraction is not waited for.
+                statements.cancel()
+            raise
 
         # Coerced against what was asked for, then against the whole type, so
         # a section left out of the request comes back present and empty.
         asked = _coerce_registry_response(definition, completion.data)
         stated = completion.data.get(TIME_KEY) if asks_start else None
-        return _coerce_registry_response(full_definition, asked), stated
+        content = _coerce_registry_response(full_definition, asked)
+        return _with_written(content, full_definition, chart, inputs, statements), stated
+
+    def _start_extraction(
+        self,
+        rendered: list[RenderedField],
+        chart: ChartContext,
+        inputs: Mapping[str, str],
+        transcript_content: str,
+    ) -> Future[Statements]:
+        """The extraction call, started beside the draft: both need only what is known now."""
+
+        def complete(
+            system_prompt: str, user_prompt: str, response_schema: dict[str, Any]
+        ) -> dict[str, Any]:
+            settings = get_settings()
+            return self._complete_structured_with_retry(
+                note_key=f"{SCHEMA_TITLE} extraction",
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_schema=response_schema,
+                temperature=0.0,
+                max_output_tokens=settings.note_source_attribution_max_output_tokens,
+                thinking_budget=settings.note_source_attribution_thinking_budget,
+            ).data
+
+        context = contextvars.copy_context()
+        return _extraction_executor().submit(
+            context.run,
+            _extract_logged,
+            complete,
+            rendered,
+            chart,
+            inputs,
+            transcript_content,
+        )
 
     def _complete_labels(self, prompt: str) -> dict[str, Any]:
         """One structured turn-labeling call; see :func:`.therapy_labels.label_turns`."""
@@ -459,6 +511,8 @@ class RegistryNoteGenerationService(NoteGenerationService):
         user_prompt: str,
         response_schema: dict[str, Any],
         temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        thinking_budget: int | None = None,
     ) -> StructuredCompletion:
         """Run a structured note completion, retrying once if truncated.
 
@@ -479,7 +533,8 @@ class RegistryNoteGenerationService(NoteGenerationService):
         :class:`TransientNoteGenerationError` for the job queue's retry.
         """
         settings = get_settings()
-        base_budget = settings.note_max_output_tokens
+        base_budget = max_output_tokens or settings.note_max_output_tokens
+        thinking = thinking_budget if thinking_budget is not None else settings.note_thinking_budget
         # A clinical note is faithful extraction, not creative writing — default
         # to the (deterministic) configured note temperature unless a caller
         # overrides it explicitly.
@@ -495,7 +550,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
                     response_schema=response_schema,
                     max_output_tokens=budget,
                     temperature=temp,
-                    thinking_budget=settings.note_thinking_budget,
+                    thinking_budget=thinking,
                 )
             except StructuredOutputTruncatedError as exc:
                 last_truncation = exc
@@ -794,6 +849,114 @@ _CURRENT_NOTE_INSTRUCTIONS = (
 def _current_note_block(current_note: Mapping[str, Any]) -> str:
     note = json.dumps(current_note, indent=2, ensure_ascii=False)
     return f"{_CURRENT_NOTE_INSTRUCTIONS}\n\n{note}"
+
+
+def _system_prompt(definition: NoteTypeDefinition, person: str) -> str:
+    if definition.system_prompt is not None:
+        return render_system_prompt(definition.system_prompt, person)
+    if definition.key == SOAP_KEY:
+        return SOAP_SYSTEM_PROMPT
+    return _DEFAULT_GENERATION_PROMPT_SYSTEM
+
+
+def _chart_block(
+    definition: NoteTypeDefinition,
+    chart: ChartContext | None,
+    rendered: Sequence[RenderedField],
+) -> str | None:
+    """The chart as the draft's prompt carries it, ``None`` when it carries none.
+
+    Allergies, medications and history go to the types that ask for them (the
+    prescriber's notes, which must state them) and not to the built-in therapy
+    formats, which have no place for them. Where code writes those fields, only
+    what the model's own fields refer to is sent.
+    """
+    if chart is None or not definition.reads_chart:
+        return None
+    if rendered:
+        return render_reference_block(chart, frozenset(r.source for r in rendered))
+    return render_chart_block(chart, full_chart=definition.full_chart)
+
+
+def _with_written(
+    content: dict[str, Any],
+    definition: NoteTypeDefinition,
+    chart: ChartContext | None,
+    inputs: Mapping[str, str],
+    statements: Future[Statements] | None,
+) -> dict[str, Any]:
+    """``content`` with each field code writes from the chart filled in.
+
+    Waits for the extraction; its failure fails the draft, as the main call's does.
+    """
+    if statements is None:
+        return content
+    written = compose_all(definition, chart or ChartContext(), inputs, statements.result())
+    for section_key, fields in written.items():
+        content[section_key].update(fields)
+    return content
+
+
+EXTRACTION_FAILED_EVENT = "chart_field_extraction_failed"
+"""Logged when the extraction call fails, apart from the main call's failures, so
+its failure rate can be read on its own. Carries counts and classes only."""
+
+
+def _extract_logged(
+    complete: CompleteStructured,
+    rendered: Sequence[RenderedField],
+    chart: ChartContext,
+    inputs: Mapping[str, str],
+    transcript_content: str,
+) -> Statements:
+    """:func:`extract_statements`, with a failure logged under its own event and re-raised."""
+    try:
+        return extract_statements(complete, rendered, chart, inputs, transcript_content)
+    except Exception as exc:
+        cause = exc.__cause__ or exc.__context__
+        logger.warning(
+            "%s fields=%d error_class=%s cause_class=%s",
+            EXTRACTION_FAILED_EVENT,
+            len(rendered),
+            type(exc).__name__,
+            type(cause).__name__ if cause is not None else "",
+            extra={
+                "event": EXTRACTION_FAILED_EVENT,
+                "field_count": len(rendered),
+                "error_class": type(exc).__name__,
+                "cause_class": type(cause).__name__ if cause is not None else None,
+            },
+        )
+        raise
+
+
+_extraction_executor_holder: list[ThreadPoolExecutor] = []
+_extraction_executor_lock = threading.Lock()
+
+
+def _extraction_executor() -> ThreadPoolExecutor:
+    """Threads the extraction call runs on beside the draft, made once per process."""
+    with _extraction_executor_lock:
+        if not _extraction_executor_holder:
+            _extraction_executor_holder.append(
+                ThreadPoolExecutor(max_workers=8, thread_name_prefix="chart-field-extraction")
+            )
+        return _extraction_executor_holder[0]
+
+
+def _without_rendered(
+    current_note: Mapping[str, Any], rendered: Sequence[RenderedField]
+) -> dict[str, Any]:
+    """The note a redraft starts from, less the fields code writes again from the chart."""
+    dropped = {(r.section, r.field.key) for r in rendered}
+    return {
+        section: (
+            {k: v for k, v in fields.items() if (section, k) not in dropped}
+            if isinstance(fields, Mapping)
+            else fields
+        )
+        for section, fields in current_note.items()
+    }
 
 
 def _without_psychotherapy(definition: NoteTypeDefinition) -> NoteTypeDefinition:

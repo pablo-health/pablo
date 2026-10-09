@@ -3,11 +3,12 @@
 /**
  * Chart history, end to end: a history field is edited on the client page,
  * survives a reload with when it was updated, keeps the value it replaced,
- * and is handed to a prescriber's draft as written.
+ * and is printed in a prescriber's draft as written.
  *
- * The stack drafts through its stand-in (NOTE_GENERATION_BASE_URL), which
- * fills a field whose key is a chart-history key with the chart's text — so
- * a draft that shows the text proves the chart reached the model.
+ * A field that names a chart entry as its source is written from the chart
+ * in code; the stack's stand-in model (NOTE_GENERATION_BASE_URL) is asked
+ * only what the visit said about it, and answers a client line
+ * "Update on <key>: <text>" with that text, citing the line.
  */
 
 import { randomBytes } from "node:crypto"
@@ -83,7 +84,13 @@ test.describe("chart history", () => {
     await api.put(`/api/patients/${patient.id}/chart-history/work_school`, {
       text: "Employed at a logistics firm.",
     })
+    await api.put(`/api/patients/${patient.id}/allergies`, {
+      status: "recorded",
+      allergies: [{ substance: "Sulfa", reaction: "Rash" }],
+    })
 
+    // Each field names the chart entry it prints, so code writes it from the
+    // chart and the model is asked only what the visit said about it.
     const slug = `e2e_history_${randomBytes(3).toString("hex")}`
     let appointmentId: string | null = null
     await api.put(`/api/note-types/custom/${slug}`, {
@@ -92,12 +99,17 @@ test.describe("chart history", () => {
         {
           key: "trauma_history",
           label: "Trauma history",
-          fields: [{ key: "trauma_history", label: "Trauma history" }],
+          fields: [{ key: "trauma_history", label: "Trauma history", source: "trauma_history" }],
         },
         {
           key: "social_history",
           label: "Social history",
-          fields: [{ key: "work_school", label: "Work or school" }],
+          fields: [{ key: "work_school", label: "Work or school", source: "work_school" }],
+        },
+        {
+          key: "medications",
+          label: "Medications and allergies",
+          fields: [{ key: "allergies", label: "Allergies", source: "allergies" }],
         },
       ],
     })
@@ -136,6 +148,8 @@ test.describe("chart history", () => {
       await expect(
         page.getByText('Employed at a logistics firm. (stated this visit: "laid off last week.")'),
       ).toBeVisible()
+      // The stand-in says nothing about allergies: the chart's record prints as entered.
+      await expect(page.getByText("Sulfa (Rash)", { exact: true })).toBeVisible()
     } finally {
       if (appointmentId) await api.delete(`/api/appointments/${appointmentId}`)
       await api.request("DELETE", `/api/note-types/custom/${slug}`)

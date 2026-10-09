@@ -317,6 +317,19 @@ def _screened(chart: _Chart, key: str, updates: dict[str, str], unchanged: set[s
     return f"{chart.history.get(key, 'Not recorded')} {screen}"
 
 
+def _reported_medications(text: str) -> list[str]:
+    """What ``I'm taking a, b and c`` lines name, in order. Plain string splitting:
+    the prompt is caller text, so no regex runs over it."""
+    stated: list[str] = []
+    for line in text.splitlines():
+        for opener in _STATED_MEDICATIONS:
+            _, found, named = line.partition(opener)
+            if found:
+                named = named.strip().removesuffix(".").replace(" and ", ",")
+                stated.extend(item.strip() for item in named.split(",") if item.strip())
+    return stated
+
+
 def _current_medications(chart_lines: list[str], user_prompt: str) -> list[str]:
     """The chart's list as written, then what the client says they take that it lacks.
 
@@ -326,14 +339,7 @@ def _current_medications(chart_lines: list[str], user_prompt: str) -> list[str]:
     """
     listed = chart_lines or ["None recorded"]
     on_chart = {line.split()[0].lower() for line in chart_lines if not line.endswith(":")}
-    # Plain string splitting: the prompt is caller text, so no regex runs over it.
-    stated: list[str] = []
-    for line in user_prompt.splitlines():
-        for opener in _STATED_MEDICATIONS:
-            _, found, named = line.partition(opener)
-            if found:
-                named = named.strip().removesuffix(".").replace(" and ", ",")
-                stated.extend(item.strip() for item in named.split(",") if item.strip())
+    stated = _reported_medications(user_prompt)
     return listed + [
         f'(stated this visit: "{item}")'
         for item in stated
@@ -435,6 +441,11 @@ async def draft_note(call: NoteCall) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail="model unavailable")
     if call.response_schema.get("title") == "PracticeNoteTypeSpec":
         return {"data": DERIVED_PROPOSAL, "finish_reason": "stop"}
+    if call.response_schema.get("title") == "ChartFieldStatements":
+        return {
+            "data": _chart_field_statements(call.response_schema, call.user_prompt),
+            "finish_reason": "stop",
+        }
     if call.response_schema.get("title") == "ChartProposals":
         return {
             "data": {
@@ -486,6 +497,107 @@ def _dictated(user_prompt: str) -> dict[str, str]:
         if sep and text.strip():
             values[_slug(label)] = text.strip()
     return values
+
+
+#: How a client line says where they are for a telehealth visit: "Client: I'm at home today."
+_AT_HOME = "Client: I'm at home"
+
+
+def _numbered(line: str) -> tuple[int | None, str]:
+    """A ``[Sn] ...`` line's number and the rest of it; ``None`` for any other line."""
+    head, sep, rest = line.partition("] ")
+    number = head.removeprefix("[S")
+    return (int(number), rest) if sep and head.startswith("[S") and number.isdigit() else (None, "")
+
+
+def _chart_line(user_prompt: str, key: str) -> str:
+    """The chart's text the extraction prompt shows for ``key``: ``- key (Label): text``."""
+    for line in user_prompt.splitlines():
+        if line.startswith(f"- {key} ("):
+            return line.partition("): ")[2]
+    return ""
+
+
+def _chart_field_statements(schema: dict[str, Any], user_prompt: str) -> dict[str, Any]:
+    """What the visit said about the chart-fed fields, from the same lines a draft reads.
+
+    ``Update on <key>: <text>`` states ``text`` about that field; ``No change in
+    <key>.`` is a substance screen with no change; ``I'm taking a, b`` names the
+    medications the client takes, of which those the chart's list lacks (matched
+    by the drug's name) are stated. Each cites its own line. Nothing is said
+    about the allergies unless a line says it, so a spec can see the chart's
+    allergies printed with no model involved.
+    """
+    properties = schema.get("properties", {})
+    keys = set(properties["statements"]["items"]["properties"]["field_key"].get("enum", []))
+    # A chart line may carry its category first ("Psychiatric: Sertraline 50 mg").
+    on_chart = {
+        entry.rpartition(": ")[2].split()[0].lower()
+        for entry in _chart_line(user_prompt, "current_medications").split("; ")
+        if entry and entry != "None recorded"
+    }
+    statements: list[dict[str, Any]] = []
+    at_home: list[int] = []
+    for line in user_prompt.splitlines():
+        number, rest = _numbered(line)
+        if number is None:
+            continue
+        evidence = [number]
+        _, found, update = rest.partition(_STATED_UPDATE)
+        key, sep, text = update.partition(": ")
+        if found and sep and key.strip() in keys and text.strip():
+            statements.append(
+                {
+                    "field_key": key.strip(),
+                    "screen": "stated",
+                    "stated": text.strip(),
+                    "evidence_segment_ids": evidence,
+                }
+            )
+        _, found, unchanged = rest.partition(_NO_CHANGE)
+        if found and (key := unchanged.strip().removesuffix(".")) in keys:
+            statements.append(
+                {
+                    "field_key": key,
+                    "screen": "asked_no_change",
+                    "stated": "",
+                    "evidence_segment_ids": evidence,
+                }
+            )
+        if "current_medications" in keys:
+            statements.extend(
+                {
+                    "field_key": "current_medications",
+                    "screen": "stated",
+                    "stated": item,
+                    "evidence_segment_ids": evidence,
+                }
+                for item in _reported_medications(rest)
+                if item.split()[0].lower() not in on_chart
+            )
+        if _AT_HOME in rest:
+            at_home = evidence
+    reply: dict[str, Any] = {"statements": statements, "risk_and_safety_plan_segment_ids": []}
+    if "diagnoses" in properties:
+        # As a draft's diagnoses field always held one: a coded stand-in, named
+        # on the visit's first line, so signing offers it to the problem list.
+        first = next(
+            (n for n, _ in map(_numbered, user_prompt.splitlines()) if n is not None), None
+        )
+        reply["diagnoses"] = (
+            [
+                {
+                    "label": "Stand-in diagnosis for assessment.diagnoses",
+                    "code": "F00.0",
+                    "evidence_segment_ids": [first],
+                }
+            ]
+            if first is not None
+            else []
+        )
+    if "client_at_home" in properties:
+        reply["client_at_home"] = {"at_home": bool(at_home), "evidence_segment_ids": at_home}
+    return reply
 
 
 def _chart_proposals(user_prompt: str) -> list[dict[str, Any]]:

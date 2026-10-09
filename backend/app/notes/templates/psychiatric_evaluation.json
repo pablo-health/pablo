@@ -28,6 +28,7 @@
             "key": "place_of_service",
             "label": "Place of service",
             "kind": "text",
+            "source": "place_of_service",
             "ai_hint": "If the place of service is telehealth, write: \"Visit conducted by synchronous audio and video telehealth on a HIPAA-compliant platform. The client was in <client location>; the provider was in <provider location>. The client consented to receive care by telehealth.\" copying each entered location exactly as written (write \"location not entered\" for a missing one). When the client said they were at home and the entered location does not say so, write \"at home in <client location>\". If in office, write \"In-office visit.\" If not provided, write \"Not stated.\""
           }
         ]
@@ -334,12 +335,14 @@
             "key": "current_medications",
             "label": "Current medications",
             "kind": "list",
+            "source": "medications",
             "ai_hint": "From the chart, exactly as given, or 'None recorded'. Then each medication the client reports currently taking that the chart lacks, with the dose as stated, appended as (stated this visit: \"...\"). A medication started, stopped or changed in this visit goes in the plan, not here."
           },
           {
             "key": "allergies",
             "label": "Allergies",
             "kind": "text",
+            "source": "allergies",
             "ai_hint": "From the chart, exactly as given (a list, NKDA, or 'Not recorded'). Then any allergy, or denial of allergies, the client or clinician states in this visit, appended as (stated this visit: \"...\"). Never write NKDA unless the chart says it."
           }
         ]

@@ -29,6 +29,7 @@ from app.repositories import (
     InMemoryPatientProblemRepository,
     InMemoryUserRepository,
 )
+from app.services.chart_field_extraction import SCHEMA_TITLE
 from app.services.note_generation_service import RegistryNoteGenerationService
 from app.services.session_service import SessionService
 from app.services.structured_llm_gateway import FakeStructuredLLMGateway, StructuredCompletion
@@ -98,7 +99,7 @@ def test_a_session_draft_reads_the_chart_in_the_clinicians_word() -> None:
 def _system_prompt(template: str, person: str) -> str:
     spec = json.loads((TEMPLATES_DIR / f"{template}.json").read_text())["spec"]
     definition = to_definition(practice_key(template), 1, PracticeNoteTypeSpec.model_validate(spec))
-    gateway = FakeStructuredLLMGateway(responses=[StructuredCompletion(data={})])
+    gateway = FakeStructuredLLMGateway(default_response=StructuredCompletion(data={}))
     RegistryNoteGenerationService(llm_gateway=gateway).generate_note(
         definition.key,
         Transcript(format="txt", content="[00:01] Therapist: How have you been?"),
@@ -107,7 +108,9 @@ def _system_prompt(template: str, person: str) -> str:
         definition=definition,
         chart=ChartContext(person=person),
     )
-    return str(gateway.calls[0]["system_prompt"])
+    # The note's own call; the extraction beside it has a system prompt of its own.
+    draft = next(c for c in gateway.calls if c["response_schema"].get("title") != SCHEMA_TITLE)
+    return str(draft["system_prompt"])
 
 
 @pytest.mark.parametrize("template", ["psychiatric_follow_up", "psychiatric_evaluation"])

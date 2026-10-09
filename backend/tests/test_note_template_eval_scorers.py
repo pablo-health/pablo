@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import re
 from datetime import date
 from typing import Any
@@ -660,6 +661,43 @@ def test_the_attestation_says_where_the_client_said_they_were(
     draft = {"encounter": {"place_of_service": attestation}}
 
     assert (telehealth_attestation(draft, FOLLOW_UP_WITH_THERAPY_AT_HOME) == []) is passes
+
+
+_HOME_ENTERED = dataclasses.replace(
+    FOLLOW_UP_WITH_THERAPY_AT_HOME,
+    expected=dataclasses.replace(
+        FOLLOW_UP_WITH_THERAPY_AT_HOME.expected,
+        telehealth=("Client's home in Faketown, AA", "Clinic office at 123 Test St, Faketown, AA"),
+    ),
+)
+_ATTESTED = (
+    "Visit conducted by synchronous audio and video telehealth on a HIPAA-compliant platform. "
+    "The client was {client}; the provider was {provider}. The client consented to receive "
+    "care by telehealth."
+)
+_CLINIC = "in Clinic office at 123 Test St, Faketown, AA"
+
+
+@pytest.mark.parametrize(
+    ("client", "provider", "passes"),
+    [
+        # The entered text as given, which already says home.
+        ("in Client's home in Faketown, AA", _CLINIC, True),
+        # The place survives with home worded the other way round.
+        ("at home in Faketown, AA", _CLINIC, True),
+        # The place itself is lost.
+        ("at home", _CLINIC, False),
+        # The provider's location stays exact.
+        ("at home in Faketown, AA", "in Faketown, AA", False),
+    ],
+)
+def test_the_clients_location_is_checked_for_the_place_not_how_home_is_worded(
+    client: str, provider: str, passes: bool
+) -> None:
+    attestation = _ATTESTED.format(client=client, provider=provider)
+    draft = {"encounter": {"place_of_service": attestation}}
+
+    assert (telehealth_attestation(draft, _HOME_ENTERED) == []) is passes
 
 
 @pytest.mark.parametrize("case", ALL_CASES, ids=lambda c: c.name)
