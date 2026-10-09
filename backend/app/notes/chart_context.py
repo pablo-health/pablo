@@ -13,6 +13,17 @@ what the visit states that changes or adds to it follows as a marked quotation,
 loses what the chart said. A medication started, stopped or changed in the
 visit belongs to the plan, not to the current list.
 
+The substance-use fields come in two shapes, and the sign step seeds the
+chart from both (``app.chart_proposals.recorded``). A field fed from the
+chart (the follow-up's) prints the baseline, or "Not recorded", then this
+visit's screen: "(asked this visit: no change)", (stated this visit: "...")
+or "(not asked this visit)". A field drafted from the visit (the
+evaluation's) prints only the answer: what the client reported, "Denies."
+(or "Denies" followed by what was denied), or "Not asked.", never a screen
+mark. The allergies field is fed from the chart in both; at intake a stated
+denial reads Not recorded (stated this visit: "none that I know of") and
+seeds no known drug allergies, never an allergy entry.
+
 Read while the caller still holds its database connection, then passed in:
 generation itself runs with nothing checked out.
 """
@@ -287,7 +298,8 @@ def render_chart_block(chart: ChartContext, *, full_chart: bool) -> str:
             "allergy was a mistake, which never removes it; and each medication the client "
             "reports currently taking that the chart does not list, with the dose as stated. "
             "A medication the clinician starts, stops or changes in this visit is written in "
-            "the plan, not in the current list. A substance-use field prints the substance "
+            "the plan, not in the current list. A substance-use field whose instructions say "
+            "it comes from the chart prints the substance "
             'use baseline above for its key, or "Not recorded", then this visit\'s screen '
             'as its suffix: "(asked this visit: no change)" when the client was asked and '
             f"described no change, {STATED_SUFFIX} with the change as stated, or "
