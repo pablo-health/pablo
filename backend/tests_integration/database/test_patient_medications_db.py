@@ -12,6 +12,8 @@ a template left behind would fail the first insert here.
   ``other``.
 * A clinician without a grant reads nothing, after a control that the
   grantee does.
+* A session's transcription vocabulary reads the current and stopped
+  medications and the allergy substances, and nothing without a grant.
 
 Run: ``make test-integration``.
 """
@@ -33,6 +35,7 @@ from app.models import Patient
 from app.notes.chart_context import ChartMedication, chart_context_for
 from app.repositories.postgres.medication import PostgresMedicationRepository
 from app.repositories.postgres.patient import PostgresPatientRepository
+from app.services.transcription_keyterms import session_keyterms
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -146,3 +149,41 @@ def test_the_database_refuses_an_unknown_category(engine: Engine, tenant: str) -
             ),
             {"id": str(uuid.uuid4()), "pid": patient.id, "uid": _CLINICIAN_A},
         )
+
+
+def test_the_session_vocabulary_reads_current_and_stopped_medications_and_allergies(
+    engine: Engine, tenant: str
+) -> None:
+    """The transcriber's vocabulary comes from this chart alone, read as the clinician
+    who recorded the session: a stopped medication still primes its name, an allergy
+    substance does too, and a clinician without a grant gets nothing."""
+    now = datetime.now(UTC)
+    patient = Patient(
+        id=str(uuid.uuid4()),
+        first_name="Sam",
+        last_name="Sample",
+        created_at=now,
+        updated_at=now,
+        allergy_status="recorded",
+        allergies=[{"substance": "penicillin", "reaction": "hives"}],
+    )
+    with _session(engine, tenant, _CLINICIAN_A) as session:
+        PostgresPatientRepository(session).create(patient, _CLINICIAN_A)
+        service = MedicationService(PostgresMedicationRepository(session))
+        service.create(
+            patient.id, _CLINICIAN_A, CreateMedicationRequest(drug_name="Sertraline", dose="50 mg")
+        )
+        stopped = service.create(
+            patient.id, _CLINICIAN_A, CreateMedicationRequest(drug_name="trazodone", dose="50 mg")
+        )
+        service.update(
+            str(stopped["id"]), _CLINICIAN_A, UpdateMedicationRequest(status="discontinued")
+        )
+        session.commit()
+
+    with _session(engine, tenant, _CLINICIAN_A) as session:
+        terms = session_keyterms(session, patient.id, _CLINICIAN_A)
+    assert terms == ["sertraline", "Zoloft", "trazodone", "Desyrel", "penicillin"]
+
+    with _session(engine, tenant, _CLINICIAN_B) as session:
+        assert session_keyterms(session, patient.id, _CLINICIAN_B) == []

@@ -10,14 +10,18 @@ and whether a telehealth client said they were at home. Every item cites the
 numbered lines that say it; an item citing none, or a line this transcript
 does not have, is dropped here, as the proposal call drops one. Its only
 output is :class:`~app.notes.chart_fields.Statements`: the chart's text and
-the marks around it are written in code.
+the marks around it are written in code. Beside it, code reads the lines for
+drug names that sound like a listed one (:mod:`app.drug_names.sound_alikes`),
+which the medication list marks as heard.
 """
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from ..chart_proposals.evidence import cited_evidence, segment_texts
+from ..drug_names.sound_alikes import find_sound_alikes
 from ..notes.chart_fields import (
     NamedDiagnosis,
     RenderedField,
@@ -26,7 +30,13 @@ from ..notes.chart_fields import (
     Statements,
     chart_text,
 )
-from ..notes.field_sources import PLACE_OF_SERVICE, PROBLEMS, is_history, is_substance
+from ..notes.field_sources import (
+    MEDICATIONS,
+    PLACE_OF_SERVICE,
+    PROBLEMS,
+    is_history,
+    is_substance,
+)
 from .source_attribution_service import format_transcript_with_segment_ids
 
 if TYPE_CHECKING:
@@ -275,4 +285,9 @@ def extract_statements(
         build_prompt(fields, chart, inputs, indexed),
         response_schema(fields, inputs),
     )
-    return parse(reply, fields, inputs, segment_texts(indexed))
+    segments = segment_texts(indexed)
+    statements = parse(reply, fields, inputs, segments)
+    if not any(f.source == MEDICATIONS for f in fields):
+        return statements
+    named = [(s.medication, s.segment_ids) for s in statements.fields if s.medication]
+    return replace(statements, sound_alikes=find_sound_alikes(chart, segments, named))

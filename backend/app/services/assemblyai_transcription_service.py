@@ -21,7 +21,7 @@ import bisect
 import io
 import logging
 import wave
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import httpx
@@ -318,7 +318,12 @@ class AssemblyAiTranscriptionService:
         return response.json()["upload_url"]  # type: ignore[no-any-return]
 
     async def _submit_transcription(
-        self, client: httpx.AsyncClient, audio_url: str, *, speaker_labels: bool
+        self,
+        client: httpx.AsyncClient,
+        audio_url: str,
+        *,
+        speaker_labels: bool,
+        keyterms: Sequence[str] = (),
     ) -> str:
         body: _JsonDict = {
             "audio_url": audio_url,
@@ -327,6 +332,8 @@ class AssemblyAiTranscriptionService:
         }
         if speaker_labels:
             body["speaker_labels"] = True
+        if keyterms:
+            body["keyterms_prompt"] = list(keyterms)
         response = await client.post(
             f"{ASSEMBLYAI_API_BASE}/transcript",
             headers=self._headers(),
@@ -344,12 +351,15 @@ class AssemblyAiTranscriptionService:
         client_audio: bytes,
         *,
         audio_url_factory: Callable[[str, bytes], str] | None = None,
+        keyterms: Sequence[str] = (),
     ) -> list[_JsonDict]:
         """Prepare and submit both channels — one AssemblyAI job each.
 
         ``audio_url_factory(speaker, wav_bytes)`` returns a URL AssemblyAI
         can fetch the prepared speech-only audio from; when omitted the
-        bytes are pushed through AssemblyAI's /upload endpoint. Returns job
+        bytes are pushed through AssemblyAI's /upload endpoint. ``keyterms``
+        is the session's vocabulary (``app.drug_names.keyterms``), sent as
+        ``keyterms_prompt`` on both channels when there is any. Returns job
         metadata ``[{transcript_id, speaker, offset_map, diarized}, ...]``
         for the polling Cloud Task.
         """
@@ -378,7 +388,7 @@ class AssemblyAiTranscriptionService:
                     audio_url = await self._upload_audio(client, prepared)
                 diarized = speaker in self._speaker_labels_channels
                 transcript_id = await self._submit_transcription(
-                    client, audio_url, speaker_labels=diarized
+                    client, audio_url, speaker_labels=diarized, keyterms=keyterms
                 )
                 jobs.append(
                     {
