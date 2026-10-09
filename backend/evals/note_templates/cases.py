@@ -748,6 +748,14 @@ FOLLOW_UP_SUPPORTIVE_ONLY = TemplateCase(
     ),
 )
 
+# The same visit, its dictated codes and window as the transcriber wrote them.
+FOLLOW_UP_DICTATION_AS_HEARD = replace(
+    FOLLOW_UP_SUPPORTIVE_ONLY,
+    name="follow-up-dictation-as-heard",
+    visit=visits.SUPPORTIVE_ONLY_AS_HEARD,
+    expected=replace(FOLLOW_UP_SUPPORTIVE_ONLY.expected, minutes=("39",)),
+)
+
 FOLLOW_UP_THERAPY_PLAN_NOT_STATED = TemplateCase(
     name="follow-up-therapy-plan-not-stated",
     template="psychiatric_follow_up",
@@ -799,5 +807,6 @@ ALL_CASES: tuple[TemplateCase, ...] = (
     FOLLOW_UP_INTERLEAVED_DICTATED,
     FOLLOW_UP_NO_THERAPY_RECORDED,
     FOLLOW_UP_SUPPORTIVE_ONLY,
+    FOLLOW_UP_DICTATION_AS_HEARD,
     FOLLOW_UP_THERAPY_PLAN_NOT_STATED,
 )

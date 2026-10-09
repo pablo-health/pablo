@@ -57,6 +57,9 @@ _ESTABLISHED_PATIENT_CODES: dict[MdmLevel, str] = {
 _ADD_ON_BANDS: tuple[tuple[int, str], ...] = ((53, "90838"), (38, "90836"), (16, "90833"))
 """Fewest psychotherapy minutes for each add-on, longest band first."""
 
+EM_CODES = frozenset((*_NEW_PATIENT_CODES.values(), *_ESTABLISHED_PATIENT_CODES.values()))
+ADD_ON_CODES = frozenset(code for _, code in _ADD_ON_BANDS)
+
 
 @dataclass(frozen=True)
 class ElementRationale:
@@ -116,7 +119,9 @@ def rationale(
 
 
 __all__ = [
+    "ADD_ON_CODES",
     "DATA_LEVELS",
+    "EM_CODES",
     "MDM_LEVELS",
     "PROBLEMS_LEVELS",
     "RISK_LEVELS",

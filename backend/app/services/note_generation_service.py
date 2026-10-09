@@ -54,6 +54,11 @@ from ..notes.client_present import (
     split_dictated,
 )
 from ..notes.diagnoses import DIAGNOSES_KIND_LABEL, DIAGNOSES_SCHEMA, coerce_diagnoses
+from ..notes.dictated_numbers import (
+    known_diagnosis_codes,
+    normalise_dictated_numbers,
+    without_unparsed_codes,
+)
 from ..notes.practice_types import PromptBlocks, render_system_prompt, render_user_prompt
 from ..notes.prompts.soap import SOAP_SYSTEM_PROMPT
 from ..notes.section_calls import (
@@ -338,6 +343,11 @@ class RegistryNoteGenerationService(NoteGenerationService):
     ) -> GeneratedNote:
         definition = definition or self.registry.get(note_type)
         _refuse_restricted(definition)
+        # Codes and times the transcriber ran together, read back before any call sees them.
+        numbers = normalise_dictated_numbers(
+            transcript.content, known_diagnosis_codes(chart, current_note)
+        )
+        transcript = Transcript(format=transcript.format, content=numbers.content)
         # The recording's own turns; anything dictated after it has no recording times.
         recording, dictated = split_dictated(transcript.content)
         segments = segments_from_transcript(Transcript(format=transcript.format, content=recording))
@@ -379,7 +389,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
             proposal = propose(said, labels, cue)
         return GeneratedNote(
             note_type=note_type,
-            content=content,
+            content=without_unparsed_codes(content, numbers),
             note_type_version=definition.version,
             psychotherapy_proposal=proposal,
             chart_statements=statements,

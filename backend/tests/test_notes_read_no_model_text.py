@@ -23,6 +23,9 @@ NOTES = Path(app.notes.__file__).parent
 
 NAMED_PATTERNS = {
     "client_present.py": "transcript lines as stored",
+    # The clinician's dictated codes and times as the transcriber wrote them;
+    # a drafted diagnosis code is compared as a string, never by a pattern.
+    "dictated_numbers.py": "numbers in the transcript's dictated lines",
     # Reads the E/M and add-on codes out of the drafted visit details, which a
     # model writes: the one place left that reads a value out of model prose.
     # Named so it stays visible until the draft returns the codes as fields.
