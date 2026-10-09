@@ -129,21 +129,58 @@ def _hints(spec: dict[str, Any], section: str) -> dict[str, str]:
 
 
 @pytest.mark.parametrize("name", _PRESCRIBER)
-def test_every_risk_field_asks_for_verbatim_quotation(name: str) -> None:
-    """A risk field written as a paraphrase ("the client denied thoughts of...") is a
-    claim nobody made; each hint, and the prompt, asks for the words in quotation marks."""
+def test_the_clients_words_about_harm_are_quoted_and_never_paraphrased(name: str) -> None:
+    """A risk field that paraphrases the client ("the client denied thoughts of...") is
+    a claim nobody made; each hint that records what the client said asks for their
+    words, quoted, as theirs."""
     spec = _spec(name)
     risk = _hints(spec, "risk")
-    assert set(risk) >= {
-        "suicidal_homicidal_ideation",
-        "risk_protective_factors",
-        "overall_risk",
-        "safety_plan",
-    }
-    for key, hint in risk.items():
-        assert "verbatim, in quotation marks" in hint, key
-        assert "paraphrase" in hint, key
-    assert "Every risk field holds only words said in the visit" in spec["user_template"]
+    quoting = [k for k in ("suicidal_homicidal_ideation", "self_harm_violence") if k in risk]
+    assert quoting
+    for key in quoting:
+        assert "the client's own words quoted verbatim and framed as theirs" in risk[key], key
+        assert "Never a paraphrase of the client" in risk[key], key
+    assert (
+        "own words about suicide, self-harm or violence are quoted verbatim"
+        in (spec["user_template"])
+    )
+
+
+@pytest.mark.parametrize("name", _PRESCRIBER)
+def test_the_clinicians_findings_are_written_as_findings(name: str) -> None:
+    """The note is the clinician's own statement: what the clinician dictated is never
+    put in quotation marks or tagged with who said it, and the risk level is only the
+    clinician's."""
+    spec = _spec(name)
+    risk = _hints(spec, "risk")
+    for key in ("risk_protective_factors", "overall_risk", "safety_plan"):
+        assert "quotation marks" not in risk[key], key
+    assert "Never a level the clinician did not say" in risk["overall_risk"]
+    assert "written as a finding" in risk["overall_risk"]
+    assert "naming who said them" not in json.dumps(spec)
+    assert '"Clinician dictated:"' in spec["user_template"]
+    assert (
+        "In no field write who said, asked, noted or dictated something" in (spec["user_template"])
+    )
+
+
+def test_advice_to_the_client_is_not_recorded_as_self_harm() -> None:
+    hint = _hints(_spec("psychiatric_follow_up"), "risk")["self_harm_violence"]
+    assert "belong in Emergency instructions" in hint
+
+
+@pytest.mark.parametrize("name", _PRESCRIBER)
+def test_the_place_of_service_reads_in_a_location_and_at_home_when_said(name: str) -> None:
+    hint = _hints(_spec(name), "encounter")["place_of_service"]
+    assert "located at" not in hint
+    assert "The client was in <client location>" in hint
+    assert 'does not say so, write "at home in <client location>"' in hint
+
+
+def test_a_denied_substance_is_marked_as_a_denial() -> None:
+    for key, hint in _hints(_spec("psychiatric_follow_up"), "substance_use").items():
+        assert "(stated this visit: denied) if the client denied it" in hint, key
+        assert '"(asked this visit: no change)" only if the client said nothing' in hint, key
 
 
 @pytest.mark.parametrize("name", _PRESCRIBER)
