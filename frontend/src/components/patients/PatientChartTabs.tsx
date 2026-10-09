@@ -73,11 +73,16 @@ function CountBadge({ count }: { count: number }) {
 }
 
 function NotesTab({ patientId }: { patientId: string }) {
-  const { data, isLoading, error } = usePatientNotes(patientId)
+  const { data, isPending, error } = usePatientNotes(patientId)
   const noteTypeLabel = useNoteTypeLabel()
   const people = usePeopleTerm()
 
-  if (isLoading) {
+  // isPending, not isLoading: the query is disabled until sign-in resolves,
+  // and a disabled query is not "loading" yet has no data. Reading that as
+  // "no notes" showed the empty state early, then swapped it for the
+  // skeleton once the fetch began — unmounting its New note button and
+  // closing a dialog the clinician had just opened.
+  if (isPending) {
     return (
       <div className="space-y-2">
         {Array.from({ length: PREVIEW_LIMIT }).map((_, i) => (
