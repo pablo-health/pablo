@@ -30,7 +30,6 @@ The marks:
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -78,6 +77,10 @@ class Statement:
     field_key: str
     screen: Screen = "stated"
     stated: str = ""
+    medication: str = ""
+    """For the current medications: the drug's name, as its own field of the reply."""
+    dose: str = ""
+    """For the current medications: the dose as said, as its own field of the reply."""
 
 
 @dataclass(frozen=True)
@@ -230,23 +233,32 @@ def _diagnoses(chart: ChartContext, named: tuple[NamedDiagnosis, ...]) -> list[S
     return listed
 
 
-_NUMBER = re.compile(r"\d+(?:\.\d+)?")
+def _first_word(text: str) -> str:
+    words = text.lower().split()
+    return words[0] if words else ""
 
 
-def restates_chart_medication(stated: str, chart: ChartContext) -> bool:
-    """Whether ``stated`` names a medication on the chart and no number its line lacks.
+def _dose_figures(dose: str) -> str:
+    """A dose's figures alone: "10 milligrams" and "10 mg" are both "10"."""
+    return "".join(c for c in dose if c.isdigit() or c == ".")
 
-    "Escitalopram 10 milligrams every morning" against the chart's
-    "Escitalopram 10 mg, every morning" adds nothing; "I take 20 of the
-    escitalopram now" states a dose the chart does not have, so it is kept.
+
+def restates_chart_medication(statement: Statement, chart: ChartContext) -> bool:
+    """Whether a stated medication is one the chart lists, at the chart's dose.
+
+    Read from the reply's own fields, the drug's name and the dose as said,
+    never from the quoted words. A statement that names no drug is kept, and
+    so is one naming a listed drug at another dose ("20" against the chart's
+    10 mg).
     """
-    words = set(re.findall(r"[a-z]+", stated.lower()))
-    numbers = set(_NUMBER.findall(stated))
-    for medication in chart.medications:
-        name = medication.name.split()[0].lower() if medication.name.split() else ""
-        if name and name in words and numbers <= set(_NUMBER.findall(medication_line(medication))):
-            return True
-    return False
+    name = _first_word(statement.medication)
+    if not name:
+        return False
+    said = _dose_figures(statement.dose)
+    return any(
+        _first_word(m.name) == name and (not said or said == _dose_figures(m.dose))
+        for m in chart.medications
+    )
 
 
 def place_of_service(inputs: Mapping[str, str], person: str, *, at_home: bool = False) -> str:
@@ -292,7 +304,7 @@ def compose(
         added = [
             stated_suffix([s])
             for s in said
-            if s.stated.strip() and not restates_chart_medication(s.stated, chart)
+            if s.stated.strip() and not restates_chart_medication(s, chart)
         ]
         return lines + [a for i, a in enumerate(added) if a not in added[:i]]
     if is_substance(source):

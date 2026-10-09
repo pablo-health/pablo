@@ -82,6 +82,8 @@ def response_schema(fields: Sequence[RenderedField], inputs: Mapping[str, str]) 
                     "field_key": {"type": "string", "enum": _statement_keys(fields)},
                     "screen": {"type": "string", "enum": _SCREENS},
                     "stated": {"type": "string"},
+                    "medication": {"type": "string"},
+                    "dose": {"type": "string"},
                     "evidence_segment_ids": _EVIDENCE,
                 },
                 "required": ["field_key", "screen", "stated", "evidence_segment_ids"],
@@ -133,8 +135,8 @@ nothing changed, denied when they denied use, stated (with their words) for use 
 change. Leave out a substance never asked about; a catch-all question ("anything else?") \
 asks only about other_substances. Every other field takes stated.
 - current_medications: one item per medication the {term} says they take that the chart \
-lacks, with the dose as stated. A medication the clinician starts, stops or changes this \
-visit is not one.
+lacks, with the dose as stated, and its name and dose also in medication and dose. A \
+medication the clinician starts, stops or changes this visit is not one.
 - allergies: an allergy, or a denial of allergies, as said.
 - risk_and_safety_plan_segment_ids: every line of today's risk questions, their answers and \
 the safety plan."""
@@ -209,6 +211,8 @@ def parse(
                 field_key=str(item["field_key"]),
                 screen=screen,
                 stated=str(item.get("stated") or "").strip(),
+                medication=str(item.get("medication") or "").strip(),
+                dose=str(item.get("dose") or "").strip(),
             )
         )
     named: list[NamedDiagnosis] = []
