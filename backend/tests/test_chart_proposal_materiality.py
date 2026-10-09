@@ -225,6 +225,23 @@ OFFERED = [
         None,
     ),
     Case(
+        "no longer working there, a marker made partly of a stop word",
+        "work_school",
+        "Works full time at the library.",
+        "Worked at the library until March; no longer working there.",
+        (("I worked at the library until March. I'm no longer working there.", CLIENT),),
+        None,
+        said=("Worked at the library until March; no longer working there.",),
+    ),
+    Case(
+        "moved in with a partner, said as moved in",
+        "living_situation",
+        "Lives alone in a studio.",
+        "Lived alone in a studio until June; moved in with partner in June 2026.",
+        (("We moved in together in June.", CLIENT),),
+        None,
+    ),
+    Case(
         "started vaping",
         "tobacco_nicotine",
         "Denies tobacco or nicotine use.",

@@ -442,7 +442,12 @@ class _Compared:
     field_key: str
     text: str
     proposal: list[str]
+    """The proposal's words with the stop words out: what novelty and placement compare."""
     chart: list[str]
+    proposal_all: list[str]
+    """Every word of the proposal, stop words kept: what a marker phrase is matched in,
+    since "no longer" and "moved in" are made partly of stop words."""
+    chart_all: list[str]
     new: set[str]
     state: list[tuple[str, ...]]
     entities: list[tuple[str, ...]]
@@ -452,17 +457,20 @@ class _Compared:
     @classmethod
     def of(cls, field_key: str, text: str, chart_text: str, others: OtherFields) -> _Compared:
         vocab = lists()
-        proposal = [w for w in words(text) if w not in vocab.stop]
-        chart = [w for w in words(chart_text) if w not in vocab.stop]
+        proposal_all, chart_all = words(text), words(chart_text)
+        proposal = [w for w in proposal_all if w not in vocab.stop]
+        chart = [w for w in chart_all if w not in vocab.stop]
         added_names = _capitalised(text) - _capitalised(chart_text)
         return cls(
             field_key=field_key,
             text=text,
             proposal=proposal,
             chart=chart,
+            proposal_all=proposal_all,
+            chart_all=chart_all,
             new=set(proposal) - set(chart),
-            state=_new_phrases(proposal, chart, vocab.state),
-            entities=_new_phrases(proposal, chart, vocab.entities),
+            state=_new_phrases(proposal_all, chart_all, vocab.state),
+            entities=_new_phrases(proposal_all, chart_all, vocab.entities),
             names={n for n in added_names if _stem(n) not in chart},
             others=others,
         )
@@ -490,14 +498,14 @@ def _novelty(c: _Compared) -> Reason | None:
 def _placement(c: _Compared) -> Reason | None:
     """Rule 4: not this visit's present in a field about the past, and not a fact the
     chart keeps in another place."""
-    if _present_not_past(c.field_key, c.proposal, c.chart):
+    if _present_not_past(c.field_key, c.proposal_all, c.chart_all):
         return "present-not-past"
     return "elsewhere" if _elsewhere(c.field_key, c.new, c.proposal, c.others) else None
 
 
 def _lasting(c: _Compared, cited: Sequence[CitedLine]) -> Reason | None:
     """Rule 2: a lasting change, not a passing event, and one that was said."""
-    transient = _new_phrases(c.proposal, c.chart, lists().transient)
+    transient = _new_phrases(c.proposal_all, c.chart_all, lists().transient)
     passing = bool(transient) and not c.state
     unmarked = not (c.state or c.entities or c.names)
     if passing or unmarked or not _said(cited, c.state, c.entities, c.names):
@@ -520,7 +528,7 @@ def _said(
     if not told:
         return True
     vocab = lists()
-    sequence = [w for c in told for w in words(c.text) if w not in vocab.stop]
+    sequence = [w for c in told for w in words(c.text)]
     if names & set(sequence) or any(_has_phrase(sequence, p) for p in entities):
         return True
     kinds = [g for g in vocab.state_groups.values() if any(p in g for p in state)]
