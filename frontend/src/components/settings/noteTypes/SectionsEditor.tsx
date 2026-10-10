@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import type { PracticeFieldKind } from "@/types/noteTypes"
-import { FieldMessages, FromTheChart, Labelled, RowActions, SELECT_CLASS } from "./EditorParts"
+import { FieldMessages, FieldSource, Labelled, RowActions, SELECT_CLASS } from "./EditorParts"
 import {
   blankField,
   blankSection,
@@ -149,7 +149,7 @@ function FieldsEditor({
               </div>
             </div>
             {field.source ? (
-              <FromTheChart />
+              <FieldSource source={field.source} />
             ) : (
               <Labelled label="What goes here" messages={errorsAt(errors, `${fieldPath}.ai_hint`)}>
                 {(props) => (

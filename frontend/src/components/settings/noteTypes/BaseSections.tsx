@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import type { PracticeFieldKind, PracticeSectionSpec } from "@/types/noteTypes"
-import { FromTheChart, Labelled, SELECT_CLASS } from "./EditorParts"
+import { FieldSource, Labelled, SELECT_CLASS } from "./EditorParts"
 import { canHide, canHideSection, type AddedDraftField, type BasedDraft } from "./basedModel"
 import { blankField, blankSection, type DraftField, type DraftSection } from "./editorModel"
 
@@ -132,7 +132,7 @@ function BaseSection({
                     <p className="text-[13px]">{field.label}</p>
                     {!fieldHidden &&
                       (field.source ? (
-                        <FromTheChart />
+                        <FieldSource source={field.source} />
                       ) : (
                         field.ai_hint && <p className="line-clamp-2 text-[12px]">{field.ai_hint}</p>
                       ))}

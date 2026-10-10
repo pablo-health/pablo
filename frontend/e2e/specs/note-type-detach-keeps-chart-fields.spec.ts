@@ -37,12 +37,13 @@ test("a detached copy of the follow-up prints the chart's allergy as recorded", 
     await page.getByRole("button", { name: `Detach from ${BASE_LABEL}` }).click()
     await page.getByRole("group", { name: "Detach" }).getByRole("button", { name: "Detach" }).click()
 
-    // Every part is editable now; a chart-fed field says where it comes from instead of offering a hint.
-    const allergies = page
-      .getByRole("group", { name: /^Field \d+$/ })
-      .filter({ has: page.locator('input[value="Allergies"]') })
-    await expect(allergies.getByText("From the chart", { exact: true })).toBeVisible()
-    await expect(allergies.getByLabel("What goes here")).toHaveCount(0)
+    // Every part is editable now; a printed field says where it comes from instead of offering a hint.
+    const field = (label: string) =>
+      page.getByRole("group", { name: /^Field \d+$/ }).filter({ has: page.locator(`input[value="${label}"]`) })
+    await expect(field("Allergies").getByText("From the chart", { exact: true })).toBeVisible()
+    await expect(field("Allergies").getByLabel("What goes here")).toHaveCount(0)
+    await expect(field("Place of service").getByText("From the visit", { exact: true })).toBeVisible()
+    await expect(field("Place of service").getByText("From the chart", { exact: true })).toHaveCount(0)
 
     const saved = page.waitForResponse(
       (r) => new URL(r.url()).pathname.startsWith("/api/note-types/custom/") && r.request().method() === "PUT",
