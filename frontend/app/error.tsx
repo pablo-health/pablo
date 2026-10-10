@@ -4,6 +4,7 @@
 
 import { useEffect } from "react"
 import Image from "next/image"
+import { SupportContactLine } from "@/components/support/SupportContactLine"
 import { Button } from "@/components/ui/button"
 
 export default function Error({
@@ -62,6 +63,7 @@ export default function Error({
             Go home
           </Button>
         </div>
+        <SupportContactLine lead="Still not working?" className="text-sm" />
       </div>
     </div>
   )

@@ -76,5 +76,10 @@ export async function GET(request: NextRequest) {
     // backend has GOOGLE_CALENDAR_CLIENT_ID and GOOGLE_CALENDAR_CLIENT_SECRET
     // set — without those the connect flow has nothing to send Google.
     googleCalendarEnabled: process.env.GOOGLE_CALENDAR_ENABLED === 'true',
+    // Where a clinician can write to reach a person about this deployment,
+    // shown beside load errors and under Help in the sidebar. Read at request
+    // time like the toggles above. Unset hides both, so a deployment that has
+    // not chosen an address shows no contact line rather than a broken link.
+    supportEmail: (process.env.SUPPORT_EMAIL || '').trim(),
   })
 }

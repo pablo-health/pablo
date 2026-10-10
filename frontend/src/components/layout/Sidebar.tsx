@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { sayPeople } from "@/lib/peopleTerm"
 import { AdminNav } from "./AdminNav"
+import { HelpNavItem } from "./HelpNavItem"
 import { NavBadge } from "./NavBadge"
 import { PabloNote } from "./PabloNote"
 import { SidebarFooter } from "./SidebarFooter"
@@ -63,6 +64,8 @@ export function Sidebar({ isAdmin = false, hideClinicianMenus = false }: Sidebar
             </Link>
           )
         })}
+
+        <HelpNavItem />
 
         {isAdmin && <AdminNav />}
       </nav>

@@ -497,6 +497,9 @@ services:
       # The backend answers Google Calendar here (through the stand-in), so
       # the settings link and the setup page are shown.
       - GOOGLE_CALENDAR_ENABLED=true
+      # A support address, so load errors and the sidebar show where to write
+      # (support-contact.spec.ts). Unset, both are hidden.
+      - SUPPORT_EMAIL=help@practice.example
       # The portal is served on a host of its own. One server answers both
       # names: localhost is the clinician app, 127.0.0.1 the portal, whose
       # `/{slug}` addresses are rewritten to the portal route and where

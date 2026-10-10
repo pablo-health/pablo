@@ -14,6 +14,7 @@ import { redirect } from "next/navigation"
 import { getServerSession } from "@/lib/auth/server"
 import { IS_DEV_MODE } from "@/lib/devMode"
 import { MFAEnrollmentForm } from "./MFAEnrollmentForm"
+import { MfaSupportFooter } from "./MfaSupportFooter"
 
 export default async function MFAEnrollmentPage() {
   // In dev mode, skip MFA entirely
@@ -90,18 +91,7 @@ export default async function MFAEnrollmentPage() {
         {/* Enrollment Form */}
         <MFAEnrollmentForm />
 
-        {/* Footer */}
-        <footer className="mt-8 pt-6 border-t border-neutral-200 text-center text-sm text-neutral-600">
-          <p>
-            Questions about MFA?{" "}
-            <a
-              href="mailto:support@pablo.health"
-              className="text-primary-600 hover:text-primary-700 underline"
-            >
-              Contact Support
-            </a>
-          </p>
-        </footer>
+        <MfaSupportFooter />
       </div>
     </div>
   )

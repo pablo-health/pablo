@@ -6,6 +6,7 @@ import Image from "next/image"
 import Link from "next/link"
 import { useMemo, useState } from "react"
 import { AiNotesConsentScriptButton } from "@/components/sessions/AiNotesConsentScript"
+import { PanelLoadError } from "@/components/support/PanelLoadError"
 import { Button } from "@/components/ui/button"
 import { useCompanionDevices } from "@/hooks/useCompanionDevices"
 import { useDashboardSummary } from "@/hooks/useDashboard"
@@ -19,7 +20,7 @@ import { StartSessionButton } from "./StartSessionButton"
 
 export function TodayPanel() {
   const timeZone = useUserTimeZone()
-  const { data, isLoading } = useDashboardSummary()
+  const { data, isLoading, isError, refetch } = useDashboardSummary()
   const [companionDialogOpen, setCompanionDialogOpen] = useState(false)
   // Smart detection: only consider the companion handoff on a platform that
   // can route the deep link, and only treat the user as "set up" once the
@@ -79,6 +80,12 @@ export function TodayPanel() {
 
       {isLoading ? (
         <p className="text-sm text-neutral-500 py-6 text-center">Loading…</p>
+      ) : isError && !data ? (
+        // Without this a failed load fell through to "No sessions today".
+        <PanelLoadError
+          message="Today’s sessions didn’t load."
+          onRetry={() => void refetch()}
+        />
       ) : appts.length === 0 ? (
         <EmptyDay />
       ) : (

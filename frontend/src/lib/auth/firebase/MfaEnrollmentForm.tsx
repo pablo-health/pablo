@@ -33,11 +33,13 @@ import { AuthFeedback, AuthInput, AuthPrimaryButton } from "@/components/auth"
 import type { MfaEnrollmentFormProps } from "@/lib/auth/types"
 import { safeReturnTo } from "@/lib/auth/returnTo"
 import { errorCode } from "@/lib/errors/errorCode"
+import { supportMailto, useSupportEmail } from "@/lib/support"
 
 export function FirebaseMfaEnrollmentForm({ returnTo: returnToProp }: MfaEnrollmentFormProps = {}) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const returnTo = returnToProp ?? searchParams.get("returnTo")
+  const supportEmail = useSupportEmail()
   const { loading: authLoading } = useAuth()
   // Firebase-specific surface: read the raw SDK user for ``providerData``
   // (sign-in method) and ``multiFactor`` — details the neutral AuthUser omits.
@@ -440,16 +442,18 @@ export function FirebaseMfaEnrollmentForm({ returnTo: returnToProp }: MfaEnrollm
           </form>
         </div>
 
-        <p className="text-xs text-neutral-500 leading-relaxed">
-          Lose access to your authenticator later? Email{" "}
-          <a
-            href="mailto:support@pablo.health"
-            className="text-primary-600 hover:text-primary-700 underline"
-          >
-            support@pablo.health
-          </a>{" "}
-          and we&apos;ll help you regain access.
-        </p>
+        {supportEmail && (
+          <p className="text-xs text-neutral-500 leading-relaxed">
+            Lose access to your authenticator later? Email{" "}
+            <a
+              href={supportMailto(supportEmail)}
+              className="text-primary-600 hover:text-primary-700 underline"
+            >
+              {supportEmail}
+            </a>{" "}
+            and we&apos;ll help you regain access.
+          </p>
+        )}
       </div>
     </div>
   )
