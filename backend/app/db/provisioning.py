@@ -37,7 +37,7 @@ from .platform_bootstrap import require_platform_schema
 from .platform_models import PracticeRow
 
 if TYPE_CHECKING:
-    from sqlalchemy.engine import Engine
+    from sqlalchemy.engine import Connection, Engine
 
 logger = logging.getLogger(__name__)
 
@@ -386,8 +386,33 @@ def create_practice_schema(engine: Engine, schema_name: str) -> None:
         try:
             _create_practice_schema_locked(engine, schema_name)
         finally:
-            lock_conn.execute(text("SELECT pg_advisory_unlock(hashtext(:s))"), {"s": schema_name})
-            lock_conn.commit()
+            _release_schema_lock(lock_conn, schema_name)
+
+
+def _release_schema_lock(lock_conn: Connection, schema_name: str) -> None:
+    """Release the provisioning lock without letting the release decide the outcome.
+
+    The lock connection sits idle for the whole build, and an idle
+    connection can be closed under it. When that happens the build has
+    already committed, and the lock went with the server session that held
+    it, so there is nothing left to release. Raising here would report a
+    finished schema as failed, and from inside ``finally`` it would also
+    replace whatever error the build itself raised.
+
+    If the release fails on a connection that is still open, the lock would
+    stay held for as long as the pool keeps that connection. Invalidating it
+    closes the connection, and the server drops the lock with the session.
+    """
+    try:
+        lock_conn.execute(text("SELECT pg_advisory_unlock(hashtext(:s))"), {"s": schema_name})
+        lock_conn.commit()
+    except SQLAlchemyError:
+        logger.warning(
+            "Could not release the provisioning lock for '%s'; discarding its connection",
+            schema_name,
+            exc_info=True,
+        )
+        lock_conn.invalidate()
 
 
 def _create_practice_schema_locked(engine: Engine, schema_name: str) -> None:
