@@ -98,6 +98,25 @@ describe("TodayPanel", () => {
     expect(screen.getByAltText(/pablo bear/i)).toBeInTheDocument()
   })
 
+  // A failed load used to fall through to "No sessions today", which tells a
+  // clinician with a full day that it is empty.
+  it("says the sessions didn't load, with a retry, instead of an empty day", () => {
+    const refetch = vi.fn()
+    useDashboardSummary.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      refetch,
+    })
+
+    renderPanel()
+
+    expect(screen.getByText("Today’s sessions didn’t load.")).toBeInTheDocument()
+    expect(screen.queryByText(/no sessions today/i)).not.toBeInTheDocument()
+    screen.getByRole("button", { name: "Try again" }).click()
+    expect(refetch).toHaveBeenCalledTimes(1)
+  })
+
   it("renders appointments sorted by start time", () => {
     mockSummary([
       makeAppointment({

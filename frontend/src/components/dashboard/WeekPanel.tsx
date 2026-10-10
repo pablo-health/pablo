@@ -3,10 +3,11 @@
 "use client"
 
 import Link from "next/link"
+import { PanelLoadError } from "@/components/support/PanelLoadError"
 import { useDashboardSummary } from "@/hooks/useDashboard"
 
 export function WeekPanel() {
-  const { data, isLoading: sessionsLoading } = useDashboardSummary()
+  const { data, isLoading: sessionsLoading, isError, refetch } = useDashboardSummary()
 
   const stats = {
     notesPending: data?.notes_pending_count ?? 0,
@@ -23,27 +24,35 @@ export function WeekPanel() {
         Loose ends to tie before the weekend.
       </p>
 
-      <ul className="space-y-2">
-        <StatRow
-          label="Notes awaiting your review"
-          value={stats.notesPending}
-          loading={sessionsLoading}
-          href="/dashboard/sessions"
-          urgent={stats.notesPending > 0}
+      {isError && !data ? (
+        // Without this a failed load showed every count as 0.
+        <PanelLoadError
+          message="This week’s numbers didn’t load."
+          onRetry={() => void refetch()}
         />
-        <StatRow
-          label="Transcripts still processing"
-          value={stats.transcriptionPending}
-          loading={sessionsLoading}
-          href="/dashboard/sessions"
-        />
-        <StatRow
-          label="Upcoming sessions"
-          value={stats.upcoming}
-          loading={false}
-          href="/dashboard/calendar"
-        />
-      </ul>
+      ) : (
+        <ul className="space-y-2">
+          <StatRow
+            label="Notes awaiting your review"
+            value={stats.notesPending}
+            loading={sessionsLoading}
+            href="/dashboard/sessions"
+            urgent={stats.notesPending > 0}
+          />
+          <StatRow
+            label="Transcripts still processing"
+            value={stats.transcriptionPending}
+            loading={sessionsLoading}
+            href="/dashboard/sessions"
+          />
+          <StatRow
+            label="Upcoming sessions"
+            value={stats.upcoming}
+            loading={false}
+            href="/dashboard/calendar"
+          />
+        </ul>
+      )}
     </div>
   )
 }
