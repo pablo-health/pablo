@@ -434,8 +434,9 @@ class SessionDictationRow(Base):
 
     Append-only — no ``updated_at`` / ``deleted_at``. The transcription
     worker fills ``transcript`` and ``used_as`` once (``transcribing`` →
-    ``transcribed`` or ``failed``); signing the draft addendum it became
-    records ``addendum_id``. Nothing rewrites what was said.
+    ``transcribed``, ``failed``, or ``no_speech`` when the clip was heard but
+    held no words); signing the draft addendum it became records
+    ``addendum_id``. Nothing rewrites what was said.
 
     ``used_as`` is ``redraft`` when the note was unsigned and the dictation
     went into its redraft, ``addendum`` when the note was signed and the
@@ -480,7 +481,7 @@ class SessionDictationRow(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('transcribing', 'transcribed', 'failed')",
+            "status IN ('transcribing', 'transcribed', 'failed', 'no_speech')",
             name="ck_session_dictations_status",
         ),
         CheckConstraint(

@@ -203,7 +203,8 @@ class SessionDictationService:
         the dictation and, when the note was redrafted, the note.
 
         Raises:
-            DictationNotPendingError: nothing left to do.
+            DictationNotPendingError: nothing left to do, including a clip
+                with no speech in it, which is recorded as ``no_speech``.
             TransientSOAPGenerationError: retry the job.
             SOAPGenerationFailedError: transcription or the redraft failed for good.
         """
@@ -246,8 +247,13 @@ class SessionDictationService:
             self._fail(dictation, user_id)
             raise SOAPGenerationFailedError from exc
         if not text:
-            self._fail(dictation, user_id)
-            raise SOAPGenerationFailedError
+            # A clip with no speech in it (a muted or silent microphone) was
+            # transcribed fine; there is just nothing to add. Recorded as its
+            # own outcome so the clinician is told to check the microphone,
+            # and the job ends normally: nothing failed and a retry would hear
+            # the same silence.
+            logger.info("Dictation %s had no speech", dictation.id)
+            return self._end(dictation, user_id, "no_speech")
 
         note = self.note_service.get_note(dictation.note_id, user_id)
         used_as: Literal["redraft", "addendum"] = "addendum" if note.finalized_at else "redraft"
@@ -266,13 +272,23 @@ class SessionDictationService:
         return dictation
 
     def _fail(self, dictation: SessionDictation, user_id: str) -> None:
-        self.dictation_repo.record_transcript(
-            dictation.id, status="failed", transcript=None, used_as=None, transcribed_at=utc_now()
+        self._end(dictation, user_id, "failed")
+
+    def _end(
+        self,
+        dictation: SessionDictation,
+        user_id: str,
+        status: Literal["failed", "no_speech"],
+    ) -> SessionDictation:
+        """Record that the dictation added nothing, and end the redraft it started."""
+        ended = self.dictation_repo.record_transcript(
+            dictation.id, status=status, transcript=None, used_as=None, transcribed_at=utc_now()
         )
         note = self.note_service.get_note(dictation.note_id, user_id)
         if note.status == "processing":
             self.note_service.end_redraft(note, user_id)
         release_db_connection()
+        return ended
 
 
 def awaiting_addendum(
