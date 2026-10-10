@@ -89,3 +89,28 @@ export function armNoHandoffFallback(
 
   return cleanup
 }
+
+const OPEN_PROMPT_HINT_KEY = "pablo.companion.openPromptHintSeen"
+
+export const OPEN_PROMPT_HINT =
+  "If your browser asks to open Pablo, choose Always allow so Start session goes straight to the app."
+
+/**
+ * Chromium browsers on Windows ask "Open Pablo?" on every handoff until the
+ * clinician picks "Always allow" (they ignore App URI handlers). Returns true
+ * once per browser profile on that combination, and records that it has been
+ * shown; false everywhere else or when storage is unavailable.
+ */
+export function takeOpenPromptHint(): boolean {
+  if (typeof navigator === "undefined") return false
+  if (!/Windows/.test(navigator.userAgent) || !/Chrome\//.test(navigator.userAgent)) {
+    return false
+  }
+  try {
+    if (window.localStorage.getItem(OPEN_PROMPT_HINT_KEY)) return false
+    window.localStorage.setItem(OPEN_PROMPT_HINT_KEY, "1")
+    return true
+  } catch {
+    return false
+  }
+}

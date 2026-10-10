@@ -9,7 +9,11 @@ const isMacOS = vi.hoisted(() => vi.fn())
 const useCompanionDownloadUrl = vi.hoisted(() => vi.fn())
 
 vi.mock("@/lib/companion", () => ({
-  isMacOS: (...args: unknown[]) => isMacOS(...args),
+  companionPlatform: () => {
+    const mac = isMacOS() as boolean | "windows"
+    if (mac === "windows") return "windows"
+    return mac ? "macos" : null
+  },
 }))
 
 vi.mock("@/lib/companion.extensions", () => ({
@@ -84,5 +88,18 @@ describe("CompanionGetDialog", () => {
     expect(
       screen.getByText(/isn't supported yet/),
     ).toBeInTheDocument()
+  })
+
+  it("names Windows and links the download on Windows", () => {
+    isMacOS.mockReturnValue("windows")
+    useCompanionDownloadUrl.mockReturnValue("https://downloads.example/win")
+
+    renderWithProviders(
+      <CompanionGetDialog open={true} onOpenChange={() => {}} />,
+    )
+
+    expect(screen.getByText("Get Pablo for Windows")).toBeInTheDocument()
+    const link = screen.getByRole("link", { name: "Download for Windows" })
+    expect(link).toHaveAttribute("href", "https://downloads.example/win")
   })
 })
