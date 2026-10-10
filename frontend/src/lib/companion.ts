@@ -27,7 +27,7 @@ export function companionPlatform(): CompanionPlatform | null {
  * macOS, companion_windows on Windows).
  *
  * Use this to gate pablohealth:// deep links and "Start session" buttons.
- * On Linux / mobile the flags have no effect — those platforms can't
+ * On Linux / mobile the flags have no effect , those platforms can't
  * handle the URL scheme.
  */
 export function isCompanionAvailable(): boolean {
