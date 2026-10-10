@@ -142,6 +142,8 @@ export function specFromDraft(draft: NoteTypeDraft): PracticeNoteTypeSpec {
         label: f.label,
         kind: f.kind,
         ai_hint: f.ai_hint,
+        // Not edited here, but kept: a copied built-in's chart-fed field stays printed from the chart.
+        ...(f.source ? { source: f.source } : {}),
       })),
       // Not edited here, but kept: a copied built-in's review-only section stays out of the note.
       ...(s.review_only ? { review_only: true } : {}),

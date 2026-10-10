@@ -28,6 +28,30 @@ describe("note-type editor model", () => {
     expect(specFromDraft(draftFromSpec(SPEC, "check_in"))).toEqual(SPEC)
   })
 
+  it("keeps the source of a field printed from the chart", () => {
+    const charted: PracticeNoteTypeSpec = {
+      ...SPEC,
+      sections: [
+        {
+          key: "medications",
+          label: "Medications and allergies",
+          fields: [
+            { key: "allergies", label: "Allergies", kind: "text", ai_hint: "", source: "allergies" },
+            { key: "notes", label: "Notes", kind: "text", ai_hint: "Anything else." },
+          ],
+        },
+      ],
+    }
+    const draft = draftFromSpec(charted, null)
+    draft.sections[0].fields[0].label = "Allergies on file"
+
+    expect(specFromDraft(draft).sections[0].fields).toEqual([
+      { key: "allergies", label: "Allergies on file", kind: "text", ai_hint: "", source: "allergies" },
+      { key: "notes", label: "Notes", kind: "text", ai_hint: "Anything else." },
+    ])
+    expect(importSpec(JSON.stringify(charted))).toEqual({ spec: charted })
+  })
+
   it("derives keys for added parts from their names, unique among siblings", () => {
     const draft = draftFromSpec(SPEC, "check_in")
     draft.sections[0].fields.push({ ...blankField(), label: "Body" }, { ...blankField(), label: "2nd look!" }, blankField())

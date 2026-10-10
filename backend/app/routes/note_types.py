@@ -74,6 +74,11 @@ class NoteFieldSchema(BaseModel):
         description="Field shape: 'text', 'list', or 'structured'.",
     )
     ai_hint: str = ""
+    source: str | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description="What code prints the field from instead of drafting it; omitted when drafted.",
+    )
 
     @classmethod
     def from_def(cls, field_def: NoteFieldDef) -> NoteFieldSchema:
@@ -82,6 +87,7 @@ class NoteFieldSchema(BaseModel):
             label=field_def.label,
             kind=field_def.kind,
             ai_hint=field_def.ai_hint,
+            source=field_def.source,
         )
 
 
