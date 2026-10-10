@@ -11,7 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { isMacOS } from "@/lib/companion"
+import { companionPlatform } from "@/lib/companion"
 import { useCompanionDownloadUrl } from "@/lib/companion.extensions"
 
 interface CompanionGetDialogProps {
@@ -23,7 +23,10 @@ export function CompanionGetDialog({
   open,
   onOpenChange,
 }: CompanionGetDialogProps) {
-  const mac = isMacOS()
+  const platform = companionPlatform()
+  const mac = platform === "macos"
+  const windows = platform === "windows"
+  const name = mac ? "macOS" : "Windows"
   const downloadUrl = useCompanionDownloadUrl()
 
   return (
@@ -40,21 +43,25 @@ export function CompanionGetDialog({
         </div>
         <DialogHeader className="items-center">
           <DialogTitle className="font-display">
-            {mac ? "Get Pablo for Mac" : "Pablo desktop app"}
+            {mac
+              ? "Get Pablo for Mac"
+              : windows
+                ? "Get Pablo for Windows"
+                : "Pablo desktop app"}
           </DialogTitle>
           <DialogDescription className="text-center">
-            {mac
+            {mac || windows
               ? "Recording and transcription happen in the Pablo desktop app. Download it once and it works alongside every session."
-              : "Recording and transcription happen in the Pablo desktop app, available for macOS. Windows support is on the roadmap."}
+              : "Recording and transcription happen in the Pablo desktop app, available for macOS and Windows."}
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-2 pt-1">
-          {mac && downloadUrl ? (
+          {platform && downloadUrl ? (
             <>
               <Button asChild>
                 <a href={downloadUrl} target="_blank" rel="noreferrer">
-                  Download for macOS
+                  Download for {name}
                 </a>
               </Button>
               {/* The dashboard only learns the app is installed once someone
@@ -63,9 +70,9 @@ export function CompanionGetDialog({
                 After installing, open the app and sign in.
               </p>
             </>
-          ) : mac ? (
+          ) : platform ? (
             <>
-              <Button disabled>Download for macOS</Button>
+              <Button disabled>Download for {name}</Button>
               <p className="text-xs text-neutral-500">
                 Download unavailable — install later from Settings.
               </p>
