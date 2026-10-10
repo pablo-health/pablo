@@ -9,11 +9,14 @@ import {
   type RecordingConsent,
 } from "@/components/sessions/RecordingConsentDialog"
 import { Button } from "@/components/ui/button"
+import { useToast } from "@/components/ui/Toast"
 import { createLaunchIntent } from "@/lib/api/devices"
 import {
   armNoHandoffFallback,
   clickThroughAnchor,
   legacyLaunchUri,
+  OPEN_PROMPT_HINT,
+  takeOpenPromptHint,
 } from "@/lib/companionLaunch"
 
 interface StartSessionButtonProps {
@@ -83,6 +86,7 @@ export function StartSessionButton({
   // What the dialog is asking about; `null` while it is closed.
   const [asking, setAsking] = useState<RecordingConsent | null>(null)
   const checkConsent = useRecordingConsentCheck()
+  const { showToast } = useToast()
   // True from click until the no-handoff window settles, so a rapid second
   // click can't issue a second intent or orphan the first fallback timer.
   const [busy, setBusy] = useState(false)
@@ -158,13 +162,14 @@ export function StartSessionButton({
     (intentId: string) => {
       clearFallback()
       setBusy(true)
+      if (takeOpenPromptHint()) showToast(OPEN_PROMPT_HINT, "info")
       cleanupRef.current = armNoHandoffFallback(() => {
         clickThroughAnchor(legacyLaunchUri(intentId))
         cleanupRef.current = null
         setBusy(false)
       })
     },
-    [clearFallback],
+    [clearFallback, showToast],
   )
 
   const onClick = (e: React.MouseEvent<HTMLAnchorElement>) => {

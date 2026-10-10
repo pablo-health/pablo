@@ -26,6 +26,7 @@ vi.mock("@/hooks/usePreferences", () => ({
 // platform detection internals.
 vi.mock("@/lib/companion", () => ({
   isMacOS: () => true,
+  companionPlatform: () => "macos",
   isCompanionAvailable: () => true,
 }))
 
