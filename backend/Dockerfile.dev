@@ -6,11 +6,14 @@
 # ships a shell, pip, git and build tooling, which local hot-reload dev
 # needs. Production uses the distroless ``:latest`` runtime variant.
 #
-# Unpinned ``:latest-dev`` on purpose — local dev should float to the
-# newest patched base. Production pins digests (bumped weekly by
-# .github/workflows/base-image-bump.yml); dev does not need that.
+# Pinned by digest, to the same ``:latest-dev`` digest the production
+# builder stage uses. The tag alone floats across Python majors: it moved
+# to 3.15 on 2026-10-10 while the project required <3.15, and every
+# end-to-end stack build broke with no change on our side. The weekly
+# .github/workflows/base-image-bump.yml moves this digest with the
+# production ones, so dev and production track the same Python.
 
-FROM cgr.dev/chainguard/python:latest-dev
+FROM cgr.dev/chainguard/python:latest-dev@sha256:87729167739190d9309588120a8ac0ffbf2eb95dd895abb9bada6bb9ecbf5a04
 
 WORKDIR /app
 
