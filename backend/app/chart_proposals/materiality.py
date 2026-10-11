@@ -43,8 +43,11 @@ there. A history proposal is offered only when all four hold:
    "began"; and a few kinds ground each other (``grounds`` in the lists), so
    a client's "I don't work there anymore" grounds a note's "let go". A
    marker phrase matches across up to :data:`MARKER_GAP` stop words, so the
-   client's "they let me go" is the note's "let go". "Weekly therapy begun"
-   written from "Three sessions." is an inference, not something said.
+   client's "they let me go" is the note's "let go". A group the lists scope
+   to fields (work, to ``work_school``) is a marker, and grounds one, only
+   in those fields: "not working" about a sleep aid is not a job change.
+   "Weekly therapy begun" written from "Three sessions." is an inference,
+   not something said.
 3. **Source.** A transcript proposal rests on what the client said or on what
    the clinician dictated after the client's last line: at least one line it
    cites is one of those. One citing only the clinician's interview lines
@@ -171,6 +174,8 @@ class _Lists:
     state_groups: Mapping[str, tuple[tuple[str, ...], ...]]
     grounds: Mapping[str, frozenset[str]]
     """Each state group, and the groups whose markers a cited line may carry for it."""
+    group_fields: Mapping[str, frozenset[str] | None]
+    """The fields a state group is scoped to; ``None`` for one that applies to every field."""
     transient: tuple[tuple[str, ...], ...]
     entities: tuple[tuple[str, ...], ...]
     present: tuple[tuple[str, ...], ...]
@@ -254,9 +259,20 @@ def _stem(word: str) -> str:
     return word
 
 
+_IRREGULAR_NOT = re.compile(r"\b(can|won|ain|shan)'t\b")
+_IRREGULAR_NOT_STEMS = {"can": "can", "won": "will", "ain": "is", "shan": "shall"}
+_NOT = re.compile(r"n't\b")
+
+
+def _irregular_not(m: re.Match[str]) -> str:
+    return f"{_IRREGULAR_NOT_STEMS[m.group(1)]} not"
+
+
 def words(text: str) -> list[str]:
-    """``text`` lowercased, dates ISO, numbers as digits, each word stemmed; stop words kept."""
-    lowered = _iso_dates(text.lower().replace(_CURLY_APOSTROPHE, "'").replace("'s ", " "))
+    """``text`` lowercased, a contraction's n't as not, dates ISO, numbers as digits, each
+    word stemmed; stop words kept."""
+    lowered = text.lower().replace(_CURLY_APOSTROPHE, "'").replace("'s ", " ")
+    lowered = _iso_dates(_NOT.sub(" not", _IRREGULAR_NOT.sub(_irregular_not, lowered)))
     out: list[str] = []
     for raw in re.findall(r"\d{4}-\d{2}(?:-\d{2})?|" + _WORD.pattern, lowered):
         if raw in _NUMBER_WORDS:
@@ -296,12 +312,20 @@ def lists() -> _Lists:
     """The committed word lists (``materiality.json``), read once."""
     raw = json.loads(_LISTS_PATH.read_text(encoding="utf-8"))
     markers = raw["state_markers"]
-    groups = {name: _phrases(entries) for name, entries in markers["groups"].items()}
+    # A group is a list of entries, or an object scoping its ``words`` to ``fields``.
+    scoped = {name: g for name, g in markers["groups"].items() if isinstance(g, dict)}
+    groups = {
+        name: _phrases(scoped[name]["words"] if name in scoped else entries)
+        for name, entries in markers["groups"].items()
+    }
     return _Lists(
         stop=frozenset(w for entry in raw["stop_words"] for w in words(entry)),
         state=tuple(dict.fromkeys(p for g in groups.values() for p in g)),
         state_groups=groups,
         grounds=_grounds(groups, markers["grounds"]["pairs"]),
+        group_fields={
+            name: frozenset(scoped[name]["fields"]) if name in scoped else None for name in groups
+        },
         transient=_phrases(raw["transient"]["words"]),
         entities=_phrases(raw["named_entities"]["words"]),
         present=_phrases(raw["present_markers"]["words"]),
@@ -312,6 +336,23 @@ def lists() -> _Lists:
         lab_words=frozenset(w for e in raw["medication_terms"]["lab_words"] for w in words(e)),
         diagnosis_filler=frozenset(w for e in raw["diagnosis_filler"]["words"] for w in words(e)),
     )
+
+
+@cache
+def _groups_for(field_key: str) -> tuple[str, ...]:
+    """The state groups that apply to ``field_key``: every group not scoped to fields,
+    and those scoped to it."""
+    vocab = lists()
+    return tuple(
+        name for name, fields in vocab.group_fields.items() if fields is None or field_key in fields
+    )
+
+
+@cache
+def _markers_for(field_key: str) -> tuple[tuple[str, ...], ...]:
+    """The state markers a proposal to ``field_key`` can carry."""
+    groups = lists().state_groups
+    return tuple(dict.fromkeys(p for name in _groups_for(field_key) for p in groups[name]))
 
 
 def content_words(text: str) -> set[str]:
@@ -533,7 +574,7 @@ class _Compared:
             proposal_all=proposal_all,
             chart_all=chart_all,
             new=set(proposal) - set(chart),
-            state=_new_phrases(proposal_all, chart_all, vocab.state, MARKER_GAP),
+            state=_new_phrases(proposal_all, chart_all, _markers_for(field_key), MARKER_GAP),
             entities=_new_phrases(proposal_all, chart_all, vocab.entities),
             names={n for n in added_names if _stem(n) not in chart},
             others=others,
@@ -572,12 +613,13 @@ def _lasting(c: _Compared, cited: Sequence[CitedLine]) -> Reason | None:
     transient = _new_phrases(c.proposal_all, c.chart_all, lists().transient)
     passing = bool(transient) and not c.state
     unmarked = not (c.state or c.entities or c.names)
-    if passing or unmarked or not _said(cited, c.state, c.entities, c.names):
+    if passing or unmarked or not _said(c.field_key, cited, c.state, c.entities, c.names):
         return "transient"
     return None
 
 
 def _said(
+    field_key: str,
     cited: Sequence[CitedLine],
     state: Sequence[tuple[str, ...]],
     entities: Sequence[tuple[str, ...]],
@@ -587,8 +629,8 @@ def _said(
     themselves: a state marker of a kind that grounds one it adds (a client's
     "started" for a note's "began", "not there anymore" for "let go"), or an entity
     or a name it adds. "Weekly therapy begun" written from "Three sessions." is the
-    model's inference, not what was said. A proposal citing no such line is not
-    checked."""
+    model's inference, not what was said. Only the groups that apply to ``field_key``
+    count, on either side. A proposal citing no such line is not checked."""
     told = [c for c in cited if c.speaker != "interview"]
     if not told:
         return True
@@ -596,11 +638,13 @@ def _said(
     sequence = [w for c in told for w in words(c.text)]
     if names & set(sequence) or any(_has_phrase(sequence, p) for p in entities):
         return True
+    applies = _groups_for(field_key)
     kinds = {
         kind
-        for name, group in vocab.state_groups.items()
-        if any(p in group for p in state)
+        for name in applies
+        if any(p in vocab.state_groups[name] for p in state)
         for kind in vocab.grounds[name]
+        if kind in applies
     }
     return any(
         _has_phrase(sequence, p, MARKER_GAP) for kind in kinds for p in vocab.state_groups[kind]
