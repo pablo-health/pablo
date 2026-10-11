@@ -22,7 +22,7 @@ import io
 import logging
 import wave
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 import numpy as np
@@ -34,6 +34,7 @@ from ..settings import Settings
 logger = logging.getLogger(__name__)
 
 _JsonDict = dict[str, Any]
+TranscriptionProfile = Literal["standard", "medical"]
 
 ASSEMBLYAI_API_BASE = "https://api.assemblyai.com/v2"
 _SAMPLE_WIDTH_16BIT = 2
@@ -301,6 +302,7 @@ class AssemblyAiTranscriptionService:
     def __init__(self, settings: Settings) -> None:
         self._api_key = settings.assemblyai_api_key.get_secret_value()
         self._speech_model = settings.assemblyai_speech_model
+        self._medical_speech_model = settings.assemblyai_medical_speech_model
         self._vad_enabled = settings.assemblyai_vad_enabled
         self._speaker_labels_channels = set(settings.assemblyai_speaker_labels_channels)
 
@@ -324,12 +326,17 @@ class AssemblyAiTranscriptionService:
         *,
         speaker_labels: bool,
         keyterms: Sequence[str] = (),
+        transcription_profile: TranscriptionProfile = "standard",
     ) -> str:
         body: _JsonDict = {
             "audio_url": audio_url,
             "language_code": "en",
-            "speech_model": self._speech_model,
         }
+        if transcription_profile == "medical":
+            body["speech_models"] = [self._medical_speech_model]
+            body["domain"] = "medical-v1"
+        else:
+            body["speech_model"] = self._speech_model
         if speaker_labels:
             body["speaker_labels"] = True
         if keyterms:
@@ -352,6 +359,7 @@ class AssemblyAiTranscriptionService:
         *,
         audio_url_factory: Callable[[str, bytes], str] | None = None,
         keyterms: Sequence[str] = (),
+        transcription_profile: TranscriptionProfile = "standard",
     ) -> list[_JsonDict]:
         """Prepare and submit both channels — one AssemblyAI job each.
 
@@ -388,7 +396,11 @@ class AssemblyAiTranscriptionService:
                     audio_url = await self._upload_audio(client, prepared)
                 diarized = speaker in self._speaker_labels_channels
                 transcript_id = await self._submit_transcription(
-                    client, audio_url, speaker_labels=diarized, keyterms=keyterms
+                    client,
+                    audio_url,
+                    speaker_labels=diarized,
+                    keyterms=keyterms,
+                    transcription_profile=transcription_profile,
                 )
                 jobs.append(
                     {

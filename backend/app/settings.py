@@ -1989,6 +1989,10 @@ class Settings(BaseSettings):
         default="best",
         description="AssemblyAI speech model, e.g. best, nano, slam-1.",
     )
+    assemblyai_medical_speech_model: str = Field(
+        default="universal-3-5-pro",
+        description="AssemblyAI pre-recorded model used with Medical Mode for prescribers.",
+    )
     assemblyai_vad_enabled: bool = Field(
         default=False,
         description=(
