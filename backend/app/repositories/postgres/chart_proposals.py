@@ -48,6 +48,8 @@ def _change(raw: dict[str, Any] | None) -> MedicationChange | None:
         frequency=raw.get("frequency"),
         category=raw.get("category"),
         reason=raw.get("reason"),
+        heard_as=str(raw.get("heard_as") or raw["drug_name"]),
+        name_uncertain=bool(raw.get("name_uncertain", False)),
     )
 
 

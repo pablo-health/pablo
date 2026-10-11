@@ -685,6 +685,7 @@ def _medication_changes(user_prompt: str) -> list[dict[str, Any]]:
         change = {
             "action": action.strip(),
             "drug_name": name.strip(),
+            "heard_as": name.strip(),
             "what_changed": "Stated this visit",
             "evidence_segment_ids": [int(segment)] if segment.isdigit() else [],
         }

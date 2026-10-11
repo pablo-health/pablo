@@ -1981,7 +1981,8 @@ class NoteChartProposalRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     # The structured change, for a field whose proposals are actions on rows
     # (the medication list): {"action", "drug_name", "dose", "frequency",
-    # "category", "reason"}. NULL for a free-text proposal.
+    # "category", "reason", "heard_as", "name_uncertain"}. NULL for a
+    # free-text proposal.
     change: Mapped[dict | None] = mapped_column(JSONB)
 
     __table_args__ = (

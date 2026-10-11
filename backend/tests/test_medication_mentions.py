@@ -151,6 +151,7 @@ def test_each_medication_put_to_the_call_is_proposed_or_kept_with_a_reason() -> 
             {
                 "action": "change",
                 "drug_name": "escitalopram 10 mg",
+                "heard_as": "escitalopram",
                 "dose": "20 mg",
                 "what_changed": "Increased",
                 "evidence_segment_ids": [2],
@@ -187,6 +188,7 @@ def test_a_stop_the_call_says_the_client_made_alone_is_kept_with_that_reason() -
             {
                 "action": "stop",
                 "drug_name": "trazodone",
+                "heard_as": "trazodone",
                 "what_changed": "Client stopped it in February.",
                 "evidence_segment_ids": [1],
                 "decided_by": "the client alone",
@@ -219,15 +221,17 @@ def test_one_the_call_neither_proposed_nor_explained_is_kept_with_no_reason() ->
 
 
 def _change(name: str, chart: ChartContext) -> list[Any]:
+    heard_as = name.split(maxsplit=1)[0]
     item = {
         "action": "change",
         "drug_name": name,
+        "heard_as": heard_as,
         "dose": "20 mg",
         "what_changed": "Increased",
         "evidence_segment_ids": [0],
     }
     reply = {"proposals": [], "medication_changes": [item]}
-    return parse_proposals(reply, chart, {0: "Therapist: twenty milligrams."})
+    return parse_proposals(reply, chart, {0: f"Therapist: {heard_as}, twenty milligrams."})
 
 
 @pytest.mark.parametrize(

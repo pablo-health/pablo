@@ -48,6 +48,8 @@ class MedicationChangeResponse(BaseModel):
     frequency: str | None
     category: str | None
     reason: str | None
+    heard_as: str
+    name_uncertain: bool
 
 
 class ChartProposalResponse(BaseModel):
