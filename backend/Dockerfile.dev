@@ -10,7 +10,7 @@
 # newest patched base. Production pins digests (bumped weekly by
 # .github/workflows/base-image-bump.yml); dev does not need that.
 
-FROM cgr.dev/chainguard/python:latest-dev
+FROM cgr.dev/chainguard/python:latest-dev@sha256:87729167739190d9309588120a8ac0ffbf2eb95dd895abb9bada6bb9ecbf5a04
 
 WORKDIR /app
 
