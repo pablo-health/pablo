@@ -510,6 +510,11 @@ class MedicationFamily(FieldFamily):
         if action in ("stop", "change") and item.get("decided_by") == CLIENT_ALONE:
             return None
         listed = listed_medication(chart, name)
+        # An unknown spelling is evidence, not a canonical chart medication. Keep
+        # existing custom/listed names usable for stop/change, but never present a
+        # model-emitted unknown name as a normalized start/add candidate.
+        if action in ("start", "add") and drug_named(name) is None:
+            return None
         category = item.get("category")
         change = MedicationChange(
             action=cast("MedicationAction", action),
