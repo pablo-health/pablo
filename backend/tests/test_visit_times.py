@@ -851,6 +851,7 @@ class TestDraftProposesTheTime:
 
     def test_nothing_stated_and_a_failed_labeling_propose_nothing(self) -> None:
         drafted = {
+            "plan": {"follow_up": "Four weeks."},
             "psychotherapy": {"psychotherapy_time": "Not stated.", "modality_interventions": ""},
             "psychotherapy_time_stated": {"start": "", "end": "", "as_dictated": ""},
         }

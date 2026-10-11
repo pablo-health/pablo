@@ -34,7 +34,8 @@ from app.problems.models import Problem
 from app.repositories import InMemoryMedicationRepository, InMemoryPatientProblemRepository
 from app.services.note_generation_service import RegistryNoteGenerationService
 from app.services.session_service import SessionService
-from app.services.structured_llm_gateway import FakeStructuredLLMGateway, StructuredCompletion
+
+from ._answering_gateway import AnsweringGateway
 
 if TYPE_CHECKING:
     from app.notes.registry import NoteTypeDefinition
@@ -187,7 +188,7 @@ def _generate(
     chart: ChartContext | None,
     definition: NoteTypeDefinition | None = None,
 ) -> str:
-    gateway = FakeStructuredLLMGateway(default_response=StructuredCompletion(data={}))
+    gateway = AnsweringGateway()
     service = RegistryNoteGenerationService(registry=registry, llm_gateway=gateway)
     service.generate_note(
         note_type, TRANSCRIPT, _patient(), NOW, definition=definition, chart=chart

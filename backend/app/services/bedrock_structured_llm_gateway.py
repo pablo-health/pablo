@@ -63,6 +63,7 @@ from .structured_llm_gateway import (
     StructuredLLMGateway,
     StructuredOutputTruncatedError,
     _attempt_timeout,
+    tool_input_completion,
 )
 
 if TYPE_CHECKING:
@@ -393,8 +394,10 @@ class BedrockStructuredLLMGateway(StructuredLLMGateway):
                 f"Structured tool input was not an object ({type(tool_input).__name__})"
             )
 
-        return StructuredCompletion(
-            data=tool_input,
+        return tool_input_completion(
+            tool_input,
+            response_schema,
+            provider="Bedrock",
             output_tokens=output_tokens,
             finish_reason=finish_reason,
         )

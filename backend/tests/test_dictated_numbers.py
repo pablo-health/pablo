@@ -345,7 +345,7 @@ def _generate(gateway: _Gateway, chart: ChartContext | None = None) -> dict[str,
 
 
 def test_the_draft_reads_the_codes_and_times_as_dictated() -> None:
-    gateway = _Gateway({"assessment": {"diagnoses": [], "visit_details": ""}})
+    gateway = _Gateway({"assessment": {"diagnoses": [], "visit_details": "Noted."}})
     chart = ChartContext(problems=(ChartProblem("Major depressive disorder", "F32.1", "active"),))
 
     _generate(gateway, chart)
