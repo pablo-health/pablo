@@ -270,6 +270,36 @@ class TestUnsignedNote:
         assert world.note().status == "complete"
         assert world.note().content == _visit("First draft.", "First plan.")
 
+    def test_a_clip_with_no_speech_is_recorded_as_such_and_ends_normally(
+        self, world: World, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        dictation_id, keep = world.dictate()
+        world.transcriber.text = ""
+        assert world.note().status == "processing"
+
+        with caplog.at_level("INFO"), pytest.raises(DictationNotPendingError):
+            world.service.run(dictation_id, USER, keep_edits=keep)
+
+        dictation = world.dictations.get(dictation_id)
+        assert dictation is not None
+        assert dictation.status == "no_speech"
+        assert dictation.transcript is None
+        assert dictation.used_as is None
+        assert world.note().status == "complete"
+        assert world.note().content == _visit("First draft.", "First plan.")
+        assert world.generator.transcripts == []
+        assert f"Dictation {dictation_id} had no speech" in caplog.text
+
+    def test_a_clip_with_no_speech_is_not_transcribed_again(self, world: World) -> None:
+        dictation_id, keep = world.dictate()
+        world.transcriber.text = ""
+        with pytest.raises(DictationNotPendingError):
+            world.service.run(dictation_id, USER, keep_edits=keep)
+
+        with pytest.raises(DictationNotPendingError):
+            world.service.run(dictation_id, USER, keep_edits=keep)
+        assert len(world.transcriber.heard) == 1
+
     def test_a_provider_that_doesnt_answer_is_retried_then_failed(self, world: World) -> None:
         dictation_id, keep = world.dictate()
         world.transcriber.error = TransientDictationTranscriptionError("timeout")
@@ -523,6 +553,34 @@ class TestRoutes:
         )
         assert result == {"status": "ok"}
         assert route_world.note().content == _visit("Redrafted.", "Redrafted plan.")
+
+    def _run_job(self, world: World, dictation_id: str, keep: bool) -> dict[str, str]:
+        return dictation_routes.session_dictation_job(
+            dictation_routes.SessionDictationJob(
+                dictation_id=dictation_id, user_id=USER, keep_edits=keep
+            ),
+            MagicMock(headers={}),
+            None,
+            world.service,
+            MagicMock(),
+            MagicMock(),
+        )
+
+    def test_the_job_ends_normally_for_a_clip_with_no_speech(self, route_world: World) -> None:
+        dictation_id, keep = route_world.dictate()
+        route_world.transcriber.text = ""
+
+        assert self._run_job(route_world, dictation_id, keep) == {"status": "done"}
+        assert route_world.dictations.get(dictation_id).status == "no_speech"  # type: ignore[union-attr]  # just written
+        assert route_world.note().status == "complete"
+
+    def test_the_job_reports_a_clip_that_cant_be_transcribed(self, route_world: World) -> None:
+        dictation_id, keep = route_world.dictate()
+        route_world.transcriber.error = DictationTranscriptionError("refused")
+
+        assert self._run_job(route_world, dictation_id, keep) == {"status": "failed"}
+        assert route_world.dictations.get(dictation_id).status == "failed"  # type: ignore[union-attr]  # just written
+        assert route_world.note().status == "complete"
 
 
 @pytest.fixture(autouse=True)

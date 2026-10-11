@@ -1521,7 +1521,7 @@ CREATE TABLE __TENANT_SCHEMA__.session_dictations (
     addendum_id uuid,
     created_at timestamp with time zone NOT NULL,
     transcribed_at timestamp with time zone,
-    CONSTRAINT ck_session_dictations_status CHECK (((status)::text = ANY ((ARRAY['transcribing'::character varying, 'transcribed'::character varying, 'failed'::character varying])::text[]))),
+    CONSTRAINT ck_session_dictations_status CHECK (((status)::text = ANY ((ARRAY['transcribing'::character varying, 'transcribed'::character varying, 'failed'::character varying, 'no_speech'::character varying])::text[]))),
     CONSTRAINT ck_session_dictations_used_as CHECK (((used_as IS NULL) OR ((used_as)::text = ANY ((ARRAY['redraft'::character varying, 'addendum'::character varying])::text[]))))
 );
 
