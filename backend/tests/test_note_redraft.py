@@ -62,8 +62,9 @@ from app.services.session_service import (
     SOAPGenerationFailedError,
     TransientSOAPGenerationError,
 )
-from app.services.structured_llm_gateway import FakeStructuredLLMGateway, StructuredCompletion
 from fastapi import HTTPException
+
+from ._answering_gateway import AnsweringGateway
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
@@ -379,9 +380,8 @@ _CAPTURED = json.loads(
 
 class TestRedraftPrompt:
     def _prompt(self, current_note: dict[str, Any] | None) -> str:
-        gateway = FakeStructuredLLMGateway(
-            default_response=StructuredCompletion(data=_CAPTURED["redrafted"])
-        )
+        # Only the prompt is read; the answer fits the type the prompt is for.
+        gateway = AnsweringGateway()
         now = datetime.now(UTC)
         patient = Patient(id="p1", first_name="A", last_name="B", created_at=now, updated_at=now)
         dictated = "\n\n".join(

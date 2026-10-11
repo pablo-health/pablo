@@ -138,6 +138,14 @@ class TransientNoteGenerationError(Exception):
     """
 
 
+class EmptyNoteGenerationError(ValueError):
+    """The model answered, twice, without filling any field of the note.
+
+    A deterministic failure like any other ``ValueError`` here, kept apart so
+    the session can say why it failed.
+    """
+
+
 # Substrings that mark a transient provider failure anywhere in the error
 # chain. The gateway flattens the provider exception into a RuntimeError but
 # chains the original via ``from exc``, so the raw 429/RESOURCE_EXHAUSTED text
@@ -369,7 +377,12 @@ class RegistryNoteGenerationService(NoteGenerationService):
             chart=chart,
             current_note=current_note,
         )
+        # Judged on what the calls wrote, before code below rewrites a field
+        # (a time read back as not stated) and after it may fill one (the
+        # dictated time): a note is refused only if both leave it empty.
+        drafted_nothing = client_present_end_seconds != 0 and not _has_content(content)
         if note_type == SOAP_KEY:
+            _refuse_empty(definition, content, expect_content=drafted_nothing)
             soap_note = _coerce_content_to_soap_note(content)
             self._run_source_attribution(soap_note, transcript.content)
             return GeneratedNote(
@@ -387,9 +400,11 @@ class RegistryNoteGenerationService(NoteGenerationService):
             # decided whether it did); after it, with the draft, otherwise.
             labels, cue = labelled or label_turns(content, turns, self._complete_labels)
             proposal = propose(said, labels, cue)
+        content = without_unparsed_codes(content, numbers)
+        _refuse_empty(definition, content, expect_content=drafted_nothing)
         return GeneratedNote(
             note_type=note_type,
-            content=without_unparsed_codes(content, numbers),
+            content=content,
             note_type_version=definition.version,
             psychotherapy_proposal=proposal,
             chart_statements=statements,
@@ -497,11 +512,13 @@ class RegistryNoteGenerationService(NoteGenerationService):
             user_prompt = f"{user_prompt}\n\n{TIME_INSTRUCTIONS}"
             schema["properties"][TIME_KEY] = TIME_SCHEMA
         try:
-            completion = self._complete_structured_with_retry(
-                note_key=definition.key,
+            completion, asked = self._complete_populated_draft(
+                definition,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 response_schema=schema,
+                # With no client in the recording an empty draft is a fair answer.
+                expect_content=client_present_end_seconds != 0,
             )
         except BaseException:
             # The draft failed; the calls beside it are not waited for.
@@ -509,9 +526,8 @@ class RegistryNoteGenerationService(NoteGenerationService):
                 side_call.cancel()
             raise
 
-        # Coerced against what was asked for, then against the whole type, so
-        # a section left out of the request comes back present and empty.
-        asked = _coerce_registry_response(definition, completion.data)
+        # Coerced against what was asked for (above), then against the whole
+        # type, so a section left out of the request comes back present and empty.
         stated = completion.data.get(TIME_KEY) if asks_start else None
         content = _with_written(
             _coerce_registry_response(full_definition, asked),
@@ -523,6 +539,49 @@ class RegistryNoteGenerationService(NoteGenerationService):
         # The calls beside the draft, waited for in turn; the psychotherapy block last.
         content, labelled = _with_psychotherapy(_with_drafted(content, drafted), therapy, stated)
         return content, stated, labelled, statements.result() if statements else None
+
+    def _complete_populated_draft(
+        self,
+        definition: NoteTypeDefinition,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        response_schema: dict[str, Any],
+        expect_content: bool,
+    ) -> tuple[StructuredCompletion, dict[str, Any]]:
+        """The main draft call and its answer coerced to ``definition``.
+
+        An answer that fills none of the fields asked for is asked once more:
+        the coercion would otherwise turn an answer it cannot read into
+        sections that are present and empty. A second empty answer is
+        returned as it is; whether the note as a whole has anything in it is
+        decided once the calls beside the draft are in and the dictated time
+        is placed (:func:`_refuse_empty`, from :meth:`generate_note`), since
+        they may fill the rest.
+        """
+        asks_fields = any(section.fields for section in definition.sections)
+        for attempt in (1, 2):
+            completion = self._complete_structured_with_retry(
+                note_key=definition.key,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_schema=response_schema,
+            )
+            asked = _coerce_registry_response(definition, completion.data)
+            if not (expect_content and asks_fields) or _has_content(asked):
+                return completion, asked
+            # The answer's shape, never its content: expected keys and the
+            # type each arrived as, and how many keys were not asked for.
+            logger.warning(
+                "Draft for note_type=%s filled no field (attempt %d of 2; %s; "
+                "output_tokens=%s finish_reason=%s)",
+                definition.key,
+                attempt,
+                _answer_shape(definition, completion.data),
+                completion.output_tokens,
+                completion.finish_reason,
+            )
+        return completion, asked
 
     def _start_extraction(
         self,
@@ -1263,6 +1322,43 @@ def _has_text(value: Any) -> bool:
     return bool(str(value or "").strip())
 
 
+def _has_content(value: Any) -> bool:
+    """True if any string anywhere in ``value`` is non-blank (or it is a number)."""
+    if isinstance(value, Mapping):
+        return any(_has_content(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_has_content(v) for v in value)
+    if isinstance(value, str):
+        return bool(value.strip())
+    return value is not None and not isinstance(value, bool)
+
+
+def _refuse_empty(
+    definition: NoteTypeDefinition, content: Mapping[str, Any], *, expect_content: bool
+) -> None:
+    """Fail a draft whose every field is empty.
+
+    Every section present and every field empty would be saved as a finished
+    note; raising :class:`EmptyNoteGenerationError` marks the session failed
+    instead. With no client in the recording an empty draft is a fair answer.
+    """
+    asks_fields = any(section.fields for section in definition.sections)
+    if expect_content and asks_fields and not _has_content(content):
+        raise EmptyNoteGenerationError(
+            f"Note generation failed: the model returned no content for {definition.key!r}"
+        )
+
+
+def _answer_shape(definition: NoteTypeDefinition, data: Mapping[str, Any]) -> str:
+    """The type each asked-for section arrived as, and a count of keys not asked for."""
+    expected = [section.key for section in definition.sections]
+    arrived = ", ".join(
+        f"{key}={type(data[key]).__name__ if key in data else 'missing'}" for key in expected
+    )
+    unexpected = sum(1 for key in data if key not in expected)
+    return f"{arrived}; unexpected_keys={unexpected}"
+
+
 def _entered_choices(definition: NoteTypeDefinition, inputs: Mapping[str, str]) -> str:
     """The choices the clinician entered (the visit code among them), as the
     psychotherapy call reads them: whether the visit was billed with therapy at all."""
@@ -1441,6 +1537,7 @@ def _coerce_registry_response(
 
 __all__ = [
     "SOAP_KEY",
+    "EmptyNoteGenerationError",
     "GeneratedNote",
     "MockNoteGenerationService",
     "NoteGenerationService",

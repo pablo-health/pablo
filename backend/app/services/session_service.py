@@ -44,6 +44,7 @@ from ..repositories import (
 )
 from ..utcnow import utc_now
 from .note_generation_service import (
+    EmptyNoteGenerationError,
     NoteGenerationService,
     TransientNoteGenerationError,
 )
@@ -527,7 +528,11 @@ class SessionService:
         except Exception as e:
             logger.exception("Note generation failed for session %s", session.id)
             session.status = SessionStatus.FAILED
-            session.error = "SOAP generation failed"
+            session.error = (
+                "SOAP generation failed (the draft came back empty)"
+                if isinstance(e, EmptyNoteGenerationError)
+                else "SOAP generation failed"
+            )
             self.session_repo.update(session)
             # Persist FAILED status before the middleware-level rollback
             # discards it -- the prior behavior left no DB audit trail

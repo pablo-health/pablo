@@ -111,6 +111,65 @@ class StructuredCompletion:
     finish_reason: str = "stop"
 
 
+def decode_json_encoded_fields(
+    data: dict[str, Any], schema: dict[str, Any]
+) -> tuple[dict[str, Any], int]:
+    """Decode object and array fields a forced tool call sent as JSON text.
+
+    A Claude tool call now and then writes a nested object parameter as a
+    string holding that object's JSON (``{"subjective": "{\\"chief_complaint\\":
+    ...}"}``) rather than as the object itself. Nothing downstream reads a
+    string where it expects a section, so every section would come back empty
+    although the model wrote all of it. A string is decoded only where the
+    schema asks for an object or an array and the text parses to one.
+
+    Returns the repaired data and how many fields were decoded.
+    """
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return data, 0
+    out = dict(data)
+    decoded = 0
+    for key, sub_schema in properties.items():
+        if not isinstance(sub_schema, dict):
+            continue
+        expected = sub_schema.get("type")
+        value = out.get(key)
+        if isinstance(value, str) and expected in ("object", "array"):
+            try:
+                parsed = json.loads(value)
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, dict if expected == "object" else list):
+                value = parsed
+                out[key] = parsed
+                decoded += 1
+        if isinstance(value, dict) and expected == "object":
+            out[key], inner = decode_json_encoded_fields(value, sub_schema)
+            decoded += inner
+    return out, decoded
+
+
+def tool_input_completion(
+    tool_input: dict[str, Any],
+    response_schema: dict[str, Any],
+    *,
+    provider: str,
+    output_tokens: int | None,
+    finish_reason: str,
+) -> StructuredCompletion:
+    """The result of a forced tool call, with JSON-encoded fields decoded."""
+    data, decoded = decode_json_encoded_fields(tool_input, response_schema)
+    if decoded:
+        # A count only: the fields' content is never logged.
+        logger.warning(
+            "%s tool call sent %d object field(s) as JSON text; decoded them",
+            provider,
+            decoded,
+        )
+    return StructuredCompletion(data=data, output_tokens=output_tokens, finish_reason=finish_reason)
+
+
 class StructuredLLMGateway(ABC):
     """Abstract one-shot JSON-output gateway.
 
@@ -434,8 +493,10 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
                 f"Structured tool input was not an object ({type(tool_input).__name__})"
             )
 
-        return StructuredCompletion(
-            data=tool_input,
+        return tool_input_completion(
+            tool_input,
+            response_schema,
+            provider="Anthropic",
             output_tokens=output_tokens,
             finish_reason=finish_reason,
         )
@@ -787,6 +848,7 @@ __all__ = [
     "MistralStructuredLLMGateway",
     "StructuredCompletion",
     "StructuredLLMGateway",
+    "decode_json_encoded_fields",
     "get_default_structured_llm_gateway",
     "register_structured_llm_provider",
     "resolve_structured_llm_gateway",

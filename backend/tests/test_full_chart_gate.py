@@ -22,7 +22,8 @@ from app.notes.practice_spec import PracticeNoteTypeSpec
 from app.notes.practice_types import resolve
 from app.repositories import InMemoryChartHistoryRepository, InMemoryChartProposalRepository
 from app.services.note_generation_service import RegistryNoteGenerationService
-from app.services.structured_llm_gateway import FakeStructuredLLMGateway, StructuredCompletion
+
+from ._answering_gateway import AnsweringGateway
 
 NOW = datetime(2026, 10, 8, tzinfo=UTC)
 TRANSCRIPT = Transcript(
@@ -64,7 +65,7 @@ def _based_follow_up(registry: NoteTypeRegistry) -> Any:
 def _prompts(definition: Any) -> list[str]:
     """Every prompt the draft sent: the note's own call, and the extraction for a
     type whose chart-fed fields are written from the chart."""
-    gateway = FakeStructuredLLMGateway(default_response=StructuredCompletion(data={}))
+    gateway = AnsweringGateway()
     service = RegistryNoteGenerationService(llm_gateway=gateway)
     patient = Patient(id="p", first_name="", last_name="", created_at=NOW, updated_at=NOW)
     service.generate_note(
