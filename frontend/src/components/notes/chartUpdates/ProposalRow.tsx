@@ -114,6 +114,13 @@ export function ProposalRow({
         )}
       </div>
 
+      {proposal.change?.name_uncertain && (
+        <p role="alert" className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          Medication name uncertain. Heard as &ldquo;{proposal.change.heard_as}&rdquo;. Check the
+          source before accepting.
+        </p>
+      )}
+
       {proposal.evidence.length > 0 && (
         <blockquote className="border-l-2 border-neutral-300 pl-3 text-sm text-neutral-600">
           {proposal.evidence.map((e) => (
@@ -175,7 +182,7 @@ export function ProposalRow({
             disabled={decide.isPending}
             onClick={() => send({ decision: "accept" })}
           >
-            Accept
+            {proposal.change?.name_uncertain ? "Confirm and accept" : "Accept"}
           </Button>
         </div>
       )}

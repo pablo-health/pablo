@@ -24,6 +24,10 @@ export interface MedicationChange {
   category: string | null
   /** Why a medication was stopped. */
   reason: string | null
+  /** The medication-name words copied from the cited source. */
+  heard_as: string
+  /** True when those words do not unambiguously support drug_name. */
+  name_uncertain: boolean
 }
 
 export interface ChartProposal {

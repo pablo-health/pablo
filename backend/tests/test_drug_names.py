@@ -193,6 +193,7 @@ def _change(action: str, name: str, ids: tuple[int, ...] = (4,)) -> dict[str, An
     return {
         "action": action,
         "drug_name": name,
+        "heard_as": name,
         "dose": "1 mg",
         "what_changed": f"{action} {name}",
         "evidence_segment_ids": list(ids),

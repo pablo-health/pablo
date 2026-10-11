@@ -66,6 +66,7 @@ def _item(action: str, name: str, ids: list[int], **fields: str) -> dict[str, An
     return {
         "action": action,
         "drug_name": name,
+        "heard_as": name,
         "what_changed": f"{action} {name}",
         "evidence_segment_ids": ids,
         **fields,
@@ -222,6 +223,77 @@ def test_the_call_asks_for_medication_changes_in_their_own_list() -> None:
         "change",
         "add",
     ]
+    assert "heard_as" in properties["medication_changes"]["items"]["required"]
+
+
+def test_an_inferred_medication_name_keeps_what_was_heard_and_is_uncertain() -> None:
+    segments = {0: "[00:01] Client: I take fluxetin every morning."}
+    reply = {
+        "medication_changes": [
+            {
+                **_item("add", "fluoxetine", [0]),
+                "heard_as": "fluxetin",
+                "frequency": "every morning",
+            }
+        ]
+    }
+
+    (proposal,) = parse_proposals(reply, _chart(), segments)
+
+    assert proposal.change is not None
+    assert proposal.change.drug_name == "fluoxetine"
+    assert proposal.change.heard_as == "fluxetin"
+    assert proposal.change.name_uncertain is True
+
+
+def test_an_unrecognized_name_is_not_presented_as_a_normalized_candidate() -> None:
+    segments = {0: "[00:01] Client: I take fluxetin every morning."}
+    item = {**_item("add", "fluxetin", [0]), "frequency": "every morning"}
+
+    assert parse_proposals({"medication_changes": [item]}, _chart(), segments) == []
+
+
+def test_competing_real_drug_guesses_for_the_same_heard_words_are_both_dropped() -> None:
+    segments = {0: "[00:01] Client: I take hydroxine every morning."}
+    reply = {
+        "medication_changes": [
+            {**_item("add", "hydroxyzine", [0]), "heard_as": "hydroxine"},
+            {**_item("add", "buspirone", [0]), "heard_as": "hydroxine"},
+        ]
+    }
+
+    assert parse_proposals(reply, _chart(), segments) == []
+
+
+def test_two_distinct_medications_in_one_line_are_not_treated_as_ambiguous() -> None:
+    segments = {0: "[00:01] Client: I take fluoxetine and buspirone every morning."}
+    reply = {
+        "medication_changes": [
+            _item("add", "fluoxetine", [0]),
+            _item("add", "buspirone", [0]),
+        ]
+    }
+
+    proposals = parse_proposals(reply, _chart(), segments)
+
+    assert [proposal.item_key for proposal in proposals] == ["fluoxetine", "buspirone"]
+
+
+def test_a_recognized_name_copied_from_the_evidence_is_not_uncertain() -> None:
+    segments = {0: "[00:01] Client: I take fluoxetine every morning."}
+    item = {**_item("add", "fluoxetine", [0]), "frequency": "every morning"}
+
+    (proposal,) = parse_proposals({"medication_changes": [item]}, _chart(), segments)
+
+    assert proposal.change is not None
+    assert proposal.change.name_uncertain is False
+
+
+def test_a_medication_name_not_copied_from_the_evidence_is_dropped() -> None:
+    segments = {0: "[00:01] Client: I take fluxetin every morning."}
+    item = {**_item("add", "fluoxetine", [0]), "heard_as": "fluoxetine"}
+
+    assert parse_proposals({"medication_changes": [item]}, _chart(), segments) == []
 
 
 def test_the_prompt_lists_the_medications_and_reads_the_drafts_stated_suffix() -> None:

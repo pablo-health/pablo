@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, cast, override
 
 from ..chart_history.fields import HISTORY_GROUPS, HISTORY_KEYS, SUBSTANCE_KEYS, is_history_key
+from ..drug_names.names import drug_named, name_key, same_drug
 from ..medications.schemas import CreateMedicationRequest, UpdateMedicationRequest
 from ..notes.chart_context import allergies_line, medication_line
 from ..utcnow import utc_now
@@ -448,7 +449,9 @@ class MedicationFamily(FieldFamily):
             ),
             (
                 "- For each item give drug_name, for stop or change exactly as the list names "
-                + "it, without a dose; dose, the amount taken each time in its unit (0.75 mg), "
+                + "it, without a dose; heard_as, the exact medication-name words copied from "
+                + "the cited lines, without correcting spelling or adding a dose; dose, the "
+                + "amount taken each time in its unit (0.75 mg), "
                 + 'never a tablet count, and for a schedule of two amounts each one ("1 mg / '
                 + '0.75 mg"); frequency, how often and when, keeping any purpose said ("with '
                 + 'meals", "as needed for back pain"); for a change only the dose or frequency '
@@ -469,6 +472,7 @@ class MedicationFamily(FieldFamily):
             "properties": {
                 "action": {"type": "string", "enum": list(_ACTION_VERBS)},
                 "drug_name": {"type": "string"},
+                "heard_as": {"type": "string"},
                 "dose": {"type": "string"},
                 "frequency": {"type": "string"},
                 "category": {"type": "string", "enum": ["psychiatric", "other"]},
@@ -481,6 +485,7 @@ class MedicationFamily(FieldFamily):
             "required": [
                 "action",
                 "drug_name",
+                "heard_as",
                 "what_changed",
                 "evidence_segment_ids",
                 "decided_by",
@@ -492,13 +497,24 @@ class MedicationFamily(FieldFamily):
     ) -> DraftedProposal | None:
         action = item.get("action")
         name = _optional(item.get("drug_name"))
-        if action not in _ACTION_VERBS or name is None:
+        heard_as = _optional(item.get("heard_as"))
+        if action not in _ACTION_VERBS or name is None or heard_as is None:
+            return None
+        heard_key = name_key(heard_as)
+        if not heard_key or not any(
+            f" {heard_key} " in f" {name_key(source.text)} " for source in evidence
+        ):
             return None
         if item.get("stated_in") in (CARRIED_ONLY, HEADING):
             return None
         if action in ("stop", "change") and item.get("decided_by") == CLIENT_ALONE:
             return None
         listed = listed_medication(chart, name)
+        # An unknown spelling is evidence, not a canonical chart medication. Keep
+        # existing custom/listed names usable for stop/change, but never present a
+        # model-emitted unknown name as a normalized start/add candidate.
+        if action in ("start", "add") and drug_named(name) is None:
+            return None
         category = item.get("category")
         change = MedicationChange(
             action=cast("MedicationAction", action),
@@ -507,6 +523,12 @@ class MedicationFamily(FieldFamily):
             frequency=_optional(item.get("frequency")),
             category=category if category in ("psychiatric", "other") else None,
             reason=_optional(item.get("reason")) if action == "stop" else None,
+            heard_as=heard_as,
+            name_uncertain=(
+                drug_named(heard_as) is None
+                or drug_named(name) is None
+                or not same_drug(heard_as, name)
+            ),
         )
         return DraftedProposal(
             field_key=MEDICATIONS,

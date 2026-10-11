@@ -30,6 +30,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from ..chart_history.fields import is_history_key
+from ..drug_names.names import drug_named, name_key
 from ..drug_names.sound_alikes import unconfirmed
 from ..notes.chart_context import STATED_THIS_VISIT
 from ..notes.chart_fields import chart_text, restates_chart_medication
@@ -371,6 +372,39 @@ def _heard_as_another(proposal: DraftedProposal, chart: ChartContext) -> bool:
     return unconfirmed(change.drug_name, cited, chart) is not None
 
 
+def _without_ambiguous_medication_names(
+    proposals: list[DraftedProposal],
+) -> list[DraftedProposal]:
+    """Drop competing real-drug guesses for the same heard words and evidence.
+
+    Two genuinely named medications may share a transcript segment, so the key
+    includes ``heard_as``. Brand and generic names for the same drug are one
+    candidate; two distinct generics mean the evidence does not support a
+    preferred correction.
+    """
+    candidates: dict[tuple[tuple[int, ...], str], set[str]] = {}
+    for proposal in proposals:
+        change = proposal.change
+        if change is None:
+            continue
+        drug = drug_named(change.drug_name)
+        if drug is None:
+            continue
+        key = (tuple(e.segment_id for e in proposal.evidence), name_key(change.heard_as))
+        candidates.setdefault(key, set()).add(drug.generic)
+    ambiguous = {key for key, names in candidates.items() if len(names) > 1}
+    return [
+        proposal
+        for proposal in proposals
+        if proposal.change is None
+        or (
+            tuple(e.segment_id for e in proposal.evidence),
+            name_key(proposal.change.heard_as),
+        )
+        not in ambiguous
+    ]
+
+
 def parse_proposals(
     reply: Mapping[str, Any],
     chart: ChartContext,
@@ -419,7 +453,7 @@ def parse_proposals(
                 continue
             seen.add(identity)
             kept.append(replace(drafted, origin=origin))
-    return kept
+    return _without_ambiguous_medication_names(kept)
 
 
 _SPEAKER_LINE = re.compile(r"^\[[\d:]+\]\s*([^:]+):\s*(.*)$", re.S)

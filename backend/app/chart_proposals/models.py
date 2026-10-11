@@ -43,6 +43,10 @@ class MedicationChange:
     frequency: str | None = None
     category: str | None = None
     reason: str | None = None
+    heard_as: str = ""
+    """The medication words copied exactly from the cited source."""
+    name_uncertain: bool = False
+    """Whether the heard name is unknown or does not support ``drug_name``."""
 
 
 ConsideredReason = Literal["novelty", "transient", "interview", "present-not-past", "elsewhere"]

@@ -175,6 +175,7 @@ def _medication_change(ids: list[Any]) -> dict[str, Any]:
     return {
         "action": "change",
         "drug_name": "buspirone",
+        "heard_as": "buspirone",
         "dose": "15 mg",
         "what_changed": "Dose increased to 15 mg",
         "evidence_segment_ids": ids,

@@ -48,6 +48,11 @@ def _change(raw: dict[str, Any] | None) -> MedicationChange | None:
         frequency=raw.get("frequency"),
         category=raw.get("category"),
         reason=raw.get("reason"),
+        # Rows written before ``heard_as`` existed need a useful display
+        # fallback.  Preserve an explicitly stored empty string, though, so a
+        # newly written MedicationChange still round-trips exactly.
+        heard_as=str(raw["heard_as"] if "heard_as" in raw else raw["drug_name"]),
+        name_uncertain=bool(raw.get("name_uncertain", False)),
     )
 
 

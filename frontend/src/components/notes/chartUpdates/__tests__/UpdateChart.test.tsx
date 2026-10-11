@@ -322,6 +322,8 @@ function medication(
       frequency: null,
       category: null,
       reason: null,
+      heard_as: name,
+      name_uncertain: false,
     },
     ...overrides,
   })
@@ -339,6 +341,33 @@ const STOP = medication("stop", "trazodone", {
 })
 
 describe("medication changes", () => {
+  it("shows the words heard and asks for confirmation when the name is uncertain", async () => {
+    const uncertain = medication("add", "fluoxetine", {
+      current_text: null,
+      proposed_text: "fluoxetine, every morning",
+      change: {
+        action: "add",
+        drug_name: "fluoxetine",
+        dose: null,
+        frequency: "every morning",
+        category: "psychiatric",
+        reason: null,
+        heard_as: "fluxetin",
+        name_uncertain: true,
+      },
+    })
+    vi.mocked(getChartProposals).mockResolvedValue(listing([uncertain]))
+    const { dialog } = await openSignDialog()
+
+    const row = await within(dialog).findByRole("listitem", {
+      name: "Medications: Add fluoxetine",
+    })
+    expect(within(row).getByRole("alert")).toHaveTextContent(
+      'Medication name uncertain. Heard as “fluxetin”. Check the source before accepting.',
+    )
+    expect(within(row).getByRole("button", { name: "Confirm and accept" })).toBeInTheDocument()
+  })
+
   it("shows each against the list, accepted or discarded, never rewritten", async () => {
     vi.mocked(getChartProposals).mockResolvedValue(listing([START, STOP]))
     vi.mocked(decideChartProposal).mockResolvedValue({ ...START, decision: "accepted" })

@@ -274,6 +274,11 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
             system_instruction=system_prompt,
             response_mime_type="application/json",
             response_schema=schema,
+            # This path asks for JSON through response_schema and supplies no
+            # callable tools. Disable the SDK's default AFC machinery explicitly;
+            # otherwise google-genai warns that Models.generate_content should be
+            # replaced with Chat.send_message even though no function is callable.
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
             temperature=temperature,
             max_output_tokens=max_output_tokens,
             # Default thinking when None; an explicit budget (incl. 0 to
