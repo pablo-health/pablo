@@ -222,6 +222,46 @@ STOPPED_WORKING = ProposalCase(
 )
 """The job ended: the chart keeps that she worked there and adds that she no longer does."""
 
+LET_GO = ProposalCase(
+    name="let-go",
+    chart=_chart(
+        ChartMedication("sertraline", "50 mg", "every morning", "psychiatric"),
+        work_school="Works full time at the Eastside branch library.",
+        living_situation="Lives alone in an apartment.",
+    ),
+    transcript="""\
+[00:00] Therapist: Has anything changed since we last met?
+[00:04] Client: Yes, a big one. I don't work at the library anymore. They let me go in March.
+[00:12] Therapist: I'm sorry. Are you working anywhere now?
+[00:16] Client: No, I'm not working right now. I'm looking.
+[00:22] Therapist: How has the mood been with all of that?
+[00:26] Client: Low some days. Worse in the mornings, better once I'm sending applications.
+[00:33] Therapist: Still taking the sertraline every morning?
+[00:37] Client: Yes, every morning.
+[00:41] Therapist: Okay. We'll keep it as is and meet in four weeks.
+""",
+    expected=(
+        ExpectedProposal(
+            field_key="work_school",
+            must_contain=("library",),
+            must_contain_any=(
+                "no longer",
+                "until",
+                "former",
+                "previously",
+                "let go",
+                "laid off",
+                "not currently",
+                "not working",
+                "unemployed",
+            ),
+            evidence=(1, 3),
+        ),
+    ),
+)
+"""A job loss said as "they let me go": the chart keeps the library and adds that the
+client no longer works there."""
+
 TRANSFER_NOTE = ProposalCase(
     name="transfer-note",
     chart=ChartContext(allergy_status="not_recorded"),
@@ -428,6 +468,7 @@ ALL_CASES: tuple[ProposalCase, ...] = (
     PETITION_SIGNED,
     UNCHANGED,
     STOPPED_WORKING,
+    LET_GO,
     START_AND_STOP,
     MEDICATION_DISCUSSED,
     ANOTHER_PRESCRIBER,

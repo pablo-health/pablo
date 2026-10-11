@@ -37,11 +37,14 @@ there. A history proposal is offered only when all four hold:
    words that include a transient-event word (an appointment, a scheduled
    interview, a weekday, "expecting") with no state marker are not lasting.
    And a line the proposal rests on (the client's, or the clinician's
-   dictation) says the change itself: it carries a marker of the same kind as
-   one the proposal adds (the markers are grouped by kind, so a client's
-   "started" grounds a note's "began"), or the entity or name the proposal
-   adds. "Weekly therapy begun" written from "Three sessions." is an
-   inference, not something said.
+   dictation) says the change itself: it carries a marker of a kind that
+   grounds one the proposal adds, or the entity or name the proposal adds.
+   The markers are grouped by kind, so a client's "started" grounds a note's
+   "began"; and a few kinds ground each other (``grounds`` in the lists), so
+   a client's "I don't work there anymore" grounds a note's "let go". A
+   marker phrase matches across up to :data:`MARKER_GAP` stop words, so the
+   client's "they let me go" is the note's "let go". "Weekly therapy begun"
+   written from "Three sessions." is an inference, not something said.
 3. **Source.** A transcript proposal rests on what the client said or on what
    the clinician dictated after the client's last line: at least one line it
    cites is one of those. One citing only the clinician's interview lines
@@ -115,6 +118,14 @@ PARAPHRASE_JACCARD = 0.85
 ELSEWHERE_MIN_WORDS = 2
 """How many new words another field must hold, all of them, for the fact to be elsewhere."""
 
+MARKER_GAP = 3
+"""How many stop words may sit between a state marker's words: "let the client go"."""
+
+DATE = "<date>"
+"""In a marker entry, one date word as normalising leaves it (a month, a year, ISO)."""
+
+_DATE_WORD = re.compile(r"\d{4}(?:-\d{2}){0,2}")
+
 _CURLY_APOSTROPHE = chr(0x2019)
 """How a typed transcript often writes an apostrophe."""
 
@@ -158,6 +169,8 @@ class _Lists:
     stop: frozenset[str]
     state: tuple[tuple[str, ...], ...]
     state_groups: Mapping[str, tuple[tuple[str, ...], ...]]
+    grounds: Mapping[str, frozenset[str]]
+    """Each state group, and the groups whose markers a cited line may carry for it."""
     transient: tuple[tuple[str, ...], ...]
     entities: tuple[tuple[str, ...], ...]
     present: tuple[tuple[str, ...], ...]
@@ -253,19 +266,42 @@ def words(text: str) -> list[str]:
     return out
 
 
+def _phrase(entry: str) -> tuple[str, ...]:
+    """An entry's normalised words, each :data:`DATE` in it kept as itself."""
+    parts = entry.split(DATE)
+    out: list[str] = []
+    for i, part in enumerate(parts):
+        out.extend((DATE,) if i else ())
+        out.extend(words(part))
+    return tuple(out)
+
+
 def _phrases(entries: Sequence[str]) -> tuple[tuple[str, ...], ...]:
-    return tuple(tuple(words(entry)) for entry in entries if words(entry))
+    return tuple(p for p in map(_phrase, entries) if p)
+
+
+def _grounds(
+    groups: Mapping[str, object], pairs: Sequence[Sequence[str]]
+) -> dict[str, frozenset[str]]:
+    """Each group with itself and every group a pair joins it to, both ways."""
+    joined = {name: {name} for name in groups}
+    for a, b in pairs:
+        joined[a].add(b)
+        joined[b].add(a)
+    return {name: frozenset(kinds) for name, kinds in joined.items()}
 
 
 @cache
 def lists() -> _Lists:
     """The committed word lists (``materiality.json``), read once."""
     raw = json.loads(_LISTS_PATH.read_text(encoding="utf-8"))
-    groups = {name: _phrases(entries) for name, entries in raw["state_markers"]["groups"].items()}
+    markers = raw["state_markers"]
+    groups = {name: _phrases(entries) for name, entries in markers["groups"].items()}
     return _Lists(
         stop=frozenset(w for entry in raw["stop_words"] for w in words(entry)),
         state=tuple(dict.fromkeys(p for g in groups.values() for p in g)),
         state_groups=groups,
+        grounds=_grounds(groups, markers["grounds"]["pairs"]),
         transient=_phrases(raw["transient"]["words"]),
         entities=_phrases(raw["named_entities"]["words"]),
         present=_phrases(raw["present_markers"]["words"]),
@@ -312,16 +348,44 @@ def heard_about(
     ]
 
 
-def _has_phrase(sequence: Sequence[str], phrase: tuple[str, ...]) -> bool:
-    n = len(phrase)
-    return any(tuple(sequence[i : i + n]) == phrase for i in range(len(sequence) - n + 1))
+def _is(word: str, token: str) -> bool:
+    """Whether ``word`` is a phrase's ``token``: itself, or for :data:`DATE` any date word."""
+    if token != DATE:
+        return word == token
+    return word in _MONTHS or word in _MONTH_ABBREVIATIONS or bool(_DATE_WORD.fullmatch(word))
+
+
+def _continues(sequence: Sequence[str], start: int, rest: tuple[str, ...], gap: int) -> bool:
+    """Whether ``rest`` follows ``sequence[start:]``, with up to ``gap`` stop words
+    before each of its words."""
+    if not rest:
+        return True
+    stop = lists().stop
+    for k in range(start, min(start + gap + 1, len(sequence))):
+        if _is(sequence[k], rest[0]) and _continues(sequence, k + 1, rest[1:], gap):
+            return True
+        if sequence[k] not in stop:
+            return False
+    return False
+
+
+def _has_phrase(sequence: Sequence[str], phrase: tuple[str, ...], gap: int = 0) -> bool:
+    """Whether ``sequence`` has ``phrase``, its words in order, up to ``gap`` stop words
+    between each two of them."""
+    return any(
+        _is(word, phrase[0]) and _continues(sequence, i + 1, phrase[1:], gap)
+        for i, word in enumerate(sequence)
+    )
 
 
 def _new_phrases(
-    proposal: Sequence[str], chart: Sequence[str], phrases: tuple[tuple[str, ...], ...]
+    proposal: Sequence[str],
+    chart: Sequence[str],
+    phrases: tuple[tuple[str, ...], ...],
+    gap: int = 0,
 ) -> list[tuple[str, ...]]:
     """The phrases ``proposal`` has and ``chart`` does not."""
-    return [p for p in phrases if _has_phrase(proposal, p) and not _has_phrase(chart, p)]
+    return [p for p in phrases if _has_phrase(proposal, p, gap) and not _has_phrase(chart, p, gap)]
 
 
 def _capitalised(text: str) -> set[str]:
@@ -469,7 +533,7 @@ class _Compared:
             proposal_all=proposal_all,
             chart_all=chart_all,
             new=set(proposal) - set(chart),
-            state=_new_phrases(proposal_all, chart_all, vocab.state),
+            state=_new_phrases(proposal_all, chart_all, vocab.state, MARKER_GAP),
             entities=_new_phrases(proposal_all, chart_all, vocab.entities),
             names={n for n in added_names if _stem(n) not in chart},
             others=others,
@@ -520,10 +584,11 @@ def _said(
     names: set[str],
 ) -> bool:
     """Whether the lines a proposal rests on (not the interview) say its lasting change
-    themselves: a state marker of the same kind as one it adds (a client's "started"
-    for a note's "began"), or an entity or a name it adds. "Weekly therapy begun"
-    written from "Three sessions." is the model's inference, not what was said. A
-    proposal citing no such line is not checked."""
+    themselves: a state marker of a kind that grounds one it adds (a client's
+    "started" for a note's "began", "not there anymore" for "let go"), or an entity
+    or a name it adds. "Weekly therapy begun" written from "Three sessions." is the
+    model's inference, not what was said. A proposal citing no such line is not
+    checked."""
     told = [c for c in cited if c.speaker != "interview"]
     if not told:
         return True
@@ -531,5 +596,12 @@ def _said(
     sequence = [w for c in told for w in words(c.text)]
     if names & set(sequence) or any(_has_phrase(sequence, p) for p in entities):
         return True
-    kinds = [g for g in vocab.state_groups.values() if any(p in g for p in state)]
-    return any(_has_phrase(sequence, p) for g in kinds for p in g)
+    kinds = {
+        kind
+        for name, group in vocab.state_groups.items()
+        if any(p in group for p in state)
+        for kind in vocab.grounds[name]
+    }
+    return any(
+        _has_phrase(sequence, p, MARKER_GAP) for kind in kinds for p in vocab.state_groups[kind]
+    )

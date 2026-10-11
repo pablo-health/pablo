@@ -38,6 +38,7 @@ The checks are unit-tested on hand-made proposals in
 | `petition-signed` | separated, divorce petition filed; temporary shared custody | "The judge signed it on the second", the divorce never named | `relationships` and `legal_custody`, each keeping its text and saying the divorce is final, citing the client's lines; the draft's extraction runs first |
 | `unchanged` | the same chart | every field restated, nothing new | no proposal |
 | `stopped-working` | full time as a dental hygienist | stopped working there at the end of August | `work_school` still naming the dental practice and saying it no longer applies |
+| `let-go` | full time at a named branch library | "They let me go in March", "I'm not working right now. I'm looking." | `work_school` still naming the library and saying the client no longer works there, citing both client lines; the step must offer it, not keep it as considered |
 | `medication-start-and-stop` | sertraline, trazodone | the clinician starts hydroxyzine 25 mg in the afternoon as needed and stops the trazodone because of nausea | a start with its frequency and a stop with its reason; nothing for the sertraline, continued |
 | `medication-only-discussed` | sertraline | a medication asked about, a dose increase considered for next time | no proposal |
 | `medication-another-prescriber-started` | sertraline | the client's primary care doctor started lisinopril 10 mg once a day | an add with the dose and frequency as stated; `medical_history` for the blood pressure is allowed, not required |
