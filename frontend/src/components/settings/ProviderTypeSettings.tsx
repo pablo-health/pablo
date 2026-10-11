@@ -38,7 +38,11 @@ interface ProviderTypeSettingsProps {
 }
 
 export function ProviderTypeSettings({ currentValue, onSaved }: ProviderTypeSettingsProps) {
-  const [value, setValue] = useState<ProviderType | null>(currentValue)
+  // The saved type arrives with user status, which can land after this
+  // control first renders, so it is read from the prop on every render
+  // rather than copied into state once. Only a pick made here overrides it.
+  const [picked, setPicked] = useState<ProviderType | null>(null)
+  const value = picked ?? currentValue
   const queryClient = useQueryClient()
 
   const mutation = useMutation({
@@ -51,7 +55,7 @@ export function ProviderTypeSettings({ currentValue, onSaved }: ProviderTypeSett
 
   const handleChange = (v: string) => {
     const next = v as ProviderType
-    setValue(next)
+    setPicked(next)
     mutation.mutate(next)
   }
 
