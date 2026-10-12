@@ -272,7 +272,7 @@ class TestDPoPEndToEnd:
         )
         from sqlalchemy.exc import OperationalError  # noqa: PLC0415
 
-        def _fail(_self: object, _install_id: str) -> None:
+        def _fail(_self: object, _user_id: str, _install_id: str) -> None:
             raise OperationalError("UPDATE", {}, Exception("canceling statement"))
 
         monkeypatch.setattr(PostgresCompanionDeviceRepository, "touch_last_seen", _fail)
@@ -401,3 +401,148 @@ class TestDPoPEndToEnd:
                 text("SELECT last_seen FROM platform.companion_devices WHERE install_id = :iid"),
                 {"iid": install_id},
             ).scalar_one()
+
+
+@pytest.fixture
+def shared_install(enrolled: dict, engine: Engine) -> Iterator[str]:
+    """Both users enroll ONE fresh install_id with the same key.
+
+    That is what the companion does when two accounts sign in on one OS
+    user: it keeps one install_id + device key whichever account signs in.
+    """
+    from app.models.companion_device import CompanionEnrollment  # noqa: PLC0415
+    from app.repositories.postgres.companion_device import (  # noqa: PLC0415
+        PostgresCompanionDeviceRepository,
+    )
+    from app.services.companion_device_service import (  # noqa: PLC0415
+        CompanionDeviceService,
+    )
+    from sqlalchemy.orm import Session  # noqa: PLC0415
+
+    install_id = uuid.uuid4().hex
+    key: EllipticCurvePrivateKey = enrolled["key"]
+    public_jwk = json.loads(jwt.algorithms.ECAlgorithm.to_jwk(key.public_key()))
+    with Session(engine) as session:
+        service = CompanionDeviceService(PostgresCompanionDeviceRepository(session))
+        for user_id in (enrolled["user_id"], enrolled["other_user_id"]):
+            service.enroll(
+                user_id,
+                CompanionEnrollment(
+                    install_id=install_id,
+                    platform="windows",
+                    device_public_key_jwk=public_jwk,
+                    key_storage="software",
+                ),
+            )
+        session.commit()
+    yield install_id
+    with engine.begin() as conn:
+        conn.execute(
+            text("DELETE FROM platform.companion_devices WHERE install_id = :iid"),
+            {"iid": install_id},
+        )
+
+
+@pytest.fixture
+def two_user_client(enrolled: dict, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """Real app; bearer ``token-a`` resolves to user A, ``token-b`` to user B."""
+    from app.main import app  # noqa: PLC0415
+    from fastapi.testclient import TestClient  # noqa: PLC0415
+
+    users = {"token-a": enrolled["user_id"], "token-b": enrolled["other_user_id"]}
+    monkeypatch.setattr(
+        "app.middleware.dpop._resolve_user_id", lambda _request, token: users.get(token)
+    )
+    return TestClient(app)
+
+
+class TestSharedInstall:
+    """One install enrolled by two users: each row stands on its own."""
+
+    @staticmethod
+    def _get(client: TestClient, token: str, install_id: str, key: EllipticCurvePrivateKey) -> int:
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "X-Install-ID": install_id,
+            "DPoP": _sign_proof(key),
+        }
+        return client.get(_PROBE_PATH, headers=headers).status_code
+
+    @staticmethod
+    def _rows(engine: Engine, install_id: str) -> dict[str, tuple]:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT user_id, last_seen, revoked_at FROM platform.companion_devices "
+                    "WHERE install_id = :iid"
+                ),
+                {"iid": install_id},
+            ).all()
+        return {str(r[0]): (r[1], r[2]) for r in rows}
+
+    def test_each_users_proof_verifies_and_touches_only_their_row(
+        self, two_user_client: TestClient, enrolled: dict, engine: Engine, shared_install: str
+    ) -> None:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE platform.companion_devices "
+                    "SET last_seen = now() - interval '1 hour' WHERE install_id = :iid"
+                ),
+                {"iid": shared_install},
+            )
+        before = self._rows(engine, shared_install)
+
+        assert self._get(two_user_client, "token-b", shared_install, enrolled["key"]) == 200
+
+        after = self._rows(engine, shared_install)
+        assert after[enrolled["user_id"]] == before[enrolled["user_id"]]
+        assert after[enrolled["other_user_id"]][0] > before[enrolled["other_user_id"]][0]
+        assert self._get(two_user_client, "token-a", shared_install, enrolled["key"]) == 200
+
+    def test_revoking_one_users_row_leaves_the_other_working(
+        self, two_user_client: TestClient, enrolled: dict, engine: Engine, shared_install: str
+    ) -> None:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE platform.companion_devices SET revoked_at = now() "
+                    "WHERE install_id = :iid AND user_id = CAST(:uid AS uuid)"
+                ),
+                {"iid": shared_install, "uid": enrolled["user_id"]},
+            )
+
+        assert self._get(two_user_client, "token-a", shared_install, enrolled["key"]) == 401
+        assert self._get(two_user_client, "token-b", shared_install, enrolled["key"]) == 200
+        assert self._rows(engine, shared_install)[enrolled["other_user_id"]][1] is None
+
+    def test_reenrolling_one_user_does_not_rebind_the_other_users_key(
+        self, two_user_client: TestClient, enrolled: dict, engine: Engine, shared_install: str
+    ) -> None:
+        from app.models.companion_device import CompanionEnrollment  # noqa: PLC0415
+        from app.repositories.postgres.companion_device import (  # noqa: PLC0415
+            PostgresCompanionDeviceRepository,
+        )
+        from app.services.companion_device_service import (  # noqa: PLC0415
+            CompanionDeviceService,
+        )
+        from sqlalchemy.orm import Session  # noqa: PLC0415
+
+        new_key, new_jwk = _make_keypair()
+        with Session(engine) as session:
+            CompanionDeviceService(PostgresCompanionDeviceRepository(session)).enroll(
+                enrolled["other_user_id"],
+                CompanionEnrollment(
+                    install_id=shared_install,
+                    platform="windows",
+                    device_public_key_jwk=new_jwk,
+                    key_storage="software",
+                ),
+            )
+            session.commit()
+
+        # B's rotation reached only B's row: A still verifies with the old key
+        # and not with B's new one.
+        assert self._get(two_user_client, "token-a", shared_install, new_key) == 401
+        assert self._get(two_user_client, "token-a", shared_install, enrolled["key"]) == 200
+        assert self._get(two_user_client, "token-b", shared_install, new_key) == 200

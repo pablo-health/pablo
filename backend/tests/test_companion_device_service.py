@@ -4,12 +4,18 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+from datetime import timedelta
+
 import pytest
 from app.models.companion_device import CompanionEnrollment
-from app.repositories.companion_device import InMemoryCompanionDeviceRepository
+from app.repositories.companion_device import (
+    LAST_SEEN_RESOLUTION,
+    InMemoryCompanionDeviceRepository,
+)
 from app.services.companion_device_service import (
     CompanionDeviceService,
-    DeviceOwnershipConflictError,
+    DeviceRevokedError,
     InvalidDeviceJWKError,
     compute_jkt,
     validate_device_jwk,
@@ -158,18 +164,35 @@ class TestEnroll:
         with pytest.raises(InvalidDeviceJWKError):
             service.enroll("user-1", bad)
 
-    def test_cross_user_install_id_is_rejected(
+    def test_second_user_on_same_install_gets_own_row(
         self, service: CompanionDeviceService, payload: CompanionEnrollment
     ) -> None:
-        """install_id → user ownership is immutable (trust-on-first-use).
-
-        A second user submitting the first user's install_id must be rejected
-        and must NOT rebind the stored key: otherwise a stolen bearer token for
-        the first user, plus a proof signed by the attacker's own key, would
-        verify — defeating proof-of-possession.
+        """The companion keeps one install_id + key per OS user, whichever
+        account signs in, so a second account enrolling the same install gets
+        its own row with the same key, and the first account's row is intact.
         """
         service.enroll("user-1", payload)
-        attacker = payload.model_copy(
+        service.enroll("user-2", payload)
+
+        mine = service._repo.get("user-1", payload.install_id)
+        theirs = service._repo.get("user-2", payload.install_id)
+        assert mine is not None
+        assert theirs is not None
+        assert mine.user_id == "user-1"
+        assert theirs.user_id == "user-2"
+        assert mine.device_public_key_jwk == theirs.device_public_key_jwk
+        assert [d.install_id for d in service.list_devices("user-1")] == [payload.install_id]
+        assert [d.install_id for d in service.list_devices("user-2")] == [payload.install_id]
+
+    def test_rekey_by_one_user_leaves_other_users_key_alone(
+        self, service: CompanionDeviceService, payload: CompanionEnrollment
+    ) -> None:
+        """A user re-enrolling with a new key rotates only their own row:
+        it can never rebind the key stored for another user of the install,
+        which is what would let a stolen bearer for that user verify.
+        """
+        service.enroll("user-1", payload)
+        rotated = payload.model_copy(
             update={
                 "device_public_key_jwk": {
                     "kty": "EC",
@@ -179,10 +202,97 @@ class TestEnroll:
                 }
             }
         )
-        with pytest.raises(DeviceOwnershipConflictError):
-            service.enroll("user-2", attacker)
-        # The stored device still belongs to user-1 with the original key.
-        stored = service._repo.get(payload.install_id)
+        service.enroll("user-2", rotated)
+
+        stored = service._repo.get("user-1", payload.install_id)
         assert stored is not None
-        assert stored.user_id == "user-1"
         assert stored.device_public_key_jwk == payload.device_public_key_jwk
+        other = service._repo.get("user-2", payload.install_id)
+        assert other is not None
+        assert other.device_public_key_jwk == rotated.device_public_key_jwk
+
+
+class TestPerUserRows:
+    """Rows for the same install never reach across users."""
+
+    @pytest.fixture
+    def repo(self) -> InMemoryCompanionDeviceRepository:
+        return InMemoryCompanionDeviceRepository()
+
+    @pytest.fixture
+    def payload(self) -> CompanionEnrollment:
+        return CompanionEnrollment(
+            install_id="install-shared",
+            platform="windows",
+            device_public_key_jwk={
+                "kty": "EC",
+                "crv": "P-256",
+                "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+                "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0",
+            },
+            key_storage="software",
+        )
+
+    def test_touch_by_one_user_leaves_the_other_row_alone(
+        self, repo: InMemoryCompanionDeviceRepository, payload: CompanionEnrollment
+    ) -> None:
+        service = CompanionDeviceService(repo)
+        first = service.enroll("user-1", payload)
+        service.enroll("user-2", payload)
+
+        later = first.last_seen + LAST_SEEN_RESOLUTION + timedelta(seconds=1)
+        repo.touch_last_seen("user-2", payload.install_id, when=later)
+
+        mine = repo.get("user-1", payload.install_id)
+        theirs = repo.get("user-2", payload.install_id)
+        assert mine is not None
+        assert theirs is not None
+        assert mine.last_seen == first.last_seen
+        assert theirs.last_seen == later
+
+    def test_revoking_one_users_row_leaves_the_other_active(
+        self, repo: InMemoryCompanionDeviceRepository, payload: CompanionEnrollment
+    ) -> None:
+        service = CompanionDeviceService(repo)
+        first = service.enroll("user-1", payload)
+        service.enroll("user-2", payload)
+
+        repo.upsert(replace(first, revoked_at=first.enrolled_at))
+
+        assert service.list_devices("user-1") == []
+        assert [d.user_id for d in service.list_devices("user-2")] == ["user-2"]
+
+    def test_reenrolling_a_revoked_enrollment_is_rejected_and_writes_nothing(
+        self, repo: InMemoryCompanionDeviceRepository, payload: CompanionEnrollment
+    ) -> None:
+        service = CompanionDeviceService(repo)
+        first = service.enroll("user-1", payload)
+        revoked = replace(first, revoked_at=first.enrolled_at)
+        repo.upsert(revoked)
+
+        rotated = payload.model_copy(
+            update={
+                "device_public_key_jwk": {
+                    "kty": "EC",
+                    "crv": "P-256",
+                    "x": "AAAAOJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+                    "y": "BBBBzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0",
+                }
+            }
+        )
+        with pytest.raises(DeviceRevokedError):
+            service.enroll("user-1", rotated)
+
+        assert repo.get("user-1", payload.install_id) == revoked
+
+    def test_another_users_revoked_row_does_not_block_enrollment(
+        self, repo: InMemoryCompanionDeviceRepository, payload: CompanionEnrollment
+    ) -> None:
+        service = CompanionDeviceService(repo)
+        first = service.enroll("user-1", payload)
+        repo.upsert(replace(first, revoked_at=first.enrolled_at))
+
+        device = service.enroll("user-2", payload)
+
+        assert device.user_id == "user-2"
+        assert [d.user_id for d in service.list_devices("user-2")] == ["user-2"]

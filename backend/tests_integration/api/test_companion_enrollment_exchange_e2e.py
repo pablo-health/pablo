@@ -142,13 +142,13 @@ def _exchange(client: TestClient, firebase_uid: str, enrollment: dict[str, Any])
     )
 
 
-def _device_owner(engine: Engine, install_id: str) -> str | None:
+def _device_owners(engine: Engine, install_id: str) -> set[str]:
     with engine.connect() as conn:
-        row = conn.execute(
+        rows = conn.execute(
             text("SELECT user_id FROM platform.companion_devices WHERE install_id = :i"),
             {"i": install_id},
-        ).first()
-    return str(row[0]) if row else None
+        ).all()
+    return {str(row[0]) for row in rows}
 
 
 class TestEnrollmentOutcome:
@@ -160,11 +160,13 @@ class TestEnrollmentOutcome:
 
         assert resp.status_code == 200
         assert resp.json()["enrollment"] == "enrolled"
-        assert _device_owner(engine, install_id) == users["a_id"]
+        assert _device_owners(engine, install_id) == {users["a_id"]}
 
-    def test_install_owned_by_someone_else_reports_failed_and_still_signs_in(
+    def test_second_user_on_the_same_install_is_enrolled_too(
         self, client: TestClient, engine: Engine, users: dict[str, str]
     ) -> None:
+        # The companion keeps one install_id + key per OS user whichever
+        # account signs in, so a second account must get its own row.
         install_id = uuid.uuid4().hex
         assert _exchange(client, users["a_uid"], _enrollment(install_id)).json()["enrollment"] == (
             "enrolled"
@@ -174,9 +176,52 @@ class TestEnrollmentOutcome:
 
         assert resp.status_code == 200
         body = resp.json()
-        assert body["enrollment"] == "failed"
+        assert body["enrollment"] == "enrolled"
         assert body["id_token"] == _ISSUED_ID
-        assert _device_owner(engine, install_id) == users["a_id"]
+        assert _device_owners(engine, install_id) == {users["a_id"], users["b_id"]}
+
+    def test_same_user_reenrolling_keeps_one_row(
+        self, client: TestClient, engine: Engine, users: dict[str, str]
+    ) -> None:
+        install_id = uuid.uuid4().hex
+        for _ in range(2):
+            resp = _exchange(client, users["a_uid"], _enrollment(install_id))
+            assert resp.json()["enrollment"] == "enrolled"
+        assert _device_owners(engine, install_id) == {users["a_id"]}
+
+    def test_revoked_enrollment_reports_failed_and_stays_revoked(
+        self, client: TestClient, engine: Engine, users: dict[str, str]
+    ) -> None:
+        install_id = uuid.uuid4().hex
+        assert _exchange(client, users["a_uid"], _enrollment(install_id)).json()["enrollment"] == (
+            "enrolled"
+        )
+        select_row = text(
+            "SELECT device_public_key_jwk, revoked_at FROM platform.companion_devices "
+            "WHERE install_id = :i AND user_id = CAST(:u AS uuid)"
+        )
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE platform.companion_devices SET revoked_at = now() "
+                    "WHERE install_id = :i AND user_id = CAST(:u AS uuid)"
+                ),
+                {"i": install_id, "u": users["a_id"]},
+            )
+            before = conn.execute(select_row, {"i": install_id, "u": users["a_id"]}).one()
+
+        resp = _exchange(client, users["a_uid"], _enrollment(install_id))
+        assert resp.status_code == 200
+        assert resp.json()["enrollment"] == "failed"
+        assert resp.json()["id_token"] == _ISSUED_ID
+        with engine.connect() as conn:
+            after = conn.execute(select_row, {"i": install_id, "u": users["a_id"]}).one()
+        assert after == before
+
+        # Another account on the same install is unaffected by A's revocation.
+        assert _exchange(client, users["b_uid"], _enrollment(install_id)).json()["enrollment"] == (
+            "enrolled"
+        )
 
     def test_retry_after_failure_enrolls(
         self, client: TestClient, engine: Engine, users: dict[str, str]
@@ -186,9 +231,9 @@ class TestEnrollmentOutcome:
         install_id = uuid.uuid4().hex
         bad = {**_enrollment(install_id), "device_public_key_jwk": {"kty": "EC", "crv": "P-256"}}
         assert _exchange(client, users["b_uid"], bad).json()["enrollment"] == "failed"
-        assert _device_owner(engine, install_id) is None
+        assert _device_owners(engine, install_id) == set()
 
         resp = _exchange(client, users["b_uid"], _enrollment(install_id))
 
         assert resp.json()["enrollment"] == "enrolled"
-        assert _device_owner(engine, install_id) == users["b_id"]
+        assert _device_owners(engine, install_id) == {users["b_id"]}

@@ -684,7 +684,7 @@ ALTER TABLE ONLY platform.claim_routes
     ADD CONSTRAINT claim_routes_pkey PRIMARY KEY (control_number);
 
 ALTER TABLE ONLY platform.companion_devices
-    ADD CONSTRAINT companion_devices_pkey PRIMARY KEY (install_id);
+    ADD CONSTRAINT companion_devices_pkey PRIMARY KEY (install_id, user_id);
 
 ALTER TABLE ONLY platform.companion_practice_slugs
     ADD CONSTRAINT companion_practice_slugs_pkey PRIMARY KEY (slug);
