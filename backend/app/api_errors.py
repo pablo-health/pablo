@@ -21,6 +21,7 @@ from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from .logging_config import RequestLogIdentity
 from .request_context import extract_request_context
 
 _auth_logger = logging.getLogger("pablo.auth")
@@ -226,6 +227,19 @@ def _unhandled_log_extra(request: Request) -> dict[str, str]:
     template = getattr(request.scope.get("route"), "path", None)
     if isinstance(template, str) and template:
         extra["route_template"] = template
+    # This handler runs outside ``RequestContextMiddleware``, whose contextvars
+    # are already reset by the time an unhandled exception reaches it, so the
+    # request id and the caller's identity come from ``request.state``. Ids
+    # only — the internal user id and the practice id, never an email.
+    request_id = getattr(request.state, "request_id", None)
+    if isinstance(request_id, str):
+        extra["request_id"] = request_id
+    identity = getattr(request.state, "log_identity", None)
+    if isinstance(identity, RequestLogIdentity):
+        if identity.user_id is not None:
+            extra["user_id"] = identity.user_id
+        if identity.tenant_id is not None:
+            extra["tenant_id"] = identity.tenant_id
     return extra
 
 
@@ -269,7 +283,8 @@ def register_exception_handlers(app: FastAPI) -> None:
         configured ``JSONFormatter`` (see ``logging_config``): the whole
         traceback rides one record's ``exc_info`` field, alongside
         ``error_class`` and the request-scoped ``request_id`` /
-        ``route_template`` / ``user_id`` from contextvars — one structured
+        ``route_template`` / ``user_id`` / ``tenant_id`` (see
+        ``_unhandled_log_extra``) — one structured
         entry per 500. The response body stays a generic envelope so internals
         never leak to the client. ``route_template`` (the matched path
         pattern, not the concrete URL) is what gets logged, so no

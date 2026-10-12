@@ -14,7 +14,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth as firebase_auth
 from firebase_admin import exceptions as firebase_exceptions
 
-from ..logging_config import tenant_id_var, user_id_var
+from ..logging_config import bind_log_tenant_id, bind_log_user_id
 from ..models import User
 from ..repositories import (
     AllowlistRepository,
@@ -372,7 +372,7 @@ def get_current_user_id(
         create_if_missing=False,
         provider=identity.provider,
     )
-    user_id_var.set(str(pablo_user_id))
+    bind_log_user_id(str(pablo_user_id))
     return pablo_user_id
 
 
@@ -483,7 +483,7 @@ def get_tenant_context(
         create_if_missing=False,
         provider=identity.provider,
     )
-    user_id_var.set(str(pablo_user_id))
+    bind_log_user_id(str(pablo_user_id))
 
     # Resolve practice from user's email
     email = _extract_email(decoded_token)
@@ -491,8 +491,10 @@ def get_tenant_context(
         practice = _resolve_practice_from_email(email)
         if practice:
             practice_id, schema_name = practice
+            # Bound before the provisioning wait so a 503 from it is
+            # attributed to the practice it concerns.
+            bind_log_tenant_id(practice_id)
             _await_provisioning_ready(practice_id)
-            tenant_id_var.set(practice_id)
             # A practice is registered under an email before anyone has signed
             # in, so this is the first moment both halves of "who owns it" are
             # in hand: the registered address, and the account it belongs to.
@@ -578,6 +580,10 @@ def _resolve_practice_from_email(email: str) -> tuple[str, str] | None:
 _PROVISIONING_POLL_INTERVAL_S = 0.2
 _PROVISIONING_POLL_ROUNDS = 5
 
+#: ``event`` field on the log line emitted whenever a request is turned away
+#: with a 503 because its practice is not provisioned.
+PROVISIONING_UNAVAILABLE_EVENT = "provisioning_unavailable"
+
 
 def _await_provisioning_ready(practice_id: str) -> None:
     """Block until a freshly-async-provisioned tenant flips to ready.
@@ -605,6 +611,18 @@ def _await_provisioning_ready(practice_id: str) -> None:
         if row is None or row.provisioning_status == "ready":
             return
         if row.provisioning_status == "failed":
+            # Every request from this practice fails until an operator
+            # intervenes, so this is an ERROR, not a client-side 503 to shrug
+            # off. ``event`` is the stable filter key.
+            logger.error(
+                "provisioning_unavailable practice_id=%s status=failed",
+                practice_id,
+                extra={
+                    "event": PROVISIONING_UNAVAILABLE_EVENT,
+                    "practice_id": practice_id,
+                    "provisioning_status": "failed",
+                },
+            )
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={
@@ -619,6 +637,20 @@ def _await_provisioning_ready(practice_id: str) -> None:
             )
         time.sleep(_PROVISIONING_POLL_INTERVAL_S)
 
+    # Still in progress after the poll budget. A brand-new practice can
+    # legitimately land here while its schema is being built, and the client
+    # retries on Retry-After, so one occurrence is a WARNING. It carries the
+    # same ``event`` as the failed case so a practice that never leaves this
+    # state shows up in the same query.
+    logger.warning(
+        "provisioning_unavailable practice_id=%s status=in_progress",
+        practice_id,
+        extra={
+            "event": PROVISIONING_UNAVAILABLE_EVENT,
+            "practice_id": practice_id,
+            "provisioning_status": "in_progress",
+        },
+    )
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail={
@@ -795,10 +827,13 @@ def _resolve_user(
                 email = (fb_user.email or "").lower()
                 logger.info("Resolved email from Firebase Auth: uid=%s", subject_id)
             except Exception as exc:
-                logger.warning(
+                # ERROR: with no email the account cannot be mapped to a
+                # practice, so this sign-in ends in a refusal. Exception type
+                # only — the provider's message can echo account details.
+                logger.error(
                     "Could not look up email from Firebase Auth for uid=%s: %s",
                     subject_id,
-                    exc,
+                    type(exc).__name__,
                 )
 
         # Reserved test-identity prefixes bypass the allowlist in non-prod
@@ -871,7 +906,7 @@ def _resolve_user(
             },
         )
 
-    user_id_var.set(str(pablo_user_id))
+    bind_log_user_id(str(pablo_user_id))
     # Arm the RLS ``app.current_user_id`` GUC for the resolved user, right
     # beside the logging var above. Both name "who this request is"; they
     # drifted apart historically — only ``get_tenant_context`` armed the RLS

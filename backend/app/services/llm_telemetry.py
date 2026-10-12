@@ -51,10 +51,10 @@ from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
 from ..logging_config import (
+    current_log_tenant_id,
+    current_log_user_id,
     request_id_var,
     route_template_var,
-    tenant_id_var,
-    user_id_var,
 )
 
 if TYPE_CHECKING:
@@ -164,9 +164,9 @@ def _set_context_attributes(span: Span) -> None:
     """Merge the request-scoped contextvars onto the span (PHI-free)."""
     if (rid := request_id_var.get()) is not None:
         span.set_attribute(_ATTR_REQUEST_ID, rid)
-    if (uid := user_id_var.get()) is not None:
+    if (uid := current_log_user_id()) is not None:
         span.set_attribute(SpanAttributes.USER_ID, uid)
-    if (tid := tenant_id_var.get()) is not None:
+    if (tid := current_log_tenant_id()) is not None:
         span.set_attribute(_ATTR_TENANT_ID, tid)
     if (tmpl := route_template_var.get()) is not None:
         span.set_attribute(_ATTR_ROUTE_TEMPLATE, tmpl)

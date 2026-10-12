@@ -33,6 +33,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.routing import Match
 
 from ..logging_config import (
+    begin_request_log_identity,
+    end_request_log_identity,
     request_id_var,
     route_template_var,
     tenant_id_var,
@@ -137,8 +139,9 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
     - Echoes the request_id on the response as ``X-Request-Id`` so
       clients (and downstream services) can pin a log line to a call.
 
-    user_id / tenant_id are populated later by the auth dependency
-    chain (see `app.auth.service._set_log_identity_context`).
+    user_id / tenant_id are populated later, once the caller is known,
+    through ``bind_log_user_id`` / ``bind_log_tenant_id`` (the database
+    session middleware and the auth dependency chain).
     """
 
     def __init__(self, app: ASGIApp) -> None:
@@ -154,6 +157,11 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         route_token = route_template_var.set(resolve_route_template(request))
         user_token = user_id_var.set(None)
         tenant_token = tenant_id_var.set(None)
+        log_identity, log_identity_token = begin_request_log_identity()
+        # The unhandled-exception handler runs outside this middleware, after
+        # the contextvars below are reset, so it reads the request's identity
+        # from here instead.
+        request.state.log_identity = log_identity
 
         start = time.perf_counter()
         status_code = 500
@@ -188,6 +196,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             route_template_var.reset(route_token)
             user_id_var.reset(user_token)
             tenant_id_var.reset(tenant_token)
+            end_request_log_identity(log_identity_token)
 
     @staticmethod
     def _derive_request_id(request: Request) -> str:
