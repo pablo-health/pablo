@@ -138,8 +138,10 @@ than by a check:
   enrollment of an install leaves any other user's enrollment of it
   working.
 
-Re-enrolling never clears `revoked_at`; reactivation stays an explicit
-action.
+Revocation is sticky: if a user signs in again on an install whose
+enrollment for them is revoked, the exchange still returns tokens but
+reports `enrollment: "failed"`, and the row (its key and `revoked_at`) is
+left unchanged; reactivation stays an explicit action.
 
 ---
 

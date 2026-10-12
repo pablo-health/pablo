@@ -29,7 +29,9 @@ class CompanionDeviceRepository(ABC):
         that user's row: pubkey, jkt, key_storage, and platform metadata,
         and bumps ``last_seen``. ``enrolled_at`` is preserved on update —
         the user first enrolled the install at that timestamp. Another
-        user's row for the same install_id is never touched.
+        user's row for the same install_id is never touched. Enrollment
+        never re-keys a revoked row: the service rejects it up front, and the
+        Postgres upsert also skips revoked rows.
         """
 
     @abstractmethod

@@ -32,6 +32,14 @@ class InvalidDeviceJWKError(ValueError):
     """The JWK in the enrollment payload is malformed or unsupported."""
 
 
+class DeviceRevokedError(Exception):
+    """This user's enrollment of the install_id has been revoked.
+
+    Revocation is sticky: a fresh sign-in must not re-enable the device, so
+    the stored row (its key and ``revoked_at``) is left untouched.
+    """
+
+
 # RFC 7638 §3.2 — required canonical members per key type, in the
 # lexicographic order the spec mandates for the thumbprint hash input.
 _REQUIRED_BY_KTY: dict[str, tuple[str, ...]] = {
@@ -115,9 +123,13 @@ class CompanionDeviceService:
         DPoP middleware looks the row up by the bearer's user_id plus the
         install_id, so each user's proofs verify only against their own
         row. Re-enrolling an install the same user already enrolled
-        rotates that user's key only.
+        rotates that user's key only, unless that enrollment was revoked:
+        then :class:`DeviceRevokedError` is raised and nothing is written.
         """
         validate_device_jwk(payload.device_public_key_jwk)
+        existing = self._repo.get(user_id, payload.install_id)
+        if existing is not None and existing.revoked_at is not None:
+            raise DeviceRevokedError("install_id enrollment revoked for this user")
         jkt = compute_jkt(payload.device_public_key_jwk)
         now = utc_now()
         device = CompanionDevice(

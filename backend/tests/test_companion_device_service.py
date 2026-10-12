@@ -15,6 +15,7 @@ from app.repositories.companion_device import (
 )
 from app.services.companion_device_service import (
     CompanionDeviceService,
+    DeviceRevokedError,
     InvalidDeviceJWKError,
     compute_jkt,
     validate_device_jwk,
@@ -259,4 +260,39 @@ class TestPerUserRows:
         repo.upsert(replace(first, revoked_at=first.enrolled_at))
 
         assert service.list_devices("user-1") == []
+        assert [d.user_id for d in service.list_devices("user-2")] == ["user-2"]
+
+    def test_reenrolling_a_revoked_enrollment_is_rejected_and_writes_nothing(
+        self, repo: InMemoryCompanionDeviceRepository, payload: CompanionEnrollment
+    ) -> None:
+        service = CompanionDeviceService(repo)
+        first = service.enroll("user-1", payload)
+        revoked = replace(first, revoked_at=first.enrolled_at)
+        repo.upsert(revoked)
+
+        rotated = payload.model_copy(
+            update={
+                "device_public_key_jwk": {
+                    "kty": "EC",
+                    "crv": "P-256",
+                    "x": "AAAAOJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+                    "y": "BBBBzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0",
+                }
+            }
+        )
+        with pytest.raises(DeviceRevokedError):
+            service.enroll("user-1", rotated)
+
+        assert repo.get("user-1", payload.install_id) == revoked
+
+    def test_another_users_revoked_row_does_not_block_enrollment(
+        self, repo: InMemoryCompanionDeviceRepository, payload: CompanionEnrollment
+    ) -> None:
+        service = CompanionDeviceService(repo)
+        first = service.enroll("user-1", payload)
+        repo.upsert(replace(first, revoked_at=first.enrolled_at))
+
+        device = service.enroll("user-2", payload)
+
+        assert device.user_id == "user-2"
         assert [d.user_id for d in service.list_devices("user-2")] == ["user-2"]

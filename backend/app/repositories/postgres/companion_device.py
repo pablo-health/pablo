@@ -53,8 +53,11 @@ class PostgresCompanionDeviceRepository(CompanionDeviceRepository):
                     "hostname_hash": device.hostname_hash,
                     "last_seen": device.last_seen,
                 },
-                # Do NOT reset revoked_at here: a re-enrollment must not silently
-                # un-revoke a device; reactivation is a separate, explicit action.
+                # Revocation is sticky: never reset revoked_at, and never replace
+                # a revoked row's key. The service rejects re-enrolling a revoked
+                # device up front; this guard covers a revoke that lands between
+                # that check and this write. Reactivation is a separate action.
+                where=CompanionDeviceRow.revoked_at.is_(None),
             )
         )
         self._session.execute(stmt)

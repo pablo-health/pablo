@@ -189,6 +189,40 @@ class TestEnrollmentOutcome:
             assert resp.json()["enrollment"] == "enrolled"
         assert _device_owners(engine, install_id) == {users["a_id"]}
 
+    def test_revoked_enrollment_reports_failed_and_stays_revoked(
+        self, client: TestClient, engine: Engine, users: dict[str, str]
+    ) -> None:
+        install_id = uuid.uuid4().hex
+        assert _exchange(client, users["a_uid"], _enrollment(install_id)).json()["enrollment"] == (
+            "enrolled"
+        )
+        select_row = text(
+            "SELECT device_public_key_jwk, revoked_at FROM platform.companion_devices "
+            "WHERE install_id = :i AND user_id = CAST(:u AS uuid)"
+        )
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE platform.companion_devices SET revoked_at = now() "
+                    "WHERE install_id = :i AND user_id = CAST(:u AS uuid)"
+                ),
+                {"i": install_id, "u": users["a_id"]},
+            )
+            before = conn.execute(select_row, {"i": install_id, "u": users["a_id"]}).one()
+
+        resp = _exchange(client, users["a_uid"], _enrollment(install_id))
+        assert resp.status_code == 200
+        assert resp.json()["enrollment"] == "failed"
+        assert resp.json()["id_token"] == _ISSUED_ID
+        with engine.connect() as conn:
+            after = conn.execute(select_row, {"i": install_id, "u": users["a_id"]}).one()
+        assert after == before
+
+        # Another account on the same install is unaffected by A's revocation.
+        assert _exchange(client, users["b_uid"], _enrollment(install_id)).json()["enrollment"] == (
+            "enrolled"
+        )
+
     def test_retry_after_failure_enrolls(
         self, client: TestClient, engine: Engine, users: dict[str, str]
     ) -> None:
