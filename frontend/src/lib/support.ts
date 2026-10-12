@@ -2,6 +2,7 @@
 
 "use client"
 
+import { useEffect, useState } from "react"
 import { useOptionalConfig } from "@/lib/config-provider"
 
 // Deliberately loose: one "@", a dot in the domain, no whitespace and nothing
@@ -24,13 +25,48 @@ export function supportMailto(email: string): string {
   return `mailto:${email}`
 }
 
+// One lookup per page load for screens rendered outside ConfigProvider.
+let standaloneLookup: Promise<string | null> | null = null
+
+function fetchSupportEmail(): Promise<string | null> {
+  standaloneLookup ??= fetch("/api/config")
+    .then((res) => (res.ok ? res.json() : null))
+    .then((body: { supportEmail?: unknown } | null) =>
+      supportEmailFrom(typeof body?.supportEmail === "string" ? body.supportEmail : null),
+    )
+    .catch(() => null)
+  return standaloneLookup
+}
+
+/** Test seam: forget the standalone lookup between tests. */
+export function _resetSupportEmailLookupForTests(): void {
+  standaloneLookup = null
+}
+
 /**
  * The support address this deployment configured (SUPPORT_EMAIL on the
  * frontend container, served by /api/config), or null when it has none.
  *
  * Safe outside ConfigProvider: error fallbacks call this, and they must not
- * throw while showing that something else did.
+ * throw while showing that something else did. The root error boundary
+ * replaces every provider, yet it is the screen where the address matters
+ * most, so outside the provider the hook reads /api/config itself (null until
+ * that answers, and null for good if it fails).
  */
 export function useSupportEmail(): string | null {
-  return supportEmailFrom(useOptionalConfig()?.supportEmail)
+  const config = useOptionalConfig()
+  const [standalone, setStandalone] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (config) return
+    let live = true
+    void fetchSupportEmail().then((email) => {
+      if (live) setStandalone(email)
+    })
+    return () => {
+      live = false
+    }
+  }, [config])
+
+  return config ? supportEmailFrom(config.supportEmail) : standalone
 }

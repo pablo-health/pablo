@@ -1,8 +1,13 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-import { describe, expect, it } from "vitest"
-import { renderHook, screen } from "@testing-library/react"
-import { supportEmailFrom, supportMailto, useSupportEmail } from "@/lib/support"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { renderHook, screen, waitFor } from "@testing-library/react"
+import {
+  _resetSupportEmailLookupForTests,
+  supportEmailFrom,
+  supportMailto,
+  useSupportEmail,
+} from "@/lib/support"
 import { renderWithProviders } from "@/test/renderWithProviders"
 import { testRuntimeConfig } from "@/test/runtimeConfig"
 
@@ -36,6 +41,18 @@ describe("supportMailto", () => {
 })
 
 describe("useSupportEmail", () => {
+  const fetchMock = vi.fn()
+
+  beforeEach(() => {
+    _resetSupportEmailLookupForTests()
+    fetchMock.mockReset().mockRejectedValue(new Error("offline"))
+    vi.stubGlobal("fetch", fetchMock)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
   it("reads the address from the runtime config", async () => {
     renderWithProviders(<Probe />, {
       config: testRuntimeConfig({ supportEmail: "help@clinic.example" }),
@@ -49,8 +66,29 @@ describe("useSupportEmail", () => {
   })
 
   // Error fallbacks call this; throwing there would replace one failure with another.
-  it("is null, without throwing, outside ConfigProvider", () => {
+  it("is null, without throwing, outside ConfigProvider", async () => {
     const { result } = renderHook(() => useSupportEmail())
     expect(result.current).toBeNull()
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/config"))
+    expect(result.current).toBeNull()
+  })
+
+  // The root error boundary replaces every provider, and it is the screen
+  // where someone most needs to know who to write to.
+  it("reads /api/config itself outside ConfigProvider", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ supportEmail: "help@clinic.example" }),
+    })
+    const { result } = renderHook(() => useSupportEmail())
+    await waitFor(() => expect(result.current).toBe("help@clinic.example"))
+  })
+
+  it("does not fetch when the provider already has the config", async () => {
+    renderWithProviders(<Probe />, {
+      config: testRuntimeConfig({ supportEmail: "help@clinic.example" }),
+    })
+    await screen.findByText("support:help@clinic.example")
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/config")
   })
 })
