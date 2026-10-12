@@ -32,18 +32,6 @@ class InvalidDeviceJWKError(ValueError):
     """The JWK in the enrollment payload is malformed or unsupported."""
 
 
-class DeviceOwnershipConflictError(Exception):
-    """The install_id is already enrolled to a different user.
-
-    ``install_id`` ownership is trust-on-first-use and immutable: whoever
-    first enrolls an install_id is the only user who may update that device's
-    key thereafter. Allowing a second user to enroll the same install_id would
-    rebind the stored public key onto the first user's device row — so a stolen
-    bearer token for the first user plus a proof signed by the second user's
-    private key would verify, defeating proof-of-possession. Reject instead.
-    """
-
-
 # RFC 7638 §3.2 — required canonical members per key type, in the
 # lexicographic order the spec mandates for the thumbprint hash input.
 _REQUIRED_BY_KTY: dict[str, tuple[str, ...]] = {
@@ -112,14 +100,24 @@ class CompanionDeviceService:
         return self._repo.list_for_user(user_id)
 
     def enroll(self, user_id: str, payload: CompanionEnrollment) -> CompanionDevice:
-        """Validate + persist a device enrollment. Returns the stored row."""
+        """Validate + persist a device enrollment. Returns the stored row.
+
+        An enrollment belongs to ``(user_id, install_id)``, not to the install
+        alone. The companion keeps one install_id and device key per OS user
+        whichever Pablo account signs in, so a second account signing in on
+        the same install gets its own row, usually carrying the same public
+        key. That is safe because rows never overlap: a user can only ever
+        write their own row, so one user's enrollment cannot rebind the key
+        stored for another user. (Under an install_id-only key, letting a
+        second user enroll would have overwritten the first user's key —
+        a stolen bearer for the first user plus a proof from the second
+        user's key would then verify, defeating proof-of-possession.) The
+        DPoP middleware looks the row up by the bearer's user_id plus the
+        install_id, so each user's proofs verify only against their own
+        row. Re-enrolling an install the same user already enrolled
+        rotates that user's key only.
+        """
         validate_device_jwk(payload.device_public_key_jwk)
-        # Enforce immutable install_id → user_id ownership before writing. The
-        # repository upsert is scoped to the same owner as a backstop, but
-        # checking here lets us reject explicitly rather than silently no-op.
-        existing = self._repo.get(payload.install_id)
-        if existing is not None and existing.user_id != user_id:
-            raise DeviceOwnershipConflictError("install_id already enrolled to a different user")
         jkt = compute_jkt(payload.device_public_key_jwk)
         now = utc_now()
         device = CompanionDevice(

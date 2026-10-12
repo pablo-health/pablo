@@ -95,3 +95,15 @@ def test_devices_excludes_other_users_and_revoked(
     assert resp.status_code == 200
     install_ids = {d["install_id"] for d in resp.json()}
     assert install_ids == {"mine"}
+
+
+def test_devices_lists_a_shared_install_once_for_each_user(
+    devices_client: TestClient, device_repo: InMemoryCompanionDeviceRepository
+) -> None:
+    # Another account signed in on the same install and then revoked its own
+    # enrollment; the caller's enrollment of that install is unaffected.
+    _enroll(device_repo, install_id="shared", user_id="test-user-123")
+    _enroll(device_repo, install_id="shared", user_id="other-user", revoked=True)
+    resp = devices_client.get("/api/users/me/devices")
+    assert resp.status_code == 200
+    assert [d["install_id"] for d in resp.json()] == ["shared"]

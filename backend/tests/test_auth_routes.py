@@ -9,8 +9,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from app.main import app
 from app.rate_limit import reset_preauth_limiter
+from app.repositories.companion_device import InMemoryCompanionDeviceRepository
 from app.services.auth_code_store import create_auth_code
-from app.services.companion_device_service import DeviceOwnershipConflictError
+from app.services.companion_device_service import CompanionDeviceService
 from fastapi.testclient import TestClient
 
 
@@ -309,21 +310,50 @@ class TestCompanionDeviceEnrollment:
         assert resp.json()["id_token"] == "id_tok"
         assert resp.json()["enrollment"] == "failed"
 
-    @pytest.mark.parametrize(
-        "error",
-        [
-            DeviceOwnershipConflictError("install_id already enrolled to a different user"),
-            RuntimeError("database unavailable"),
-        ],
-    )
-    def test_enrollment_failure_is_reported_and_sign_in_succeeds(
-        self, client: TestClient, error: Exception
+    def test_two_users_enrolling_the_same_install_are_both_enrolled(
+        self, client: TestClient
     ) -> None:
+        # The companion keeps one install_id + key per OS user whichever
+        # account signs in; the second account must enroll too, not "failed".
+        mock_identity_repo = MagicMock()
+        mock_identity_repo.resolve_or_create.side_effect = ["pablo-user-1", "pablo-user-2"]
+        repo = InMemoryCompanionDeviceRepository()
+        service = CompanionDeviceService(repo)
+
+        outcomes = []
+        with (
+            patch(
+                "app.routes.auth.get_identity_repository",
+                return_value=mock_identity_repo,
+            ),
+            patch(
+                "app.routes.auth.get_companion_device_service",
+                return_value=service,
+            ),
+        ):
+            for _ in range(2):
+                resp = client.post(
+                    "/api/auth/native/exchange",
+                    json={
+                        "code": self._create_code(client),
+                        "redirect_uri": self.REDIRECT_URI,
+                        "enrollment": self.VALID_ENROLLMENT,
+                    },
+                )
+                assert resp.status_code == 200
+                outcomes.append(resp.json()["enrollment"])
+
+        assert outcomes == ["enrolled", "enrolled"]
+        install_id = self.VALID_ENROLLMENT["install_id"]
+        assert repo.get("pablo-user-1", install_id) is not None
+        assert repo.get("pablo-user-2", install_id) is not None
+
+    def test_enrollment_failure_is_reported_and_sign_in_succeeds(self, client: TestClient) -> None:
         code = self._create_code(client)
         mock_identity_repo = MagicMock()
         mock_identity_repo.resolve_or_create.return_value = "pablo-user-1"
         mock_service = MagicMock()
-        mock_service.enroll.side_effect = error
+        mock_service.enroll.side_effect = RuntimeError("database unavailable")
 
         with (
             patch(

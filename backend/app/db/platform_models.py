@@ -989,6 +989,12 @@ class CompanionDeviceRow(PlatformBase):
     Microsoft Software KSP) on Windows boxes without TPM 2.0. All Macs
     from 2018+ have Secure Enclave so Mac rows are always ``hardware``.
 
+    Keyed by ``(install_id, user_id)``, not ``install_id`` alone: the
+    companion keeps one install_id and device key per OS user no matter
+    which Pablo account signs in, so one install can carry an enrollment
+    for each account that signs in on it. Each enrollment is its own row,
+    and every lookup names both columns.
+
     No PHI: install_id is a random UUID; hostname_hash is the device's
     hostname run through a one-way hash on the client. Refresh tokens
     are not stored here — Firebase manages those.
@@ -1001,7 +1007,7 @@ class CompanionDeviceRow(PlatformBase):
     user_id: Mapped[str] = mapped_column(
         Uuid(as_uuid=False),
         ForeignKey(f"{PLATFORM_SCHEMA}.users.id", ondelete="CASCADE"),
-        nullable=False,
+        primary_key=True,
         index=True,
     )
     device_public_key_jwk: Mapped[dict] = mapped_column(JSONB, nullable=False)

@@ -31,6 +31,7 @@ import json
 import time
 import uuid
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import app.middleware.dpop as dpop_module
 import jwt
@@ -46,6 +47,9 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from jwt.algorithms import ECAlgorithm
+
+if TYPE_CHECKING:
+    import httpx
 
 TEST_USER_ID = "pablo-user-001"
 INSTALL_ID = "install-abc-123"
@@ -137,19 +141,21 @@ class _FakeSettings:
 def _build_app(
     *,
     enable: bool,
-    devices: dict[str, CompanionDevice],
+    devices: list[CompanionDevice],
     resolve_user_id: str | None = TEST_USER_ID,
-    touched: list[str] | None = None,
+    users_by_token: dict[str, str] | None = None,
+    touched: list[tuple[str, str]] | None = None,
     backend_base_url: str = "",
     app_url: str = "http://testserver",
     dpop_trusted_hosts: str = "",
 ):
     """Build a minimal app wired with the DPoP middleware.
 
-    ``devices`` is the in-memory registry keyed by install_id; the
-    middleware's ``device_lookup`` reads from it. ``resolve_user_id`` is
-    the user id the (patched) token resolver returns — ``None`` simulates
-    an unverifiable token.
+    ``devices`` is the in-memory registry, keyed by ``(user_id, install_id)``
+    like the real table; the middleware's ``device_lookup`` reads from it.
+    ``resolve_user_id`` is the user id the (patched) token resolver returns —
+    ``None`` simulates an unverifiable token. ``users_by_token`` overrides it
+    per bearer token, for cases with more than one user.
     """
     app = FastAPI()
 
@@ -160,6 +166,7 @@ def _build_app(
         app.add_api_route(path, lambda: {"ok": True}, methods=["POST"])
 
     touch_sink = touched if touched is not None else []
+    registry = {(d.user_id, d.install_id): d for d in devices}
 
     app.add_middleware(
         DPoPMiddleware,
@@ -169,14 +176,16 @@ def _build_app(
             app_url=app_url,
             dpop_trusted_hosts=dpop_trusted_hosts,
         ),
-        device_lookup=devices.get,
-        touch=touch_sink.append,
+        device_lookup=lambda user_id, install_id: registry.get((user_id, install_id)),
+        touch=lambda user_id, install_id: touch_sink.append((user_id, install_id)),
     )
 
     # Patch the user resolver the middleware calls. We patch the symbol on
     # the dpop module so the middleware's ``_resolve_user_id(...)`` call
     # resolves to our stub regardless of token/Firebase availability.
-    def _stub_resolve(_request, _token):
+    def _stub_resolve(_request, token):
+        if users_by_token is not None:
+            return users_by_token.get(token)
         return resolve_user_id
 
     dpop_module._resolve_user_id = _stub_resolve  # type: ignore[assignment]
@@ -202,7 +211,7 @@ def _restore_resolver():
 # --------------------------------------------------------------------------- #
 def test_flag_off_is_hard_noop_even_with_install_id(keypair) -> None:
     public_jwk, _ = keypair
-    client, touched = _build_app(enable=False, devices={INSTALL_ID: _make_device(public_jwk)})
+    client, touched = _build_app(enable=False, devices=[_make_device(public_jwk)])
     # Garbage install_id + no proof would 401 if enforced; with the flag off
     # the middleware must not inspect headers at all.
     resp = client.get(
@@ -218,7 +227,7 @@ def test_flag_off_is_hard_noop_even_with_install_id(keypair) -> None:
 # --------------------------------------------------------------------------- #
 def test_no_install_id_passes_as_legacy(keypair) -> None:
     public_jwk, _ = keypair
-    client, _ = _build_app(enable=True, devices={INSTALL_ID: _make_device(public_jwk)})
+    client, _ = _build_app(enable=True, devices=[_make_device(public_jwk)])
     resp = client.get("/api/patients/p1", headers={"Authorization": "Bearer t"})
     assert resp.status_code == 200
 
@@ -226,7 +235,7 @@ def test_no_install_id_passes_as_legacy(keypair) -> None:
 @pytest.mark.parametrize("path", ROUTES)
 def test_valid_proof_passes_and_touches_last_seen(keypair, path: str) -> None:
     public_jwk, signing_key = keypair
-    client, touched = _build_app(enable=True, devices={INSTALL_ID: _make_device(public_jwk)})
+    client, touched = _build_app(enable=True, devices=[_make_device(public_jwk)])
     htu = f"http://testserver{path}"
     proof = _sign_proof(signing_key, htm="POST", htu=htu)
     resp = client.post(
@@ -238,14 +247,14 @@ def test_valid_proof_passes_and_touches_last_seen(keypair, path: str) -> None:
         },
     )
     assert resp.status_code == 200
-    assert touched == [INSTALL_ID]
+    assert touched == [(TEST_USER_ID, INSTALL_ID)]
 
 
 def test_query_string_is_stripped_from_htu(keypair) -> None:
     """A proof signed for the path (no query) must validate a request that
     carries a query string — htu comparison strips the query."""
     public_jwk, signing_key = keypair
-    client, _ = _build_app(enable=True, devices={INSTALL_ID: _make_device(public_jwk)})
+    client, _ = _build_app(enable=True, devices=[_make_device(public_jwk)])
     proof = _sign_proof(signing_key, htm="GET", htu="http://testserver/api/patients/p1")
     resp = client.get(
         "/api/patients/p1?foo=bar",
@@ -261,7 +270,7 @@ def _assert_invalid_proof(resp) -> None:
 
 def test_install_id_without_proof_is_rejected(keypair) -> None:
     public_jwk, _ = keypair
-    client, touched = _build_app(enable=True, devices={INSTALL_ID: _make_device(public_jwk)})
+    client, touched = _build_app(enable=True, devices=[_make_device(public_jwk)])
     resp = client.post(
         "/api/sessions/s1",
         headers={"Authorization": "Bearer t", INSTALL_ID_HEADER: INSTALL_ID},
@@ -274,7 +283,7 @@ def test_bad_signature_is_rejected(keypair) -> None:
     public_jwk, _ = keypair
     # Sign with a DIFFERENT key than the one enrolled.
     _, other_signing_key = _make_keypair()
-    client, _ = _build_app(enable=True, devices={INSTALL_ID: _make_device(public_jwk)})
+    client, _ = _build_app(enable=True, devices=[_make_device(public_jwk)])
     proof = _sign_proof(other_signing_key, htm="POST", htu="http://testserver/api/sessions/s1")
     resp = client.post(
         "/api/sessions/s1",
@@ -285,7 +294,7 @@ def test_bad_signature_is_rejected(keypair) -> None:
 
 def test_wrong_htu_is_rejected(keypair) -> None:
     public_jwk, signing_key = keypair
-    client, _ = _build_app(enable=True, devices={INSTALL_ID: _make_device(public_jwk)})
+    client, _ = _build_app(enable=True, devices=[_make_device(public_jwk)])
     # Proof signed for a different path than the one requested.
     proof = _sign_proof(signing_key, htm="POST", htu="http://testserver/api/patients/OTHER")
     resp = client.post(
@@ -297,7 +306,7 @@ def test_wrong_htu_is_rejected(keypair) -> None:
 
 def test_wrong_method_is_rejected(keypair) -> None:
     public_jwk, signing_key = keypair
-    client, _ = _build_app(enable=True, devices={INSTALL_ID: _make_device(public_jwk)})
+    client, _ = _build_app(enable=True, devices=[_make_device(public_jwk)])
     proof = _sign_proof(signing_key, htm="GET", htu="http://testserver/api/sessions/s1")
     resp = client.post(
         "/api/sessions/s1",
@@ -308,7 +317,7 @@ def test_wrong_method_is_rejected(keypair) -> None:
 
 def test_stale_iat_is_rejected(keypair) -> None:
     public_jwk, signing_key = keypair
-    client, _ = _build_app(enable=True, devices={INSTALL_ID: _make_device(public_jwk)})
+    client, _ = _build_app(enable=True, devices=[_make_device(public_jwk)])
     stale = int(time.time()) - 120  # outside the ±60s window
     proof = _sign_proof(signing_key, htm="POST", htu="http://testserver/api/sessions/s1", iat=stale)
     resp = client.post(
@@ -320,7 +329,7 @@ def test_stale_iat_is_rejected(keypair) -> None:
 
 def test_future_iat_is_rejected(keypair) -> None:
     public_jwk, signing_key = keypair
-    client, _ = _build_app(enable=True, devices={INSTALL_ID: _make_device(public_jwk)})
+    client, _ = _build_app(enable=True, devices=[_make_device(public_jwk)])
     future = int(time.time()) + 120
     proof = _sign_proof(
         signing_key, htm="POST", htu="http://testserver/api/sessions/s1", iat=future
@@ -334,7 +343,7 @@ def test_future_iat_is_rejected(keypair) -> None:
 
 def test_replayed_jti_is_rejected(keypair) -> None:
     public_jwk, signing_key = keypair
-    client, _ = _build_app(enable=True, devices={INSTALL_ID: _make_device(public_jwk)})
+    client, _ = _build_app(enable=True, devices=[_make_device(public_jwk)])
     jti = str(uuid.uuid4())
     htu = "http://testserver/api/sessions/s1"
     first = _sign_proof(signing_key, htm="POST", htu=htu, jti=jti)
@@ -352,7 +361,7 @@ def test_replayed_jti_is_rejected(keypair) -> None:
 
 def test_unknown_install_id_is_rejected(keypair) -> None:
     _public_jwk, signing_key = keypair
-    client, _ = _build_app(enable=True, devices={})  # empty registry
+    client, _ = _build_app(enable=True, devices=[])  # empty registry
     proof = _sign_proof(signing_key, htm="POST", htu="http://testserver/api/sessions/s1")
     resp = client.post(
         "/api/sessions/s1",
@@ -364,7 +373,7 @@ def test_unknown_install_id_is_rejected(keypair) -> None:
 def test_revoked_install_id_is_rejected(keypair) -> None:
     public_jwk, signing_key = keypair
     device = _make_device(public_jwk, revoked=True)
-    client, _ = _build_app(enable=True, devices={INSTALL_ID: device})
+    client, _ = _build_app(enable=True, devices=[device])
     proof = _sign_proof(signing_key, htm="POST", htu="http://testserver/api/sessions/s1")
     resp = client.post(
         "/api/sessions/s1",
@@ -374,10 +383,10 @@ def test_revoked_install_id_is_rejected(keypair) -> None:
 
 
 def test_cross_user_install_id_is_rejected(keypair) -> None:
-    """The device is enrolled to a different user than the token resolves to."""
+    """The install is enrolled only by a different user than the token resolves to."""
     public_jwk, signing_key = keypair
     device = _make_device(public_jwk, user_id="some-other-user")
-    client, _ = _build_app(enable=True, devices={INSTALL_ID: device})
+    client, _ = _build_app(enable=True, devices=[device])
     proof = _sign_proof(signing_key, htm="POST", htu="http://testserver/api/sessions/s1")
     resp = client.post(
         "/api/sessions/s1",
@@ -386,9 +395,79 @@ def test_cross_user_install_id_is_rejected(keypair) -> None:
     _assert_invalid_proof(resp)
 
 
+OTHER_USER_ID = "other-user-456"
+_TWO_USERS = {"token-a": TEST_USER_ID, "token-b": OTHER_USER_ID}
+
+
+def _post_as(client: TestClient, token: str, signing_key: object) -> httpx.Response:
+    proof = _sign_proof(signing_key, htm="POST", htu="http://testserver/api/sessions/s1")
+    return client.post(
+        "/api/sessions/s1",
+        headers={
+            "Authorization": f"Bearer {token}",
+            INSTALL_ID_HEADER: INSTALL_ID,
+            DPOP_HEADER: proof,
+        },
+    )
+
+
+def test_two_users_on_one_install_each_verify_against_their_own_row(keypair) -> None:
+    """The companion keeps one install_id + key per OS user whichever account
+    signs in, so two users can hold an enrollment of the same install with the
+    same key. Each user's proof verifies, and touches only that user's row."""
+    public_jwk, signing_key = keypair
+    client, touched = _build_app(
+        enable=True,
+        devices=[
+            _make_device(public_jwk, user_id=TEST_USER_ID),
+            _make_device(public_jwk, user_id=OTHER_USER_ID),
+        ],
+        users_by_token=_TWO_USERS,
+    )
+
+    assert _post_as(client, "token-a", signing_key).status_code == 200
+    assert _post_as(client, "token-b", signing_key).status_code == 200
+    assert touched == [(TEST_USER_ID, INSTALL_ID), (OTHER_USER_ID, INSTALL_ID)]
+
+
+def test_proof_verifies_only_against_the_callers_own_row(keypair) -> None:
+    """Same install, a different key per user: a proof signed with one user's
+    key is rejected under the other user's bearer, and nothing is touched."""
+    public_jwk_a, signing_key_a = keypair
+    public_jwk_b, signing_key_b = _make_keypair()
+    client, touched = _build_app(
+        enable=True,
+        devices=[
+            _make_device(public_jwk_a, user_id=TEST_USER_ID),
+            _make_device(public_jwk_b, user_id=OTHER_USER_ID),
+        ],
+        users_by_token=_TWO_USERS,
+    )
+
+    _assert_invalid_proof(_post_as(client, "token-a", signing_key_b))
+    _assert_invalid_proof(_post_as(client, "token-b", signing_key_a))
+    assert touched == []
+
+
+def test_revoking_one_users_enrollment_leaves_the_other_working(keypair) -> None:
+    public_jwk, signing_key = keypair
+    client, touched = _build_app(
+        enable=True,
+        devices=[
+            _make_device(public_jwk, user_id=TEST_USER_ID, revoked=True),
+            _make_device(public_jwk, user_id=OTHER_USER_ID),
+        ],
+        users_by_token=_TWO_USERS,
+    )
+
+    _assert_invalid_proof(_post_as(client, "token-a", signing_key))
+    assert _post_as(client, "token-b", signing_key).status_code == 200
+    assert touched == [(OTHER_USER_ID, INSTALL_ID)]
+
+
 def test_install_id_without_bearer_is_rejected(keypair) -> None:
     public_jwk, signing_key = keypair
-    client, _ = _build_app(enable=True, devices={INSTALL_ID: _make_device(public_jwk)})
+    client, _ = _build_app(enable=True, devices=[_make_device(public_jwk)])
     proof = _sign_proof(signing_key, htm="POST", htu="http://testserver/api/sessions/s1")
     resp = client.post(
         "/api/sessions/s1",
@@ -411,7 +490,7 @@ def test_spoofed_forwarded_host_falls_back_to_request_host(keypair) -> None:
     - a proof signed for ``https://testserver`` (real host) → 200.
     """
     public_jwk, signing_key = keypair
-    client, _ = _build_app(enable=True, devices={INSTALL_ID: _make_device(public_jwk)})
+    client, _ = _build_app(enable=True, devices=[_make_device(public_jwk)])
 
     spoof_proof = _sign_proof(signing_key, htm="POST", htu="https://evil.example/api/sessions/s1")
     resp = client.post(
@@ -446,7 +525,7 @@ def test_trusted_forwarded_host_is_honored(keypair) -> None:
     public_jwk, signing_key = keypair
     client, _ = _build_app(
         enable=True,
-        devices={INSTALL_ID: _make_device(public_jwk)},
+        devices=[_make_device(public_jwk)],
         app_url="https://app.pablo.health",
     )
     proof = _sign_proof(signing_key, htm="POST", htu="https://app.pablo.health/api/sessions/s1")
@@ -472,7 +551,7 @@ def test_preserved_host_without_forwarded_host_is_honored(keypair) -> None:
     public_jwk, signing_key = keypair
     client, _ = _build_app(
         enable=True,
-        devices={INSTALL_ID: _make_device(public_jwk)},
+        devices=[_make_device(public_jwk)],
         dpop_trusted_hosts="app.pablo.health",
     )
     proof = _sign_proof(signing_key, htm="POST", htu="https://app.pablo.health/api/sessions/s1")
@@ -502,7 +581,7 @@ def test_api_origin_forwarded_host_is_honored(keypair) -> None:
     public_jwk, signing_key = keypair
     client, _ = _build_app(
         enable=True,
-        devices={INSTALL_ID: _make_device(public_jwk)},
+        devices=[_make_device(public_jwk)],
         backend_base_url="https://api.pablo.health",
         app_url="http://localhost:3000",
     )
@@ -523,9 +602,7 @@ def test_api_origin_forwarded_host_is_honored(keypair) -> None:
 def test_unresolvable_token_is_rejected(keypair) -> None:
     """install_id present but the bearer token resolves to no user → 401."""
     public_jwk, signing_key = keypair
-    client, _ = _build_app(
-        enable=True, devices={INSTALL_ID: _make_device(public_jwk)}, resolve_user_id=None
-    )
+    client, _ = _build_app(enable=True, devices=[_make_device(public_jwk)], resolve_user_id=None)
     proof = _sign_proof(signing_key, htm="POST", htu="http://testserver/api/sessions/s1")
     resp = client.post(
         "/api/sessions/s1",

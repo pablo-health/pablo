@@ -85,7 +85,7 @@ install_id belongs to the authenticated user."
 |---|---|---|
 | Firebase mints id_tokens | We'd have to mint our own session tokens that include `cnf.jkt` — weeks of work, ongoing maintenance of an identity layer over Firebase | None — Firebase token stays untouched |
 | Multi-device per user | Each access token bound to one key; multi-device requires per-device tokens | One Firebase token works on every device the user enrolls |
-| Per-device revocation | Revoke specific token via Firebase admin SDK, awkward UX | `DELETE FROM companion_devices WHERE install_id = ?` |
+| Per-device revocation | Revoke specific token via Firebase admin SDK, awkward UX | `DELETE FROM companion_devices WHERE user_id = ? AND install_id = ?` |
 | Forward path | N/A — already standard | `jkt` column populated at enrollment; migration to `cnf.jkt` later is mechanical |
 
 ### Why we **could** do this safely
@@ -106,6 +106,40 @@ preserve that property as long as:
 
 These three checks together give the same end-state guarantee as
 RFC 9449. We've moved where the binding lives, not what it does.
+
+### Ownership: one row per (install_id, user_id)
+
+`platform.companion_devices` is keyed by `(install_id, user_id)`, not by
+`install_id` alone. The companion keeps one install_id and one device key
+per OS user, whichever Pablo account signs in on it, so two accounts that
+sign in on the same install each get their own row — usually carrying the
+same public key.
+
+The table used to be keyed by `install_id` alone, with ownership
+trust-on-first-use: the first user to enroll an install owned it, and a
+second user's enrollment was rejected. That rule existed because, with one
+row per install, letting a second user enroll would have rebound the
+stored key on the *first* user's row — a stolen bearer token for the first
+user plus a proof signed by the second user's key would then verify. The
+cost was that a second account on the same install could not enroll at
+all, and since the companion still sends `X-Install-ID` + `DPoP`, every
+request from that account failed the binding check and signed it out.
+
+With the composite key the rebinding risk is gone by construction rather
+than by a check:
+
+- Enrollment writes only the enrolling user's row. A conflict on the key
+  is always the same user re-enrolling the same install, which rotates
+  that user's key and nothing else.
+- The middleware looks up the row by the bearer's user_id *and* the
+  install_id. A proof verifies only against the caller's own row; another
+  user's enrollment of the same install is invisible to it.
+- `last_seen` and revocation act on one row. Revoking one user's
+  enrollment of an install leaves any other user's enrollment of it
+  working.
+
+Re-enrolling never clears `revoked_at`; reactivation stays an explicit
+action.
 
 ---
 

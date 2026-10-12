@@ -28,7 +28,6 @@ from ..rate_limit import require_rate_limit
 from ..repositories import get_identity_repository
 from ..services.auth_code_store import create_auth_code, exchange_auth_code
 from ..services.companion_device_service import (
-    DeviceOwnershipConflictError,
     InvalidDeviceJWKError,
     get_companion_device_service,
 )
@@ -158,7 +157,8 @@ def exchange_native_code(
     If the native app includes an ``enrollment`` payload (companion
     install_id + Secure-Enclave / TPM public key), this is also the
     enrollment point: we persist a ``companion_devices`` row keyed to
-    the authenticated user. See THERAPY-xo0o.
+    the authenticated user and the install_id. Several users may enroll
+    the same install; each gets their own row. See THERAPY-xo0o.
     """
     entry = exchange_auth_code(request.code)
     if entry is None:
@@ -258,11 +258,6 @@ def _enroll_companion_device(
             "companion_enrollment_rejected reason=invalid_jwk install_id=%s detail=%s",
             enrollment.install_id,
             err,
-        )
-    except DeviceOwnershipConflictError:
-        logger.warning(
-            "companion_enrollment_rejected reason=ownership_conflict install_id=%s",
-            enrollment.install_id,
         )
     except Exception:
         logger.exception("companion_enrollment_failed install_id=%s", enrollment.install_id)
