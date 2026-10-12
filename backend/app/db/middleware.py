@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from ..logging_config import bind_log_tenant_id
 from . import (
     DEFAULT_PRACTICE_SCHEMA,
     _current_patient_id,
@@ -161,6 +162,9 @@ def _resolve_schema_from_request(request: Request) -> tuple[str | None, str]:
 
         practice = _resolve_practice_from_email(identity.email)
         if practice:
+            # The earliest point the practice is known, and before any route
+            # or dependency logs: every line for the request carries it.
+            bind_log_tenant_id(practice[0])
             return practice[1], "resolved"  # schema_name
     except Exception as exc:
         # Exception TYPE only — never the message, which can carry the email
@@ -216,8 +220,15 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
             if unresolved_reason is not None:
                 # Logged after routing so the route TEMPLATE is available —
                 # never request.url.path, which carries record ids.
+                #
+                # A lookup that RAISED is an ERROR: the caller may well have a
+                # practice, and this request ran without it. No mapping or no
+                # email stays a WARNING — that is also what an administrator
+                # without a practice, or an account mid-onboarding, looks like.
                 route = request.scope.get("route")
-                logger.warning(
+                lookup_raised = unresolved_reason.startswith(UNRESOLVED_LOOKUP_RAISED)
+                logger.log(
+                    logging.ERROR if lookup_raised else logging.WARNING,
                     "tenant_schema_unresolved route=%s method=%s status=%s reason=%s "
                     "fell_back_to=%s",
                     getattr(route, "path", "unmatched"),
@@ -225,6 +236,7 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
                     getattr(response, "status_code", "unknown"),
                     unresolved_reason,
                     DEFAULT_PRACTICE_SCHEMA,
+                    extra={"event": "tenant_schema_unresolved"},
                 )
             # Guard: refuse to commit if the session still points at the
             # default 'practice' schema and multi-tenancy is on.  This

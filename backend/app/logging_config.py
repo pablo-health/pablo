@@ -12,8 +12,9 @@ This module installs a root-logger configuration that:
 3. Reads request-scoped context (request_id, user_id, tenant_id,
    route_template, ...) from contextvars defined here. The middleware
    that populates these vars lives in `app.middleware.request_context`
-   (THERAPY-2pf4); the auth dependency chain populates user_id /
-   tenant_id once the token is verified.
+   (THERAPY-2pf4); the auth dependency chain and the database session
+   middleware populate user_id / tenant_id through ``bind_log_user_id`` /
+   ``bind_log_tenant_id`` once the caller is known.
 
 Design contract: log messages MUST NOT contain PHI. The deny-list is the
 load-bearing defense — the regex layer catches accidents, but free-text
@@ -29,7 +30,8 @@ import json
 import logging
 import re
 import sys
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
+from dataclasses import dataclass
 from typing import Any, Final, override
 
 PHI_DENY_KEYS: Final[frozenset[str]] = frozenset(
@@ -68,6 +70,68 @@ request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
 user_id_var: ContextVar[str | None] = ContextVar("user_id", default=None)
 tenant_id_var: ContextVar[str | None] = ContextVar("tenant_id", default=None)
 route_template_var: ContextVar[str | None] = ContextVar("route_template", default=None)
+
+
+@dataclass
+class RequestLogIdentity:
+    """Who a request is acting for, as far as the logs are concerned.
+
+    Mutable on purpose. Sync FastAPI dependencies run in a worker thread on a
+    COPY of the request's context, so a ``user_id_var.set(...)`` made there
+    dies with the thread and every later log line for the request — the
+    async route body, the error handlers, the access line — goes out without
+    it. The copy still points at the same object, though, so a field written
+    here from the worker is visible everywhere else in the request.
+
+    One instance per request, created by ``RequestContextMiddleware`` and
+    dropped when the request ends, so nothing carries over to the next one.
+    """
+
+    user_id: str | None = None
+    tenant_id: str | None = None
+
+
+_request_log_identity_var: ContextVar[RequestLogIdentity | None] = ContextVar(
+    "request_log_identity", default=None
+)
+
+
+def begin_request_log_identity() -> tuple[RequestLogIdentity, Token[RequestLogIdentity | None]]:
+    """Install a fresh identity holder for one request; reset with the token."""
+    identity = RequestLogIdentity()
+    return identity, _request_log_identity_var.set(identity)
+
+
+def end_request_log_identity(token: Token[RequestLogIdentity | None]) -> None:
+    _request_log_identity_var.reset(token)
+
+
+def bind_log_user_id(user_id: str) -> None:
+    """Attribute every remaining log line of this request to ``user_id``."""
+    user_id_var.set(user_id)
+    if (identity := _request_log_identity_var.get()) is not None:
+        identity.user_id = user_id
+
+
+def bind_log_tenant_id(tenant_id: str) -> None:
+    """Attribute every remaining log line of this request to ``tenant_id``."""
+    tenant_id_var.set(tenant_id)
+    if (identity := _request_log_identity_var.get()) is not None:
+        identity.tenant_id = tenant_id
+
+
+def current_log_user_id() -> str | None:
+    if (uid := user_id_var.get()) is not None:
+        return uid
+    identity = _request_log_identity_var.get()
+    return identity.user_id if identity is not None else None
+
+
+def current_log_tenant_id() -> str | None:
+    if (tid := tenant_id_var.get()) is not None:
+        return tid
+    identity = _request_log_identity_var.get()
+    return identity.tenant_id if identity is not None else None
 
 
 def _scrub_text(text: str) -> str:
@@ -156,9 +220,9 @@ class JSONFormatter(logging.Formatter):
 
         if (rid := request_id_var.get()) is not None:
             payload["request_id"] = rid
-        if (uid := user_id_var.get()) is not None:
+        if (uid := current_log_user_id()) is not None:
             payload["user_id"] = uid
-        if (tid := tenant_id_var.get()) is not None:
+        if (tid := current_log_tenant_id()) is not None:
             payload["tenant_id"] = tid
         if (tmpl := route_template_var.get()) is not None:
             payload["route_template"] = tmpl
