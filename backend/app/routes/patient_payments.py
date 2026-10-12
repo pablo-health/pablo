@@ -951,13 +951,18 @@ def list_charges(
     patient_id: str,
     request: Request,
     user: CurrentUser,
-    tenant: Tenant,
     payments: PaymentsRepo,
     patients: PatientsRepo,
     audit: AuditService = Depends(get_audit_service),
 ) -> list[ChargeResponse]:
-    """This client's charge ledger, newest first."""
-    _require_credentials(tenant.practice_id)
+    """This client's charge ledger, newest first.
+
+    Not gated on ``_require_credentials``, for the same reason as the balance
+    below: listing rows the practice already holds needs no card processor.
+    The chart reads this on every open to count the Charges tab, so gating it
+    answered a 503 for every chart in a practice that takes no cards, and hid
+    the history of one that had taken cards and since disconnected.
+    """
     _require_patient(patients, patient_id, user.id)
 
     audit.log(

@@ -113,7 +113,8 @@ describe("PaymentsTab", () => {
       503,
     )
     mockUsePatientCard.mockReturnValue({ data: null, isLoading: false, error: unconfigured })
-    mockUsePatientCharges.mockReturnValue({ data: undefined, isLoading: false, error: unconfigured })
+    // The ledger read needs no processor, so it answers with an empty list.
+    mockUsePatientCharges.mockReturnValue({ data: [], isLoading: false, error: null })
 
     render(<PaymentsTab patientId="patient-1" />)
 
@@ -121,6 +122,26 @@ describe("PaymentsTab", () => {
       screen.getByText("Card payments are not set up for this practice."),
     ).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /add a card/i })).not.toBeInTheDocument()
+    // "No charges yet." under "not set up" would read as if charging were possible.
+    expect(screen.queryByText("No charges yet.")).not.toBeInTheDocument()
+  })
+
+  it("still shows past charges after card payments are disconnected", () => {
+    const unconfigured = new ApiError(
+      "SERVICE_UNAVAILABLE",
+      "Card payments are not configured.",
+      undefined,
+      503,
+    )
+    mockUsePatientCard.mockReturnValue({ data: null, isLoading: false, error: unconfigured })
+
+    render(<PaymentsTab patientId="patient-1" />)
+
+    expect(
+      screen.getByText("Card payments are not set up for this practice."),
+    ).toBeInTheDocument()
+    expect(screen.getByText("$150.00")).toBeInTheDocument()
+    expect(screen.getByText("Paid")).toBeInTheDocument()
   })
 
   it("hides the add and replace actions in read-only mode", () => {
