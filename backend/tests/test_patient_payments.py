@@ -14,7 +14,8 @@ These cover the behaviours that actually protect money and privacy:
   so money can never move against an intent that was not written down.
 * an unknown or foreign client is 404, never 403 — no existence leak.
 * a deployment with no card processing configured is 503, not a half-working
-  charge.
+  charge — on the routes that touch the processor. Reading the ledger and the
+  balance needs no processor and answers normally.
 * the amount comes from the client's own rate, falling back to the appointment
   type's default fee, and refuses rather than guessing when neither exists.
 * the PaymentIntent carries opaque ids only — a ledger id, a clinician id and a
@@ -469,7 +470,7 @@ class TestPreconditions:
         client = _client(payments, _FakePatients())
         register_payment_credential_provider(provider)
 
-        client.get(f"/api/patients/{_PATIENT_ID}/charges")
+        client.get(f"/api/patients/{_PATIENT_ID}/payment-method")
 
         assert provider.asked_for == [_PRACTICE_ID]
 
@@ -1298,6 +1299,39 @@ class TestLedgerRead:
         rows = client.get(f"/api/patients/{_PATIENT_ID}/charges").json()
 
         assert rows[0]["kind"] == "session"
+
+    def test_a_practice_with_no_card_processor_reads_an_empty_ledger(self) -> None:
+        """The chart counts this on every open; no processor is not a server error."""
+        client = _client(_FakePayments(), _FakePatients(), credentials=None)
+
+        response = client.get(f"/api/patients/{_PATIENT_ID}/charges")
+
+        assert response.status_code == 200
+        assert response.json() == []
+
+    def test_history_stays_readable_after_the_processor_is_disconnected(self) -> None:
+        payments = _FakePayments()
+        payments.charges.append(
+            PatientCharge(
+                id="c1",
+                patient_id=_PATIENT_ID,
+                amount_cents=15000,
+                currency="usd",
+                status="succeeded",
+                stripe_payment_intent_id="pi_1",
+                created_by_user_id=_USER_ID,
+                created_at=datetime.now(UTC),
+            )
+        )
+        client = _client(payments, _FakePatients(), credentials=None)
+
+        rows = client.get(f"/api/patients/{_PATIENT_ID}/charges").json()
+
+        assert [row["id"] for row in rows] == ["c1"]
+
+    def test_foreign_client_ledger_is_404_without_a_processor(self) -> None:
+        client = _client(_FakePayments(), _FakePatients(visible=False), credentials=None)
+        assert client.get(f"/api/patients/{_PATIENT_ID}/charges").status_code == 404
 
     def test_no_card_on_file_is_404(self) -> None:
         client = _client(_FakePayments(card=None), _FakePatients())

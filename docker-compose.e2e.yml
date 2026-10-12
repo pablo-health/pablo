@@ -181,13 +181,9 @@ services:
       # The token exchange goes over plain HTTP to the stand-in, which the
       # OAuth library refuses by default. Development only, like the URL.
       - OAUTHLIB_INSECURE_TRANSPORT=1
-      # A client's charge ledger is 503 until the deployment has card
-      # payments configured, and what a payer says a client owes lands on
-      # that ledger — so without a key no end-to-end test can see the one
-      # number the billing surface exists to produce. Present, not valid:
-      # reading the ledger never calls the processor, and nothing in this
-      # stack charges a card. Same rule as the clearinghouse key above.
-      - STRIPE_SECRET_KEY=sk_test_e2e_not_a_real_key
+      # No STRIPE_SECRET_KEY, on purpose: this stack is a practice that takes
+      # no cards. The ledger and the balance read without one, and
+      # charges-without-cards.spec.ts holds the chart to that.
       # The desktop-app hand-off. The app itself cannot run here, but what
       # "Start session" hands it can: recording-consent.spec.ts issues real
       # intents and redeems them as the app would.
