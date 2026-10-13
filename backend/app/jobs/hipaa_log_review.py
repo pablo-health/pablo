@@ -26,6 +26,8 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
+from ..logging_config import configure_job_logging
+
 logger = logging.getLogger("hipaa_log_review")
 
 SYSTEM_PROMPT = """\
@@ -152,7 +154,7 @@ def run(
 
     REVIEW_WINDOW_HOURS=720 switches to the monthly rollup review.
     """
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    configure_job_logging()
 
     gcs_bucket = gcs_bucket or os.environ.get("COMPLIANCE_REPORT_BUCKET")
     window_hours = int(os.environ.get("REVIEW_WINDOW_HOURS", window_hours))

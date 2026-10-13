@@ -24,12 +24,14 @@ import os
 import sys
 from datetime import UTC, datetime
 
+from ..logging_config import configure_job_logging
+
 logger = logging.getLogger("pipeline_heartbeat")
 
 
 def run() -> int:
     """Entry point. Always exits 0 unless something fundamental is broken."""
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    configure_job_logging()
 
     now_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     logger.info("Pablo compliance pipeline heartbeat — %s", now_iso)
