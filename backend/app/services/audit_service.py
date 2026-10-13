@@ -626,14 +626,15 @@ class AuditService:
         self,
         action: AuditAction | str,
         user_id: str,
-        request: Request,
+        request: Request | None,
     ) -> AuditLogEntry:
         """Record an account-security event keyed by ``user_id`` alone.
 
         For auth surfaces that mint a session without loading a full ``User``
         — notably the usernameless passkey login, where the caller is only
         known after the assertion verifies. Resource is SELF; the payload
-        carries no PHI.
+        carries no PHI. ``request`` is ``None`` when the request did not come
+        from the user's own device, so no address or agent is recorded.
         """
         ip_address, user_agent = extract_request_context(request)
         entry = AuditLogEntry(
