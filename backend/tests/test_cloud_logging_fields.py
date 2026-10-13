@@ -45,6 +45,13 @@ if TYPE_CHECKING:
 
 PROJECT = "demo-project"
 TRACE_ID = "105445aa7843bc8bf206b12000100000"
+TRACE_FIELDS = frozenset(
+    {
+        "logging.googleapis.com/trace",
+        "logging.googleapis.com/spanId",
+        "logging.googleapis.com/trace_sampled",
+    }
+)
 _LOGGER = "cloud_logging_fields_test"
 _BACKEND_DIR = Path(__file__).resolve().parent.parent
 
@@ -189,7 +196,7 @@ class TestTraceCorrelation:
             TestClient(_build_app()).get("/patients/p-1", headers={"X-Cloud-Trace-Context": header})
 
         (line,) = _records(buf)
-        assert "logging.googleapis.com/trace" not in line
+        assert TRACE_FIELDS.isdisjoint(line)
         assert line["severity"] == "ERROR"
 
     def test_no_project_id_means_no_trace_field(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -200,7 +207,7 @@ class TestTraceCorrelation:
             )
 
         (line,) = _records(buf)
-        assert not any(key.startswith("logging.googleapis.com/") for key in line)
+        assert TRACE_FIELDS.isdisjoint(line)
 
     def test_the_trace_does_not_outlive_the_request(self) -> None:
         TestClient(_build_app()).get(
@@ -262,7 +269,7 @@ class TestErrorReportingEvent:
         event = json.loads(JSONFormatter().format(record))
         assert event["@type"] == REPORTED_ERROR_EVENT_TYPE
         assert "context" not in event
-        assert "logging.googleapis.com/trace" not in event
+        assert TRACE_FIELDS.isdisjoint(event)
 
     def test_a_warning_with_an_exception_is_not_an_error_event(self) -> None:
         try:
