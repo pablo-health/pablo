@@ -39,6 +39,7 @@ describe("formatAuditAction", () => {
   it("reads an action as a sentence", () => {
     expect(formatAuditAction("patient_viewed")).toBe("Patient viewed")
     expect(formatAuditAction("session_transcript_uploaded")).toBe("Session transcript uploaded")
+    expect(formatAuditAction("signed_in")).toBe("Signed in")
   })
 
   it("names the person in the clinician's own word", () => {
