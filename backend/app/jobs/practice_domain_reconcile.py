@@ -70,6 +70,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Literal
 
+from ..logging_config import configure_job_logging
 from ..services.practice_domain_cloud import ServingConfig
 from ..services.practice_domain_dns import get_dns_lookup
 from ..services.practice_domain_email import email_identity_provisioner
@@ -147,7 +148,7 @@ def run(
 ) -> int:
     """One run. The keyword arguments replace the cloud, the database, the
     clock and the wait (tests)."""
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+    configure_job_logging()
     args = _parse_argv(argv)
     settings = get_settings()
     try:

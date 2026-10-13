@@ -29,6 +29,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from ..logging_config import configure_job_logging
+
 logger = logging.getLogger("hipaa_attestation")
 
 
@@ -62,7 +64,7 @@ class Evidence:
 
 
 def run() -> int:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    configure_job_logging()
 
     gcs_bucket = os.environ.get("COMPLIANCE_REPORT_BUCKET")
     project_id = os.environ.get("GCP_PROJECT_ID") or os.environ.get(
