@@ -17,6 +17,7 @@ import {
   type DraftNotice,
 } from "@/lib/draftNotices"
 import { unwatchDraft, useWatchedDrafts, watchDraft } from "@/lib/draftWatch"
+import { refreshDashboard } from "./dashboardFreshness"
 import { useSessionList } from "./useSessions"
 
 /** How often the session list is re-read for drafts started elsewhere (a recording). */
@@ -84,6 +85,7 @@ export function useDraftNotices(): {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- a notice is raised in response to polled data arriving
     setNotices((current) => [...landed, ...current].slice(0, MAX_NOTICES))
     void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.lists() })
+    void refreshDashboard(queryClient)
   }, [drafts, queryClient])
 
   const dismiss = useCallback((sessionId: string) => {

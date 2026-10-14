@@ -16,6 +16,7 @@ import {
 } from "@/lib/api/outsideSessions"
 import { queryKeys } from "@/lib/api/queryKeys"
 import { calendarFreshness } from "./calendarFreshness"
+import { withDashboard } from "./dashboardFreshness"
 import { GOOGLE_CALENDAR_STATUS_KEY } from "./useGoogleCalendarStatus"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
 
@@ -54,7 +55,7 @@ export function useAutoBooked() {
 export function useUndoAutoBooked() {
   return useAuthMutation<unknown, string>({
     mutationFn: (appointmentId) => cancelAppointment(appointmentId),
-    invalidateKeys: [queryKeys.appointments.all],
+    invalidateKeys: withDashboard([queryKeys.appointments.all]),
   })
 }
 
@@ -70,7 +71,7 @@ export function useAnswerOutsideSessions() {
   return useAuthMutation<OutsideAnswerResult, OutsideAnswer[]>({
     mutationFn: (answers) => answerOutsideSessions(answers),
     // Appointments appear, open rows go, and a new client may join the list.
-    invalidateKeys: [queryKeys.appointments.all, queryKeys.patients.all],
+    invalidateKeys: withDashboard([queryKeys.appointments.all, queryKeys.patients.all]),
   })
 }
 
@@ -83,6 +84,6 @@ export function useAnswerOutsideSessions() {
 export function useSyncCalendarsNow() {
   return useAuthMutation<CalendarSyncResult, void>({
     mutationFn: () => syncCalendarsNow(),
-    invalidateKeys: [queryKeys.appointments.all, GOOGLE_CALENDAR_STATUS_KEY],
+    invalidateKeys: withDashboard([queryKeys.appointments.all, GOOGLE_CALENDAR_STATUS_KEY]),
   })
 }

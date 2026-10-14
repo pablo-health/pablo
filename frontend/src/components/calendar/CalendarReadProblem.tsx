@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { AlertCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { refreshDashboard } from "@/hooks/dashboardFreshness"
 import {
   followedCalendarGone,
   GOOGLE_CALENDAR_STATUS_KEY,
@@ -105,6 +106,7 @@ export function useFinishReconnect(enabled = true): string | null {
     const refresh = () => {
       queryClient.invalidateQueries({ queryKey: GOOGLE_CALENDAR_STATUS_KEY })
       queryClient.invalidateQueries({ queryKey: queryKeys.appointments.all })
+      void refreshDashboard(queryClient)
     }
     completeGoogleCalendarConnect(code, params.get("state") ?? "", returnUri(), selection).then(
       () => {
