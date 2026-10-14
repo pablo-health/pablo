@@ -33,9 +33,13 @@ if TYPE_CHECKING:
 
     from fastapi import Request, Response
     from sqlalchemy.orm import Session
-    from starlette.types import ASGIApp
+    from starlette.types import ASGIApp, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
+
+#: Where ``dispatch`` leaves the request's session for ``__call__`` to finish
+#: once the whole response, background tasks included, has run.
+_SCOPE_SESSION_KEY = "pablo.db_session"
 
 #: The health endpoint's path. A request to it turned away here answers with
 #: the same body the health handler uses, so a probe reads the same thing
@@ -235,11 +239,46 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
     def __init__(self, app: ASGIApp) -> None:
         super().__init__(app)
 
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Run the request, then end whatever the session began after ``dispatch`` let go.
+
+        ``dispatch`` commits and closes the session when ``call_next`` returns,
+        which is as soon as the route's response HEADERS are ready. A streaming
+        body that reads while it streams, and a ``BackgroundTask`` attached to
+        the response, both run after that, in the route's context, holding the
+        same ``Session``. A closed session is reusable: their first statement
+        begins a new transaction on a freshly checked-out connection, and
+        nothing ended it. The connection sat ``idle in transaction`` until the
+        garbage collector freed the session or Postgres's
+        ``idle_in_transaction_session_timeout`` killed the backend, and the
+        next request to draw it from the pool failed on a closed socket. Any
+        write made there (an audit row recorded after an export finished) was
+        never committed.
+
+        ``BaseHTTPMiddleware.__call__`` returns only once the downstream app
+        has finished, background tasks included, so this is the point where
+        nothing can touch the session again.
+        """
+        if scope["type"] != "http":
+            await super().__call__(scope, receive, send)
+            return
+        try:
+            await super().__call__(scope, receive, send)
+        except BaseException:
+            session = scope.pop(_SCOPE_SESSION_KEY, None)
+            if session is not None:
+                await run_in_threadpool(self._discard_after_response, session)
+            raise
+        session = scope.pop(_SCOPE_SESSION_KEY, None)
+        if session is not None and session.in_transaction():
+            await run_in_threadpool(self._finish_after_response, session)
+
     async def dispatch(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         session = get_session_factory()()
         _request_session.set(session)
+        request.scope[_SCOPE_SESSION_KEY] = session
 
         # The prelude below verifies the credential against the identity
         # provider (a network round trip, because `check_revoked=True`) and
@@ -358,6 +397,27 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
             unresolved_reason = reason
         set_tenant_schema(session, schema)
         return schema, unresolved_reason
+
+    @classmethod
+    def _finish_after_response(cls, session: Session) -> None:
+        """Commit work done after the response started, under the same guard as the request's."""
+        try:
+            if session.dirty or session.new or session.deleted:
+                cls._assert_tenant_isolation(session)
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    @staticmethod
+    def _discard_after_response(session: Session) -> None:
+        """Roll back whatever a failed post-response step began, and release the connection."""
+        try:
+            session.rollback()
+        finally:
+            session.close()
 
     @staticmethod
     def _assert_tenant_isolation(session: Session) -> None:
