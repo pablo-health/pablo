@@ -10,10 +10,13 @@ change the chart would be wrong without.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import date
+from pathlib import Path
 
 import pytest
+from app.chart_proposals import materiality
 from app.chart_proposals.drafting import cited_lines, material, said_this_visit
 from app.chart_proposals.materiality import (
     CitedLine,
@@ -309,6 +312,130 @@ def test_a_restatement_a_passing_event_or_a_misplaced_fact_is_not_offered(case: 
 @pytest.mark.parametrize("case", OFFERED, ids=lambda c: c.name)
 def test_a_lasting_change_the_client_or_the_dictation_states_is_offered(case: Case) -> None:
     assert _verdict(case).admitted
+
+
+# --- A job loss said in the client's words ------------------------------------------------
+
+LIBRARY = "Works full time at the library."
+LET_GO = "Yes, a big one. I don't work at the library anymore. They let me go in March."
+LOOKING = "No, I'm not working right now. I'm looking."
+
+JOB_LOSS = {
+    0: "[00:01] Therapist: Anything change with work since we last met?",
+    1: f"[00:06] Client: {LET_GO}",
+    2: "[00:14] Therapist: I'm sorry. Are you working anywhere now?",
+    3: f"[00:18] Client: {LOOKING}",
+}
+
+JOB_LOSS_PROPOSALS = [
+    "No longer works at the library; let go in March. Not currently working; looking for work.",
+    (
+        "Previously worked full time at the library; let go in March. Not currently working; "
+        "looking for work."
+    ),
+    (
+        "Worked full time at the library until March, when they let the client go; not currently "
+        "working, looking for work."
+    ),
+    "Laid off from the library in March; unemployed and looking.",
+    "Worked full time at the library until March; not currently working.",
+]
+
+
+@pytest.mark.parametrize("proposed", JOB_LOSS_PROPOSALS)
+def test_a_job_loss_the_client_tells_in_their_own_words_is_offered(proposed: str) -> None:
+    proposal = DraftedProposal(
+        field_key="work_school",
+        proposed_text=proposed,
+        what_changed="",
+        evidence=(Evidence(1, JOB_LOSS[1]), Evidence(3, JOB_LOSS[3])),
+    )
+    chart = ChartContext(
+        allergy_status="nkda",
+        history=(ChartHistoryField("work_school", LIBRARY, date(2026, 1, 9)),),
+    )
+    statements = Statements(
+        fields=(
+            Statement("work_school", stated="let go in March; not working", segment_ids=(1, 3)),
+        )
+    )
+    said = said_this_visit({"work_school"}, statements, None)
+    offered, considered = material([proposal], chart, JOB_LOSS, said)
+    assert (offered, considered) == ([proposal], ())
+
+
+def _work(proposed: str, *lines: str) -> Verdict:
+    return _verdict(
+        Case("", "work_school", LIBRARY, proposed, tuple((t, CLIENT) for t in lines), None)
+    )
+
+
+def test_a_split_phrase_the_client_says_grounds_the_phrase_the_note_writes() -> None:
+    assert _work("Let go from the library in March.", "They let me go in March.").admitted
+    assert _work("Laid off from the library in March.", "They laid me off in March.").admitted
+    assert _work("Lost job at the library.", "I lost my job at the library.").admitted
+
+
+def test_an_end_the_client_says_grounds_a_change_of_work_and_the_reverse() -> None:
+    assert _work("Laid off from the library in March.", "I don't work there anymore.").admitted
+    assert _work("No longer works at the library.", "They laid me off in March.").admitted
+    assert _work("Worked at the library until March 2026.", "I'm not there anymore.").admitted
+
+
+def test_a_word_too_general_to_be_a_change_does_not_ground_one() -> None:
+    assert _work("Laid off from the library.", "I'm so tired right now.") == Verdict(
+        admitted=False, reason="transient"
+    )
+
+
+SLEEP_AID = Case(
+    "",
+    "medical_history",
+    "Insomnia; takes an over-the-counter sleep aid at night.",
+    "Sleep aid not working; still waking at 3 am.",
+    (("The sleep aid isn't working. I'm still up at three.", CLIENT),),
+    None,
+)
+
+
+def test_a_work_marker_outside_work_is_not_a_change_of_state() -> None:
+    # Novelty and placement pass ("3" and "waking" are new; nothing else on the chart
+    # holds them), so the lasting rule is the one that refuses: "not working" is
+    # scoped to work_school, and nothing else in the proposal is a marker.
+    assert _verdict(SLEEP_AID) == Verdict(admitted=False, reason="transient")
+
+
+def test_the_same_words_in_work_school_are_a_change_of_work() -> None:
+    in_work = Case(
+        "",
+        "work_school",
+        LIBRARY,
+        SLEEP_AID.proposed,
+        SLEEP_AID.cited,
+        None,
+    )
+    assert _verdict(in_work).admitted
+
+
+def test_a_contraction_reads_as_not() -> None:
+    assert words("isn't working") == words("is not working")
+    assert words("can't") == ["can", "not"]
+    assert words("won't") == ["will", "not"]
+
+
+def test_markers_ground_only_their_kinds_and_none_is_also_a_passing_event() -> None:
+    vocab = lists()
+    raw = json.loads(Path(materiality.__file__).with_name("materiality.json").read_text("utf-8"))
+    assert raw["state_markers"]["groups"]["work"]["fields"] == ["work_school"]
+    assert vocab.group_fields["work"] == {"work_school"}
+    assert vocab.group_fields["end"] is None
+    assert ("quit",) in vocab.state_groups["end"]
+    assert vocab.grounds["work"] == {"work", "start", "end"}
+    assert vocab.grounds["time"] == {"time", "start", "end"}
+    assert vocab.grounds["death"] == {"death"}
+    assert not set(vocab.state) & set(vocab.transient)
+    for marker in ("not working", "not currently working", "out of work", "between jobs"):
+        assert tuple(words(marker)) in vocab.state_groups["work"]
 
 
 # --- Normalising --------------------------------------------------------------------------

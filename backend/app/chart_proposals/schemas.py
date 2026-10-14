@@ -75,12 +75,23 @@ class ChartProposalResponse(BaseModel):
     created_at: datetime
 
 
+class ConsideredResponse(BaseModel):
+    """A history proposal the call made and did not offer: its field and why."""
+
+    field_key: str
+    reason: str
+    """``novelty``, ``transient``, ``interview``, ``present-not-past`` or ``elsewhere``."""
+
+
 class ProposalRunResponse(BaseModel):
     status: str
     """``ok``, ``failed`` (the note was not checked) or ``skipped``."""
     computed_at: datetime
     retryable: bool
     """Whether the call can be run again: a note drafted from a session's transcript."""
+    considered: list[ConsideredResponse]
+    """The history proposals the call made and did not offer, each with its reason. The
+    text it proposed stays on the run record and is not sent."""
 
 
 class ChartProposalsResponse(BaseModel):
@@ -96,6 +107,9 @@ def run_response(run: ProposalRun | None, note: Note) -> ProposalRunResponse | N
         status=run.status,
         computed_at=run.computed_at,
         retryable=run.status != "skipped" and note.session_id is not None,
+        considered=[
+            ConsideredResponse(field_key=c.field_key, reason=c.reason) for c in run.considered
+        ],
     )
 
 

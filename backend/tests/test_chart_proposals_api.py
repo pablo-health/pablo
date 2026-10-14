@@ -17,7 +17,7 @@ from app.chart_proposals.dependencies import (
     get_chart_proposal_repository,
     get_proposal_medication_repository,
 )
-from app.chart_proposals.models import DraftedProposal, Evidence, MedicationChange
+from app.chart_proposals.models import Considered, DraftedProposal, Evidence, MedicationChange
 from app.chart_proposals.service import ChartProposalService
 from app.chart_proposals.step import ChartProposalStep
 from app.main import app
@@ -413,6 +413,56 @@ def test_a_note_type_the_call_does_not_run_on_is_skipped_not_failed(
     listed = client.get(f"/api/notes/{note.id}/chart-proposals").json()
     assert (listed["run"]["status"], listed["run"]["retryable"]) == ("skipped", False)
     assert client.post(f"/api/notes/{note.id}/chart-proposals/retry").status_code == 409
+
+
+def test_the_run_says_which_fields_were_considered_and_why_but_not_what_was_proposed(
+    client: TestClient,
+    mock_repo: InMemoryPatientRepository,
+    mock_session_repo: InMemoryTherapySessionRepository,
+    mock_notes_repo: InMemoryNotesRepository,
+    mock_user_id: str,
+    chart: tuple[InMemoryChartHistoryRepository, InMemoryChartProposalRepository],
+) -> None:
+    _, proposals = chart
+    registry = app.dependency_overrides[notes_routes.get_registry]()
+    note = _drafted_session_note(
+        _Failing(registry),
+        FOLLOW_UP,
+        mock_repo,
+        mock_session_repo,
+        mock_notes_repo,
+        mock_user_id,
+        chart,
+    )
+    run = proposals.run(note.id)
+    assert run is not None
+    withheld = "Therapy intake appointment scheduled for next week."
+    proposals.record_run(
+        replace(
+            run,
+            status="ok",
+            error_class=None,
+            considered=(
+                Considered(
+                    field_key="psychotherapy_history",
+                    proposed_text=withheld,
+                    what_changed="Intake booked.",
+                    evidence_segment_ids=(3,),
+                    origin="transcript",
+                    reason="transient",
+                ),
+            ),
+        )
+    )
+
+    response = client.get(f"/api/notes/{note.id}/chart-proposals")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["run"]["considered"] == [
+        {"field_key": "psychotherapy_history", "reason": "transient"}
+    ]
+    assert withheld not in response.text
+    assert "Intake booked." not in response.text
 
 
 def test_medication_changes_are_accepted_against_the_list_and_never_rewritten(
