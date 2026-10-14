@@ -74,7 +74,8 @@ test("the practice chooses to delete audio when the note is signed", async () =>
       r.request().method() === "PUT" &&
       r.ok(),
   )
-  await page.getByRole("button", { name: "Save" }).click()
+  // The video-sessions card on the same page has a Save of its own.
+  await page.getByRole("region", { name: "Audio retention" }).getByRole("button", { name: "Save" }).click()
   expect((await (await saved).json()).audio_retention_days).toBe(0)
   await expect(page.getByRole("status")).toHaveText("Saved")
 

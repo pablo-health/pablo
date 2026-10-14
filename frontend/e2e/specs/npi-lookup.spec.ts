@@ -120,8 +120,18 @@ test.describe("when the answer is not a clean yes", () => {
 })
 
 test.describe("the two ways past it", () => {
-  test("she can find herself by name and state", async ({ signedInPage: page }) => {
+  test("she can find herself by name and state", async ({ signedInPage: page, api }) => {
+    // The tests above leave an NPI on her profile, and the profile cannot be
+    // emptied again, so say which one: a number that turns out not to be
+    // hers. Waiting for its card first means the screen has finished
+    // arriving before she starts — clicking into the form while her profile
+    // is still loading raced the lookup that replaces it.
+    await api.request("PATCH", "/api/users/me/professional-info", {
+      npi_number: "1999999984",
+    })
     await page.goto(SETUP)
+    await expect(page.getByText("TEST THERAPIST, LCSW")).toBeVisible()
+    await page.getByRole("button", { name: /that.s not me/i }).click()
 
     await page.getByRole("button", { name: /don.t know my npi/i }).click()
     await page.getByLabel("Last name").fill("THERAPIST")
