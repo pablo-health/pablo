@@ -3147,7 +3147,9 @@ CREATE POLICY rls_audit_actor_access ON __TENANT_SCHEMA__.audit_logs USING (((us
 
 
 
-CREATE POLICY rls_audit_owner_client_read ON __TENANT_SCHEMA__.audit_logs FOR SELECT USING (((patient_id IS NOT NULL) AND __TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying) AND (EXISTS ( SELECT 1
+CREATE POLICY rls_audit_owner_client_read ON __TENANT_SCHEMA__.audit_logs FOR SELECT USING (((patient_id IS NOT NULL) AND (EXISTS ( SELECT 1
+   FROM __TENANT_SCHEMA__.patient_clinicians pc
+  WHERE ((pc.patient_id = audit_logs.patient_id) AND ((pc.user_id)::text = current_setting('app.current_user_id'::text, true)) AND ((pc.expires_at IS NULL) OR (pc.expires_at > now()))))) AND (EXISTS ( SELECT 1
    FROM platform.practices p
   WHERE (((p.owner_user_id)::text = current_setting('app.current_user_id'::text, true)) AND ((to_regclass(((p.schema_name)::text || '.audit_logs'::text)))::oid = ('__TENANT_SCHEMA__.audit_logs'::regclass)::oid))))));
 

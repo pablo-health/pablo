@@ -14,7 +14,15 @@ reads and nothing else: a row is also visible when
   * it is about a client (``patient_id`` is set),
   * the reader is the practice's owner — ``platform.practices.owner_user_id``
     for the practice whose schema holds this table, and
-  * the reader has access to that client (``has_patient_access``).
+  * the reader holds a live grant to that client in ``patient_clinicians``
+    — the same test ``has_patient_access`` makes.
+
+Every name in the policy is schema-qualified. It is evaluated wherever an
+audit row is read, which includes the RETURNING of an INSERT made from a
+session that is not scoped to this tenant, so it cannot depend on the
+caller's search_path. That is why it spells the grant check out instead
+of calling ``has_patient_access``, whose body finds ``patient_clinicians``
+unqualified.
 
 INSERT, UPDATE and DELETE are untouched: ``rls_audit_actor_access`` still
 decides who may write a row in whose name, and the append-only trigger
@@ -61,8 +69,10 @@ def owner_client_read_using(schema: str) -> str:
     """
     return (
         "patient_id IS NOT NULL "  # noqa: S608
-        f"AND {schema}.has_patient_access("
-        "patient_id, current_setting('app.current_user_id', true)) "
+        f"AND EXISTS (SELECT 1 FROM {schema}.patient_clinicians pc "
+        f"WHERE pc.patient_id = {schema}.audit_logs.patient_id "
+        "AND pc.user_id::text = current_setting('app.current_user_id', true) "
+        "AND (pc.expires_at IS NULL OR pc.expires_at > now())) "
         "AND EXISTS (SELECT 1 FROM platform.practices p "
         "WHERE p.owner_user_id::text = current_setting('app.current_user_id', true) "
         f"AND to_regclass(p.schema_name || '.audit_logs') = '{schema}.audit_logs'::regclass)"

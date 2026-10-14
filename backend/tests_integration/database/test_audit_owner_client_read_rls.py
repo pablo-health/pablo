@@ -259,6 +259,52 @@ class TestWhatTheOwnerReads:
         assert {e.actor_type for e in entries} == {"clinician", "patient"}
 
 
+class TestTheCallersSearchPathDoesNotMatter:
+    """The policy is evaluated wherever an audit row is read, including the
+    RETURNING of an INSERT, and some audit writes happen from a session that
+    is not scoped to the tenant's search_path. A policy that resolved any
+    name through the search_path would raise there — and a caller that
+    swallows audit failures would then silently stop recording."""
+
+    def test_an_insert_returning_from_an_unscoped_session_succeeds(
+        self, engine: Engine, cast: _Cast
+    ) -> None:
+        row_id = str(uuid.uuid4())
+        with engine.begin() as conn:
+            conn.execute(text("SET search_path = public"))
+            conn.execute(text("SELECT set_config('app.current_user_id', :u, false)"), {"u": _OWNER})
+            returned = conn.execute(
+                text(
+                    f'INSERT INTO {cast.schema}.audit_logs (id, "timestamp", expires_at,'  # noqa: S608
+                    " user_id, actor_type, action, resource_type, resource_id, patient_id)"
+                    " VALUES (CAST(:id AS uuid), now(), now() + interval '1 day', :u,"
+                    " 'clinician', 'patient_viewed', 'patient', 'x', CAST(:p AS uuid))"
+                    " RETURNING id"
+                ),
+                {"id": row_id, "u": _OWNER, "p": cast.client_a},
+            ).scalar_one()
+            conn.execute(text("SELECT set_config('app.current_user_id', '', false)"))
+
+        assert str(returned) == row_id
+
+    def test_an_unscoped_read_still_sees_what_the_owner_may_see(
+        self, engine: Engine, cast: _Cast
+    ) -> None:
+        with engine.begin() as conn:
+            conn.execute(text("SET search_path = public"))
+            conn.execute(text("SELECT set_config('app.current_user_id', :u, false)"), {"u": _OWNER})
+            visible = {
+                str(r)
+                for r in conn.execute(
+                    text(f"SELECT id FROM {cast.schema}.audit_logs")  # noqa: S608
+                ).scalars()
+            }
+            conn.execute(text("SELECT set_config('app.current_user_id', '', false)"))
+
+        assert cast.rows["client_a_self"] in visible
+        assert cast.rows["colleague_on_b"] not in visible
+
+
 class TestNobodyElseGainsAnything:
     def test_a_clinician_who_is_not_the_owner_reads_only_their_own_rows(
         self, engine: Engine, cast: _Cast

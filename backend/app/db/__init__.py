@@ -2116,12 +2116,22 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
             # qualified names, which a regclass literal is and a string
             # literal is not. Same text as migration ``a7e3c5d19b42``;
             # ``test_audit_policy_parity`` holds the two together.
+            #
+            # Every name in it is schema-qualified, because it is evaluated
+            # wherever an audit row is read — including the RETURNING of an
+            # INSERT made from a session not scoped to this tenant. So it
+            # spells out the grant check rather than calling
+            # ``has_patient_access``, whose body finds ``patient_clinicians``
+            # through the caller's search_path.
+            #
             # ``qualified`` is built from the validated schema name and a
             # fixed table name; not user input.
             owner_client_read = (
                 "patient_id IS NOT NULL "  # noqa: S608
-                f"AND {schema_name}.has_patient_access("
-                "patient_id, current_setting('app.current_user_id', true)) "
+                f"AND EXISTS (SELECT 1 FROM {schema_name}.patient_clinicians pc "
+                f"WHERE pc.patient_id = {qualified}.patient_id "
+                "AND pc.user_id::text = current_setting('app.current_user_id', true) "
+                "AND (pc.expires_at IS NULL OR pc.expires_at > now())) "
                 "AND EXISTS (SELECT 1 FROM platform.practices p "
                 "WHERE p.owner_user_id::text = current_setting('app.current_user_id', true) "
                 f"AND to_regclass(p.schema_name || '.audit_logs') = '{qualified}'::regclass)"
