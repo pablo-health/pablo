@@ -158,13 +158,15 @@ test.describe("AI-tools consent", () => {
     const row = formRow(page, formName)
     await row.getByRole("button", { name: formName, exact: true }).click()
 
-    await row.getByRole("button", { name: "Start from a template" }).click()
+    await row.getByRole("button", { name: "Add a document" }).click()
     await row.getByRole("button", { name: TEMPLATE }).click()
 
     // Added and saved: the question is on the form, and the practice's copy
     // of the document is in its documents list to edit like any other.
     await expect(row.getByText("Session transcription")).toBeVisible()
-    await expect(page.getByRole("button", { name: TEMPLATE }).first()).toBeVisible()
+    const documents = page.getByRole("region", { name: "Documents in your packets" })
+    await documents.getByRole("button", { name: /^Show \d+ documents?$/ }).click()
+    await expect(documents.getByRole("button", { name: new RegExp(TEMPLATE) }).first()).toBeVisible()
 
     const versionPath = `/api/intake/templates/${template.id}/versions/${template.versions[0].id}`
     const readVersion = () => api.get<IntakeVersionDetail>(versionPath)

@@ -3,6 +3,7 @@
 "use client"
 
 import { Plus, X } from "lucide-react"
+import { useState, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -19,8 +20,8 @@ import {
   DOCUMENT_PICKER_LABEL,
   MEASURE_NEEDS_PERMISSION,
   NO_BLANK_FORM_CHOICE,
-  NO_BLANK_FORMS,
   NO_PUBLISHED_DOCUMENTS,
+  WRITE_NEW_DOCUMENT,
   cardCollectFieldsHelp,
 } from "./intakeCopy"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
@@ -51,6 +52,23 @@ interface ItemConfigFormProps {
    * list, and this component renders what it is given.
    */
   blankForms?: OfferableBlankForm[]
+  /**
+   * A way to write a new document from a consent question, handed the
+   * function that points the question at it. Absent, the question can only
+   * pick from `documents`. The card that owns the packet supplies it, since
+   * writing one means calling the server.
+   */
+  renderNewDocument?: (choose: (documentKey: string, title?: string) => void) => ReactNode
+  /**
+   * Which published wording of the chosen document to ask for, newest by
+   * default. Supplied by the card that owns the packet, since the versions
+   * come from the server.
+   */
+  renderVersionPicker?: (
+    documentKey: string,
+    chosen: string | undefined,
+    choose: (versionId: string | undefined) => void,
+  ) => ReactNode
 }
 
 /** One document a consent item can point at. */
@@ -163,8 +181,15 @@ export function ItemConfigForm({
   documents = [],
   instruments = [],
   blankForms = [],
+  renderNewDocument,
+  renderVersionPicker,
 }: ItemConfigFormProps) {
   const people = usePeopleTerm()
+  const [writing, setWriting] = useState(false)
+  // A chosen wording belongs to one document, so picking another drops it
+  // rather than carrying a version the server would refuse.
+  const pickDocument = (documentKey: string) =>
+    onChange({ ...config, document_key: documentKey, chosen_version_id: undefined })
   const set = (key: string, value: unknown) => onChange({ ...config, [key]: value })
   const setNumber = (key: string, raw: string) =>
     set(key, raw === "" ? undefined : Number(raw))
@@ -392,14 +417,16 @@ export function ItemConfigForm({
       // signs is decided when the form is published, so a practice that
       // revises a document afterwards does not have to touch the form.
       return (
-        <div>
+        <div className="space-y-2">
           <Label htmlFor={`${idPrefix}-document`}>{DOCUMENT_PICKER_LABEL}</Label>
           {documents.length === 0 ? (
-            <p className="text-[12.5px] text-muted-foreground">{NO_PUBLISHED_DOCUMENTS}</p>
+            !renderNewDocument && (
+              <p className="text-[12.5px] text-muted-foreground">{NO_PUBLISHED_DOCUMENTS}</p>
+            )
           ) : (
             <Select
               value={text(config, "document_key")}
-              onValueChange={(value) => set("document_key", value)}
+              onValueChange={(value) => pickDocument(value)}
             >
               <SelectTrigger id={`${idPrefix}-document`} aria-label={DOCUMENT_PICKER_LABEL}>
                 <SelectValue placeholder="Choose a document" />
@@ -413,6 +440,24 @@ export function ItemConfigForm({
               </SelectContent>
             </Select>
           )}
+          {renderVersionPicker &&
+            text(config, "document_key") &&
+            renderVersionPicker(
+              text(config, "document_key"),
+              text(config, "chosen_version_id") || undefined,
+              (versionId) => set("chosen_version_id", versionId),
+            )}
+          {renderNewDocument &&
+            (writing ? (
+              renderNewDocument((documentKey) => {
+                pickDocument(documentKey)
+                setWriting(false)
+              })
+            ) : (
+              <Button type="button" variant="outline" size="sm" onClick={() => setWriting(true)}>
+                {WRITE_NEW_DOCUMENT}
+              </Button>
+            ))}
         </div>
       )
 
@@ -462,31 +507,31 @@ export function ItemConfigForm({
       // What to ask for is the item's own question. What is settable is the
       // paper fallback: a practice that still works from paper can offer
       // its own form to download before asking for the filled-in copy back.
+      // With no blank copies on file there is nothing to offer, so the
+      // setting stays out of the way rather than pointing at an upload this
+      // screen doesn't have.
+      if (blankForms.length === 0) return null
       return (
         <div>
           <Label htmlFor={`${idPrefix}-blank-form`}>{BLANK_FORM_PICKER_LABEL}</Label>
-          {blankForms.length === 0 ? (
-            <p className="text-[12.5px] text-muted-foreground">{NO_BLANK_FORMS}</p>
-          ) : (
-            <Select
-              value={text(config, "blank_form_id") || NO_BLANK_FORM}
-              onValueChange={(value) =>
-                set("blank_form_id", value === NO_BLANK_FORM ? undefined : value)
-              }
-            >
-              <SelectTrigger id={`${idPrefix}-blank-form`} aria-label={BLANK_FORM_PICKER_LABEL}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NO_BLANK_FORM}>{NO_BLANK_FORM_CHOICE}</SelectItem>
-                {blankForms.map((form) => (
-                  <SelectItem key={form.id} value={form.id}>
-                    {form.title}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
+          <Select
+            value={text(config, "blank_form_id") || NO_BLANK_FORM}
+            onValueChange={(value) =>
+              set("blank_form_id", value === NO_BLANK_FORM ? undefined : value)
+            }
+          >
+            <SelectTrigger id={`${idPrefix}-blank-form`} aria-label={BLANK_FORM_PICKER_LABEL}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_BLANK_FORM}>{NO_BLANK_FORM_CHOICE}</SelectItem>
+              {blankForms.map((form) => (
+                <SelectItem key={form.id} value={form.id}>
+                  {form.title}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       )
 

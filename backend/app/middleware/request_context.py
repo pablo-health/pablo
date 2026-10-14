@@ -10,7 +10,10 @@ don't leak across requests sharing the same worker thread.
 Upstream trace correlation: if the request carries a recognized trace
 header, we reuse the trace_id as our request_id so a single id pins a
 log line to the upstream LB / sidecar / OTel-instrumented caller.
-Headers are tried in priority order:
+The same headers also give Cloud Logging its ``trace`` / ``spanId``
+fields (see ``resolve_log_trace``), which nest every app line of a
+request under that request's own log entry. For the request id, headers
+are tried in priority order:
 
 * ``traceparent`` — W3C Trace Context (the OpenTelemetry standard,
   emitted by any OTel-instrumented client and most modern proxies).
@@ -33,6 +36,11 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.routing import Match
 
 from ..logging_config import (
+    LogHttpRequest,
+    LogTrace,
+    begin_request_log_identity,
+    end_request_log_identity,
+    log_http_request_var,
     request_id_var,
     route_template_var,
     tenant_id_var,
@@ -108,6 +116,73 @@ _TRACE_PARSERS: tuple[tuple[str, Callable[[str], str | None]], ...] = (
 )
 
 
+_HEX_DIGITS = frozenset("0123456789abcdef")
+_SPAN_ID_HEX_LEN = 16
+_MAX_SPAN_ID = 2**64 - 1
+
+
+def _is_hex(value: str, length: int) -> bool:
+    return len(value) == length and set(value) <= _HEX_DIGITS
+
+
+def _is_id(value: str, length: int) -> bool:
+    """A trace or span id: fixed-width lowercase hex, and not all zeros (invalid)."""
+    return _is_hex(value, length) and value != "0" * length
+
+
+def _gcp_log_trace(value: str) -> LogTrace | None:
+    """``X-Cloud-Trace-Context`` as Cloud Logging's trace / spanId pair.
+
+    The header's span id is decimal; ``LogEntry.spanId`` wants it as 16 hex
+    characters. ``o=1`` is the sampled flag.
+    """
+    head, _, options = value.strip().partition(";")
+    trace_id, _, span = head.partition("/")
+    trace_id = trace_id.lower()
+    if not _is_id(trace_id, _W3C_TRACE_ID_HEX_LEN):
+        return None
+    span_id: str | None = None
+    if span.isdigit() and 0 < int(span) <= _MAX_SPAN_ID:
+        span_id = f"{int(span):016x}"
+    sampled: bool | None = None
+    if options.startswith("o="):
+        sampled = options[2:].strip() == "1"
+    return LogTrace(trace_id=trace_id, span_id=span_id, sampled=sampled)
+
+
+def _w3c_log_trace(value: str) -> LogTrace | None:
+    """W3C ``traceparent`` as Cloud Logging's trace / spanId pair."""
+    parts = value.strip().split("-")
+    if len(parts) < _W3C_TRACEPARENT_FIELDS:
+        return None
+    trace_id, span_id, flags = parts[1], parts[2], parts[3]
+    if not _is_id(trace_id, _W3C_TRACE_ID_HEX_LEN):
+        return None
+    return LogTrace(
+        trace_id=trace_id,
+        span_id=span_id if _is_id(span_id, _SPAN_ID_HEX_LEN) else None,
+        sampled=int(flags, 16) & 1 == 1 if _is_hex(flags, 2) else None,
+    )
+
+
+# Google's request log takes its trace from ``X-Cloud-Trace-Context``, so it
+# goes first here; ``traceparent`` covers a proxy that only speaks W3C. AWS's
+# id is not a Cloud Trace id, so it never becomes one.
+_LOG_TRACE_PARSERS: tuple[tuple[str, Callable[[str], LogTrace | None]], ...] = (
+    (CLOUD_TRACE_HEADER, _gcp_log_trace),
+    (W3C_TRACEPARENT_HEADER, _w3c_log_trace),
+)
+
+
+def resolve_log_trace(request: Request) -> LogTrace | None:
+    """The request's trace, validated, for the log's trace / spanId fields."""
+    for header, parser in _LOG_TRACE_PARSERS:
+        value = request.headers.get(header)
+        if value and (trace := parser(value)) is not None:
+            return trace
+    return None
+
+
 def resolve_route_template(request: Request) -> str | None:
     """Return the matched route's path pattern, e.g. ``/api/patients/{id}``.
 
@@ -137,8 +212,9 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
     - Echoes the request_id on the response as ``X-Request-Id`` so
       clients (and downstream services) can pin a log line to a call.
 
-    user_id / tenant_id are populated later by the auth dependency
-    chain (see `app.auth.service._set_log_identity_context`).
+    user_id / tenant_id are populated later, once the caller is known,
+    through ``bind_log_user_id`` / ``bind_log_tenant_id`` (the database
+    session middleware and the auth dependency chain).
     """
 
     def __init__(self, app: ASGIApp) -> None:
@@ -154,6 +230,14 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         route_token = route_template_var.set(resolve_route_template(request))
         user_token = user_id_var.set(None)
         tenant_token = tenant_id_var.set(None)
+        log_identity, log_identity_token = begin_request_log_identity()
+        log_http_request = LogHttpRequest(method=request.method, trace=resolve_log_trace(request))
+        http_request_token = log_http_request_var.set(log_http_request)
+        # The unhandled-exception handler runs outside this middleware, after
+        # the contextvars below are reset, so it reads the request's identity
+        # and trace from here instead.
+        request.state.log_identity = log_identity
+        request.state.log_http_request = log_http_request
 
         start = time.perf_counter()
         status_code = 500
@@ -188,6 +272,8 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             route_template_var.reset(route_token)
             user_id_var.reset(user_token)
             tenant_id_var.reset(tenant_token)
+            log_http_request_var.reset(http_request_token)
+            end_request_log_identity(log_identity_token)
 
     @staticmethod
     def _derive_request_id(request: Request) -> str:

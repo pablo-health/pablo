@@ -64,7 +64,7 @@ class _HeldParse:
         self.seen_schema: str | None = None
         self.saw_request_session = False
 
-    def parse_soap_note(self, source_text: str) -> ParsedImportedNote:
+    def parse_note(self, source_text: str, definition: object = None) -> ParsedImportedNote:
         self.seen_schema = _current_tenant_schema.get()
         self.saw_request_session = _request_session.get() is not None
         self.entered.set()

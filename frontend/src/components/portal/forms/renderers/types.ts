@@ -116,6 +116,11 @@ export type ItemRendererProps = LiveItemProps | ReadOnlyItemProps
 export interface ReviewLabelProps {
   item: IntakeAssignmentItem
   sessionToken: string
+  /**
+   * The part heading the row sits under, when the row is that part's only
+   * document. A label that would only repeat it is left out.
+   */
+  heading?: string | null
 }
 
 export interface ItemRenderer {

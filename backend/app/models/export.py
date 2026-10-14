@@ -202,6 +202,10 @@ class MedicationStatement(BaseModel):
     id: str
     drug_name: str
     dose: str
+    frequency: str | None = Field(description="How often and when it is taken, as written.")
+    category: Literal["psychiatric", "other"] | None = Field(
+        description="Whether it is a psychiatric medication; null when not recorded."
+    )
     status: Literal["active", "discontinued", "on_hold"]
     started_on: date | None
     stopped_on: date | None

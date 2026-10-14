@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 
 #: What the patient reads. The code and how long they have, and nothing
 #: else: a text message is not the place for a name, a practice or a reason.
-OTP_MESSAGE = "Your Pablo verification code is {otp}. It expires in 15 minutes."
+OTP_MESSAGE = "Your verification code is {otp}. It expires in 15 minutes."
 
 
 @dataclass(frozen=True)

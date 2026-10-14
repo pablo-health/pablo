@@ -15,6 +15,8 @@ import { test, expect } from "../fixtures/auth"
 import { givePatient, giveWorkingHours, markCalendarSetupComplete } from "../fixtures/scenarios"
 
 const TEMPLATE_LABEL = "Psychiatric follow-up (E/M + psychotherapy)"
+/** Named apart from the built-in it adjusts, which sits in the same picker. */
+const TYPE_LABEL = "Medication follow-up"
 const BOOKS_AT = "10:00"
 
 /** Pinned so the time typed and the practice's working hours agree; see scheduling.spec.ts. */
@@ -62,8 +64,12 @@ test("a practice starts a note type from a template, tries it, saves it and book
     await expect(draft.getByText("Stand-in draft for plan.pdmp.")).toBeVisible()
 
     // Trying it saved nothing.
-    const before = await api.get<{ note_types: Array<{ label: string }> }>("/api/note-types")
-    expect(before.note_types.map((t) => t.label)).not.toContain(TEMPLATE_LABEL)
+    const before = await api.get<{ note_types: Array<{ key: string; label: string }> }>("/api/note-types")
+    expect(before.note_types.filter((t) => t.key.startsWith("custom.")).map((t) => t.label)).not.toContain(
+      TEMPLATE_LABEL,
+    )
+
+    await page.getByLabel("Note type name").fill(TYPE_LABEL)
 
     const saved = page.waitForResponse(
       (r) => new URL(r.url()).pathname.startsWith("/api/note-types/custom/") && r.request().method() === "PUT",
@@ -73,8 +79,8 @@ test("a practice starts a note type from a template, tries it, saves it and book
     expect(savedResponse.status(), await savedResponse.text()).toBe(200)
     const savedType = (await savedResponse.json()) as { key: string; version: number }
     slug = savedType.key.replace(/^custom\./, "")
-    await expect(page.getByRole("status")).toHaveText(`Saved ${TEMPLATE_LABEL}, version ${savedType.version}.`)
-    await expect(page.getByRole("button", { name: `Edit ${TEMPLATE_LABEL}` })).toBeVisible()
+    await expect(page.getByRole("status")).toHaveText(`Saved ${TYPE_LABEL}, version ${savedType.version}.`)
+    await expect(page.getByRole("button", { name: `Edit ${TYPE_LABEL}` })).toBeVisible()
 
     // Book an appointment with it, inside declared working hours.
     const patient = await givePatient(api)
@@ -93,7 +99,7 @@ test("a practice starts a note type from a template, tries it, saves it and book
 
     await page.getByRole("button", { name: /More options/ }).click()
     await page.getByRole("combobox", { name: "Note type" }).click()
-    await page.getByRole("option", { name: TEMPLATE_LABEL }).click()
+    await page.getByRole("option", { name: TYPE_LABEL }).click()
     await page.getByRole("combobox", { name: "Place of service" }).click()
     await page.getByRole("option", { name: "Telehealth" }).click()
     await page.getByLabel("Your location (telehealth)").fill("Office")

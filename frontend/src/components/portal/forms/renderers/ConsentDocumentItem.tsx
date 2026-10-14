@@ -198,7 +198,12 @@ function SignableConsent({
 
       <div
         data-testid="forms-consent-document"
-        className="prose-sm mt-4 max-h-80 overflow-y-auto rounded-md border border-neutral-200 p-4 text-sm leading-relaxed text-neutral-800"
+        // At its full height, on the page. A long document — a privacy notice
+        // runs to several screens — inside a fixed-height box is a small
+        // window scrolled with a thumb on a phone, inside a page that also
+        // scrolls. The page is what scrolls; the box to tick and the name to
+        // type follow the last line.
+        className="prose-sm mt-4 break-words rounded-md border border-neutral-200 p-4 text-sm leading-relaxed text-neutral-800"
         // The server built this by escaping the practice's text first and
         // emitting a fixed set of tags second, so there is no character it
         // could contain that arrives here as markup. See
@@ -325,7 +330,7 @@ function summaryOf(value: AnswerValue | null): string | null {
  * Read through the same query the signing screen used, so a form walked in
  * this session names its documents without a second request.
  */
-function ConsentReviewLabel({ item, sessionToken }: ReviewLabelProps) {
+function ConsentReviewLabel({ item, sessionToken, heading = null }: ReviewLabelProps) {
   const own = item.label?.trim()
   const pinned = pinnedVersionOf(item.config)
   const document = useQuery({
@@ -334,10 +339,17 @@ function ConsentReviewLabel({ item, sessionToken }: ReviewLabelProps) {
     enabled: !own && pinned !== null,
     retry: false,
   })
-  if (own) return <>{own}</>
-  if (document.data) return <>{document.data.title}</>
+  // A part that holds one document is usually named after it, and the
+  // heading above the row already says it.
+  const title = own || document.data?.title
+  if (title && heading !== null && sameTitle(title, heading)) return null
+  if (title) return <>{title}</>
   if (document.isPending && pinned !== null) return null
   return <>{CONSENT_REVIEW_LABEL}</>
+}
+
+function sameTitle(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase()
 }
 
 export const consentDocumentRenderer: ItemRenderer = {

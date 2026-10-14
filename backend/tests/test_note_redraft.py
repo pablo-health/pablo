@@ -62,8 +62,9 @@ from app.services.session_service import (
     SOAPGenerationFailedError,
     TransientSOAPGenerationError,
 )
-from app.services.structured_llm_gateway import FakeStructuredLLMGateway, StructuredCompletion
 from fastapi import HTTPException
+
+from ._answering_gateway import AnsweringGateway
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
@@ -379,9 +380,8 @@ _CAPTURED = json.loads(
 
 class TestRedraftPrompt:
     def _prompt(self, current_note: dict[str, Any] | None) -> str:
-        gateway = FakeStructuredLLMGateway(
-            default_response=StructuredCompletion(data=_CAPTURED["redrafted"])
-        )
+        # Only the prompt is read; the answer fits the type the prompt is for.
+        gateway = AnsweringGateway()
         now = datetime.now(UTC)
         patient = Patient(id="p1", first_name="A", last_name="B", created_at=now, updated_at=now)
         dictated = "\n\n".join(
@@ -430,6 +430,28 @@ class TestStart:
         assert note.status == "processing"
         assert keep is False
         assert notes_repo.get(note_id, USER).status == "processing"  # type: ignore[union-attr]  # just written
+
+    def test_new_inputs_leave_the_medical_decision_making_choices_alone(
+        self,
+        service: NoteRedraftService,
+        session_repo: InMemoryTherapySessionRepository,
+        patient_repo: InMemoryPatientRepository,
+        notes_repo: InMemoryNotesRepository,
+    ) -> None:
+        session, _ = _drafted_session(
+            session_repo,
+            patient_repo,
+            notes_repo,
+            note_type="psychiatric_follow_up",
+            content={"plan": {"follow_up": "Four weeks."}},
+            note_inputs={"place_of_service": "In office", "mdm_problems": "moderate"},
+        )
+
+        note, _keep = service.start(
+            session.id, USER, note_inputs={"place_of_service": "Telehealth", "mdm_problems": "low"}
+        )
+
+        assert note.note_inputs == {"place_of_service": "Telehealth", "mdm_problems": "moderate"}
 
     def test_an_input_the_type_refuses_is_refused(
         self, service: NoteRedraftService, drafted: tuple[TherapySession, str]

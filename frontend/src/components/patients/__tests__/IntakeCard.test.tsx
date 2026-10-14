@@ -203,7 +203,7 @@ describe("IntakeCard", () => {
     renderCard()
 
     expect(await screen.findByTestId("intake-empty")).toHaveTextContent(
-      "No forms have been sent to this client yet.",
+      "No packets have been sent to this client yet.",
     )
     expect(screen.getByTestId("send-intake-form-button")).toBeInTheDocument()
   })

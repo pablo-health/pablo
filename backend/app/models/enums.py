@@ -31,11 +31,55 @@ class VideoPlatform(StrEnum):
     NONE = "none"
 
 
+_VIDEO_PLATFORM_LABELS: dict[str, VideoPlatform] = {
+    "zoom": VideoPlatform.ZOOM,
+    "teams": VideoPlatform.TEAMS,
+    "microsoft_teams": VideoPlatform.TEAMS,
+    "msteams": VideoPlatform.TEAMS,
+    "meet": VideoPlatform.MEET,
+    "google_meet": VideoPlatform.MEET,
+    "googlemeet": VideoPlatform.MEET,
+    "hangouts": VideoPlatform.MEET,
+    "none": VideoPlatform.NONE,
+}
+
+
+def video_platform_from_label(label: str | None) -> VideoPlatform | None:
+    """Read an appointment's free-text platform label as a ``VideoPlatform``.
+
+    An appointment's platform is whatever the scheduling form offered when it
+    was booked ("google_meet", "doxy", "other", a calendar import's own name),
+    so it is read leniently and never raises. A label with no matching value
+    is ``None`` — the platform is unknown — rather than ``NONE``, which would
+    claim the visit was not a video call.
+    """
+    if label is None:
+        return None
+    return _VIDEO_PLATFORM_LABELS.get(label.strip().lower())
+
+
 class SessionType(StrEnum):
     """Type of therapy session."""
 
     INDIVIDUAL = "individual"
     COUPLES = "couples"
+    GROUP = "group"
+
+
+def session_type_from_label(label: str | None) -> SessionType:
+    """Read an appointment's session type label as a ``SessionType``.
+
+    An appointment carries the name of the type it was booked under, which a
+    practice can name freely, so it is read leniently and never raises. A
+    label that is not one of the values is ``INDIVIDUAL``, the default a
+    session gets everywhere else it is created without one.
+    """
+    if label is None:
+        return SessionType.INDIVIDUAL
+    try:
+        return SessionType(label.strip().lower())
+    except ValueError:
+        return SessionType.INDIVIDUAL
 
 
 class SessionSource(StrEnum):

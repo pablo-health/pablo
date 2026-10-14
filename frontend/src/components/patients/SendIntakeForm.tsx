@@ -30,7 +30,7 @@ export function SendIntakeForm({ patientId }: { patientId: string }) {
   return (
     <div data-testid="send-intake-form">
       <Button onClick={() => setOpen(true)} data-testid="send-intake-form-button">
-        Send forms
+        Send a packet
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-[520px]">
@@ -40,7 +40,7 @@ export function SendIntakeForm({ patientId }: { patientId: string }) {
               onDone={() => setOpen(false)}
               header={
                 <DialogHeader>
-                  <DialogTitle>Send forms</DialogTitle>
+                  <DialogTitle>Send a packet</DialogTitle>
                   <DialogDescription>Choose what this {people.one} should do, then review it.</DialogDescription>
                 </DialogHeader>
               }

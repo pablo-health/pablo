@@ -98,6 +98,10 @@ class StarterSummary(BaseModel):
 
     key: str
     title: str
+    #: Whether adopting it adds a document to read and sign, or only
+    #: questions. The editor offers the first kind beside the practice's own
+    #: documents, and the second beside its questions.
+    has_document: bool
 
 
 class StarterAdoptedResponse(BaseModel):

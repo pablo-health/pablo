@@ -44,6 +44,7 @@ export function importSpec(raw: string): ImportResult {
           label: text(f.label),
           kind: f.kind === "list" || f.kind === "diagnoses" ? f.kind : "text",
           ai_hint: text(f.ai_hint),
+          ...(typeof f.source === "string" && f.source ? { source: f.source } : {}),
         })),
       })),
       inputs: list(body.inputs).filter(isObject).map((i) => ({

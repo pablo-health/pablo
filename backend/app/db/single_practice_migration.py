@@ -412,7 +412,7 @@ def is_migrated(engine: Engine) -> bool:
     """Whether this deployment already lives in its own practice schema.
 
     True also for a deployment that was never in the old shape — a fresh install
-    boots straight onto ``practice_default``, so "nothing to migrate" and
+    is provisioned straight onto ``practice_default``, so "nothing to migrate" and
     "already migrated" are the same answer to the only question callers ask.
     """
     with engine.connect() as conn:
@@ -422,8 +422,9 @@ def is_migrated(engine: Engine) -> bool:
             ),
             {"id": DEFAULT_PRACTICE_ID},
         ).first()
-    # No registry row at all: boot has not run yet, so there is nothing stranded
-    # in the template. Boot will create the row pointing at the new schema.
+    # No registry row at all: nothing has been provisioned yet, so nothing is
+    # stranded in the template. ``ensure_schemas``, which the migrate step runs
+    # next, creates the row pointing at the new schema.
     return row is None or row[0] != DEFAULT_PRACTICE_SCHEMA
 
 

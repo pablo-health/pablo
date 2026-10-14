@@ -9,6 +9,7 @@ Thin HTTP handlers that delegate business logic to SessionService.
 import contextvars
 import logging
 from datetime import datetime
+from functools import partial
 from typing import Any
 
 from anyio import fail_after, to_thread
@@ -42,6 +43,9 @@ from ..auth.service import (
     require_baa_acceptance,
     require_cloud_tasks_invoker,
 )
+from ..chart_proposals.dependencies import get_chart_proposal_step
+from ..chart_proposals.models import Drafted
+from ..chart_proposals.step import ChartProposalStep, proposes_chart_updates
 from ..db import release_db_connection
 from ..db.tenant_session import tenant_db_session
 from ..jobs.task_queue import enqueue
@@ -65,7 +69,14 @@ from ..models import (
 )
 from ..models.note import Note
 from ..models.session import TherapySession
-from ..notes import NoteTypeAuthorizer, get_note_type_authorizer
+from ..notes import (
+    NoteTypeAuthorizer,
+    NoteTypeDefinition,
+    NoteTypeRegistry,
+    get_note_type_authorizer,
+)
+from ..notes.chart_context import ChartContext
+from ..people_term_lookup import worker_people_term_lookup
 from ..rate_limit import get_audio_upload_limiter
 from ..repositories import (
     NotesRepository,
@@ -73,6 +84,15 @@ from ..repositories import (
     TherapySessionRepository,
     UserRepository,
     get_user_repository,
+)
+from ..repositories import (
+    get_chart_history_repository as _history_repo_factory,
+)
+from ..repositories import (
+    get_chart_proposal_repository as _proposal_repo_factory,
+)
+from ..repositories import (
+    get_medication_repository as _medication_repo_factory,
 )
 from ..repositories import (
     get_notes_repository as _notes_repo_factory,
@@ -119,13 +139,14 @@ from ..services.session_generation_worker import (
     resolve_tenant_schema_for_user,
     run_soap_generation_job,
 )
+from ..services.session_service import DEFAULT_NOTE_TYPE
 from ..services.transcription_queue_service import (
     MockTranscriptionQueueService,
     TranscriptionQueueService,
 )
 from ..settings import get_settings
 from ..utcnow import utc_now
-from .notes import get_audio_on_signing, get_note_generation_service
+from .notes import get_audio_on_signing, get_note_generation_service, get_registry
 
 # Optional subscription extension point. When a billing overlay is
 # installed it registers ``app.routes.subscription``; otherwise the
@@ -286,12 +307,19 @@ def get_worker_session_service(
     runs. ``note_generation_service`` stays injected so tests can substitute a
     deterministic mock.
     """
+    people = worker_people_term_lookup()
     return SessionService(
         _session_repo_factory(),
         _patient_repo_factory(),
         note_generation_service,
         NoteService(_notes_repo_factory()),
         _problem_repo_factory(),
+        _medication_repo_factory(),
+        _history_repo_factory(),
+        ChartProposalStep(
+            _proposal_repo_factory(), _history_repo_factory(), _medication_repo_factory(), people
+        ),
+        people,
     )
 
 
@@ -309,9 +337,10 @@ def upload_session(
     session_service: SessionService = Depends(get_session_service),
     note_generation_service: NoteGenerationService = Depends(get_note_generation_service),
     audit: AuditService = Depends(get_audit_service),
+    authorizer: NoteTypeAuthorizer = Depends(get_note_type_authorizer),
 ) -> SessionResponse:
     """
-    Upload a transcript and start SOAP generation asynchronously.
+    Upload a transcript and start note generation asynchronously.
 
     Persists the session in ``processing`` and returns ``202`` immediately;
     the multi-second LLM generation runs on a Cloud Tasks worker
@@ -323,7 +352,15 @@ def upload_session(
     - **patient_id**: Patient ID for this session
     - **session_date**: ISO 8601 datetime of session
     - **transcript**: Transcript data (format and content)
+    - **note_type**: Note type to draft (SOAP when omitted)
     """
+    # Same gate as /api/sessions/schedule: an explicitly requested type must
+    # be allowed; falling back to the default always is.
+    if request.note_type is not None and not authorizer.is_allowed(user, request.note_type):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Note type {request.note_type!r} not allowed for this subscription",
+        )
     _gate_trial_session(user.email)
     try:
         session, patient = session_service.create_session_for_generation(
@@ -509,6 +546,29 @@ _MAX_IMPORT_DOC_BYTES = MAX_IMPORT_DOC_BYTES
 # timeout, so a stalled call comes back as "try again" rather than a 500.
 IMPORT_PARSE_TIMEOUT_SECONDS = 90.0
 
+# The chart-proposal call on an imported document is smaller than the parse.
+# Running out of time records the note as not checked; the import still lands.
+IMPORT_PROPOSALS_TIMEOUT_SECONDS = 60.0
+
+
+async def _propose_from_document(
+    step: ChartProposalStep,
+    generator: NoteGenerationService,
+    definition: NoteTypeDefinition,
+    chart: ChartContext | None,
+    text: str,
+) -> Drafted | None:
+    """The chart updates an imported document proposes, off the event loop. Never raises."""
+    if chart is None:
+        return None
+    ask = partial(step.draft_from_document, generator, definition, chart, text)
+    try:
+        with fail_after(IMPORT_PROPOSALS_TIMEOUT_SECONDS):
+            return await to_thread.run_sync(ask, abandon_on_cancel=True)
+    except TimeoutError as exc:
+        logger.warning("Imported-note chart proposals timed out; the note is not checked")
+        return Drafted([], error_class=type(exc).__name__)
+
 
 def _resolve_import_session_date(override: str | None, extracted: datetime | None) -> datetime:
     """Pick the session date for an import: caller override > document > now.
@@ -533,6 +593,36 @@ def _resolve_import_session_date(override: str | None, extracted: datetime | Non
     return utc_now().replace(tzinfo=None)
 
 
+def _importable_note_type(
+    note_type: str, registry: NoteTypeRegistry, authorizer: NoteTypeAuthorizer, user: User
+) -> NoteTypeDefinition:
+    """The definition a document is imported into, or the reason it can't be.
+
+    The same set a clinician can start a visit note from: a built-in or one of
+    the practice's active types, of session context, and not a hand-written
+    restricted type (an import is a model reading the document).
+    """
+    if not registry.has(note_type):
+        raise BadRequestError(
+            "That note type isn't available.",
+            {"note_type": note_type},
+            code="UNKNOWN_NOTE_TYPE",
+        )
+    definition = registry.get(note_type)
+    if definition.context != "session" or definition.restricted:
+        raise BadRequestError(
+            f"{definition.label} notes can't be imported.",
+            {"note_type": note_type},
+            code="NOTE_TYPE_NOT_IMPORTABLE",
+        )
+    if not authorizer.is_allowed(user, note_type):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Note type {note_type!r} not allowed for this subscription",
+        )
+    return definition
+
+
 @router.post(
     "/api/patients/{patient_id}/sessions/import",
     status_code=status.HTTP_201_CREATED,
@@ -542,23 +632,39 @@ async def import_session(
     file: UploadFile,
     http_request: Request,
     session_date: str | None = Form(default=None),
+    note_type: str = Form(default=DEFAULT_NOTE_TYPE),
     _ctx: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_baa_acceptance),
     session_service: SessionService = Depends(get_session_service),
     note_import_service: NoteImportService = Depends(get_note_import_service),
     ocr: DocumentAiOcrClient = Depends(get_document_ocr_client),
+    registry: NoteTypeRegistry = Depends(get_registry),
+    authorizer: NoteTypeAuthorizer = Depends(get_note_type_authorizer),
+    generator: NoteGenerationService = Depends(get_note_generation_service),
+    proposal_step: ChartProposalStep = Depends(get_chart_proposal_step),
     audit: AuditService = Depends(get_audit_service),
 ) -> SessionResponse:
-    """Import an existing SOAP note (PDF or TXT) as a pending-review session.
+    """Import an existing note (PDF, Word or TXT) as a pending-review session.
 
-    Extracts the document's text, parses it into a structured SOAP note plus
-    the date the session took place, and creates a session dated from the
-    document — or from ``session_date`` when the caller overrides it. The
-    original text is kept as the session transcript so it can be reviewed
-    beside the parsed note. One file per request; the client uploads several
-    in parallel for a bulk chart import.
+    Extracts the document's text, parses it into the fields of ``note_type``
+    (SOAP unless named) plus the date the session took place, and creates a
+    session dated from the document — or from ``session_date`` when the
+    caller overrides it. The original text is kept as the session transcript
+    so it can be reviewed beside the parsed note. One file per request; the
+    client uploads several in parallel for a bulk chart import.
+
+    A type that proposes chart updates proposes them here, from the
+    document, as a drafted note does from its transcript: each cites the
+    paragraphs that state it, and they are decided when the note is signed.
     """
+    definition = _importable_note_type(note_type, registry, authorizer, user)
     _gate_trial_session(user.email)
+    chart = None
+    if proposes_chart_updates(definition):
+        charted = session_service.patient_repo.get(patient_id, user.id)
+        if charted is None:
+            raise NotFoundError("Patient not found", {"patient_id": patient_id})
+        chart = proposal_step.chart(charted, user.id)
 
     data = await file.read()
     if len(data) > _MAX_IMPORT_DOC_BYTES:
@@ -598,7 +704,7 @@ async def import_session(
     try:
         with fail_after(IMPORT_PARSE_TIMEOUT_SECONDS):
             parsed = await to_thread.run_sync(
-                note_import_service.parse_soap_note, text, abandon_on_cancel=True
+                note_import_service.parse_note, text, definition, abandon_on_cancel=True
             )
     except TimeoutError as exc:
         logger.warning("Imported-note parse timed out after %.0fs", IMPORT_PARSE_TIMEOUT_SECONDS)
@@ -608,8 +714,9 @@ async def import_session(
         ) from exc
     except ValueError as exc:
         logger.exception("Imported-note parse failed")
-        raise ServerError("Could not read the SOAP note from this document.") from exc
+        raise ServerError("Could not read the note from this document.") from exc
 
+    drafted = await _propose_from_document(proposal_step, generator, definition, chart, text)
     resolved_date = _resolve_import_session_date(session_date, parsed.session_datetime())
 
     try:
@@ -619,9 +726,13 @@ async def import_session(
             session_date=resolved_date,
             source_text=text,
             note_content=parsed.content,
+            note_type=definition.key,
+            note_type_version=definition.version,
         )
     except PatientNotFoundError as exc:
         raise NotFoundError("Patient not found", {"patient_id": patient_id}) from exc
+    if chart is not None:
+        proposal_step.store(note, definition, chart, drafted, parsed.content)
 
     audit.log_session_action(AuditAction.SESSION_CREATED, user, http_request, session, patient)
 

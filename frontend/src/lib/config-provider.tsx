@@ -22,6 +22,12 @@ export interface RuntimeConfig {
   resubscribeUrl: string
   publicBookingEnabled: boolean
   googleCalendarEnabled: boolean
+  /**
+   * Where a clinician can write to reach a person about this deployment.
+   * Empty when the deployment has not set one; read it through
+   * `useSupportEmail`, which also screens out a malformed value.
+   */
+  supportEmail: string
   /** The edition this deployment runs. */
   pabloEdition: string
   /**
@@ -108,6 +114,16 @@ export function ConfigProvider({
       {children}
     </ConfigContext.Provider>
   )
+}
+
+/**
+ * The runtime config once it has loaded, otherwise undefined. Never throws.
+ *
+ * For components that may render outside ConfigProvider, such as an error
+ * fallback, which must not fail while reporting that something else did.
+ */
+export function useOptionalConfig(): RuntimeConfig | undefined {
+  return useContext(ConfigContext)?.config
 }
 
 export function useConfig(): RuntimeConfig {

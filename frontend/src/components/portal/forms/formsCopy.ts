@@ -31,9 +31,40 @@ export const LIST_PROGRESS_DONE = "Ready to send"
 export const LIST_WITHDRAWN = "No longer needed"
 export const LIST_CORRECTION = "Your practice has a question"
 
+/**
+ * What a row on the list is called.
+ *
+ * The title the practice wrote for the person filling it in, when it wrote
+ * one. Never the packet's name: that is the name the clinician filed it
+ * under in settings ("New client intake 2026-10-07"), written for their own
+ * list, and the server does not send it here. With no title, the row says
+ * whose forms these are.
+ */
+export function rowTitle(clientTitle: string | null, practiceName: string | null): string {
+  const title = clientTitle?.trim()
+  return title ? title : formsFrom(practiceName)
+}
+
+/** The row's title when the practice wrote none: whose forms these are. */
+export function formsFrom(practiceName: string | null): string {
+  return `Forms from ${practiceName ?? "your practice"}`
+}
+
 /** How much of a form is outstanding, from the count the server sent. */
 export function questionsLeft(outstanding: number): string {
   return outstanding === 1 ? "1 question left" : `${outstanding} questions left`
+}
+
+/**
+ * How much of a form in parts is outstanding, in the parts the walk shows.
+ *
+ * Parts rather than questions because the walk counts in parts ("Part 8 of
+ * 14"), and a count of required questions leaves out every optional one the
+ * walk still steps through — a row that said 30 opened a walk of 47.
+ */
+export function partsLeft(left: number, total: number): string {
+  if (left === total) return `${total} parts`
+  return `${left} of ${total} parts left`
 }
 
 /** Both dead ends a portal session can hand a form. */
@@ -48,10 +79,44 @@ export const RETRY_ACTION = "Try again"
 
 export const LOADING = "Loading your forms…"
 
-/** Where the patient is in the questions that collect an answer. */
+/**
+ * Where the patient is: which part of the form, and how far into it.
+ *
+ * A form's sections are its parts, and the count is kept to the part. "2 of
+ * 3" under "Consent to telehealth" is a number somebody can hold in their
+ * head; one count across the whole form reaches the dozens and reads as how
+ * much is left to do, which is the screen people close.
+ *
+ * Only questions that collect something are counted. A paragraph to read is
+ * not a question.
+ */
 export function questionPosition(index: number, total: number): string {
   return `Question ${index} of ${total}`
 }
+
+/** The count inside a named part, which already says what it is counting. */
+export function positionInPart(index: number, total: number): string {
+  return `${index} of ${total}`
+}
+
+export function partPosition(index: number, total: number): string {
+  return `Part ${index} of ${total}`
+}
+
+/**
+ * What a form's opening is called, when it is the identity check and the
+ * reason for coming in and nothing else. Anything else that comes before the
+ * first section gets no heading.
+ */
+export const OPENING_PART_TITLE = "About you"
+
+/** What a part asks them to do, shown before its name: "Read and sign: Informed consent". */
+export const PART_VERBS = {
+  sign: "Read and sign",
+  answer: "Answer",
+  photo: "Send a photo",
+  file: "Send a file",
+} as const
 
 /** Navigation through one form. */
 export const BACK = "Back"

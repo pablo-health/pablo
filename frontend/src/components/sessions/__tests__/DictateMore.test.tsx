@@ -161,4 +161,28 @@ describe("DictateMore", () => {
     })
     expect(screen.getByRole("alert")).toHaveTextContent("couldn't be transcribed")
   })
+
+  it("says nothing was heard when the clip held no speech", async () => {
+    const { rerender } = render(
+      <DictateMore
+        sessionId="s-1"
+        signed={false}
+        hasEdits={false}
+        onSend={vi.fn().mockResolvedValue({ id: "d-1" })}
+      />,
+    )
+    await recordAndStop()
+    await userEvent.click(screen.getByRole("button", { name: "Add to note" }))
+
+    listed.data = [{ id: "d-1", status: "no_speech" } as SessionDictation]
+    await act(async () => {
+      rerender(<DictateMore sessionId="s-1" signed={false} hasEdits={false} onSend={vi.fn()} />)
+    })
+    const alert = screen.getByRole("alert")
+    expect(alert).toHaveTextContent(
+      "Pablo didn't hear anything in that dictation, so the note hasn't changed. Check that your microphone is working, then try again.",
+    )
+    expect(alert).not.toHaveTextContent("couldn't be transcribed")
+    expect(screen.getByRole("button", { name: "Dictate more" })).toBeEnabled()
+  })
 })

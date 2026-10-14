@@ -76,6 +76,11 @@ FONTS: tuple[str, ...] = (
     "Nunito Sans",
     "Space Grotesk",
     "Poppins",
+    "Lora",
+    "Source Serif 4",
+    "Literata",
+    "EB Garamond",
+    "Crimson Pro",
 )
 
 #: The portal's own colors, which stand in for any a theme leaves out when its

@@ -24,7 +24,7 @@ import {
   type FieldErrors,
   type NoteTypeDraft,
 } from "./editorModel"
-import type { SampleVisit } from "./templates"
+import type { SampleVisit } from "@/types/noteTypes"
 
 interface NoteTypeEditorProps {
   initial: NoteTypeDraft

@@ -382,6 +382,11 @@ class TestGeminiAttemptTimeout:
         self._complete(gw)
         assert models.configs[0].http_options is None
 
+    def test_structured_json_disables_unused_automatic_function_calling(self) -> None:
+        gw, models = self._gateway(stalls=0)
+        self._complete(gw)
+        assert models.configs[0].automatic_function_calling.disable is True
+
     def test_a_stalled_attempt_is_retried_once(self) -> None:
         gw, models = self._gateway(stalls=1)
         assert self._complete(gw, timeout_seconds=10.0).data == {"ok": True}

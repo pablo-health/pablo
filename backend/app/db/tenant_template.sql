@@ -700,7 +700,8 @@ CREATE TABLE __TENANT_SCHEMA__.intake_packet_templates (
     name character varying(120) NOT NULL,
     created_by uuid,
     created_at timestamp with time zone NOT NULL,
-    archived_at timestamp with time zone
+    archived_at timestamp with time zone,
+    client_title character varying(120)
 );
 
 
@@ -743,6 +744,39 @@ CREATE TABLE __TENANT_SCHEMA__.note_addenda (
     prev_digest character varying(64),
     created_by uuid NOT NULL,
     created_at timestamp with time zone NOT NULL
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.note_chart_proposal_runs (
+    note_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    status character varying(16) NOT NULL,
+    error_class character varying(100),
+    computed_at timestamp with time zone NOT NULL,
+    considered jsonb DEFAULT '[]'::jsonb NOT NULL,
+    CONSTRAINT ck_note_chart_proposal_runs_status CHECK (((status)::text = ANY ((ARRAY['ok'::character varying, 'failed'::character varying, 'skipped'::character varying])::text[])))
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.note_chart_proposals (
+    id uuid NOT NULL,
+    note_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    field_key character varying(64) NOT NULL,
+    item_key character varying(200) DEFAULT ''::character varying NOT NULL,
+    proposed_text text NOT NULL,
+    what_changed text NOT NULL,
+    evidence jsonb DEFAULT '[]'::jsonb NOT NULL,
+    origin character varying(16) NOT NULL,
+    decision character varying(16) DEFAULT 'pending'::character varying NOT NULL,
+    decided_text text,
+    decided_by uuid,
+    decided_at timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    change jsonb,
+    CONSTRAINT ck_note_chart_proposals_decision CHECK (((decision)::text = ANY ((ARRAY['pending'::character varying, 'accepted'::character varying, 'edited'::character varying, 'discarded'::character varying])::text[])))
 );
 
 
@@ -845,6 +879,32 @@ CREATE TABLE __TENANT_SCHEMA__.patient_charges (
     CONSTRAINT ck_patient_charges_status CHECK (((status)::text = ANY ((ARRAY['pending'::character varying, 'succeeded'::character varying, 'failed'::character varying, 'refunded'::character varying, 'disputed'::character varying, 'dispute_lost'::character varying])::text[]))),
     CONSTRAINT ck_patient_charges_write_off_reason CHECK (((write_off_reason IS NULL) OR ((write_off_reason)::text = ANY ((ARRAY['hardship'::character varying, 'small_balance'::character varying, 'courtesy'::character varying, 'error'::character varying])::text[])))),
     CONSTRAINT ck_patient_charges_write_off_reason_kind CHECK ((((kind)::text = 'write_off'::text) = (write_off_reason IS NOT NULL)))
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.patient_chart_history (
+    id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    field_key character varying(64) NOT NULL,
+    text text,
+    source_note_id uuid,
+    updated_by uuid,
+    updated_at timestamp with time zone NOT NULL
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.patient_chart_history_revisions (
+    id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    field_key character varying(64) NOT NULL,
+    text text,
+    source_note_id uuid,
+    written_by uuid,
+    written_at timestamp with time zone NOT NULL,
+    replaced_by uuid NOT NULL,
+    replaced_at timestamp with time zone NOT NULL
 );
 
 
@@ -1025,6 +1085,10 @@ CREATE TABLE __TENANT_SCHEMA__.patient_medications (
     updated_at timestamp with time zone NOT NULL,
     deleted_at timestamp with time zone,
     stop_reason text,
+    frequency text,
+    category character varying(16),
+    source_note_id uuid,
+    CONSTRAINT ck_patient_medications_category CHECK (((category)::text = ANY ((ARRAY['psychiatric'::character varying, 'other'::character varying])::text[]))),
     CONSTRAINT ck_patient_medications_status CHECK (((status)::text = ANY ((ARRAY['active'::character varying, 'discontinued'::character varying, 'on_hold'::character varying])::text[])))
 );
 
@@ -1457,7 +1521,7 @@ CREATE TABLE __TENANT_SCHEMA__.session_dictations (
     addendum_id uuid,
     created_at timestamp with time zone NOT NULL,
     transcribed_at timestamp with time zone,
-    CONSTRAINT ck_session_dictations_status CHECK (((status)::text = ANY ((ARRAY['transcribing'::character varying, 'transcribed'::character varying, 'failed'::character varying])::text[]))),
+    CONSTRAINT ck_session_dictations_status CHECK (((status)::text = ANY ((ARRAY['transcribing'::character varying, 'transcribed'::character varying, 'failed'::character varying, 'no_speech'::character varying])::text[]))),
     CONSTRAINT ck_session_dictations_used_as CHECK (((used_as IS NULL) OR ((used_as)::text = ANY ((ARRAY['redraft'::character varying, 'addendum'::character varying])::text[]))))
 );
 
@@ -1726,6 +1790,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.note_addenda
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_chart_proposal_runs
+    ADD CONSTRAINT note_chart_proposal_runs_pkey PRIMARY KEY (note_id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_chart_proposals
+    ADD CONSTRAINT note_chart_proposals_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.note_signatures
     ADD CONSTRAINT note_signatures_pkey PRIMARY KEY (id);
 
@@ -1743,6 +1817,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.outcome_measures
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_charges
     ADD CONSTRAINT patient_charges_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_chart_history
+    ADD CONSTRAINT patient_chart_history_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_chart_history_revisions
+    ADD CONSTRAINT patient_chart_history_revisions_pkey PRIMARY KEY (id);
 
 
 
@@ -1956,8 +2040,18 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.intake_packet_versions
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_chart_proposals
+    ADD CONSTRAINT uq_note_chart_proposals_field UNIQUE (note_id, field_key, item_key);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.note_signatures
     ADD CONSTRAINT uq_note_signatures_note_version UNIQUE (note_id, version);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_chart_history
+    ADD CONSTRAINT uq_patient_chart_history_field UNIQUE (patient_id, field_key);
 
 
 
@@ -2307,6 +2401,10 @@ CREATE INDEX ix_patient_charges_claim_id ON __TENANT_SCHEMA__.patient_charges US
 
 
 CREATE INDEX ix_patient_charges_patient_created ON __TENANT_SCHEMA__.patient_charges USING btree (patient_id, created_at);
+
+
+
+CREATE INDEX ix_patient_chart_history_revisions_patient_field ON __TENANT_SCHEMA__.patient_chart_history_revisions USING btree (patient_id, field_key);
 
 
 
@@ -2840,6 +2938,26 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.note_addenda
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_chart_proposal_runs
+    ADD CONSTRAINT note_chart_proposal_runs_note_id_fkey FOREIGN KEY (note_id) REFERENCES __TENANT_SCHEMA__.notes(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_chart_proposal_runs
+    ADD CONSTRAINT note_chart_proposal_runs_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_chart_proposals
+    ADD CONSTRAINT note_chart_proposals_note_id_fkey FOREIGN KEY (note_id) REFERENCES __TENANT_SCHEMA__.notes(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_chart_proposals
+    ADD CONSTRAINT note_chart_proposals_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.note_signatures
     ADD CONSTRAINT note_signatures_note_id_fkey FOREIGN KEY (note_id) REFERENCES __TENANT_SCHEMA__.notes(id) ON DELETE CASCADE;
 
@@ -2875,6 +2993,26 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.outcome_measures
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_chart_history
+    ADD CONSTRAINT patient_chart_history_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_chart_history_revisions
+    ADD CONSTRAINT patient_chart_history_revisions_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_chart_history_revisions
+    ADD CONSTRAINT patient_chart_history_revisions_source_note_id_fkey FOREIGN KEY (source_note_id) REFERENCES __TENANT_SCHEMA__.notes(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_chart_history
+    ADD CONSTRAINT patient_chart_history_source_note_id_fkey FOREIGN KEY (source_note_id) REFERENCES __TENANT_SCHEMA__.notes(id) ON DELETE SET NULL;
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_clinicians
     ADD CONSTRAINT patient_clinicians_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
 
@@ -2887,6 +3025,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_documents
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_medications
     ADD CONSTRAINT patient_medications_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_medications
+    ADD CONSTRAINT patient_medications_source_note_id_fkey FOREIGN KEY (source_note_id) REFERENCES __TENANT_SCHEMA__.notes(id) ON DELETE SET NULL;
 
 
 

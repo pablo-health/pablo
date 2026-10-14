@@ -989,6 +989,12 @@ class CompanionDeviceRow(PlatformBase):
     Microsoft Software KSP) on Windows boxes without TPM 2.0. All Macs
     from 2018+ have Secure Enclave so Mac rows are always ``hardware``.
 
+    Keyed by ``(install_id, user_id)``, not ``install_id`` alone: the
+    companion keeps one install_id and device key per OS user no matter
+    which Pablo account signs in, so one install can carry an enrollment
+    for each account that signs in on it. Each enrollment is its own row,
+    and every lookup names both columns.
+
     No PHI: install_id is a random UUID; hostname_hash is the device's
     hostname run through a one-way hash on the client. Refresh tokens
     are not stored here — Firebase manages those.
@@ -1001,7 +1007,7 @@ class CompanionDeviceRow(PlatformBase):
     user_id: Mapped[str] = mapped_column(
         Uuid(as_uuid=False),
         ForeignKey(f"{PLATFORM_SCHEMA}.users.id", ondelete="CASCADE"),
-        nullable=False,
+        primary_key=True,
         index=True,
     )
     device_public_key_jwk: Mapped[dict] = mapped_column(JSONB, nullable=False)
@@ -1059,13 +1065,14 @@ class LaunchIntentRow(PlatformBase):
         DateTime(timezone=True), nullable=False, index=True
     )
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # True when the web asked "No consent on file" and the clinician chose to
-    # record anyway, so the companion does not ask the same question again.
+    # True when an earlier web app offered recording an in-person visit with
+    # no answer on file and the clinician chose to, so the companion does not
+    # ask the same question again. The web app no longer sets it.
     ai_consent_prompted: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
-    # True when the web asked "No consent on file" for a telehealth visit and
-    # the clinician chose to ask once recording starts, so the companion starts
+    # True when the web found no answer on file and the clinician chose to
+    # ask once recording starts, so the companion starts
     # the session saying so (app.services.recording_consent).
     ask_consent_on_recording: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"

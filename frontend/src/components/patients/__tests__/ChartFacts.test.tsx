@@ -57,6 +57,27 @@ describe("ChartFacts", () => {
     ).toBe("Penicillin (Hives), Sulfa")
   })
 
+  it("shows what has been said about an allergy under it, the allergy unchanged", () => {
+    render(
+      <ChartFacts
+        patient={createMockPatient({
+          allergy_status: "recorded",
+          allergies: [
+            {
+              substance: "Codeine",
+              reaction: "Nausea",
+              note: "Took it in February without a reaction.",
+            },
+          ],
+        })}
+      />,
+    )
+    expect(screen.getByTestId("chart-allergies")).toHaveTextContent("Codeine (Nausea)")
+    expect(screen.getByTestId("allergy-note")).toHaveTextContent(
+      "Codeine: Took it in February without a reaction.",
+    )
+  })
+
   it("records no known drug allergies as its own state", async () => {
     render(<ChartFacts patient={createMockPatient({ id: "patient_1" })} />)
 

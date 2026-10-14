@@ -34,6 +34,7 @@ Semantics shared by both backends:
 
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -515,12 +516,36 @@ class S3FileStorage(FileStorageProvider):
         return names
 
 
+class InvalidObjectNameError(ValueError):
+    """Raised by :class:`LocalFileStorage` for a name that leaves its bucket."""
+
+
+def _local_bucket(bucket: str) -> str:
+    """``bucket`` as an absolute, normalised directory path."""
+    return os.path.normpath(Path(bucket).absolute())
+
+
+def _local_object_path(bucket: str, object_name: str) -> Path:
+    """The path ``object_name`` names beneath ``bucket``, refusing any escape.
+
+    The join is normalised before the containment check, so a ``..`` segment
+    or an absolute name is caught by where it actually lands rather than by
+    spotting particular spellings.
+    """
+    base = _local_bucket(bucket)
+    full = os.path.normpath(Path(base) / object_name)
+    if not full.startswith(base + os.sep):
+        raise InvalidObjectNameError("object name escapes its bucket")
+    return Path(full)
+
+
 class LocalFileStorage(FileStorageProvider):
     """Local-filesystem backend (self-hosted deployments; e.g. an EFS mount).
 
     ``bucket`` is an absolute base directory and ``object_name`` a relative
-    path beneath it. Only the server-side byte ops are supported: minting
-    browser-direct URLs requires a cloud signing service, and the surfaces
+    path beneath it; a name that would land outside the bucket raises
+    :class:`InvalidObjectNameError`. Only the server-side byte ops are
+    supported: minting browser-direct URLs requires a cloud signing service, and the surfaces
     that need those (patient documents, session audio) are configured with
     a cloud provider via ``file_storage_provider``.
     """
@@ -552,14 +577,14 @@ class LocalFileStorage(FileStorageProvider):
         bucket: str,
         object_name: str,
     ) -> tuple[int, str | None] | None:
-        path = Path(bucket) / object_name
+        path = _local_object_path(bucket, object_name)
         if not path.is_file():
             return None
         # The local filesystem keeps no content-type metadata.
         return path.stat().st_size, None
 
     def download_bytes(self, *, bucket: str, object_name: str) -> bytes:
-        return (Path(bucket) / object_name).read_bytes()
+        return _local_object_path(bucket, object_name).read_bytes()
 
     def upload_bytes(
         self,
@@ -570,7 +595,7 @@ class LocalFileStorage(FileStorageProvider):
         content_type: str,
     ) -> None:
         _ = content_type  # no content-type metadata on a plain filesystem
-        dest = Path(bucket) / object_name
+        dest = _local_object_path(bucket, object_name)
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(data)
 
@@ -584,7 +609,7 @@ class LocalFileStorage(FileStorageProvider):
         max_bytes: int,
     ) -> None:
         _ = content_type  # no content-type metadata on a plain filesystem
-        dest = Path(bucket) / object_name
+        dest = _local_object_path(bucket, object_name)
         dest.parent.mkdir(parents=True, exist_ok=True)
         total = 0
         with dest.open("wb") as out:
@@ -601,13 +626,14 @@ class LocalFileStorage(FileStorageProvider):
                 out.write(chunk)
 
     def delete(self, *, bucket: str, object_name: str) -> None:
-        (Path(bucket) / object_name).unlink(missing_ok=True)
+        _local_object_path(bucket, object_name).unlink(missing_ok=True)
 
     def list_names(self, *, bucket: str, prefix: str) -> list[str]:
         # Object-store semantics: every name starting with the prefix, files
         # in folders beneath it included, as a cloud bucket lists them.
-        base = Path(bucket)
-        root = base / prefix.rpartition("/")[0]
+        base = Path(_local_bucket(bucket))
+        folder = prefix.rpartition("/")[0]
+        root = _local_object_path(bucket, folder) if folder else base
         if not root.is_dir():
             return []
         names = (path.relative_to(base).as_posix() for path in root.rglob("*") if path.is_file())

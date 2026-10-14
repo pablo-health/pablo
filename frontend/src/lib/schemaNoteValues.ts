@@ -28,3 +28,12 @@ export function isEmptyValue(value: unknown): boolean {
   if (typeof value === "object") return Object.keys(value).length === 0
   return false
 }
+
+/**
+ * The sections that are part of the note. A review-only section (the
+ * evidence behind the medical decision making) is shown beside the note,
+ * never in it or in its PDF.
+ */
+export function inTheNote<S extends { review_only?: boolean }>(sections: S[]): S[] {
+  return sections.filter((section) => !section.review_only)
+}

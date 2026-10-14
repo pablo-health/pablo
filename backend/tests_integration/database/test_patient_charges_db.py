@@ -106,13 +106,6 @@ _TENANT_EMAIL = _CLINICIAN_A_EMAIL
 #: anything under test.
 _PRINCIPAL_HEADER = "X-Test-Clinician"
 
-# Deliberately not shaped like real credentials, the same posture as
-# ``tests/test_patient_payments.py``: nothing here ever parses these, no Stripe
-# call is made, and a fixture imitating a credential would be indistinguishable
-# from a leaked one to a secret scanner.
-_SECRET_KEY = "secret-key-for-tests"  # noqa: S105 - a placeholder, not a credential
-_PUBLISHABLE_KEY = "publishable-key-for-tests"
-
 # A local copy of ``app.db.models.CHARGE_KINDS``, because parametrisation is
 # evaluated at import time and this directory's conftest forbids importing
 # ``app.*`` at module scope. ``test_the_kind_list_here_matches_the_models``
@@ -739,21 +732,6 @@ def _user(user_id: str, email: str) -> Any:
     )
 
 
-class _AlwaysConfigured:
-    """A payment credential provider, so the ledger route is not gated on 503.
-
-    ``GET /charges`` refuses with 503 when the deployment has no card
-    processing configured, and that check runs before the client is looked up
-    — so without this the isolation assertions below would be asserting on the
-    wrong refusal.
-    """
-
-    def credentials_for_practice(self, practice_id: str | None) -> Any:  # noqa: ARG002
-        from app.payments.provider import PaymentCredentials  # noqa: PLC0415
-
-        return PaymentCredentials(secret_key=_SECRET_KEY, publishable_key=_PUBLISHABLE_KEY)
-
-
 def _build_app(tenant_schema: str) -> FastAPI:
     """The real payments router, real middleware, two real credentials."""
     from app.auth.service import (  # noqa: PLC0415
@@ -803,9 +781,8 @@ def _build_app(tenant_schema: str) -> FastAPI:
 
 
 @pytest.fixture
-def client(tenant_schema: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+def client(tenant_schema: str, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
-    from app.payments.provider import register_payment_credential_provider  # noqa: PLC0415
 
     # There's no Firebase token to decode in tests, so stand in for the one
     # thing it would have produced — a verified identity — and let the
@@ -819,11 +796,9 @@ def client(tenant_schema: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[Test
         request.state.verified_identity = identity
 
     monkeypatch.setattr("app.db.middleware._verify_and_stash_clinician_identity", _stash_identity)
-    register_payment_credential_provider(_AlwaysConfigured())
-    try:
-        yield TestClient(_build_app(tenant_schema))
-    finally:
-        register_payment_credential_provider(None)
+    # No payment credential provider is registered: neither route here touches
+    # a card processor, so these run as a practice that takes no cards.
+    return TestClient(_build_app(tenant_schema))
 
 
 def _as(clinician_id: str) -> dict[str, str]:

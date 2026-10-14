@@ -40,10 +40,12 @@ from ..models import User  # noqa: TC001 — fastapi resolves the annotation at 
 from ..models.audit import AuditAction, ResourceType
 from ..models.intake_packet_api import (
     CreateTemplateRequest,
+    DocumentUsageResponse,
     IntakeItemResponse,
     IntakeTemplateResponse,
     IntakeVersionDetailResponse,
     IntakeVersionResponse,
+    PacketRef,
     ReplaceItemsRequest,
     UpdateTemplateRequest,
 )
@@ -93,7 +95,10 @@ def get_intake_packet_service(
     def instrument_attested(instrument_code: str) -> bool:
         return licenses.active_for_code(instrument_code) is not None
 
-    return IntakePacketService(repo, published_document, instrument_attested)
+    def published_versions(document_key: str) -> list[str]:
+        return [str(row["id"]) for row in documents.versions(document_key) if row["published_at"]]
+
+    return IntakePacketService(repo, published_document, instrument_attested, published_versions)
 
 
 PacketService = Annotated[IntakePacketService, Depends(get_intake_packet_service)]
@@ -127,12 +132,17 @@ def _optional_str(value: object) -> str | None:
     return str(value) if value is not None else None
 
 
+def _optional_text(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
 def _template_response(
     service: IntakePacketService, row: dict[str, object]
 ) -> IntakeTemplateResponse:
     return IntakeTemplateResponse(
         id=str(row["id"]),
         name=str(row["name"]),
+        client_title=_optional_text(row.get("client_title")),
         created_at=row["created_at"],  # type: ignore[arg-type]
         archived_at=row["archived_at"],  # type: ignore[arg-type]
         versions=[_version_response(v) for v in service.list_versions(str(row["id"]))],
@@ -171,6 +181,22 @@ def list_templates(
     return [
         _template_response(service, row)
         for row in service.list_templates(include_archived=include_archived)
+    ]
+
+
+@router.get("/document-usage", response_model=list[DocumentUsageResponse])
+def document_usage(
+    service: PacketService,
+    _user: User = Depends(require_baa_acceptance),
+) -> list[DocumentUsageResponse]:
+    """Which packets ask for each document. A document no packet asks for is
+    not listed."""
+    return [
+        DocumentUsageResponse(
+            document_key=key,
+            packets=[PacketRef(id=str(p["id"]), name=str(p["name"])) for p in packets],
+        )
+        for key, packets in service.document_usage().items()
     ]
 
 
@@ -214,6 +240,8 @@ def update_template(
     _require_template(service, template_id)
     if body.name is not None:
         service.rename_template(template_id, body.name)
+    if "client_title" in body.model_fields_set:
+        service.set_client_title(template_id, body.client_title)
     if body.archived is not None:
         service.set_archived(template_id, body.archived)
     return _template_response(service, _require_template(service, template_id))

@@ -41,6 +41,11 @@ export const PRACTICE_FONTS: Readonly<Record<string, PracticeFont>> = {
   "Nunito Sans": { file: "nunito-sans", weight: "200 1000", fallback: SANS },
   "Space Grotesk": { file: "space-grotesk", weight: "300 700", fallback: SANS },
   Poppins: { file: "poppins", weight: "400", fallback: SANS },
+  Lora: { file: "lora", weight: "400 700", fallback: SERIF },
+  "Source Serif 4": { file: "source-serif-4", weight: "200 900", fallback: SERIF },
+  Literata: { file: "literata", weight: "200 900", fallback: SERIF },
+  "EB Garamond": { file: "eb-garamond", weight: "400 800", fallback: SERIF },
+  "Crimson Pro": { file: "crimson-pro", weight: "200 900", fallback: SERIF },
 }
 
 export interface PracticeTheme {

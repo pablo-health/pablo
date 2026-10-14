@@ -24,7 +24,7 @@ import { Button } from "@/components/ui/button"
 import { SignNoteDialog } from "@/components/notes/signing/SigningDialogs"
 import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import { useFinalizeSession } from "@/hooks/useSessions"
-import type { NoteSignerFields } from "@/types/notes"
+import type { Note, NoteSignerFields } from "@/types/notes"
 import type { SessionStatus } from "@/types/sessions"
 
 export interface FinalizeButtonProps {
@@ -33,6 +33,8 @@ export interface FinalizeButtonProps {
   qualityRating: number | null
   qualityRatingReason?: string
   qualityRatingSections?: string[]
+  /** The session's note, so the chart updates it proposes are offered at sign. */
+  note?: Note
   onSuccess?: () => void
 }
 
@@ -42,6 +44,7 @@ export function FinalizeButton({
   qualityRating,
   qualityRatingReason,
   qualityRatingSections,
+  note,
   onSuccess,
 }: FinalizeButtonProps) {
   const finalizeMutation = useFinalizeSession()
@@ -92,7 +95,12 @@ export function FinalizeButton({
         <Lock className="mr-2 h-4 w-4" />
         Sign and lock
       </Button>
-      <SignNoteDialog open={dialogOpen} onOpenChange={setDialogOpen} onSign={handleSign} />
+      <SignNoteDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        onSign={handleSign}
+        note={note}
+      />
     </>
   )
 }

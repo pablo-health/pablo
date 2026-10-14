@@ -412,3 +412,74 @@ describe("file downloads", () => {
     expect(await file.blob.text()).toBe("%PDF-1.4")
   })
 })
+
+/**
+ * A dashboard whose reads are refused for want of a second factor goes to the
+ * passkey step-up page. Seen in production: a returning session passed the
+ * dashboard gate on its server cookie while the browser's own token lacked the
+ * passkey, so every panel answered 403 MFA_REQUIRED and the page offered no way
+ * forward.
+ */
+describe.each(["nested", "flat"] as const)("dashboard MFA step-up (%s envelope)", (shape) => {
+  function err403(code: string): Response {
+    return new Response(JSON.stringify(ENVELOPES[shape](code)), {
+      status: 403,
+      headers: { "content-type": "application/json" },
+    })
+  }
+
+  function standOn(pathname: string) {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      writable: true,
+      value: { assign: assignSpy, href: `http://test${pathname}`, pathname },
+    })
+  }
+
+  it("sends a refused dashboard load to step-up once, however many panels fail", async () => {
+    standOn("/dashboard")
+    const client = await freshClient()
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => err403("MFA_REQUIRED")))
+
+    const loads = ["/api/dashboard/summary", "/api/compliance", "/api/users/me/preferences"]
+    const results = await Promise.allSettled(loads.map((path) => client.get(path)))
+
+    expect(results.every((r) => r.status === "rejected")).toBe(true)
+    expect(assignSpy).toHaveBeenCalledTimes(1)
+    expect(assignSpy).toHaveBeenCalledWith("/mfa-step-up")
+    expect(signOut).not.toHaveBeenCalled()
+  })
+
+  it("leaves a refused passkey change to the Settings screen that explains it", async () => {
+    standOn("/dashboard/settings")
+    const client = await freshClient()
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(err403("MFA_REQUIRED")))
+
+    await expect(client.post("/api/auth/passkey/register/begin", {})).rejects.toMatchObject({
+      code: "MFA_REQUIRED",
+    })
+    expect(assignSpy).not.toHaveBeenCalled()
+  })
+
+  it("does not redirect outside the dashboard, where onboarding owns the flow", async () => {
+    standOn("/onboarding/passkey")
+    const client = await freshClient()
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(err403("MFA_REQUIRED")))
+
+    await expect(client.get("/api/users/me/devices")).rejects.toMatchObject({
+      code: "MFA_REQUIRED",
+    })
+    expect(assignSpy).not.toHaveBeenCalled()
+  })
+
+  it("does not redirect when the caller supplied its own token", async () => {
+    standOn("/dashboard")
+    const client = await freshClient()
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(err403("MFA_REQUIRED")))
+
+    await expect(client.get("/api/dashboard/summary", "caller-token")).rejects.toMatchObject({
+      code: "MFA_REQUIRED",
+    })
+    expect(assignSpy).not.toHaveBeenCalled()
+  })
+})

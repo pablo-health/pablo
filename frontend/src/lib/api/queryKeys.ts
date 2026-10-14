@@ -241,6 +241,8 @@ const baseQueryKeys = {
   intakeTemplates: {
     all: ["intake-templates"] as const,
     list: () => [...baseQueryKeys.intakeTemplates.all, "list"] as const,
+    // Under the packets' key, so saving or archiving a packet refreshes it.
+    documentUsage: () => [...baseQueryKeys.intakeTemplates.all, "document-usage"] as const,
     version: (templateId: string, versionId: string) =>
       [...baseQueryKeys.intakeTemplates.all, "version", templateId, versionId] as const,
   },
@@ -251,6 +253,8 @@ const baseQueryKeys = {
     list: () => [...baseQueryKeys.intakeDocuments.all, "list"] as const,
     published: () => [...baseQueryKeys.intakeDocuments.all, "published"] as const,
     starters: () => [...baseQueryKeys.intakeDocuments.all, "starters"] as const,
+    publishedVersions: (documentKey: string) =>
+      [...baseQueryKeys.intakeDocuments.all, "published-versions", documentKey] as const,
   },
 
   // The instrument catalogue and what this practice is licensed to ask.
@@ -275,6 +279,7 @@ const baseQueryKeys = {
     detail: (key: string, version?: number | null) =>
       [...baseQueryKeys.noteTypes.all, "detail", key, version ?? null] as const,
     deriveReferences: () => [...baseQueryKeys.noteTypes.all, "derive-references"] as const,
+    bases: () => [...baseQueryKeys.noteTypes.all, "bases"] as const,
   },
 
   // Compliance query keys (therapist-owned reminders)
@@ -363,6 +368,20 @@ const baseQueryKeys = {
     all: ["problems"] as const,
     byPatient: (patientId: string) =>
       [...baseQueryKeys.problems.all, "byPatient", patientId] as const,
+  },
+
+  // A client's history fields on the chart
+  chartHistory: {
+    all: ["chartHistory"] as const,
+    byPatient: (patientId: string) =>
+      [...baseQueryKeys.chartHistory.all, "byPatient", patientId] as const,
+  },
+
+  // The chart updates a note proposes
+  chartProposals: {
+    all: ["chartProposals"] as const,
+    byNote: (noteId: string) =>
+      [...baseQueryKeys.chartProposals.all, "byNote", noteId] as const,
   },
 
   // Availability rule query keys

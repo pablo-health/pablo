@@ -38,6 +38,7 @@ def _template_to_dict(row: IntakePacketTemplateRow) -> dict[str, object]:
     return {
         "id": row.id,
         "name": row.name,
+        "client_title": row.client_title,
         "created_by": row.created_by,
         "created_at": row.created_at,
         "archived_at": row.archived_at,
@@ -127,6 +128,16 @@ class PostgresIntakePacketRepository(IntakePacketRepository):
             row.archived_at = archived_at
         if unarchive:
             row.archived_at = None
+        self._session.flush()
+        return _template_to_dict(row)
+
+    def set_client_title(
+        self, template_id: str, client_title: str | None
+    ) -> dict[str, object] | None:
+        row = self._session.get(IntakePacketTemplateRow, template_id)
+        if row is None:
+            return None
+        row.client_title = client_title
         self._session.flush()
         return _template_to_dict(row)
 

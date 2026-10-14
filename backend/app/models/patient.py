@@ -21,8 +21,14 @@ class AllergyEntry(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     substance: str = Field(min_length=1, max_length=120)
-    reaction: str | None = Field(None, max_length=200)
+    reaction: str | None = Field(None, max_length=500)
     severity: Literal["mild", "moderate", "severe"] | None = None
+    note: str | None = Field(None, max_length=2000)
+    """What has been said about the allergy since, kept with it (a client
+    reporting having taken the drug without a reaction, say). The entry
+    itself is unchanged by it."""
+    source_note_id: str | None = None
+    """The note this entry, or its note, was accepted from."""
 
 
 class UpdateAllergiesRequest(BaseModel):

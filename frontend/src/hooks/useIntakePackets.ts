@@ -6,19 +6,35 @@ import {
   createIntakeTemplate,
   createIntakeVersion,
   getIntakeVersion,
+  listDocumentUsage,
   listIntakeTemplates,
   publishIntakeVersion,
   replaceIntakeItems,
   updateIntakeTemplate,
+  type UpdateTemplateInput,
 } from "@/lib/api/intakePackets"
 import { queryKeys } from "@/lib/api/queryKeys"
-import type { IntakeItemInput, IntakeTemplate, IntakeVersionDetail } from "@/types/intakePackets"
+import type {
+  DocumentUsage,
+  IntakeItemInput,
+  IntakeTemplate,
+  IntakeVersionDetail,
+} from "@/types/intakePackets"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
 
 export function useIntakeTemplates(token?: string) {
   return useAuthQuery({
     queryKey: queryKeys.intakeTemplates.list(),
     queryFn: (): Promise<IntakeTemplate[]> => listIntakeTemplates(token),
+    staleTime: 60 * 1000,
+  })
+}
+
+/** Which packets ask for each document, for the documents list. */
+export function useDocumentUsage(token?: string) {
+  return useAuthQuery({
+    queryKey: queryKeys.intakeTemplates.documentUsage(),
+    queryFn: (): Promise<DocumentUsage[]> => listDocumentUsage(token),
     staleTime: 60 * 1000,
   })
 }
@@ -45,7 +61,7 @@ export function useCreateIntakeTemplate(token?: string) {
 
 export function useUpdateIntakeTemplate(token?: string) {
   return useAuthMutation({
-    mutationFn: ({ id, data }: { id: string; data: { name?: string; archived?: boolean } }) =>
+    mutationFn: ({ id, data }: { id: string; data: UpdateTemplateInput }) =>
       updateIntakeTemplate(id, data, token),
     invalidateKeys: [queryKeys.intakeTemplates.all],
   })

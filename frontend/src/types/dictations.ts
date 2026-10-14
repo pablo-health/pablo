@@ -5,7 +5,8 @@ export interface SessionDictation {
   id: string
   session_id: string
   note_id: string
-  status: "transcribing" | "transcribed" | "failed"
+  /** `no_speech`: the clip was heard but held no words (a silent microphone). */
+  status: "transcribing" | "transcribed" | "failed" | "no_speech"
   /** Went into the note's redraft, or became a draft addendum to a signed note. */
   used_as: "redraft" | "addendum" | null
   duration_seconds: number | null

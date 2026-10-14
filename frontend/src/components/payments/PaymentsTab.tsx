@@ -3,10 +3,10 @@
 /**
  * PaymentsTab
  *
- * Chart tab for self-pay: the card on file, and what has been charged to it.
- * Charging itself lives on the signed note, where the clinician already knows
- * the session happened — this tab is where the card is set up and the ledger
- * is read.
+ * The Payments section of the chart's Billing tab, for self-pay: the card on
+ * file, and what has been charged to it. Charging itself lives on the signed
+ * note, where the clinician already knows the session happened — this section
+ * is where the card is set up and the ledger is read.
  */
 
 "use client"
@@ -22,11 +22,11 @@ export function PaymentsTab({ patientId }: PaymentsTabProps) {
   return (
     <div className="space-y-6">
       <section>
-        <h3 className="mb-3 text-sm font-semibold text-neutral-900">Card on file</h3>
+        <h4 className="mb-3 text-sm font-semibold text-neutral-900">Card on file</h4>
         <CardOnFileSection patientId={patientId} />
       </section>
       <section>
-        <h3 className="mb-3 text-sm font-semibold text-neutral-900">Charges</h3>
+        <h4 className="mb-3 text-sm font-semibold text-neutral-900">Charges</h4>
         <ChargeHistory patientId={patientId} />
       </section>
     </div>

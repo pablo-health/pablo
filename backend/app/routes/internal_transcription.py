@@ -79,6 +79,8 @@ from ..services.assemblyai_transcription_service import (
 from ..services.cloud_tasks_service import enqueue_cloud_task
 from ..services.file_storage import file_storage_from_settings
 from ..services.session_service import SessionService
+from ..services.transcription_keyterms import session_keyterms
+from ..services.transcription_profile import transcription_profile_for_user
 from ..settings import get_settings
 
 if TYPE_CHECKING:
@@ -619,15 +621,28 @@ def assemblyai_submit(
                 ttl_seconds=_SPEECH_AUDIO_URL_TTL_SECONDS,
             )
 
+        keyterms = (
+            session_keyterms(db, session_row.patient_id, request.user_id)
+            if settings.assemblyai_chart_keyterms
+            else []
+        )
+        logger.info(
+            "assemblyai-submit: session=%s vocabulary of %d terms",
+            request.session_id,
+            len(keyterms),
+        )
         try:
             therapist_bytes = storage.download_bytes(bucket=bucket, object_name=therapist_object)
             client_bytes = storage.download_bytes(bucket=bucket, object_name=client_object)
             service = AssemblyAiTranscriptionService(settings)
+            transcription_profile = transcription_profile_for_user(db, request.user_id)
             jobs = asyncio.run(
                 service.submit_dual_channel(
                     therapist_audio=therapist_bytes,
                     client_audio=client_bytes,
                     audio_url_factory=_stage_prepared_audio,
+                    keyterms=keyterms,
+                    transcription_profile=transcription_profile,
                 )
             )
         except Exception as exc:

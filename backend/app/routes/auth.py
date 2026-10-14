@@ -10,7 +10,7 @@ verified token but deliberately skip MFA and the idle-session touch
 """
 
 import logging
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Request
@@ -28,7 +28,7 @@ from ..rate_limit import require_rate_limit
 from ..repositories import get_identity_repository
 from ..services.auth_code_store import create_auth_code, exchange_auth_code
 from ..services.companion_device_service import (
-    DeviceOwnershipConflictError,
+    DeviceRevokedError,
     InvalidDeviceJWKError,
     get_companion_device_service,
 )
@@ -80,9 +80,17 @@ class ExchangeAuthCodeRequest(BaseModel):
     enrollment: CompanionEnrollment | None = None
 
 
+EnrollmentStatus = Literal["enrolled", "failed"]
+
+
 class ExchangeAuthCodeResponse(BaseModel):
     id_token: str
     refresh_token: str
+    # Outcome of the enrollment payload, so the companion can tell the
+    # clinician and offer a retry instead of the failure only reaching the
+    # server log. None when the request carried no payload. Sign-in
+    # succeeds either way.
+    enrollment: EnrollmentStatus | None = None
 
 
 @router.post("/native/code", response_model=CreateAuthCodeResponse)
@@ -150,7 +158,8 @@ def exchange_native_code(
     If the native app includes an ``enrollment`` payload (companion
     install_id + Secure-Enclave / TPM public key), this is also the
     enrollment point: we persist a ``companion_devices`` row keyed to
-    the authenticated user. See THERAPY-xo0o.
+    the authenticated user and the install_id. Several users may enroll
+    the same install; each gets their own row. See THERAPY-xo0o.
     """
     entry = exchange_auth_code(request.code)
     if entry is None:
@@ -159,12 +168,14 @@ def exchange_native_code(
     if entry.redirect_uri != request.redirect_uri:
         raise BadRequestError("redirect_uri mismatch.")
 
+    enrollment: EnrollmentStatus | None = None
     if request.enrollment is not None:
-        _enroll_companion_device(entry.firebase_uid, request.enrollment)
+        enrollment = _enroll_companion_device(entry.firebase_uid, request.enrollment)
 
     return ExchangeAuthCodeResponse(
         id_token=entry.id_token,
         refresh_token=entry.refresh_token,
+        enrollment=enrollment,
     )
 
 
@@ -224,18 +235,22 @@ def touch_session(
     return _session_status(idle_session.peek(claims))
 
 
-def _enroll_companion_device(firebase_uid: str | None, enrollment: CompanionEnrollment) -> None:
+def _enroll_companion_device(
+    firebase_uid: str | None, enrollment: CompanionEnrollment
+) -> EnrollmentStatus:
     """Persist a companion device row, mapping firebase_uid → pablo user_id.
 
     Failures here do NOT block the token exchange — a stale or invalid
-    payload should not prevent the user from getting their tokens.
-    The companion will retry enrollment on next launch when it sees
-    that DPoP-protected endpoints are rejecting it (THERAPY-6qtr).
+    payload should not prevent the user from getting their tokens. The
+    outcome is returned so the exchange response can report it: until a
+    device is enrolled the web app cannot tell the companion is installed,
+    so a silent failure leaves the clinician looking at a download prompt
+    for an app they already have.
     """
     if firebase_uid is None:
         # Legacy in-flight code (pre-deploy) — no uid stashed; skip.
         logger.info("companion_enrollment_skipped reason=missing_firebase_uid")
-        return
+        return "failed"
     try:
         pablo_user_id = get_identity_repository().resolve_or_create("firebase", firebase_uid)
         get_companion_device_service().enroll(pablo_user_id, enrollment)
@@ -245,10 +260,13 @@ def _enroll_companion_device(firebase_uid: str | None, enrollment: CompanionEnro
             enrollment.install_id,
             err,
         )
-    except DeviceOwnershipConflictError:
+    except DeviceRevokedError:
         logger.warning(
-            "companion_enrollment_rejected reason=ownership_conflict install_id=%s",
+            "companion_enrollment_rejected reason=revoked install_id=%s",
             enrollment.install_id,
         )
     except Exception:
         logger.exception("companion_enrollment_failed install_id=%s", enrollment.install_id)
+    else:
+        return "enrolled"
+    return "failed"

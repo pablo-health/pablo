@@ -9,13 +9,13 @@ start paths refuse with ``CLIENT_DECLINED_AI_NOTES`` and the day the client
 declined, so the caller can say so. With the setting off, nothing is checked.
 
 A client nobody has asked yet depends on where the client is. In person, the
-session may start; the web app and the companion prompt the clinician
-instead, and the clinician may record anyway. Over telehealth, the client may be
-somewhere every party to a recording has to agree to it, and the session does
-not know where that is, so recording before asking is not offered: a start
-with nothing on file is refused with ``CLIENT_AI_CONSENT_NEEDED`` unless the
-caller says the clinician is asking once recording starts, which puts the
-client's answer on the recording itself.
+session may start; the web app and the companion offer asking once recording
+starts, and an earlier version of either may start without saying so. Over
+telehealth, the client may be somewhere every party to a recording has to
+agree to it, and the session does not know where that is, so a start with
+nothing on file is refused with ``CLIENT_AI_CONSENT_NEEDED`` unless the caller
+says the clinician is asking once recording starts, which puts the client's
+answer on the recording itself.
 
 The gate sits on the paths that START a recorded session, not on the audio
 upload. By the time audio arrives the session has already been recorded, and

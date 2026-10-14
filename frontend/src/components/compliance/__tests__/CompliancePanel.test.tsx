@@ -85,6 +85,26 @@ describe("CompliancePanel", () => {
     ).toBeInTheDocument()
   })
 
+  // A failed load used to show the first-time setup screen to someone who may
+  // already have reminders saved.
+  it("says the reminders didn't load instead of the first-time setup screen", () => {
+    const refetch = vi.fn()
+    useComplianceItems.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      refetch,
+    })
+    useComplianceTemplates.mockReturnValue({ data: [LICENSE_TEMPLATE] })
+
+    renderPanel()
+
+    expect(screen.getByText("Your reminders didn’t load.")).toBeInTheDocument()
+    expect(screen.queryByText(/let's set up your reminders/i)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }))
+    expect(refetch).toHaveBeenCalledTimes(1)
+  })
+
   it("shows the all-clear state when items are saved but none urgent", () => {
     useComplianceItems.mockReturnValue({
       data: [makeItem({ due_date: "2027-12-01" })], // far future

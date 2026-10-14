@@ -270,9 +270,10 @@ class NoteRow(Base):
     # Values the clinician supplied for the note type's declared inputs,
     # kept so generation sees the same context every time it runs.
     note_inputs: Mapped[dict | None] = mapped_column(JSONB)
-    # The visit's psychotherapy window: the start the draft proposed and the
-    # one the clinician confirmed (see app.notes.visit_times). Kept apart from
-    # content so a redraft keeps the confirmation.
+    # The visit's psychotherapy time: what the draft proposed (the time the
+    # clinician dictated, a label per turn) and what the clinician confirmed
+    # (see app.notes.visit_times). Kept apart from content so a redraft keeps
+    # the confirmation.
     psychotherapy_window: Mapped[dict | None] = mapped_column(JSONB)
     # AI-generated and clinician-edited note bodies. Shape varies by
     # note_type; the registry owns validation. Mirrors the existing
@@ -433,8 +434,9 @@ class SessionDictationRow(Base):
 
     Append-only — no ``updated_at`` / ``deleted_at``. The transcription
     worker fills ``transcript`` and ``used_as`` once (``transcribing`` →
-    ``transcribed`` or ``failed``); signing the draft addendum it became
-    records ``addendum_id``. Nothing rewrites what was said.
+    ``transcribed``, ``failed``, or ``no_speech`` when the clip was heard but
+    held no words); signing the draft addendum it became records
+    ``addendum_id``. Nothing rewrites what was said.
 
     ``used_as`` is ``redraft`` when the note was unsigned and the dictation
     went into its redraft, ``addendum`` when the note was signed and the
@@ -479,7 +481,7 @@ class SessionDictationRow(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('transcribing', 'transcribed', 'failed')",
+            "status IN ('transcribing', 'transcribed', 'failed', 'no_speech')",
             name="ck_session_dictations_status",
         ),
         CheckConstraint(
@@ -666,6 +668,10 @@ class IntakePacketTemplateRow(Base):
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
+    #: What the person filling the packet in sees as its title. ``name`` is
+    #: the practice's own label and never leaves the practice; NULL here
+    #: means the portal falls back to naming whose forms these are.
+    client_title: Mapped[str | None] = mapped_column(String(120))
     created_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -1777,6 +1783,12 @@ class PatientMedicationRow(Base):
     patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
     drug_name: Mapped[str] = mapped_column(String(200), nullable=False)
     dose: Mapped[str] = mapped_column(String(100), nullable=False)
+    # How often and when it is taken, as written ("every morning", "50 mg AM /
+    # 25 mg PM"), kept apart from the dose so either can change on its own.
+    frequency: Mapped[str | None] = mapped_column(Text)
+    # 'psychiatric' or 'other': a prescriber's note lists the two separately.
+    # NULL when nobody has said which.
+    category: Mapped[str | None] = mapped_column(String(16))
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     started_at: Mapped[date | None] = mapped_column(Date)
     stopped_at: Mapped[date | None] = mapped_column(Date)
@@ -1784,6 +1796,11 @@ class PatientMedicationRow(Base):
     # effects, remission). Only meaningful for discontinued rows; nullable.
     stop_reason: Mapped[str | None] = mapped_column(Text)
     notes: Mapped[str | None] = mapped_column(Text)
+    # The note whose accepted proposal last wrote this row; NULL for a row
+    # entered on the chart directly.
+    source_note_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("notes.id", ondelete="SET NULL")
+    )
     created_by: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -1793,6 +1810,10 @@ class PatientMedicationRow(Base):
         CheckConstraint(
             "status IN ('active','discontinued','on_hold')",
             name="ck_patient_medications_status",
+        ),
+        CheckConstraint(
+            "category IN ('psychiatric','other')",
+            name="ck_patient_medications_category",
         ),
         Index(
             "ix_patient_medications_patient_status",
@@ -1848,6 +1869,162 @@ class PatientProblemRow(Base):
         CheckConstraint(
             "status IN ('active', 'rule_out', 'resolved')",
             name="ck_patient_problems_status",
+        ),
+    )
+
+
+class PatientChartHistoryRow(Base):
+    """One chart-history field's current value for a client (``app.chart_history``).
+
+    One row per patient per ``field_key``; the keys are a constant in
+    ``app.chart_history.fields``, so a new field needs no migration. ``text``
+    is NULL once a value is removed. ``source_note_id`` is the note the value
+    was accepted from, when it was. The value a write replaces goes to
+    ``patient_chart_history_revisions``.
+
+    Access is governed by ``has_patient_access``, like ``patient_problems``.
+    """
+
+    __tablename__ = "patient_chart_history"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    field_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    text: Mapped[str | None] = mapped_column(Text)
+    source_note_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("notes.id", ondelete="SET NULL")
+    )
+    updated_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("patient_id", "field_key", name="uq_patient_chart_history_field"),
+    )
+
+
+class PatientChartHistoryRevisionRow(Base):
+    """A value a chart-history field held, appended when a write replaced it.
+
+    ``written_*`` say who recorded the value and when; ``replaced_*`` who
+    changed or removed it and when, so the chart's text on any date can be
+    read back. Rows are only ever inserted. Access as ``patient_chart_history``.
+    """
+
+    __tablename__ = "patient_chart_history_revisions"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    field_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    text: Mapped[str | None] = mapped_column(Text)
+    source_note_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("notes.id", ondelete="SET NULL")
+    )
+    written_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    written_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    replaced_by: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    replaced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_patient_chart_history_revisions_patient_field", "patient_id", "field_key"),
+    )
+
+
+class NoteChartProposalRow(Base):
+    """A chart update a note proposes, and what the clinician decided (``app.chart_proposals``).
+
+    Kept beside the note, never in its content, so the note's body, PDF and
+    exports cannot carry one. ``field_key`` names the chart field;
+    ``item_key`` the entry within a list field (an allergy's substance), empty
+    for a free-text field. ``evidence`` is the cited transcript segments, each
+    ``{"segment_id", "text"}``, checked against the transcript when written.
+    ``origin`` is ``transcript`` for a proposal drafted from what was said and
+    ``note`` for one taken from the note's own text (an intake's history).
+    ``decision`` is ``pending`` until the clinician accepts, edits or
+    discards it; ``decided_text`` is the clinician's text for an edit.
+
+    One row per note per field and entry. Carries ``patient_id`` so the
+    reconcile pass gives it the ``has_patient_access`` row policy.
+    """
+
+    __tablename__ = "note_chart_proposals"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    note_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("notes.id", ondelete="CASCADE"), nullable=False
+    )
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("patients.id", ondelete="CASCADE"), nullable=False
+    )
+    field_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    item_key: Mapped[str] = mapped_column(
+        String(200), nullable=False, default="", server_default=text("''")
+    )
+    proposed_text: Mapped[str] = mapped_column(Text, nullable=False)
+    what_changed: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    origin: Mapped[str] = mapped_column(String(16), nullable=False)
+    decision: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="pending", server_default=text("'pending'")
+    )
+    decided_text: Mapped[str | None] = mapped_column(Text)
+    decided_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # The structured change, for a field whose proposals are actions on rows
+    # (the medication list): {"action", "drug_name", "dose", "frequency",
+    # "category", "reason", "heard_as", "name_uncertain"}. NULL for a
+    # free-text proposal.
+    change: Mapped[dict | None] = mapped_column(JSONB)
+
+    __table_args__ = (
+        UniqueConstraint("note_id", "field_key", "item_key", name="uq_note_chart_proposals_field"),
+        CheckConstraint(
+            "decision IN ('pending', 'accepted', 'edited', 'discarded')",
+            name="ck_note_chart_proposals_decision",
+        ),
+    )
+
+
+class NoteChartProposalRunRow(Base):
+    """Whether a note's proposal call last ran, and how it ended (``app.chart_proposals``).
+
+    One row per note. ``status`` is ``ok``, ``failed`` (the call raised;
+    ``error_class`` names the exception type, never its message) or
+    ``skipped`` (a note type the call does not run on). Without it a failed
+    call would read as "nothing changed". Carries ``patient_id`` for the
+    ``has_patient_access`` row policy, like ``note_chart_proposals``.
+    """
+
+    __tablename__ = "note_chart_proposal_runs"
+
+    note_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("notes.id", ondelete="CASCADE"), primary_key=True
+    )
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("patients.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    error_class: Mapped[str | None] = mapped_column(String(100))
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    considered: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    """The history proposals the call made that were considered and not offered, each
+    with its reason (``app.chart_proposals.materiality``)."""
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('ok', 'failed', 'skipped')", name="ck_note_chart_proposal_runs_status"
         ),
     )
 

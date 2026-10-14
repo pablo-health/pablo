@@ -36,6 +36,7 @@ import {
   type RatingFeedback,
 } from "@/components/sessions/QualityRatingWithFeedback"
 import { FinalizeButton } from "@/components/sessions/FinalizeButton"
+import { ChartUpdatesPanel } from "@/components/notes/chartUpdates/ChartUpdatesPanel"
 import { NoteSignaturePanel } from "@/components/notes/signing/NoteSignaturePanel"
 import { ChargeCardSection } from "@/components/payments/ChargeCardSection"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -51,6 +52,7 @@ import { pdfSignatureBlock } from "@/lib/utils/signatureBlock"
 import type { RedraftEdits, RedraftNoteRequest } from "@/types/notes"
 import type { NoteContent } from "@/types/sessions"
 import { noteContentToJson } from "@/types/sessions"
+import { MdmReviewPanel } from "@/components/sessions/MdmReviewPanel"
 
 const HIGHLIGHT_DURATION_MS = 4000
 
@@ -154,7 +156,8 @@ export default function SessionDetailPage({ params }: PageProps) {
   }
 
   // A redraft rewrites the note from the saved copy, so it waits for a save
-  // in flight, and the local copy must not mask what it returns.
+  // in flight, and the local copy must not mask what it returns. Putting the
+  // computed codes in the note does the same.
   const settleEdits = async () => {
     await savingEditsRef.current
     setLocalNoteEdited(null)
@@ -360,6 +363,15 @@ export default function SessionDetailPage({ params }: PageProps) {
             )}
           </div>
 
+          {note && (
+            <MdmReviewPanel
+              key={`mdm-${note.id}`}
+              note={note}
+              editable={noteEditable && !redrafting}
+              beforeApply={settleEdits}
+            />
+          )}
+
           {note && session.source !== "imported" && (
             <NoteInputsPanel
               key={note.id}
@@ -404,6 +416,7 @@ export default function SessionDetailPage({ params }: PageProps) {
                     qualityRating={localRatingFeedback.rating}
                     qualityRatingReason={localRatingFeedback.reason}
                     qualityRatingSections={localRatingFeedback.sections}
+                    note={note ?? undefined}
                   />
                 </div>
               </div>
@@ -421,6 +434,8 @@ export default function SessionDetailPage({ params }: PageProps) {
               }
             />
           )}
+
+          {note && session.status === "finalized" && <ChartUpdatesPanel note={note} />}
 
           {noteIsSigned && (
             <div className="border-t border-neutral-200 pt-6">

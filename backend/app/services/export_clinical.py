@@ -206,6 +206,8 @@ def _medication(row: Mapping[str, object]) -> MedicationStatement:
             "id": str(row["id"]),
             "drug_name": str(row["drug_name"]),
             "dose": str(row["dose"]),
+            "frequency": _optional_text(row, "frequency"),
+            "category": row.get("category"),
             "status": row["status"],
             "started_on": cast("date | None", row.get("started_at")),
             "stopped_on": cast("date | None", row.get("stopped_at")),

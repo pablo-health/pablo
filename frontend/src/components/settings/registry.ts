@@ -88,6 +88,12 @@ export interface SettingsItem {
    * absent from the nav *and* its route 404s — a hidden nav link is not a gate.
    */
   feature?: string
+  /**
+   * False for a page reached from another page rather than from the nav: a
+   * step that belongs to one card should be found on that card. Its route
+   * still resolves. Defaults to true.
+   */
+  inNav?: boolean
 }
 
 export interface SettingsGroup {
@@ -188,7 +194,7 @@ const baseGroups: SettingsGroup[] = [
         icon: Users,
         page: PatientPortalPage,
         feature: "patient_portal",
-        desc: "Intake forms, self-report measures and {person} sign-in.",
+        desc: "Intake packets, self-report measures and {person} sign-in.",
       },
       {
         id: DOMAINS_SETTINGS_ID,

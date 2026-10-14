@@ -1596,7 +1596,15 @@ class Settings(BaseSettings):
             "of its tier's default (ai_model, or ai_model_flash for the "
             "interactive features); one not named keeps the default. With "
             "ai_fallbacks, a feature can run on any provider and fall back to "
-            "any other, the tier default included. Empty by default."
+            "any other, the tier default included. Empty by default.\n\n"
+            "A section of a note drafted by a call of its own also has a key "
+            "here: ``note_generation.risk_mse`` names the model for the risk, "
+            "mental status and measures sections, ``note_generation.hpi`` the "
+            "model for the history of present illness, "
+            "``note_generation.psychotherapy`` the model for the psychotherapy "
+            "block, and the note model "
+            "(``note_generation``) drafts each when it is not named. Such a "
+            "call falls back as ``note_generation`` does."
         ),
     )
     ai_fallbacks: dict[str, str] = Field(
@@ -1981,6 +1989,10 @@ class Settings(BaseSettings):
         default="best",
         description="AssemblyAI speech model, e.g. best, nano, slam-1.",
     )
+    assemblyai_medical_speech_model: str = Field(
+        default="universal-3-5-pro",
+        description="AssemblyAI pre-recorded model used with Medical Mode for prescribers.",
+    )
     assemblyai_vad_enabled: bool = Field(
         default=False,
         description=(
@@ -2001,6 +2013,16 @@ class Settings(BaseSettings):
             'B"). Comma-separated in the environment, e.g. '
             "ASSEMBLYAI_SPEAKER_LABELS_CHANNELS=Client. Empty (default) keeps "
             "today's one-speaker-per-channel behavior."
+        ),
+    )
+
+    assemblyai_chart_keyterms: bool = Field(
+        default=False,
+        description=(
+            "Send each session's vocabulary to AssemblyAI as keyterms_prompt: the "
+            "client's medication and allergy names from the chart, generic and "
+            "brand, at most 200 words (app.drug_names.keyterms). A session whose "
+            "chart names nothing is sent none. Off (default) sends no vocabulary."
         ),
     )
 

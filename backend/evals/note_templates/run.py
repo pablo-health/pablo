@@ -30,17 +30,22 @@ from typing import Any
 
 from app.models import Patient, Transcript
 from app.notes.practice_types import practice_key, to_definition, validate_note_inputs
-from app.services.note_generation_service import RegistryNoteGenerationService
+from app.services.note_generation_service import GeneratedNote, RegistryNoteGenerationService
 from app.services.structured_llm_gateway import (
     get_default_structured_llm_gateway,
     resolve_structured_llm_gateway,
 )
 
 from evals.note_templates.cases import ALL_CASES, TemplateCase
-from evals.note_templates.scorers import Draft, grade
+from evals.note_templates.scorers import (
+    grade,
+    recorded_boundary,
+    therapy_minutes,
+    therapy_minutes_table,
+)
 
 
-def draft(case: TemplateCase, model: str | None) -> Draft:
+def draft(case: TemplateCase, model: str | None) -> GeneratedNote:
     definition = to_definition(practice_key(case.template), 0, case.spec)
     inputs = validate_note_inputs(definition, case.inputs)
     now = datetime.now(UTC)
@@ -62,28 +67,43 @@ def draft(case: TemplateCase, model: str | None) -> Draft:
         inputs=inputs,
         definition=definition,
         chart=case.chart,
+        client_present_end_seconds=recorded_boundary(case),
     )
-    return generated.content
+    return generated
 
 
 def run_case(case: TemplateCase, model: str | None, run: int) -> dict[str, Any]:
     started = time.monotonic()
-    content = draft(case, model)
-    problems = grade(content, case)
+    generated = draft(case, model)
+    problems = grade(generated.content, case)
+    problems["therapy_minutes"] = therapy_minutes(case, generated.psychotherapy_proposal)
+    table = therapy_minutes_table(case, generated.psychotherapy_proposal)
     return {
         "case": case.name,
         "run": run,
         "passed": not any(problems.values()),
         "failed_checks": {name: found for name, found in problems.items() if found},
         "seconds": round(time.monotonic() - started, 1),
-        "draft": content,
+        "therapy_seconds": (
+            {"proposed": table["proposed"], "labeled": table["labeled"], "end": table["end"]}
+            if table
+            else None
+        ),
+        "draft": generated.content,
+        "psychotherapy_proposal": generated.psychotherapy_proposal,
     }
 
 
 def _print(results: list[dict[str, Any]]) -> None:
     for r in results:
         mark = "PASS" if r["passed"] else "FAIL"
-        print(f"{mark}  run {r['run']}  {r['case']}  ({r['seconds']}s)")
+        therapy = r["therapy_seconds"]
+        minutes = (
+            f"  therapy {therapy['proposed'] / 60:.1f} min, labeled {therapy['labeled'] / 60:.1f}"
+            if therapy
+            else ""
+        )
+        print(f"{mark}  run {r['run']}  {r['case']}  ({r['seconds']}s){minutes}")
         for name, found in r["failed_checks"].items():
             for problem in found:
                 print(f"      {name}: {problem}")

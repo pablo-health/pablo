@@ -13,6 +13,7 @@ const FLAGS = {
   calendar_integrations: true,
   audio_retention: false,
   companion_mac: true,
+  companion_windows: true,
 } as const satisfies Record<string, boolean>
 
 export type FeatureFlag = keyof typeof FLAGS
@@ -28,6 +29,7 @@ const OVERRIDES: Record<FeatureFlag, string | undefined> = {
   calendar_integrations: process.env.NEXT_PUBLIC_FF_CALENDAR_INTEGRATIONS,
   audio_retention: process.env.NEXT_PUBLIC_FF_AUDIO_RETENTION,
   companion_mac: process.env.NEXT_PUBLIC_FF_COMPANION_MAC,
+  companion_windows: process.env.NEXT_PUBLIC_FF_COMPANION_WINDOWS,
 }
 
 export function isEnabled(flag: FeatureFlag): boolean {

@@ -5,10 +5,12 @@
  *
  * Covers the default tab, tab switching, the count badges wired to the
  * list hooks, and the Notes-tab preview: 3-most-recent rows with type and
- * draft/finalized badges, click-through routing, and the empty state.
+ * draft/finalized badges, click-through routing, and the empty state; and
+ * the Billing tab, which holds Balance, Payments and Insurance as sections
+ * and still answers links that name them as tabs.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest"
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -18,13 +20,27 @@ import { createMockNote } from "@/test/factories"
 import * as notesApi from "@/lib/api/notes"
 import * as documentsApi from "@/lib/api/patientDocuments"
 import * as noteTypesApi from "@/lib/api/noteTypes"
+import * as paymentsApi from "@/lib/api/payments"
+import * as coverageApi from "@/lib/api/coverage"
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn() }),
 }))
+let authLoading = false
+vi.mock("@/lib/auth-context", () => ({
+  useAuth: () => ({ user: null, loading: authLoading, getIdToken: async () => null }),
+}))
 vi.mock("@/lib/api/notes")
 vi.mock("@/lib/api/patientDocuments")
 vi.mock("@/lib/api/noteTypes")
+vi.mock("@/lib/api/payments", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api/payments")>()),
+  listCharges: vi.fn(),
+  fetchCardOnFile: vi.fn(),
+  fetchChargeAmount: vi.fn(),
+  fetchPatientBalance: vi.fn(),
+}))
+vi.mock("@/lib/api/coverage")
 
 const createWrapper = () => {
   const queryClient = new QueryClient({
@@ -42,6 +58,7 @@ const createWrapper = () => {
 describe("PatientChartTabs", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    authLoading = false
     vi.mocked(notesApi.listNotesForPatient).mockResolvedValue({
       data: [
         createMockNote({
@@ -65,6 +82,23 @@ describe("PatientChartTabs", () => {
     })
     // An empty catalog: labels fall back to the raw key.
     vi.mocked(noteTypesApi.listNoteTypes).mockResolvedValue({ note_types: [] })
+    vi.mocked(paymentsApi.listCharges).mockResolvedValue([])
+    vi.mocked(paymentsApi.fetchCardOnFile).mockResolvedValue(null)
+    vi.mocked(paymentsApi.fetchChargeAmount).mockResolvedValue({
+      amount_cents: null,
+      currency: "usd",
+    })
+    vi.mocked(paymentsApi.fetchPatientBalance).mockResolvedValue({
+      owed_cents: 0,
+      collected_cents: 0,
+      written_off_cents: 0,
+      adjusted_cents: 0,
+      credited_cents: 0,
+      balance_cents: 0,
+      outcome_known: true,
+      by_visit: [],
+    })
+    vi.mocked(coverageApi.fetchCoverage).mockResolvedValue(null)
   })
 
   it("labels a note with its type's catalog name", async () => {
@@ -158,6 +192,36 @@ describe("PatientChartTabs", () => {
     })
   })
 
+  it("waits for sign-in before saying there are no notes", async () => {
+    // While sign-in resolves the notes query is disabled: no data, not
+    // loading. The empty state (and its New note button) must not show
+    // then, or it is replaced by the skeleton once the fetch starts and a
+    // New note dialog opened in between closes under the clinician.
+    vi.mocked(notesApi.listNotesForPatient).mockResolvedValue({
+      data: [],
+      total: 0,
+    })
+    authLoading = true
+    const { rerender } = render(<PatientChartTabs patientId="p1" />, {
+      wrapper: createWrapper(),
+    })
+    const panel = screen.getByRole("tabpanel")
+
+    expect(screen.queryByText(/no notes yet/i)).not.toBeInTheDocument()
+    expect(
+      within(panel).queryByRole("button", { name: /new note/i }),
+    ).not.toBeInTheDocument()
+    expect(notesApi.listNotesForPatient).not.toHaveBeenCalled()
+
+    authLoading = false
+    rerender(<PatientChartTabs patientId="p1" />)
+
+    expect(await screen.findByText(/no notes yet/i)).toBeInTheDocument()
+    expect(
+      within(panel).getByRole("button", { name: /new note/i }),
+    ).toBeInTheDocument()
+  })
+
   it("switches to the Documents tab and mounts the documents panel", async () => {
     const user = userEvent.setup()
     render(<PatientChartTabs patientId="p1" />, { wrapper: createWrapper() })
@@ -184,6 +248,68 @@ describe("PatientChartTabs", () => {
     await waitFor(() => {
       expect(within(notesTab).getByText("2")).toBeInTheDocument()
       expect(within(documentsTab).getByText("1")).toBeInTheDocument()
+    })
+  })
+
+  it("puts balance, payments and insurance under one Billing tab", async () => {
+    const user = userEvent.setup()
+    render(<PatientChartTabs patientId="p1" />, { wrapper: createWrapper() })
+
+    for (const gone of [/^payments/i, /^balance/i, /^insurance/i]) {
+      expect(screen.queryByRole("tab", { name: gone })).not.toBeInTheDocument()
+    }
+    await user.click(screen.getByRole("tab", { name: /billing/i }))
+
+    const panel = screen.getByRole("tabpanel")
+    const sections = within(panel)
+      .getAllByRole("region")
+      .map((region) => region.id)
+    expect(sections).toEqual(["billing-balance", "billing-payments", "billing-insurance"])
+    for (const name of ["Balance", "Payments", "Insurance"]) {
+      expect(within(panel).getByRole("region", { name })).toBeInTheDocument()
+    }
+  })
+
+  describe("links to the tabs Billing replaced", () => {
+    const scrolledTo: string[] = []
+
+    beforeEach(() => {
+      scrolledTo.length = 0
+      // jsdom has no scrollIntoView of its own.
+      Element.prototype.scrollIntoView = function (this: Element) {
+        scrolledTo.push(this.id)
+      }
+    })
+
+    afterEach(() => {
+      delete (Element.prototype as Partial<Element>).scrollIntoView
+    })
+
+    it.each(["balance", "payments", "insurance"])(
+      "opens ?tab=%s on Billing, scrolled to that section",
+      (section) => {
+        render(<PatientChartTabs patientId="p1" initialTab={section} />, {
+          wrapper: createWrapper(),
+        })
+
+        expect(screen.getByRole("tab", { name: /billing/i })).toHaveAttribute(
+          "data-state",
+          "active",
+        )
+        expect(scrolledTo).toEqual([`billing-${section}`])
+      },
+    )
+
+    it("opens ?tab=billing at the top", () => {
+      render(<PatientChartTabs patientId="p1" initialTab="billing" />, {
+        wrapper: createWrapper(),
+      })
+
+      expect(screen.getByRole("tab", { name: /billing/i })).toHaveAttribute(
+        "data-state",
+        "active",
+      )
+      expect(scrolledTo).toEqual([])
     })
   })
 })

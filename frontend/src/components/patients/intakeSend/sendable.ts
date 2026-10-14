@@ -67,12 +67,21 @@ export interface DeliveryFacts {
  * email or mobile on file has the forms waiting and no way to reach them, and
  * that is the one state worth interrupting for.
  */
+/** "Packet" or "Packets", by how many went out. */
+function packetsWord(count: number): string {
+  return count === 1 ? "Packet" : "Packets"
+}
+
+function sentWord(count: number): string {
+  return `${packetsWord(count)} sent`
+}
+
 export function deliveryOutcome(facts: DeliveryFacts, people: PeopleWords): DeliveryOutcome {
   const { formCount, invited, inviteError, hadAccess, email, phone } = facts
   const forms = formCount > 0
   if (inviteError) {
     const status = (inviteError as { status?: number } | null)?.status
-    const heading = forms ? "Forms sent. The invitation didn't go out." : "Invitation not sent"
+    const heading = forms ? `${sentWord(formCount)}. The invitation didn't go out.` : "Invitation not sent"
     if (status === 422) {
       return {
         heading,
@@ -91,20 +100,20 @@ export function deliveryOutcome(facts: DeliveryFacts, people: PeopleWords): Deli
   if (invited) {
     const lines = [`They'll get a link by email at ${email} and a code by text at ${phone}.`]
     if (forms) lines.push("You'll see their answers on the Intake tab once they're done.")
-    return { heading: forms ? "Forms and invitation sent" : "Invitation sent", lines, complete: true }
+    return { heading: forms ? `${packetsWord(formCount)} and invitation sent` : "Invitation sent", lines, complete: true }
   }
   if (hadAccess && forms) {
-    return { heading: "Forms sent", lines: ["They're waiting in their portal."], complete: true }
+    return { heading: sentWord(formCount), lines: ["They're waiting in their portal."], complete: true }
   }
   if (facts.portalServed === false) {
     // A deployment with no portal: forms are filled in with the practice,
     // and there is no invitation to be missing.
-    return { heading: "Forms sent", lines: [], complete: true }
+    return { heading: sentWord(formCount), lines: [], complete: true }
   }
   // Forms on the chart and no way in for the client: the one state worth
   // interrupting for (see above), so it is not shown as done.
   return {
-    heading: "Forms sent",
+    heading: sentWord(formCount),
     lines: ["They'll need an invitation to the portal to open them."],
     complete: false,
   }
@@ -127,9 +136,9 @@ export function assignErrorMessage(
   const sofar =
     alreadySent.length > 0 ? ` ${alreadySent.join(", ")} went out; the rest did not.` : ""
   if (status === 422) {
-    return `A form is no longer published, so it was not sent.${sofar} Reload to see the current forms.`
+    return `A packet is no longer published, so it was not sent.${sofar} Reload to see the current packets.`
   }
   return alreadySent.length > 0
-    ? `Not every form could be sent.${sofar} You can send the others from the chart.`
-    : `The forms could not be sent. Nothing went to the ${people.one}; you can try again.`
+    ? `Not every packet could be sent.${sofar} You can send the others from the chart.`
+    : `The packets could not be sent. Nothing went to the ${people.one}; you can try again.`
 }

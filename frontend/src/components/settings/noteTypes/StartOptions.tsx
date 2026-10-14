@@ -6,21 +6,22 @@ import { FileText, LayoutTemplate } from "lucide-react"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import type { PracticeNoteTypeSpec } from "@/types/noteTypes"
+import type { NoteTypeBase, PracticeNoteTypeSpec } from "@/types/noteTypes"
 import { ListRow, SettingsCard } from "../ui"
 import { FieldMessages } from "./EditorParts"
 import { importSpec } from "./importSpec"
-import { NOTE_TYPE_TEMPLATES, type NoteTypeTemplate } from "./templates"
 
 interface StartOptionsProps {
+  /** Built-ins a type can be based on: it keeps up with them and carries its own changes. */
+  bases: NoteTypeBase[]
   onBlank: () => void
-  onTemplate: (template: NoteTypeTemplate) => void
+  onBase: (base: NoteTypeBase) => void
   onFromNotes: () => void
   onImport: (spec: PracticeNoteTypeSpec) => void
 }
 
-/** Ways to begin a new note type: blank, from a template, from your own notes, or from JSON. */
-export function StartOptions({ onBlank, onTemplate, onFromNotes, onImport }: StartOptionsProps) {
+/** Ways to begin a new note type: blank, by adjusting a built-in, from your own notes, or from JSON. */
+export function StartOptions({ bases, onBlank, onBase, onFromNotes, onImport }: StartOptionsProps) {
   const [json, setJson] = useState("")
   const [importError, setImportError] = useState<string | null>(null)
 
@@ -47,21 +48,20 @@ export function StartOptions({ onBlank, onTemplate, onFromNotes, onImport }: Sta
         New note type
       </Button>
 
-      <h3 className="mb-1 mt-5 text-[13px] font-semibold text-foreground">Start from a template</h3>
-      <ul>
-        {NOTE_TYPE_TEMPLATES.map((template) => (
-          <ListRow key={template.id} icon={LayoutTemplate} title={template.spec.label} subtitle={template.spec.description}>
-            <Button
-              size="sm"
-              variant="outline"
-              aria-label={`Start from ${template.spec.label}`}
-              onClick={() => onTemplate(template)}
-            >
-              Use
-            </Button>
-          </ListRow>
-        ))}
-      </ul>
+      {bases.length > 0 && (
+        <>
+          <h3 className="mb-1 mt-5 text-[13px] font-semibold text-foreground">Start from a template</h3>
+          <ul>
+            {bases.map((base) => (
+              <ListRow key={base.key} icon={LayoutTemplate} title={base.label} subtitle={base.description}>
+                <Button size="sm" variant="outline" aria-label={`Start from ${base.label}`} onClick={() => onBase(base)}>
+                  Use
+                </Button>
+              </ListRow>
+            ))}
+          </ul>
+        </>
+      )}
 
       <h3 className="mb-1 mt-5 text-[13px] font-semibold text-foreground">Start from your notes</h3>
       <ul>

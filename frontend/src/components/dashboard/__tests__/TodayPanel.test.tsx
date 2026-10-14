@@ -26,6 +26,7 @@ vi.mock("@/hooks/usePreferences", () => ({
 // platform detection internals.
 vi.mock("@/lib/companion", () => ({
   isMacOS: () => true,
+  companionPlatform: () => "macos",
   isCompanionAvailable: () => true,
 }))
 
@@ -98,6 +99,25 @@ describe("TodayPanel", () => {
     expect(screen.getByAltText(/pablo bear/i)).toBeInTheDocument()
   })
 
+  // A failed load used to fall through to "No sessions today", which tells a
+  // clinician with a full day that it is empty.
+  it("says the sessions didn't load, with a retry, instead of an empty day", () => {
+    const refetch = vi.fn()
+    useDashboardSummary.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      refetch,
+    })
+
+    renderPanel()
+
+    expect(screen.getByText("Today’s sessions didn’t load.")).toBeInTheDocument()
+    expect(screen.queryByText(/no sessions today/i)).not.toBeInTheDocument()
+    screen.getByRole("button", { name: "Try again" }).click()
+    expect(refetch).toHaveBeenCalledTimes(1)
+  })
+
   it("renders appointments sorted by start time", () => {
     mockSummary([
       makeAppointment({
@@ -145,6 +165,31 @@ describe("TodayPanel", () => {
     expect(
       screen.queryByRole("button", { name: /^start session$/i }),
     ).not.toBeInTheDocument()
+  })
+
+  it("does not offer Download when the device check fails, and offers a retry", () => {
+    const refetch = vi.fn()
+    useCompanionDevices.mockReturnValue({
+      data: undefined,
+      isError: true,
+      refetch,
+    })
+    mockSummary([makeAppointment({ id: "appt-x" })])
+
+    renderPanel()
+
+    expect(
+      screen.queryByRole("button", { name: /download pablo companion/i }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole("link", { name: /start session/i }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: /don't have it yet/i }),
+    ).not.toBeInTheDocument()
+
+    screen.getByRole("button", { name: /try again/i }).click()
+    expect(refetch).toHaveBeenCalledOnce()
   })
 
   it("links already-recorded appointments to the web session detail", () => {

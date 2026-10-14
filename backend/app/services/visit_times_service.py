@@ -1,11 +1,12 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""A recorded visit's times, and confirming its psychotherapy window.
+"""A recorded visit's times, and confirming its psychotherapy time.
 
 The visit's start and end are the call's own times when the telehealth
 platform reported them, otherwise the recording's. Psychotherapy minutes are
-counted on the recording, from the confirmed start to where the client left
-(:mod:`app.notes.client_present`), and can never exceed that span.
+counted on the recording, as the sum of the client-present turns labeled
+therapy (:mod:`app.notes.visit_times`), and can never exceed the span the
+client was present (:mod:`app.notes.client_present`).
 """
 
 from __future__ import annotations
@@ -17,18 +18,28 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..api_errors import BadRequestError, NotFoundError, UnprocessableEntityError
 from ..models.visit_times import (
+    DictatedTimeResponse,
     PsychotherapyWindowResponse,
     RecordingTurn,
-    StartCandidateResponse,
+    TurnRun,
     VisitTimesResponse,
 )
 from ..notes import is_practice_key
 from ..notes.client_present import recording_end, segments_from_transcript
 from ..notes.visit_times import (
     PSYCHOTHERAPY_SECTION_KEY,
+    TurnLabel,
     client_present_turns,
     disagrees,
     drafted_time,
+    interleaved_text,
+    labels_from_stored,
+    labels_to_stored,
+    layout,
+    proposed_dictation,
+    therapy_minutes,
+    therapy_runs,
+    turn_spans,
     window_minutes,
     window_text,
 )
@@ -60,7 +71,7 @@ def _visit_bounds(
 
 
 def _client_present_span(session: TherapySession) -> float | None:
-    """Where the psychotherapy window ends, in seconds into the recording.
+    """Where the client-present span ends, in seconds into the recording.
 
     The client-present boundary when measured; otherwise the whole recording.
     """
@@ -72,27 +83,55 @@ def _client_present_span(session: TherapySession) -> float | None:
     return end or None
 
 
+def _labels(window: dict[str, Any]) -> dict[float, TurnLabel]:
+    """The confirmed labels, else the proposed ones."""
+    confirmed = window.get("confirmed") or {}
+    if confirmed.get("labels") is not None:
+        return labels_from_stored(confirmed["labels"])
+    return labels_from_stored((window.get("proposal") or {}).get("labels"))
+
+
 def _psychotherapy(session: TherapySession, note: Note) -> PsychotherapyWindowResponse:
     if session.client_present_end_seconds == 0:
         return PsychotherapyWindowResponse(offered=False)
     window = note.psychotherapy_window or {}
     proposal = window.get("proposal") or {}
     confirmed = window.get("confirmed") or {}
+    end = _client_present_span(session)
     turns = client_present_turns(
         segments_from_transcript(session.transcript), session.client_present_end_seconds
     )
-    dictated = drafted_time(note.content_edited or note.content)
+    labels = _labels(window)
+    spans = dict(turn_spans(turns, end)) if end is not None else {}
+    content = note.content_edited or note.content
+    stated = proposed_dictation(window)
     return PsychotherapyWindowResponse(
         offered=True,
-        end_seconds=_client_present_span(session),
-        turns=[RecordingTurn(seconds=t.start, speaker=t.speaker, text=t.text) for t in turns],
-        candidates=[StartCandidateResponse(**c) for c in proposal.get("candidates", [])],
-        stated_clock_time=proposal.get("stated_clock_time"),
+        end_seconds=end,
+        turns=[
+            RecordingTurn(
+                seconds=t.start,
+                end_seconds=spans.get(t.start, t.end),
+                speaker=t.speaker,
+                text=t.text,
+                label=labels.get(t.start),
+            )
+            for t in turns
+        ],
+        runs=[
+            TurnRun(label=r.label, start_seconds=r.start, end_seconds=r.end)
+            for r in (layout(labels, turns, end) if end is not None else [])
+        ],
+        labeled_minutes=therapy_minutes(labels, turns, end) if end is not None and labels else None,
+        cue_seconds=proposal.get("cue_seconds"),
+        dictated=DictatedTimeResponse(**stated.to_dict()) if stated else None,
         confirmed_start_seconds=confirmed.get("start_seconds"),
         confirmed_minutes=confirmed.get("minutes"),
+        contiguous=confirmed.get("contiguous"),
+        labels_confirmed=confirmed.get("labels") is not None,
         window_text=confirmed.get("window_text"),
-        dictated_time=dictated if dictated != confirmed.get("window_text") else None,
-        disagrees=disagrees(dictated, confirmed),
+        dictated_time=drafted_time(content, window),
+        disagrees=disagrees(content, window),
     )
 
 
@@ -155,6 +194,48 @@ def _zone(name: str) -> ZoneInfo:
         raise UnprocessableEntityError(f"Unknown time zone {name!r}", {"time_zone": name}) from exc
 
 
+def _confirm_labels(
+    session: TherapySession,
+    request: ConfirmPsychotherapyWindowRequest,
+    end: float,
+    zone: ZoneInfo,
+) -> dict[str, Any]:
+    """The labels as confirmed: their therapy minutes, as a window when they are one run."""
+    turns = client_present_turns(
+        segments_from_transcript(session.transcript), session.client_present_end_seconds
+    )
+    starts = {t.start for t in turns}
+    labels: dict[float, TurnLabel] = {}
+    for item in request.labels or []:
+        if item.seconds not in starts:
+            raise UnprocessableEntityError(
+                "A label names a turn that is not on the recording while the client was present",
+                {"seconds": item.seconds},
+            )
+        labels[item.seconds] = item.label
+    minutes = therapy_minutes(labels, turns, end)
+    runs = therapy_runs(layout(labels, turns, end))
+    began = session.started_at
+    if len(runs) == 1 and began is not None:
+        text = window_text(
+            minutes,
+            start_at=began + timedelta(seconds=runs[0].start),
+            end_at=began + timedelta(seconds=runs[0].end),
+            zone=zone,
+        )
+    elif len(runs) > 1:
+        text = interleaved_text(minutes)
+    else:
+        text = window_text(minutes)
+    return {
+        "labels": labels_to_stored(labels),
+        "start_seconds": runs[0].start if len(runs) == 1 else None,
+        "minutes": minutes,
+        "contiguous": len(runs) <= 1,
+        "window_text": text,
+    }
+
+
 def confirm_psychotherapy_window(
     session: TherapySession,
     note: Note | None,
@@ -176,7 +257,9 @@ def confirm_psychotherapy_window(
         )
     zone = _zone(request.time_zone)
     confirmed: dict[str, Any]
-    if request.start_seconds is not None:
+    if request.labels is not None:
+        confirmed = _confirm_labels(session, request, end, zone)
+    elif request.start_seconds is not None:
         if request.start_seconds >= end:
             raise UnprocessableEntityError(
                 "The therapy portion must start before the client left",
@@ -194,7 +277,8 @@ def confirm_psychotherapy_window(
             if began
             else window_text(minutes)
         )
-        confirmed = {"start_seconds": request.start_seconds, "minutes": minutes}
+        confirmed = {"start_seconds": request.start_seconds, "minutes": minutes, "contiguous": True}
+        confirmed["window_text"] = text
     else:
         minutes = request.minutes or 0
         if minutes * _SECONDS_PER_MINUTE > end:
@@ -202,9 +286,7 @@ def confirm_psychotherapy_window(
                 "Psychotherapy minutes can't be more than the time the client was present",
                 {"minutes": minutes, "max_minutes": math.floor(end / _SECONDS_PER_MINUTE)},
             )
-        text = window_text(minutes)
-        confirmed = {"start_seconds": None, "minutes": minutes}
-    confirmed["window_text"] = text
+        confirmed = {"start_seconds": None, "minutes": minutes, "window_text": window_text(minutes)}
     confirmed["keep_dictated"] = request.resolution == "keep_dictated"
     # Remembered, so a redraft that brings the dictated time back gets the window again.
     confirmed["use_confirmed"] = request.resolution == "use_confirmed"

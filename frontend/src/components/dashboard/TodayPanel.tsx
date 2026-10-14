@@ -6,6 +6,7 @@ import Image from "next/image"
 import Link from "next/link"
 import { useMemo, useState } from "react"
 import { AiNotesConsentScriptButton } from "@/components/sessions/AiNotesConsentScript"
+import { PanelLoadError } from "@/components/support/PanelLoadError"
 import { Button } from "@/components/ui/button"
 import { useCompanionDevices } from "@/hooks/useCompanionDevices"
 import { useDashboardSummary } from "@/hooks/useDashboard"
@@ -13,14 +14,13 @@ import { useUserTimeZone } from "@/hooks/usePreferences"
 import { appointmentBadge } from "@/lib/appointmentBadge"
 import { isCompanionAvailable } from "@/lib/companion"
 import { useCompanionAccess } from "@/lib/companion.extensions"
-import { isTelehealth } from "@/lib/telehealth"
 import type { AppointmentResponse } from "@/types/scheduling"
 import { CompanionGetDialog } from "./CompanionGetDialog"
 import { StartSessionButton } from "./StartSessionButton"
 
 export function TodayPanel() {
   const timeZone = useUserTimeZone()
-  const { data, isLoading } = useDashboardSummary()
+  const { data, isLoading, isError, refetch } = useDashboardSummary()
   const [companionDialogOpen, setCompanionDialogOpen] = useState(false)
   // Smart detection: only consider the companion handoff on a platform that
   // can route the deep link, and only treat the user as "set up" once the
@@ -31,8 +31,15 @@ export function TodayPanel() {
   // account without it should see no companion affordances at all.
   const companionAccess = useCompanionAccess()
   const platformSupported = isCompanionAvailable() && companionAccess
-  const { data: devices } = useCompanionDevices()
+  const {
+    data: devices,
+    isError: devicesUnknown,
+    refetch: refetchDevices,
+  } = useCompanionDevices()
   const companionEnrolled = platformSupported && (devices?.length ?? 0) > 0
+  // When the device check fails we cannot tell whether the app is installed,
+  // so rows show neither Start nor Download; the footer offers a retry.
+  const offerDownload = platformSupported && !devicesUnknown
 
   const lastVisitByPatient = useMemo(() => {
     const m = new Map<string, string | null>()
@@ -73,6 +80,12 @@ export function TodayPanel() {
 
       {isLoading ? (
         <p className="text-sm text-neutral-500 py-6 text-center">Loading…</p>
+      ) : isError && !data ? (
+        // Without this a failed load fell through to "No sessions today".
+        <PanelLoadError
+          message="Today’s sessions didn’t load."
+          onRetry={() => void refetch()}
+        />
       ) : appts.length === 0 ? (
         <EmptyDay />
       ) : (
@@ -85,7 +98,7 @@ export function TodayPanel() {
                 lastVisit={lastVisitByPatient.get(a.patient_id) ?? null}
                 timeZone={timeZone}
                 companionEnrolled={companionEnrolled}
-                platformSupported={platformSupported}
+                platformSupported={offerDownload}
                 onGetApp={() => setCompanionDialogOpen(true)}
               />
             ))}
@@ -93,9 +106,12 @@ export function TodayPanel() {
           {/* The footer shows on every PLATFORM (non-mac users get the
               "coming soon" dialog), but not to an account whose deployment
               policy says recording isn't theirs to set up. */}
-          {companionAccess && (
-            <CompanionFooter onGetApp={() => setCompanionDialogOpen(true)} />
-          )}
+          {companionAccess &&
+            (devicesUnknown ? (
+              <DeviceCheckFailedFooter onRetry={() => void refetchDevices()} />
+            ) : (
+              <CompanionFooter onGetApp={() => setCompanionDialogOpen(true)} />
+            ))}
           <CompanionGetDialog
             open={companionDialogOpen}
             onOpenChange={setCompanionDialogOpen}
@@ -167,7 +183,6 @@ function AppointmentRow({
         <StartSessionButton
           appointmentId={appointment.id}
           patientId={appointment.patient_id}
-          telehealth={isTelehealth(appointment)}
         />
       ) : launchable && platformSupported ? (
         <Button size="sm" variant="outline" onClick={onGetApp}>
@@ -188,6 +203,21 @@ function CompanionFooter({ onGetApp }: { onGetApp: () => void }) {
         className="text-primary-700 hover:underline"
       >
         Don&apos;t have it yet?
+      </button>
+    </p>
+  )
+}
+
+function DeviceCheckFailedFooter({ onRetry }: { onRetry: () => void }) {
+  return (
+    <p className="text-xs text-neutral-500 mt-3 pt-3 border-t border-neutral-100 text-center">
+      Couldn&apos;t check for the Pablo desktop app.{" "}
+      <button
+        type="button"
+        onClick={onRetry}
+        className="text-primary-700 hover:underline"
+      >
+        Try again
       </button>
     </p>
   )

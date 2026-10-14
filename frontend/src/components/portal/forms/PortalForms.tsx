@@ -28,6 +28,7 @@ import {
   listAssignments,
   PatientIntakeError,
 } from "@/lib/api/patientIntake"
+import { fetchCapabilities } from "@/lib/portal-shell/api"
 import { AssignmentList } from "./AssignmentList"
 import { FormsExpired, FormsLoadFailed, FormsLoading } from "./FormsNotice"
 import { PacketFlow } from "./PacketFlow"
@@ -35,6 +36,7 @@ import { PacketFlow } from "./PacketFlow"
 export const keys = {
   assignments: (token: string) => ["patient-intake", "assignments", token] as const,
   form: (token: string) => ["patient-intake", "form", token] as const,
+  capabilities: (token: string) => ["portal-capabilities", token] as const,
 }
 
 export interface PortalFormsProps {
@@ -60,6 +62,17 @@ export function PortalForms({ slug, sessionToken }: PortalFormsProps) {
     queryFn: () => fetchIntakeForm(sessionToken),
     retry: false,
   })
+
+  // The practice's name, for the list's titles. Best-effort, and shared with
+  // the refills section under one key: without it a row says "your
+  // practice".
+  const capabilities = useQuery({
+    queryKey: keys.capabilities(sessionToken),
+    queryFn: () => fetchCapabilities(sessionToken),
+    staleTime: Infinity,
+  })
+  const practiceName =
+    (capabilities.data?.ok ? capabilities.data.data.practice.display_name : null) || null
 
   const refetchList = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: keys.assignments(sessionToken) })
@@ -88,5 +101,11 @@ export function PortalForms({ slug, sessionToken }: PortalFormsProps) {
     )
   }
 
-  return <AssignmentList assignments={assignments.data} onOpen={setOpenId} />
+  return (
+    <AssignmentList
+      assignments={assignments.data}
+      practiceName={practiceName}
+      onOpen={setOpenId}
+    />
+  )
 }

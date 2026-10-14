@@ -59,9 +59,10 @@ def test_recording_nkda_then_a_list_then_clearing(
         },
     )
     assert listed.status_code == 200, listed.text
+    unnoted = {"note": None, "source_note_id": None}
     assert listed.json()["allergies"] == [
-        {"substance": "Penicillin", "reaction": "Hives", "severity": "moderate"},
-        {"substance": "Sulfa", "reaction": None, "severity": None},
+        {"substance": "Penicillin", "reaction": "Hives", "severity": "moderate", **unnoted},
+        {"substance": "Sulfa", "reaction": None, "severity": None, **unnoted},
     ]
     stored = mock_repo.get(patient.id, mock_user_id)
     assert stored is not None

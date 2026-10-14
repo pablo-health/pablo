@@ -70,13 +70,14 @@ def get_patient_repository(
 
 class CreateLaunchIntentRequest(BaseModel):
     appointment_id: str = Field(min_length=1)
-    # The web already asked "No consent on file" and the clinician chose to
-    # record anyway. Carried to the companion so it does not ask again; it
-    # still refuses a client who declined.
+    # An in-person start the clinician chose to record without an answer on
+    # file. The web app no longer offers that; kept so an earlier client's
+    # intent still redeems the way it did. The companion still refuses a
+    # client who declined.
     ai_consent_prompted: bool = False
-    # For a telehealth visit with no answer on file, the clinician chose to ask
-    # once recording starts. Carried to the companion so it starts the session
-    # saying so, and shows the script to read.
+    # For a visit with no answer on file, the clinician chose to ask once
+    # recording starts. Carried to the companion so it starts the session
+    # saying so, and shows the script to read once recording is running.
     ask_consent_on_recording: bool = False
 
 

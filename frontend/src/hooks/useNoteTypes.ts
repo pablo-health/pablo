@@ -6,8 +6,10 @@ import {
   deriveNoteType,
   getNoteType,
   listDeriveReferences,
+  listNoteTypeBases,
   listNoteTypes,
   previewNoteDraft,
+  resolveNoteTypeSpec,
   retirePracticeNoteType,
   savePracticeNoteType,
 } from "@/lib/api/noteTypes"
@@ -60,6 +62,22 @@ export function useNoteTypeLabel(): (key: string) => string {
   const { data } = useNoteTypes()
   const labels = new Map((data?.note_types ?? []).map((t) => [t.key, t.label]))
   return (key) => labels.get(key) ?? key
+}
+
+/** Built-ins a practice can base its own type on; fixed at server startup. */
+export function useNoteTypeBases(token?: string) {
+  return useAuthQuery({
+    queryKey: queryKeys.noteTypes.bases(),
+    queryFn: () => listNoteTypeBases(token),
+    staleTime: Infinity,
+  })
+}
+
+/** Resolve a based type to a full spec, for detaching it. Saves nothing, so invalidates nothing. */
+export function useResolveNoteTypeSpec(token?: string) {
+  return useAuthMutation<{ spec: PracticeNoteTypeSpec }, PracticeNoteTypeSpec>({
+    mutationFn: (spec) => resolveNoteTypeSpec(spec, token),
+  })
 }
 
 /** Save the next version of one of the practice's own types. */

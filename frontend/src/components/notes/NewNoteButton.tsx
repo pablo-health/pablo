@@ -39,7 +39,7 @@ import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import { useNoteTypes } from "@/hooks/useNoteTypes"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { useCreateStandaloneNote } from "@/hooks/useNotes"
-import type { NoteTypeSchema } from "@/types/noteTypes"
+import { lockedNoteTypeMessage, type NoteTypeSchema } from "@/types/noteTypes"
 
 export interface NewNoteButtonProps {
   patientId: string
@@ -66,10 +66,7 @@ export function NewNoteButton({ patientId }: NewNoteButtonProps) {
 
   const handlePick = async (type: NoteTypeSchema) => {
     if (type.is_locked) {
-      showToast(
-        `${type.label} is a Practice tier note format. Upgrade your subscription to enable it.`,
-        "info",
-      )
+      showToast(lockedNoteTypeMessage(type.label), "info")
       return
     }
     try {
@@ -121,8 +118,8 @@ export function NewNoteButton({ patientId }: NewNoteButtonProps) {
                   From a transcript
                 </div>
                 <div className="text-sm text-neutral-600">
-                  Upload a session transcript (VTT, JSON, or TXT) to generate a
-                  SOAP note.
+                  Upload a session transcript (VTT, JSON, or TXT) to draft a
+                  note.
                 </div>
               </div>
             </div>
@@ -143,8 +140,8 @@ export function NewNoteButton({ patientId }: NewNoteButtonProps) {
                   Import existing notes
                 </div>
                 <div className="text-sm text-neutral-600">
-                  Upload one or many existing SOAP notes (PDF, Word, or TXT) —
-                  we extract the date and S/O/A/P sections for your review.
+                  Upload one or many notes you&apos;ve already written (PDF,
+                  Word, or TXT) for your review.
                 </div>
               </div>
             </div>

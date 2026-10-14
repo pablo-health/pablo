@@ -38,8 +38,9 @@ look like the website. It is a short list of values, never code:
 
 - **colors** are hex, `#rgb` or `#rrggbb`. Text colors must keep a 4.5:1
   contrast with what they are drawn on; one that doesn't is left out.
-- **fonts** are one of Fraunces, Newsreader, Inter, Hanken Grotesk, Nunito
-  Sans, Space Grotesk or Poppins. The portal serves them itself.
+- **fonts** are one of Fraunces, Newsreader, Lora, Source Serif 4, Literata,
+  EB Garamond, Crimson Pro, Inter, Hanken Grotesk, Nunito Sans, Space Grotesk
+  or Poppins. The portal serves them itself.
 - **radius** is `none`, `sm`, `md` or `lg`.
 - **header** is described below.
 

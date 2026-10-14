@@ -3,9 +3,12 @@
 "use client"
 
 import { Plus } from "lucide-react"
-import { useState } from "react"
+import { Suspense, useState } from "react"
+import { PacketsBuildOptions } from "@/components/settings/settingsSlots.extensions"
 import { SettingsBadge, SettingsCard } from "@/components/settings/ui"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { useInstruments } from "@/hooks/useInstruments"
 import { useIntakeBlankForms } from "@/hooks/useIntakeBlankForms"
 import {
@@ -20,11 +23,19 @@ import {
   useIntakeVersion,
   usePublishIntakeVersion,
   useSaveIntakeItems,
+  useUpdateIntakeTemplate,
 } from "@/hooks/useIntakePackets"
 import type { IntakeItemInput, IntakeTemplate } from "@/types/intakePackets"
 import { IntakeItemEditor } from "./IntakeItemEditor"
+import { PacketFromLink } from "./PacketFromLink"
+import { DocumentVersionPicker } from "./DocumentVersionPicker"
+import { NewDocumentInline } from "./NewDocumentInline"
+import { PacketClientTitle } from "./PacketClientTitle"
 import {
+  ADD_PACKET,
   DRAFT_BADGE,
+  PACKET_NAME_LABEL,
+  SAVE_NAME,
   EMPTY_STATE,
   FORMS_DESCRIPTION,
   FORMS_TITLE,
@@ -45,11 +56,69 @@ function latestVersion(template: IntakeTemplate) {
 }
 
 /**
- * Practice > Patient portal > Forms.
+ * The packet's name, editable in place. Save shows once the name has
+ * changed; an empty name is said beside the field rather than greying Save.
+ */
+function PacketName({ template }: { template: IntakeTemplate }) {
+  const update = useUpdateIntakeTemplate()
+  const [name, setName] = useState(template.name)
+  const [empty, setEmpty] = useState(false)
+  const id = `packet-name-${template.id}`
+
+  function save() {
+    if (!name.trim()) {
+      setEmpty(true)
+      document.getElementById(id)?.focus()
+      return
+    }
+    setEmpty(false)
+    update.mutate({ id: template.id, data: { name: name.trim() } })
+  }
+
+  return (
+    <div className="flex flex-wrap items-end gap-2">
+      <div className="space-y-1">
+        <Label htmlFor={id} className="text-[12.5px] font-semibold">
+          {PACKET_NAME_LABEL}
+        </Label>
+        <Input
+          id={id}
+          className="h-8 w-64 text-[13px]"
+          maxLength={120}
+          value={name}
+          aria-invalid={empty || undefined}
+          aria-describedby={empty ? `${id}-missing` : undefined}
+          onChange={(e) => {
+            setName(e.target.value)
+            if (e.target.value.trim()) setEmpty(false)
+          }}
+        />
+      </div>
+      {name.trim() !== template.name && (
+        <Button type="button" size="sm" onClick={save} disabled={update.isPending}>
+          {SAVE_NAME}
+        </Button>
+      )}
+      {empty && (
+        <p id={`${id}-missing`} className="w-full text-[12px] text-red-700">
+          Give the packet a name.
+        </p>
+      )}
+      {update.error && (
+        <p role="alert" className="w-full text-[12px] text-red-700">
+          {messageOf(update.error)}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Practice > Patient portal > Packets.
  *
- * A list of the practice's intake forms, and the questions on whichever
- * version is open. One form is selected at a time: a practice edits the form
- * it is thinking about, and a page of every version of every form would be a
+ * A list of the practice's packets, and the questions on whichever version
+ * is open. One packet is selected at a time: a practice edits the packet it
+ * is thinking about, and a page of every version of every packet would be a
  * page nobody reads.
  */
 export function IntakeFormsCard() {
@@ -64,6 +133,7 @@ export function IntakeFormsCard() {
   const saveItems = useSaveIntakeItems()
   const publish = usePublishIntakeVersion()
 
+  // `?packet=<id>` opens that packet: see PacketFromLink, rendered below.
   const [openTemplateId, setOpenTemplateId] = useState<string | null>(null)
   const [openVersionId, setOpenVersionId] = useState<string | null>(null)
 
@@ -113,7 +183,13 @@ export function IntakeFormsCard() {
 
   return (
     <SettingsCard title={FORMS_TITLE} description={FORMS_DESCRIPTION}>
-      {list.length === 0 && <p className="text-[13px] text-muted-foreground">{EMPTY_STATE}</p>}
+      <Suspense fallback={null}>
+        <PacketFromLink onPacket={setOpenTemplateId} />
+      </Suspense>
+      {/* Only once the list has arrived: while it loads, "No packets yet" is untrue. */}
+      {templates !== undefined && list.length === 0 && (
+        <p className="text-[13px] text-muted-foreground">{EMPTY_STATE}</p>
+      )}
 
       <ul className="space-y-2">
         {list.map((template) => {
@@ -139,6 +215,8 @@ export function IntakeFormsCard() {
 
               {open && version && (
                 <div className="mt-3 space-y-3 border-t border-border pt-3">
+                  <PacketName key={template.name} template={template} />
+                  <PacketClientTitle key={`title-${template.client_title ?? ""}`} template={template} />
                   <div className="flex items-center gap-2">
                     {template.versions.map((v) => (
                       <Button
@@ -173,6 +251,17 @@ export function IntakeFormsCard() {
                     documents={publishedDocuments}
                     instruments={instruments ?? []}
                     blankForms={offerableBlankForms}
+                    renderNewDocument={(choose) => (
+                      <NewDocumentInline idPrefix={`packet-${template.id}`} onCreated={choose} />
+                    )}
+                    renderVersionPicker={(documentKey, chosen, choose) => (
+                      <DocumentVersionPicker
+                        documentKey={documentKey}
+                        chosen={chosen}
+                        onChoose={choose}
+                        idPrefix={`packet-${template.id}-${documentKey}`}
+                      />
+                    )}
                     starters={starters ?? []}
                     onAdoptStarter={async (key) => (await adoptStarter.mutateAsync(key)).items}
                     adopting={adoptStarter.isPending}
@@ -184,16 +273,22 @@ export function IntakeFormsCard() {
         })}
       </ul>
 
-      <div className="mt-3">
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <PacketsBuildOptions />
         <Button
           type="button"
           variant="outline"
           size="sm"
-          onClick={() => createTemplate.mutate(NEW_FORM_NAME)}
+          onClick={() =>
+            createTemplate.mutate(NEW_FORM_NAME, {
+              // A new packet opens, so its name and first question are right there.
+              onSuccess: (created) => setOpenTemplateId(created.id),
+            })
+          }
           disabled={createTemplate.isPending}
         >
           <Plus className="mr-1 h-4 w-4" aria-hidden="true" />
-          Add a form
+          {ADD_PACKET}
         </Button>
       </div>
     </SettingsCard>

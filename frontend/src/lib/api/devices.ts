@@ -39,8 +39,8 @@ export interface LaunchIntentResponse {
  * List the current user's enrolled (non-revoked) companion installs.
  *
  * Returns an empty array when the user has no companion enrolled. May 404
- * on deployments where the backend endpoint is not yet available — callers
- * should treat any failure as "no devices" and degrade gracefully.
+ * on deployments where the backend endpoint is not yet available; only that
+ * case means "no devices" (see useCompanionDevices).
  */
 export async function listCompanionDevices(
   token?: string,
@@ -54,25 +54,18 @@ export async function listCompanionDevices(
  * in order to hand off to the companion. 404 when the backend launch flow
  * is flag-gated off.
  *
- * `aiConsentPrompted`: the clinician was just asked "No consent on file" and
- * chose to record anyway, so the companion does not ask the same question.
- * `askConsentOnRecording`: for a telehealth visit with nothing on file, the
- * clinician chose to ask once recording starts, so the answer is on the
- * recording.
+ * `askConsentOnRecording`: for a visit with nothing on file, the clinician
+ * chose to ask once recording starts, so the answer is on the recording.
  */
 export async function createLaunchIntent(
   appointmentId: string,
-  {
-    aiConsentPrompted = false,
-    askConsentOnRecording = false,
-  }: { aiConsentPrompted?: boolean; askConsentOnRecording?: boolean } = {},
+  { askConsentOnRecording = false }: { askConsentOnRecording?: boolean } = {},
   token?: string,
 ): Promise<LaunchIntentResponse> {
   return post<LaunchIntentResponse>(
     "/api/launch/intent",
     {
       appointment_id: appointmentId,
-      ai_consent_prompted: aiConsentPrompted,
       ask_consent_on_recording: askConsentOnRecording,
     },
     token,

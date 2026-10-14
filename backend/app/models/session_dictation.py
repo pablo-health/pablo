@@ -15,7 +15,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-DictationStatus = Literal["transcribing", "transcribed", "failed"]
+DictationStatus = Literal["transcribing", "transcribed", "failed", "no_speech"]
 DictationUse = Literal["redraft", "addendum"]
 
 

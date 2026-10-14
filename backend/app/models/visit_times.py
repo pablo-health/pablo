@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""API models for a recorded visit's times and its psychotherapy window."""
+"""API models for a recorded visit's times and its psychotherapy time."""
 
 from __future__ import annotations
 
@@ -9,39 +9,63 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, Field, model_validator
 
+from ..notes.visit_times import RunLabel, TurnLabel  # noqa: TC001 — Pydantic needs these at runtime
+
 
 class RecordingTurn(BaseModel):
-    """A transcript turn the therapy portion could start on."""
+    """A client-present transcript turn, and what it was."""
 
     seconds: float
+    #: Where the turn's span ends: the next turn's start, or where the client left.
+    end_seconds: float
     speaker: str
     text: str
+    #: The confirmed label, else the proposed one; ``None`` is unattributed.
+    label: TurnLabel | None = None
 
 
-class StartCandidateResponse(BaseModel):
-    seconds: float
-    #: ``spoken_cue``: the clinician said so at that turn; ``marked``: the
-    #: draft marked it; ``attributed``: the drafted interventions cite it.
-    source: Literal["spoken_cue", "marked", "attributed"]
+class TurnRun(BaseModel):
+    """Consecutive turns with one label, for the timeline."""
+
+    label: RunLabel
+    start_seconds: float
+    end_seconds: float
+
+
+class DictatedTimeResponse(BaseModel):
+    """A psychotherapy time the clinician stated, part by part, as said."""
+
+    start: str | None = None
+    end: str | None = None
+    minutes: int | None = None
+    as_dictated: str = ""
 
 
 class PsychotherapyWindowResponse(BaseModel):
-    """The psychotherapy portion of a visit whose note has a section for it."""
+    """The psychotherapy time of a visit whose note has a section for it."""
 
     #: False for a dictation-only recording: no client, no therapy time.
     offered: bool
-    #: Seconds into the recording the client was last present: the window's end.
+    #: Seconds into the recording the client was last present: the span's end.
     end_seconds: float | None = None
     turns: list[RecordingTurn] = Field(default_factory=list)
-    candidates: list[StartCandidateResponse] = Field(default_factory=list)
-    #: A start time the clinician stated aloud, exactly as said.
-    stated_clock_time: str | None = None
+    runs: list[TurnRun] = Field(default_factory=list)
+    #: The therapy minutes the labels add up to.
+    labeled_minutes: int | None = None
+    #: The turn where the clinician said aloud the therapy was starting.
+    cue_seconds: float | None = None
+    #: The time the clinician dictated, as the draft returned it.
+    dictated: DictatedTimeResponse | None = None
     confirmed_start_seconds: float | None = None
     confirmed_minutes: int | None = None
+    #: The therapy was one contiguous run (or a single window was confirmed).
+    contiguous: bool | None = None
+    #: The clinician confirmed the turn labels (rather than a start or minutes).
+    labels_confirmed: bool = False
     window_text: str | None = None
     #: What the note's psychotherapy time field holds, when the clinician said one.
     dictated_time: str | None = None
-    #: The dictated time and the confirmed window disagree; the clinician picks.
+    #: The dictated time and the confirmed one disagree; the clinician picks.
     disagrees: bool = False
 
 
@@ -62,9 +86,15 @@ class VisitTimesResponse(BaseModel):
     total_with_documentation_minutes: int | None = None
 
 
-class ConfirmPsychotherapyWindowRequest(BaseModel):
-    """The clinician confirms the start on the transcript, or types the minutes."""
+class TurnLabelRequest(BaseModel):
+    seconds: float = Field(ge=0)
+    label: TurnLabel
 
+
+class ConfirmPsychotherapyWindowRequest(BaseModel):
+    """The clinician confirms the turn labels, a start on the transcript, or the minutes."""
+
+    labels: list[TurnLabelRequest] | None = None
     start_seconds: float | None = Field(default=None, ge=0)
     minutes: int | None = Field(default=None, ge=0)
     #: The clinician's time zone, for the clock times written into the note.
@@ -74,6 +104,7 @@ class ConfirmPsychotherapyWindowRequest(BaseModel):
 
     @model_validator(mode="after")
     def _one_way(self) -> Self:
-        if (self.start_seconds is None) == (self.minutes is None):
-            raise ValueError("give either start_seconds or minutes")
+        given = [v for v in (self.labels, self.start_seconds, self.minutes) if v is not None]
+        if len(given) != 1:
+            raise ValueError("give exactly one of labels, start_seconds or minutes")
         return self

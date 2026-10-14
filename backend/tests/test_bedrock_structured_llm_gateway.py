@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+import app.services.bedrock_structured_llm_gateway as module
 import app.services.structured_llm_gateway as structured
 import botocore.session
 import httpx
@@ -319,6 +320,45 @@ class TestTimeouts:
         _call(gw, timeout_seconds=9.4)
         _call(gw)
         assert built == [15.0, 9.5, 180.0]
+
+    def test_a_client_idle_past_the_limit_is_rebuilt_before_its_next_call(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A NAT drops idle connections silently; a stale pool must not be reused."""
+        clock = [1000.0]
+        monkeypatch.setattr(module, "_now", lambda: clock[0])
+        built: list[_StubClient] = []
+
+        def factory(_timeout: float) -> _StubClient:
+            client = _StubClient(_response({"proposals": []}))
+            built.append(client)
+            return client
+
+        gw = BedrockStructuredLLMGateway(client_factory=factory)
+        first = gw.client(15.0)
+        clock[0] += module._MAX_CLIENT_IDLE_SECONDS - 1
+        assert gw.client(15.0) is first, "used within the limit: reused"
+        clock[0] += module._MAX_CLIENT_IDLE_SECONDS + 1
+        fresh = gw.client(15.0)
+        assert fresh is not first, "idle past the limit: rebuilt"
+        clock[0] += 1
+        assert gw.client(15.0) is fresh
+        assert len(built) == 2
+
+    def test_a_client_in_steady_use_is_never_rebuilt(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        clock = [0.0]
+        monkeypatch.setattr(module, "_now", lambda: clock[0])
+        built: list[float] = []
+
+        def factory(timeout: float) -> _StubClient:
+            built.append(timeout)
+            return _StubClient(_response({"proposals": []}))
+
+        gw = BedrockStructuredLLMGateway(client_factory=factory)
+        for _ in range(12):  # an hour of calls, each well inside the limit
+            gw.client(15.0)
+            clock[0] += module._MAX_CLIENT_IDLE_SECONDS / 2
+        assert built == [15.0]
 
     def test_with_no_bound_given_the_retry_deadline_does_not_cut_the_attempt(self) -> None:
         """A long draft on Bedrock as the only model keeps the full default bound."""

@@ -11,6 +11,7 @@ import type {
   DeriveNoteTypeResponse,
   NoteDraftPreviewRequest,
   NoteDraftPreviewResponse,
+  NoteTypeBaseListResponse,
   NoteTypeListResponse,
   NoteTypeReferenceListResponse,
   NoteTypeSchema,
@@ -34,6 +35,19 @@ export async function getNoteType(
 ): Promise<NoteTypeSchema> {
   const query = version != null ? `?version=${version}` : ""
   return get<NoteTypeSchema>(`/api/note-types/${encodeURIComponent(key)}${query}`, token)
+}
+
+/** Built-in note types a practice can base its own on, with their sample visits. */
+export async function listNoteTypeBases(token?: string): Promise<NoteTypeBaseListResponse> {
+  return get<NoteTypeBaseListResponse>("/api/note-types/bases", token)
+}
+
+/** A based type as the full spec it resolves to now, for detaching it. Nothing is saved. */
+export async function resolveNoteTypeSpec(
+  spec: PracticeNoteTypeSpec,
+  token?: string,
+): Promise<{ spec: PracticeNoteTypeSpec }> {
+  return post<{ spec: PracticeNoteTypeSpec }>("/api/note-types/resolve", spec, token)
 }
 
 /** Save the next version of the practice's type `custom.<slug>`. */

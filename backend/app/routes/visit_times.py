@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""A recorded visit's times, and the psychotherapy window the clinician confirms."""
+"""A recorded visit's times, and the psychotherapy time the clinician confirms."""
 
 from fastapi import APIRouter, Depends, Request
 
@@ -42,7 +42,7 @@ def get_visit_times(
     dictation_repo: SessionDictationRepository = Depends(get_dictation_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> VisitTimesResponse:
-    """Start, end and minutes of a recorded visit, and its psychotherapy window."""
+    """Start, end and minutes of a recorded visit, and its psychotherapy time."""
     session = session_repo.get(session_id, user.id)
     if session is None:
         raise NotFoundError("Session not found", {"session_id": session_id})
@@ -69,7 +69,7 @@ def put_psychotherapy_window(
     dictation_repo: SessionDictationRepository = Depends(get_dictation_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> VisitTimesResponse:
-    """Confirm where the therapy portion started, or type its minutes."""
+    """Confirm which turns were therapy, where it started, or its minutes."""
     session = session_repo.get(session_id, user.id)
     if session is None:
         raise NotFoundError("Session not found", {"session_id": session_id})

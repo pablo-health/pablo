@@ -14,6 +14,7 @@ boilerplate that was scattered across the routes layer.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import Any
 
 from fastapi import FastAPI, Request, status
@@ -21,6 +22,7 @@ from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from .logging_config import LOG_HTTP_REQUEST_EXTRA, LogHttpRequest, RequestLogIdentity
 from .request_context import extract_request_context
 
 _auth_logger = logging.getLogger("pablo.auth")
@@ -205,7 +207,7 @@ def _log_auth_failed(request: Request, exc: StarletteHTTPException) -> None:
         _auth_logger.exception("auth_failed emit raised")
 
 
-def _unhandled_log_extra(request: Request) -> dict[str, str]:
+def _unhandled_log_extra(request: Request) -> dict[str, object]:
     """Fields for the unhandled-exception record, including the route.
 
     ``JSONFormatter`` normally fills ``route_template`` from a contextvar, but
@@ -222,10 +224,30 @@ def _unhandled_log_extra(request: Request) -> dict[str, str]:
     The TEMPLATE, never ``request.url.path`` — the concrete path carries record
     ids, and this line lands in a log stream read outside the request.
     """
-    extra = {"http_method": request.method}
+    extra: dict[str, object] = {"http_method": request.method}
     template = getattr(request.scope.get("route"), "path", None)
     if isinstance(template, str) and template:
         extra["route_template"] = template
+    # This handler runs outside ``RequestContextMiddleware``, whose contextvars
+    # are already reset by the time an unhandled exception reaches it, so the
+    # request id and the caller's identity come from ``request.state``. Ids
+    # only — the internal user id and the practice id, never an email.
+    request_id = getattr(request.state, "request_id", None)
+    if isinstance(request_id, str):
+        extra["request_id"] = request_id
+    identity = getattr(request.state, "log_identity", None)
+    if isinstance(identity, RequestLogIdentity):
+        if identity.user_id is not None:
+            extra["user_id"] = identity.user_id
+        if identity.tenant_id is not None:
+            extra["tenant_id"] = identity.tenant_id
+    # The request's trace and method, for the log's trace field and the error
+    # report's context; this handler is what answers the 500.
+    http_request = getattr(request.state, "log_http_request", None)
+    if isinstance(http_request, LogHttpRequest):
+        extra[LOG_HTTP_REQUEST_EXTRA] = replace(
+            http_request, response_status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
     return extra
 
 
@@ -269,7 +291,8 @@ def register_exception_handlers(app: FastAPI) -> None:
         configured ``JSONFormatter`` (see ``logging_config``): the whole
         traceback rides one record's ``exc_info`` field, alongside
         ``error_class`` and the request-scoped ``request_id`` /
-        ``route_template`` / ``user_id`` from contextvars — one structured
+        ``route_template`` / ``user_id`` / ``tenant_id`` (see
+        ``_unhandled_log_extra``) — one structured
         entry per 500. The response body stays a generic envelope so internals
         never leak to the client. ``route_template`` (the matched path
         pattern, not the concrete URL) is what gets logged, so no

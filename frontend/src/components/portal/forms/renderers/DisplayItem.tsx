@@ -14,6 +14,7 @@
  * part of it a patient would miss.
  */
 
+import type { IntakeAssignmentItem } from "@/lib/api/patientIntake"
 import { ITEM_UNAVAILABLE } from "../formsCopy"
 import type { ItemRenderer, ItemRendererProps } from "./types"
 
@@ -28,6 +29,14 @@ function SectionItem({ item }: ItemRendererProps) {
 }
 
 function InstructionsItem({ item }: ItemRendererProps) {
+  return <Instructions item={item} />
+}
+
+/**
+ * A block of instructions, on its own screen or above the question it leads
+ * into. One component for both, so the two cannot drift.
+ */
+export function Instructions({ item }: { item: IntakeAssignmentItem }) {
   const body = typeof item.config.body_markdown === "string" ? item.config.body_markdown : null
   if (body === null) return <Unavailable />
   return (

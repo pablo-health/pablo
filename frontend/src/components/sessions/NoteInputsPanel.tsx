@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useNoteType } from "@/hooks/useNoteTypes"
+import { isReviewInput } from "@/lib/mdm"
 import { filledInputs, requiredInputsFilled } from "@/lib/noteInputs"
 import type { Note, RedraftEdits, RedraftNoteRequest } from "@/types/notes"
 import { RedraftChoiceDialog } from "./RedraftChoiceDialog"
@@ -49,7 +50,8 @@ export function NoteInputsPanel({
   const [values, setValues] = useState<Record<string, string>>(saved)
   const [choosing, setChoosing] = useState(false)
 
-  const declared = noteType?.inputs ?? []
+  // The medical decision making choices are set in their own panel and never redraft.
+  const declared = (noteType?.inputs ?? []).filter((input) => !isReviewInput(input.key))
   if (declared.length === 0) return null
 
   const redrafting = note.status === "processing"

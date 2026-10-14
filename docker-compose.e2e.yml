@@ -181,13 +181,9 @@ services:
       # The token exchange goes over plain HTTP to the stand-in, which the
       # OAuth library refuses by default. Development only, like the URL.
       - OAUTHLIB_INSECURE_TRANSPORT=1
-      # A client's charge ledger is 503 until the deployment has card
-      # payments configured, and what a payer says a client owes lands on
-      # that ledger — so without a key no end-to-end test can see the one
-      # number the billing surface exists to produce. Present, not valid:
-      # reading the ledger never calls the processor, and nothing in this
-      # stack charges a card. Same rule as the clearinghouse key above.
-      - STRIPE_SECRET_KEY=sk_test_e2e_not_a_real_key
+      # No STRIPE_SECRET_KEY, on purpose: this stack is a practice that takes
+      # no cards. The ledger and the balance read without one, and
+      # charges-without-cards.spec.ts holds the chart to that.
       # The desktop-app hand-off. The app itself cannot run here, but what
       # "Start session" hands it can: recording-consent.spec.ts issues real
       # intents and redeems them as the app would.
@@ -402,8 +398,10 @@ services:
       dockerfile: backend/Dockerfile.dev
     # Two entrypoints, in this order, because they do different halves of the
     # job. ``migrate.py`` brings the platform schema and the ``practice``
-    # TEMPLATE to head; it does not touch the per-practice schemas at all, and
-    # ``migrate_tenants.py`` is what fans the tenant chain out across those.
+    # TEMPLATE to head and then provisions (on an empty database, the
+    # deployment's own practice, cloned from that template at head); it does
+    # not migrate existing per-practice schemas, and ``migrate_tenants.py`` is
+    # what fans the tenant chain out across those.
     # A deployment runs both as separate jobs; a stack that ran only the first
     # would be correct on a fresh volume — where every practice is provisioned
     # from the freshly-regenerated template — and would silently leave an
@@ -495,6 +493,9 @@ services:
       # The backend answers Google Calendar here (through the stand-in), so
       # the settings link and the setup page are shown.
       - GOOGLE_CALENDAR_ENABLED=true
+      # A support address, so load errors and the sidebar show where to write
+      # (support-contact.spec.ts). Unset, both are hidden.
+      - SUPPORT_EMAIL=help@practice.example
       # The portal is served on a host of its own. One server answers both
       # names: localhost is the clinician app, 127.0.0.1 the portal, whose
       # `/{slug}` addresses are rewritten to the portal route and where

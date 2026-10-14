@@ -1,0 +1,8 @@
+{
+  "description": "Drug names a transcriber wrote as the other name of the pair when the other name was in its vocabulary list. Measured on synthesized speech: each name said four times (two voices, a dose sentence and a stop sentence) with a 192-word vocabulary of psychiatric and over-the-counter names holding both names of each pair. Each spoken name below came back as its partner all four times, 12 sayings in all. With no vocabulary every one of these names was heard correctly; with only the partner removed from the list the swap reversed.",
+  "pairs": [
+    {"said": "nortriptyline", "written": "amitriptyline", "sayings": 4, "of": 4},
+    {"said": "lorazepam", "written": "clonazepam", "sayings": 4, "of": 4},
+    {"said": "aripiprazole", "written": "brexpiprazole", "sayings": 4, "of": 4}
+  ]
+}

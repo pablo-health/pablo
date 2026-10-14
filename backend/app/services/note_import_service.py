@@ -1,18 +1,20 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Parse an existing, already-written SOAP note into the structured shape.
+"""Parse an existing, already-written note into a note type's structured shape.
 
 Where :mod:`note_generation_service` *synthesizes* a note from a session
 transcript, this module *extracts* the content of a note the clinician has
 already written — e.g. a PDF or Word doc exported from another records
-system — and maps it into the registry's SOAP fields without inventing any
-clinical material. It also reads the date (and time, when present) the
-session took place, so an imported note can be filed against the day it
-actually happened rather than the day it was uploaded.
+system — and maps it into the fields of a registry note type (SOAP unless
+the caller names another) without inventing any clinical material. It also
+reads the date (and time, when present) the session took place, so an
+imported note can be filed against the day it actually happened rather than
+the day it was uploaded.
 
 The extracted text feeds the same structured-output gateway and the same
-SOAP response schema used for generation, so the resulting ``content`` is
-shape-identical to a generated note and renders in the editor unchanged.
+registry response schema used for generation, so the resulting ``content`` is
+shape-identical to a generated note of that type and renders in the editor
+unchanged.
 """
 
 from __future__ import annotations
@@ -73,7 +75,7 @@ DOCUMENT_READ_TIMEOUT_SECONDS = 90.0
 # anything past this is either not one note or an attempt to run up LLM cost.
 _MAX_EXTRACTED_CHARS = 1_000_000
 
-# Keys we add to the SOAP response schema so the model also reports when the
+# Keys we add to the note type's response schema so the model also reports when the
 # session occurred. Kept distinct from the note ``content`` so they never
 # leak into the rendered note body.
 _SESSION_DATE_KEY = "session_date"
@@ -101,15 +103,37 @@ _EMPTY_FIELD_RULE = (
     "an empty list for list fields). Never fabricate text to fill a field."
 )
 
+# An import keeps every word of the note: a detail filed under a heading the
+# note type lacks goes to the field whose meaning fits best.
+_IMPORT_RULES = (
+    _VERBATIM_RULES + "- When the source files a detail under a heading we do not "
+    "have, place it under the field whose meaning fits best, but keep the "
+    "source's exact wording (including any sub-labels) intact.\n" + _EMPTY_FIELD_RULE
+)
+
 EXTRACT_SYSTEM_PROMPT = (
     "You are a clinical documentation assistant. You are given the full text "
     "of an existing, already-written therapy progress note in SOAP format "
     "(often exported from another records system). Your job is to RELOCATE "
     "that note's existing text into the named fields below — not to rewrite "
-    "it.\n\n" + _VERBATIM_RULES + "- When the source files a detail under a heading we do not "
-    "have, place it under the field whose meaning fits best, but keep the "
-    "source's exact wording (including any sub-labels) intact.\n" + _EMPTY_FIELD_RULE
+    "it.\n\n" + _IMPORT_RULES
 )
+
+
+def _extract_system_prompt(definition: NoteTypeDefinition) -> str:
+    """The import system prompt for ``definition``; SOAP keeps its own."""
+    if definition.key == SOAP_KEY:
+        return EXTRACT_SYSTEM_PROMPT
+    # Not the type's own system prompt: that one tells a model how to write a
+    # draft, and an import writes nothing of its own.
+    return (
+        "You are a clinical documentation assistant. You are given the full text "
+        "of an existing, already-written clinical note (often exported from "
+        "another records system). Your job is to RELOCATE that note's existing "
+        f"text into the named fields of a {definition.label} note below — not to "
+        "rewrite it.\n\n" + _IMPORT_RULES
+    )
+
 
 # An import must keep every word of the note, so a detail with no matching
 # field goes to the nearest one. Extracting into a note type to see whether
@@ -172,9 +196,9 @@ class FieldGrounding:
 
 @dataclass(frozen=True)
 class ParsedImportedNote:
-    """Result of parsing an uploaded SOAP note.
+    """Result of parsing an uploaded note into one note type.
 
-    ``content`` is the registry-shaped SOAP dict — identical in shape to a
+    ``content`` is that type's registry-shaped dict — identical in shape to a
     generated note's ``content`` — and renders in the note editor unchanged.
     ``session_date`` / ``session_time`` are read from the document, or
     ``None`` when the document did not state them (the time often is absent).
@@ -454,8 +478,9 @@ def _build_extract_prompt(definition: NoteTypeDefinition, source_text: str) -> s
     """Render the field guide + source note into the extraction user prompt."""
     field_guide = _field_guide(definition)
 
+    source = "SOAP note" if definition.key == SOAP_KEY else "clinical note"
     return f"""# Source note
-The following is the complete text of an existing SOAP note. Reorganize its
+The following is the complete text of an existing {source}. Reorganize its
 content into the fields described below.
 
 \"\"\"
@@ -491,7 +516,7 @@ its content into the fields described below.
 
 
 def _build_extract_schema(definition: NoteTypeDefinition) -> dict[str, Any]:
-    """SOAP registry schema plus the session date/time fields."""
+    """The note type's registry schema plus the session date/time fields."""
     schema = _build_registry_response_schema(definition)
     schema["properties"][_SESSION_DATE_KEY] = {"type": "string"}
     schema["properties"][_SESSION_TIME_KEY] = {"type": "string"}
@@ -527,6 +552,13 @@ def _word_tokens(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", text.lower())
 
 
+def _grounding_text(item: Any) -> str:
+    """The words one field item states; a stated diagnosis is its label, code and status."""
+    if isinstance(item, dict):
+        return " ".join(str(value).strip() for value in item.values() if value).strip()
+    return str(item).strip()
+
+
 def check_grounding(content: dict[str, Any], source_text: str) -> tuple[FieldGrounding, ...]:
     """Check each parsed field's text against the source — no LLM call.
 
@@ -547,7 +579,7 @@ def check_grounding(content: dict[str, Any], source_text: str) -> tuple[FieldGro
             is_list = isinstance(value, list)
             items = value if is_list else ([value] if value else [])
             for index, item in enumerate(items):
-                text = str(item).strip()
+                text = _grounding_text(item)
                 if not text:
                     continue
                 path = f"{section}.{key}" + (f"[{index}]" if is_list else "")
@@ -563,7 +595,7 @@ def check_grounding(content: dict[str, Any], source_text: str) -> tuple[FieldGro
 
 
 class NoteImportService:
-    """Parse an existing SOAP note's text into the structured note shape."""
+    """Parse an existing note's text into a note type's structured shape."""
 
     def __init__(
         self,
@@ -646,9 +678,15 @@ class NoteImportService:
 
     def parse_soap_note(self, source_text: str) -> ParsedImportedNote:
         """Parse the extracted text of a SOAP note into structured content."""
-        definition = self._registry.get(SOAP_KEY)
+        return self.parse_note(source_text)
+
+    def parse_note(
+        self, source_text: str, definition: NoteTypeDefinition | None = None
+    ) -> ParsedImportedNote:
+        """Parse a note's extracted text into ``definition``'s fields (SOAP by default)."""
+        definition = definition or self._registry.get(SOAP_KEY)
         completion = self._complete_with_retry(
-            system_prompt=EXTRACT_SYSTEM_PROMPT,
+            system_prompt=_extract_system_prompt(definition),
             user_prompt=_build_extract_prompt(definition, source_text),
             response_schema=_build_extract_schema(definition),
         )
@@ -665,10 +703,14 @@ class NoteImportService:
                 len(grounding),
                 ungrounded,
             )
-        # Store the SOAPSentence-shaped content a *generated* SOAP note uses, so
-        # an imported note renders and edits in the note viewer identically.
-        # source_segment_ids stay empty — there is no transcript to attribute to.
-        content = _coerce_content_to_soap_note(registry_content).to_dict()
+        content = registry_content
+        if definition.key == SOAP_KEY:
+            # Store the SOAPSentence-shaped content a *generated* SOAP note uses,
+            # so an imported note renders and edits in the note viewer
+            # identically. source_segment_ids stay empty — there is no
+            # transcript to attribute to. Every other type keeps the registry
+            # shape, as its generated notes do.
+            content = _coerce_content_to_soap_note(registry_content).to_dict()
         return ParsedImportedNote(
             content=content,
             session_date=_parse_iso_date(data.get(_SESSION_DATE_KEY)),

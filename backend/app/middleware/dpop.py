@@ -13,8 +13,9 @@ What this middleware does, when ``ENABLE_DPOP_VALIDATION`` is on and the
 request carries an ``X-Install-ID`` header:
 
 1. Resolve the authenticated user from the bearer token.
-2. Look up ``companion_devices(user_id, install_id)``. Missing, revoked,
-   or owned by a different user → 401.
+2. Look up ``companion_devices(user_id, install_id)`` — the bearer's own
+   enrollment of that install. Missing (including an install only some
+   other user enrolled) or revoked → 401.
 3. Parse the ``DPoP`` compact JWS and verify:
    - ``htm`` == request method,
    - ``htu`` == request scheme+host+path (query stripped),
@@ -55,6 +56,7 @@ from urllib.parse import urlsplit, urlunsplit
 import jwt
 from fastapi import Request, Response, status
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from ..services.replay_guard import ReplayGuard, get_replay_guard
@@ -302,8 +304,8 @@ def _resolve_user_id(request: Request, token: str) -> str | None:
     return repo.get_user_id(identity.provider, identity.subject_id)
 
 
-def _default_device_lookup(install_id: str) -> CompanionDevice | None:
-    """Load an enrolled device by install_id from the request-scoped session.
+def _default_device_lookup(user_id: str, install_id: str) -> CompanionDevice | None:
+    """Load this user's enrollment of install_id from the request-scoped session.
 
     Returns ``None`` when no Postgres session is in scope (no companion
     can be enrolled without one) so the middleware degrades to a
@@ -315,23 +317,34 @@ def _default_device_lookup(install_id: str) -> CompanionDevice | None:
             PostgresCompanionDeviceRepository,
         )
 
-        return PostgresCompanionDeviceRepository(get_db_session()).get(install_id)
+        return PostgresCompanionDeviceRepository(get_db_session()).get(user_id, install_id)
     except RuntimeError:
         return None
 
 
-def _touch_last_seen(install_id: str) -> None:
-    """Best-effort ``last_seen`` bump after a successful proof."""
-    try:
-        from ..db import get_db_session
-        from ..repositories.postgres.companion_device import (
-            PostgresCompanionDeviceRepository,
-        )
+def _touch_last_seen(user_id: str, install_id: str) -> None:
+    """Best-effort ``last_seen`` bump after a successful proof.
 
-        PostgresCompanionDeviceRepository(get_db_session()).touch_last_seen(install_id)
+    Committed straight away rather than with the request: a row lock taken
+    here would otherwise be held for as long as the route runs, and every
+    other request from the same device would queue behind it. A failure is
+    logged and swallowed — ``last_seen`` is bookkeeping and must never fail
+    the request it rides on.
+    """
+    from ..db import get_db_session
+    from ..repositories.postgres.companion_device import PostgresCompanionDeviceRepository
+
+    try:
+        session = get_db_session()
     except RuntimeError:
         # No session in scope (tests / dev). last_seen is non-critical.
         return
+    try:
+        PostgresCompanionDeviceRepository(session).touch_last_seen(user_id, install_id)
+        session.commit()
+    except SQLAlchemyError as err:
+        session.rollback()
+        logger.warning("Companion last_seen update skipped: %s", type(err).__name__)
 
 
 class DPoPMiddleware(BaseHTTPMiddleware):
@@ -350,8 +363,8 @@ class DPoPMiddleware(BaseHTTPMiddleware):
         self,
         app: ASGIApp,
         settings: Settings,
-        device_lookup: Callable[[str], CompanionDevice | None] | None = None,
-        touch: Callable[[str], None] | None = None,
+        device_lookup: Callable[[str, str], CompanionDevice | None] | None = None,
+        touch: Callable[[str, str], None] | None = None,
         replay_guard: ReplayGuard | None = None,
     ) -> None:
         super().__init__(app)
@@ -398,10 +411,14 @@ class DPoPMiddleware(BaseHTTPMiddleware):
         if user_id is None:
             return self._reject()
 
-        device = self._device_lookup(install_id)
+        # Scoped to the bearer's user: the same install can carry an enrollment
+        # for each account that signed in on it, and a proof only verifies
+        # against the caller's own row.
+        device = self._device_lookup(user_id, install_id)
         if device is None or device.revoked_at is not None or device.user_id != user_id:
-            # Unknown / revoked / cross-user install_id. Same 401 for all
-            # three so the response doesn't reveal which condition tripped.
+            # Not enrolled by this user / revoked. Same 401 either way so the
+            # response doesn't reveal which condition tripped (or whether
+            # another user enrolled this install).
             return self._reject()
 
         proof = request.headers.get(DPOP_HEADER)
@@ -421,5 +438,5 @@ class DPoPMiddleware(BaseHTTPMiddleware):
             logger.warning("DPoP proof rejected for install_id=%s: %s", install_id, err)
             return self._reject()
 
-        self._touch(install_id)
+        self._touch(user_id, install_id)
         return await call_next(request)

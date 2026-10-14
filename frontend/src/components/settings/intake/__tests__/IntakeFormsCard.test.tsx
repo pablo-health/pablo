@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 
 import { IntakeFormsCard } from "../IntakeFormsCard"
@@ -19,6 +19,7 @@ import type { IntakeTemplate, IntakeVersionDetail } from "@/types/intakePackets"
 const mockUseTemplates = vi.fn()
 const mockUseVersion = vi.fn()
 const mockCreateTemplate = vi.fn()
+const mockUpdateTemplate = vi.fn()
 const mockCreateVersion = vi.fn()
 const mockSaveItems = vi.fn()
 const mockPublish = vi.fn()
@@ -27,6 +28,11 @@ const mockPublish = vi.fn()
 // picker itself is the item editor's test; here it only has to not be a
 // network call.
 const mockUsePublishedDocuments = vi.fn()
+
+const mockSearchParams = vi.hoisted(() => ({ current: new URLSearchParams() }))
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => mockSearchParams.current,
+}))
 
 vi.mock("@/hooks/useIntakeDocuments", () => ({
   usePublishedIntakeDocuments: () => mockUsePublishedDocuments(),
@@ -55,6 +61,7 @@ vi.mock("@/hooks/useIntakePackets", () => ({
   useCreateIntakeVersion: () => ({ mutate: mockCreateVersion, isPending: false, error: null }),
   useSaveIntakeItems: () => ({ mutate: mockSaveItems, isPending: false, error: null }),
   usePublishIntakeVersion: () => ({ mutate: mockPublish, isPending: false, error: null }),
+  useUpdateIntakeTemplate: () => ({ mutate: mockUpdateTemplate, isPending: false, error: null }),
 }))
 
 const DRAFT: IntakeVersionDetail = {
@@ -81,6 +88,7 @@ const DRAFT: IntakeVersionDetail = {
 const TEMPLATE: IntakeTemplate = {
   id: "template-1",
   name: "Intake",
+  client_title: null,
   created_at: "2026-09-01T10:00:00Z",
   archived_at: null,
   versions: [
@@ -97,6 +105,7 @@ const TEMPLATE: IntakeTemplate = {
 describe("IntakeFormsCard", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockSearchParams.current = new URLSearchParams()
     mockUseTemplates.mockReturnValue({ data: [TEMPLATE] })
     mockUseVersion.mockReturnValue({ data: DRAFT })
     mockUsePublishedDocuments.mockReturnValue({ data: [] })
@@ -109,6 +118,16 @@ describe("IntakeFormsCard", () => {
     render(<IntakeFormsCard />)
 
     expect(screen.getByText(EMPTY_STATE)).toBeInTheDocument()
+  })
+
+  it("does not say there are no packets while the list is still loading", () => {
+    // Seen on dev: the card said "No packets yet" for a moment on a practice
+    // with dozens, before the list arrived.
+    mockUseTemplates.mockReturnValue({ data: undefined })
+
+    render(<IntakeFormsCard />)
+
+    expect(screen.queryByText(EMPTY_STATE)).not.toBeInTheDocument()
   })
 
   it("lists each form with the state of its newest version", () => {
@@ -176,12 +195,87 @@ describe("IntakeFormsCard", () => {
     expect(mockCreateVersion).toHaveBeenCalledWith("template-1", expect.anything())
   })
 
-  it("adding a form asks for one", async () => {
+  it("renames an open packet", async () => {
+    const user = userEvent.setup()
+    render(<IntakeFormsCard />)
+    await user.click(screen.getByRole("button", { name: TEMPLATE.name }))
+
+    const name = await screen.findByLabelText("Packet name")
+    expect(screen.queryByRole("button", { name: "Save name" })).not.toBeInTheDocument()
+    await user.clear(name)
+    await user.type(name, "New client intake")
+    await user.click(screen.getByRole("button", { name: "Save name" }))
+
+    expect(mockUpdateTemplate).toHaveBeenCalledWith({
+      id: TEMPLATE.id,
+      data: { name: "New client intake" },
+    })
+  })
+
+  it("sets the title clients see, and clears it when emptied", async () => {
+    const user = userEvent.setup()
+    mockUseTemplates.mockReturnValue({ data: [{ ...TEMPLATE, client_title: "Before your first visit" }] })
+    render(<IntakeFormsCard />)
+    await user.click(screen.getByRole("button", { name: TEMPLATE.name }))
+
+    const title = await screen.findByLabelText("Title clients see")
+    expect(title).toHaveValue("Before your first visit")
+    // Nothing changed, nothing to save.
+    expect(screen.queryByRole("button", { name: "Save title" })).not.toBeInTheDocument()
+
+    await user.clear(title)
+    await user.type(title, "  Yearly check-in ")
+    await user.click(screen.getByRole("button", { name: "Save title" }))
+    expect(mockUpdateTemplate).toHaveBeenLastCalledWith({
+      id: TEMPLATE.id,
+      data: { client_title: "Yearly check-in" },
+    })
+
+    // Emptied is an answer, not a mistake: it clears the title.
+    await user.clear(title)
+    await user.click(screen.getByRole("button", { name: "Save title" }))
+    expect(mockUpdateTemplate).toHaveBeenLastCalledWith({
+      id: TEMPLATE.id,
+      data: { client_title: null },
+    })
+  })
+
+  it("says a packet needs a name instead of saving an empty one", async () => {
+    const user = userEvent.setup()
+    render(<IntakeFormsCard />)
+    await user.click(screen.getByRole("button", { name: TEMPLATE.name }))
+
+    const name = await screen.findByLabelText("Packet name")
+    await user.clear(name)
+    await user.click(screen.getByRole("button", { name: "Save name" }))
+
+    expect(mockUpdateTemplate).not.toHaveBeenCalled()
+    expect(name).toHaveAttribute("aria-invalid", "true")
+    expect(name).toHaveFocus()
+    expect(screen.getByText("Give the packet a name.")).toBeInTheDocument()
+  })
+
+  it("adding a packet asks for one", async () => {
     const user = userEvent.setup()
     render(<IntakeFormsCard />)
 
-    await user.click(screen.getByRole("button", { name: "Add a form" }))
+    await user.click(screen.getByRole("button", { name: "Add a packet" }))
 
-    expect(mockCreateTemplate).toHaveBeenCalledWith("New form")
+    expect(mockCreateTemplate).toHaveBeenCalledWith("New packet", expect.anything())
+  })
+
+  it("opens the packet a link names, even when the link arrives after the card renders", async () => {
+    // An in-app link renders the card before the address changes: the first
+    // render sees no ?packet=, the next one does. A read-once on first render
+    // opened nothing on dev (the builder's "Open your packet").
+    mockSearchParams.current = new URLSearchParams()
+    const view = render(<IntakeFormsCard />)
+    expect(screen.queryByLabelText("Packet name")).not.toBeInTheDocument()
+
+    mockSearchParams.current = new URLSearchParams("packet=template-1")
+    view.rerender(<IntakeFormsCard />)
+
+    await waitFor(() => expect(screen.getByLabelText("Packet name")).toHaveValue("Intake"))
+    expect(mockUseVersion).toHaveBeenCalledWith("template-1", "version-2")
   })
 })

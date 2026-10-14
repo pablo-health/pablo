@@ -5,13 +5,15 @@
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { useVisitTimes } from "@/hooks/useVisitTimes"
 import { useUserTimeZone } from "@/hooks/usePreferences"
-import { clientPresentLineText, visitLineText } from "@/lib/visitTimes"
+import { clientPresentLineText, durationsLineText, visitLineText } from "@/lib/visitTimes"
 import { PsychotherapyWindow } from "./PsychotherapyWindow"
 
 /**
  * A recorded visit's times, above its note: when it started and ended, how
  * long the client was on the recording, and — for a note with a
- * psychotherapy section — the therapy portion's confirmed minutes.
+ * psychotherapy section — the therapy portion's confirmed minutes. Once the
+ * therapy minutes are confirmed it states both durations, the whole visit's
+ * and the therapy's, as a coded note's header does.
  *
  * Total time including documentation is shown only for a note without a
  * psychotherapy section: it counts only for a visit chosen by time, and a
@@ -36,6 +38,7 @@ export function VisitTimesPanel({
     people,
   )
   const psychotherapy = times.psychotherapy
+  const durations = durationsLineText(times)
   if (!visit && !present && !psychotherapy?.offered && times.total_with_documentation_minutes === null) {
     return null
   }
@@ -50,6 +53,11 @@ export function VisitTimesPanel({
       {present && (
         <p data-testid="client-present-line" className="text-sm text-neutral-600">
           {present}
+        </p>
+      )}
+      {durations && (
+        <p data-testid="durations-line" className="text-sm text-neutral-700">
+          {durations}
         </p>
       )}
       {psychotherapy?.offered && (

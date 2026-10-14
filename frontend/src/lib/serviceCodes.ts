@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
- * The service codes an outpatient therapy practice reaches for most often.
+ * The service codes an outpatient therapy or prescribing practice reaches for
+ * most often.
  *
  * These are suggestions and nothing more. The field they feed is free text,
  * nothing is validated against this list, and no code is ever chosen for a
@@ -31,6 +32,17 @@ export const COMMON_SERVICE_CODES: ServiceCodeSuggestion[] = [
   { code: "90847", description: "Family or couples session — patient present" },
   { code: "90853", description: "Group session" },
   { code: "90839", description: "Crisis session — first 60 minutes" },
+  { code: "99202", description: "Medical visit, new — straightforward" },
+  { code: "99203", description: "Medical visit, new — low complexity" },
+  { code: "99204", description: "Medical visit, new — moderate complexity" },
+  { code: "99205", description: "Medical visit, new — high complexity" },
+  { code: "99212", description: "Medical visit, established — straightforward" },
+  { code: "99213", description: "Medical visit, established — low complexity" },
+  { code: "99214", description: "Medical visit, established — moderate complexity" },
+  { code: "99215", description: "Medical visit, established — high complexity" },
+  { code: "90833", description: "Therapy with a medical visit — around 30 minutes" },
+  { code: "90836", description: "Therapy with a medical visit — around 45 minutes" },
+  { code: "90838", description: "Therapy with a medical visit — 60 minutes or more" },
 ]
 
 /** The plain-English name for a code, when it is one we happen to know. */

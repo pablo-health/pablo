@@ -13,7 +13,6 @@ import {
   specFromDraft,
 } from "../editorModel"
 import { importSpec } from "../importSpec"
-import { NOTE_TYPE_TEMPLATES } from "../templates"
 
 const SPEC: PracticeNoteTypeSpec = {
   label: "Check-in",
@@ -25,10 +24,32 @@ const SPEC: PracticeNoteTypeSpec = {
 }
 
 describe("note-type editor model", () => {
-  it("round-trips every template unchanged", () => {
-    for (const template of NOTE_TYPE_TEMPLATES) {
-      expect(specFromDraft(draftFromSpec(template.spec, null, template.slug))).toEqual(template.spec)
+  it("round-trips a loaded spec unchanged", () => {
+    expect(specFromDraft(draftFromSpec(SPEC, "check_in"))).toEqual(SPEC)
+  })
+
+  it("keeps the source of a field printed from the chart", () => {
+    const charted: PracticeNoteTypeSpec = {
+      ...SPEC,
+      sections: [
+        {
+          key: "medications",
+          label: "Medications and allergies",
+          fields: [
+            { key: "allergies", label: "Allergies", kind: "text", ai_hint: "", source: "allergies" },
+            { key: "notes", label: "Notes", kind: "text", ai_hint: "Anything else." },
+          ],
+        },
+      ],
     }
+    const draft = draftFromSpec(charted, null)
+    draft.sections[0].fields[0].label = "Allergies on file"
+
+    expect(specFromDraft(draft).sections[0].fields).toEqual([
+      { key: "allergies", label: "Allergies on file", kind: "text", ai_hint: "", source: "allergies" },
+      { key: "notes", label: "Notes", kind: "text", ai_hint: "Anything else." },
+    ])
+    expect(importSpec(JSON.stringify(charted))).toEqual({ spec: charted })
   })
 
   it("derives keys for added parts from their names, unique among siblings", () => {

@@ -8,6 +8,7 @@
  */
 
 import type {
+  DocumentUsage,
   IntakeItemInput,
   IntakeTemplate,
   IntakeVersionDetail,
@@ -16,8 +17,23 @@ import { get, patch, post, put } from "./client"
 
 const ENDPOINT = "/api/intake/templates"
 
+/**
+ * What a PATCH may change. `client_title` sent as null clears it; left out,
+ * it stays as it is.
+ */
+export interface UpdateTemplateInput {
+  name?: string
+  archived?: boolean
+  client_title?: string | null
+}
+
 export async function listIntakeTemplates(token?: string): Promise<IntakeTemplate[]> {
   return get<IntakeTemplate[]>(ENDPOINT, token)
+}
+
+/** Which packets ask for each document. A document no packet asks for is absent. */
+export async function listDocumentUsage(token?: string): Promise<DocumentUsage[]> {
+  return get<DocumentUsage[]>("/api/intake/document-usage", token)
 }
 
 export async function createIntakeTemplate(
@@ -29,7 +45,7 @@ export async function createIntakeTemplate(
 
 export async function updateIntakeTemplate(
   templateId: string,
-  data: { name?: string; archived?: boolean },
+  data: UpdateTemplateInput,
   token?: string
 ): Promise<IntakeTemplate> {
   return patch<IntakeTemplate>(`${ENDPOINT}/${templateId}`, data, token)

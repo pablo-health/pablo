@@ -53,7 +53,12 @@ from ..intake.items import (
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
-    from ..intake.items import InstrumentAttested, ItemConfig, PublishedDocumentLookup
+    from ..intake.items import (
+        InstrumentAttested,
+        ItemConfig,
+        PublishedDocumentLookup,
+        PublishedVersionsLookup,
+    )
     from ..repositories.intake_packet import IntakePacketRepository
 
 
@@ -79,8 +84,10 @@ class IntakePacketService:
         repo: IntakePacketRepository,
         published_document: PublishedDocumentLookup | None = None,
         instrument_attested: InstrumentAttested | None = None,
+        published_versions: PublishedVersionsLookup | None = None,
     ) -> None:
         self._repo = repo
+        self._published_versions = published_versions
         self._published_document = published_document
         self._instrument_attested = instrument_attested
 
@@ -98,6 +105,7 @@ class IntakePacketService:
             {
                 "id": str(uuid.uuid4()),
                 "name": name,
+                "client_title": None,
                 "created_by": created_by,
                 "created_at": now,
                 "archived_at": None,
@@ -129,6 +137,18 @@ class IntakePacketService:
         """
         return self._repo.update_template(template_id, name=name)
 
+    def set_client_title(self, template_id: str, title: str | None) -> dict[str, object] | None:
+        """Set or clear the title a patient sees in their portal.
+
+        Separate from the name, which is the practice's own label: a name
+        like "New client intake 2026-10-07" is written for the practice's
+        list and was never meant to be read by the person filling it in.
+        An empty title clears it, and the portal falls back to its own
+        wording. Like the name, it is not part of a frozen version.
+        """
+        cleaned = (title or "").strip()
+        return self._repo.set_client_title(template_id, cleaned or None)
+
     def set_archived(self, template_id: str, archived: bool) -> dict[str, object] | None:
         """Take a template out of circulation, or put it back.
 
@@ -138,6 +158,31 @@ class IntakePacketService:
         if archived:
             return self._repo.update_template(template_id, archived_at=utc_now())
         return self._repo.update_template(template_id, unarchive=True)
+
+    def document_usage(self) -> dict[str, list[dict[str, object]]]:
+        """Which packets put each document in front of people.
+
+        Keyed by ``document_key``, each a list of ``{"id", "name"}`` in the
+        order the packets are listed. A packet counts when its newest version
+        — the one being worked on, or the one being sent — has a consent item
+        pointing at the document. An archived packet sends nothing, so it is
+        left out.
+        """
+        usage: dict[str, list[dict[str, object]]] = {}
+        for template in self._repo.list_templates():
+            latest = self._repo.latest_version(str(template["id"]))
+            if latest is None:
+                continue
+            keys: set[str] = set()
+            for item in self._repo.list_items(str(latest["id"])):
+                config = item.get("config")
+                if item["item_type"] != "consent_document" or not isinstance(config, dict):
+                    continue
+                if key := config.get("document_key"):
+                    keys.add(str(key))
+            for key in sorted(keys):
+                usage.setdefault(key, []).append({"id": template["id"], "name": template["name"]})
+        return usage
 
     # --- versions ---
 
@@ -261,6 +306,7 @@ class IntakePacketService:
             ],
             published_document=self._published_document,
             instrument_attested=self._instrument_attested,
+            published_versions=self._published_versions,
         )
         self._pin_documents(rows, configs)
 
@@ -282,7 +328,9 @@ class IntakePacketService:
         for row, config in zip(rows, configs, strict=True):
             if not isinstance(config, ConsentDocumentConfig):
                 continue
-            version_id = self._published_document(config.document_key)
+            # The version the practice chose, checked above to be one of
+            # this document's published versions; otherwise the newest.
+            version_id = config.chosen_version_id or self._published_document(config.document_key)
             if version_id is None:  # pragma: no cover — validation refused this already
                 continue
             self._repo.set_item_config(

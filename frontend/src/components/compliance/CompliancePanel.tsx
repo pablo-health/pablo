@@ -5,6 +5,7 @@
 import { FileText } from "lucide-react"
 import Image from "next/image"
 import { useMemo, useState } from "react"
+import { PanelLoadError } from "@/components/support/PanelLoadError"
 import { Button } from "@/components/ui/button"
 import {
   useComplianceItems,
@@ -28,7 +29,13 @@ import { SupervisionHeroCard } from "./SupervisionHeroCard"
 type Selection = HorizonId | "urgent" | "all"
 
 export function CompliancePanel() {
-  const { data: items = [], isLoading: itemsLoading } = useComplianceItems()
+  const {
+    data: itemsData,
+    isLoading: itemsLoading,
+    isError: itemsFailed,
+    refetch: refetchItems,
+  } = useComplianceItems()
+  const items = useMemo(() => itemsData ?? [], [itemsData])
   const { data: templates = [] } = useComplianceTemplates()
   const completeItem = useCompleteComplianceItem()
   const [composerOpen, setComposerOpen] = useState(false)
@@ -102,6 +109,20 @@ export function CompliancePanel() {
       <div className="card">
         <PanelHeader onAdd={openComposerForAdd} hasAny={false} />
         <p className="text-sm text-neutral-500 py-6 text-center">Loading…</p>
+      </div>
+    )
+  }
+
+  // Without this a failed load showed the first-time "set up your reminders"
+  // screen to someone who may already have them.
+  if (itemsFailed && !itemsData) {
+    return (
+      <div className="card">
+        <PanelHeader onAdd={openComposerForAdd} hasAny={false} />
+        <PanelLoadError
+          message="Your reminders didn’t load."
+          onRetry={() => void refetchItems()}
+        />
       </div>
     )
   }

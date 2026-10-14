@@ -208,7 +208,8 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
     {
         # internal_transcription.py — Cloud Tasks worker that hands audio already
         # audited at upload (SESSION_AUDIO_UPLOADED) to the transcription
-        # provider; discloses nothing to a user. The transcript that results is
+        # provider, with the chart's medication and allergy names as its
+        # vocabulary when that is on; discloses nothing to a user. The transcript that results is
         # audited on the completion path.
         ("post", "/api/internal/assemblyai-submit"),  # provider submit worker, no disclosure
         # admin.py — operates on therapist accounts / invitees, never patient data
@@ -245,6 +246,7 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # patient. Publishing IS audited (INTAKE_TEMPLATE_PUBLISHED), because
         # that is the version every later submission gets read back against.
         ("get", "/api/intake/templates"),  # lists the practice's own forms
+        ("get", "/api/intake/document-usage"),  # which of its forms ask for which document
         ("post", "/api/intake/templates"),  # creates a form, no patient data
         ("get", "/api/intake/templates/{template_id}"),  # one form and its versions
         ("patch", "/api/intake/templates/{template_id}"),  # renames or archives a form
@@ -268,6 +270,8 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("get", "/api/intake/documents"),  # lists the practice's own documents
         ("post", "/api/intake/documents"),  # starts a document, no patient data
         ("get", "/api/intake/documents/{document_id}"),  # one version and its rendering
+        # the practice's published versions of one document, for a picker
+        ("get", "/api/intake/documents/keys/{document_key}/published"),
         ("put", "/api/intake/documents/{document_id}"),  # edits an unpublished draft
         ("post", "/api/intake/documents/{document_id}/new-version"),  # starts the next draft
         ("get", "/api/intake/starters"),  # the built-in documents a practice can start from
@@ -411,6 +415,8 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("get", "/api/note-types/{key}"),  # single note-type definition
         ("put", "/api/note-types/custom/{slug}"),  # saves a practice's own note format
         ("delete", "/api/note-types/custom/{slug}"),  # retires a practice's own note format
+        ("get", "/api/note-types/bases"),  # built-in note formats a practice can adjust
+        ("post", "/api/note-types/resolve"),  # a note format applied to its base; no client data
         ("get", "/api/note-types/derive/references"),  # names of comparison references
         # scheduling.py — therapist's own availability/OAuth, no client attached
         ("get", "/api/availability/rules"),  # therapist availability rules

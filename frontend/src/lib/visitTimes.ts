@@ -15,8 +15,6 @@ const FIRST_BAND_LAST_MINUTE = 37
 const SECOND_BAND_LAST_MINUTE = 52
 
 const SECONDS_PER_MINUTE = 60
-const MINUTES_PER_HOUR = 60
-const HOURS_PER_HALF_DAY = 12
 
 /** The add-on band for psychotherapy minutes. */
 export function addOnBand(minutes: number): string {
@@ -24,10 +22,6 @@ export function addOnBand(minutes: number): string {
   if (minutes <= FIRST_BAND_LAST_MINUTE) return "16–37 minutes"
   if (minutes <= SECOND_BAND_LAST_MINUTE) return "38–52 minutes"
   return "53 minutes or more"
-}
-
-export function minutesBetween(startSeconds: number, endSeconds: number): number {
-  return Math.max(Math.floor((endSeconds - startSeconds) / SECONDS_PER_MINUTE), 0)
 }
 
 /** Whole minutes in a span of seconds. */
@@ -54,17 +48,6 @@ export function clockTime(moment: Date | string, timeZone: string): string {
     minute: "2-digit",
     timeZone,
   })
-}
-
-function minutesOfDay(moment: Date, timeZone: string): number {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    hour: "numeric",
-    minute: "numeric",
-    hourCycle: "h23",
-    timeZone,
-  }).formatToParts(moment)
-  const value = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? 0)
-  return value("hour") * MINUTES_PER_HOUR + value("minute")
 }
 
 /** "Started 11:00 AM · Ended 11:55 AM · 55 min", or nothing when either end is unknown. */
@@ -109,31 +92,16 @@ export function clientPresentLineText(
   return addendum > 0 ? `${present} · Your dictated addendum: ${addendum} min` : present
 }
 
-const STATED_TIME =/(\d{1,2})(?::(\d{2}))?\s*([ap])?\.?\s*m?\.?/i
-
 /**
- * Seconds into the recording for a start time the clinician said aloud
- * ("around 10:15"), read in their time zone. A time without am/pm is taken
- * as the reading nearest the recording. Null when it cannot be placed
- * inside the client-present span.
+ * The visit's two durations, as a coded note's header states them: the
+ * whole visit, and the therapy alone. Nothing until the therapy minutes are
+ * confirmed.
  */
-export function placeStatedTime(
-  stated: string,
-  startedAt: string | null,
-  timeZone: string,
-  endSeconds: number,
-): number | null {
-  const match = STATED_TIME.exec(stated)
-  if (!match || !startedAt) return null
-  const hour = Number(match[1])
-  const minute = Number(match[2] ?? 0)
-  const meridiem = match[3]?.toLowerCase()
-  const startMinutes = minutesOfDay(new Date(startedAt), timeZone)
-  const readings = meridiem
-    ? [(hour % HOURS_PER_HALF_DAY) + (meridiem === "p" ? HOURS_PER_HALF_DAY : 0)]
-    : [hour % HOURS_PER_HALF_DAY, (hour % HOURS_PER_HALF_DAY) + HOURS_PER_HALF_DAY]
-  const offsets = readings
-    .map((h) => (h * MINUTES_PER_HOUR + minute - startMinutes) * SECONDS_PER_MINUTE)
-    .filter((offset) => offset >= 0 && offset < endSeconds)
-  return offsets.length > 0 ? Math.min(...offsets) : null
+export function durationsLineText(
+  times: Pick<VisitTimes, "total_minutes" | "psychotherapy">,
+): string | null {
+  const therapy = times.psychotherapy
+  if (!therapy?.offered || therapy.confirmed_minutes === null) return null
+  const total = times.total_minutes !== null ? `Total duration: ${times.total_minutes} min · ` : ""
+  return `${total}Psychotherapy duration: ${therapy.confirmed_minutes} min`
 }

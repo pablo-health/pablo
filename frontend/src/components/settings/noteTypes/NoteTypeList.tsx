@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { useRetirePracticeNoteType } from "@/hooks/useNoteTypes"
 import { isPracticeKey, PRACTICE_KEY_PREFIX, type NoteTypeSchema } from "@/types/noteTypes"
 import { ListRow, SettingsCard } from "../ui"
+import { basedOnLine } from "./basedModel"
 
 interface NoteTypeListProps {
   noteTypes: NoteTypeSchema[]
@@ -34,7 +35,9 @@ export function NoteTypeList({ noteTypes, onEdit }: NoteTypeListProps) {
               subtitle={
                 confirming === t.key
                   ? "Retire it? New appointments can't use it. Notes already written with it are unchanged."
-                  : `Version ${t.version}${t.description ? ` · ${t.description}` : ""}`
+                  : t.based_on
+                    ? `Version ${t.version} · ${basedOnLine(t.based_on)}`
+                    : `Version ${t.version}${t.description ? ` · ${t.description}` : ""}`
               }
             >
               {confirming === t.key ? (

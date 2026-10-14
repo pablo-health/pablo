@@ -91,6 +91,30 @@ export function handleTerminalAuthLogout(reason: "idle_timeout" | "session_expir
   })()
 }
 
+let dashboardStepUpInFlight = false
+
+/**
+ * Send a dashboard whose data loads are refused for want of a second factor
+ * to the passkey step-up page.
+ *
+ * The dashboard layout gates on the server session cookie, but the page's own
+ * requests carry the browser's Firebase token, and the two can disagree: a
+ * returning session can pass the gate on a cookie that holds the upgraded
+ * token while the browser sends one without the passkey factor. Every panel
+ * then fails with `MFA_REQUIRED` and nothing on the page offers a way out.
+ *
+ * Only reads trigger this. A refused mutation is an action the user just took
+ * — adding or removing a passkey in Settings — and that screen explains it
+ * inline. Re-entry guarded so a dashboard's burst of parallel loads navigates
+ * once.
+ */
+function handleDashboardStepUp() {
+  if (typeof window === "undefined" || dashboardStepUpInFlight) return
+  if (!(window.location?.pathname ?? "").startsWith("/dashboard")) return
+  dashboardStepUpInFlight = true
+  window.location.assign("/mfa-step-up")
+}
+
 /**
  * The `&returnTo=` fragment that sends the user back where they were once they
  * sign in again, or "" when there is nowhere sensible to return to.
@@ -429,13 +453,20 @@ export async function apiClient<T>(
     // to client-managed tokens (no caller-supplied `token`), since a caller
     // that owns its token owns its own auth handling. Both paths are re-entry
     // guarded so a parallel burst of 401s fires one redirect. MFA_REQUIRED is
-    // intentionally excluded (it drives the step-up flow, not a logout).
+    // never a logout: a refused dashboard read goes to passkey step-up instead.
     if (response.status === 401 && typeof window !== "undefined") {
       if (errorCode === "IDLE_TIMEOUT") {
         handleTerminalAuthLogout("idle_timeout")
       } else if (!token && TERMINAL_AUTH_CODES.has(errorCode)) {
         handleTerminalAuthLogout("session_expired")
       }
+    }
+    if (
+      errorCode === "MFA_REQUIRED" &&
+      !token &&
+      (fetchOptions.method ?? "GET").toUpperCase() === "GET"
+    ) {
+      handleDashboardStepUp()
     }
 
     const apiError = new ApiError(errorCode, errorMessage, errorDetails, response.status)

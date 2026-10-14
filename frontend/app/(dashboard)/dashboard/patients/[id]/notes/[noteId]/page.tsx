@@ -23,6 +23,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { NoteViewer } from "@/components/sessions/NoteViewer"
 import { NoteConsentLine } from "@/components/sessions/NoteConsentLine"
 import { OnlyYouBadge } from "@/components/notes/OnlyYouBadge"
+import { ChartUpdatesPanel } from "@/components/notes/chartUpdates/ChartUpdatesPanel"
 import { NoteSignaturePanel } from "@/components/notes/signing/NoteSignaturePanel"
 import { SignNoteDialog } from "@/components/notes/signing/SigningDialogs"
 import {
@@ -194,6 +195,8 @@ export default function StandaloneNotePage({ params }: PageProps) {
 
       {!isGenerating && !generationFailed && <NoteSignaturePanel note={note} />}
 
+      {isFinalized && <ChartUpdatesPanel note={note} />}
+
       {!isFinalized && !isGenerating && !generationFailed && (
         <div className="card space-y-6">
           <div>
@@ -220,7 +223,12 @@ export default function StandaloneNotePage({ params }: PageProps) {
               Sign and lock
             </Button>
           </div>
-          <SignNoteDialog open={signOpen} onOpenChange={setSignOpen} onSign={handleSign} />
+          <SignNoteDialog
+            open={signOpen}
+            onOpenChange={setSignOpen}
+            onSign={handleSign}
+            note={note}
+          />
         </div>
       )}
     </div>

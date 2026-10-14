@@ -27,7 +27,7 @@ export const ITEM_TYPE_LABELS: Record<string, string> = {
   guardian: "Parent or guardian",
   consent_document: "Consent to sign",
   insurance_card: "Insurance card",
-  document_request: "Document upload",
+  document_request: "Ask for a file",
 }
 
 export const ITEM_TYPE_HINTS: Record<string, string> = {
@@ -80,7 +80,7 @@ export const LICENSED_ON_FILE = "On file"
  */
 export const SOLD_TITLE = "Measures you buy from their publisher"
 export const SOLD_GUIDANCE =
-  "Ask for your own copy as a document upload, and record the score yourself."
+  "Add an Ask for a file question for your own copy, and record the score yourself."
 
 /** Shown under the measure picker beside one the practice has not licensed. */
 export const MEASURE_NEEDS_PERMISSION =
@@ -104,24 +104,51 @@ export const HELP_TEXT_PLACEHOLDER = "Anything that helps them answer it"
 export const LABEL_FIELD_OVERRIDE = "Heading (optional)"
 export const LABEL_OVERRIDE_PLACEHOLDER = "Leave empty to ask it as Pablo words it"
 
-export const FORMS_TITLE = "Forms"
-export const FORMS_DESCRIPTION = "What your intake asks, and who it asks it of."
-export const EMPTY_STATE = "No forms yet."
-export const NEW_FORM_NAME = "New form"
+/**
+ * A packet is what a practice sends: things to read and sign, questions to
+ * answer, and files to send back. The clinician's word for it; the person
+ * filling it in sees "forms" in the portal.
+ */
+export const FORMS_TITLE = "Packets"
+export const FORMS_DESCRIPTION = "What you send people to read, sign and answer."
+export const EMPTY_STATE = "No packets yet."
+export const NEW_FORM_NAME = "New packet"
+export const ADD_PACKET = "Add a packet"
+export const RENAME_PACKET = "Rename"
+export const PACKET_NAME_LABEL = "Packet name"
+export const SAVE_NAME = "Save name"
+/** The title the person filling the packet in sees; the name above stays the practice's own. */
+export function clientTitleLabel(people: PeopleWords): string {
+  return `Title ${people.many} see`
+}
+export const CLIENT_TITLE_HINT = 'Shown in their portal. Left empty, it says "Forms from" and your practice name.'
+export const SAVE_TITLE = "Save title"
 export const DRAFT_BADGE = "Draft"
 export const PUBLISHED_BADGE = "Published"
 export const PUBLISH_BUTTON = "Publish"
 export const ADD_QUESTION = "Add question"
 
 /**
- * The built-in documents a practice can add to a form. Adding one also adds
- * the practice's own copy of the document, which it edits like any other.
+ * Putting a document in a packet. Its own button rather than a kind of
+ * question, because a practice thinks of a packet as papers to sign and
+ * questions to answer — and looked for exactly this button.
  */
-export const START_FROM_TEMPLATE = "Start from a template"
+export const ADD_DOCUMENT_TO_PACKET = "Add a document"
+export const YOUR_DOCUMENTS = "Your documents"
+export const BUILT_IN_DOCUMENTS = "Built in"
+export const NO_DOCUMENTS_TO_ADD = "You have no documents yet. Write one here."
+/** Beside a document's name in the packet, so it reads as a paper, not a question. */
+export const DOCUMENT_TAG = "Document"
+
+/**
+ * Built-in questions a practice can add to a form. Built-in documents are
+ * offered under Add a document instead, beside the practice's own.
+ */
+export const START_FROM_TEMPLATE = "Add built-in questions"
 /** Shown when every item a template adds is already on the form. */
-export const TEMPLATE_ALREADY_ON_FORM = "This form already has it."
+export const TEMPLATE_ALREADY_ON_FORM = "This packet already has it."
 export const NEW_VERSION_BUTTON = "Start a new version"
-export const NO_QUESTIONS = "Nothing on this form yet."
+export const NO_QUESTIONS = "Nothing in this packet yet."
 
 /**
  * Shown on a published version instead of the editor.
@@ -132,9 +159,19 @@ export const NO_QUESTIONS = "Nothing on this form yet."
 export const PUBLISHED_NOTICE =
   "This version has been published. Start a new version to change the questions."
 
-export const DOCUMENTS_TITLE = "Documents"
-export const DOCUMENTS_DESCRIPTION = "What people read and sign before you see them."
+export const DOCUMENTS_TITLE = "Documents in your packets"
+export const DOCUMENTS_DESCRIPTION =
+  "What your packets ask people to read and sign. Put one in a packet with Add a document. Editing one starts a new version."
 export const DOCUMENTS_EMPTY = "No documents yet."
+/** Under each document: the packets that ask for it. */
+export const USED_IN = "Used in"
+export const NOT_IN_A_PACKET = "Not in a packet yet."
+export const HIDE_DOCUMENTS = "Hide documents"
+/** `null` while the list is still loading: no count is better than a wrong one. */
+export function showDocuments(count: number | null): string {
+  if (count === null) return "Show documents"
+  return count === 1 ? "Show 1 document" : `Show ${count} documents`
+}
 export const NEW_DOCUMENT_NAME = "New document"
 export const ADD_DOCUMENT = "Add a document"
 export const DOCUMENT_NAME_LABEL = "Name"
@@ -154,6 +191,29 @@ export const DOCUMENT_PUBLISHED_NOTICE =
 
 /** Shown under the picker when the practice has nothing published to pick. */
 export const NO_PUBLISHED_DOCUMENTS = "Publish a document first, then you can ask for it here."
+/** Which published wording of a document a consent question asks for. */
+export const VERSION_PICKER_LABEL = "Which wording"
+export function NEWEST_VERSION(version: number): string {
+  return `The newest when you publish (now version ${version})`
+}
+export function versionChoice(version: number, publishedAt: string | null): string {
+  if (!publishedAt) return `Version ${version}`
+  const date = new Date(publishedAt).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  })
+  return `Version ${version}, published ${date}`
+}
+
+/** Writing a document from the question that asks for it. */
+export const WRITE_NEW_DOCUMENT = "Write a new one"
+export const PUBLISH_AND_USE = "Publish and use it"
+/** Named apart from the question's own "Name" field, which sits just above it. */
+export const NEW_DOCUMENT_NAME_LABEL = "Document name"
+/** Said under the built-in documents: picking one also gives the practice its own copy. */
+export const STARTER_ADDS_DOCUMENT =
+  "A built-in document also lands in Documents in your packets, to edit like any other."
 
 export const DOCUMENT_PICKER_LABEL = "Which document"
 
@@ -177,9 +237,8 @@ export function cardCollectFieldsHelp(people: PeopleWords): string {
  * Optional, and described as what it is: the question works without one,
  * and most of what it asks for is something the client already has.
  */
-export const BLANK_FORM_PICKER_LABEL = "Offer a form to download (optional)"
+export const BLANK_FORM_PICKER_LABEL = "Offer a blank copy to download (optional)"
 export const NO_BLANK_FORM_CHOICE = "Don't offer one"
-export const NO_BLANK_FORMS = "Upload a blank form first, then you can offer it here."
 
 /**
  * Asking a question only of the people it applies to.

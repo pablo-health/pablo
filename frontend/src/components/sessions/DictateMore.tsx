@@ -136,6 +136,12 @@ export function DictateMore({ sessionId, signed, hasEdits, disabled, onSend }: D
           That dictation couldn&apos;t be transcribed, so the note hasn&apos;t changed. Try again.
         </p>
       )}
+      {sent?.status === "no_speech" && (
+        <p role="alert" className="text-sm text-red-700">
+          Pablo didn&apos;t hear anything in that dictation, so the note hasn&apos;t changed. Check
+          that your microphone is working, then try again.
+        </p>
+      )}
 
       <RedraftChoiceDialog
         open={choosing}

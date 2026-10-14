@@ -279,6 +279,31 @@ class TestTheFreeze:
         assert draft["published_at"] is None
 
 
+class TestPublishedVersionsOfOneDocument:
+    """What a consent question's version picker offers."""
+
+    def test_only_published_versions_newest_first(self, practice: TestClient) -> None:
+        first = _publish(practice, _create(practice, title="Consent")["id"])
+        second_draft = practice.post(f"{BASE}/{first['id']}/new-version").json()
+        second = _publish(practice, second_draft["id"])
+        # A third, still a draft: nobody can be asked to sign it yet.
+        practice.post(f"{BASE}/{second['id']}/new-version")
+
+        response = practice.get(f"{BASE}/keys/{first['document_key']}/published")
+        assert response.status_code == 200
+        assert [(row["id"], row["version"]) for row in response.json()] == [
+            (second["id"], 2),
+            (first["id"], 1),
+        ]
+
+    def test_another_documents_versions_are_not_offered(self, practice: TestClient) -> None:
+        consent = _publish(practice, _create(practice, title="Consent")["id"])
+        _publish(practice, _create(practice, title="Telehealth")["id"])
+
+        listed = practice.get(f"{BASE}/keys/{consent['document_key']}/published").json()
+        assert [row["title"] for row in listed] == ["Consent"]
+
+
 class TestTheAuditRow:
     def test_publishing_is_recorded(
         self, practice: TestClient, audit_repo: InMemoryAuditRepository, mock_user_id: str
@@ -431,9 +456,11 @@ class TestStarters:
     def test_the_list_names_the_ai_tools_consent(self, practice: TestClient) -> None:
         response = practice.get(STARTERS)
         assert response.status_code == 200
-        assert {"key": "ai_tools_consent", "title": "Consent for the use of AI tools"} in (
-            response.json()
-        )
+        assert {
+            "key": "ai_tools_consent",
+            "title": "Consent for the use of AI tools",
+            "has_document": True,
+        } in response.json()
 
     def test_adopting_one_publishes_the_practices_copy(self, practice: TestClient) -> None:
         response = practice.post(f"{STARTERS}/ai_tools_consent")
@@ -541,8 +568,13 @@ class TestRegisteredStarters:
         return practice
 
     def test_they_are_listed_after_the_built_ins(self, practice: TestClient) -> None:
-        listed = [s["key"] for s in practice.get(STARTERS).json()]
-        assert listed == ["ai_tools_consent", "cancellation_policy", "previous_care"]
+        listed = [(s["key"], s["has_document"]) for s in practice.get(STARTERS).json()]
+        # The one without a document is questions alone, and says so.
+        assert listed == [
+            ("ai_tools_consent", True),
+            ("cancellation_policy", True),
+            ("previous_care", False),
+        ]
 
     def test_adopting_one_publishes_the_copy_and_hands_back_its_items(
         self, practice: TestClient

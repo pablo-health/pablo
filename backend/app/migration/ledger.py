@@ -19,6 +19,7 @@ matter again.
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 import uuid
 import zipfile
@@ -190,6 +191,22 @@ def archive_path(base: Path, practice_key: str, ref: str) -> Path | None:
         return None
     path = practice_archive_dir(base, practice_key) / ref
     return path if path.is_dir() else None
+
+
+def archive_file(root: Path, relative: str) -> Path | None:
+    """The file ``relative`` names inside an unpacked archive, or ``None``.
+
+    ``relative`` arrives from a request, so it is joined and fully resolved
+    (symlinks included) before anything touches the disk, and anything that
+    lands outside ``root`` is refused: a ``..`` segment, an absolute path, or
+    a link that points elsewhere.
+    """
+    base = os.path.realpath(root)
+    full = os.path.realpath(Path(base) / relative)
+    if not full.startswith(base + os.sep):
+        return None
+    target = Path(full)
+    return target if target.is_file() else None
 
 
 def delete_archive(base: Path, practice_key: str, ref: str | None) -> bool:

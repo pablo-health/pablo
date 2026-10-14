@@ -202,7 +202,7 @@ export function IntakeCard({ patientId }: IntakeCardProps) {
 
       {empty && (
         <p className="text-sm text-neutral-600" data-testid="intake-empty">
-          No forms have been sent to this {people.one} yet.
+          No packets have been sent to this {people.one} yet.
         </p>
       )}
 
@@ -243,7 +243,7 @@ export function IntakeCard({ patientId }: IntakeCardProps) {
           className="mt-4 space-y-3 border-t border-border pt-4"
           data-testid="intake-assignments"
         >
-          <h3 className="text-sm font-semibold text-neutral-900">Forms</h3>
+          <h3 className="text-sm font-semibold text-neutral-900">Packets</h3>
           {assignments.map((assignment) => (
             <AssignmentRow
               key={assignment.id}

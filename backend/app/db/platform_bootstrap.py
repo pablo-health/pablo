@@ -164,7 +164,8 @@ def bring_platform_to_head(engine: Engine, alembic_ini: str = "alembic.ini") -> 
 def require_platform_schema(engine: Engine) -> None:
     """Fail loudly when the platform schema has not been built yet.
 
-    Two callers, same question. Boot (``ensure_schemas``) used to BUILD it with
+    Two callers, same question. Provisioning (``ensure_schemas``, which ran on
+    boot and now runs in the migrate step) used to BUILD it with
     ``create_all``, which is what let a platform table exist without the policy,
     trigger or constraint that was supposed to come with it. The tenant chain's
     ``env.py`` used to rely on that same call as the thing that satisfied its

@@ -3,6 +3,7 @@
 "use client"
 
 import { Component, type ReactNode } from "react"
+import { SupportContactLine } from "@/components/support/SupportContactLine"
 import { reportFrontendError } from "@/lib/feErrorReporter"
 
 interface ErrorBoundaryProps {
@@ -62,6 +63,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             >
               Try again
             </button>
+            <SupportContactLine lead="Still not working?" />
           </div>
         </div>
       )

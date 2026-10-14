@@ -11,9 +11,13 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from ..logging_config import bind_log_tenant_id
 from . import (
     DEFAULT_PRACTICE_SCHEMA,
     _current_patient_id,
@@ -32,6 +36,53 @@ if TYPE_CHECKING:
     from starlette.types import ASGIApp
 
 logger = logging.getLogger(__name__)
+
+#: The health endpoint's path. A request to it turned away here answers with
+#: the same body the health handler uses, so a probe reads the same thing
+#: whichever layer said "not yet".
+HEALTH_PATH = "/api/health"
+
+#: Seconds a client should wait before retrying a request turned away because
+#: the database could not be reached.
+DATABASE_UNAVAILABLE_RETRY_AFTER_S = 5
+
+
+def _database_unavailable_response(
+    request: Request, exc: OperationalError | PoolTimeoutError
+) -> JSONResponse:
+    """Answer 503 for a request whose prelude could not reach the database.
+
+    A new instance's first connections can take a while to come up, and the
+    platform's startup probe hits ``/api/health`` inside that window. The
+    health handler already answers 503 when it cannot connect, but the prelude
+    connects first (``set_tenant_schema`` issues SQL), so the failure used to
+    escape as an unhandled exception and every deploy logged a crash for what
+    is an ordinary "not ready yet". The request has done no work, so the honest
+    answer is "retry", logged at WARNING.
+
+    Logs the exception TYPE only, and never the path, which can carry record
+    ids — the route template is not known yet, because routing has not run.
+    """
+    logger.warning(
+        "database_unavailable_in_request_prelude method=%s error=%s",
+        request.method,
+        type(exc).__name__,
+        extra={"event": "database_unavailable_in_request_prelude"},
+    )
+    headers = {"Retry-After": str(DATABASE_UNAVAILABLE_RETRY_AFTER_S)}
+    if request.url.path == HEALTH_PATH:
+        return JSONResponse({"status": "unavailable"}, status_code=503, headers=headers)
+    return JSONResponse(
+        {
+            "error": {
+                "code": "SERVICE_UNAVAILABLE",
+                "message": "Temporarily unavailable. Please retry in a few seconds.",
+                "details": {},
+            }
+        },
+        status_code=503,
+        headers=headers,
+    )
 
 
 def _verify_and_stash_clinician_identity(request: Request) -> None:
@@ -161,6 +212,9 @@ def _resolve_schema_from_request(request: Request) -> tuple[str | None, str]:
 
         practice = _resolve_practice_from_email(identity.email)
         if practice:
+            # The earliest point the practice is known, and before any route
+            # or dependency logs: every line for the request carries it.
+            bind_log_tenant_id(practice[0])
             return practice[1], "resolved"  # schema_name
     except Exception as exc:
         # Exception TYPE only — never the message, which can carry the email
@@ -201,7 +255,17 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
         # that were powerless to commit. They then woke onto dead sockets and
         # returned 500. Running the prelude in a worker thread keeps one slow
         # credential check to one slow request. (PABLO-pjdb)
-        schema, unresolved_reason = await run_in_threadpool(self._prepare, request, session)
+        #
+        # A database that cannot be reached yet is answered here with a 503.
+        # The catch wraps the prelude alone, never the route: an
+        # OperationalError raised by a handler is a real failure mid-request
+        # and propagates as one.
+        try:
+            schema, unresolved_reason = await run_in_threadpool(self._prepare, request, session)
+        except (OperationalError, PoolTimeoutError) as exc:
+            session.close()
+            _request_session.set(None)
+            return _database_unavailable_response(request, exc)
 
         # `set_tenant_schema` also stashes the schema in the
         # `_current_tenant_schema` ContextVar, so the pool-checkout listener
@@ -216,8 +280,15 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
             if unresolved_reason is not None:
                 # Logged after routing so the route TEMPLATE is available —
                 # never request.url.path, which carries record ids.
+                #
+                # A lookup that RAISED is an ERROR: the caller may well have a
+                # practice, and this request ran without it. No mapping or no
+                # email stays a WARNING — that is also what an administrator
+                # without a practice, or an account mid-onboarding, looks like.
                 route = request.scope.get("route")
-                logger.warning(
+                lookup_raised = unresolved_reason.startswith(UNRESOLVED_LOOKUP_RAISED)
+                logger.log(
+                    logging.ERROR if lookup_raised else logging.WARNING,
                     "tenant_schema_unresolved route=%s method=%s status=%s reason=%s "
                     "fell_back_to=%s",
                     getattr(route, "path", "unmatched"),
@@ -225,6 +296,7 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
                     getattr(response, "status_code", "unknown"),
                     unresolved_reason,
                     DEFAULT_PRACTICE_SCHEMA,
+                    extra={"event": "tenant_schema_unresolved"},
                 )
             # Guard: refuse to commit if the session still points at the
             # default 'practice' schema and multi-tenancy is on.  This

@@ -4,6 +4,7 @@
 
 import { useQuery } from "@tanstack/react-query"
 import { useAuth } from "@/lib/auth-context"
+import { ApiError } from "@/lib/api/client"
 import { listCompanionDevices, type CompanionDevice } from "@/lib/api/devices"
 import { queryKeys } from "@/lib/api/queryKeys"
 
@@ -11,10 +12,13 @@ import { queryKeys } from "@/lib/api/queryKeys"
  * List the current user's enrolled companion installs.
  *
  * Used by the dashboard for smart-detection of the "Start Session" handoff
- * button. Degrades gracefully: if the backend endpoint is unavailable (404
- * while the launch flow is dark, or older self-hosted backends), the query
- * resolves to an empty list rather than surfacing an error — the caller
- * simply renders the "Download Pablo Companion" affordance instead.
+ * button. A 404 means the backend has no devices endpoint (an older
+ * self-hosted backend), which resolves to an empty list so the caller shows
+ * the "Download Pablo Companion" affordance.
+ *
+ * Any other failure (401, 5xx, network) is surfaced as a query error. It must
+ * not read as "no devices": that would tell a clinician who has the app to go
+ * download it again. Callers check `isError` and offer a retry instead.
  *
  * Shorter `staleTime` than the app default so a freshly-enrolled companion
  * (the user just finished OAuth and landed back on the dashboard) is
@@ -27,9 +31,9 @@ export function useCompanionDevices(token?: string) {
     queryFn: async () => {
       try {
         return await listCompanionDevices(token)
-      } catch {
-        // No endpoint / flag off / transient error → treat as "no devices".
-        return []
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return []
+        throw err
       }
     },
     staleTime: 10 * 1000,

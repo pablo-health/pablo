@@ -27,7 +27,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { useSignerDefaults } from "@/hooks/useNoteSigning"
 import { useUserTimeZone } from "@/hooks/usePreferences"
 import { formatSignedAt, signedByLine } from "@/lib/utils/signatureBlock"
-import type { NoteSignerFields } from "@/types/notes"
+import type { Note, NoteSignerFields } from "@/types/notes"
+import { UpdateChart, useChartUpdates } from "../chartUpdates/UpdateChart"
 
 const errorText = (err: unknown) =>
   err instanceof Error ? err.message : "That didn't work. Try again."
@@ -102,11 +103,37 @@ interface DialogProps {
   onOpenChange: (open: boolean) => void
 }
 
-export function SignNoteDialog({
+type SignNoteDialogProps = DialogProps & {
+  onSign: (signer: NoteSignerFields) => Promise<unknown>
+  /** The note being signed, so the chart updates it proposes can be decided first. */
+  note?: Note
+}
+
+export function SignNoteDialog({ note, ...props }: SignNoteDialogProps) {
+  return note ? <SignWithChartUpdates note={note} {...props} /> : <SignDialog {...props} />
+}
+
+function SignWithChartUpdates({ note, ...props }: SignNoteDialogProps & { note: Note }) {
+  const updates = useChartUpdates(props.open ? note : undefined)
+  return (
+    <SignDialog {...props} undecided={updates.undecided}>
+      <UpdateChart note={note} updates={updates} />
+    </SignDialog>
+  )
+}
+
+function SignDialog({
   open,
   onOpenChange,
   onSign,
-}: DialogProps & { onSign: (signer: NoteSignerFields) => Promise<unknown> }) {
+  undecided = 0,
+  children,
+}: DialogProps & {
+  onSign: (signer: NoteSignerFields) => Promise<unknown>
+  /** Chart updates not yet decided; signing leaves them on the note. */
+  undecided?: number
+  children?: React.ReactNode
+}) {
   const signer = useSignerState()
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -135,11 +162,12 @@ export function SignNoteDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Sign and lock note</DialogTitle>
           <DialogDescription>Signing locks the note.</DialogDescription>
         </DialogHeader>
+        {children}
         <form onSubmit={handleSubmit} className="space-y-4">
           <SignatureFields
             idPrefix="sign-note"
@@ -158,7 +186,12 @@ export function SignNoteDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={pending || !signer.name.trim()}>
-              {pending ? "Signing…" : "Sign and lock"}
+              {/* What is left stays on the signed note, to be decided later. */}
+              {pending
+                ? "Signing…"
+                : undecided > 0
+                  ? "Sign without updating"
+                  : "Sign and lock"}
             </Button>
           </DialogFooter>
         </form>

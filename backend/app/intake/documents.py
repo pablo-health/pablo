@@ -47,14 +47,19 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+# The captured words start at a non-space so the gap before them and the
+# words themselves can never trade characters, which keeps matching linear
+# on a long run of spaces. Lines arrive right-stripped, so this captures
+# exactly what a looser ``\s+(.*)`` would.
+
 #: A heading: one to six hashes, a space, then the words.
-_HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
+_HEADING = re.compile(r"^(#{1,6})\s+(\S.*)$")
 
 #: A bullet: ``-``, ``*`` or ``+`` and a space.
-_BULLET = re.compile(r"^\s{0,3}[-*+]\s+(.*)$")
+_BULLET = re.compile(r"^\s{0,3}[-*+]\s+(\S.*)$")
 
 #: A numbered item: digits, a dot or a bracket, and a space.
-_NUMBERED = re.compile(r"^\s{0,3}\d{1,9}[.)]\s+(.*)$")
+_NUMBERED = re.compile(r"^\s{0,3}\d{1,9}[.)]\s+(\S.*)$")
 
 #: A block quote: ``>`` and optionally a space.
 _QUOTE = re.compile(r"^\s{0,3}>\s?(.*)$")

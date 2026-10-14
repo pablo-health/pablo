@@ -15,6 +15,7 @@ the run:
   - a diagnosis lacks a code, carries a code the clinician never said, or a
     stated code is missing; a rule-out was not marked as one;
   - any value contains a forbidden string (a code or level never stated);
+  - a turn of the medication portion is labeled therapy;
   - once the case's therapy start is confirmed, the psychotherapy time field
     does not read the confirmed window;
   - drafted again with a line dictated afterwards, the note lost a fact the
@@ -50,7 +51,9 @@ from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
 from app.notes.visit_times import (
     PSYCHOTHERAPY_SECTION_KEY,
     PSYCHOTHERAPY_TIME_FIELD,
+    THERAPY,
     apply_confirmed_window,
+    labels_from_stored,
     window_minutes,
     window_text,
 )
@@ -92,11 +95,12 @@ def _text(value: Any) -> str:
 
 
 def grade(
-    case: TemplateCase, content: dict[str, Any], start: dict[str, Any] | None = None
+    case: TemplateCase, content: dict[str, Any], proposal: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     """Every hard failure in ``content``, a draft of ``case``'s sample.
 
-    ``start`` is the draft's proposed psychotherapy start.
+    ``proposal`` is the draft's proposed psychotherapy time: the dictated
+    time and the turn labels.
     """
     failures: list[str] = []
     for section, fields in content.items():
@@ -117,28 +121,27 @@ def grade(
             elif case.fill_unnamed and path not in case.may_be_empty and _is_empty(value):
                 failures.append(f"{path} is empty")
     failures.extend(_grade_quoted(case, content))
-    failures.extend(_grade_start(case, start))
-    failures.extend(_grade_confirmed_window(case, content))
+    failures.extend(_grade_start(case, proposal))
+    failures.extend(_grade_confirmed_window(case, content, proposal))
     if case.diagnoses_field:
         failures.extend(_grade_diagnoses(case, content))
     return {"case": case.name, "passed": not failures, "failures": failures}
 
 
-def _grade_start(case: TemplateCase, start: dict[str, Any] | None) -> list[str]:
-    """Every proposed therapy start is after the medication portion; the first is at the turn."""
+def _grade_start(case: TemplateCase, proposal: dict[str, Any] | None) -> list[str]:
+    """No turn of the medication portion is labeled therapy; the therapy starts at the turn."""
     if case.therapy_starts_between is None:
         return []
     low, high = case.therapy_starts_between
-    candidates = [c["seconds"] for c in (start or {}).get("candidates", [])]
-    if not candidates:
-        return ["no psychotherapy start was proposed"]
-    failures = [
-        f"proposed therapy start {seconds:.0f}s is before {low:.0f}s"
-        for seconds in candidates
-        if seconds < low
-    ]
-    if candidates[0] > high:
-        failures.append(f"first proposed therapy start {candidates[0]:.0f}s is after {high:.0f}s")
+    labels = labels_from_stored((proposal or {}).get("labels"))
+    therapy = sorted(seconds for seconds, label in labels.items() if label == THERAPY)
+    if not therapy:
+        return ["no turn was labeled therapy"]
+    failures = []
+    if therapy[0] < low:
+        failures.append(f"the turn at {therapy[0]:.0f}s, before {low:.0f}s, is labeled therapy")
+    if therapy[0] > high:
+        failures.append(f"the first therapy turn {therapy[0]:.0f}s is after {high:.0f}s")
     return failures
 
 
@@ -167,7 +170,9 @@ def confirmed_window(case: TemplateCase) -> dict[str, Any] | None:
     return {"start_seconds": case.confirmed_start_seconds, "minutes": minutes, "window_text": text}
 
 
-def _grade_confirmed_window(case: TemplateCase, content: dict[str, Any]) -> list[str]:
+def _grade_confirmed_window(
+    case: TemplateCase, content: dict[str, Any], proposal: dict[str, Any] | None
+) -> list[str]:
     """Once the clinician confirms the start, the time field reads the window.
 
     And nothing else in the note still calls a psychotherapy time "Not stated."
@@ -175,7 +180,8 @@ def _grade_confirmed_window(case: TemplateCase, content: dict[str, Any]) -> list
     confirmed = confirmed_window(case)
     if confirmed is None:
         return []
-    filled = apply_confirmed_window(content, {"confirmed": confirmed}) or {}
+    window = {"proposal": proposal, "confirmed": confirmed}
+    filled = apply_confirmed_window(content, window) or {}
     field = f"{PSYCHOTHERAPY_SECTION_KEY}.{PSYCHOTHERAPY_TIME_FIELD}"
     stated = _text(filled.get(PSYCHOTHERAPY_SECTION_KEY, {}).get(PSYCHOTHERAPY_TIME_FIELD))
     failures = []
@@ -325,16 +331,16 @@ def main(argv: list[str] | None = None) -> int:
         if args.out:
             out = Path(args.out)
             out.mkdir(parents=True, exist_ok=True)
-            kept = {**generated.content, "psychotherapy_start": generated.psychotherapy_start}
+            kept = {**generated.content, "psychotherapy_proposal": generated.psychotherapy_proposal}
             (out / f"{case.name}.json").write_text(json.dumps(kept, indent=2) + "\n")
-        result = grade(case, generated.content, generated.psychotherapy_start)
+        result = grade(case, generated.content, generated.psychotherapy_proposal)
         if case.redraft_dictation:
             redrafted = draft(gateway, case, args.model, redraft_of=generated.content)
             if args.out:
                 (Path(args.out) / f"{case.name}.redraft.json").write_text(
                     json.dumps(redrafted.content, indent=2) + "\n"
                 )
-            again = grade(case, redrafted.content, redrafted.psychotherapy_start)
+            again = grade(case, redrafted.content, redrafted.psychotherapy_proposal)
             result["failures"] += [f"redraft: {f}" for f in again["failures"]]
             result["failures"] += grade_redraft(case, generated.content, redrafted.content)
             result["passed"] = not result["failures"]

@@ -203,6 +203,11 @@ class AuditAction(StrEnum):
     # passwordless sign-in event, audited alongside recovery so login
     # monitoring covers the whole authenticator surface.
     PASSKEY_AUTHENTICATED = "passkey_authenticated"
+    # One row per sign-in, whatever the method: written when the identity
+    # provider's sign-in hook asks the backend whether the account may sign
+    # in, which happens after every factor has been verified. The
+    # factor-specific events above still record HOW; this records THAT.
+    SIGNED_IN = "signed_in"
 
     # Patient-context chat (THERAPY-bhv). Two-tier audit policy per
     # docs/architecture/patient-context-chat-oss.md §10: lifecycle events

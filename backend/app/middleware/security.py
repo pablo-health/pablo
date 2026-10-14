@@ -15,6 +15,15 @@ from starlette.types import ASGIApp
 
 from ..settings import Settings
 
+# Paths a platform health probe calls. Matched exactly, never by prefix.
+#
+# The health endpoint carries no client data: it reports status, the server
+# version and the deployed commit. A platform health probe speaks plain HTTP
+# to the container and cannot add forwarded headers, so HTTPS enforcement
+# would answer every probe with 400 and no new instance would ever be marked
+# ready. The same paths skip the no-store caching headers below.
+PLATFORM_PROBE_PATHS: frozenset[str] = frozenset({"/api/health"})
+
 
 class HTTPSEnforcementMiddleware(BaseHTTPMiddleware):
     """
@@ -45,6 +54,10 @@ class HTTPSEnforcementMiddleware(BaseHTTPMiddleware):
         """
         # Allow HTTP in development mode for local development and testing
         if self.settings.is_development:
+            return await call_next(request)
+
+        # A platform health probe reaches the container over plain HTTP.
+        if request.url.path in PLATFORM_PROBE_PATHS:
             return await call_next(request)
 
         # In production/staging, enforce HTTPS for HIPAA compliance
@@ -147,7 +160,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Cache-Control — prevent caching of PHI responses (HIPAA §164.312)
         # Applied to all authenticated API responses; public assets (health
         # check, static files) are excluded so CDNs can still cache them.
-        if request.url.path.startswith("/api/") and request.url.path != "/api/health":
+        if request.url.path.startswith("/api/") and request.url.path not in PLATFORM_PROBE_PATHS:
             response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
             response.headers["Pragma"] = "no-cache"
 

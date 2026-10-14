@@ -2,6 +2,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 
 import { VisitTimesPanel } from "../VisitTimesPanel"
 import { peopleWords } from "@/lib/peopleTerm"
@@ -62,10 +63,14 @@ describe("VisitTimesPanel", () => {
           offered: false,
           end_seconds: null,
           turns: [],
-          candidates: [],
-          stated_clock_time: null,
+          runs: [],
+          labeled_minutes: null,
+          cue_seconds: null,
+          dictated: null,
           confirmed_start_seconds: null,
           confirmed_minutes: null,
+          contiguous: null,
+          labels_confirmed: false,
           window_text: null,
           dictated_time: null,
           disagrees: false,
@@ -76,5 +81,39 @@ describe("VisitTimesPanel", () => {
 
     expect(screen.getByTestId("client-present-line")).toHaveTextContent("Dictation only, 2 min")
     expect(screen.queryByTestId("psychotherapy-window")).not.toBeInTheDocument()
+  })
+
+  it("states both durations once the therapy minutes are confirmed, and flags a medical visit left under five minutes", async () => {
+    mockTimes.mockReturnValue(
+      times({
+        psychotherapy: {
+          offered: true,
+          end_seconds: 3895,
+          turns: [
+            { seconds: 5, end_seconds: 3895, speaker: "Therapist", text: "…", label: "therapy" },
+          ],
+          runs: [],
+          labeled_minutes: 64,
+          cue_seconds: null,
+          dictated: null,
+          confirmed_start_seconds: null,
+          confirmed_minutes: 60,
+          contiguous: true,
+          labels_confirmed: true,
+          window_text: "60 minutes",
+          dictated_time: null,
+          disagrees: false,
+        },
+      }),
+    )
+    render(<VisitTimesPanel sessionId="s1" />)
+
+    expect(screen.getByTestId("durations-line")).toHaveTextContent(
+      "Total duration: 67 min · Psychotherapy duration: 60 min",
+    )
+    await userEvent.click(screen.getByRole("button", { name: "Change" }))
+    expect(screen.getByTestId("em-remainder-flag")).toHaveTextContent(
+      "Under 5 minutes left for the medical visit.",
+    )
   })
 })

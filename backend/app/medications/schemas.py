@@ -5,8 +5,12 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
+
+#: A prescriber's note lists psychiatric and other medications separately.
+MedicationCategory = Literal["psychiatric", "other"]
 
 
 class CreateMedicationRequest(BaseModel):
@@ -16,6 +20,8 @@ class CreateMedicationRequest(BaseModel):
 
     drug_name: str
     dose: str
+    frequency: str | None = None
+    category: MedicationCategory | None = None
     status: str = "active"
     started_at: date | None = None
     stop_reason: str | None = None
@@ -32,6 +38,8 @@ class UpdateMedicationRequest(BaseModel):
 
     drug_name: str | None = None
     dose: str | None = None
+    frequency: str | None = None
+    category: MedicationCategory | None = None
     status: str | None = None
     started_at: date | None = None
     stopped_at: date | None = None
@@ -48,6 +56,8 @@ class MedicationResponse(BaseModel):
     patient_id: str
     drug_name: str
     dose: str
+    frequency: str | None
+    category: MedicationCategory | None
     status: str
     started_at: date | None
     stopped_at: date | None
