@@ -76,7 +76,7 @@ def fastapi_app() -> FastAPI:
 
 def _arm(conn: Connection, schema: str, user_id: str) -> None:
     conn.execute(text(f"SET search_path = {schema}, platform, public"))
-    conn.execute(text("SELECT set_config('app.current_user_id', :u, false)"), {"u": user_id})
+    conn.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": user_id})
 
 
 @contextmanager
@@ -178,7 +178,6 @@ def _practice_with_owner(engine: Engine, label: str) -> Iterator[SimpleNamespace
                 },
             )
             row_ids.append(row_id)
-        conn.execute(text("SELECT set_config('app.current_user_id', '', false)"))
 
     try:
         yield SimpleNamespace(
@@ -262,7 +261,6 @@ def _activity_views(engine: Engine, schema: str, reader: str, patient_id: str) -
             ),
             {"pid": patient_id},
         ).scalar_one()
-        conn.execute(text("SELECT set_config('app.current_user_id', '', false)"))
     return int(count)
 
 
@@ -270,7 +268,6 @@ def _all_rows(engine: Engine, schema: str, reader: str) -> int:
     with engine.begin() as conn:
         _arm(conn, schema, reader)
         count = conn.execute(text("SELECT count(*) FROM audit_logs")).scalar_one()
-        conn.execute(text("SELECT set_config('app.current_user_id', '', false)"))
     return int(count)
 
 
