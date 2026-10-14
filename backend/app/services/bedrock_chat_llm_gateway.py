@@ -31,6 +31,7 @@ from .bedrock_structured_llm_gateway import (
     BedrockCallError,
     BedrockStructuredLLMGateway,
     _translate_error,
+    system_content,
 )
 from .chat_llm_gateway import (
     ChatLLMGateway,
@@ -135,7 +136,7 @@ class BedrockChatLLMGateway(ChatLLMGateway):
         normalized_model = strip_provider_prefix(model)
         request: dict[str, Any] = {
             "modelId": normalized_model,
-            "system": [{"text": system_prompt}],
+            "system": system_content(system_prompt, normalized_model),
             "messages": to_converse_messages(prior_turns, new_user_text),
             "inferenceConfig": {"maxTokens": max_output_tokens, "temperature": temperature},
         }

@@ -242,6 +242,19 @@ class TestBedrockChat:
         assert client.requests[0]["modelId"] == "us.some-model"
         assert client.requests[0]["system"] == [{"text": "You help."}]
 
+    def test_claude_system_prompt_ends_with_a_cache_point(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _no_db_guard(monkeypatch)
+        gateway, client = _bedrock([{"messageStop": {"stopReason": "end_turn"}}])
+
+        _stream(gateway, "bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0")
+
+        assert client.requests[0]["system"] == [
+            {"text": "You help."},
+            {"cachePoint": {"type": "default", "ttl": "1h"}},
+        ]
+
     def test_a_throttled_request_is_a_transient_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
