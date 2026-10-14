@@ -46,6 +46,7 @@ import json
 import os
 import re
 import shutil
+import string
 import tempfile
 import uuid
 import zipfile
@@ -88,21 +89,12 @@ _MESSAGE_SENTINEL = "PORTALMESSAGESENTINEL4H6J"
 _CHAT_SENTINEL = "ASSISTANTCHATSENTINEL8N2P"
 #: The card on file: processor ids and display fields that must be in no copy.
 _CARD_SENTINEL = "CARDSENTINEL6B4V"
-_CARD_LAST4 = "4242"
+# The last four are stored as the processor hands them over. Four digits would
+# turn up by chance inside the ids, checksums, control numbers and timestamps
+# an export is full of, and no list of those stays complete. Letters none of
+# them is made of can only be in a copy by being copied there.
+_CARD_LAST4 = "WQKR"
 _CHECK_NUMBER = "1042"
-
-# Random ids and timestamps are digits and hex the card's last four can turn up
-# in by chance ("…-9d24-4242-…"). They carry nothing about the card, so the
-# last-four check looks past them; every other card check reads the whole text.
-_GENERATED_VALUE = re.compile(
-    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
-    r"|\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?"
-)
-
-
-def _without_generated_values(text: str) -> str:
-    return _GENERATED_VALUE.sub("", text)
-
 
 _TAX_ID = "844459714"
 
@@ -1387,8 +1379,7 @@ class TestZipBilling:
                 assert _CARD_SENTINEL not in text, name
                 assert f"cus_{_CARD_SENTINEL}" not in text, name
                 assert "visa" not in text.lower(), name
-                if not name.endswith(".pdf"):
-                    assert _CARD_LAST4 not in _without_generated_values(text), name
+                assert _CARD_LAST4 not in text, name
             # Control: the row the card paid is in the same copy, as a category.
             assert chart["charge:copay"] in files["patient.json"].decode()
 
@@ -1488,9 +1479,7 @@ class TestZipCsv:
         assert (kinds["clients.csv"], kinds["appointments.csv"]) == ("csv", "csv")
 
 
-def test_the_last_four_check_ignores_ids_and_timestamps_but_not_the_card() -> None:
-    """The flake this guards: a random id containing the last four."""
-    by_chance = '{"id": "689ec965-9d24-4242-ae0e-7af3f4309063", "at": "2026-09-30T04:24:24Z"}'
-    assert _CARD_LAST4 not in _without_generated_values(by_chance)
-    leaked = '{"id": "689ec965-9d24-1111-ae0e-7af3f4309063", "card": "ending 4242"}'
-    assert _CARD_LAST4 in _without_generated_values(leaked)
+def test_no_id_or_timestamp_can_spell_the_last_four() -> None:
+    """Four digits failed this file twice, inside a random id each time."""
+    generated = set(string.hexdigits + "-:.+TZ")
+    assert generated.isdisjoint(_CARD_LAST4)
