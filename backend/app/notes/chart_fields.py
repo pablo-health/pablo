@@ -368,12 +368,14 @@ def _from_chart(rendered: RenderedField, chart: ChartContext, inputs: Mapping[st
         return "" if attestation == NOT_STATED else attestation
     if source == PROBLEMS:
         return problem_diagnoses(chart)
-    if _entered(rendered, inputs):
-        return compose(rendered, chart, inputs, Statements())
+    entered = _entered(rendered, inputs)
     if source == MEDICATIONS:
-        return medication_lines(chart) if chart.medications else []
-    text = chart_text(source, chart)
-    return "" if text == NOT_RECORDED else text
+        listed = medication_lines(chart) if chart.medications else []
+        return listed + _stated_medications(chart, entered, ())
+    recorded = chart_text(source, chart)
+    if recorded == NOT_RECORDED:
+        recorded = ""
+    return " ".join(part for part in (recorded, stated_suffix(entered)) if part)
 
 
 def compose_from_chart(
@@ -385,8 +387,11 @@ def compose_from_chart(
 
     Each is what a draft prints from the chart and the entered values, with
     no visit heard: nothing marks what the visit said or did not say (no
-    "(not asked this visit)"), and a field the chart has nothing for is left
-    out rather than printed as "Not recorded", for the clinician to fill.
+    "(not asked this visit)"), and nothing stands in for a missing value:
+    where the chart and the entered values have nothing, the field is left
+    out rather than printed as "Not recorded", "None recorded" or "Not
+    stated.", for the clinician to fill. A value the chart does record, such
+    as no known drug allergies, is printed as recorded.
     """
     content: dict[str, dict[str, Any]] = {}
     for rendered in rendered_fields(definition):

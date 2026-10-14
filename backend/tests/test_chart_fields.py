@@ -34,6 +34,7 @@ from app.notes.chart_fields import (
     Statement,
     Statements,
     compose_all,
+    compose_from_chart,
     place_of_service,
     rendered_fields,
 )
@@ -863,3 +864,72 @@ def test_the_proposal_call_is_given_what_the_extraction_found_on_the_same_lines(
         in prompt
     )
     assert "[S1] [00:03] Client: Same as always." in prompt
+
+
+# ---------------------------------------------------------------------------
+# A note written by hand: what it opens with
+# ---------------------------------------------------------------------------
+
+PLACEHOLDERS = (
+    "Not recorded",
+    "None recorded",
+    "Not stated",
+    "not asked",
+    "no change",
+    "N/A",
+    "(none)",
+    "No known",
+)
+
+
+def _strings(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [s for v in value.values() for s in _strings(v)]
+    if isinstance(value, list):
+        return [s for v in value for s in _strings(v)]
+    return []
+
+
+@pytest.mark.parametrize("template", ["psychiatric_follow_up", "psychiatric_evaluation"])
+def test_an_empty_chart_opens_a_note_written_by_hand_with_nothing_in_it(template: str) -> None:
+    assert compose_from_chart(_definition(template), ChartContext(), {}) == {}
+
+
+def test_nothing_stands_in_for_what_the_chart_lacks() -> None:
+    """Only what is there is printed: no placeholder beside an entered value either."""
+    content = compose_from_chart(
+        _definition("psychiatric_evaluation"),
+        ChartContext(),
+        {"allergies": "Penicillin per client"},
+    )
+    assert content == {"medications": {"allergies": '(stated this visit: "Penicillin per client")'}}
+    assert not [s for s in _strings(content) for p in PLACEHOLDERS if p.lower() in s.lower()]
+
+
+def test_a_note_written_by_hand_opens_with_the_chart_as_recorded_and_no_visit_marks() -> None:
+    chart = ChartContext(
+        allergy_status="nkda",
+        medications=(ChartMedication("Sertraline", "100 mg", "every morning", "psychiatric"),),
+        problems=(ChartProblem("Generalized anxiety disorder", "F41.1", "active"),),
+        history=_history(("alcohol", "Denies alcohol."), ("supports", "Sister nearby.")),
+    )
+
+    content = compose_from_chart(_definition(), chart, {"place_of_service": "In office"})
+
+    assert content == {
+        "encounter": {"place_of_service": IN_OFFICE},
+        "substance_use": {"alcohol": "Denies alcohol."},
+        "medications": {
+            "current_medications": ["Psychiatric: Sertraline 100 mg, every morning"],
+            # Recorded on the chart, so it is data, not a placeholder.
+            "allergies": "No known drug allergies (NKDA)",
+        },
+        "social_history": {"supports": "Sister nearby."},
+        "assessment": {
+            "diagnoses": [
+                {"label": "Generalized anxiety disorder", "code": "F41.1", "status": None}
+            ]
+        },
+    }
