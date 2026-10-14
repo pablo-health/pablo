@@ -84,11 +84,11 @@ vi.mock("@/lib/api/portalSettings", async (importOriginal) => ({
   getPortalSettings: (...a: unknown[]) => mockPortal(...a),
 }))
 
-const prefsApi = { getPreferences: vi.fn(), savePreferences: vi.fn() }
+const prefsApi = { getPreferences: vi.fn(), updatePreferences: vi.fn() }
 vi.mock("@/lib/api/users", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api/users")>()),
   getPreferences: (...a: unknown[]) => prefsApi.getPreferences(...a),
-  savePreferences: (...a: unknown[]) => prefsApi.savePreferences(...a),
+  updatePreferences: (...a: unknown[]) => prefsApi.updatePreferences(...a),
 }))
 
 function item(overrides: Partial<InboxItem>): InboxItem {
@@ -168,7 +168,9 @@ describe("Inbox", () => {
     nav.set("")
     mockPortal.mockResolvedValue({ enabled: true, decided: true })
     prefsApi.getPreferences.mockResolvedValue(PREFERENCES)
-    prefsApi.savePreferences.mockImplementation((prefs: unknown) => Promise.resolve(prefs))
+    prefsApi.updatePreferences.mockImplementation((changes: object) =>
+      Promise.resolve({ ...PREFERENCES, ...changes }),
+    )
     inboxApi.listInbox.mockResolvedValue({ data: [MESSAGE, REFILL], total: 2 })
     inboxApi.dismissInboxItem.mockResolvedValue({ ...REFILL, disposition: "dismissed" })
     inboxApi.snoozeInboxItem.mockResolvedValue({ ...REFILL, disposition: "snoozed" })
@@ -307,7 +309,7 @@ describe("Inbox", () => {
       await userEvent.click(within(prompt).getByRole("button", { name: "Yes" }))
 
       expect(inboxApi.handleEarlierMessages).toHaveBeenCalledWith("m2")
-      expect(prefsApi.savePreferences).not.toHaveBeenCalled()
+      expect(prefsApi.updatePreferences).not.toHaveBeenCalled()
       expect(await screen.findByTestId("inbox-earlier-handled")).toHaveTextContent(
         "2 earlier messages marked handled",
       )
@@ -337,8 +339,8 @@ describe("Inbox", () => {
 
       expect(inboxApi.handleEarlierMessages).toHaveBeenCalledWith("m2")
       await waitFor(() =>
-        expect(prefsApi.savePreferences).toHaveBeenCalledWith(
-          expect.objectContaining({ inbox_reply_earlier_messages: "always" }),
+        expect(prefsApi.updatePreferences).toHaveBeenCalledWith(
+          { inbox_reply_earlier_messages: "always" },
           undefined,
         ),
       )
@@ -357,8 +359,8 @@ describe("Inbox", () => {
 
       expect(inboxApi.handleEarlierMessages).not.toHaveBeenCalled()
       await waitFor(() =>
-        expect(prefsApi.savePreferences).toHaveBeenCalledWith(
-          expect.objectContaining({ inbox_reply_earlier_messages: "never" }),
+        expect(prefsApi.updatePreferences).toHaveBeenCalledWith(
+          { inbox_reply_earlier_messages: "never" },
           undefined,
         ),
       )

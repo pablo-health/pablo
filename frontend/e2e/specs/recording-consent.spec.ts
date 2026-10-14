@@ -136,9 +136,7 @@ test.beforeAll(async ({ browser }) => {
   })
   const { api, page } = practice
   await api.put("/api/users/me/practice/ai-notes-consent", { ask_clients_about_ai_notes: true })
-  const preferences = await api.get<Record<string, unknown>>("/api/users/me/preferences")
-  await api.put("/api/users/me/preferences", {
-    ...preferences,
+  await api.patch("/api/users/me/preferences", {
     calendar_setup_complete: true,
     timezone: BROWSER_TIME_ZONE,
   })

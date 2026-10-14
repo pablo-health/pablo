@@ -51,9 +51,7 @@ describe("SessionDefaults", () => {
     await user.click(screen.getByRole("combobox", { name: /session type/i }))
     await user.click(screen.getByRole("option", { name: "Couples" }))
 
-    expect(onSave).toHaveBeenCalledWith(
-      expect.objectContaining({ default_session_type: "couples" })
-    )
+    expect(onSave).toHaveBeenCalledWith({ default_session_type: "couples" })
   })
 
   it("disables all selects when saving", () => {

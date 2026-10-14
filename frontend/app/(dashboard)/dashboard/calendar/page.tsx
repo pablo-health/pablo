@@ -18,7 +18,7 @@ import {
 import { useTheme } from "@/components/theme/ThemeProvider"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
-import { usePreferences, useSavePreferences } from "@/hooks/usePreferences"
+import { usePreferences, useUpdatePreferences } from "@/hooks/usePreferences"
 import { useAvailabilityRules } from "@/hooks/useAvailability"
 import { getICalSyncStatus, type ICalConnectionStatus } from "@/lib/api/scheduling"
 import { useAuth } from "@/lib/auth-context"
@@ -46,7 +46,7 @@ export default function CalendarPage() {
   const { theme } = useTheme()
   const { data: preferences } = usePreferences()
   const { readOnly } = useReadOnlyMode()
-  const saveMutation = useSavePreferences()
+  const saveMutation = useUpdatePreferences()
   const { googleCalendarEnabled } = useConfig()
   const { data: availabilityRules } = useAvailabilityRules()
   const workingHoursWindow = deriveWorkingHoursWindow(availabilityRules?.data ?? [])
@@ -99,10 +99,9 @@ export default function CalendarPage() {
   // Either way out of the wizard — finished or "later" — is an answer;
   // Settings keeps its own door back in.
   const markSetupComplete = useCallback(() => {
-    if (!preferences) return
     setJustSetUp(true)
-    saveMutation.mutate({ ...preferences, calendar_setup_complete: true })
-  }, [preferences, saveMutation])
+    saveMutation.mutate({ calendar_setup_complete: true })
+  }, [saveMutation])
   const lastSavedView = useRef<string | undefined>(undefined)
   const [modalOpen, setModalOpen] = useState(false)
   const [selectedAppointment, setSelectedAppointment] = useState<AppointmentResponse | null>(null)
@@ -165,7 +164,7 @@ export default function CalendarPage() {
     (view: string) => {
       if (!preferences || view === lastSavedView.current) return
       lastSavedView.current = view
-      saveMutation.mutate({ ...preferences, calendar_default_view: view })
+      saveMutation.mutate({ calendar_default_view: view })
     },
     [preferences, saveMutation]
   )

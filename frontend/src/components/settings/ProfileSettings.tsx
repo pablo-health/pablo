@@ -6,11 +6,11 @@ import { useState } from "react"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
-import type { UserPreferences } from "@/lib/api/users"
+import type { PreferenceChanges, UserPreferences } from "@/lib/api/users"
 
 interface ProfileSettingsProps {
   preferences: UserPreferences
-  onSave: (prefs: UserPreferences) => void
+  onSave: (changes: PreferenceChanges) => void
   isSaving: boolean
 }
 
@@ -18,7 +18,7 @@ export function ProfileSettings({ preferences, onSave, isSaving }: ProfileSettin
   const [displayName, setDisplayName] = useState(preferences.therapist_display_name ?? "")
 
   const handleSave = () => {
-    onSave({ ...preferences, therapist_display_name: displayName || null })
+    onSave({ therapist_display_name: displayName || null })
   }
 
   const isDirty = displayName !== (preferences.therapist_display_name ?? "")

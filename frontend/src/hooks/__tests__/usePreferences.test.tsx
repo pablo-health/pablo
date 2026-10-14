@@ -3,7 +3,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { renderHook, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { usePreferences, useSavePreferences } from "../usePreferences"
+import { usePreferences, useUpdatePreferences } from "../usePreferences"
 import * as usersApi from "@/lib/api/users"
 
 vi.mock("@/lib/api/users")
@@ -53,22 +53,29 @@ describe("usePreferences", () => {
   })
 })
 
-describe("useSavePreferences", () => {
+describe("useUpdatePreferences", () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  it("saves preferences and updates cache", async () => {
-    const updated = { ...mockPreferences, therapist_display_name: "Dr. Rivera" }
-    vi.mocked(usersApi.savePreferences).mockResolvedValue(updated)
+  it("sends only the change and caches everything the server returns", async () => {
+    const merged = { ...mockPreferences, therapist_display_name: "Dr. Rivera" }
+    vi.mocked(usersApi.getPreferences).mockResolvedValue(mockPreferences)
+    vi.mocked(usersApi.updatePreferences).mockResolvedValue(merged)
 
-    const { result } = renderHook(() => useSavePreferences(), {
-      wrapper: createWrapper(),
-    })
+    const { result } = renderHook(
+      () => ({ update: useUpdatePreferences(), cached: usePreferences() }),
+      { wrapper: createWrapper() },
+    )
+    await waitFor(() => expect(result.current.cached.isSuccess).toBe(true))
 
-    result.current.mutate(updated)
+    result.current.update.mutate({ therapist_display_name: "Dr. Rivera" })
 
-    await waitFor(() => expect(result.current.isSuccess).toBe(true))
-    expect(usersApi.savePreferences).toHaveBeenCalledWith(updated, undefined)
+    await waitFor(() => expect(result.current.update.isSuccess).toBe(true))
+    expect(usersApi.updatePreferences).toHaveBeenCalledWith(
+      { therapist_display_name: "Dr. Rivera" },
+      undefined,
+    )
+    expect(result.current.cached.data).toEqual(merged)
   })
 })
