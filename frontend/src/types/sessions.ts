@@ -34,6 +34,8 @@ export type SessionStatus =
   | "pending_review"
   | "finalized"
   | "failed"
+  // A reference copy of a note documented and signed elsewhere; never signed here.
+  | "imported"
 
 export type TranscriptFormat = "vtt" | "json" | "txt" | "google_meet"
 
@@ -210,6 +212,10 @@ export interface SessionResponse {
   // PII-redacted transcript variants
   redacted_transcript: string | null
   naturalized_transcript: string | null
+  /** Who signed an imported note where it was written, as the document states it. */
+  source_signer?: string | null
+  /** The client document keeping the file an imported note was read from. */
+  source_document_id?: string | null
   // Embedded note (None when this session has no generated note yet).
   note: Note | null
 }

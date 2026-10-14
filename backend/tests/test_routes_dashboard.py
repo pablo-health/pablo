@@ -33,6 +33,8 @@ from app.scheduling_engine.models.appointment import Appointment, AppointmentSta
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.scheduling_engine.services.scheduling import SchedulingService
 from app.services import AuditService, get_audit_service
+from app.services.note_service import NoteService
+from app.services.session_service import SessionService
 
 if TYPE_CHECKING:
     from app.repositories import (
@@ -229,3 +231,29 @@ def test_today_appointment_carries_its_linked_session_status(
     assert rows[started.id]["status"] == "confirmed"
     assert rows[started.id]["session_status"] == "pending_review"
     assert rows[not_started.id]["session_status"] is None
+
+
+def test_an_imported_note_is_never_counted_as_awaiting_signature(
+    seeded_client,
+    mock_session_repo: InMemoryTherapySessionRepository,
+    mock_repo: InMemoryPatientRepository,
+    mock_notes_repo: InMemoryNotesRepository,
+    mock_user_id: str,
+) -> None:
+    """A note imported from another system was signed there; it is not on the to-sign list."""
+    sessions = SessionService(
+        mock_session_repo, mock_repo, MagicMock(), NoteService(mock_notes_repo)
+    )
+    imported, _, _ = sessions.import_session(
+        P1,
+        mock_user_id,
+        session_date=datetime(2026, 5, 1, tzinfo=UTC),
+        source_text="Chief complaint: sleep.",
+        note_content={"subjective": {}},
+    )
+
+    body = _get_summary(seeded_client)
+
+    assert body["awaiting_review_total"] == 7
+    assert body["notes_pending_count"] == 3
+    assert imported.id not in {row["session_id"] for row in body["awaiting_review"]}

@@ -17,8 +17,12 @@ export interface NoteStatus {
   className: string
 }
 
-/** Draft-vs-finalized badge, keyed off `finalized_at`. */
+/**
+ * Draft-vs-finalized badge, keyed off `finalized_at`. An imported note was
+ * signed where it was written, so it is never a draft here.
+ */
 export function noteStatus(note: Note): NoteStatus {
+  if (note.imported) return { label: "Imported", className: "bg-neutral-100 text-neutral-700" }
   return note.finalized_at
     ? { label: "Finalized", className: "bg-secondary-100 text-secondary-700" }
     : { label: "Draft", className: "bg-yellow-100 text-yellow-800" }

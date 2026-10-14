@@ -244,7 +244,7 @@ def mock_problem_repo() -> InMemoryPatientProblemRepository:
 
 
 @pytest.fixture
-def mock_notes_repo() -> InMemoryNotesRepository:
+def mock_notes_repo(mock_session_repo: InMemoryTherapySessionRepository) -> InMemoryNotesRepository:
     """Create a fresh in-memory notes repository for each test.
 
     Pre-grants universal access so legacy tests that pre-date the
@@ -255,7 +255,7 @@ def mock_notes_repo() -> InMemoryNotesRepository:
     ``(patient_id, user_id)`` pairs) — the IDOR regression test in
     ``test_routes_notes.py`` does this.
     """
-    repo = InMemoryNotesRepository()
+    repo = InMemoryNotesRepository(session_repo=mock_session_repo)
     repo.grant_all_access()
     return repo
 

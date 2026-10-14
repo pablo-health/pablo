@@ -138,8 +138,8 @@ def follow_up() -> NoteTypeDefinition:
     return to_definition("custom.psychiatric_follow_up", 1, spec)
 
 
-def _reply(content: dict[str, Any]) -> FakeStructuredLLMGateway:
-    data = {**content, "session_date": "2026-08-19", "session_time": "14:30"}
+def _reply(content: dict[str, Any], **extra: Any) -> FakeStructuredLLMGateway:
+    data = {**content, "session_date": "2026-08-19", "session_time": "14:30", **extra}
     return FakeStructuredLLMGateway(default_response=StructuredCompletion(data=data))
 
 
@@ -202,6 +202,8 @@ def test_the_model_is_asked_for_the_types_fields_from_the_document(
         *follow_up.section_keys(),
         "session_date",
         "session_time",
+        "signed_by",
+        "note_inputs",
     }
     assert call["user_prompt"].startswith("# Source note")
     assert "existing clinical note" in call["user_prompt"]
@@ -227,3 +229,78 @@ def test_soap_stays_the_default_with_its_own_prompt() -> None:
     assert {"subjective", "objective", "assessment", "plan"} <= set(
         call["response_schema"]["properties"]
     )
+
+
+# --- The type's declared inputs, and who signed it ----------------------------------
+
+_STATED_INPUTS = {
+    "place_of_service": "Telehealth",
+    "client_location": "home",
+    "provider_location": "clinic office",
+}
+
+
+def test_the_documents_place_of_service_fills_the_notes_input(
+    follow_up: NoteTypeDefinition,
+) -> None:
+    gateway = _reply(_RELOCATED, note_inputs=_STATED_INPUTS)
+
+    parsed = NoteImportService(llm_gateway=gateway).parse_note(_DOCUMENT, follow_up)
+
+    assert parsed.note_inputs == _STATED_INPUTS
+    (call,) = gateway.calls
+    # One string per declared input; the MDM review's choices stay the clinician's.
+    asked = call["response_schema"]["properties"]["note_inputs"]["properties"]
+    assert set(asked) == {"place_of_service", "client_location", "provider_location"}
+    assert (
+        '- place_of_service: Place of service (one of "Telehealth" / "In office")'
+        in (call["user_prompt"])
+    )
+    assert "only when the document plainly states it" in call["user_prompt"]
+
+
+def test_a_choice_is_read_as_the_declared_option_and_anything_else_is_dropped(
+    follow_up: NoteTypeDefinition,
+) -> None:
+    for stated, kept in [("telehealth ", "Telehealth"), ("Video visit", None), ("", None)]:
+        gateway = _reply(
+            _RELOCATED,
+            note_inputs={
+                "place_of_service": stated,
+                # Not in the document: a location the model made up is not kept.
+                "client_location": "a hotel in another state",
+                # The MDM review's choice is never read from a document.
+                "mdm_risk": "low",
+            },
+        )
+
+        parsed = NoteImportService(llm_gateway=gateway).parse_note(_DOCUMENT, follow_up)
+
+        assert parsed.note_inputs == ({"place_of_service": kept} if kept else {})
+
+
+def test_a_document_that_does_not_say_leaves_the_input_blank(
+    follow_up: NoteTypeDefinition,
+) -> None:
+    silent = "\n".join(line for line in _DOCUMENT.splitlines() if not line.startswith("Visit:"))
+    gateway = _reply(_RELOCATED, note_inputs={"place_of_service": ""})
+
+    parsed = NoteImportService(llm_gateway=gateway).parse_note(silent, follow_up)
+
+    # Required on the type, and still left unset: an import never guesses one.
+    assert parsed.note_inputs == {}
+
+
+def test_the_signer_is_kept_as_written_and_only_when_the_document_states_one(
+    follow_up: NoteTypeDefinition,
+) -> None:
+    signed = _DOCUMENT + "\nElectronically signed by A. Rivera, PMHNP-BC on 08/19/2026"
+
+    def signer(document: str, stated: str) -> str | None:
+        gateway = _reply(_RELOCATED, signed_by=stated)
+        return NoteImportService(llm_gateway=gateway).parse_note(document, follow_up).signed_by
+
+    assert signer(signed, "A. Rivera, PMHNP-BC") == "A. Rivera, PMHNP-BC"
+    # The fixture names no signer; a name the model supplies anyway is not kept.
+    assert signer(_DOCUMENT, "") is None
+    assert signer(_DOCUMENT, "Dr. Someone") is None

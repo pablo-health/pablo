@@ -22,19 +22,14 @@ beforeAll(() => {
   Element.prototype.scrollIntoView = vi.fn()
 })
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }))
+const push = vi.fn()
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }))
 
 const start = vi.fn()
+const IDLE = { items: [] as unknown[], isRunning: false, isComplete: false, doneCount: 0 }
+let run = IDLE
 vi.mock("@/hooks/useImportNotes", () => ({
-  useImportNotes: () => ({
-    items: [],
-    isRunning: false,
-    isComplete: false,
-    doneCount: 0,
-    errorCount: 0,
-    start,
-    reset: vi.fn(),
-  }),
+  useImportNotes: () => ({ ...run, errorCount: 0, start, reset: vi.fn() }),
 }))
 
 function noteType(key: string, label: string, extra: Partial<NoteTypeSchema> = {}): NoteTypeSchema {
@@ -63,6 +58,8 @@ function chooseFile() {
 describe("ImportNotesDialog", () => {
   beforeEach(() => {
     start.mockReset()
+    push.mockReset()
+    run = IDLE
   })
 
   it("offers the visit-note types a model can read a note into", async () => {
@@ -96,5 +93,22 @@ describe("ImportNotesDialog", () => {
     await user.click(screen.getByRole("button", { name: "Import 1 note" }))
 
     expect(start).toHaveBeenCalledWith([expect.any(File)], "custom.psychiatric_follow_up")
+  })
+
+  it("opens an imported note itself, never the Review list it is not on", async () => {
+    const user = userEvent.setup()
+    const file = new File(["Chief complaint: sleep"], "prior.txt", { type: "text/plain" })
+    run = {
+      items: [{ id: "i1", file, status: "done", session: { id: "s1", session_date: null } }],
+      isRunning: false,
+      isComplete: true,
+      doneCount: 1,
+    }
+    render(<ImportNotesDialog patientId="p1" open onOpenChange={vi.fn()} />)
+
+    expect(screen.queryByRole("button", { name: /Review/ })).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Open note" }))
+
+    expect(push).toHaveBeenCalledWith("/dashboard/sessions/s1")
   })
 })

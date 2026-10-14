@@ -1595,7 +1595,9 @@ CREATE TABLE __TENANT_SCHEMA__.therapy_sessions (
     naturalized_transcript text,
     deleted_at timestamp with time zone,
     transcription_job_metadata jsonb,
-    client_present_end_seconds double precision
+    client_present_end_seconds double precision,
+    source_signer text,
+    source_document_id uuid
 );
 
 
@@ -3133,6 +3135,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.supervision_relationships
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.therapy_sessions
     ADD CONSTRAINT therapy_sessions_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.therapy_sessions
+    ADD CONSTRAINT therapy_sessions_source_document_id_fkey FOREIGN KEY (source_document_id) REFERENCES __TENANT_SCHEMA__.patient_documents(id) ON DELETE SET NULL;
 
 
 

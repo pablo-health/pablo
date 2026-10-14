@@ -70,6 +70,7 @@ from ..repositories import (
     NotesRepository,
     PatientProblemRepository,
     PatientRepository,
+    TherapySessionRepository,
     UserRepository,
     get_session_dictation_repository,
     get_session_repository,
@@ -112,6 +113,7 @@ from ..services.audio_retention import AudioOnSigning
 from ..services.file_storage import file_storage_from_settings
 from ..services.hedged_structured_llm_gateway import generation_gateway
 from ..services.http_structured_llm_gateway import HttpStructuredLLMGateway
+from ..services.imported_notes import imported_note_ids, refuse_imported_note
 from ..services.note_generation_service import TransientNoteGenerationError
 from ..services.note_redraft import as_shown
 from ..services.note_signing import current_signature
@@ -119,6 +121,7 @@ from ..services.session_dictation_service import awaiting_addendum
 from ..services.session_generation_worker import resolve_tenant_schema_for_user
 from ..settings import get_settings
 from ..utcnow import utc_now
+from .patients import get_therapy_session_repository
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -219,6 +222,13 @@ def _restricted_change(note: Note) -> dict[str, bool]:
     return {"restricted": True} if note.restricted else {}
 
 
+def _refuse_imported(
+    note_id: str, user: User, note_service: NoteService, sessions: TherapySessionRepository
+) -> None:
+    """409 for an imported note: it is never signed, unlocked or added to here."""
+    refuse_imported_note(note_service.get_note(note_id, user.id), sessions, user.id)
+
+
 def get_worker_note_service() -> NoteService:
     """NoteService for the off-request Cloud Tasks worker.
 
@@ -269,6 +279,7 @@ def get_note(
     http_request: Request,
     user: User = Depends(require_baa_acceptance),
     note_service: NoteService = Depends(get_note_service),
+    sessions: TherapySessionRepository = Depends(get_therapy_session_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> NoteResponse:
     """Fetch a single note by id."""
@@ -276,6 +287,7 @@ def get_note(
         note = note_service.get_note(note_id, user.id)
     except NoteNotFoundError as exc:
         raise NotFoundError("Note not found", {"note_id": note_id}) from exc
+    imported = note.id in imported_note_ids([note], sessions, user.id)
 
     audit.log_note_action(
         action=AuditAction.SESSION_VIEWED,
@@ -286,7 +298,7 @@ def get_note(
         session_id=note.session_id,
         changes=_restricted_change(note) or None,
     )
-    return NoteResponse.from_note(note)
+    return NoteResponse.from_note(note, imported=imported)
 
 
 @router.patch("/{note_id}")
@@ -346,11 +358,13 @@ def finalize_note(
     request: FinalizeNoteRequest,
     user: User = Depends(require_baa_acceptance),
     note_service: NoteService = Depends(get_note_service),
+    sessions: TherapySessionRepository = Depends(get_therapy_session_repository),
     audit: AuditService = Depends(get_audit_service),
     audio_on_signing: AudioOnSigning = Depends(get_audio_on_signing),
 ) -> NoteResponse:
     """Finalize a note — record quality rating + finalized_at."""
     try:
+        _refuse_imported(note_id, user, note_service, sessions)
         note = note_service.finalize_note(
             note_id,
             quality_rating=request.quality_rating,
@@ -426,10 +440,12 @@ def sign_note(
     request: SignNoteRequest,
     user: User = Depends(require_baa_acceptance),
     note_service: NoteService = Depends(get_note_service),
+    sessions: TherapySessionRepository = Depends(get_therapy_session_repository),
     audit: AuditService = Depends(get_audit_service),
     audio_on_signing: AudioOnSigning = Depends(get_audio_on_signing),
 ) -> NoteResponse:
     """Sign and lock a note with the name and credentials entered."""
+    _refuse_imported(note_id, user, note_service, sessions)
     note, signature = note_service.sign_note(
         note_id,
         signer_name=request.signer_name,
@@ -467,6 +483,7 @@ def unlock_note(
     request: UnlockNoteRequest,
     user: User = Depends(require_baa_acceptance),
     note_service: NoteService = Depends(get_note_service),
+    sessions: TherapySessionRepository = Depends(get_therapy_session_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> NoteResponse:
     """Unlock a signed note to correct an error; the reason is required.
@@ -474,6 +491,7 @@ def unlock_note(
     The audit row names the superseded version; the reason itself is kept
     on that version, not in the log.
     """
+    _refuse_imported(note_id, user, note_service, sessions)
     note, superseded = note_service.unlock_note(note_id, reason=request.reason, user_id=user.id)
     audit.log_note_action(
         action=AuditAction.NOTE_UNLOCKED,
@@ -498,6 +516,7 @@ def add_note_addendum(
     request: CreateNoteAddendumRequest,
     user: User = Depends(require_baa_acceptance),
     note_service: NoteService = Depends(get_note_service),
+    sessions: TherapySessionRepository = Depends(get_therapy_session_repository),
     audit: AuditService = Depends(get_audit_service),
     audio_on_signing: AudioOnSigning = Depends(get_audio_on_signing),
 ) -> NoteAddendumResponse:
@@ -506,6 +525,7 @@ def add_note_addendum(
     ``dictation_id`` names the dictation the addendum was drafted from; the
     dictation then stops offering its draft.
     """
+    _refuse_imported(note_id, user, note_service, sessions)
     dictation_repo = get_session_dictation_repository() if request.dictation_id else None
     if dictation_repo is not None and request.dictation_id is not None:
         awaiting_addendum(dictation_repo, request.dictation_id, note_id)
@@ -546,6 +566,7 @@ def list_patient_notes(
     user: User = Depends(require_baa_acceptance),
     note_service: NoteService = Depends(get_note_service),
     patient_repo: PatientRepository = Depends(get_patient_repository),
+    sessions: TherapySessionRepository = Depends(get_therapy_session_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> PatientNotesListResponse:
     """List all notes (session-bound + standalone) for a patient."""
@@ -573,8 +594,9 @@ def list_patient_notes(
             session_id=n.session_id,
             changes=_restricted_change(n) or None,
         )
+    imported = imported_note_ids(notes, sessions, user.id)
     return PatientNotesListResponse(
-        data=[NoteResponse.from_note(n) for n in notes],
+        data=[NoteResponse.from_note(n, imported=n.id in imported) for n in notes],
         total=len(notes),
     )
 

@@ -358,6 +358,8 @@ def _row_to_session(row: TherapySessionRow) -> TherapySession:
         error=row.error,
         redacted_transcript=row.redacted_transcript,
         naturalized_transcript=row.naturalized_transcript,
+        source_signer=row.source_signer,
+        source_document_id=row.source_document_id,
     )
 
 
@@ -388,3 +390,5 @@ def _session_to_row(session: TherapySession, row: TherapySessionRow) -> None:
     row.error = session.error
     row.redacted_transcript = session.redacted_transcript
     row.naturalized_transcript = session.naturalized_transcript
+    row.source_signer = session.source_signer
+    row.source_document_id = session.source_document_id

@@ -21,7 +21,14 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import String, Uuid, bindparam, func, or_, select, text
 
-from ...db.models import NoteAddendumRow, NoteRow, NoteSignatureRow, PatientClinicianRow
+from ...db.models import (
+    NoteAddendumRow,
+    NoteRow,
+    NoteSignatureRow,
+    PatientClinicianRow,
+    TherapySessionRow,
+)
+from ...models.enums import SessionStatus
 from ...models.note import Note
 from ...models.note_signing import NoteAddendum, NoteSignature
 from ...utcnow import utc_now
@@ -185,7 +192,12 @@ class PostgresNotesRepository(NotesRepository):
     def count_unfinalized(self, user_id: str) -> int:
         # Single-query join through patient_clinicians so the count covers
         # exactly the notes the user is granted on. session_id IS NOT NULL
-        # restricts to session-attached notes ("awaiting your signature").
+        # restricts to session-attached notes ("awaiting your signature"),
+        # and an imported note is never one of those.
+        imported = select(TherapySessionRow.id).where(
+            TherapySessionRow.id == NoteRow.session_id,
+            TherapySessionRow.status == SessionStatus.IMPORTED,
+        )
         return (
             self._session.scalar(
                 select(func.count())
@@ -198,6 +210,7 @@ class PostgresNotesRepository(NotesRepository):
                     NoteRow.session_id.is_not(None),
                     NoteRow.finalized_at.is_(None),
                     NoteRow.deleted_at.is_(None),
+                    ~imported.exists(),
                     PatientClinicianRow.user_id == user_id,
                     or_(
                         PatientClinicianRow.expires_at.is_(None),

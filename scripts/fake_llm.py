@@ -412,11 +412,16 @@ def _extracted(schema: dict[str, Any], note: str) -> dict[str, Any]:
 
     The verbatim relocation a model does, for the one layout specs write;
     a line with no such field lands nowhere, which is what a coverage
-    check looks for.
+    check looks for. A top-level text property is read the same way, so
+    "Signed by: <name>" answers ``signed_by``; one no line names is "".
     """
-    fields: dict[str, tuple[str, str, bool]] = {}
+    fields: dict[str, tuple[str | None, str, bool]] = {}
     content: dict[str, Any] = {}
     for section, sub in schema.get("properties", {}).items():
+        if sub.get("type") == "string":
+            content[section] = ""
+            fields[section] = (None, section, False)
+            continue
         content[section] = {}
         for key, spec in sub.get("properties", {}).items():
             is_list = spec.get("type") == "array"
@@ -428,7 +433,11 @@ def _extracted(schema: dict[str, Any], note: str) -> dict[str, Any]:
         if target is None or not text.strip():
             continue
         section, key, is_list = target
-        content[section][key] = [text.strip()] if is_list else text.strip()
+        value = [text.strip()] if is_list else text.strip()
+        if section is None:
+            content[key] = value
+        else:
+            content[section][key] = value
     return content
 
 
