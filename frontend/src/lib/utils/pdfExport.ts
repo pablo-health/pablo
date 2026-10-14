@@ -12,7 +12,7 @@
 import jsPDF from "jspdf"
 import type { PeopleWords } from "@/lib/peopleTerm"
 import type { SOAPNoteModel } from "@/types/sessions"
-import { parseNarrativeBlocks } from "./narrativeParser"
+import { headsNextBlock, parseNarrativeBlocks } from "./narrativeParser"
 
 export interface PDFExportMetadata {
   patient_name: string
@@ -141,7 +141,11 @@ function renderSignatureBlock(
   return y
 }
 
-/** A SOAP note's sections, each sub-field split out from its **Label:** text. */
+/**
+ * A SOAP note's sections, each sub-field split out from its **Label:** text.
+ * A sub-field with no text is left out, unless it heads the ones after it,
+ * and so is a section with nothing in it, heading included.
+ */
 export function soapNotePdf(soapNote: SOAPNoteModel): PDFNote {
   return {
     title: "SOAP Note",
@@ -150,7 +154,12 @@ export function soapNotePdf(soapNote: SOAPNoteModel): PDFNote {
       { title: "Objective", content: soapNote.objective },
       { title: "Assessment", content: soapNote.assessment },
       { title: "Plan", content: soapNote.plan },
-    ].map(({ title, content }) => ({ title, blocks: parseNarrativeBlocks(content) })),
+    ]
+      .map(({ title, content }) => {
+        const blocks = parseNarrativeBlocks(content)
+        return { title, blocks: blocks.filter((b, i) => b.content || headsNextBlock(blocks, i)) }
+      })
+      .filter((section) => section.blocks.length > 0),
   }
 }
 

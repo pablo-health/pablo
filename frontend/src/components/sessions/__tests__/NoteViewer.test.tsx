@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { render, screen, fireEvent, waitFor } from "@testing-library/react"
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react"
 import { NoteViewer } from "../NoteViewer"
 import { peopleWords } from "@/lib/peopleTerm"
 import type {
@@ -580,6 +580,27 @@ describe("NoteViewer (SOAP)", () => {
       expect(screen.queryByText("sourced")).not.toBeInTheDocument()
     })
 
+    it("marks an empty section and an empty sub-field quietly rather than as note content", () => {
+      renderViewer({
+        note: asSoapContent(
+          createMockSOAPNote({
+            subjective: "**Mood/Affect:** Brighter\n\n**Sleep:**",
+            objective: "Calm",
+            assessment: "",
+            plan: "Not stated.",
+          }),
+        ),
+      })
+
+      const assessment = screen.getByRole("heading", { name: "Assessment" }).parentElement!
+      expect(within(assessment).getByText("Nothing entered")).toHaveClass("select-none")
+      const sleep = screen.getByRole("heading", { name: "Sleep" }).parentElement!
+      expect(within(sleep).getByText("Nothing entered")).toBeInTheDocument()
+      expect(screen.getAllByText("Nothing entered")).toHaveLength(2)
+      expect(screen.queryByText("No content")).not.toBeInTheDocument()
+      expect(screen.getByText("Not stated.")).toBeInTheDocument()
+    })
+
     it("falls back to NarrativeContent when no structured data", () => {
       // Default mockSession has soap_note_structured: null
       renderViewer()
@@ -719,6 +740,13 @@ describe("NoteViewer (Narrative)", () => {
     renderNarrative()
 
     expect(screen.getByText(/Met with client to review progress/)).toBeInTheDocument()
+  })
+
+  it("marks an empty body quietly rather than as note content", () => {
+    renderNarrative({ note: { note_type: "narrative", body: "  " } })
+
+    expect(screen.getByText("Nothing entered")).toHaveClass("select-none")
+    expect(screen.queryByText("No content")).not.toBeInTheDocument()
   })
 
   it("does not render SOAP section headers", () => {

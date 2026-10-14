@@ -138,7 +138,7 @@ describe("schemaNotePdf", () => {
     ])
   })
 
-  it("leaves out empty fields, says so for an empty section, and prints values as stored", () => {
+  it("leaves out empty fields and empty sections, and prints values as stored", () => {
     const layout: PDFNoteLayout = {
       label: "Follow-up",
       sections: [
@@ -149,18 +149,40 @@ describe("schemaNotePdf", () => {
             { key: "ideation", label: "Ideation", kind: "text" },
             { key: "plan", label: "Safety plan", kind: "text" },
             { key: "factors", label: "Factors", kind: "list" },
+            { key: "cannabis", label: "Cannabis", kind: "text" },
           ],
         },
         { key: "labs", label: "Labs", fields: [{ key: "ordered", label: "Ordered", kind: "list" }] },
+        {
+          key: "assessment",
+          label: "Assessment",
+          fields: [
+            { key: "diagnoses", label: "Diagnoses", kind: "diagnoses" },
+            { key: "scores", label: "Scores", kind: "structured" },
+          ],
+        },
       ],
     }
     const pdf = schemaNotePdf(layout, {
-      risk: { ideation: "Not stated.", plan: "  ", factors: [] },
+      risk: {
+        ideation: "Not stated.",
+        plan: "  ",
+        factors: [],
+        cannabis: "(not asked this visit)",
+      },
+      labs: { ordered: ["", "  "] },
+      assessment: { diagnoses: [], scores: {} },
     })
     expect(pdf.sections).toEqual([
-      { title: "Risk", blocks: [{ label: "Ideation", content: "Not stated." }] },
-      { title: "Labs", blocks: [{ label: null, content: "No content" }] },
+      {
+        title: "Risk",
+        blocks: [
+          { label: "Ideation", content: "Not stated." },
+          { label: "Cannabis", content: "(not asked this visit)" },
+        ],
+      },
     ])
+    expect(JSON.stringify(pdf)).not.toMatch(/No content|None|—/)
   })
 })
 
@@ -172,19 +194,58 @@ describe("narrativeNotePdf and soapNotePdf", () => {
     })
   })
 
-  it("prints SOAP's four sections, each sub-field under its label", () => {
+  it("prints nothing for a narrative note with no body", () => {
+    expect(narrativeNotePdf("  \n ")).toEqual({ title: "Narrative Note", sections: [] })
+  })
+
+  it("prints SOAP's sections, each sub-field under its label, leaving out the empty ones", () => {
     const pdf = soapNotePdf({
-      subjective: "**Mood/Affect:** Brighter",
+      subjective: "**Mood/Affect:** Brighter\n**Substance Use:** Not stated.\n**Sleep:** ",
       objective: "Calm",
       assessment: "",
       plan: "**Next Steps:**\n- Walk daily",
     })
     expect(pdf.title).toBe("SOAP Note")
     expect(pdf.sections).toEqual([
-      { title: "Subjective", blocks: [{ label: "Mood/Affect", content: "Brighter" }] },
+      {
+        title: "Subjective",
+        blocks: [
+          { label: "Mood/Affect", content: "Brighter" },
+          { label: "Substance Use", content: "Not stated." },
+        ],
+      },
       { title: "Objective", blocks: [{ label: null, content: "Calm" }] },
-      { title: "Assessment", blocks: [] },
       { title: "Plan", blocks: [{ label: "Next Steps", content: "- Walk daily" }] },
+    ])
+  })
+
+  it("keeps a SOAP label with no text of its own that heads the sub-fields under it", () => {
+    const pdf = soapNotePdf({
+      subjective: "",
+      objective: "**Clinician Observations:**\n\n**Appearance:** Well groomed",
+      assessment: "",
+      plan: "",
+    })
+    expect(pdf.sections).toEqual([
+      {
+        title: "Objective",
+        blocks: [
+          { label: "Clinician Observations", content: "" },
+          { label: "Appearance", content: "Well groomed" },
+        ],
+      },
+    ])
+  })
+
+  it("leaves out a SOAP section whose every sub-field is empty, heading included", () => {
+    const pdf = soapNotePdf({
+      subjective: "Steadier.",
+      objective: "**Appearance:**\n**Behavior:**   ",
+      assessment: "  ",
+      plan: "",
+    })
+    expect(pdf.sections).toEqual([
+      { title: "Subjective", blocks: [{ label: null, content: "Steadier." }] },
     ])
   })
 })

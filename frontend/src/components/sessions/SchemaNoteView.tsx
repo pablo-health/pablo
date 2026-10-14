@@ -46,6 +46,7 @@ import type {
 } from "@/types/sessions"
 import { DiagnosesEditor, DiagnosesList, type DiagnosisAction } from "./DiagnosesField"
 import { GroundingBadge } from "./GroundingBadge"
+import { NothingEntered } from "./NothingEntered"
 
 export interface SchemaNoteViewProps {
   noteTypeKey: string
@@ -285,7 +286,7 @@ export function SchemaNoteBody({
                 {section.label}
               </h4>
               {shown.length === 0 ? (
-                <p className="text-sm text-neutral-500 italic">No content</p>
+                <NothingEntered />
               ) : (
                 <div className="space-y-3">
                   {shown.map((field) => (
@@ -402,7 +403,7 @@ function FieldBlock({
       <div>
         {label}
         {isEmptyValue(value) ? (
-          <p className="text-sm text-neutral-500 italic">No content</p>
+          <NothingEntered />
         ) : (
           <pre className="text-xs text-neutral-900 whitespace-pre-wrap rounded-lg bg-neutral-50 p-3">
             {JSON.stringify(value, null, 2)}

@@ -7,7 +7,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { fireEvent, render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, within } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { ReactNode } from "react"
 import { NoteViewer } from "../NoteViewer"
@@ -149,6 +149,36 @@ describe("catalog-driven note view", () => {
     )
     await screen.findByRole("heading", { name: "DAP" })
     expect(getNoteType).toHaveBeenCalledWith("custom.coach", 3, undefined)
+  })
+
+  it("marks an empty section and field quietly, as no part of the note, and edits them as empty boxes", async () => {
+    vi.mocked(getNoteType).mockResolvedValue(DAP)
+    render(
+      <NoteViewer
+        note={createMockNote({
+          note_type: "dap",
+          content: {
+            data: { subjective: "Not stated.", observations: [] },
+            assessment: { impression: "  " },
+            plan: { next_steps: ["(not asked this visit)"], measures: { phq9: 7 } },
+          },
+        })}
+        onSave={vi.fn()}
+      />,
+      { wrapper },
+    )
+
+    const assessment = (await screen.findByRole("heading", { name: "Assessment" })).parentElement!
+    const cue = within(assessment).getByText("Nothing entered")
+    expect(cue).toHaveClass("select-none")
+    expect(screen.getAllByText("Nothing entered")).toHaveLength(1)
+    expect(screen.queryByText("No content")).not.toBeInTheDocument()
+    expect(screen.getByText("Not stated.")).toBeInTheDocument()
+    expect(screen.getByText("(not asked this visit)")).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }))
+    expect(screen.queryByText("Nothing entered")).not.toBeInTheDocument()
+    expect(within(assessment).getByRole("textbox")).toBeInTheDocument()
   })
 
   it("shows clinician edits over the generated content", async () => {
