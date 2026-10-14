@@ -63,6 +63,7 @@ from ..claims.status_worker import AWAITING_STATES, poll_acknowledgments
 from ..claims.submit_worker import submit_pending
 from ..claims.watchdog import run_watchdog
 from ..db import create_standalone_session
+from ..logging_config import configure_job_logging
 from ..settings import get_settings
 
 if TYPE_CHECKING:
@@ -286,7 +287,7 @@ async def claims_pipeline_loop() -> None:
 
 
 def run(argv: list[str] | None = None) -> int:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+    configure_job_logging()
     args = _parse_argv(argv)
     stages = STAGES if args.stage == "all" else (args.stage,)
     run_pipeline(stages, max_tenants=args.max_tenants, max_per_tenant=args.max_per_tenant)

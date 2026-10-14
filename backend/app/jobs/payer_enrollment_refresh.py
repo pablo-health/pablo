@@ -44,6 +44,7 @@ from ..claims.enrollment import (
 from ..db import _validate_schema_name, create_standalone_session, get_engine
 from ..db.migrate_tenants import list_active_practice_registry
 from ..db.models import PayerEnrollmentRow
+from ..logging_config import configure_job_logging
 
 if TYPE_CHECKING:
     from ..claims.clearinghouse import ClearinghouseClient
@@ -88,7 +89,7 @@ def refresh_tenant(schema: str, client: ClearinghouseClient, *, limit: int) -> i
 
 
 def run(argv: list[str] | None = None) -> int:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+    configure_job_logging()
     args = _parse_argv(argv)
 
     registry = list_active_practice_registry(get_engine())[: args.max_tenants]

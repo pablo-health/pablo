@@ -19,10 +19,17 @@ from pydantic import BaseModel, EmailStr
 
 from ..auth.route_security import truly_public
 from ..auth.service import E2E_EMAIL_PATTERN
-from ..db import get_db_session
+from ..db import arm_current_user_id, get_db_session, set_tenant_schema
 from ..db.platform_models import EmailTenantMappingRow
 from ..jobs.pentest_identity import PENTEST_EMAIL_PATTERN
-from ..repositories import get_allowlist_repository, get_user_repository
+from ..models.audit import AuditAction
+from ..repositories import (
+    get_allowlist_repository,
+    get_identity_repository,
+    get_user_repository,
+)
+from ..services import AuditService, get_audit_service
+from ..services.session_generation_worker import resolve_tenant_schema_for_user
 from ..settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -187,18 +194,52 @@ def check_allowlist(
 def check_status(
     request: CheckStatusRequest,
     http_request: Request,
+    audit: AuditService = Depends(get_audit_service),
     _public: None = Depends(truly_public),
 ) -> CheckStatusResponse:
-    """Check if a user account is disabled.
+    """Check if a user account is disabled, and record the sign-in.
 
-    Called by the beforeSignIn blocking function to block disabled users.
+    Called by the beforeSignIn blocking function to block disabled users. The
+    identity provider runs that function on every sign-in, after the password
+    or Google credential and any second factor have been verified and just
+    before the ID token is issued, so this is the one place every sign-in
+    reaches the backend whatever the method (HIPAA § 164.308(a)(5)(ii)(C)).
     """
     _verify_blocking_function_token(http_request)
 
-    repo = get_user_repository()
-    user = repo.get(request.uid)
+    # The function sends the identity provider's uid. Users are keyed by
+    # Pablo's own id, so translate through the identity mapping, falling back
+    # to the raw uid for an account created before the mapping existed (the
+    # same rule the request auth path follows).
+    user_id = get_identity_repository().get_user_id("firebase", request.uid) or request.uid
+    user = get_user_repository().get(user_id)
     if user is None:
         # New user — not disabled
         return CheckStatusResponse(disabled=False)
 
-    return CheckStatusResponse(disabled=user.status == "disabled")
+    if user.status == "disabled":
+        return CheckStatusResponse(disabled=True)
+
+    # One signed_in row in the user's practice audit log, best-effort. The
+    # caller has no clinician session, so the request session sits on the
+    # default schema: resolve the user's practice and re-arm before the write,
+    # as the passkey sign-in does. A failure must not block the sign-in — the
+    # identity provider gives the whole hook a few seconds — so it is logged
+    # and dropped. The savepoint matters: a failed flush leaves the session
+    # needing a rollback, and the commit at the end of the request would then
+    # fail the response after all. No IP address or user agent is recorded:
+    # the request comes from the hook, not the clinician's device.
+    try:
+        schema = resolve_tenant_schema_for_user(user.id)
+        if schema is None:
+            logger.info("sign_in_audit_no_practice user_id=%s", user.id)
+        else:
+            session = get_db_session()
+            with session.begin_nested():
+                set_tenant_schema(session, schema)
+                arm_current_user_id(session, user.id)
+                audit.log_account_security_event(AuditAction.SIGNED_IN, user.id, None)
+    except Exception:
+        logger.warning("sign_in_audit_failed user_id=%s", user.id, exc_info=True)
+
+    return CheckStatusResponse(disabled=False)

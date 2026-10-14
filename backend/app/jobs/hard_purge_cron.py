@@ -49,6 +49,7 @@ from sqlalchemy import text
 
 from ..db import PLATFORM_SCHEMA, _validate_schema_name, get_engine
 from ..db.migrate_tenants import list_active_practice_registry
+from ..logging_config import configure_job_logging
 from ..models.audit import AUDIT_LOG_RETENTION_DAYS, AuditAction, ResourceType
 from .hard_purge_retention_stub import (
     ComplianceRetentionStubPayload,
@@ -316,7 +317,7 @@ def _delete_document_blobs(objects: list[str]) -> None:
 
 
 def run(argv: list[str] | None = None) -> int:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+    configure_job_logging()
     args = _parse_argv(argv)
 
     stub_writer = get_compliance_retention_stub_writer()

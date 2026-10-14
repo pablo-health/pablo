@@ -453,9 +453,9 @@ test.describe("patient export billing", () => {
     const patient = await givePatient(api)
 
     // The payment, recorded the way a clinician records one: from the
-    // chart's Balance tab, a cheque with its number.
+    // chart's Billing tab, a cheque with its number.
     await page.goto(`/dashboard/patients/${patient.id}`)
-    await page.getByRole("tab", { name: /Balance/ }).click()
+    await page.getByRole("tab", { name: /Billing/ }).click()
     await page.getByRole("button", { name: "Record payment" }).click()
     await page.getByLabel("Amount").fill("150.00")
     await page.getByRole("combobox", { name: /how it arrived/i }).click()

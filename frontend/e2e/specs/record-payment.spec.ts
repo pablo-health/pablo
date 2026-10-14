@@ -38,7 +38,7 @@ test("a cheque recorded in the chart reaches the ledger and moves the balance", 
   const patient = await givePatient(api)
 
   await page.goto(`/dashboard/patients/${patient.id}`)
-  await page.getByRole("tab", { name: /Balance/ }).click()
+  await page.getByRole("tab", { name: /Billing/ }).click()
 
   await page.getByRole("button", { name: "Record payment" }).click()
   await page.getByLabel("Amount").fill("150.00")
@@ -81,7 +81,7 @@ test("a payment recorded as 'other' has to say what it was", async ({ signedInPa
   const patient = await givePatient(api)
 
   await page.goto(`/dashboard/patients/${patient.id}`)
-  await page.getByRole("tab", { name: /Balance/ }).click()
+  await page.getByRole("tab", { name: /Billing/ }).click()
   await page.getByRole("button", { name: "Record payment" }).click()
 
   await page.getByLabel("Amount").fill("40.00")
@@ -117,10 +117,10 @@ test("a client with no card on file is told what they can still do", async ({
   const patient = await givePatient(api)
 
   await page.goto(`/dashboard/patients/${patient.id}`)
-  await page.getByRole("tab", { name: /Balance/ }).click()
+  await page.getByRole("tab", { name: /Billing/ }).click()
 
   // The action is offered regardless of a card, a balance, or whether the
   // deployment has card processing set up at all. Before this existed, a
-  // practice that takes cheques reached this tab and found nothing to press.
+  // practice that takes cheques reached its balance and found nothing to press.
   await expect(page.getByRole("button", { name: "Record payment" })).toBeVisible()
 })
