@@ -3,6 +3,7 @@
 """User repository implementations."""
 
 from abc import ABC, abstractmethod
+from typing import Any
 
 from ..models import User, UserPreferences
 from ..utcnow import utc_now
@@ -47,6 +48,17 @@ class UserRepository(ABC):
         """Save user preferences (full replace)."""
         pass
 
+    @abstractmethod
+    def update_preferences(self, user_id: str, changes: dict[str, Any]) -> UserPreferences:
+        """Merge ``changes`` into the saved preferences as one atomic write.
+
+        Keys not in ``changes`` are left as they are, including keys another
+        writer saved a moment ago. A key whose value is ``None`` is removed,
+        so it reads back as its default. ``changes`` must already be valid —
+        see :func:`app.models.user.preference_changes`.
+        """
+        pass
+
 
 class InMemoryUserRepository(UserRepository):
     """In-memory implementation of UserRepository for testing and development."""
@@ -82,3 +94,14 @@ class InMemoryUserRepository(UserRepository):
     def save_preferences(self, user_id: str, prefs: UserPreferences) -> UserPreferences:
         self._preferences[user_id] = prefs
         return prefs
+
+    def update_preferences(self, user_id: str, changes: dict[str, Any]) -> UserPreferences:
+        saved = self.get_preferences(user_id).model_dump()
+        for key, value in changes.items():
+            if value is None:
+                saved.pop(key, None)
+            else:
+                saved[key] = value
+        merged = UserPreferences(**saved)
+        self._preferences[user_id] = merged
+        return merged

@@ -4,8 +4,8 @@
 
 import { useCallback } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { usePreferences, useSavePreferences } from "@/hooks/usePreferences"
-import { getUserStatus, type UserPreferences } from "@/lib/api/users"
+import { usePreferences, useUpdatePreferences } from "@/hooks/usePreferences"
+import { getUserStatus, type PreferenceChanges } from "@/lib/api/users"
 import { useSettingsSaved } from "./SettingsSavedContext"
 
 /**
@@ -15,17 +15,18 @@ import { useSettingsSaved } from "./SettingsSavedContext"
  * mutation, so the confirmation appears in one place no matter which page
  * triggered it. React Query dedupes the underlying reads across pages.
  *
- * Note the save is a FULL REPLACE of the blob, which is why callers spread the
- * current value: `save({ ...preferences, theme: next })`.
+ * Pass only the keys being changed: `save({ theme: next })`. Spreading the
+ * cached blob back in would put any key another save changed since it loaded
+ * back the way it was.
  */
 export function useSettingsPreferences() {
   const { data: preferences, isLoading, error } = usePreferences()
-  const mutation = useSavePreferences()
+  const mutation = useUpdatePreferences()
   const { flashSaved } = useSettingsSaved()
 
   const save = useCallback(
-    (next: UserPreferences) => {
-      mutation.mutate(next, { onSuccess: () => flashSaved() })
+    (changes: PreferenceChanges) => {
+      mutation.mutate(changes, { onSuccess: () => flashSaved() })
     },
     [mutation, flashSaved]
   )

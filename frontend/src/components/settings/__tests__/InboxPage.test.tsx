@@ -11,11 +11,11 @@ import userEvent from "@testing-library/user-event"
 import { renderWithProviders } from "@/test/renderWithProviders"
 import { InboxPage } from "../pages/InboxPage"
 
-const prefsApi = { getPreferences: vi.fn(), savePreferences: vi.fn() }
+const prefsApi = { getPreferences: vi.fn(), updatePreferences: vi.fn() }
 vi.mock("@/lib/api/users", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api/users")>()),
   getPreferences: (...a: unknown[]) => prefsApi.getPreferences(...a),
-  savePreferences: (...a: unknown[]) => prefsApi.savePreferences(...a),
+  updatePreferences: (...a: unknown[]) => prefsApi.updatePreferences(...a),
 }))
 
 const PREFERENCES = {
@@ -34,7 +34,9 @@ const PREFERENCES = {
 describe("Settings → Inbox", () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    prefsApi.savePreferences.mockImplementation((prefs: unknown) => Promise.resolve(prefs))
+    prefsApi.updatePreferences.mockImplementation((changes: object) =>
+      Promise.resolve({ ...PREFERENCES, ...changes }),
+    )
   })
 
   it("asks by default, and says what the choice is about", async () => {
@@ -60,8 +62,8 @@ describe("Settings → Inbox", () => {
     await userEvent.click(screen.getByRole("radio", { name: "Mark handled too" }))
 
     await waitFor(() =>
-      expect(prefsApi.savePreferences).toHaveBeenCalledWith(
-        { ...PREFERENCES, inbox_reply_earlier_messages: "always" },
+      expect(prefsApi.updatePreferences).toHaveBeenCalledWith(
+        { inbox_reply_earlier_messages: "always" },
         undefined,
       ),
     )

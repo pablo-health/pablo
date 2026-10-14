@@ -12,11 +12,11 @@ import userEvent from "@testing-library/user-event"
 import { renderWithProviders } from "@/test/renderWithProviders"
 import { NameBookingSetting } from "../NameBookingSetting"
 
-const api = { getPreferences: vi.fn(), savePreferences: vi.fn(), getUserStatus: vi.fn() }
+const api = { getPreferences: vi.fn(), updatePreferences: vi.fn(), getUserStatus: vi.fn() }
 vi.mock("@/lib/api/users", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api/users")>()),
   getPreferences: (...a: unknown[]) => api.getPreferences(...a),
-  savePreferences: (...a: unknown[]) => api.savePreferences(...a),
+  updatePreferences: (...a: unknown[]) => api.updatePreferences(...a),
   getUserStatus: (...a: unknown[]) => api.getUserStatus(...a),
 }))
 
@@ -38,7 +38,9 @@ const LABEL = "Add sessions that show a client’s full name"
 describe("Settings → booking sessions by full name", () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    api.savePreferences.mockImplementation((prefs: unknown) => Promise.resolve(prefs))
+    api.updatePreferences.mockImplementation((changes: object) =>
+      Promise.resolve({ ...PREFERENCES, ...changes }),
+    )
   })
 
   it("shows the server's default until the clinician chooses", async () => {
@@ -61,8 +63,8 @@ describe("Settings → booking sessions by full name", () => {
     await userEvent.click(await screen.findByRole("checkbox", { name: LABEL }))
 
     await waitFor(() =>
-      expect(api.savePreferences).toHaveBeenCalledWith(
-        { ...PREFERENCES, book_sessions_named_in_title: true },
+      expect(api.updatePreferences).toHaveBeenCalledWith(
+        { book_sessions_named_in_title: true },
         undefined,
       ),
     )
@@ -79,8 +81,8 @@ describe("Settings → booking sessions by full name", () => {
     await userEvent.click(box)
 
     await waitFor(() =>
-      expect(api.savePreferences).toHaveBeenCalledWith(
-        { ...PREFERENCES, book_sessions_named_in_title: false },
+      expect(api.updatePreferences).toHaveBeenCalledWith(
+        { book_sessions_named_in_title: false },
         undefined,
       ),
     )

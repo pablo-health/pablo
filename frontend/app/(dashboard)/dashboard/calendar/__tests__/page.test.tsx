@@ -15,10 +15,10 @@ vi.mock("@/lib/config", () => ({
 const preferencesState = vi.hoisted(() => ({
   data: undefined as Record<string, unknown> | undefined,
 }))
-const savePreferences = vi.hoisted(() => vi.fn())
+const updatePreferences = vi.hoisted(() => vi.fn())
 vi.mock("@/hooks/usePreferences", () => ({
   usePreferences: () => ({ data: preferencesState.data }),
-  useSavePreferences: () => ({ mutate: savePreferences, isPending: false }),
+  useUpdatePreferences: () => ({ mutate: updatePreferences, isPending: false }),
 }))
 // Mutable so a test can put the practice on either side of the "no
 // availability rules at all" gate.
@@ -157,7 +157,7 @@ describe("CalendarPage first visit", () => {
 
     await user.click(screen.getByRole("button", { name: "Finish later" }))
 
-    expect(savePreferences).toHaveBeenCalledWith({ ...PREFERENCES, calendar_setup_complete: true })
+    expect(updatePreferences).toHaveBeenCalledWith({ calendar_setup_complete: true })
   })
 
   it("records finishing the wizard the same way", async () => {
@@ -166,7 +166,7 @@ describe("CalendarPage first visit", () => {
 
     await user.click(screen.getByRole("button", { name: "Done" }))
 
-    expect(savePreferences).toHaveBeenCalledWith({ ...PREFERENCES, calendar_setup_complete: true })
+    expect(updatePreferences).toHaveBeenCalledWith({ calendar_setup_complete: true })
   })
 
   it("never shows the wizard on a deployment that has not enabled calendar", () => {
@@ -265,7 +265,7 @@ describe("CalendarPage hours capture", () => {
     await user.click(screen.getByRole("button", { name: "Skip hours" }))
 
     expect(screen.getByTestId("editorial-calendar")).toBeInTheDocument()
-    expect(savePreferences).not.toHaveBeenCalled()
+    expect(updatePreferences).not.toHaveBeenCalled()
   })
 
   it("keeps the hours step up while the rules it is saving arrive", async () => {
@@ -305,6 +305,6 @@ describe("CalendarPage hours capture", () => {
 
     await user.click(screen.getByRole("button", { name: "Save hours" }))
 
-    expect(savePreferences).not.toHaveBeenCalled()
+    expect(updatePreferences).not.toHaveBeenCalled()
   })
 })

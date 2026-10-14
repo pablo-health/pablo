@@ -23,14 +23,14 @@ vi.mock("@/hooks/useAppointmentTypes", () => ({
   useCreateAppointmentType: () => ({ mutate: createType, isPending: false, isError: false }),
 }))
 
-const savePreferences = vi.hoisted(() => vi.fn())
+const updatePreferences = vi.hoisted(() => vi.fn())
 const preferencesState = vi.hoisted(() => ({
   data: { timezone: "America/New_York" } as Record<string, unknown>,
   browserTimezone: "America/New_York",
 }))
 vi.mock("@/hooks/usePreferences", () => ({
   usePreferences: () => ({ data: preferencesState.data }),
-  useSavePreferences: () => ({ mutateAsync: savePreferences }),
+  useUpdatePreferences: () => ({ mutateAsync: updatePreferences }),
   detectBrowserTimezone: () => preferencesState.browserTimezone,
 }))
 
@@ -64,7 +64,7 @@ describe("CalendarHoursStep", () => {
     preferencesState.data = { timezone: "America/New_York" }
     preferencesState.browserTimezone = "America/New_York"
     createRule.mockResolvedValue({})
-    savePreferences.mockResolvedValue({})
+    updatePreferences.mockResolvedValue({})
   })
 
   it("offers example sentences that fill the box, parsed the same way as typing", async () => {
@@ -336,7 +336,7 @@ describe("CalendarHoursStep", () => {
     await user.click(screen.getByRole("button", { name: "Save hours" }))
 
     await waitFor(() =>
-      expect(savePreferences).toHaveBeenCalledWith({ timezone: "America/Chicago" })
+      expect(updatePreferences).toHaveBeenCalledWith({ timezone: "America/Chicago" })
     )
   })
 
@@ -355,7 +355,7 @@ describe("CalendarHoursStep", () => {
 
     await user.click(screen.getByRole("button", { name: "Save hours" }))
     await waitFor(() =>
-      expect(savePreferences).toHaveBeenCalledWith({ timezone: "America/Los_Angeles" })
+      expect(updatePreferences).toHaveBeenCalledWith({ timezone: "America/Los_Angeles" })
     )
   })
 
@@ -374,7 +374,7 @@ describe("CalendarHoursStep", () => {
 
     await user.click(screen.getByRole("button", { name: "Save hours" }))
     await waitFor(() => expect(createRule).toHaveBeenCalled())
-    expect(savePreferences).not.toHaveBeenCalled()
+    expect(updatePreferences).not.toHaveBeenCalled()
   })
 
   it("leaves the timezone alone when it was already right", async () => {
@@ -385,7 +385,7 @@ describe("CalendarHoursStep", () => {
     await user.click(screen.getByRole("button", { name: "Save hours" }))
 
     await waitFor(() => expect(createRule).toHaveBeenCalled())
-    expect(savePreferences).not.toHaveBeenCalled()
+    expect(updatePreferences).not.toHaveBeenCalled()
   })
 
   it("lets the practice skip, without reciting what will not work", async () => {
@@ -398,7 +398,7 @@ describe("CalendarHoursStep", () => {
 
     expect(onSkip).toHaveBeenCalled()
     expect(createRule).not.toHaveBeenCalled()
-    expect(savePreferences).not.toHaveBeenCalled()
+    expect(updatePreferences).not.toHaveBeenCalled()
   })
 })
 
@@ -466,7 +466,7 @@ describe("CalendarHoursStep saving", () => {
     vi.clearAllMocks()
     parseState.pending = false
     preferencesState.data = { timezone: "America/New_York" }
-    savePreferences.mockResolvedValue({})
+    updatePreferences.mockResolvedValue({})
     parseRules.mockResolvedValue({ proposals: MON_TO_THU, could_not_parse: null })
   })
 
@@ -534,7 +534,7 @@ describe("CalendarHoursStep saving", () => {
   it("saves a changed timezone before the hours that are read in it", async () => {
     const user = userEvent.setup()
     const order: string[] = []
-    savePreferences.mockImplementation(async () => order.push("timezone"))
+    updatePreferences.mockImplementation(async () => order.push("timezone"))
     createRule.mockImplementation(async () => order.push("rule"))
     renderStep()
 

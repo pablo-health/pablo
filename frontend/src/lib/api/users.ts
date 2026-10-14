@@ -9,7 +9,7 @@
 import type { AcceptBAARequest, BAAStatusResponse } from "@/types/baa"
 import type { ThemeId } from "@/lib/theme"
 import type { PeopleTerm } from "@/lib/peopleTerm"
-import { get, patch, post, put } from "./client"
+import { get, patch, post } from "./client"
 import type {
   UpdateUserRequestExtensions,
   UserStatusExtensions,
@@ -439,16 +439,24 @@ export async function getPreferences(
   return get<UserPreferences>("/api/users/me/preferences", token)
 }
 
-export async function savePreferences(
-  prefs: UserPreferences,
-  token?: string
-): Promise<UserPreferences> {
-  return put<UserPreferences>("/api/users/me/preferences", prefs, token)
+/**
+ * The preferences one save changes. `null` removes a key, so it reads back as
+ * its default; a key left out is not touched.
+ */
+export type PreferenceChanges = {
+  [K in keyof UserPreferences]?: UserPreferences[K] | null
 }
 
-export async function saveThemePreference(
-  theme: ThemeId,
+/**
+ * Save only the preferences named in `changes`; resolves to all of them.
+ *
+ * Never send a copy of the whole object: a copy read before someone else's
+ * save puts their keys back as they were, erasing what they just saved. The
+ * server merges what is sent into what is stored, in one write.
+ */
+export async function updatePreferences(
+  changes: PreferenceChanges,
   token?: string
 ): Promise<UserPreferences> {
-  return put<UserPreferences>("/api/users/me/preferences/theme", { theme }, token)
+  return patch<UserPreferences>("/api/users/me/preferences", changes, token)
 }

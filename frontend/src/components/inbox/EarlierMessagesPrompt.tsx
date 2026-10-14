@@ -18,7 +18,7 @@
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { useHandleEarlierMessages, useRestoreInboxItems } from "@/hooks/useInbox"
-import { usePreferences, useSavePreferences } from "@/hooks/usePreferences"
+import { useUpdatePreferences } from "@/hooks/usePreferences"
 import type { ReplyInboxOutcome } from "@/lib/api/messageInbox"
 import type { UserPreferences } from "@/lib/api/users"
 
@@ -35,11 +35,10 @@ export function EarlierMessagesPrompt({ messageId, patientName, outcome }: Earli
   const [undone, setUndone] = useState(false)
   const handleEarlier = useHandleEarlierMessages()
   const restore = useRestoreInboxItems()
-  const { data: preferences } = usePreferences()
-  const savePreferences = useSavePreferences()
+  const updatePreferences = useUpdatePreferences()
 
   function remember(choice: UserPreferences["inbox_reply_earlier_messages"]) {
-    if (preferences) savePreferences.mutate({ ...preferences, inbox_reply_earlier_messages: choice })
+    updatePreferences.mutate({ inbox_reply_earlier_messages: choice })
   }
 
   function markHandled() {

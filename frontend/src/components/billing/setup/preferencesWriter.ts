@@ -1,78 +1,66 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-import type { UserPreferences } from "@/lib/api/users"
+import type { PreferenceChanges, UserPreferences } from "@/lib/api/users"
 
 /**
  * Writes setup answers to preferences one save at a time, newest last.
  *
- * The preferences endpoint replaces the whole object, so every save carries a
- * full copy built on whatever the screen last loaded. Saving each answer the
- * moment it was given went wrong in two ways when answers came quickly — two
- * Continue clicks in a row is enough:
+ * Each save sends only the keys it changes, and the server merges them into
+ * what is stored, so two saves in flight together can no longer erase each
+ * other's answers. What is left is order: Continue twice in a row is two saves
+ * of the same key (the step reached), and if they were in flight together the
+ * older could land last and put them back a step. So there is one save in
+ * flight at most, and answers given while it runs are folded into the one
+ * that follows it.
  *
- *   - The second save was built on the copy from BEFORE the first one landed,
- *     so it carried the old, empty checklist and wiped the answer the first
- *     save had just stored. Coming back found the step but no answer, and an
- *     unanswered checklist only has one screen, so they were back at the start.
- *   - The two saves were in flight together, so the older could land last and
- *     put them back a step.
- *
- * So: one save in flight at most, and every answer given this sitting rides on
- * every save after it. Answers that arrive while a save is running are folded
- * into the one that follows it, which is built on what the last save returned.
- * Nothing is sent until the saved preferences have loaded, because a full
- * replace built on nothing would erase every other preference they have.
+ * A refused save keeps its keys; they go out with the next save rather than
+ * being retried here, which would loop against a server that is refusing.
  *
  * Plain TypeScript rather than hook state: the queue has to outlive renders,
  * and nothing on screen reads it.
  */
-export type SavePreferences = (next: UserPreferences) => Promise<UserPreferences>
+export type SavePreferences = (changes: PreferenceChanges) => Promise<UserPreferences>
 
 export interface PreferencesWriter {
-  /** Remember these keys and save them, now or after the save in flight. */
-  write(patch: Partial<UserPreferences>): void
-  /**
-   * The preferences as last loaded, and how to save them. The first loaded
-   * preferences also release any writes held until then.
-   */
-  load(preferences: UserPreferences | undefined, save: SavePreferences): void
+  /** Save these keys, now or after the save in flight. */
+  write(changes: PreferenceChanges): void
+  /** How to save. Saves written before this is first called wait for it. */
+  setSave(save: SavePreferences): void
 }
 
 export function createPreferencesWriter(): PreferencesWriter {
   let save: SavePreferences | undefined
-  let base: UserPreferences | undefined
-  // Everything written this sitting. Laid over every save, so a save built on
-  // a copy that predates an answer still carries it.
-  let written: Partial<UserPreferences> = {}
-  let unsaved = false
+  let unsaved: PreferenceChanges = {}
   let saving = false
 
   async function flush() {
-    if (saving || !unsaved || !base || !save) return
+    if (saving || !save || Object.keys(unsaved).length === 0) return
     saving = true
-    unsaved = false
+    const sending = unsaved
+    unsaved = {}
     try {
-      base = await save({ ...base, ...written })
+      await save(sending)
     } catch {
-      // The mutation owns reporting the failure. What was written stays in
-      // `written` and goes out with the next save; retrying here would loop
-      // against a server that is refusing.
-    } finally {
-      saving = false
+      // The mutation owns reporting the failure. Anything written since this
+      // save began is newer, so it wins over what is put back.
+      const writtenSince = Object.keys(unsaved).length > 0
+      unsaved = { ...sending, ...unsaved }
+      if (!writtenSince) {
+        saving = false
+        return
+      }
     }
+    saving = false
     void flush()
   }
 
   return {
-    write(patch) {
-      written = { ...written, ...patch }
-      unsaved = true
+    write(changes) {
+      unsaved = { ...unsaved, ...changes }
       void flush()
     },
-    load(preferences, nextSave) {
+    setSave(nextSave) {
       save = nextSave
-      if (!preferences) return
-      base = preferences
       void flush()
     },
   }

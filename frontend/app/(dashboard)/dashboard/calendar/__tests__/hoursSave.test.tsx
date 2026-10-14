@@ -80,7 +80,7 @@ vi.mock("@/lib/api/users", () => ({
     calendar_default_view: "timeGridWeek",
     calendar_setup_complete: true,
   }),
-  savePreferences: async (prefs: unknown) => prefs,
+  updatePreferences: async (changes: unknown) => changes,
 }))
 
 function renderPage() {

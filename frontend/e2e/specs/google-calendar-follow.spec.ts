@@ -851,7 +851,7 @@ test("a session named for one client books by default, and is asked once that is
   const saved = page.waitForResponse(
     (response) =>
       response.url().includes("/api/users/me/preferences") &&
-      response.request().method() === "PUT" &&
+      response.request().method() === "PATCH" &&
       response.ok(),
   )
   await choice.click()

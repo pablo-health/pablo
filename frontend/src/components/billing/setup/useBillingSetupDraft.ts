@@ -183,9 +183,9 @@ export function persistedPatch(action: SetupDraftAction): Partial<UserPreference
  * reducer.
  *
  * Every save goes through one writer for the life of the screen, which keeps
- * the saves in order and holds any made before preferences load. Saving once
- * per action, each built on the preferences of that render, raced: see
- * `createPreferencesWriter`.
+ * saves of the same key in the order they were made: see
+ * `createPreferencesWriter`. Each sends only what its action changed, so a
+ * save never needs the stored preferences to have loaded first.
  */
 export function useBillingSetupDraft(
   preferences: UserPreferences | undefined,
@@ -196,12 +196,11 @@ export function useBillingSetupDraft(
   const answers = resolveAnswers(saved, draft)
 
   // One writer for as long as the screen is up, so every save queues behind
-  // the last. Preferences and `save` reach it after each render that changes
-  // them.
+  // the last.
   const [writer] = useState(createPreferencesWriter)
   useEffect(() => {
-    writer.load(preferences, save)
-  }, [writer, preferences, save])
+    writer.setSave(save)
+  }, [writer, save])
 
   const apply = useCallback(
     (action: SetupDraftAction) => {

@@ -47,7 +47,7 @@ describe("CalendarDensitySettings", () => {
     await user.click(screen.getByRole("radio", { name: /gentle/i }))
 
     expect(onSave).toHaveBeenCalledTimes(1)
-    expect(onSave).toHaveBeenCalledWith({ ...preferences, calendar_density: "gentle" })
+    expect(onSave).toHaveBeenCalledWith({ calendar_density: "gentle" })
   })
 
   it("disables every option while saving", () => {
