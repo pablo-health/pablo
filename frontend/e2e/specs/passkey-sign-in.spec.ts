@@ -27,6 +27,7 @@
  * the custom-token sign-in and the session cookie.
  */
 
+import { randomBytes } from "node:crypto"
 import type { CDPSession, Page } from "@playwright/test"
 import { ApiClient, createEmulatorUser, signInWithPassword } from "../fixtures/api"
 import { expect, test } from "../fixtures/auth"
@@ -41,7 +42,7 @@ const ROUNDS = 20
  * and the API refuses to add another without asserting that one.
  */
 function freshAccount(): { email: string; password: string } {
-  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const id = randomBytes(6).toString("hex")
   return { email: `e2e-passkey-${id}@example.com`, password: `E2e-passkey-${id}-password` }
 }
 
