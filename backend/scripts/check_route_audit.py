@@ -516,6 +516,7 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("post", "/api/users/me/acknowledge-security-guide"),  # records caller's own ack
         ("post", "/api/users/me/mfa-enrolled"),  # records caller's own MFA enrollment
         ("put", "/api/users/me/preferences"),  # saves caller's own preferences
+        ("patch", "/api/users/me/preferences"),  # changes some of caller's own preferences
         ("put", "/api/users/me/preferences/theme"),  # saves caller's own theme
         # people_term.py — the word the UI uses ("clients"/"patients"), no PHI
         ("get", "/api/users/me/people-term"),  # caller's own vocabulary and what set it

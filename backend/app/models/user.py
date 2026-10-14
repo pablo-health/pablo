@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..people_term import PeopleTerm  # noqa: TC001 — Pydantic needs this at runtime
 from .inbox import EarlierMessagesOnReply  # noqa: TC001 — Pydantic needs this at runtime
@@ -224,6 +224,31 @@ class UserPreferences(BaseModel):
             if self.billing_setup_route in _ROUTE_WANTED_CREDENTIALING:
                 self.billing_setup_wants_credentialing = True
         return self
+
+
+class _StrictPreferences(UserPreferences):
+    model_config = ConfigDict(extra="forbid")
+
+
+def preference_changes(body: dict[str, Any]) -> dict[str, Any]:
+    """Validate a partial preferences update, returning the keys to write.
+
+    Each value is checked and normalised exactly as a full save checks it. A
+    key sent as ``null`` comes back as ``None``, which means "remove this
+    key": the stored blob then falls back to the field's default. A key that
+    was not sent is not returned and stays as it is. An unknown key is
+    refused rather than dropped, because a misspelt key that silently saves
+    nothing looks like a save that worked.
+
+    Raises ``pydantic.ValidationError`` with each problem located at its key.
+    """
+    fields = UserPreferences.model_fields
+    removed = {key for key, value in body.items() if value is None and key in fields}
+    written = {key: value for key, value in body.items() if key not in removed}
+    validated = _StrictPreferences.model_validate(written)
+    changes: dict[str, Any] = validated.model_dump(mode="json", include=set(written))
+    changes.update(dict.fromkeys(removed))
+    return changes
 
 
 class UpdateThemeRequest(BaseModel):

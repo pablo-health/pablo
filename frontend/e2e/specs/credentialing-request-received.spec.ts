@@ -19,11 +19,6 @@
  * Panel applications are created by the concierge operator console, which the
  * local stack does not run, so the empty board here is deterministic rather
  * than incidental.
- *
- * NOTE ON THE PREFERENCE WRITE: `PUT /api/users/me/preferences` is a FULL
- * REPLACE, and the account is shared by the whole run. Sending the one field
- * would blank this user's timezone and theme for every spec that follows, so
- * both tests below read, merge and write back. Do not shorten them.
  */
 
 import { expect, test } from "../fixtures/auth"
@@ -33,11 +28,7 @@ const CREDENTIALING = "/dashboard/settings/credentialing"
 
 /** Set just the credentialing flag, leaving every other preference intact. */
 async function setWantsCredentialing(api: ApiClient, wants: boolean): Promise<void> {
-  const current = await api.get<Record<string, unknown>>("/api/users/me/preferences")
-  await api.put("/api/users/me/preferences", {
-    ...current,
-    billing_setup_wants_credentialing: wants,
-  })
+  await api.patch("/api/users/me/preferences", { billing_setup_wants_credentialing: wants })
 }
 
 test("asking for credentialing is acknowledged before anything is filed @smoke", async ({

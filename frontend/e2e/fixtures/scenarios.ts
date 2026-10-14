@@ -112,10 +112,7 @@ export async function giveScheduledSession(
 }
 
 export async function markCalendarSetupComplete(api: ApiClient): Promise<void> {
-  const preferences = await api.get<Record<string, unknown>>("/api/users/me/preferences")
-  if (preferences.calendar_setup_complete !== true) {
-    await api.put("/api/users/me/preferences", { ...preferences, calendar_setup_complete: true })
-  }
+  await api.patch("/api/users/me/preferences", { calendar_setup_complete: true })
 }
 
 /**
@@ -123,11 +120,7 @@ export async function markCalendarSetupComplete(api: ApiClient): Promise<void> {
  * title is one client's full name. `null` goes back to the deployment default.
  */
 export async function letNamesBook(api: ApiClient, books: boolean | null): Promise<void> {
-  const preferences = await api.get<Record<string, unknown>>("/api/users/me/preferences")
-  await api.put("/api/users/me/preferences", {
-    ...preferences,
-    book_sessions_named_in_title: books,
-  })
+  await api.patch("/api/users/me/preferences", { book_sessions_named_in_title: books })
 }
 
 export interface Appointment {

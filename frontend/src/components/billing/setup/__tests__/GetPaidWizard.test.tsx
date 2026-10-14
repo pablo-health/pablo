@@ -21,11 +21,13 @@ import type { UserPreferences } from "@/lib/api/users"
 import { GetPaidWizard } from "../GetPaidWizard"
 
 const usePreferences = vi.hoisted(() => vi.fn())
-const savePreferences = vi.hoisted(() => vi.fn())
+const updatePreferences = vi.hoisted(() =>
+  vi.fn((next: unknown) => Promise.resolve(next)),
+)
 
 vi.mock("@/hooks/usePreferences", () => ({
   usePreferences: (...args: unknown[]) => usePreferences(...args),
-  useSavePreferences: () => ({ mutate: savePreferences, isPending: false }),
+  useUpdatePreferences: () => ({ mutateAsync: updatePreferences, isPending: false }),
 }))
 
 // Several steps mount components that fetch their own data: the settings cards
@@ -110,7 +112,7 @@ describe("the checklist", () => {
 
     fireEvent.click(screen.getByLabelText(PLATFORM))
 
-    expect(savePreferences).not.toHaveBeenCalled()
+    expect(updatePreferences).not.toHaveBeenCalled()
   })
 
   it("saves what she ticked when she continues", () => {
@@ -120,12 +122,12 @@ describe("the checklist", () => {
     fireEvent.click(screen.getByLabelText(SELF_PAY))
     fireEvent.click(screen.getByRole("button", { name: "Continue" }))
 
-    expect(savePreferences).toHaveBeenCalledWith(
-      expect.objectContaining({
-        billing_setup_state: ["platform", "self_pay"],
-        billing_setup_step: "plan",
-      }),
-    )
+    // Exactly the answer and the step: a copy of everything else she has
+    // saved would put back any key another screen changed since it loaded.
+    expect(updatePreferences).toHaveBeenCalledWith({
+      billing_setup_state: ["platform", "self_pay"],
+      billing_setup_step: "plan",
+    })
   })
 })
 
@@ -137,9 +139,10 @@ describe("not seeing clients yet", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /not seeing clients yet/i }))
 
-    expect(savePreferences).toHaveBeenCalledWith(
-      expect.objectContaining({ billing_setup_state: [], billing_setup_step: "plan" }),
-    )
+    expect(updatePreferences).toHaveBeenCalledWith({
+      billing_setup_state: [],
+      billing_setup_step: "plan",
+    })
   })
 
   it("moves her on rather than leaving her on the question", () => {
@@ -169,7 +172,7 @@ describe("the plan screen", () => {
 
     fireEvent.click(screen.getByTestId("wants-credentialing"))
 
-    expect(savePreferences).toHaveBeenCalledWith(
+    expect(updatePreferences).toHaveBeenCalledWith(
       expect.objectContaining({ billing_setup_wants_credentialing: true }),
     )
   })
@@ -242,7 +245,7 @@ describe("leaving mid-way", () => {
     fireEvent.click(screen.getByRole("button", { name: /finish later/i }))
 
     await waitFor(() =>
-      expect(savePreferences).toHaveBeenCalledWith(
+      expect(updatePreferences).toHaveBeenCalledWith(
         expect.objectContaining({ billing_setup_complete: true }),
       ),
     )

@@ -4,7 +4,7 @@
 
 import { useEffect, useRef } from "react"
 import { useAuth } from "@/lib/auth-context"
-import { getPreferences, saveThemePreference } from "@/lib/api/users"
+import { getPreferences, updatePreferences } from "@/lib/api/users"
 import { isThemeId, type ThemeId } from "@/lib/theme"
 import { useTheme } from "./ThemeProvider"
 
@@ -40,7 +40,7 @@ export function ThemeSync() {
     if (!user || lastPersisted.current === null) return
     if (lastPersisted.current === theme) return
     lastPersisted.current = theme
-    saveThemePreference(theme).catch(() => {})
+    updatePreferences({ theme }).catch(() => {})
   }, [user, theme])
 
   return null

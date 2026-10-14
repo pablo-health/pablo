@@ -2,8 +2,9 @@
 
 "use client"
 
-import { useCallback, useReducer } from "react"
+import { useCallback, useEffect, useReducer, useState } from "react"
 import type { UserPreferences } from "@/lib/api/users"
+import { createPreferencesWriter, type SavePreferences } from "./preferencesWriter"
 import type { CurrentStateId } from "./routes"
 import { HAS_PAYMENTS_SETUP } from "./setupSlots.extensions"
 
@@ -180,29 +181,39 @@ export function persistedPatch(action: SetupDraftAction): Partial<UserPreference
  *
  * `toggleState` is the one action that deliberately does NOT persist; see the
  * reducer.
+ *
+ * Every save goes through one writer for the life of the screen, which keeps
+ * saves of the same key in the order they were made: see
+ * `createPreferencesWriter`. Each sends only what its action changed, so a
+ * save never needs the stored preferences to have loaded first.
  */
 export function useBillingSetupDraft(
   preferences: UserPreferences | undefined,
-  save: (next: UserPreferences) => void,
+  save: SavePreferences,
 ) {
   const [draft, dispatch] = useReducer(setupDraftReducer, {})
   const saved = savedAnswersFrom(preferences)
   const answers = resolveAnswers(saved, draft)
 
+  // One writer for as long as the screen is up, so every save queues behind
+  // the last.
+  const [writer] = useState(createPreferencesWriter)
+  useEffect(() => {
+    writer.setSave(save)
+  }, [writer, save])
+
   const apply = useCallback(
     (action: SetupDraftAction) => {
       dispatch(action)
-      if (!preferences) return
       const patch = persistedPatch(action)
-      if (patch) save({ ...preferences, ...patch })
+      if (patch) writer.write(patch)
     },
-    [preferences, save],
+    [writer],
   )
 
   const settle = useCallback(() => {
-    if (!preferences) return
-    save({ ...preferences, billing_setup_complete: true })
-  }, [preferences, save])
+    writer.write({ billing_setup_complete: true })
+  }, [writer])
 
   return { answers, apply, settle }
 }

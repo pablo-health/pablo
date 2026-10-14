@@ -50,8 +50,7 @@ test.beforeAll(async ({ browser }) => {
   const { api } = practice
   await api.put("/api/users/me/practice/ai-notes-consent", { ask_clients_about_ai_notes: true })
   // Today, not the calendar's first-run steps, is where the script is offered.
-  const preferences = await api.get<Record<string, unknown>>("/api/users/me/preferences")
-  await api.put("/api/users/me/preferences", { ...preferences, calendar_setup_complete: true })
+  await api.patch("/api/users/me/preferences", { calendar_setup_complete: true })
 })
 
 test.afterAll(async () => {

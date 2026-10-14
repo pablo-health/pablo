@@ -109,9 +109,7 @@ def set_people_term(
     _: None = Depends(subscription_exempt),
 ) -> PeopleTermResponse:
     """Set the caller's own word. Reachable before MFA so onboarding can set it."""
-    prefs = user_repo.get_preferences(user.id)
-    prefs.people_term = request.people_term
-    user_repo.save_preferences(user.id, prefs)
+    user_repo.update_preferences(user.id, {"people_term": request.people_term})
     return load_people_term(user, user_repo, profile_repo)
 
 

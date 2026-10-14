@@ -4,8 +4,8 @@
 
 import {
   getPreferences,
-  savePreferences,
-  type UserPreferences,
+  updatePreferences,
+  type PreferenceChanges,
 } from "@/lib/api/users"
 
 /** Detect browser timezone for auto-populating user preferences. */
@@ -24,9 +24,13 @@ export function usePreferences(token?: string) {
   })
 }
 
-export function useSavePreferences(token?: string) {
+/**
+ * Save some preferences. Pass only the keys being changed — see
+ * `updatePreferences` for why a full copy must never be sent.
+ */
+export function useUpdatePreferences(token?: string) {
   return useAuthMutation({
-    mutationFn: (prefs: UserPreferences) => savePreferences(prefs, token),
+    mutationFn: (changes: PreferenceChanges) => updatePreferences(changes, token),
     onSuccess: (data, _variables, queryClient) => {
       queryClient.setQueryData(queryKeys.user.preferences(), data)
     },

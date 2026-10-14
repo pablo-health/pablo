@@ -10,14 +10,15 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated, Any
 
 import google.auth
 import google.auth.transport.requests
 import httpx
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Body, Depends, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import update
 
 from ..api_errors import BadRequestError, ForbiddenError, NotFoundError, ServerError
@@ -46,6 +47,7 @@ from ..models import (
     UserPreferences,
 )
 from ..models.audit import AuditAction, AuditCursor, ResourceType
+from ..models.user import preference_changes
 from ..repositories import (
     ClinicianProfile,
     ClinicianProfileRepository,
@@ -1106,8 +1108,34 @@ def save_preferences(
     user_repo: UserRepository = Depends(get_user_repository),
     _: None = Depends(subscription_exempt),
 ) -> UserPreferences:
-    """Save user preferences (full replace)."""
+    """Save user preferences (full replace).
+
+    Kept for older clients. A body built from a cached copy erases whatever
+    another save wrote since that copy was read, so the app uses PATCH.
+    """
     return user_repo.save_preferences(user.id, prefs)
+
+
+@router.patch("/me/preferences")
+def update_preferences(
+    changes: Annotated[dict[str, Any], Body()],
+    user: User = Depends(get_current_user),
+    user_repo: UserRepository = Depends(get_user_repository),
+    _: None = Depends(subscription_exempt),
+) -> UserPreferences:
+    """Change only the preferences named in the body; returns all of them.
+
+    Keys left out are untouched. A key sent as ``null`` is removed and reads
+    back as its default. Values are validated as PUT validates them, and an
+    unknown key is refused with 422.
+    """
+    try:
+        validated = preference_changes(changes)
+    except ValidationError as exc:
+        raise RequestValidationError(
+            [{**error, "loc": ("body", *error["loc"])} for error in exc.errors(include_url=False)]
+        ) from exc
+    return user_repo.update_preferences(user.id, validated)
 
 
 @router.put("/me/preferences/theme")
@@ -1118,9 +1146,7 @@ def save_theme_preference(
     _: None = Depends(subscription_exempt),
 ) -> UserPreferences:
     """Update just the UI theme without round-tripping the full prefs blob."""
-    prefs = user_repo.get_preferences(user.id)
-    prefs.theme = request.theme
-    return user_repo.save_preferences(user.id, prefs)
+    return user_repo.update_preferences(user.id, {"theme": request.theme})
 
 
 class AuditLogItem(BaseModel):

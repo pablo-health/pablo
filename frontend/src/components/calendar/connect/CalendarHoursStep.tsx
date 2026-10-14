@@ -43,7 +43,7 @@ import {
 } from "@/components/availability/WorkingHoursGrid"
 import { echoLines, timezoneOptions, type EchoLine } from "./hoursCapture"
 import { useCreateAvailabilityRule, useParseAvailabilityRules } from "@/hooks/useAvailability"
-import { detectBrowserTimezone, usePreferences, useSavePreferences } from "@/hooks/usePreferences"
+import { detectBrowserTimezone, usePreferences, useUpdatePreferences } from "@/hooks/usePreferences"
 import {
   proposalToCreateRequest,
   type CreateAvailabilityRuleRequest,
@@ -95,7 +95,7 @@ interface CalendarHoursStepProps {
 export function CalendarHoursStep({ step, onSaved, onSkip }: CalendarHoursStepProps) {
   const { data: preferences } = usePreferences()
   const people = usePeopleTerm()
-  const savePreferences = useSavePreferences()
+  const updatePreferences = useUpdatePreferences()
   const createRule = useCreateAvailabilityRule()
   const parseRules = useParseAvailabilityRules()
   const boxRef = useRef<HTMLTextAreaElement>(null)
@@ -206,7 +206,7 @@ export function CalendarHoursStep({ step, onSaved, onSkip }: CalendarHoursStepPr
       // below trigger then already uses the zone the hours were given in.
       if (preferences && chosenTimezone !== preferences.timezone) {
         try {
-          await savePreferences.mutateAsync({ ...preferences, timezone: chosenTimezone })
+          await updatePreferences.mutateAsync({ timezone: chosenTimezone })
         } catch {
           setError(SAVE_ERROR)
           setSaving(false)
@@ -227,7 +227,7 @@ export function CalendarHoursStep({ step, onSaved, onSkip }: CalendarHoursStepPr
       setError(partial ? PARTIAL_SAVE_ERROR : SAVE_ERROR)
       setSaving(false)
     },
-    [chosenTimezone, createRule, onSaved, preferences, savePreferences, saving, unsaved]
+    [chosenTimezone, createRule, onSaved, preferences, updatePreferences, saving, unsaved]
   )
 
   const lines = proposals ? echoLines(proposals) : []
