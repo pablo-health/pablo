@@ -251,6 +251,60 @@ describe("catalog-driven note view", () => {
     })
   })
 
+  it("opens a new note written by hand in the editor, with the chart's fields filled in", async () => {
+    vi.mocked(getNoteType).mockResolvedValue(DAP)
+    const onSave = vi.fn<(content: NoteContent) => void>()
+    render(
+      <NoteViewer
+        note={createMockNote({
+          note_type: "dap",
+          session_id: null,
+          content_edited: { data: { observations: ["Sertraline 100 mg"] } },
+        })}
+        onSave={onSave}
+      />,
+      { wrapper },
+    )
+
+    const observations = await screen.findByLabelText("Observations")
+    expect(observations).toHaveValue("Sertraline 100 mg")
+    expect(screen.getByLabelText("Client report")).toHaveValue("")
+    // Written by hand: nothing marks it as drafted or edited, and nothing to cancel back to.
+    expect(screen.queryByText("AI Generated")).not.toBeInTheDocument()
+    expect(screen.queryByText("Edited")).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /cancel/i })).not.toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText("Client report"), {
+      target: { value: "First session" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }))
+    expect(noteContentToJson(onSave.mock.calls[0][0])).toEqual({
+      data: { subjective: "First session", observations: ["Sertraline 100 mg"] },
+      assessment: { impression: "" },
+      plan: { next_steps: [] },
+    })
+  })
+
+  it("shows a note written by hand as saved once it has been saved", async () => {
+    vi.mocked(getNoteType).mockResolvedValue(DAP)
+    render(
+      <NoteViewer
+        note={createMockNote({
+          note_type: "dap",
+          session_id: null,
+          content_edited: { data: { observations: ["Sertraline 100 mg"] } },
+          updated_at: "2024-01-15T14:45:00Z",
+        })}
+        onSave={vi.fn()}
+      />,
+      { wrapper },
+    )
+
+    expect(await screen.findByText("Sertraline 100 mg")).toBeInTheDocument()
+    expect(screen.queryByLabelText("Observations")).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /edit/i })).toBeInTheDocument()
+  })
+
   it("offers no editing when the note is read-only", async () => {
     vi.mocked(getNoteType).mockResolvedValue(DAP)
     render(

@@ -60,6 +60,7 @@ from ..notes import (
     get_note_type_authorizer,
 )
 from ..notes.chart_context import chart_context_for
+from ..notes.chart_fields import compose_from_chart, rendered_fields
 from ..notes.practice_types import validate_note_inputs
 from ..people_term_lookup import worker_people_term_lookup
 from ..problems.dependencies import get_problem_service
@@ -120,6 +121,9 @@ from ..settings import get_settings
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from ..models import Patient
     from ..problems.service import ProblemService
     from ..scheduling_engine.models.appointment import Appointment
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
@@ -592,6 +596,7 @@ def create_standalone_note(
     authorizer: NoteTypeAuthorizer = Depends(get_note_type_authorizer),
     scheduling_service: SchedulingService = Depends(get_scheduling_service),
     problems: ProblemService = Depends(get_problem_service),
+    proposal_step: ChartProposalStep = Depends(get_chart_proposal_step),
     audit: AuditService = Depends(get_audit_service),
 ) -> NoteResponse:
     """Create a patient-owned note with no associated recording session.
@@ -603,7 +608,9 @@ def create_standalone_note(
     pipeline used by the session-upload path runs off-request on a Cloud
     Tasks worker (``/api/internal/jobs/generate-standalone-note``); poll
     ``GET /api/notes/{id}`` for ``status``. With no dictation, the note is
-    stored empty (``201``) for the clinician to fill via PATCH.
+    stored (``201``) for the clinician to fill via PATCH: it has no draft, and
+    starts as the clinician's copy with the fields a draft prints from the
+    chart and the entered values already in them (``_from_chart``).
 
     If ``appointment_id`` and any billing-code field are supplied, this is
     also where a clinician codes the visit — the primary coding surface,
@@ -671,11 +678,17 @@ def create_standalone_note(
             str(exc), {"note_type": request.note_type}, code="INVALID_NOTE_INPUTS"
         ) from exc
 
+    content_edited = (
+        _from_chart(definition, patient, user.id, note_inputs, problems, proposal_step)
+        if request.dictation_transcript is None and request.content_edited is None
+        else request.content_edited
+    )
+
     note = note_service.create_standalone_note(
         patient_id=patient.id,
         note_type=request.note_type,
         content=None,
-        content_edited=request.content_edited,
+        content_edited=content_edited,
         status="processing" if request.dictation_transcript is not None else "complete",
         user_id=user.id,
         note_type_version=definition.version,
@@ -723,6 +736,26 @@ def create_standalone_note(
             )
 
     return NoteResponse.from_note(note)
+
+
+def _from_chart(
+    definition: NoteTypeDefinition,
+    patient: Patient,
+    user_id: str,
+    inputs: Mapping[str, str],
+    problems: ProblemService,
+    proposal_step: ChartProposalStep,
+) -> dict[str, Any] | None:
+    """What a note written by hand opens with: the fields code writes in a draft.
+
+    Kept as the clinician's copy, not as content, because no draft was written:
+    the note still reads as written by hand, and every field stays editable. No
+    model is asked. ``None`` when the type prints nothing, or nothing is there.
+    """
+    if not rendered_fields(definition):
+        return None
+    chart = proposal_step.chart(patient, user_id, problems.problems(patient.id))
+    return compose_from_chart(definition, chart, inputs) or None
 
 
 def _visit_codes(

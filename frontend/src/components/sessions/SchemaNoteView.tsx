@@ -53,6 +53,11 @@ export interface SchemaNoteViewProps {
   version: number | null
   note: SchemaNoteContent | null
   noteEdited: SchemaNoteContent | null
+  /**
+   * A note written by hand and not yet saved. It opens in the editor like a
+   * blank one, with whatever was filled in from the chart.
+   */
+  newByHand?: boolean
   readonly?: boolean
   onSave?: (editedNote: NoteContent) => void
   /** Offered beside each stated diagnosis while the note is not being edited. */
@@ -164,6 +169,7 @@ export function SchemaNoteBody({
   definition,
   note,
   noteEdited,
+  newByHand = false,
   readonly = false,
   onSave,
   diagnosisAction,
@@ -173,22 +179,23 @@ export function SchemaNoteBody({
 }: SchemaNoteBodyProps) {
   const people = usePeopleTerm()
   // Same blank-note behaviour as the SOAP and Narrative views: a manually
-  // created, empty note opens straight in the editor.
+  // created note opens straight in the editor until it is first saved, empty
+  // or with what was filled in from the chart.
   const isBlank = !noteEdited && !note
   const canEdit = !readonly && !!onSave
-  const startEmptyEditing = isBlank && canEdit
-  const isManual = isBlank
+  const isManual = isBlank || newByHand
+  const startEditing = isManual && canEdit
 
   const displaySections = (noteEdited ?? note)?.sections ?? {}
-  const hasDisplay = !!(noteEdited ?? note) || startEmptyEditing
+  const hasDisplay = !!(noteEdited ?? note) || startEditing
   const isEdited = !!noteEdited
 
-  const [editMode, setEditMode] = useState(startEmptyEditing)
+  const [editMode, setEditMode] = useState(startEditing)
   const [drafts, setDrafts] = useState<Drafts>(() =>
-    startEmptyEditing ? draftsFrom(definition, {}) : {},
+    startEditing ? draftsFrom(definition, displaySections) : {},
   )
   const [initialDrafts, setInitialDrafts] = useState<string>(() =>
-    startEmptyEditing ? JSON.stringify(draftsFrom(definition, {})) : "",
+    startEditing ? JSON.stringify(draftsFrom(definition, displaySections)) : "",
   )
   const [showConfirmDialog, setShowConfirmDialog] = useState(false)
 

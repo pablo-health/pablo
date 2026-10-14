@@ -32,6 +32,7 @@ from .models import ProposalRun, RunStatus
 from .service import ChartProposalService
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from typing import Any
 
     from ..medications.repository import MedicationRepository
@@ -39,6 +40,7 @@ if TYPE_CHECKING:
     from ..notes import NoteTypeDefinition
     from ..notes.chart_context import ChartContext
     from ..people_term_lookup import PeopleTermLookup
+    from ..problems.models import Problem
     from ..repositories import ChartHistoryRepository, ChartProposalRepository
     from ..services.note_generation_service import GeneratedNote, NoteGenerationService
     from .models import Drafted
@@ -71,10 +73,16 @@ class ChartProposalStep:
         self._medications = medications
         self._people = people
 
-    def chart(self, patient: Patient, user_id: str | None = None) -> ChartContext:
+    def chart(
+        self,
+        patient: Patient,
+        user_id: str | None = None,
+        problems: Iterable[Problem] = (),
+    ) -> ChartContext:
         """What the proposals are measured against, for a caller that has no chart yet.
         The medication list is read as ``user_id`` sees it, and the chart names the
-        person in their word, when given."""
+        person in their word, when given. ``problems`` is the problem list, for a
+        caller that prints the diagnoses from it; proposals never read it."""
         medications = (
             self._medications.list_by_patient(patient.id, user_id)
             if self._medications is not None and user_id is not None
@@ -82,7 +90,7 @@ class ChartProposalStep:
         )
         return chart_context_for(
             patient,
-            [],
+            problems,
             medications,
             history=self._history.entries(patient.id),
             person=self.person(user_id) if user_id is not None else None,

@@ -129,6 +129,7 @@ export function NoteViewer({
         version={note.note_type_version}
         note={asSchema(baseContent)}
         noteEdited={asSchema(editedContent)}
+        newByHand={isNewByHand(note) && !pendingEdited}
         readonly={viewOnly}
         pdfMetadata={pdfMetadata}
         onSave={onSave}
@@ -152,6 +153,15 @@ export function NoteViewer({
       className={className}
     />
   )
+}
+
+/**
+ * A note written by hand that nobody has saved since it was created. It has
+ * no draft, only the clinician's copy, which may start with what Pablo filled
+ * in from the chart; any save moves `updated_at` on.
+ */
+function isNewByHand(note: Note): boolean {
+  return note.session_id === null && !note.content && note.updated_at === note.created_at
 }
 
 function asSOAP(n: NoteContent | null): SOAPNoteContent | null {
