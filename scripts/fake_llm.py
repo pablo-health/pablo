@@ -317,7 +317,8 @@ def _screened(chart: _Chart, key: str, updates: dict[str, str], unchanged: set[s
         screen = "(asked this visit: no change)"
     else:
         screen = "(not asked this visit)"
-    return f"{chart.history.get(key, 'Not recorded')} {screen}"
+    # With no baseline the screen stands alone, as the draft prints it.
+    return " ".join(part for part in (chart.history.get(key, ""), screen) if part)
 
 
 def _reported_medications(text: str) -> list[str]:

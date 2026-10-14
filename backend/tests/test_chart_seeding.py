@@ -64,6 +64,11 @@ INTAKE_ALLERGY_DENIAL = 'Not recorded (stated this visit: "No. None that I know 
         ('Not recorded (stated this visit: "vapes since June")', "vapes since June"),
         ("Not recorded (asked this visit: no change)", ""),
         ("Not recorded (not asked this visit)", ""),
+        # The follow-up's shape now: an empty chart prints nothing before the mark.
+        ("(stated this visit: denied)", "Denies."),
+        ('(stated this visit: "vapes since June")', "vapes since June"),
+        ("(asked this visit: no change)", ""),
+        ("(not asked this visit)", ""),
         # A mark neither shape writes states nothing: the rule does not guess.
         ("Not recorded (not asked this visit: asked this visit). Client denied.", ""),
     ],
@@ -96,6 +101,13 @@ def test_both_shapes_seed_by_the_same_rule_without_a_note_type() -> None:
             "opioids": "Not recorded (not asked this visit)",
         }
     }
+    follow_up_now = {
+        "substance_use": {
+            "alcohol": "Two beers a week. (asked this visit: no change)",
+            "cocaine": "(stated this visit: denied)",
+            "opioids": "(not asked this visit)",
+        }
+    }
     evaluation = {"substance_use": {"alcohol": "Two beers a week.", "cocaine": "Denies."}}
 
     def seeded(content: dict[str, Any]) -> dict[str, str]:
@@ -104,7 +116,9 @@ def test_both_shapes_seed_by_the_same_rule_without_a_note_type() -> None:
             for p in recorded_proposals(content, recorded_keys=["alcohol"])
         }
 
-    assert seeded(follow_up) == seeded(evaluation) == {"cocaine": "Denies."}
+    assert (
+        seeded(follow_up) == seeded(follow_up_now) == seeded(evaluation) == {"cocaine": "Denies."}
+    )
 
 
 @pytest.mark.parametrize(

@@ -285,6 +285,11 @@ def test_a_note_proposes_each_stated_field_the_chart_lacks_as_written(key: str) 
         ("asked — no change", ""),
         ("Not recorded (not asked this visit)", ""),
         ("Not recorded (asked this visit: no change)", ""),
+        # As a draft prints it now: an empty chart puts nothing before the mark.
+        ("", ""),
+        ("(not asked this visit)", ""),
+        ("(asked this visit: no change)", ""),
+        ('(stated this visit: "a few times a month.")', "a few times a month."),
         (
             "Not recorded (stated this visit: lives with a partner since May)",
             "lives with a partner since May",

@@ -12,11 +12,12 @@ review; there is no transcript evidence to cite.
 A field's value reads one of three ways:
 
 - Nothing to record: empty, "Not asked.", "Not stated.", "Not recorded" or
-  "None recorded" alone, or "Not recorded" followed by a mark that states
-  nothing ("(not asked this visit)", "(asked this visit: no change)").
-- A chart-fed field the chart was empty for: "Not recorded (stated this
-  visit: …)". What the mark quotes is recorded; a substance screen marked
-  "(stated this visit: denied)" is recorded as "Denies.".
+  "None recorded" alone, or a mark that states nothing ("(not asked this
+  visit)", "(asked this visit: no change)"), alone or after "Not recorded".
+- A chart-fed field the chart was empty for: "(stated this visit: …)", or
+  "Not recorded (stated this visit: …)" as a note drafted before printed it.
+  What the mark quotes is recorded; a substance screen marked "(stated this
+  visit: denied)" is recorded as "Denies.".
 - Anything else is what the visit drafted, recorded as written: a history
   answer, a substance answer, or a substance denial ("Denies.", "Denies
   smoking or vaping.").
@@ -57,6 +58,7 @@ _NOTHING_STATED = frozenset(
 )
 
 _STATED_OPEN = "(stated this visit:"
+_VISIT = "this visit"
 
 #: A substance screen's denial mark, and the baseline it records.
 _DENIED_MARKS = frozenset({"denied", "denies"})
@@ -70,19 +72,27 @@ def field_text(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
+def _is_mark(text: str) -> bool:
+    """Whether ``text`` is one visit mark and nothing else: "(... this visit ...)"."""
+    return text.startswith("(") and text.endswith(")") and _VISIT in text.lower()
+
+
 def recorded_text(text: str) -> str:
     """What a field states for the chart, or "" when it states nothing (the rule above)."""
     stated = text.strip()
     for empty in _EMPTY_CHART:
         if stated.lower().startswith(empty):
-            rest = stated[len(empty) :].strip().lstrip(".").strip()
-            # Any other mark after it ("(not asked this visit)") states nothing.
-            if not (rest.lower().startswith(_STATED_OPEN) and rest.endswith(")")):
+            stated = stated[len(empty) :].strip().lstrip(".").strip()
+            if not _is_mark(stated):
                 return ""
-            stated = rest[len(_STATED_OPEN) : -1].strip().strip('"“”').strip()
-            if stated.lower().rstrip(".").strip() in _DENIED_MARKS:
-                return DENIES
             break
+    if _is_mark(stated):
+        # Any mark but what was stated ("(not asked this visit)") states nothing.
+        if not stated.lower().startswith(_STATED_OPEN):
+            return ""
+        stated = stated[len(_STATED_OPEN) : -1].strip().strip('"“”').strip()
+        if stated.lower().rstrip(".").strip() in _DENIED_MARKS:
+            return DENIES
     return "" if stated.lower().rstrip(".").strip() in _NOTHING_STATED else stated
 
 

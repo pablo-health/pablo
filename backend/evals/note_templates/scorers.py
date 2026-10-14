@@ -478,7 +478,7 @@ def _baseline_then_screen(draft: Draft, case: TemplateCase) -> list[str]:
     for k in (*graded, *e.substances_stated):
         path = f"substance_use.{k}"
         chart_text, screen = split_screen(_text(draft, "substance_use", k))
-        if normalize(chart_text) != normalize(baseline.get(k, "Not recorded")):
+        if normalize(chart_text) != normalize(baseline.get(k, "")):
             problems.append(f"{path}: not the chart's baseline as recorded")
         answer = (
             screen.removeprefix(STATED_PREFIX).strip(' )"')
@@ -597,7 +597,7 @@ def medications_from_chart(draft: Draft, case: TemplateCase) -> list[str]:
         return []
     path = "medications.current_medications"
     items = [_without_heading(i) for i in _items(draft, *CURRENT_MEDICATIONS) if not _is_heading(i)]
-    chart_lines = expected or ("None recorded",)
+    chart_lines = expected
     listed = {normalize(i) for i in items}
     wanted = {normalize(line) for line in chart_lines}
     problems = [
@@ -652,7 +652,8 @@ def allergies_never_dropped(draft: Draft, case: TemplateCase) -> list[str]:
     elif chart.allergy_status == "recorded" and chart.allergies:
         kept = all(normalize(a["substance"]) in said for a in chart.allergies)
     else:
-        kept = "not recorded" in said
+        # Nothing on the chart: nothing stands in for it, only what was stated.
+        kept = not said or said.startswith(normalize(STATED_MARK))
     problems = [] if kept else [f"{path}: the chart's {allergies_line(chart)!r} was dropped"]
     stated = case.expected.allergies_stated
     if stated and not any(words in said for words in stated):
@@ -677,7 +678,8 @@ def suffix_only_where_stated(draft: Draft, case: TemplateCase) -> list[str]:
 
 def history_from_chart(draft: Draft, case: TemplateCase) -> list[str]:
     """Each history field the template fills from the chart starts with the chart's
-    text, word for word, or "Not recorded"; anything after it is marked as stated."""
+    text, word for word, or with nothing where the chart has none; anything after
+    it is marked as stated."""
     recorded = {f.key: f.text for f in case.history}
     problems = []
     for section, key in chart_fed_fields(case):
@@ -685,13 +687,13 @@ def history_from_chart(draft: Draft, case: TemplateCase) -> list[str]:
             continue
         text = normalize(_text(draft, section, key))
         path = f"{section}.{key}"
-        chart = normalize(recorded.get(key, "Not recorded"))
+        chart = normalize(recorded.get(key, ""))
         rest = text.removeprefix(chart).strip() if text.startswith(chart) else None
         if rest is None or (rest and not rest.startswith("stated this visit")):
             problems.append(
                 f"{path}: not the chart's text as recorded"
                 if key in recorded
-                else f'{path}: nothing on the chart, so it should read "Not recorded"'
+                else f"{path}: nothing on the chart, so it should be empty"
             )
         elif rest.rstrip(":") == "stated this visit":
             problems.append(f"{path}: an empty (stated this visit: ...) suffix")

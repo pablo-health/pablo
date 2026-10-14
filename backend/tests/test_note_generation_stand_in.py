@@ -25,6 +25,8 @@ from app.notes.chart_context import (
     ChartMedication,
     ChartProblem,
 )
+from app.notes.chart_fields import NOT_ASKED, rendered_fields
+from app.notes.field_sources import PROBLEMS, is_substance
 from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
 from app.notes.spec_templates import TEMPLATES_DIR
 from app.routes.notes import get_note_generation_service
@@ -356,7 +358,7 @@ def test_a_follow_up_states_the_charts_medication_list_not_the_visits_changes(
     assert not any("bupropion" in line.lower() for line in current)
 
 
-def test_a_follow_up_with_no_medications_on_the_chart_says_none_recorded(
+def test_a_follow_up_with_no_medications_on_the_chart_lists_none(
     stand_in: list[str],
 ) -> None:
     definition = _follow_up()
@@ -371,7 +373,63 @@ def test_a_follow_up_with_no_medications_on_the_chart_says_none_recorded(
         chart=ChartContext(),
     )
 
-    assert generated.content["medications"]["current_medications"] == ["None recorded"]
+    assert generated.content["medications"]["current_medications"] == []
+
+
+def _strings(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [s for v in value.values() for s in _strings(v)]
+    if isinstance(value, list):
+        return [s for v in value for s in _strings(v)]
+    return []
+
+
+def _drafted_over_an_empty_chart(template: str) -> tuple[NoteTypeDefinition, dict[str, Any]]:
+    spec = PracticeNoteTypeSpec.model_validate(
+        json.loads((TEMPLATES_DIR / f"{template}.json").read_text())["spec"]
+    )
+    definition = to_definition(f"custom.{template}", 1, spec)
+    generated = _service().generate_note(
+        definition.key,
+        TRANSCRIPT,
+        PATIENT,
+        NOW,
+        inputs={},
+        definition=definition,
+        chart=ChartContext(),
+    )
+    return definition, generated.content
+
+
+@pytest.mark.parametrize("template", ["psychiatric_follow_up", "psychiatric_evaluation"])
+def test_a_draft_over_an_empty_chart_leaves_the_charts_fields_empty(
+    stand_in: list[str], template: str
+) -> None:
+    """Where Pablo has nothing for a field, the field is empty; a topic the visit
+    never covered still says so."""
+    definition, content = _drafted_over_an_empty_chart(template)
+
+    for rendered in rendered_fields(definition):
+        value = content[rendered.section][rendered.field.key]
+        if is_substance(rendered.source):
+            assert value == NOT_ASKED, rendered.field.key
+        elif rendered.source != PROBLEMS:  # The stand-in names a diagnosis in the visit.
+            assert not value, rendered.field.key
+
+
+def test_a_follow_up_drafted_over_an_empty_chart_holds_no_placeholder_anywhere(
+    stand_in: list[str],
+) -> None:
+    """Every field the follow-up takes from the chart is written in code, so the
+    whole note is free of them."""
+    _, content = _drafted_over_an_empty_chart("psychiatric_follow_up")
+
+    placeholders = [
+        s for s in _strings(content) if "not recorded" in s.lower() or "none recorded" in s.lower()
+    ]
+    assert placeholders == []
 
 
 def test_the_stand_in_drafts_risk_mental_status_and_measures_by_their_own_call(
@@ -503,9 +561,9 @@ def test_a_follow_up_writes_the_charts_history_word_for_word(stand_in: list[str]
     assert content["substance_use"]["alcohol"] == (
         "Two glasses of wine on weekends. (not asked this visit)"
     )
-    # A field the chart has nothing for reads as a model writes it, not as a draft of the visit.
-    assert content["social_history"]["relationships"] == "Not recorded"
-    assert content["family_history"]["family_medical"] == "Not recorded"
+    # A field the chart has nothing for is empty: nothing stands in for it.
+    assert content["social_history"]["relationships"] == ""
+    assert content["family_history"]["family_medical"] == ""
 
 
 def _draft_current_medications(chart: ChartContext, transcript: str) -> list[str]:
@@ -533,7 +591,6 @@ def test_medications_the_client_reports_are_added_after_an_empty_chart(
         "[00:04] Client: I'm taking sertraline 50 mg and trazodone 50 mg at night.",
     )
     assert current == [
-        "None recorded",
         '(stated this visit: "sertraline 50 mg")',
         '(stated this visit: "trazodone 50 mg at night")',
     ]
@@ -644,13 +701,13 @@ def test_the_stand_in_proposes_what_a_clinician_line_says_for_the_medication_lis
         (
             "[00:04] Client: No change in alcohol.",
             "Two glasses of wine a week. (asked this visit: no change)",
-            "Not recorded (not asked this visit)",
+            "(not asked this visit)",
         ),
         (
             "[00:04] Client: Update on alcohol: stopped drinking in September.\n"
             "[00:06] Client: Update on cannabis: a few times a month.",
             'Two glasses of wine a week. (stated this visit: "stopped drinking in September.")',
-            'Not recorded (stated this visit: "a few times a month.")',
+            '(stated this visit: "a few times a month.")',
         ),
     ],
 )
