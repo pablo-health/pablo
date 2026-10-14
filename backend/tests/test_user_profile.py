@@ -106,6 +106,7 @@ class TestUpdateProfile:
         mock_user_repo.update(mock_user)
         practice = SimpleNamespace(
             owner_email="",
+            owner_user_id=None,
             name="Renamed Practice",
             phone="555-010-0100",
             address="5 Oak Ave, Town, NY 10001",
@@ -139,7 +140,12 @@ class TestUpdateProfile:
         prefilling a form needs to tell "nothing on file" from "blank"."""
         mock_user_repo.update(mock_user)
         practice = SimpleNamespace(
-            owner_email="", name="Renamed Practice", phone=None, address="   ", people_term=None
+            owner_email="",
+            owner_user_id=None,
+            name="Renamed Practice",
+            phone=None,
+            address="   ",
+            people_term=None,
         )
         fake_session = MagicMock()
         fake_session.get.return_value = practice
@@ -841,6 +847,7 @@ class TestPracticeRename:
         defaults: dict[str, Any] = {
             "id": "practice-1",
             "owner_email": "test@example.com",
+            "owner_user_id": None,
             "name": "Jane Doe",
             "phone": None,
             "address": None,
@@ -989,6 +996,36 @@ class TestPracticeRename:
                 mock_settings.return_value.is_saas = False
                 body = client.get("/api/users/me/status").json()
             assert body["is_practice_owner"] is expected, owner_email
+
+    def test_record_activity_is_offered_to_the_recorded_owner_only(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        """Narrower than ``is_practice_owner`` on purpose: a practice
+        registered under no email calls every member its owner for renaming,
+        but only the account it recorded may read who acted on a record —
+        the same test the route and the audit row policy make."""
+        mock_user_repo.update(mock_user)
+        for owner_user_id, expected in (
+            (mock_user.id, True),
+            (None, False),
+            ("someone-else", False),
+        ):
+            fake_session = MagicMock()
+            fake_session.get.return_value = self._practice(
+                owner_email="", owner_user_id=owner_user_id
+            )
+            with (
+                patch("app.settings.get_settings") as mock_settings,
+                patch(
+                    "app.auth.service._resolve_practice_from_email",
+                    return_value=("practice-1", "practice_1"),
+                ),
+                patch("app.db.get_db_session", return_value=fake_session),
+            ):
+                mock_settings.return_value.is_saas = False
+                body = client.get("/api/users/me/status").json()
+            assert body["is_practice_owner"] is True, owner_user_id
+            assert body["can_view_record_activity"] is expected, owner_user_id
 
 
 class TestAudioRetentionSelfService:

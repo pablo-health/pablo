@@ -19,6 +19,7 @@ from ..audit import (
 )
 
 if TYPE_CHECKING:
+    from sqlalchemy import Select
     from sqlalchemy.orm import Session
 
     from ...models.audit import AuditCursor, AuditLogEntry
@@ -58,11 +59,26 @@ class PostgresAuditRepository(AuditRepository):
         limit: int = 100,
         before: AuditCursor | None = None,
     ) -> list[AuditLogEntry]:
-        from ...models.audit import AuditLogEntry  # noqa: PLC0415
-
         query = select(AuditLogRow).where(AuditLogRow.user_id == user_id)
         if since is not None:
             query = query.where(AuditLogRow.timestamp > since)
+        return self._newest_first(query, limit, before)
+
+    def list_for_patient(
+        self,
+        patient_id: str,
+        limit: int = 100,
+        before: AuditCursor | None = None,
+    ) -> list[AuditLogEntry]:
+        # No actor filter: whose rows come back is the row policy's call. An
+        # actor reads their own; the practice owner also reads every row about
+        # a client they have access to.
+        query = select(AuditLogRow).where(AuditLogRow.patient_id == patient_id)
+        return self._newest_first(query, limit, before)
+
+    def _newest_first(
+        self, query: Select[tuple[AuditLogRow]], limit: int, before: AuditCursor | None
+    ) -> list[AuditLogEntry]:
         if before is not None:
             # Row-value comparison, so the id breaks ties inside one
             # timestamp rather than a page boundary dropping rows that
@@ -76,26 +92,7 @@ class PostgresAuditRepository(AuditRepository):
             )
         query = query.order_by(AuditLogRow.timestamp.desc(), AuditLogRow.id.desc()).limit(limit)
 
-        rows = self._session.execute(query).scalars().all()
-        return [
-            AuditLogEntry(
-                id=row.id,
-                timestamp=row.timestamp.isoformat().replace("+00:00", "Z"),
-                expires_at=row.expires_at.isoformat().replace("+00:00", "Z"),
-                user_id=row.user_id,
-                actor_type=row.actor_type,
-                actor_component=row.actor_component,
-                action=row.action,
-                resource_type=row.resource_type,
-                resource_id=row.resource_id,
-                patient_id=row.patient_id,
-                session_id=row.session_id,
-                ip_address=row.ip_address,
-                user_agent=row.user_agent,
-                changes=row.changes,
-            )
-            for row in rows
-        ]
+        return [_row_to_entry(row) for row in self._session.execute(query).scalars().all()]
 
     def append(self, entry: AuditLogEntry) -> None:
         row = AuditLogRow(
@@ -200,6 +197,27 @@ class PostgresAuditRepository(AuditRepository):
 
         _assert_phi_free(out)
         return out
+
+
+def _row_to_entry(row: AuditLogRow) -> AuditLogEntry:
+    from ...models.audit import AuditLogEntry  # noqa: PLC0415
+
+    return AuditLogEntry(
+        id=row.id,
+        timestamp=row.timestamp.isoformat().replace("+00:00", "Z"),
+        expires_at=row.expires_at.isoformat().replace("+00:00", "Z"),
+        user_id=row.user_id,
+        actor_type=row.actor_type,
+        actor_component=row.actor_component,
+        action=row.action,
+        resource_type=row.resource_type,
+        resource_id=row.resource_id,
+        patient_id=row.patient_id,
+        session_id=row.session_id,
+        ip_address=row.ip_address,
+        user_agent=row.user_agent,
+        changes=row.changes,
+    )
 
 
 def _row_to_dict(row: AuditLogRow) -> dict:

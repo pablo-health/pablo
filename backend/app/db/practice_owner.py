@@ -55,6 +55,8 @@ from . import PLATFORM_SCHEMA
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
+    from .platform_models import PracticeRow
+
 logger = logging.getLogger(__name__)
 
 #: Fill the owner from the account signing in. The predicate carries the whole
@@ -151,3 +153,18 @@ def reconcile_practice_owners(engine: Engine) -> int:
     if filled:
         logger.info("Recorded the owner of %d practice(s) from the registry.", filled)
     return filled
+
+
+def is_recorded_owner(practice: PracticeRow | None, user_id: str) -> bool:
+    """Whether *user_id* is the account this practice recorded as its owner.
+
+    The recorded owner, not "an account whose email matches": this is the
+    test the audit log's owner-read policy makes in the database, so a route
+    that gates on it and the rows that route can read agree about who the
+    owner is. A practice that has recorded nobody yet has no owner here.
+    """
+    return (
+        practice is not None
+        and practice.owner_user_id is not None
+        and str(practice.owner_user_id) == user_id
+    )

@@ -10,6 +10,7 @@
  * chart, with a different data classification than the one it claims.
  */
 
+import type { RecordActivityItem } from "@/lib/api/patientActivity"
 import type { AuditLogItem } from "@/lib/api/users"
 import type { PeopleWords } from "@/lib/peopleTerm"
 
@@ -117,4 +118,72 @@ export function describeAuditResource(entry: AuditLogItem, people?: PeopleWords)
  */
 export function isSomeoneElsesAction(entry: AuditLogItem): boolean {
   return entry.actor_type !== "clinician"
+}
+
+/**
+ * What an action looks like as the rest of a sentence about who did it:
+ * "viewed the chart", "sent a message".
+ *
+ * A short list on purpose, covering what a reviewer looks for on a record —
+ * opened, changed, signed, and what the person in care did through the
+ * portal. Anything else falls back to `formatAuditAction`, which is plain if
+ * less natural, so a new server action is never shown wrongly, only plainly.
+ */
+const ACTIVITY_PHRASES: Record<string, string> = {
+  patient_created: "created the record",
+  patient_viewed: "viewed the chart",
+  patient_updated: "edited the chart",
+  patient_exported: "exported the chart",
+  patient_activity_viewed: "viewed record activity",
+  chart_closed: "closed the chart",
+  chart_reopened: "reopened the chart",
+  session_viewed: "opened a session",
+  session_updated: "edited a session",
+  session_finalized: "finished a session",
+  note_signed: "signed a note",
+  note_addendum_added: "added an addendum",
+  patient_document_viewed: "viewed a document",
+  patient_document_uploaded: "uploaded a document",
+  patient_document_downloaded: "downloaded a document",
+  patient_portal_invite_issued: "sent a portal invitation",
+  patient_portal_session_redeemed: "signed in to the portal",
+  patient_session_revoked: "signed out of the portal",
+  patient_access_recovery_requested: "asked for a new sign-in link",
+  patient_profile_updated: "updated their profile",
+  patient_profile_contact_changed: "changed their contact details",
+  patient_message_thread_created: "started a conversation",
+  patient_message_sent: "sent a message",
+  patient_message_thread_read: "read a message",
+  patient_intake_draft_saved: "saved forms to finish later",
+  patient_intake_submitted: "submitted forms",
+  patient_consent_signed: "signed a consent form",
+  refill_request_created: "requested a refill",
+  appointment_created: "booked an appointment",
+  appointment_updated: "changed an appointment",
+  appointment_cancelled: "cancelled an appointment",
+}
+
+/** Who acted, as the owner reading the record would say it. */
+export function describeActivityActor(item: RecordActivityItem, people: PeopleWords): string {
+  if (item.is_you) return "You"
+  switch (item.actor_type) {
+    case "clinician":
+      return item.actor_name ?? "A clinician"
+    case "patient":
+      return people.One
+    case "staff":
+      return item.actor_name ? `${item.actor_name} (support)` : "Support"
+    case "anonymous":
+      return "Someone booking online"
+    default:
+      // A background job. Its component name is for engineers, not readers.
+      return "Pablo"
+  }
+}
+
+/** "Client sent a message", "You viewed the chart". */
+export function describeActivity(item: RecordActivityItem, people: PeopleWords): string {
+  const who = describeActivityActor(item, people)
+  const phrase = ACTIVITY_PHRASES[item.action]
+  return phrase ? `${who} ${phrase}` : `${who}: ${formatAuditAction(item.action, people)}`
 }

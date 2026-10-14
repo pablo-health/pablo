@@ -72,6 +72,11 @@ export interface UserStatusBase {
    * BAA again. Undefined when no practice resolves for the user.
    */
   is_practice_owner?: boolean
+  /**
+   * Whether this user may read who acted on a client's record: the account
+   * the practice recorded as its owner. Undefined when no practice resolves.
+   */
+  can_view_record_activity?: boolean
   practice_phone?: string | null
   /**
    * The practice's address, one free-text line as it was typed rather than

@@ -3147,6 +3147,12 @@ CREATE POLICY rls_audit_actor_access ON __TENANT_SCHEMA__.audit_logs USING (((us
 
 
 
+CREATE POLICY rls_audit_owner_client_read ON __TENANT_SCHEMA__.audit_logs FOR SELECT USING (((patient_id IS NOT NULL) AND __TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying) AND (EXISTS ( SELECT 1
+   FROM platform.practices p
+  WHERE (((p.owner_user_id)::text = current_setting('app.current_user_id'::text, true)) AND ((to_regclass(((p.schema_name)::text || '.audit_logs'::text)))::oid = ('__TENANT_SCHEMA__.audit_logs'::regclass)::oid))))));
+
+
+
 CREATE POLICY rls_audit_purge_delete ON __TENANT_SCHEMA__.audit_logs FOR DELETE USING ((current_setting('app.allow_audit_purge'::text, true) = 'on'::text));
 
 

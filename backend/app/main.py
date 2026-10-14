@@ -92,6 +92,7 @@ from .routes import (
     notes,
     outside_sessions,
     passkey,
+    patient_activity,
     patient_allergies,
     patient_appointments,
     patient_booking,
@@ -291,6 +292,7 @@ app.include_router(users.router)
 app.include_router(people_term.router)
 app.include_router(practice_ai_notes_consent.router)
 app.include_router(patients.router)
+app.include_router(patient_activity.router)
 app.include_router(patient_allergies.router)
 app.include_router(patient_problems.router)
 app.include_router(patient_chart_history.router)

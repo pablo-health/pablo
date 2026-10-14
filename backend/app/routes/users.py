@@ -226,6 +226,13 @@ def get_user_status(
             # Who may rename the practice or sign its BAA again. Same rule
             # the write routes enforce (_is_practice_owner).
             result["is_practice_owner"] = _is_practice_owner(practice_row, user)
+            # Who may read the activity on a client's record. The recorded
+            # owner only — the same test the route and the row policy make,
+            # which is narrower than the one above when a practice was
+            # registered under no email.
+            from ..db.practice_owner import is_recorded_owner
+
+            result["can_view_record_activity"] = is_recorded_owner(practice_row, user.id)
             result["practice_phone"] = practice_row.phone
             # Free text as the professional-info step captured it: one
             # line, unparsed. A practice that never filled it in reads

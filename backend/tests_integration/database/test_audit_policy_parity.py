@@ -38,6 +38,7 @@ from sqlalchemy import create_engine, text
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from types import ModuleType
 
     from sqlalchemy.engine import Engine
 
@@ -98,20 +99,8 @@ def migrated_schema(engine: Engine) -> Iterator[str]:
     """
     from app.db.provisioning import create_practice_schema  # noqa: PLC0415
 
-    # Loaded by path: ``alembic/versions`` is a script directory, not an
-    # importable package, and a bare ``alembic.versions`` resolves to the
-    # installed alembic library instead.
-    migration_path = (
-        Path(__file__).resolve().parents[2]
-        / "alembic"
-        / "versions"
-        / "b2d6f83a4c19_audit_logs_actor_split_policy.py"
-    )
-    spec = importlib.util.spec_from_file_location("_audit_split_policy", migration_path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = _load_migration("b2d6f83a4c19_audit_logs_actor_split_policy.py")
+    owner_read = _load_migration("a7e3c5d19b42_audit_logs_owner_reads_client_activity.py")
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -127,10 +116,49 @@ def migrated_schema(engine: Engine) -> Iterator[str]:
                 f"USING ({module._SELECT_USING}) WITH CHECK ({module._INSERT_CHECK})"
             )
         )
+        conn.execute(text(f"DROP POLICY IF EXISTS {owner_read.POLICY_NAME} ON {schema}.audit_logs"))
+        conn.execute(
+            text(
+                f"CREATE POLICY {owner_read.POLICY_NAME} ON {schema}.audit_logs "
+                f"FOR SELECT USING ({owner_read.owner_client_read_using(schema)})"
+            )
+        )
     yield schema
     with engine.connect() as conn:
         conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
         conn.commit()
+
+
+def _schema_neutral(policies: list[dict], schema: str) -> list[dict]:
+    """The policies with their own schema's name taken out.
+
+    The owner-read policy names its schema — a qualified function and the
+    table's own regclass — so two schemas' copies of the same predicate
+    differ by exactly that name.
+    """
+    return [
+        {
+            key: value.replace(schema, "<schema>") if isinstance(value, str) else value
+            for key, value in policy.items()
+        }
+        for policy in policies
+    ]
+
+
+def _load_migration(filename: str) -> ModuleType:
+    """Load a tenant revision by path.
+
+    ``alembic/versions`` is a script directory, not an importable package,
+    and a bare ``alembic.versions`` resolves to the installed alembic
+    library instead.
+    """
+    path = Path(__file__).resolve().parents[2] / "alembic" / "versions" / filename
+    spec = importlib.util.spec_from_file_location(f"_migration_{path.stem}", path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _policies(engine: Engine, schema: str, table: str = "audit_logs") -> list[dict]:
@@ -167,15 +195,15 @@ class TestBothProvisioningPathsAgree:
         enough but read as though it also proved the migrated path was
         protected, on the one schema where it is not.
         """
-        migrated = _policies(engine, migrated_schema)
-        provisioned = _policies(engine, provisioned_schema)
+        migrated = _schema_neutral(_policies(engine, migrated_schema), migrated_schema)
+        provisioned = _schema_neutral(_policies(engine, provisioned_schema), provisioned_schema)
 
         assert migrated == provisioned
 
     def test_the_actor_policy_covers_all_commands_and_the_purge_ones_do_not(
         self, engine: Engine, migrated_schema: str, provisioned_schema: str
     ) -> None:
-        """Three policies, and the split between them is the design.
+        """Four policies, and the split between them is the design.
 
         ``rls_audit_actor_access`` must stay ``FOR ALL``. Narrowing it to
         SELECT and INSERT would leave UPDATE and DELETE with no policy,
@@ -197,10 +225,15 @@ class TestBothProvisioningPathsAgree:
             by_name = {p["policyname"]: p for p in _policies(engine, schema)}
             assert sorted(by_name) == [
                 "rls_audit_actor_access",
+                "rls_audit_owner_client_read",
                 "rls_audit_purge_delete",
                 "rls_audit_purge_select",
             ], schema
             assert by_name["rls_audit_actor_access"]["cmd"] == "ALL", schema
+            # Reads only: whatever the owner may see, writing a row in
+            # someone else's name stays with the actor policy.
+            assert by_name["rls_audit_owner_client_read"]["cmd"] == "SELECT", schema
+            assert by_name["rls_audit_owner_client_read"]["with_check"] is None, schema
             assert by_name["rls_audit_purge_delete"]["cmd"] == "DELETE", schema
             assert by_name["rls_audit_purge_select"]["cmd"] == "SELECT", schema
             for policy in by_name.values():
@@ -302,6 +335,7 @@ class TestWhereThePolicyIsActuallyInForce:
         assert flags["relforcerowsecurity"] is False
         assert sorted(p["policyname"] for p in _policies(engine, "practice")) == [
             "rls_audit_actor_access",
+            "rls_audit_owner_client_read",
             "rls_audit_purge_delete",
             "rls_audit_purge_select",
         ]
