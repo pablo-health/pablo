@@ -12,6 +12,7 @@
 #   scripts/run-note-template-eval.sh --case medication-only
 #   scripts/run-note-template-eval.sh --runs 3
 #   scripts/run-note-template-eval.sh --model bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0
+#   scripts/run-note-template-eval.sh --model anthropic-api:claude-sonnet-4-6
 
 set -euo pipefail
 
