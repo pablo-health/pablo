@@ -329,10 +329,14 @@ JOB_LOSS = {
 
 JOB_LOSS_PROPOSALS = [
     "No longer works at the library; let go in March. Not currently working; looking for work.",
-    "Previously worked full time at the library; let go in March. Not currently working; "
-    "looking for work.",
-    "Worked full time at the library until March, when they let the client go; not currently "
-    "working, looking for work.",
+    (
+        "Previously worked full time at the library; let go in March. Not currently working; "
+        "looking for work."
+    ),
+    (
+        "Worked full time at the library until March, when they let the client go; not currently "
+        "working, looking for work."
+    ),
     "Laid off from the library in March; unemployed and looking.",
     "Worked full time at the library until March; not currently working.",
 ]
