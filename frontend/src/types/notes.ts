@@ -90,6 +90,8 @@ export interface FinalizeNoteRequest {
 
 export interface CreateStandaloneNoteRequest {
   note_type: NoteType
+  /** Values for the note type's declared inputs. */
+  note_inputs?: Record<string, string> | null
   content_edited?: Record<string, unknown> | null
   dictation_transcript?: TranscriptModel | null
 }
