@@ -50,11 +50,14 @@ class NoteResponse(BaseModel):
     author_user_id: str | None = None
     #: Readable by its author alone (a psychotherapy note).
     restricted: bool = False
+    #: A reference copy of a note signed where it was written: its session is
+    #: ``imported``. Never a draft, and never signed here.
+    imported: bool = False
     created_at: datetime
     updated_at: datetime
 
     @staticmethod
-    def from_note(note: Note) -> NoteResponse:
+    def from_note(note: Note, *, imported: bool = False) -> NoteResponse:
         return NoteResponse(
             id=note.id,
             patient_id=note.patient_id,
@@ -71,6 +74,7 @@ class NoteResponse(BaseModel):
             status=note.status,
             author_user_id=note.author_user_id,
             restricted=note.restricted,
+            imported=imported,
             created_at=note.created_at,
             updated_at=note.updated_at,
         )

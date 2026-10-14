@@ -20,5 +20,7 @@ chart has no value for. That is how an intake fills the chart.
 
 A note imported from another records system proposes from its document,
 each proposal citing the document's paragraphs; that is how a client who
-arrives with a note and no intake here has their chart filled.
+arrives with a note and no intake here has their chart filled. Such a note
+was signed where it was written and is never signed here, so its proposals
+are decided on its own page; deciding one never needed a signature.
 """

@@ -30,6 +30,7 @@ from anyio import fail_after, to_thread
 
 from ..notes import NoteTypeDefinition, NoteTypeRegistry, get_default_registry
 from ..notes.diagnoses import DIAGNOSES_KIND_LABEL
+from ..notes.mdm_review import REVIEW_INPUTS
 from ..settings import get_settings
 
 # These helpers build/validate the registry-shaped JSON for a note type.
@@ -51,6 +52,7 @@ from .structured_llm_gateway import (
 )
 
 if TYPE_CHECKING:
+    from ..notes import NoteInputDef
     from .document_ai_ocr import OcrResult
 
 logger = logging.getLogger(__name__)
@@ -80,6 +82,12 @@ _MAX_EXTRACTED_CHARS = 1_000_000
 # leak into the rendered note body.
 _SESSION_DATE_KEY = "session_date"
 _SESSION_TIME_KEY = "session_time"
+# Likewise the values the document states for the note type's declared inputs,
+# and who signed it. An imported note is a reference copy of a note signed
+# elsewhere, so its signer is read as written and shown, never matched to a user.
+_NOTE_INPUTS_KEY = "note_inputs"
+_SIGNED_BY_KEY = "signed_by"
+_MAX_SIGNER_CHARS = 200
 
 # A parsed field counts as "grounded" in the source when it is a
 # whitespace-normalized substring of the source, or its word-token overlap
@@ -203,13 +211,18 @@ class ParsedImportedNote:
     ``session_date`` / ``session_time`` are read from the document, or
     ``None`` when the document did not state them (the time often is absent).
     ``grounding`` reports, per field, whether the parse stayed faithful to
-    the source text (see :func:`check_grounding`).
+    the source text (see :func:`check_grounding`). ``note_inputs`` holds the
+    values the document plainly states for the type's declared inputs, each a
+    declared option (see :func:`_read_note_inputs`); ``signed_by`` is who signed
+    the note, as written, or ``None`` when the document names no signer.
     """
 
     content: dict[str, Any]
     session_date: date | None
     session_time: time | None
     grounding: tuple[FieldGrounding, ...] = field(default_factory=tuple)
+    note_inputs: dict[str, str] = field(default_factory=dict)
+    signed_by: str | None = None
 
     @property
     def ungrounded(self) -> tuple[FieldGrounding, ...]:
@@ -249,6 +262,18 @@ def _looks_like_docx(content_type: str | None, filename: str | None) -> bool:
     if content_type and "wordprocessingml" in content_type.lower():
         return True
     return bool(filename and filename.lower().endswith(".docx"))
+
+
+_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def document_mime_type(content_type: str | None, filename: str | None) -> str:
+    """The content type an accepted import is kept under, read the way it was parsed."""
+    if _looks_like_pdf(content_type, filename):
+        return "application/pdf"
+    if _looks_like_docx(content_type, filename):
+        return _DOCX_MIME
+    return "text/plain"
 
 
 def _docx_block_lines(document: Any) -> list[str]:
@@ -474,6 +499,30 @@ def _field_guide(definition: NoteTypeDefinition) -> str:
     return "\n".join(lines)
 
 
+def _importable_inputs(definition: NoteTypeDefinition) -> tuple[NoteInputDef, ...]:
+    """The declared inputs an import reads; the MDM review's choices are the clinician's."""
+    return tuple(i for i in definition.inputs if i.key not in REVIEW_INPUTS)
+
+
+def _inputs_guide(definition: NoteTypeDefinition) -> str:
+    """The prompt block asking for the declared inputs, or nothing when there are none."""
+    inputs = _importable_inputs(definition)
+    if not inputs:
+        return ""
+    lines = []
+    for item in inputs:
+        options = " / ".join(f'"{o}"' for o in item.options)
+        allowed = f"one of {options}" if options else "the document's own words"
+        lines.append(f"- {item.key}: {item.label} ({allowed})")
+    return (
+        f"\n# Note details\n"
+        f"Also report, under {_NOTE_INPUTS_KEY}, these details of the visit:\n"
+        + "\n".join(lines)
+        + "\n\nChoose an option only when the document plainly states it. When it "
+        'does not, or you are unsure, return "". Never guess one from context.\n'
+    )
+
+
 def _build_extract_prompt(definition: NoteTypeDefinition, source_text: str) -> str:
     """Render the field guide + source note into the extraction user prompt."""
     field_guide = _field_guide(definition)
@@ -498,7 +547,11 @@ Also report when *this* documented session took place:
 Use the date/time of the session this note documents (usually labeled "Date"
 or "Session Date" near the top). Do NOT use the date of the next appointment
 or any future follow-up mentioned in the plan.
-"""
+
+# Signature
+- {_SIGNED_BY_KEY}: who signed this note, copied exactly as its signature
+  line writes the name and credentials, or "" if the note shows no signature.
+{_inputs_guide(definition)}"""
 
 
 def _build_extract_into_prompt(definition: NoteTypeDefinition, source_text: str) -> str:
@@ -516,10 +569,17 @@ its content into the fields described below.
 
 
 def _build_extract_schema(definition: NoteTypeDefinition) -> dict[str, Any]:
-    """The note type's registry schema plus the session date/time fields."""
+    """The note type's registry schema plus the session date/time, signer and inputs."""
     schema = _build_registry_response_schema(definition)
     schema["properties"][_SESSION_DATE_KEY] = {"type": "string"}
     schema["properties"][_SESSION_TIME_KEY] = {"type": "string"}
+    schema["properties"][_SIGNED_BY_KEY] = {"type": "string"}
+    inputs = _importable_inputs(definition)
+    if inputs:
+        schema["properties"][_NOTE_INPUTS_KEY] = {
+            "type": "object",
+            "properties": {i.key: {"type": "string"} for i in inputs},
+        }
     return schema
 
 
@@ -542,6 +602,41 @@ def _parse_iso_time(raw: Any) -> time | None:
     except ValueError:
         logger.warning("Imported note had an unparseable session_time")
         return None
+
+
+def _read_note_inputs(definition: NoteTypeDefinition, raw: Any, source_text: str) -> dict[str, str]:
+    """The declared inputs the document states, each a value the type accepts.
+
+    A choice is matched to its declared option without regard to case; a value
+    off the list is dropped. A free-text input is kept only when its words are
+    in the document. Blank values are dropped and ``required`` is never
+    enforced: an input the document is silent on stays unset.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    source = _norm_ws(source_text)
+    found: dict[str, str] = {}
+    for item in _importable_inputs(definition):
+        value = raw.get(item.key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        if item.options:
+            option = next((o for o in item.options if o.lower() == value.strip().lower()), None)
+            if option is not None:
+                found[item.key] = option
+        elif _norm_ws(value) in source:
+            found[item.key] = value.strip()
+    return found
+
+
+def _read_signer(raw: Any, source_text: str) -> str | None:
+    """Who signed the note, as written; ``None`` unless the document says it."""
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    signer = raw.strip()
+    if len(signer) > _MAX_SIGNER_CHARS or _norm_ws(signer) not in _norm_ws(source_text):
+        return None
+    return signer
 
 
 def _norm_ws(text: str) -> str:
@@ -716,4 +811,6 @@ class NoteImportService:
             session_date=_parse_iso_date(data.get(_SESSION_DATE_KEY)),
             session_time=_parse_iso_time(data.get(_SESSION_TIME_KEY)),
             grounding=grounding,
+            note_inputs=_read_note_inputs(definition, data.get(_NOTE_INPUTS_KEY), source_text),
+            signed_by=_read_signer(data.get(_SIGNED_BY_KEY), source_text),
         )

@@ -473,7 +473,7 @@ _IMPORTED_CONTENT = {
 class TestImportSession:
     """Importing an already-written note as a pending-review session."""
 
-    def test_creates_pending_review_session_with_parsed_content(
+    def test_creates_imported_session_with_parsed_content(
         self,
         service: SessionService,
         patient: Patient,
@@ -489,8 +489,9 @@ class TestImportSession:
             note_content=_IMPORTED_CONTENT,
         )
 
-        # Lands ready for review, no LLM generation involved.
-        assert session.status == SessionStatus.PENDING_REVIEW
+        # A reference copy of a note signed elsewhere, never one to sign; no
+        # LLM generation involved.
+        assert session.status == SessionStatus.IMPORTED
         assert session.session_date == session_date
         # Original text is preserved as the transcript for side-by-side review.
         assert session.transcript is not None

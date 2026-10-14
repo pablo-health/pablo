@@ -43,6 +43,7 @@ from ..repositories import (
     TherapySessionRepository,
 )
 from ..utcnow import utc_now
+from .imported_notes import refuse_imported
 from .note_generation_service import (
     EmptyNoteGenerationError,
     NoteGenerationService,
@@ -573,6 +574,9 @@ class SessionService:
         note_content: dict[str, Any],
         note_type: str = DEFAULT_NOTE_TYPE,
         note_type_version: int | None = None,
+        note_inputs: dict[str, str] | None = None,
+        source_signer: str | None = None,
+        source_document_id: str | None = None,
     ) -> tuple[TherapySession, Patient, Note]:
         """Create a session from an already-written note imported as a file.
 
@@ -580,8 +584,13 @@ class SessionService:
         caller — parsed from an uploaded document — rather than
         generated from a transcript, so there is no LLM call here. The
         original document text is stored as the session transcript so it can
-        be shown beside the parsed note during review. The session lands in
-        ``PENDING_REVIEW``, exactly like a generated note.
+        be shown beside the parsed note. The session lands in ``IMPORTED``:
+        the visit was documented and signed where it happened, so the note is
+        a reference copy and never one to sign (see
+        :mod:`app.services.imported_notes`). ``note_inputs`` are the values
+        the document states for the type's declared inputs; ``source_signer``
+        is who signed it there, as written; ``source_document_id`` is the
+        client document keeping the uploaded file itself.
 
         Returns ``(session, patient, note)``.
 
@@ -601,12 +610,14 @@ class SessionService:
             patient_id=patient_id,
             session_date=session_date,
             session_number=session_number,
-            status=SessionStatus.PENDING_REVIEW,
+            status=SessionStatus.IMPORTED,
             transcript=Transcript(format=TranscriptFormat.TXT, content=source_text),
             source=SessionSource.IMPORTED.value,
             created_at=now,
             processing_started_at=now,
             processing_completed_at=now,
+            source_signer=source_signer,
+            source_document_id=source_document_id,
         )
         session = self.session_repo.create(session)
 
@@ -617,6 +628,7 @@ class SessionService:
             content=note_content,
             user_id=user_id,
             note_type_version=note_type_version,
+            note_inputs=note_inputs or None,
         )
 
         patient.session_count += 1
@@ -640,6 +652,7 @@ class SessionService:
 
         Raises:
             SessionNotFoundError: If session doesn't exist.
+            ImportedNoteError: If the session holds an imported note.
             InvalidSessionStatusError: If session is not in pending_review status.
             NoteNotFoundError: If the session has no note (generation never ran).
         """
@@ -647,6 +660,7 @@ class SessionService:
         if not session:
             raise SessionNotFoundError(f"Session {session_id} not found")
 
+        refuse_imported(session)
         if session.status != SessionStatus.PENDING_REVIEW:
             raise InvalidSessionStatusError(session.status, "pending_review")
 

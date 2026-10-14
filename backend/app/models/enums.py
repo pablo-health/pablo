@@ -20,6 +20,9 @@ class SessionStatus(StrEnum):
     PENDING_REVIEW = "pending_review"
     FINALIZED = "finalized"
     FAILED = "failed"
+    # A note imported from a document: a visit documented, and signed, in the
+    # system where it happened. Kept as a reference copy; never a note to sign.
+    IMPORTED = "imported"
 
 
 class VideoPlatform(StrEnum):

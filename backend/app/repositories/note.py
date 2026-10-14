@@ -16,9 +16,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
+from ..models.enums import SessionStatus
+
 if TYPE_CHECKING:
     from ..models import Note
     from ..models.note_signing import NoteAddendum, NoteSignature
+    from .session import InMemoryTherapySessionRepository
 
 
 class PatientAccessDeniedError(Exception):
@@ -102,8 +105,9 @@ class NotesRepository(ABC):
         """Count session-attached notes awaiting signature for accessible patients.
 
         Session-attached means ``session_id IS NOT NULL`` — these are the
-        "notes awaiting your signature" the dashboard surfaces. Counts over
-        the full set, not a page.
+        "notes awaiting your signature" the dashboard surfaces. An imported
+        note is never signed here, so its session's ``imported`` status
+        leaves it out. Counts over the full set, not a page.
         """
 
     @abstractmethod
@@ -167,7 +171,10 @@ class InMemoryNotesRepository(NotesRepository):
     the argument.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, session_repo: InMemoryTherapySessionRepository | None = None) -> None:
+        # Sessions, when given, so a count can leave out an imported note the
+        # way the Postgres query's join does.
+        self._session_repo = session_repo
         self._notes: dict[str, Note] = {}
         self._signatures: dict[str, NoteSignature] = {}
         self._addenda: list[NoteAddendum] = []
@@ -239,8 +246,16 @@ class InMemoryNotesRepository(NotesRepository):
             for n in self._notes.values()
             if n.session_id is not None
             and n.finalized_at is None
+            and not self._imported(n.session_id)
             and self._can_access(n.patient_id, user_id)
         )
+
+    def _imported(self, session_id: str) -> bool:
+        # Read past the session repo's own access set, as the SQL join does:
+        # the note's access was checked already.
+        sessions = self._session_repo._sessions if self._session_repo else {}
+        session = sessions.get(session_id)
+        return session is not None and session.status == SessionStatus.IMPORTED
 
     def list_finalized(
         self, user_id: str = _TEST_DEFAULT_USER, *, limit: int | None = None

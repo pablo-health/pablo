@@ -2,11 +2,11 @@
 
 /**
  * A client arriving from another records system: their last note is imported
- * as the practice's follow-up type, and signing it fills their empty chart.
- * The note shows which fields were found in the document; at sign it
+ * as the practice's follow-up type, and its chart updates fill their empty
+ * chart. The note shows which fields were found in the document; its page
  * proposes each history field it states, the document's own paragraph where
  * one says what changed, and the medication its plan starts; accepting them
- * all fills the chart, and the next follow-up prints it.
+ * all fills the chart, with nothing signed, and the next follow-up prints it.
  *
  * The stack reads imports through its stand-in (scripts/fake_llm.py): the
  * parse relocates each "Label: text" line into the field of that name, and
@@ -42,7 +42,7 @@ async function historyText(api: ApiClient, patientId: string, key: string) {
   return chart.groups.flatMap((g) => g.fields).find((f) => f.key === key)?.text
 }
 
-test("an imported note fills an empty chart when it is signed, and the next follow-up prints it", async ({
+test("an imported note fills an empty chart from its page, and the next follow-up prints it", async ({
   signedInPage: page,
   api,
 }) => {
@@ -94,32 +94,32 @@ test("an imported note fills an empty chart when it is signed, and the next foll
       "from your note",
     )
 
-    await page.getByRole("button", { name: "Sign and lock" }).click()
-    const sign = page.getByRole("dialog")
-    await expect(sign.getByRole("heading", { name: "Update the chart" })).toBeVisible()
-    const supports = sign.getByRole("listitem", { name: "Social history and supports: Supports" })
+    // A reference copy of a note signed elsewhere: its updates are decided on
+    // its own page, with nothing to sign.
+    await expect(page.getByRole("button", { name: "Sign and lock" })).toHaveCount(0)
+    const updates = page.getByRole("region", { name: "Chart updates" })
+    const supports = updates.getByRole("listitem", {
+      name: "Social history and supports: Supports",
+    })
     await expect(supports).toContainText("Client: Update on supports: Sister and a neighbor.")
-    const relationships = sign.getByRole("listitem", {
+    const relationships = updates.getByRole("listitem", {
       name: "Social history and supports: Relationships",
     })
     await expect(relationships).toContainText("Recorded this visit")
     // The medication the document's plan starts, citing the plan's paragraph.
-    const buspirone = sign.getByRole("listitem", { name: "Medications: Start buspirone" })
+    const buspirone = updates.getByRole("listitem", { name: "Medications: Start buspirone" })
     await expect(buspirone).toContainText("buspirone 5 mg, twice daily")
     await expect(buspirone).toContainText("Clinician: Medication start: buspirone")
-    const rows = sign.getByTestId("chart-proposal")
+    const rows = updates.getByTestId("chart-proposal")
     await expect(rows).toHaveCount(4)
     for (const name of ["Relationships", "Work or school", "Supports"]) {
-      await sign
-        .getByRole("listitem", { name: `Social history and supports: ${name}` })
-        .getByRole("button", { name: "Accept" })
-        .click()
+      const row = updates.getByRole("listitem", { name: `Social history and supports: ${name}` })
+      await row.getByRole("button", { name: "Accept" }).click()
+      await expect(row.getByRole("button", { name: "Accept" })).toHaveCount(0)
     }
     await buspirone.getByRole("button", { name: "Accept" }).click()
-    await sign.getByRole("button", { name: "Sign and lock" }).click()
-    await expect
-      .poll(async () => (await api.get<Session>(`/api/sessions/${session.id}`)).status)
-      .toBe("finalized")
+    await expect(buspirone.getByRole("button", { name: "Accept" })).toHaveCount(0)
+    expect((await api.get<Session>(`/api/sessions/${session.id}`)).status).toBe("imported")
 
     expect(await historyText(api, patient.id, "relationships")).toBe("Married, two children.")
     expect(await historyText(api, patient.id, "work_school")).toBe("Teaches fourth grade.")

@@ -53,6 +53,7 @@ from ..models import (
     AuditAction,
     FinalizeSessionRequest,
     NoteResponse,
+    PatientDocument,
     PatientSummary,
     ScheduleSessionRequest,
     SessionListResponse,
@@ -131,8 +132,10 @@ from ..services.note_import_service import (
     DocumentTextExtractionError,
     NoteImportService,
     UnsupportedDocumentTypeError,
+    document_mime_type,
     read_document_text,
 )
+from ..services.patient_documents_service import PatientDocumentsService
 from ..services.recording_consent import RecordingConsentGate, get_recording_consent_gate
 from ..services.session_generation_worker import (
     UnknownTenantError,
@@ -147,6 +150,7 @@ from ..services.transcription_queue_service import (
 from ..settings import get_settings
 from ..utcnow import utc_now
 from .notes import get_audio_on_signing, get_note_generation_service, get_registry
+from .patient_documents import get_patient_documents_service
 
 # Optional subscription extension point. When a billing overlay is
 # installed it registers ``app.routes.subscription``; otherwise the
@@ -570,13 +574,81 @@ async def _propose_from_document(
         return Drafted([], error_class=type(exc).__name__)
 
 
+async def _store_original(
+    documents: PatientDocumentsService,
+    patient_id: str,
+    user: User,
+    file: UploadFile,
+    data: bytes,
+    text: str,
+) -> PatientDocument | None:
+    """Write the uploaded file to the client's documents, off the event loop.
+
+    Runs before anything is written to the database, so a storage failure
+    refuses the import whole: no session, no note, no document row. A
+    deployment with no document storage keeps importing, without the file.
+    """
+    if not documents.configured:
+        logger.warning("Imported note's file not kept: document storage is not configured")
+        return None
+    store = partial(
+        documents.store_imported_file,
+        patient_id=patient_id,
+        user_id=user.id,
+        filename=file.filename or "imported-note",
+        mime_type=document_mime_type(file.content_type, file.filename),
+        data=data,
+        extracted_text=text,
+    )
+    try:
+        return await to_thread.run_sync(store)
+    except Exception as exc:
+        logger.exception("Storing an imported note's file failed")
+        raise ServiceUnavailableError(
+            "We couldn't save a copy of this file. Try again in a moment.",
+            code="IMPORT_FILE_NOT_STORED",
+        ) from exc
+
+
+def _record_original(
+    documents: PatientDocumentsService, original: PatientDocument | None
+) -> str | None:
+    """Add the kept file's row in the import's own transaction; its id, to link.
+
+    Before the session, which references it.
+    """
+    return documents.record_imported_file(original).id if original is not None else None
+
+
+def _audit_original(
+    original: PatientDocument | None, user: User, request: Request, audit: AuditService
+) -> None:
+    """Audited as a clinician's own upload to the client's documents is."""
+    if original is None:
+        return
+    for action in (
+        AuditAction.PATIENT_DOCUMENT_UPLOAD_INITIATED,
+        AuditAction.PATIENT_DOCUMENT_UPLOADED,
+    ):
+        audit.log_patient_document_action(
+            action,
+            user,
+            request,
+            document_id=original.id,
+            patient_id=original.patient_id,
+            mime_type=original.mime_type,
+            size_bytes=original.size_bytes,
+            category=original.category.value,
+        )
+
+
 def _resolve_import_session_date(override: str | None, extracted: datetime | None) -> datetime:
     """Pick the session date for an import: caller override > document > now.
 
     Falls back to upload time (as a naive datetime, matching the date the
     transcript-upload path stores from a ``datetime-local`` input) so the
     import still succeeds when no date is found; the clinician can correct
-    it during review.
+    it on the session's page.
     """
     if override:
         try:
@@ -642,20 +714,25 @@ async def import_session(
     authorizer: NoteTypeAuthorizer = Depends(get_note_type_authorizer),
     generator: NoteGenerationService = Depends(get_note_generation_service),
     proposal_step: ChartProposalStep = Depends(get_chart_proposal_step),
+    documents: PatientDocumentsService = Depends(get_patient_documents_service),
     audit: AuditService = Depends(get_audit_service),
 ) -> SessionResponse:
-    """Import an existing note (PDF, Word or TXT) as a pending-review session.
+    """Import an existing note (PDF, Word or TXT) as a reference copy.
 
     Extracts the document's text, parses it into the fields of ``note_type``
-    (SOAP unless named) plus the date the session took place, and creates a
-    session dated from the document — or from ``session_date`` when the
-    caller overrides it. The original text is kept as the session transcript
-    so it can be reviewed beside the parsed note. One file per request; the
-    client uploads several in parallel for a bulk chart import.
+    (SOAP unless named) plus the date the session took place, the values it
+    states for the type's declared inputs and who signed it, and creates an
+    ``imported`` session dated from the document — or from ``session_date``
+    when the caller overrides it. The original text is kept as the session
+    transcript so it can be read beside the parsed note, and the file itself
+    is kept in the client's documents and linked from the session. The note is
+    never signed here: the visit was documented and signed where it happened.
+    One file per request; the client uploads several in parallel for a bulk
+    chart import.
 
     A type that proposes chart updates proposes them here, from the
     document, as a drafted note does from its transcript: each cites the
-    paragraphs that state it, and they are decided when the note is signed.
+    paragraphs that state it, and they are decided on the session's page.
     """
     definition = _importable_note_type(note_type, registry, authorizer, user)
     _gate_trial_session(user.email)
@@ -719,6 +796,10 @@ async def import_session(
     drafted = await _propose_from_document(proposal_step, generator, definition, chart, text)
     resolved_date = _resolve_import_session_date(session_date, parsed.session_datetime())
 
+    if session_service.patient_repo.get(patient_id, user.id) is None:
+        raise NotFoundError("Patient not found", {"patient_id": patient_id})
+    original = await _store_original(documents, patient_id, user, file, data, text)
+
     try:
         session, patient, note = session_service.import_session(
             patient_id,
@@ -728,12 +809,16 @@ async def import_session(
             note_content=parsed.content,
             note_type=definition.key,
             note_type_version=definition.version,
+            note_inputs=parsed.note_inputs,
+            source_signer=parsed.signed_by,
+            source_document_id=_record_original(documents, original),
         )
     except PatientNotFoundError as exc:
         raise NotFoundError("Patient not found", {"patient_id": patient_id}) from exc
     if chart is not None:
         proposal_step.store(note, definition, chart, drafted, parsed.content)
 
+    _audit_original(original, user, http_request, audit)
     audit.log_session_action(AuditAction.SESSION_CREATED, user, http_request, session, patient)
 
     return SessionResponse.from_session(session, patient.display_name, _embed_note(note))

@@ -36,6 +36,8 @@ import {
   type RatingFeedback,
 } from "@/components/sessions/QualityRatingWithFeedback"
 import { FinalizeButton } from "@/components/sessions/FinalizeButton"
+import { ImportedNoteNotice } from "@/components/sessions/ImportedNoteNotice"
+import { OriginalFileButton } from "@/components/sessions/OriginalFileButton"
 import { ChartUpdatesPanel } from "@/components/notes/chartUpdates/ChartUpdatesPanel"
 import { NoteSignaturePanel } from "@/components/notes/signing/NoteSignaturePanel"
 import { ChargeCardSection } from "@/components/payments/ChargeCardSection"
@@ -234,6 +236,9 @@ export default function SessionDetailPage({ params }: PageProps) {
   const noteHeading = note ? `${noteTypeLabel(note.note_type)} note` : "Note"
   const canReview =
     session.status === "pending_review" && note !== null
+  // A reference copy of a note signed where the visit happened: read-only,
+  // never signed here, and its chart updates are decided on this page.
+  const imported = session.status === "imported"
   const finalizedRating = note?.finalized_at ? note.quality_rating : null
   // Charging follows signing: the same column, the same place the finalize
   // action was, and only once the note actually carries a signature.
@@ -258,7 +263,7 @@ export default function SessionDetailPage({ params }: PageProps) {
         sessionNumber={session.session_number}
         status={session.status}
         sessionId={session.id}
-        editableSessionDate={session.status === "pending_review"}
+        editableSessionDate={session.status === "pending_review" || imported}
         savingSessionDate={updateMetadataMutation.isPending}
         onSessionDateChange={(value) =>
           updateMetadataMutation.mutate({
@@ -280,9 +285,14 @@ export default function SessionDetailPage({ params }: PageProps) {
           className="lg:overflow-y-auto lg:max-h-[calc(100vh-12rem)] lg:sticky lg:top-6"
           data-testid="transcript-pane"
         >
-          <h2 className="text-lg font-semibold text-neutral-900 mb-3 lg:sticky lg:top-0 lg:bg-white lg:z-10 lg:pb-2">
-            {session.source === "imported" ? "Original document" : "Transcript"}
-          </h2>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2 lg:sticky lg:top-0 lg:bg-white lg:z-10 lg:pb-2">
+            <h2 className="text-lg font-semibold text-neutral-900">
+              {session.source === "imported" ? "Original document" : "Transcript"}
+            </h2>
+            {session.source_document_id && (
+              <OriginalFileButton documentId={session.source_document_id} />
+            )}
+          </div>
           <TranscriptViewer
             ref={transcriptRef}
             transcript={session.transcript}
@@ -310,6 +320,15 @@ export default function SessionDetailPage({ params }: PageProps) {
                 </div>
               )}
             </div>
+
+            {imported && (
+              <div className="mb-3">
+                <ImportedNoteNotice
+                  sessionDate={session.session_date}
+                  signer={session.source_signer}
+                />
+              </div>
+            )}
 
             {/* Above the drafted sections and outside them: read from the
                 client's consent record, never part of the note. */}
@@ -372,11 +391,13 @@ export default function SessionDetailPage({ params }: PageProps) {
             />
           )}
 
-          {note && session.source !== "imported" && (
+          {/* An imported note shows the details its document states, read-only:
+              changing one would mean drafting the note again. */}
+          {note && (session.source !== "imported" || imported) && (
             <NoteInputsPanel
               key={note.id}
               note={note}
-              editable={noteEditable}
+              editable={noteEditable && !imported}
               hasEdits={noteHasEdits}
               onRedraft={handleRedraft}
               pending={redraftNote.isPending || updateNoteEdits.isPending}
@@ -435,7 +456,9 @@ export default function SessionDetailPage({ params }: PageProps) {
             />
           )}
 
-          {note && session.status === "finalized" && <ChartUpdatesPanel note={note} />}
+          {note && (session.status === "finalized" || imported) && (
+            <ChartUpdatesPanel note={note} />
+          )}
 
           {noteIsSigned && (
             <div className="border-t border-neutral-200 pt-6">

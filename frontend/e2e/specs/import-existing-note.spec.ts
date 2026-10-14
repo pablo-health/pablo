@@ -3,7 +3,7 @@
 import { test, expect } from "../fixtures/auth"
 import { givePatient } from "../fixtures/scenarios"
 
-test("a clinician imports an existing note and it is filed for review", async ({
+test("a clinician imports an existing note and opens it", async ({
   signedInPage: page,
   api,
 }) => {
@@ -30,8 +30,12 @@ test("a clinician imports an existing note and it is filed for review", async ({
   await dialog.getByRole("button", { name: "Import 1 note" }).click()
   const response = await imported
   expect(response.status()).toBe(201)
-  expect(JSON.stringify(await response.json())).toContain(complaint)
+  const session = (await response.json()) as { id: string }
+  expect(JSON.stringify(session)).toContain(complaint)
 
   await expect(dialog.getByRole("status")).toHaveText("1 added")
-  await expect(dialog.getByRole("button", { name: "Go to Review" })).toBeVisible()
+  // An imported note was signed where it was written; it never waits in Review.
+  await dialog.getByRole("button", { name: "Open note" }).click()
+  await expect(page).toHaveURL(new RegExp(`/dashboard/sessions/${session.id}$`))
+  await expect(page.getByRole("region", { name: "Imported note" })).toBeVisible()
 })

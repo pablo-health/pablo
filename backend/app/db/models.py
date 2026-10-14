@@ -242,6 +242,13 @@ class TherapySessionRow(Base):
     # PII-redacted transcript variants (note-side variants live on NoteRow).
     redacted_transcript: Mapped[str | None] = mapped_column(Text)
     naturalized_transcript: Mapped[str | None] = mapped_column(Text)
+    # Who signed an imported note in the system it came from, as written in
+    # the document. A string, never a user reference.
+    source_signer: Mapped[str | None] = mapped_column(Text)
+    # The file an imported note was read from, kept on the client's chart.
+    source_document_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("patient_documents.id", ondelete="SET NULL")
+    )
     # Soft-delete marker (THERAPY-nyb). NULL = live row; non-null hides the
     # session (and JSONB transcript payload) from normal reads.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

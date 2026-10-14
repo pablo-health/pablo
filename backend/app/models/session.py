@@ -230,6 +230,10 @@ class SessionResponse(BaseModel):
     # PII-redacted transcript variants
     redacted_transcript: str | None = None
     naturalized_transcript: str | None = None
+    # An imported note's signer as its document states it (see TherapySession).
+    source_signer: str | None = None
+    # The client document holding the file an imported note was read from.
+    source_document_id: str | None = None
     # Embedded note (None when this session has no generated note yet).
     note: NoteResponse | None = None
 
@@ -248,6 +252,8 @@ class SessionResponse(BaseModel):
         transcript_segments = None
         if note is not None and note.content is not None:
             transcript_segments = parse_transcript_segments(session.transcript.content)
+        if note is not None and session.status == SessionStatus.IMPORTED:
+            note = note.model_copy(update={"imported": True})
 
         return SessionResponse(
             id=session.id,
@@ -280,6 +286,8 @@ class SessionResponse(BaseModel):
             error=session.error,
             redacted_transcript=session.redacted_transcript,
             naturalized_transcript=session.naturalized_transcript,
+            source_signer=session.source_signer,
+            source_document_id=session.source_document_id,
             note=note,
         )
 
@@ -355,6 +363,11 @@ class TherapySession:
     # PII-redacted transcript variants (note-side variants live on Note).
     redacted_transcript: str | None = None
     naturalized_transcript: str | None = None
+    #: Who signed an imported note in the system it came from, exactly as the
+    #: document states it. Never matched to a user; ``None`` when unstated.
+    source_signer: str | None = None
+    #: The client document holding the file an imported note was read from.
+    source_document_id: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TherapySession:
@@ -391,6 +404,8 @@ class TherapySession:
             error=data.get("error"),
             redacted_transcript=data.get("redacted_transcript"),
             naturalized_transcript=data.get("naturalized_transcript"),
+            source_signer=data.get("source_signer"),
+            source_document_id=data.get("source_document_id"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -422,6 +437,8 @@ class TherapySession:
             "error": self.error,
             "redacted_transcript": self.redacted_transcript,
             "naturalized_transcript": self.naturalized_transcript,
+            "source_signer": self.source_signer,
+            "source_document_id": self.source_document_id,
         }
 
 

@@ -133,6 +133,8 @@ export default function StandaloneNotePage({ params }: PageProps) {
   }
 
   const isFinalized = !!note.finalized_at
+  // A reference copy of a note signed elsewhere reads like a signed one.
+  const readOnly = isFinalized || !!note.imported
   const isGenerating = note.status === "processing"
   // A session note whose redraft failed is marked failed too, but keeps its
   // content; only a note that never got any has nothing to show.
@@ -182,22 +184,23 @@ export default function StandaloneNotePage({ params }: PageProps) {
       ) : (
         <NoteViewer
           note={note}
-          readonly={isFinalized}
+          readonly={readOnly}
           pdfMetadata={{
             patient_name: patientName,
             session_date: note.created_at,
             visit: visitPdf,
             signature: pdfSignatureBlock(signing, timeZone),
           }}
-          onSave={isFinalized ? undefined : handleSave}
+          onSave={readOnly ? undefined : handleSave}
         />
       )}
 
       {!isGenerating && !generationFailed && <NoteSignaturePanel note={note} />}
 
-      {isFinalized && <ChartUpdatesPanel note={note} />}
+      {readOnly && <ChartUpdatesPanel note={note} />}
 
-      {!isFinalized && !isGenerating && !generationFailed && (
+      {/* An imported note was signed where it was written; never here. */}
+      {!readOnly && !isGenerating && !generationFailed && (
         <div className="card space-y-6">
           <div>
             <h3 className="text-lg font-semibold text-neutral-900 mb-2">

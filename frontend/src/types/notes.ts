@@ -50,6 +50,8 @@ export interface Note {
   author_user_id: string | null
   /** Readable by its author alone (a psychotherapy note). */
   restricted: boolean
+  /** A reference copy of a note signed where it was written; never signed here. */
+  imported?: boolean
   created_at: string
   updated_at: string
 }
