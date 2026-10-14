@@ -95,6 +95,26 @@ _MAX_CLIENT_IDLE_SECONDS = 600.0
 
 _TOOL_NAME = "emit_structured_output"
 
+# Bedrock evaluates Converse cache checkpoints in tools -> system -> messages
+# order. Placing one after the stable system prompt therefore makes both the
+# tool schema and system instructions reusable while leaving patient/session
+# input in the uncached user message.
+_CACHE_POINT: dict[str, dict[str, str]] = {"cachePoint": {"type": "default"}}
+
+
+def system_content(system_prompt: str, model: str) -> list[dict[str, Any]]:
+    """Build Converse system content, caching the stable prefix for Claude.
+
+    Cache points are model-specific in Bedrock. The gateway can also be used
+    with Nova or another provider, so only Anthropic Claude requests receive
+    the explicit checkpoint. Omitting ``ttl`` selects Bedrock's broadly
+    supported five-minute cache instead of rejecting models without 1h TTL.
+    """
+    blocks: list[dict[str, Any]] = [{"text": system_prompt}]
+    if "anthropic.claude-" in model:
+        blocks.append(_CACHE_POINT)
+    return blocks
+
 
 def _now() -> float:
     """Monotonic seconds; a function so a test can move the clock."""
@@ -306,7 +326,7 @@ class BedrockStructuredLLMGateway(StructuredLLMGateway):
         normalized_model = strip_provider_prefix(model)
         request: dict[str, Any] = {
             "modelId": normalized_model,
-            "system": [{"text": system_prompt}],
+            "system": system_content(system_prompt, normalized_model),
             "messages": [{"role": "user", "content": [{"text": user_prompt}]}],
             "inferenceConfig": {"maxTokens": max_output_tokens, "temperature": temperature},
             "toolConfig": {
@@ -453,5 +473,6 @@ __all__ = [
     "BedrockStructuredLLMGateway",
     "build_botocore_session",
     "google_id_token",
+    "system_content",
     "to_json_schema",
 ]
