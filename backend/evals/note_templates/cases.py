@@ -67,7 +67,7 @@ class Expected:
     code. Empty means none was entered or named, so the note names none."""
     current_medications: tuple[str, ...] | None = None
     """The chart's medication lines as rendered, which the current list must
-    reproduce word for word (empty: "None recorded"); ``None`` leaves the
+    reproduce word for word (empty: no line at all); ``None`` leaves the
     list ungraded."""
     not_current: tuple[str, ...] = ()
     """Words of a change made in this visit, which belong to the plan and
@@ -167,7 +167,7 @@ class TemplateCase:
     medications: tuple[ChartMedication, ...] = ()
     """The chart's active medications, as the clinician last recorded them."""
     history: tuple[ChartHistoryField, ...] = ()
-    """The chart's recorded history fields. Every other history field is "Not recorded"."""
+    """The chart's recorded history fields. Every other history field is empty."""
     recorded: bool = False
     """Drafted as a recorded visit: where the client left is measured from the
     transcript, and what the clinician says after it is the dictated addendum."""

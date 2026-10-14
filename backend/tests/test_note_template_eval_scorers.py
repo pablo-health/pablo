@@ -77,13 +77,13 @@ THERAPY_DRAFT: dict[str, dict[str, Any]] = {
             'One to two drinks on weekends. (stated this visit: "A glass of wine on weekends, '
             'maybe two.")'
         ),
-        "tobacco_nicotine": "Not recorded (stated this visit: denied)",
-        "cannabis": "Not recorded (stated this visit: denied)",
-        "other_substances": "Not recorded (stated this visit: denied)",
-        "stimulants": "Not recorded (not asked this visit)",
-        "cocaine": "Not recorded (not asked this visit)",
-        "opioids": "Not recorded (not asked this visit)",
-        "benzodiazepines": "Not recorded (not asked this visit)",
+        "tobacco_nicotine": "(stated this visit: denied)",
+        "cannabis": "(stated this visit: denied)",
+        "other_substances": "(stated this visit: denied)",
+        "stimulants": "(not asked this visit)",
+        "cocaine": "(not asked this visit)",
+        "opioids": "(not asked this visit)",
+        "benzodiazepines": "(not asked this visit)",
     },
     "risk": {
         "suicidal_homicidal_ideation": (
@@ -115,7 +115,7 @@ THERAPY_DRAFT: dict[str, dict[str, Any]] = {
             "Adderall XR 20 mg, every morning",
             "Sertraline 50 mg, every morning",
         ],
-        "allergies": "Not recorded",
+        "allergies": "",
     },
     "assessment": {
         "diagnoses": [
@@ -150,9 +150,9 @@ THERAPY_DRAFT: dict[str, dict[str, Any]] = {
 
 
 def _history(recorded: dict[str, str]) -> dict[str, dict[str, str]]:
-    """Every chart-history section, each field the chart's text or "Not recorded"."""
+    """Every chart-history section, each field the chart's text or empty."""
     return {
-        g.key: {f.key: recorded.get(f.key, "Not recorded") for f in g.fields}
+        g.key: {f.key: recorded.get(f.key, "") for f in g.fields}
         for g in HISTORY_GROUPS
         if g.key != SUBSTANCE_USE
     }
@@ -176,10 +176,10 @@ MEDICATION_ONLY_DRAFT: dict[str, dict[str, Any]] = {
         "place_of_service": "In-office visit.",
     },
     "substance_use": {
-        "alcohol": 'Not recorded (stated this visit: "No, I don\'t drink")',
-        "tobacco_nicotine": "Not recorded (not asked this visit)",
-        "cannabis": "Not recorded (not asked this visit)",
-        "other_substances": "Not recorded (not asked this visit)",
+        "alcohol": '(stated this visit: "No, I don\'t drink")',
+        "tobacco_nicotine": "(not asked this visit)",
+        "cannabis": "(not asked this visit)",
+        "other_substances": "(not asked this visit)",
     },
     "risk": {
         "suicidal_homicidal_ideation": (
@@ -194,7 +194,7 @@ MEDICATION_ONLY_DRAFT: dict[str, dict[str, Any]] = {
     "measures": {"measures_reviewed": ""},
     "medications": {
         "current_medications": ["Bupropion XL 150 mg, every morning"],
-        "allergies": "Not recorded",
+        "allergies": "",
     },
     "assessment": {"diagnoses": ["Depression, in remission"]},
     "subjective": {
@@ -239,9 +239,7 @@ def test_what_the_visit_changed_may_follow_a_history_fields_chart_text() -> None
         "work_school",
         'Financial analyst, full time, since 2022. (stated this visit: "on leave this month.")',
     )
-    draft = _with(
-        draft, "trauma_history", "trauma_history", 'Not recorded (stated this visit: "denies.")'
-    )
+    draft = _with(draft, "trauma_history", "trauma_history", '(stated this visit: "denies.")')
     assert history_from_chart(draft, FOLLOW_UP_WITH_THERAPY) == []
     # The therapy sample states neither, so the marks themselves are flagged.
     assert list(_failed(draft, FOLLOW_UP_WITH_THERAPY)) == ["suffix_only_where_stated"]
@@ -324,7 +322,7 @@ def test_a_medication_the_client_reports_may_follow_the_charts_list() -> None:
             "risk_as_said",
         ),
         # Also seen: "anything else?" was asked and answered, but read as never asked.
-        ("substance_use", "other_substances", "Not recorded (not asked this visit)", "substances"),
+        ("substance_use", "other_substances", "(not asked this visit)", "substances"),
         ("risk", "overall_risk", "Moderate.", "risk_as_said"),
         ("risk", "overall_risk", "", "risk_as_said"),
         # A quotation that is not the client's: never said, or the clinician's question.
@@ -351,7 +349,7 @@ def test_a_medication_the_client_reports_may_follow_the_charts_list() -> None:
         (
             "social_history",
             "relationships",
-            'Not recorded (stated this visit: "supportive partner" — as noted by clinician '
+            '(stated this visit: "supportive partner" — as noted by clinician '
             "in dictated addendum)",
             "no_attribution_tags",
         ),
@@ -378,18 +376,18 @@ def test_a_medication_the_client_reports_may_follow_the_charts_list() -> None:
             "findings_unquoted",
         ),
         # Also seen: a grouped denial read as "no change", and a substance never named as asked.
-        ("substance_use", "cannabis", "Not recorded (asked this visit: no change)", "substances"),
+        ("substance_use", "cannabis", "(asked this visit: no change)", "substances"),
         (
             "substance_use",
             "tobacco_nicotine",
-            "Not recorded (asked this visit: no change)",
+            "(asked this visit: no change)",
             "substances",
         ),
-        ("substance_use", "stimulants", "Not recorded (asked this visit: no change)", "substances"),
+        ("substance_use", "stimulants", "(asked this visit: no change)", "substances"),
         (
             "substance_use",
             "other_substances",
-            'Not recorded (stated this visit: "No, none of that.")',
+            '(stated this visit: "No, none of that.")',
             "substances",
         ),
         # The client described their drinking: that is what was said, not "no change".
@@ -432,7 +430,7 @@ def test_a_medication_the_client_reports_may_follow_the_charts_list() -> None:
             "telehealth_attestation",
         ),
         # An asked substance with no screen, or the baseline lost or rewritten.
-        ("substance_use", "cannabis", "Not recorded (not asked this visit)", "substances"),
+        ("substance_use", "cannabis", "(not asked this visit)", "substances"),
         ("substance_use", "alcohol", "One to two drinks on weekends.", "substances"),
         ("substance_use", "alcohol", "(asked this visit: no change)", "substances"),
         (
@@ -441,8 +439,8 @@ def test_a_medication_the_client_reports_may_follow_the_charts_list() -> None:
             "A glass of wine on weekends. (asked this visit: no change)",
             "substances",
         ),
-        ("substance_use", "cannabis", "Not recorded (stated this visit: )", "substances"),
-        ("substance_use", "cannabis", 'Not recorded (stated this visit: "")', "substances"),
+        ("substance_use", "cannabis", "(stated this visit: )", "substances"),
+        ("substance_use", "cannabis", '(stated this visit: "")', "substances"),
         # A diagnosis or code nobody entered.
         (
             "assessment",
@@ -496,7 +494,7 @@ def test_a_medication_the_client_reports_may_follow_the_charts_list() -> None:
         (
             "social_history",
             "living_situation",
-            'Not recorded (stated this visit: "I\'m at home")',
+            '(stated this visit: "I\'m at home")',
             "suffix_only_where_stated",
         ),
         # The increase left out of the plan.
@@ -506,8 +504,8 @@ def test_a_medication_the_client_reports_may_follow_the_charts_list() -> None:
             ["Continue Adderall XR 20 mg.", "Continue sertraline."],
             "medications_from_chart",
         ),
-        # The chart's "Not recorded" dropped.
-        ("medications", "allergies", "", "allergies_never_dropped"),
+        # A placeholder where the chart has no allergies.
+        ("medications", "allergies", "Not recorded", "allergies_never_dropped"),
         # The worry the visit was about, left out of its domain.
         ("subjective", "anxiety", "Not discussed.", "hpi_by_domain"),
         ("subjective", "anxiety", "Mood okay.", "hpi_by_domain"),
@@ -540,10 +538,10 @@ def test_therapy_draft_failures_are_caught(section: str, key: str, value: Any, c
         (
             "substance_use",
             "tobacco_nicotine",
-            'Not recorded (stated this visit: "denies")',
+            '(stated this visit: "denies")',
             "substances",
         ),
-        ("substance_use", "cannabis", "Not recorded (asked this visit: no change)", "substances"),
+        ("substance_use", "cannabis", "(asked this visit: no change)", "substances"),
         ("substance_use", "cannabis", "", "substances"),
         # Only the diagnosis the clinician named, with no invented code.
         (
@@ -558,10 +556,11 @@ def test_therapy_draft_failures_are_caught(section: str, key: str, value: Any, c
             ["Depression, in remission", "Generalized anxiety disorder"],
             "diagnoses_only_stated",
         ),
-        # No history on the chart: a field reads "Not recorded", not "Not stated.".
+        # No history on the chart: the field is empty, with nothing standing in for it.
         ("trauma_history", "trauma_history", "Not stated.", "history_from_chart"),
+        ("trauma_history", "trauma_history", "Not recorded", "history_from_chart"),
         # The chart has bupropion; the list says none, or adds what it does not have.
-        ("medications", "current_medications", ["None recorded"], "medications_from_chart"),
+        ("medications", "current_medications", [], "medications_from_chart"),
         (
             "medications",
             "current_medications",
@@ -748,11 +747,11 @@ FULL_CHART_DRAFT: dict[str, dict[str, Any]] = {
         "alcohol": "Two to three drinks a week, wine with dinner. (asked this visit: no change)",
         "cannabis": "Used in college; none since 2010. (asked this visit: no change)",
         "tobacco_nicotine": "Never. (asked this visit: no change)",
-        "stimulants": "Not recorded (not asked this visit)",
-        "cocaine": "Not recorded (not asked this visit)",
-        "opioids": "Not recorded (not asked this visit)",
+        "stimulants": "(not asked this visit)",
+        "cocaine": "(not asked this visit)",
+        "opioids": "(not asked this visit)",
         "benzodiazepines": "None. (not asked this visit)",
-        "other_substances": "Not recorded (not asked this visit)",
+        "other_substances": "(not asked this visit)",
     },
 }
 
@@ -924,20 +923,25 @@ def test_stated_change_failures_are_caught(section: str, key: str, value: Any, c
         ),
         (FOLLOW_UP_ALLERGY_DISPUTED, "No known drug allergies.", False),
         (FOLLOW_UP_ALLERGY_DISPUTED, "Not recorded", False),
-        # Nothing on the chart, a denial stated: "Not recorded", the denial marked.
+        # Nothing on the chart, a denial stated: the denial marked, and nothing before it.
         (
             EVALUATION_EMPTY_CHART,
-            'Not recorded (stated this visit: "No, none that I know of.")',
+            '(stated this visit: "No, none that I know of.")',
             True,
         ),
         (
             EVALUATION_EMPTY_CHART,
-            "Not recorded (stated this visit: no known drug allergies)",
+            "(stated this visit: no known drug allergies)",
             True,
         ),
         (EVALUATION_EMPTY_CHART, "No known drug allergies.", False),
         (EVALUATION_EMPTY_CHART, "NKDA", False),
         (EVALUATION_EMPTY_CHART, "Not recorded", False),
+        (
+            EVALUATION_EMPTY_CHART,
+            'Not recorded (stated this visit: "No, none that I know of.")',
+            False,
+        ),
     ],
 )
 def test_allergies_keep_the_chart_and_mark_what_was_said(
@@ -954,11 +958,10 @@ def test_allergies_keep_the_chart_and_mark_what_was_said(
 EVALUATION_DRAFT: dict[str, dict[str, Any]] = {
     "medications": {
         "current_medications": [
-            "None recorded",
             '"Levothyroxine, 75 micrograms every morning" (stated this visit)',
             '"omeprazole, 20 milligrams before breakfast" (stated this visit)',
         ],
-        "allergies": 'Not recorded (stated this visit: "No, none that I know of.")',
+        "allergies": '(stated this visit: "No, none that I know of.")',
     },
     "treatment_plan": {
         "plan_items": ["Start escitalopram 5 mg daily for seven days, then 10 mg daily."],
@@ -1010,12 +1013,13 @@ def test_an_intake_on_an_empty_chart_passes() -> None:
     ("section", "key", "value", "check"),
     [
         # The client listed what they take; the draft says there is nothing.
-        ("medications", "current_medications", ["None recorded"], "intake_states_meds"),
-        # The client's medications listed, but "None recorded" left out.
+        ("medications", "current_medications", [], "intake_states_meds"),
+        # The client's medications listed behind a placeholder for the empty chart.
         (
             "medications",
             "current_medications",
             [
+                "None recorded",
                 '"Levothyroxine 75 mcg" (stated this visit)',
                 '"omeprazole 20 mg" (stated this visit)',
             ],
@@ -1033,7 +1037,6 @@ def test_an_intake_on_an_empty_chart_passes() -> None:
             "medications",
             "current_medications",
             [
-                "None recorded",
                 '"Levothyroxine" (stated this visit)',
                 '"omeprazole" (stated this visit)',
                 "Escitalopram 5 mg daily",
@@ -1061,7 +1064,7 @@ def test_intake_failures_are_caught(section: str, key: str, value: Any, check: s
 
 EMPTY_CHART_DRAFT: dict[str, dict[str, Any]] = {
     **_history({}),
-    "medications": {"current_medications": ["None recorded"], "allergies": "Not recorded"},
+    "medications": {"current_medications": [], "allergies": ""},
     "assessment": {"diagnoses": []},
 }
 
@@ -1086,9 +1089,12 @@ def test_an_empty_chart_names_no_diagnosis(diagnoses: list[str]) -> None:
     [
         ("assessment", "diagnoses", ["Insomnia, improving"], "diagnoses_only_stated"),
         ("assessment", "diagnoses", ["G47.00 Insomnia"], "diagnoses_only_stated"),
-        ("medications", "current_medications", [], "medications_from_chart"),
+        ("medications", "current_medications", ["None recorded"], "medications_from_chart"),
         ("medications", "allergies", "NKDA", "allergies_never_dropped"),
+        ("medications", "allergies", "Not recorded", "allergies_never_dropped"),
         ("social_history", "living_situation", "Not stated.", "history_from_chart"),
+        ("social_history", "living_situation", "Not recorded", "history_from_chart"),
+        ("substance_use", "cannabis", "Not recorded (not asked this visit)", "substances"),
     ],
 )
 def test_empty_chart_failures_are_caught(section: str, key: str, value: Any, check: str) -> None:
