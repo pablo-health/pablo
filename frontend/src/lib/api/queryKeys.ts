@@ -114,6 +114,10 @@ const baseQueryKeys = {
       [...baseQueryKeys.patients.details(), patientId] as const,
   },
 
+  // Who acted on a client's record. Outside `patients` on purpose: reading it
+  // writes an audit row, so invalidating a patient must not refetch it.
+  recordActivity: (patientId: string) => ["record-activity", patientId] as const,
+
   // Session query keys
   sessions: {
     all: ["sessions"] as const,

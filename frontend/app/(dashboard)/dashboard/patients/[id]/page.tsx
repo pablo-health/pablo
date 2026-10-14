@@ -11,6 +11,7 @@ import { PatientSummary } from "@/components/patients/PatientSummary"
 import { PatientChartTabs } from "@/components/patients/PatientChartTabs"
 import { PatientChatDialog } from "@/components/patients/PatientChatDialog"
 import { PatientChartExtras } from "@/components/patients/PatientChartExtras"
+import { RecordActivity } from "@/components/patients/RecordActivity"
 import { NewNoteButton } from "@/components/notes/NewNoteButton"
 import { usePatient } from "@/hooks/usePatients"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
@@ -84,6 +85,7 @@ export default function PatientDetailPage({ params, searchParams }: PatientDetai
           <span>Back to {people.Many}</span>
         </Link>
         <div className="flex items-center gap-2">
+          <RecordActivity patientId={patient.id} />
           <EditPatientButton patient={patient} />
           <PatientChatDialog patientId={patient.id} />
           <NewNoteButton patientId={patient.id} />

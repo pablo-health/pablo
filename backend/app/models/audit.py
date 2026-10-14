@@ -25,6 +25,9 @@ class AuditAction(StrEnum):
     PATIENT_RESTORED = "patient_restored"
     PATIENT_EXPORTED = "patient_exported"
     PATIENT_PURGED = "patient_purged"
+    # The practice owner read who acted on this patient's record, and when.
+    # Reading the trail is itself an access to it, so it lands in the trail.
+    PATIENT_ACTIVITY_VIEWED = "patient_activity_viewed"
     # Chart closure (THERAPY-hek). Orthogonal to soft-delete: closing a
     # chart marks the clinical/administrative care episode as ended, but
     # the row stays live and the day-30 hard-purge clock (THERAPY-cgy)

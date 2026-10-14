@@ -2093,21 +2093,47 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
                 "(actor_type = 'patient' AND "
                 "user_id::text = current_setting('app.current_patient_id', true))"
             )
-            # Reads are unchanged: an actor reads the rows they are the
-            # actor of, and nothing else. A clinician therefore does NOT
-            # read a patient's audit records, and a patient principal reads
-            # nothing at all — patient-actor rows are written for
-            # accountability and read by no one here.
+            # Reads: an actor reads the rows they are the actor of. A
+            # patient principal reads nothing at all.
             #
-            # That is deliberate. The audit log is a compliance record, not
-            # a read-surface for observing what a patient did. When a
-            # clinically meaningful signal matters — that an intake packet
-            # was completed, and when — it belongs in a domain column that
+            # The one widening is the practice owner, who reads every row
+            # about a client they have access to, whoever wrote it — the
+            # review of activity on a client's record that the practice is
+            # responsible for (§ 164.308(a)(1)(ii)(D)). That is its own
+            # SELECT-only policy below, so it adds reads and nothing else.
+            #
+            # The audit log is still a compliance record, not a
+            # read-surface for product behaviour. When a clinically
+            # meaningful signal matters — that an intake packet was
+            # completed, and when — it belongs in a domain column that
             # says so, queried like any other clinical fact. Deriving it
             # from audit rows would make the compliance record load-bearing
-            # for product behaviour, and quietly turn "who accessed what"
-            # into a feed.
+            # for product behaviour.
             select_using = "user_id::text = current_setting('app.current_user_id', true)"
+            # The practice is found through this table's own schema, not a
+            # schema name written into the policy: the tenant template is
+            # captured from ``practice`` and rewrites only ``practice.``-
+            # qualified names, which a regclass literal is and a string
+            # literal is not. Same text as migration ``a7e3c5d19b42``;
+            # ``test_audit_policy_parity`` holds the two together.
+            #
+            # No name it reaches may depend on the caller's search_path: it is
+            # evaluated wherever an audit row is read, including the
+            # RETURNING of an INSERT made from a session not scoped to this
+            # tenant. ``has_patient_access`` is called schema-qualified, and
+            # since ``a7e3c5d19b42`` its SQL-standard body is bound to its own
+            # schema's ``patient_clinicians``, not found through the path.
+            #
+            # ``qualified`` is built from the validated schema name and a
+            # fixed table name; not user input.
+            owner_client_read = (
+                "patient_id IS NOT NULL "  # noqa: S608
+                f"AND {schema_name}.has_patient_access("
+                "patient_id, current_setting('app.current_user_id', true)) "
+                "AND EXISTS (SELECT 1 FROM platform.practices p "
+                "WHERE p.owner_user_id::text = current_setting('app.current_user_id', true) "
+                f"AND to_regclass(p.schema_name || '.audit_logs') = '{qualified}'::regclass)"
+            )
             # One ALL policy, the same shape the generic branch uses, so
             # UPDATE and DELETE keep a predicate. Splitting this into
             # SELECT-only and INSERT-only policies would leave those two
@@ -2146,9 +2172,18 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
             session.execute(text(f"DROP POLICY IF EXISTS rls_audit_purge_delete ON {qualified}"))
             session.execute(text(f"DROP POLICY IF EXISTS rls_audit_purge_select ON {qualified}"))
             session.execute(
+                text(f"DROP POLICY IF EXISTS rls_audit_owner_client_read ON {qualified}")
+            )
+            session.execute(
                 text(
                     f"CREATE POLICY rls_audit_actor_access ON {qualified} "
                     f"USING ({select_using}) WITH CHECK ({insert_check})"
+                )
+            )
+            session.execute(
+                text(
+                    f"CREATE POLICY rls_audit_owner_client_read ON {qualified} "
+                    f"FOR SELECT USING ({owner_client_read})"
                 )
             )
             session.execute(

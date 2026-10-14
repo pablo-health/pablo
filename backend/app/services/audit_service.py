@@ -596,6 +596,14 @@ class AuditService:
     ) -> list[AuditLogEntry]:
         return self._repo.list_for_user(user_id=user_id, since=since, limit=limit, before=before)
 
+    def list_for_patient(
+        self,
+        patient_id: str,
+        limit: int = 100,
+        before: AuditCursor | None = None,
+    ) -> list[AuditLogEntry]:
+        return self._repo.list_for_patient(patient_id=patient_id, limit=limit, before=before)
+
     def log_onboarding_milestone(
         self,
         action: AuditAction | str,
