@@ -21,11 +21,13 @@ import type { UserPreferences } from "@/lib/api/users"
 import { GetPaidWizard } from "../GetPaidWizard"
 
 const usePreferences = vi.hoisted(() => vi.fn())
-const savePreferences = vi.hoisted(() => vi.fn())
+const savePreferences = vi.hoisted(() =>
+  vi.fn((next: unknown) => Promise.resolve(next)),
+)
 
 vi.mock("@/hooks/usePreferences", () => ({
   usePreferences: (...args: unknown[]) => usePreferences(...args),
-  useSavePreferences: () => ({ mutate: savePreferences, isPending: false }),
+  useSavePreferences: () => ({ mutateAsync: savePreferences, isPending: false }),
 }))
 
 // Several steps mount components that fetch their own data: the settings cards
