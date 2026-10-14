@@ -9,9 +9,16 @@
  * used to be reachable only by driving the UI.
  */
 
-import { describe, expect, it } from "vitest"
+import { act, renderHook } from "@testing-library/react"
+import { describe, expect, it, vi } from "vitest"
+import type { UserPreferences } from "@/lib/api/users"
 import type { SavedAnswers } from "../useBillingSetupDraft"
-import { persistedPatch, resolveAnswers, setupDraftReducer } from "../useBillingSetupDraft"
+import {
+  persistedPatch,
+  resolveAnswers,
+  setupDraftReducer,
+  useBillingSetupDraft,
+} from "../useBillingSetupDraft"
 
 const NOTHING_SAVED: SavedAnswers = {
   state: null,
@@ -121,6 +128,110 @@ describe("what each action writes", () => {
     })
     expect(persistedPatch({ type: "wantsCardPayments", value: false })).toEqual({
       billing_setup_wants_card_payments: false,
+    })
+  })
+})
+
+/**
+ * A stand-in for the preferences endpoint: a full replace, with replies the
+ * test releases by hand so it chooses the order saves land in.
+ */
+function fakePreferencesEndpoint(initial: UserPreferences) {
+  let stored = initial
+  const pending: { body: UserPreferences; land: () => void; refuse: () => void }[] = []
+  let mostInFlight = 0
+  const save = vi.fn(
+    (body: UserPreferences) =>
+      new Promise<UserPreferences>((resolve, reject) => {
+        pending.push({
+          body,
+          land: () => {
+            stored = body
+            resolve(body)
+          },
+          refuse: () => reject(new Error("refused")),
+        })
+        mostInFlight = Math.max(mostInFlight, pending.length)
+      }),
+  )
+  return {
+    save,
+    stored: () => stored,
+    mostInFlight: () => mostInFlight,
+    /** Land whatever is in flight, newest first, until nothing is left. */
+    async landNewestFirst() {
+      while (pending.length > 0) {
+        const newest = pending.pop()!
+        await act(async () => newest.land())
+      }
+    },
+    async refuseOldest() {
+      const oldest = pending.shift()!
+      await act(async () => oldest.refuse())
+    },
+  }
+}
+
+const LOADED = { timezone: "America/Chicago", theme: "warm-paper" } as UserPreferences
+
+describe("saving answers as they are given", () => {
+  it("keeps the step reached when two answers are saved back to back", async () => {
+    // Answer the checklist, then Continue again straight away. Each save used
+    // to be a full copy of the preferences as that render saw them, so the
+    // second carried the empty checklist from before the first had landed and
+    // erased the answer — and the two were in flight together, so the older
+    // could land last and move the step back.
+    const endpoint = fakePreferencesEndpoint(LOADED)
+    const { result } = renderHook(() => useBillingSetupDraft(LOADED, endpoint.save))
+
+    act(() => result.current.apply({ type: "answerChecklist", state: ["self_pay"] }))
+    act(() => result.current.apply({ type: "goTo", step: "confirm" }))
+    await endpoint.landNewestFirst()
+
+    expect(endpoint.mostInFlight()).toBe(1)
+    expect(endpoint.stored()).toMatchObject({
+      timezone: "America/Chicago",
+      billing_setup_state: ["self_pay"],
+      billing_setup_step: "confirm",
+    })
+  })
+
+  it("holds answers given before preferences load, then saves them", async () => {
+    // A full replace built on nothing would erase every other preference, so
+    // nothing may go out early — but dropping the answer is no better.
+    const endpoint = fakePreferencesEndpoint(LOADED)
+    const { result, rerender } = renderHook(
+      ({ preferences }: { preferences: UserPreferences | undefined }) =>
+        useBillingSetupDraft(preferences, endpoint.save),
+      { initialProps: { preferences: undefined as UserPreferences | undefined } },
+    )
+
+    act(() => result.current.apply({ type: "answerChecklist", state: ["self_pay"] }))
+    act(() => result.current.apply({ type: "goTo", step: "confirm" }))
+    expect(endpoint.save).not.toHaveBeenCalled()
+
+    rerender({ preferences: LOADED })
+    await endpoint.landNewestFirst()
+
+    expect(endpoint.stored()).toMatchObject({
+      timezone: "America/Chicago",
+      billing_setup_state: ["self_pay"],
+      billing_setup_step: "confirm",
+    })
+  })
+
+  it("carries an answer whose save was refused on the next save", async () => {
+    const endpoint = fakePreferencesEndpoint(LOADED)
+    const { result } = renderHook(() => useBillingSetupDraft(LOADED, endpoint.save))
+
+    act(() => result.current.apply({ type: "answerChecklist", state: ["platform"] }))
+    await endpoint.refuseOldest()
+    act(() => result.current.apply({ type: "goTo", step: "confirm" }))
+    await endpoint.landNewestFirst()
+
+    expect(endpoint.stored()).toMatchObject({
+      billing_setup_state: ["platform"],
+      billing_setup_step: "confirm",
     })
   })
 })

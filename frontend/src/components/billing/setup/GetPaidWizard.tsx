@@ -70,7 +70,7 @@ function GetPaidWizardBody({ onSettled }: GetPaidWizardProps) {
   // the one default it applies live in `resolveAnswers`, which is pure.
   const { answers, apply, settle: persistSettled } = useBillingSetupDraft(
     preferences,
-    savePreferences.mutate,
+    savePreferences.mutateAsync,
   )
 
   const steps = stepsForState(
