@@ -35,6 +35,21 @@ export function isFirebaseStuckStateError(err: unknown): boolean {
   return /INTERNAL ASSERTION FAILED.*Pending promise was never set/i.test(msg)
 }
 
+/**
+ * Empty `firebaseLocalStorageDb` in place: every record the SDK restores from
+ * on the next load — the signed-in user, any unfinished redirect event — is
+ * gone when this resolves. Best-effort; resolves either way.
+ *
+ * The records are cleared rather than the database deleted, because a delete
+ * cannot run while any connection to the database is open, and the SDK on
+ * this very page keeps one open for the page's lifetime. A blocked delete is
+ * not cancelled, only postponed: it stays queued and runs the moment that
+ * connection closes, which is the next time the page unloads. Called on the
+ * login screen, that meant the delete fired after the user had signed in
+ * again — wiping the session just stored — so the next full page load came
+ * up signed out. A clear runs inside an ordinary transaction, needs no
+ * exclusive access, and leaves nothing behind to fire later.
+ */
 export async function clearFirebaseAuthStorage(): Promise<void> {
   if (typeof indexedDB === "undefined") return
   await new Promise<void>((resolve) => {
@@ -45,10 +60,32 @@ export async function clearFirebaseAuthStorage(): Promise<void> {
       resolve()
     }
     try {
-      const req = indexedDB.deleteDatabase(FIREBASE_AUTH_DB)
-      req.onsuccess = finish
-      req.onerror = finish
-      req.onblocked = finish
+      const open = indexedDB.open(FIREBASE_AUTH_DB)
+      // No database yet means nothing to clear. Abort the upgrade so opening
+      // it here doesn't create an empty one.
+      open.onupgradeneeded = () => open.transaction?.abort()
+      open.onerror = finish
+      open.onblocked = finish
+      open.onsuccess = () => {
+        const db = open.result
+        const stores = Array.from(db.objectStoreNames)
+        if (stores.length === 0) {
+          db.close()
+          finish()
+          return
+        }
+        try {
+          const tx = db.transaction(stores, "readwrite")
+          for (const name of stores) tx.objectStore(name).clear()
+          tx.oncomplete = tx.onerror = tx.onabort = () => {
+            db.close()
+            finish()
+          }
+        } catch {
+          db.close()
+          finish()
+        }
+      }
     } catch {
       finish()
     }
