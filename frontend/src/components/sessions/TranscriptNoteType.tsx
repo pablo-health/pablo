@@ -11,7 +11,7 @@
 "use client"
 
 import { Lock } from "lucide-react"
-import { NoteInputFields } from "@/components/notes/NoteInputFields"
+import { LabeledNoteInputs } from "@/components/notes/LabeledNoteInputs"
 import { Label } from "@/components/ui/label"
 import {
   Select,
@@ -29,10 +29,6 @@ import {
   type NoteInputSchema,
   type NoteTypeSchema,
 } from "@/types/noteTypes"
-
-// The dialog's other text boxes are the shared Input; match its look.
-const TEXT_FIELD_CLASS =
-  "border-input h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive"
 
 export interface TranscriptNoteTypeChoice {
   noteType: string
@@ -134,24 +130,11 @@ export function TranscriptNoteType({
         </Select>
       </div>
 
-      <NoteInputFields
+      <LabeledNoteInputs
         inputs={inputs}
         values={value.inputs}
         onChange={setInput}
-        invalidKeys={missing}
-        textClassName={TEXT_FIELD_CLASS}
-        renderField={(input, control) => (
-          <div className="space-y-2">
-            <p className="text-sm font-medium leading-none">
-              {input.label}
-              {input.required && <span className="text-destructive"> *</span>}
-            </p>
-            {control}
-            {missing.has(input.key) && (
-              <p className="text-sm text-destructive">{input.label} is required</p>
-            )}
-          </div>
-        )}
+        missing={missing}
       />
     </>
   )
