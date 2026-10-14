@@ -3,11 +3,17 @@
 """Fields printed from the chart, written in code rather than by the model.
 
 A field whose definition names a ``source`` (:mod:`.field_sources`) is
-written here: the chart's part is the chart's text exactly as recorded (or
-"Not recorded" / "None recorded"), and what the visit said about it is
-appended as a mark composed from :class:`Statements`, which the extraction
-call (:mod:`.chart_statements`) returns. A model never writes the chart's
-text, so it cannot reword it, drop it or invent it.
+written here: the chart's part is the chart's text exactly as recorded, and
+what the visit said about it is appended as a mark composed from
+:class:`Statements`, which the extraction call (:mod:`.chart_statements`)
+returns. A model never writes the chart's text, so it cannot reword it, drop
+it or invent it.
+
+Where the chart has nothing, nothing stands in for it: no "Not recorded",
+"None recorded" or "Not stated.". The field holds only the visit's mark, and
+is empty when there is none. A mark is information and stays, alone if it
+has to: ``(not asked this visit)`` says the topic was not covered. A value
+the chart records, such as no known drug allergies, is printed as recorded.
 
 The marks:
 
@@ -57,7 +63,6 @@ if TYPE_CHECKING:
 
 NOT_RECORDED = "Not recorded"
 NONE_RECORDED = "None recorded"
-NOT_STATED = "Not stated."
 STATED_DIAGNOSIS = "stated this visit"
 RULE_OUT = "rule-out"
 ASKED_NO_CHANGE = "(asked this visit: no change)"
@@ -145,13 +150,18 @@ def without_rendered(definition: NoteTypeDefinition) -> NoteTypeDefinition:
 
 
 def _history_text(chart: ChartContext, key: str) -> str:
-    return next((f.text for f in chart.history if f.key == key), "") or NOT_RECORDED
+    """The chart's text for a history field, "" when it has none."""
+    return next((f.text for f in chart.history if f.key == key), "")
+
+
+def _allergies_text(chart: ChartContext) -> str:
+    """The chart's allergies, "" while they are not recorded."""
+    line = allergies_line(chart)
+    return "" if line == NOT_RECORDED else line
 
 
 def medication_lines(chart: ChartContext) -> list[str]:
     """The current list a line per medication, each named by its category when it has one."""
-    if not chart.medications:
-        return [NONE_RECORDED]
     return [
         _CATEGORY_PREFIX.get(m.category or "", "") + medication_line(m) for m in chart.medications
     ]
@@ -169,18 +179,22 @@ def problem_diagnoses(chart: ChartContext) -> list[StatedDiagnosis]:
 
 
 def chart_text(source: str, chart: ChartContext) -> str:
-    """A source's chart part as text, as the extraction prompt shows it."""
+    """A source's chart part as text, as the extraction prompt shows it.
+
+    The prompt says outright where the chart has nothing ("Not recorded"), so
+    the model reads an empty chart as one; the note itself never prints that.
+    """
     if source == ALLERGIES:
         return allergies_line(chart)
     if source == MEDICATIONS:
-        return "; ".join(medication_lines(chart))
+        return "; ".join(medication_lines(chart)) or NONE_RECORDED
     if source == PROBLEMS:
         lines = [
             " ".join(p for p in (d["code"], d["label"]) if p) for d in problem_diagnoses(chart)
         ]
         return "; ".join(lines) or "no diagnoses recorded"
     if is_history(source):
-        return _history_text(chart, source)
+        return _history_text(chart, source) or NOT_RECORDED
     return ""
 
 
@@ -203,8 +217,9 @@ def stated_suffix(statements: list[Statement]) -> str:
     return f"(stated this visit: {'; '.join(quotes)})" if quotes else ""
 
 
-def _with_suffix(text: str, suffix: str) -> str:
-    return f"{text} {suffix}" if suffix else text
+def _joined(*parts: str) -> str:
+    """The parts there are, a space apart: "" when there are none."""
+    return " ".join(part for part in parts if part)
 
 
 def _screen(statements: list[Statement]) -> str:
@@ -297,10 +312,11 @@ def _stated_medications(
 
 
 def place_of_service(inputs: Mapping[str, str], person: str, *, at_home: bool = False) -> str:
-    """The attestation from the entered place of service and locations."""
+    """The attestation from the entered place of service and locations, "" when no
+    place of service was entered."""
     place = (inputs.get("place_of_service") or "").strip()
     if not place or place.lower() == "not provided":
-        return NOT_STATED
+        return ""
     if not place.lower().startswith("tele"):
         return IN_OFFICE if "office" in place.lower() else f"{place}."
     client_at = (inputs.get("client_location") or "").strip()
@@ -328,8 +344,14 @@ def compose(
     chart: ChartContext,
     inputs: Mapping[str, str],
     statements: Statements,
+    *,
+    heard: bool = True,
 ) -> Any:
-    """One code-written field's content: the chart's part, then what the visit said."""
+    """One code-written field's content: the chart's part, then what the visit said.
+
+    Empty ("" or no items) where neither has anything. With ``heard`` false no
+    visit was heard, so a substance field carries no screen.
+    """
     source = rendered.source
     if source == PLACE_OF_SERVICE:
         return place_of_service(inputs, chart.person, at_home=statements.client_at_home)
@@ -340,10 +362,11 @@ def compose(
         added = _stated_medications(chart, said, statements.sound_alikes)
         return medication_lines(chart) + [a for i, a in enumerate(added) if a not in added[:i]]
     if is_substance(source):
-        return f"{_history_text(chart, source)} {_screen(said)}"
+        screen = _screen(said) if heard else stated_suffix(said)
+        return _joined(_history_text(chart, source), screen)
     if source == ALLERGIES:
-        return _with_suffix(allergies_line(chart), stated_suffix(said))
-    return _with_suffix(_history_text(chart, source), stated_suffix(said))
+        return _joined(_allergies_text(chart), stated_suffix(said))
+    return _joined(_history_text(chart, source), stated_suffix(said))
 
 
 def compose_all(
@@ -358,4 +381,24 @@ def compose_all(
         content.setdefault(rendered.section, {})[rendered.field.key] = compose(
             rendered, chart, inputs, statements
         )
+    return content
+
+
+def compose_from_chart(
+    definition: NoteTypeDefinition,
+    chart: ChartContext,
+    inputs: Mapping[str, str],
+) -> dict[str, dict[str, Any]]:
+    """The code-written fields of a note the clinician writes by hand, as it opens.
+
+    Each is what a draft prints from the chart and the entered values, with
+    no visit heard: nothing marks what the visit said or did not say (no
+    "(not asked this visit)"). A field with nothing in it is left out, for
+    the clinician to fill.
+    """
+    content: dict[str, dict[str, Any]] = {}
+    for rendered in rendered_fields(definition):
+        value = compose(rendered, chart, inputs, Statements(), heard=False)
+        if value:
+            content.setdefault(rendered.section, {})[rendered.field.key] = value
     return content

@@ -34,6 +34,7 @@ from app.notes.chart_fields import (
     Statement,
     Statements,
     compose_all,
+    compose_from_chart,
     place_of_service,
     rendered_fields,
 )
@@ -157,14 +158,14 @@ def test_a_source_is_checked_against_what_code_can_print_and_its_kind() -> None:
 
 
 @pytest.mark.parametrize("key", NON_SUBSTANCE_HISTORY)
-def test_a_history_field_is_the_charts_text_or_not_recorded(key: str) -> None:
+def test_a_history_field_is_the_charts_text_or_empty(key: str) -> None:
     text = "Line one of the chart.\nLine two, kept."
     sections = _compose(ChartContext(history=_history((key, text))))
     printed = {k: v for fields in sections.values() for k, v in fields.items()}
     assert printed[key] == text
     for other in NON_SUBSTANCE_HISTORY:
         if other != key:
-            assert printed[other] == "Not recorded"
+            assert printed[other] == ""
 
 
 def test_what_the_visit_stated_follows_the_charts_text_marked() -> None:
@@ -182,8 +183,8 @@ def test_what_the_visit_stated_follows_the_charts_text_marked() -> None:
         'Employed at a logistics firm. (stated this visit: "I got laid off last week"; '
         '"starting a course in May")'
     )
-    assert social["relationships"] == 'Not recorded (stated this visit: "we split up")'
-    assert social["supports"] == "Not recorded"
+    assert social["relationships"] == '(stated this visit: "we split up")'
+    assert social["supports"] == ""
 
 
 def test_a_statement_with_no_words_adds_no_mark() -> None:
@@ -227,14 +228,15 @@ def test_a_substance_field_is_the_baseline_then_one_screen(
     with_baseline = _compose(ChartContext(history=_history((key, "Weekends only."))), statements)
     without = _compose(ChartContext(), statements)
     assert with_baseline["substance_use"][field_key] == f"Weekends only. {screen}"
-    assert without["substance_use"][field_key] == f"Not recorded {screen}"
+    # With no baseline the screen stands alone: it is what the visit covered.
+    assert without["substance_use"][field_key] == screen
 
 
 def test_the_follow_up_prints_all_eight_substance_keys() -> None:
     assert len(SUBSTANCE_KEYS) == 8
     printed = _compose()["substance_use"]
     assert len(printed) == 8
-    assert all(v == f"Not recorded {NOT_ASKED}" for v in printed.values())
+    assert all(v == NOT_ASKED for v in printed.values())
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +247,7 @@ def test_the_follow_up_prints_all_eight_substance_keys() -> None:
 @pytest.mark.parametrize(
     ("chart", "printed"),
     [
-        (ChartContext(), "Not recorded"),
+        (ChartContext(), ""),
         (ChartContext(allergy_status="nkda"), "No known drug allergies (NKDA)"),
         (
             ChartContext(
@@ -262,15 +264,16 @@ def test_the_follow_up_prints_all_eight_substance_keys() -> None:
 def test_the_allergies_are_the_charts_whatever_was_said(chart: ChartContext, printed: str) -> None:
     assert _compose(chart)["medications"]["allergies"] == printed
     said = Statements(fields=(Statement("allergies", stated="amoxicillin gave me a rash"),))
+    mark = '(stated this visit: "amoxicillin gave me a rash")'
     assert _compose(chart, said)["medications"]["allergies"] == (
-        f'{printed} (stated this visit: "amoxicillin gave me a rash")'
+        f"{printed} {mark}" if printed else mark
     )
 
 
 def test_a_denial_on_an_empty_chart_is_quoted_never_nkda() -> None:
     said = Statements(fields=(Statement("allergies", stated="no allergies I know of"),))
     assert _compose(ChartContext(), said)["medications"]["allergies"] == (
-        'Not recorded (stated this visit: "no allergies I know of")'
+        '(stated this visit: "no allergies I know of")'
     )
 
 
@@ -281,9 +284,7 @@ def test_an_entered_value_under_the_fields_own_key_is_the_clinicians_statement()
         inputs={"place_of_service": "In office", "allergies": "NKDA per client"},
         template="psychiatric_evaluation",
     )
-    assert content["medications"]["allergies"] == (
-        'Not recorded (stated this visit: "NKDA per client")'
-    )
+    assert content["medications"]["allergies"] == '(stated this visit: "NKDA per client")'
 
 
 # ---------------------------------------------------------------------------
@@ -291,8 +292,8 @@ def test_an_entered_value_under_the_fields_own_key_is_the_clinicians_statement()
 # ---------------------------------------------------------------------------
 
 
-def test_no_medications_on_the_chart_reads_none_recorded() -> None:
-    assert _compose()["medications"]["current_medications"] == ["None recorded"]
+def test_no_medications_on_the_chart_lists_none() -> None:
+    assert _compose()["medications"]["current_medications"] == []
 
 
 def test_uncategorized_medications_are_the_charts_lines() -> None:
@@ -474,8 +475,8 @@ TELEHEALTH = {
             "Michigan. The client consented to receive care by telehealth.",
         ),
         ({"place_of_service": "In office"}, True, "client", IN_OFFICE),
-        ({}, False, "client", "Not stated."),
-        ({"place_of_service": "not provided"}, False, "client", "Not stated."),
+        ({}, False, "client", ""),
+        ({"place_of_service": "not provided"}, False, "client", ""),
     ],
 )
 def test_the_place_of_service_is_written_from_the_entered_values(
@@ -794,11 +795,11 @@ def test_the_chart_fed_fields_are_printed_with_no_model_text_in_them() -> None:
     assert content["medications"]["allergies"] == "Sulfa (rash)"
     assert content["medications"]["current_medications"] == ["Sertraline 50 mg, every morning"]
     assert content["social_history"]["work_school"] == "Teaches third grade at a public school."
-    assert content["social_history"]["supports"] == "Not recorded"
+    assert content["social_history"]["supports"] == ""
     assert (
         content["substance_use"]["alcohol"] == f"Two glasses of wine on weekends. {ASKED_NO_CHANGE}"
     )
-    assert content["substance_use"]["cannabis"] == f"Not recorded {NOT_ASKED}"
+    assert content["substance_use"]["cannabis"] == NOT_ASKED
     assert content["assessment"]["diagnoses"] == [
         {"label": "Generalized anxiety disorder", "code": "F41.1", "status": None}
     ]
@@ -863,3 +864,115 @@ def test_the_proposal_call_is_given_what_the_extraction_found_on_the_same_lines(
         in prompt
     )
     assert "[S1] [00:03] Client: Same as always." in prompt
+
+
+# ---------------------------------------------------------------------------
+# A note written by hand: what it opens with
+# ---------------------------------------------------------------------------
+
+PLACEHOLDERS = (
+    "Not recorded",
+    "None recorded",
+    "Not stated",
+    "not asked",
+    "no change",
+    "N/A",
+    "(none)",
+    "No known",
+)
+
+
+def _strings(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [s for v in value.values() for s in _strings(v)]
+    if isinstance(value, list):
+        return [s for v in value for s in _strings(v)]
+    return []
+
+
+@pytest.mark.parametrize("template", ["psychiatric_follow_up", "psychiatric_evaluation"])
+def test_an_empty_chart_opens_a_note_written_by_hand_with_nothing_in_it(template: str) -> None:
+    assert compose_from_chart(_definition(template), ChartContext(), {}) == {}
+
+
+def test_nothing_stands_in_for_what_the_chart_lacks() -> None:
+    """Only what is there is printed: no placeholder beside an entered value either."""
+    content = compose_from_chart(
+        _definition("psychiatric_evaluation"),
+        ChartContext(),
+        {"allergies": "Penicillin per client"},
+    )
+    assert content == {"medications": {"allergies": '(stated this visit: "Penicillin per client")'}}
+    assert not [s for s in _strings(content) for p in PLACEHOLDERS if p.lower() in s.lower()]
+
+
+@pytest.mark.parametrize("template", ["psychiatric_follow_up", "psychiatric_evaluation"])
+def test_a_draft_over_an_empty_chart_prints_nothing_but_the_visits_marks(template: str) -> None:
+    """Where the chart and the visit have nothing, the field is empty; a topic the
+    visit never covered still says so, since that is information."""
+    content = compose_all(_definition(template), ChartContext(), {}, Statements())
+
+    marks = {NOT_ASKED}
+    printed = [s for s in _strings(content) if s and s not in marks]
+    assert printed == []
+    for section in content.values():
+        for key, value in section.items():
+            if key in SUBSTANCE_KEYS:
+                assert value == NOT_ASKED, key
+            else:
+                assert not value, key
+
+
+def test_a_draft_over_an_empty_chart_prints_what_the_visit_stated_alone() -> None:
+    statements = Statements(
+        fields=(
+            Statement("relationships", stated="we split up"),
+            Statement("alcohol", screen="denied"),
+            Statement(
+                "current_medications", stated="Levothyroxine 50 mcg", medication="Levothyroxine"
+            ),
+        )
+    )
+    content = _compose(statements=statements, inputs={"allergies": "No allergies"})
+
+    assert content["social_history"]["relationships"] == '(stated this visit: "we split up")'
+    assert content["substance_use"]["alcohol"] == DENIED
+    assert content["medications"]["current_medications"] == [
+        '(stated this visit: "Levothyroxine 50 mcg")'
+    ]
+    assert content["medications"]["allergies"] == '(stated this visit: "No allergies")'
+    assert not [
+        s
+        for s in _strings(content)
+        for p in ("Not recorded", "None recorded", "Not stated")
+        if p.lower() in s.lower()
+    ]
+
+
+def test_a_note_written_by_hand_opens_with_the_chart_as_recorded_and_no_visit_marks() -> None:
+    chart = ChartContext(
+        allergy_status="nkda",
+        medications=(ChartMedication("Sertraline", "100 mg", "every morning", "psychiatric"),),
+        problems=(ChartProblem("Generalized anxiety disorder", "F41.1", "active"),),
+        history=_history(("alcohol", "Denies alcohol."), ("supports", "Sister nearby.")),
+    )
+
+    content = compose_from_chart(_definition(), chart, {"place_of_service": "In office"})
+
+    assert content == {
+        "encounter": {"place_of_service": IN_OFFICE},
+        "substance_use": {"alcohol": "Denies alcohol."},
+        "medications": {
+            "current_medications": ["Psychiatric: Sertraline 100 mg, every morning"],
+            # Recorded on the chart, so it is data, not a placeholder.
+            "allergies": "No known drug allergies (NKDA)",
+        },
+        "social_history": {"supports": "Sister nearby."},
+        "assessment": {
+            "diagnoses": [
+                {"label": "Generalized anxiety disorder", "code": "F41.1", "status": None}
+            ]
+        },
+    }
