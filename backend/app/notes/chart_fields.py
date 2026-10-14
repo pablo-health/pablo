@@ -359,3 +359,38 @@ def compose_all(
             rendered, chart, inputs, statements
         )
     return content
+
+
+def _from_chart(rendered: RenderedField, chart: ChartContext, inputs: Mapping[str, str]) -> Any:
+    source = rendered.source
+    if source == PLACE_OF_SERVICE:
+        attestation = place_of_service(inputs, chart.person)
+        return "" if attestation == NOT_STATED else attestation
+    if source == PROBLEMS:
+        return problem_diagnoses(chart)
+    if _entered(rendered, inputs):
+        return compose(rendered, chart, inputs, Statements())
+    if source == MEDICATIONS:
+        return medication_lines(chart) if chart.medications else []
+    text = chart_text(source, chart)
+    return "" if text == NOT_RECORDED else text
+
+
+def compose_from_chart(
+    definition: NoteTypeDefinition,
+    chart: ChartContext,
+    inputs: Mapping[str, str],
+) -> dict[str, dict[str, Any]]:
+    """The code-written fields of a note the clinician writes by hand, as it opens.
+
+    Each is what a draft prints from the chart and the entered values, with
+    no visit heard: nothing marks what the visit said or did not say (no
+    "(not asked this visit)"), and a field the chart has nothing for is left
+    out rather than printed as "Not recorded", for the clinician to fill.
+    """
+    content: dict[str, dict[str, Any]] = {}
+    for rendered in rendered_fields(definition):
+        value = _from_chart(rendered, chart, inputs)
+        if value:
+            content.setdefault(rendered.section, {})[rendered.field.key] = value
+    return content

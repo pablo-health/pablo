@@ -11,7 +11,9 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from app.chart_history.dependencies import get_chart_history_repository
 from app.chart_history.service import ChartHistoryService
+from app.chart_proposals.dependencies import get_proposal_medication_repository
 from app.chart_proposals.step import ChartProposalStep
 from app.main import app
 from app.medications.schemas import CreateMedicationRequest
@@ -56,13 +58,18 @@ from app.routes.sessions import (
 from app.scheduling_engine.models.appointment import Appointment
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.scheduling_engine.services.scheduling import SchedulingService
-from app.services import GeneratedNote, NoteGenerationService, NoteService
+from app.services import (
+    GeneratedNote,
+    NoteGenerationService,
+    NoteService,
+    RegistryNoteGenerationService,
+)
 from app.services.note_generation_service import TransientNoteGenerationError
 from fastapi import HTTPException
 from fastapi.testclient import TestClient  # noqa: TC002 — runtime fixture type
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterator, Mapping
 
     from app.notes.chart_context import ChartContext
     from app.services import AuditService
@@ -1077,6 +1084,149 @@ class TestVisitCodesPrefillFromProblemList:
 
         assert response.status_code == 201, response.text
         assert _stored_codes(appt_repo, mock_user_id) == ["F43.10"]
+
+
+FOLLOW_UP = "psychiatric_follow_up"
+_DRAFTED_BY_THE_VISIT = ("subjective", "risk", "mse", "measures", "mdm", "plan", "psychotherapy")
+
+
+@pytest.fixture
+def chart_repos() -> Iterator[tuple[InMemoryChartHistoryRepository, InMemoryMedicationRepository]]:
+    history = InMemoryChartHistoryRepository()
+    medications = InMemoryMedicationRepository()
+    app.dependency_overrides[get_chart_history_repository] = lambda: history
+    app.dependency_overrides[get_proposal_medication_repository] = lambda: medications
+    yield history, medications
+    app.dependency_overrides.pop(get_chart_history_repository, None)
+    app.dependency_overrides.pop(get_proposal_medication_repository, None)
+
+
+@pytest.fixture
+def no_model() -> Iterator[dict[str, MagicMock]]:
+    """Every way the create path could reach a model, each one failing the test if asked."""
+    with (
+        patch("app.routes.notes.enqueue") as enqueue,
+        patch.object(RegistryNoteGenerationService, "generate_note") as generate,
+        patch("app.services.note_generation_service.extract_statements") as extract,
+    ):
+        yield {"enqueue": enqueue, "generate": generate, "extract": extract}
+    enqueue.assert_not_called()
+    generate.assert_not_called()
+    extract.assert_not_called()
+
+
+class TestBlankNoteStartsFromTheChart:
+    """A note written by hand opens with what a draft prints from the chart, and no more."""
+
+    def test_chart_and_place_of_service_fill_their_fields_and_nothing_else(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_problem_repo: InMemoryPatientProblemRepository,
+        mock_notes_repo: InMemoryNotesRepository,
+        mock_user_id: str,
+        chart_repos: tuple[InMemoryChartHistoryRepository, InMemoryMedicationRepository],
+        no_model: dict[str, MagicMock],
+    ) -> None:
+        history, medications = chart_repos
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient.allergy_status = "recorded"
+        patient.allergies = [{"substance": "Penicillin", "reaction": "Hives"}]
+        mock_repo.update(patient)
+        ProblemService(mock_problem_repo).add(
+            patient.id,
+            mock_user_id,
+            AddProblemRequest(label="Generalized anxiety disorder", icd10_code="F41.1"),
+        )
+        chart_history = ChartHistoryService(history)
+        chart_history.set(patient.id, "prior_diagnoses", mock_user_id, "ADHD diagnosed at 12.")
+        chart_history.set(patient.id, "alcohol", mock_user_id, "Two drinks on weekends.")
+        medications.grant_access(patient.id, mock_user_id)
+        MedicationService(medications).create(
+            patient.id,
+            mock_user_id,
+            CreateMedicationRequest(
+                drug_name="Sertraline",
+                dose="100 mg",
+                frequency="every morning",
+                category="psychiatric",
+            ),
+        )
+
+        response = client.post(
+            f"/api/patients/{patient.id}/notes",
+            json={"note_type": FOLLOW_UP, "note_inputs": {"place_of_service": "Telehealth"}},
+        )
+
+        assert response.status_code == 201, response.text
+        body = response.json()
+        # No draft was written: the chart's part is the clinician's copy.
+        assert body["content"] is None
+        edited = body["content_edited"]
+        assert edited["encounter"] == {
+            "place_of_service": (
+                "Visit conducted by synchronous audio and video telehealth on a "
+                "HIPAA-compliant platform. The client's location was not entered; the "
+                "provider's location was not entered. The client consented to receive "
+                "care by telehealth."
+            )
+        }
+        assert edited["medications"] == {
+            "current_medications": ["Psychiatric: Sertraline 100 mg, every morning"],
+            "allergies": "Penicillin (Hives)",
+        }
+        assert edited["psychiatric_history"] == {"prior_diagnoses": "ADHD diagnosed at 12."}
+        # The baseline alone: nothing was heard, so no screen mark about this visit.
+        assert edited["substance_use"] == {"alcohol": "Two drinks on weekends."}
+        assert edited["assessment"] == {
+            "diagnoses": [
+                {"label": "Generalized anxiety disorder", "code": "F41.1", "status": None}
+            ]
+        }
+        for section in _DRAFTED_BY_THE_VISIT:
+            assert section not in edited
+        [stored] = mock_notes_repo.list_by_patient(patient.id)
+        assert stored.content_edited == edited
+
+    def test_an_empty_chart_leaves_its_fields_empty(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+        chart_repos: tuple[InMemoryChartHistoryRepository, InMemoryMedicationRepository],
+        no_model: dict[str, MagicMock],
+    ) -> None:
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+
+        response = client.post(
+            f"/api/patients/{patient.id}/notes",
+            json={"note_type": FOLLOW_UP, "note_inputs": {"place_of_service": "In office"}},
+        )
+
+        assert response.status_code == 201, response.text
+        body = response.json()
+        assert body["content"] is None
+        # Never "Not recorded", "None recorded" or "(not asked this visit)".
+        assert body["content_edited"] == {"encounter": {"place_of_service": "In-office visit."}}
+
+    def test_a_soap_note_still_starts_empty(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+        chart_repos: tuple[InMemoryChartHistoryRepository, InMemoryMedicationRepository],
+        no_model: dict[str, MagicMock],
+    ) -> None:
+        history, _ = chart_repos
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        ChartHistoryService(history).set(
+            patient.id, "prior_diagnoses", mock_user_id, "ADHD diagnosed at 12."
+        )
+
+        response = client.post(f"/api/patients/{patient.id}/notes", json={"note_type": "soap"})
+
+        assert response.status_code == 201, response.text
+        assert response.json()["content_edited"] is None
 
 
 # Avoid unused-fixture warnings.
