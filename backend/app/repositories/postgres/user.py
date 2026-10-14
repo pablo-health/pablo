@@ -5,9 +5,11 @@
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import select
+from sqlalchemy import ARRAY, Text, cast, select
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from ...db.platform_models import PlatformUserPreferencesRow, PlatformUserRow
 from ...models import User, UserPreferences
@@ -78,6 +80,36 @@ class PostgresUserRepository(UserRepository):
             row.preferences = prefs.model_dump()
         self._session.flush()
         return prefs
+
+    def update_preferences(self, user_id: str, changes: dict[str, Any]) -> UserPreferences:
+        # One INSERT ... ON CONFLICT DO UPDATE, so the merge happens inside
+        # Postgres rather than in Python. The conflicting row is locked for the
+        # update, and under READ COMMITTED a writer that waited on that lock
+        # applies ``||`` to the row as the other writer committed it, not to a
+        # copy read before. Two writers touching different keys therefore both
+        # land, including when neither row exists yet. A read-modify-write in
+        # Python would need SELECT ... FOR UPDATE plus a separate path for the
+        # first insert to say the same thing.
+        written = {key: value for key, value in changes.items() if value is not None}
+        removed = [key for key, value in changes.items() if value is None]
+        table = PlatformUserPreferencesRow
+        stmt = (
+            pg_insert(table)
+            .values(user_id=user_id, preferences=written)
+            .on_conflict_do_update(
+                index_elements=[table.user_id],
+                set_={
+                    "preferences": table.preferences.op("||")(cast(written, JSONB)).op("-")(
+                        cast(removed, ARRAY(Text))
+                    )
+                },
+            )
+            .returning(table)
+        )
+        # populate_existing refreshes a row this session already loaded, so a
+        # later read in the same request sees the merged value.
+        row = self._session.scalars(stmt, execution_options={"populate_existing": True}).one()
+        return UserPreferences(**row.preferences)
 
 
 def _row_to_user(row: PlatformUserRow) -> User:
