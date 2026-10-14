@@ -224,6 +224,25 @@ describe("exportSOAPToPDF", () => {
     expect(() => exportSOAPToPDF(mockSession, emptySOAP, peopleWords("patients"))).not.toThrow()
   })
 
+  it("prints no heading, label or filler for empty sections and sub-fields", () => {
+    exportSOAPToPDF(
+      mockSession,
+      {
+        subjective: "**Mood/Affect:** Brighter\n**Sleep:**",
+        objective: "",
+        assessment: "**Progress:**   ",
+        plan: "Not stated.",
+      },
+      peopleWords("patients"),
+    )
+    const printed = mockText.mock.calls.map((call) => call[0] as string)
+    expect(printed).toEqual(expect.arrayContaining(["Subjective", "Mood/Affect:", "Brighter", "Plan", "Not stated."]))
+    expect(printed).not.toEqual(
+      expect.arrayContaining([expect.stringMatching(/^(Objective|Assessment|Sleep:|Progress:)$/)]),
+    )
+    expect(printed.join("\n")).not.toMatch(/No content|None|—/)
+  })
+
   it("handles special characters in content", () => {
     const specialSOAP: SOAPNoteModel = {
       subjective: "Patient's mood: \"good\"",

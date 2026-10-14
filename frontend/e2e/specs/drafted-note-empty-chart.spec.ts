@@ -89,7 +89,7 @@ test("a draft over an empty chart leaves the chart's boxes empty and keeps the v
     body.getByRole("heading", { level: 4, name: label, exact: true }).locator("xpath=..")
 
   for (const label of CHART_ONLY_SECTIONS) {
-    await expect(section(label), label).toContainText("No content")
+    await expect(section(label), label).toContainText("Nothing entered")
   }
   const substances = section("Substance use")
   await expect(substances.getByText("(not asked this visit)", { exact: true })).toHaveCount(7)

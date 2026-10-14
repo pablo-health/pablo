@@ -65,8 +65,9 @@ import {
   EMPTY_CLINICAL_OBSERVATION,
   formatClinicalObservation,
 } from "./ClinicalObservationForm"
-import { parseNarrativeBlocks } from "@/lib/utils/narrativeParser"
+import { headsNextBlock, parseNarrativeBlocks } from "@/lib/utils/narrativeParser"
 import { GroundingBadge } from "./GroundingBadge"
+import { NothingEntered } from "./NothingEntered"
 import { SourceBadge, SourceHighlight } from "./SourceBadge"
 import { SchemaNoteView } from "./SchemaNoteView"
 import { addToProblemListAction } from "./AddToProblemList"
@@ -463,6 +464,11 @@ function StructuredContent({
   if (!sectionData || typeof sectionData === "string") return null
 
   const record = sectionData as unknown as Record<string, SOAPSentence | SOAPSentence[] | null>
+  const hasAny = fields.some((field) => {
+    const value = record[field.key]
+    return Array.isArray(value) ? value.length > 0 : !!value
+  })
+  if (!hasAny) return <NothingEntered />
 
   return (
     <div className="space-y-3">
@@ -579,11 +585,7 @@ function StructuredContent({
 function NarrativeContent({ text }: { text: string }) {
   const blocks = parseNarrativeBlocks(text)
 
-  if (blocks.length === 0) {
-    return (
-      <p className="text-sm text-neutral-500 italic">No content</p>
-    )
-  }
+  if (blocks.length === 0) return <NothingEntered />
 
   return (
     <div className="space-y-3">
@@ -594,9 +596,13 @@ function NarrativeContent({ text }: { text: string }) {
               {block.label}
             </h5>
           )}
-          <p className="text-sm text-neutral-900 whitespace-pre-wrap leading-relaxed">
-            {block.content}
-          </p>
+          {block.content ? (
+            <p className="text-sm text-neutral-900 whitespace-pre-wrap leading-relaxed">
+              {block.content}
+            </p>
+          ) : (
+            !headsNextBlock(blocks, i) && <NothingEntered />
+          )}
         </div>
       ))}
     </div>
@@ -726,7 +732,7 @@ function NarrativeNoteView({
             {displayNote.body}
           </p>
         ) : (
-          <p className="text-sm text-neutral-500 italic">No content</p>
+          <NothingEntered />
         )}
       </div>
 

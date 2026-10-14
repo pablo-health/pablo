@@ -10,7 +10,7 @@
 import type { PeopleWords } from "@/lib/peopleTerm"
 import { inTheNote, isEmptyValue, listItems, textValue } from "@/lib/schemaNoteValues"
 import { diagnosisText, statedDiagnoses } from "@/lib/statedDiagnoses"
-import type { PDFBlock, PDFNote } from "@/lib/utils/pdfExport"
+import type { PDFBlock, PDFNote, PDFSection } from "@/lib/utils/pdfExport"
 import { addOnBand, clientPresentLineText, durationsLineText, visitLineText } from "@/lib/visitTimes"
 import type { NoteFieldKind } from "@/types/noteTypes"
 import type { SchemaSectionValues } from "@/types/sessions"
@@ -30,7 +30,16 @@ export interface PDFNoteLayout {
   }>
 }
 
-const NO_CONTENT = "No content"
+/**
+ * The sections with nothing empty in them: a field with no text is left out,
+ * and so is a section left with no fields, heading and all. The PDF is the
+ * record, so it carries what the note says and never words for a gap.
+ */
+export function withoutEmpty(sections: PDFSection[]): PDFSection[] {
+  return sections
+    .map((section) => ({ ...section, blocks: section.blocks.filter((b) => b.content.trim()) }))
+    .filter((section) => section.blocks.length > 0)
+}
 
 const bullets = (items: string[]) => items.map((item) => `- ${item}`).join("\n")
 
@@ -42,9 +51,9 @@ function fieldText(kind: NoteFieldKind, value: unknown): string {
 
 /**
  * A schema note's sections and fields, in the type's order and with its
- * labels. A field with nothing in it is left out, as on screen, and a
- * section left with no fields says so; a value is printed as stored, so a
- * field the draft filled with "Not stated." prints that.
+ * labels. A field with nothing in it is left out, as on screen, and so is a
+ * section with nothing in any field, heading included; a value is printed as
+ * stored, so a field the draft filled with "Not stated." prints that.
  */
 export function schemaNotePdf(
   layout: PDFNoteLayout,
@@ -52,24 +61,23 @@ export function schemaNotePdf(
 ): PDFNote {
   return {
     title: layout.label,
-    sections: inTheNote(layout.sections).map((section) => {
-      const values = sections[section.key] ?? {}
-      const blocks: PDFBlock[] = section.fields
-        .filter((field) => !isEmptyValue(values[field.key]))
-        .map((field) => ({ label: field.label, content: fieldText(field.kind, values[field.key]) }))
-      return {
-        title: section.label,
-        blocks: blocks.length > 0 ? blocks : [{ label: null, content: NO_CONTENT }],
-      }
-    }),
+    sections: withoutEmpty(
+      inTheNote(layout.sections).map((section) => {
+        const values = sections[section.key] ?? {}
+        const blocks: PDFBlock[] = section.fields
+          .filter((field) => !isEmptyValue(values[field.key]))
+          .map((field) => ({ label: field.label, content: fieldText(field.kind, values[field.key]) }))
+        return { title: section.label, blocks }
+      }),
+    ),
   }
 }
 
-/** A narrative note: its body, under no heading of its own. */
+/** A narrative note: its body, under no heading of its own; nothing when it has none. */
 export function narrativeNotePdf(body: string): PDFNote {
   return {
     title: "Narrative Note",
-    sections: [{ title: "", blocks: [{ label: null, content: body.trim() || NO_CONTENT }] }],
+    sections: withoutEmpty([{ title: "", blocks: [{ label: null, content: body.trim() }] }]),
   }
 }
 
