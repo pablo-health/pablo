@@ -38,6 +38,7 @@ from sqlalchemy import text
 
 from ..db import PLATFORM_SCHEMA, _validate_schema_name, get_engine
 from ..db.migrate_tenants import list_active_tenant_schemas
+from ..logging_config import configure_job_logging
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -107,7 +108,7 @@ def _delete_expired(engine: Engine, schema: str, as_of: datetime) -> int:
 
 
 def run(argv: list[str] | None = None) -> int:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+    configure_job_logging()
     args = _parse_argv(argv)
 
     as_of = _parse_as_of(args.as_of_raw)
