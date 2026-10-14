@@ -383,10 +383,16 @@ jobs:
 
       - name: Install dependencies
         if: steps.classify.outputs.substantive != 'false'
-        # --audit-signatures verifies each package's npm registry signature
-        # before install, catching account-takeover republishes that share
-        # a pinned version.
-        run: npm ci --audit-signatures
+        run: npm ci
+        env:
+          npm_config_fetch_retries: 5
+          npm_config_fetch_retry_mintimeout: 20000
+
+      - name: Verify dependency signatures and provenance
+        if: steps.classify.outputs.substantive != 'false'
+        # Signature verification is an npm audit subcommand, not an npm ci
+        # option. Keep it separate so an unsupported flag cannot be ignored.
+        run: npm audit signatures
         env:
           npm_config_fetch_retries: 5
           npm_config_fetch_retry_mintimeout: 20000
