@@ -18,6 +18,7 @@ import {
   updateNoteEdits,
 } from "@/lib/api/notes"
 import { queryKeys } from "@/lib/api/queryKeys"
+import { withDashboard } from "./dashboardFreshness"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
 
 export function useNote(
@@ -69,11 +70,12 @@ export function useFinalizeNote(token?: string) {
     Note
   >({
     mutationFn: ({ noteId, data }) => finalizeNote(noteId, data, token),
-    invalidateKeys: ({ noteId }, data) => [
-      queryKeys.notes.detail(noteId),
-      ...(data ? [queryKeys.notes.byPatient(data.patient_id)] : []),
-      queryKeys.sessions.lists(),
-    ],
+    invalidateKeys: ({ noteId }, data) =>
+      withDashboard([
+        queryKeys.notes.detail(noteId),
+        ...(data ? [queryKeys.notes.byPatient(data.patient_id)] : []),
+        queryKeys.sessions.lists(),
+      ]),
     optimistic: {
       queryKey: ({ noteId }) => queryKeys.notes.detail(noteId),
       updater: (previous, { data }) => ({

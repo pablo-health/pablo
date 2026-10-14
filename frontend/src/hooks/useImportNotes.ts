@@ -18,6 +18,7 @@ import { useCallback, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { importNote } from "@/lib/api/sessions"
 import { queryKeys } from "@/lib/api/queryKeys"
+import { refreshDashboard } from "./dashboardFreshness"
 import type { SessionResponse } from "@/types/sessions"
 
 export type ImportItemStatus = "queued" | "parsing" | "done" | "error"
@@ -111,6 +112,7 @@ export function useImportNotes(
       // patient's session count / last-session date.
       void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all })
       void queryClient.invalidateQueries({ queryKey: queryKeys.patients.all })
+      void refreshDashboard(queryClient)
     },
     [patientId, token, patchItem, queryClient],
   )

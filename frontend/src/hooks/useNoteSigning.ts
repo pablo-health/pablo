@@ -19,6 +19,7 @@ import {
 } from "@/lib/api/notes"
 import { queryKeys } from "@/lib/api/queryKeys"
 import { getUserStatus } from "@/lib/api/users"
+import { withDashboard } from "./dashboardFreshness"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
 
 /** The note's signature, signed versions and addenda. */
@@ -32,16 +33,17 @@ export function useNoteSigning(noteId: string | undefined, token?: string) {
 
 /**
  * Everything that shows a note's lock state: the note itself, its signing
- * record, the patient's note list, and the session pages that embed the note.
+ * record, the patient's note list, the session pages that embed the note, and
+ * the dashboard's count of notes awaiting signature.
  */
 function signingKeys(noteId: string, patientId?: string) {
-  return [
+  return withDashboard([
     queryKeys.notes.detail(noteId),
     queryKeys.notes.signing(noteId),
     ...(patientId ? [queryKeys.notes.byPatient(patientId)] : []),
     queryKeys.sessions.details(),
     queryKeys.sessions.lists(),
-  ]
+  ])
 }
 
 export function useSignNote(token?: string) {

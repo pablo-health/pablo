@@ -5,6 +5,7 @@
 import { formatInUserTimeZone, useUserTimeZone } from "@/hooks/usePreferences"
 import { inboxKeys } from "@/hooks/inboxKeys"
 import { useAuthMutation } from "@/hooks/useAuthQuery"
+import { withDashboard } from "@/hooks/dashboardFreshness"
 import { queryKeys } from "@/lib/api/queryKeys"
 import { resolveGoogleChange, resolveHeldGoogleRemovals } from "@/lib/api/scheduling"
 import { GOOGLE_SYNC_STATUS, type GoogleChangeResolution } from "@/types/scheduling"
@@ -12,7 +13,7 @@ import { NoticeButton } from "@/components/calendar/editorial/GoogleChangeNotice
 import type { InboxItemRendererProps } from "./itemRenderers"
 import { ItemPanel, OpenLink, WHEN } from "./ItemPanel"
 
-const INVALIDATE = [inboxKeys.all, queryKeys.appointments.all]
+const INVALIDATE = withDashboard([inboxKeys.all, queryKeys.appointments.all])
 
 /**
  * A session Google Calendar changed and Pablo did not simply follow. Settled

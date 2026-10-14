@@ -20,6 +20,7 @@ import {
   updatePatient,
 } from "@/lib/api/patients"
 import { queryKeys } from "@/lib/api/queryKeys"
+import { withDashboard } from "./dashboardFreshness"
 import { useAuthQuery, useAuthMutation } from "./useAuthQuery"
 
 export function usePatientList(params?: PatientListParams, token?: string) {
@@ -84,7 +85,7 @@ export function useDeletePatient(token?: string) {
   return useAuthMutation({
     mutationFn: ({ patientId, acknowledgedRetentionObligation }: DeletePatientVariables) =>
       deletePatient(patientId, acknowledgedRetentionObligation, token),
-    invalidateKeys: [queryKeys.patients.lists(), queryKeys.sessions.all],
+    invalidateKeys: withDashboard([queryKeys.patients.lists(), queryKeys.sessions.all]),
     onSuccess: (_data, { patientId }, queryClient) => {
       queryClient.removeQueries({
         queryKey: queryKeys.patients.detail(patientId),
@@ -102,6 +103,6 @@ export function useDeletePatient(token?: string) {
 export function useRestorePatient(token?: string) {
   return useAuthMutation({
     mutationFn: (patientId: string) => restorePatient(patientId, token),
-    invalidateKeys: [queryKeys.patients.lists(), queryKeys.sessions.all],
+    invalidateKeys: withDashboard([queryKeys.patients.lists(), queryKeys.sessions.all]),
   })
 }
