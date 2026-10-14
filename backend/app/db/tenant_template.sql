@@ -47,16 +47,22 @@ CREATE FUNCTION __TENANT_SCHEMA__.audit_logs_no_truncate() RETURNS trigger
 
 
 
+
+CREATE TABLE __TENANT_SCHEMA__.patient_clinicians (
+    patient_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    role character varying(20) DEFAULT 'primary'::character varying NOT NULL,
+    granted_at timestamp with time zone DEFAULT now() NOT NULL,
+    granted_by uuid NOT NULL,
+    expires_at timestamp with time zone,
+    CONSTRAINT patient_clinicians_role_check CHECK (((role)::text = ANY ((ARRAY['primary'::character varying, 'co_treating'::character varying, 'supervisor'::character varying, 'covering'::character varying])::text[])))
+);
+
+
+
 CREATE FUNCTION __TENANT_SCHEMA__.has_patient_access(p_patient_id uuid, p_user_id character varying) RETURNS boolean
     LANGUAGE sql STABLE
-    AS $$
-        SELECT EXISTS (
-            SELECT 1 FROM patient_clinicians
-            WHERE patient_id = p_patient_id
-              AND user_id::text = p_user_id
-              AND (expires_at IS NULL OR expires_at > now())
-        );
-    $$;
+    RETURN (EXISTS (SELECT 1 FROM __TENANT_SCHEMA__.patient_clinicians pc WHERE ((pc.patient_id = has_patient_access.p_patient_id) AND ((pc.user_id)::text = (has_patient_access.p_user_id)::text) AND ((pc.expires_at IS NULL) OR (pc.expires_at > now())))));
 
 
 
@@ -96,7 +102,6 @@ CREATE FUNCTION __TENANT_SCHEMA__.practice_outside_appointment(p_source text, p_
         ORDER BY a.created_at, a.id
         LIMIT 1
     $$;
-
 
 
 
@@ -905,18 +910,6 @@ CREATE TABLE __TENANT_SCHEMA__.patient_chart_history_revisions (
     written_at timestamp with time zone NOT NULL,
     replaced_by uuid NOT NULL,
     replaced_at timestamp with time zone NOT NULL
-);
-
-
-
-CREATE TABLE __TENANT_SCHEMA__.patient_clinicians (
-    patient_id uuid NOT NULL,
-    user_id uuid NOT NULL,
-    role character varying(20) DEFAULT 'primary'::character varying NOT NULL,
-    granted_at timestamp with time zone DEFAULT now() NOT NULL,
-    granted_by uuid NOT NULL,
-    expires_at timestamp with time zone,
-    CONSTRAINT patient_clinicians_role_check CHECK (((role)::text = ANY ((ARRAY['primary'::character varying, 'co_treating'::character varying, 'supervisor'::character varying, 'covering'::character varying])::text[])))
 );
 
 
@@ -3147,9 +3140,7 @@ CREATE POLICY rls_audit_actor_access ON __TENANT_SCHEMA__.audit_logs USING (((us
 
 
 
-CREATE POLICY rls_audit_owner_client_read ON __TENANT_SCHEMA__.audit_logs FOR SELECT USING (((patient_id IS NOT NULL) AND (EXISTS ( SELECT 1
-   FROM __TENANT_SCHEMA__.patient_clinicians pc
-  WHERE ((pc.patient_id = audit_logs.patient_id) AND ((pc.user_id)::text = current_setting('app.current_user_id'::text, true)) AND ((pc.expires_at IS NULL) OR (pc.expires_at > now()))))) AND (EXISTS ( SELECT 1
+CREATE POLICY rls_audit_owner_client_read ON __TENANT_SCHEMA__.audit_logs FOR SELECT USING (((patient_id IS NOT NULL) AND __TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying) AND (EXISTS ( SELECT 1
    FROM platform.practices p
   WHERE (((p.owner_user_id)::text = current_setting('app.current_user_id'::text, true)) AND ((to_regclass(((p.schema_name)::text || '.audit_logs'::text)))::oid = ('__TENANT_SCHEMA__.audit_logs'::regclass)::oid))))));
 

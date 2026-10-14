@@ -287,6 +287,25 @@ class TestTheCallersSearchPathDoesNotMatter:
 
         assert str(returned) == row_id
 
+    def test_has_patient_access_reads_its_own_schemas_grants(
+        self, engine: Engine, cast: _Cast
+    ) -> None:
+        """The policy calls the function rather than repeating it, so the
+        function itself has to be search_path-independent."""
+        with engine.begin() as conn:
+            conn.execute(text("SET search_path = public"))
+            conn.execute(text("SELECT set_config('app.current_user_id', :u, false)"), {"u": _OWNER})
+            answers = conn.execute(
+                text(
+                    f"SELECT {cast.schema}.has_patient_access(CAST(:a AS uuid), :u),"
+                    f" {cast.schema}.has_patient_access(CAST(:b AS uuid), :u)"
+                ),
+                {"a": cast.client_a, "b": cast.client_b, "u": _OWNER},
+            ).one()
+            conn.execute(text("SELECT set_config('app.current_user_id', '', false)"))
+
+        assert tuple(answers) == (True, False)
+
     def test_an_unscoped_read_still_sees_what_the_owner_may_see(
         self, engine: Engine, cast: _Cast
     ) -> None:
