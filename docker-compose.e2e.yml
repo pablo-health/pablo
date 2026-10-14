@@ -73,6 +73,9 @@ services:
       # (practice-host-lb below).
       - CORS_ORIGINS=http://localhost:${E2E_FRONTEND_PORT:-3000},http://127.0.0.1:${E2E_FRONTEND_PORT:-3000}
       - CORS_ALLOW_CREDENTIALS=true
+      # Where a passkey ceremony may come from: the clinician app's origin.
+      # The relying-party id keeps its default, localhost.
+      - WEBAUTHN_ORIGINS=http://localhost:${E2E_FRONTEND_PORT:-3000}
       - DATABASE_BACKEND=postgres
       - DATABASE_URL=postgresql://pablo:pablo_dev@postgres:5432/pablo
       - GCP_PROJECT_ID=demo-pablo-e2e
