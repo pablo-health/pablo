@@ -100,11 +100,17 @@ jobs:
           username: oauth2accesstoken
           password: ${{ steps.auth.outputs.access_token }}
 
+      - name: Short commit SHA
+        id: build
+        run: echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
       - name: Build and push frontend
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
         with:
           context: frontend
           file: frontend/Dockerfile.production
+          build-args: |
+            NEXT_PUBLIC_CLIENT_BUILD=${{ steps.build.outputs.short_sha }}
           push: true
           tags: |
             ${{ env.REGISTRY }}/frontend:${{ github.sha }}
