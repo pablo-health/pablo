@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from fastapi import Depends, HTTPException, Request, status
 
+from ..api_errors import ForbiddenError
 from ..db import (
     DEFAULT_PRACTICE_SCHEMA,
     arm_current_patient_id,
@@ -64,6 +65,7 @@ __all__ = [
     "get_patient_resolver_registry",
     "patient_not_authenticated_detail",
     "patient_resolver_registry",
+    "require_stepped_up",
 ]
 
 
@@ -432,3 +434,14 @@ async def get_patient_context(
         )
         raise _unauthenticated() from None
     return context
+
+
+def require_stepped_up(patient: PatientContext) -> None:
+    """Refuse a single-factor principal: 403 ``STEP_UP_REQUIRED``.
+
+    The bar for the patient surfaces that show or change the record. One
+    factor reaching the wrong person (a sign-in link forwarded to the wrong
+    inbox) should not open a chart, sign a form or change the account.
+    """
+    if patient.auth_strength is not AuthStrength.STEPPED_UP:
+        raise ForbiddenError("Confirm it is you to continue.", code="STEP_UP_REQUIRED")

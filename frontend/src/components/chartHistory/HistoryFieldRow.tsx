@@ -16,14 +16,7 @@ import { Button } from "@/components/ui/button"
 import { useToast } from "@/components/ui/Toast"
 import { useRemoveHistoryField, useSetHistoryField } from "@/hooks/useChartHistory"
 import type { HistoryField } from "@/types/chartHistory"
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  })
-}
+import { formatDate } from "@/lib/dates"
 
 function sourceLine(field: HistoryField): string | null {
   if (!field.updated_at || field.text === null) return null

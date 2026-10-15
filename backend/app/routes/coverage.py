@@ -166,6 +166,7 @@ from ..services import AuditService, get_audit_service
 from ..services.coverage_intake import new_payer
 from ..services.session_generation_worker import resolve_tenant_for_user
 from ..utcnow import utc_now
+from ._deps import client_not_found, visible_patient
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -255,12 +256,6 @@ def _to_coverage_response(coverage: PatientCoverage, payer: Payer) -> CoverageRe
     return CoverageResponse(
         payer=_to_payer_response(payer), eligibility=summary_for_coverage(coverage), **fields
     )
-
-
-def _require_patient(patients: PatientRepository, patient_id: str, user_id: str) -> None:
-    """404 unless this client is visible to this clinician in this practice."""
-    if patients.get(patient_id, user_id) is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
 
 
 def _require_payer(payers: PayerRepository, payer_row_id: str) -> Payer:
@@ -898,7 +893,7 @@ def get_coverage(
     plan on file" is answered by an absent resource rather than an empty
     object every caller would have to special-case.
     """
-    _require_patient(patients, patient_id, user.id)
+    visible_patient(patients, patient_id, user.id, client_not_found)
     active = _require_active_coverage(coverage, patient_id)
     payer = _require_payer(payers, active.payer_id)
 
@@ -941,7 +936,7 @@ def create_coverage(
     enrollments on file gets them requested on the way through, so the
     practice is enrolled by the time a claim is ready.
     """
-    _require_patient(patients, patient_id, user.id)
+    visible_patient(patients, patient_id, user.id, client_not_found)
     if coverage.get_active(patient_id) is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1011,7 +1006,7 @@ def update_coverage(
     leaves the stored answer where it is. Clearing it there would throw away
     the very figure the override falls back to.
     """
-    _require_patient(patients, patient_id, user.id)
+    visible_patient(patients, patient_id, user.id, client_not_found)
     active = _require_active_coverage(coverage, patient_id)
 
     changes = payload.model_dump(exclude_unset=True)
@@ -1061,7 +1056,7 @@ def verify_coverage(
     The check discloses the client to the payer, so it is audited whenever
     an inquiry went out — answered or not.
     """
-    _require_patient(patients, patient_id, user.id)
+    visible_patient(patients, patient_id, user.id, client_not_found)
     active = _require_active_coverage(coverage, patient_id)
     deps = EligibilityDeps(
         client=client, identity=identity, coverage=coverage, payers=payers, patients=patients
@@ -1223,7 +1218,7 @@ def deactivate_coverage(
     audit: AuditService = Depends(get_audit_service),
 ) -> Response:
     """Take the active coverage off file. The row stays, inactive."""
-    _require_patient(patients, patient_id, user.id)
+    visible_patient(patients, patient_id, user.id, client_not_found)
     active = _require_active_coverage(coverage, patient_id)
 
     deactivated = coverage.update(active.model_copy(update={"active": False}))

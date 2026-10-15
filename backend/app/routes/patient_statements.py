@@ -43,7 +43,8 @@ from ..repositories import (
 from ..services import AuditService, get_audit_service
 from ..services.practice_billing_profile import load_billing_profile
 from ..utcnow import utc_now
-from .claims import _practice_timezone, _require_patient
+from ._deps import client_not_found, visible_patient
+from .claims import _practice_timezone
 
 if TYPE_CHECKING:
     from ..models import User
@@ -112,7 +113,7 @@ def generate_statement(
     audit: AuditService = Depends(get_audit_service),
 ) -> Response:
     """The client's statement, as a PDF download."""
-    patient = _require_patient(patients, patient_id, user.id)
+    patient = visible_patient(patients, patient_id, user.id, client_not_found)
     charges = payments.list_charges(patient_id)
     active = coverage.get_active(patient_id)
     statement = build_statement(

@@ -28,12 +28,11 @@ import type {
   SourceKey,
   SourceSelection,
 } from "@/lib/chat/types"
+import { formatDate } from "@/lib/dates"
 
-function formatDate(iso: string | undefined | null): string | null {
-  if (!iso) return null
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return null
-  return d.toLocaleDateString("en-US", { month: "long", day: "numeric" })
+function formatLatestDate(iso: string | undefined | null): string | null {
+  if (!iso || Number.isNaN(new Date(iso).getTime())) return null
+  return formatDate(iso, { month: "long", day: "numeric" }, "en-US")
 }
 
 function progressLimit(selection: SourceSelection): number | null {
@@ -62,7 +61,7 @@ function phraseForSource(
     // pasted in).
     return null
   }
-  const lastDate = formatDate(entry.latest_at)
+  const lastDate = formatLatestDate(entry.latest_at)
   switch (entry.source_key) {
     case "most_recent_intake":
       return lastDate

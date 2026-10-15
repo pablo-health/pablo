@@ -1220,25 +1220,25 @@
             "key": "suicidal_homicidal_ideation",
             "label": "Suicidal / homicidal ideation",
             "kind": "text",
-            "ai_hint": "What was asked and answered about current suicidal or homicidal thoughts, intent, plan or means: the client's own words quoted verbatim and framed as theirs, and the clinician's finding as dictated, unquoted (e.g. Denies SI and HI. Asked about thoughts of harming self or others, the client said: \"...\"). Never a paraphrase of the client, never a level the clinician did not say. \"Not stated.\" if nothing was said."
+            "ai_hint": "What was asked and answered about current suicidal or homicidal thoughts, intent, plan or means: the client's own words quoted verbatim and framed as theirs, and the clinician's finding as dictated, unquoted (e.g. Denies SI and HI. Asked about thoughts of harming self or others, the client said: \"...\"). Never a paraphrase of the client, never a level the clinician did not say. \"Not assessed this visit.\" if it was not asked; never a denial nobody gave."
           },
           {
             "key": "risk_protective_factors",
             "label": "Risk and protective factors",
             "kind": "text",
-            "ai_hint": "Risk factors and protective factors as the clinician or client named them, written as findings (e.g. Protective factors: employed, engaged in treatment.). Never one nobody named. \"Not stated.\" if none were named."
+            "ai_hint": "Risk factors and protective factors as the clinician or client named them, written as findings (e.g. Protective factors: employed, engaged in treatment.). Never one nobody named. \"None discussed.\" if none were named."
           },
           {
             "key": "overall_risk",
             "label": "Overall risk",
             "kind": "text",
-            "ai_hint": "Only the clinician's own stated judgment of overall risk, written as a finding (e.g. Overall risk is low.). Never a level the clinician did not say. \"Not stated.\" if the clinician did not state one."
+            "ai_hint": "Only the clinician's own stated judgment of overall risk, written as a finding (e.g. Overall risk is low.). Never a level the clinician did not say. \"Overall risk level not stated.\" if the clinician did not state one."
           },
           {
             "key": "safety_plan",
             "label": "Safety plan",
             "kind": "text",
-            "ai_hint": "Only if any ideation, self-harm or high risk was reported: the safety planning the clinician described (warning signs, coping, supports, crisis contacts, making the environment safer), in the clinician's own words, unquoted; never a summary that drops a step. Otherwise leave empty."
+            "ai_hint": "Only if any ideation, self-harm or high risk was reported: the safety planning the clinician described (warning signs, coping, supports, crisis contacts, making the environment safer), in the clinician's own words, unquoted; never a summary that drops a step. If one was reported and no safety planning was described, \"Safety plan not discussed this visit.\" Otherwise leave empty."
           }
         ]
       },
@@ -1335,7 +1335,7 @@
             "key": "pdmp",
             "label": "PDMP",
             "kind": "text",
-            "ai_hint": "If the clinician said the state prescription monitoring program (PDMP) was checked, write \"State prescription monitoring program (PDMP) reviewed on <date>: <finding as stated>.\" where <date> is the calendar date the clinician gave, or the date of service when the clinician said \"today\" or gave no date (never the word \"today\"). If a controlled substance was prescribed and the clinician did not mention the check, write \"Not stated.\" If no controlled substance was involved and no check was mentioned, leave empty."
+            "ai_hint": "If the clinician said the state prescription monitoring program (PDMP) was checked, write \"State prescription monitoring program (PDMP) reviewed on <date>: <finding as stated>.\" where <date> is the calendar date the clinician gave, or the date of service when the clinician said \"today\" or gave no date (never the word \"today\"). If a controlled substance was prescribed and the clinician did not mention the check, write \"PDMP review not documented this visit.\" If no controlled substance was involved and no check was mentioned, leave empty."
           },
           {
             "key": "labs",
@@ -1827,31 +1827,31 @@
             "key": "suicidal_homicidal_ideation",
             "label": "Suicidal / homicidal ideation",
             "kind": "text",
-            "ai_hint": "What was asked and answered about suicidal or homicidal thoughts, intent, plan or means: the client's own words quoted verbatim and framed as theirs, and the clinician's finding as dictated, unquoted (e.g. Denies SI and HI. Asked about thoughts of harming self or others, the client said: \"...\"). Never a paraphrase of the client, never a level the clinician did not say. \"Not stated.\" if nothing was said."
+            "ai_hint": "What was asked and answered about suicidal or homicidal thoughts, intent, plan or means: the client's own words quoted verbatim and framed as theirs, and the clinician's finding as dictated, unquoted (e.g. Denies SI and HI. Asked about thoughts of harming self or others, the client said: \"...\"). Never a paraphrase of the client, never a level the clinician did not say. \"Not assessed this visit.\" if it was not asked; never a denial nobody gave."
           },
           {
             "key": "self_harm_violence",
             "label": "Self-harm / violent behavior",
             "kind": "text",
-            "ai_hint": "What was reported or observed about self-harm or violence: the client's own words quoted verbatim and framed as theirs, and the clinician's finding as dictated, unquoted. Advice or instructions given to the client belong in Emergency instructions, not here. Never a paraphrase of the client, never a level the clinician did not say. \"Not stated.\" if nothing was said."
+            "ai_hint": "What was reported or observed about self-harm or violence: the client's own words quoted verbatim and framed as theirs, and the clinician's finding as dictated, unquoted. Advice or instructions given to the client belong in Emergency instructions, not here. Never a paraphrase of the client, never a level the clinician did not say. \"No self-harm or violence discussed.\" if nothing was said about it; never a denial nobody gave."
           },
           {
             "key": "risk_protective_factors",
             "label": "Risk and protective factors",
             "kind": "text",
-            "ai_hint": "Risk factors and protective factors as the clinician or client named them, written as findings (e.g. Protective factors: employed, engaged in treatment.). Never one nobody named. \"Not stated.\" if none were named."
+            "ai_hint": "Risk factors and protective factors as the clinician or client named them, written as findings (e.g. Protective factors: employed, engaged in treatment.). Never one nobody named. \"None discussed.\" if none were named."
           },
           {
             "key": "overall_risk",
             "label": "Overall acute risk",
             "kind": "text",
-            "ai_hint": "Only the clinician's own stated judgment of overall acute risk, written as a finding (e.g. Overall acute risk is low.). Never a level the clinician did not say. \"Not stated.\" if the clinician did not state one."
+            "ai_hint": "Only the clinician's own stated judgment of overall acute risk, written as a finding (e.g. Overall acute risk is low.). Never a level the clinician did not say. \"Overall risk level not stated.\" if the clinician did not state one."
           },
           {
             "key": "safety_plan",
             "label": "Safety plan",
             "kind": "text",
-            "ai_hint": "Only if any ideation, self-harm or violence was reported: the safety planning the clinician described (warning signs, coping, supports, crisis contacts, means safety), in the clinician's own words, unquoted; never a summary that drops a step. Otherwise leave empty."
+            "ai_hint": "Only if any ideation, self-harm or violence was reported: the safety planning the clinician described (warning signs, coping, supports, crisis contacts, means safety), in the clinician's own words, unquoted; never a summary that drops a step. If one was reported and no safety planning was described, \"Safety plan not discussed this visit.\" Otherwise leave empty."
           }
         ]
       },
@@ -1985,7 +1985,7 @@
             "key": "pdmp",
             "label": "PDMP",
             "kind": "text",
-            "ai_hint": "If the clinician said the state prescription monitoring program (PDMP) was checked, write \"State prescription monitoring program (PDMP) reviewed on <date>: <finding as stated>.\" where <date> is the calendar date the clinician gave, or the date of service when the clinician said \"today\" or gave no date (never the word \"today\"). If a controlled substance was prescribed or continued and the clinician did not mention the check, write \"Not stated.\" If no controlled substance was involved, leave empty."
+            "ai_hint": "If the clinician said the state prescription monitoring program (PDMP) was checked, write \"State prescription monitoring program (PDMP) reviewed on <date>: <finding as stated>.\" where <date> is the calendar date the clinician gave, or the date of service when the clinician said \"today\" or gave no date (never the word \"today\"). If a controlled substance was prescribed or continued and the clinician did not mention the check, write \"PDMP review not documented this visit.\" If no controlled substance was involved, leave empty."
           },
           {
             "key": "informed_consent",

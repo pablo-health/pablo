@@ -394,8 +394,9 @@ def list_patients(
             )
             for p, stamp in deleted_pairs
         ]
-        for p, _stamp in deleted_pairs:
-            audit.log_patient_action(AuditAction.PATIENT_VIEWED, user, request, p)
+        with audit.batched():
+            for p, _stamp in deleted_pairs:
+                audit.log_patient_action(AuditAction.PATIENT_VIEWED, user, request, p)
         total = len(responses)
         return PatientListResponse(
             data=responses,
@@ -411,9 +412,11 @@ def list_patients(
     # (DOB, email, phone) for every patient returned, so reading it is a
     # per-record content read on par with the GET /api/patients/{id} detail
     # view — audit one patient_viewed per patient. The read-coalescing gate
-    # collapses repeats of the same patient within the window.
-    for p in patients:
-        audit.log_patient_action(AuditAction.PATIENT_VIEWED, user, request, p)
+    # collapses repeats of the same patient within the window; the batch
+    # writes the page's rows in one trip.
+    with audit.batched():
+        for p in patients:
+            audit.log_patient_action(AuditAction.PATIENT_VIEWED, user, request, p)
 
     return PatientListResponse(
         data=responses,

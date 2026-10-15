@@ -173,8 +173,8 @@ Key points:
 `note_templates/` drafts each starting note-type template's own sample
 visits with the real model and grades the drafts with deterministic checks:
 codes, times and the monitoring-program check only as dictated, risk fields
-quoted or "Not stated.", an empty psychotherapy section when there was no
-therapy, and the rest. See `note_templates/README.md` for how to run it and
+quoted or a gap worded for the field, an empty psychotherapy section when
+there was no therapy, and the rest. See `note_templates/README.md` for how to run it and
 what each check protects.
 
 ```bash

@@ -21,6 +21,7 @@
 import type { RefillRequest, RefillRequestStatus } from "@/lib/api/patientRefills"
 import { cn } from "@/lib/utils"
 import { LIST_EMPTY, LIST_HEADING, NEXT_STEPS, STATUS_LABELS } from "./refillsCopy"
+import { MEDIUM_DATE, formatDate } from "@/lib/dates"
 
 export interface RefillRequestListProps {
   requests: RefillRequest[]
@@ -37,14 +38,6 @@ const PILL_TONES: Record<RefillRequestStatus, string> = {
   approved: "bg-green-100 text-green-800",
   needs_visit: "bg-amber-100 text-amber-800",
   declined: "bg-neutral-100 text-neutral-700",
-}
-
-function formatDate(value: string): string {
-  return new Date(value).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  })
 }
 
 function statusDate(request: RefillRequest): string {
@@ -106,7 +99,7 @@ export function RefillRequestList({
                   data-testid={`portal-refills-date-${request.id}`}
                   className="text-xs text-neutral-500"
                 >
-                  {formatDate(date)}
+                  {formatDate(date, MEDIUM_DATE, "en-US")}
                 </time>
                 {step && (
                   <span

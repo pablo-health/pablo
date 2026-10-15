@@ -145,7 +145,7 @@ class Expected:
     therapy_never: dict[str, tuple[str, ...]] = field(default_factory=dict)
     """Psychotherapy fields with words nobody said, which they must not carry."""
     therapy_not_stated: tuple[str, ...] = ()
-    """Psychotherapy fields the clinician never spoke to: "Not stated."."""
+    """Psychotherapy fields the clinician never spoke to: each says it was not covered."""
 
 
 @dataclass(frozen=True)

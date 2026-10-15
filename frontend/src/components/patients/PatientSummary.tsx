@@ -10,6 +10,7 @@ import { usePatientCoverage } from "@/hooks/useCoverage"
 import { usePatientBalance } from "@/hooks/usePayments"
 import { formatBalanceLine } from "@/lib/paymentDisplay"
 import type { PatientResponse } from "@/types/patients"
+import { NUMERIC_DATE, formatDate } from "@/lib/dates"
 
 interface PatientSummaryProps {
   patient: PatientResponse
@@ -21,13 +22,8 @@ const STATUS_BADGE_STYLES: Record<string, string> = {
   on_hold: "bg-yellow-100 text-yellow-700",
 }
 
-function formatDate(dateString: string | null): string {
-  if (!dateString) return "N/A"
-  try {
-    return new Date(dateString).toLocaleDateString()
-  } catch {
-    return "N/A"
-  }
+function formatSummaryDate(dateString: string | null): string {
+  return dateString ? formatDate(dateString, NUMERIC_DATE) : "N/A"
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -111,7 +107,7 @@ export function PatientSummary({ patient }: PatientSummaryProps) {
             </div>
             <div className="flex items-center gap-2">
               <Calendar className="w-4 h-4" />
-              <span>DOB: {formatDate(patient.date_of_birth)}</span>
+              <span>DOB: {formatSummaryDate(patient.date_of_birth)}</span>
             </div>
             <div className="flex items-center gap-2">
               <Calendar className="w-4 h-4" />
@@ -121,13 +117,13 @@ export function PatientSummary({ patient }: PatientSummaryProps) {
             {patient.last_session_date && (
               <div className="flex items-center gap-2">
                 <Calendar className="w-4 h-4" />
-                <span>Last Session: {formatDate(patient.last_session_date)}</span>
+                <span>Last Session: {formatSummaryDate(patient.last_session_date)}</span>
               </div>
             )}
             {patient.next_session_date && (
               <div className="flex items-center gap-2">
                 <Calendar className="w-4 h-4" />
-                <span>Next Session: {formatDate(patient.next_session_date)}</span>
+                <span>Next Session: {formatSummaryDate(patient.next_session_date)}</span>
               </div>
             )}
           </div>

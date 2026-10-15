@@ -68,6 +68,8 @@ from app.services.note_generation_service import TransientNoteGenerationError
 from fastapi import HTTPException
 from fastapi.testclient import TestClient  # noqa: TC002 — runtime fixture type
 
+from .conftest import audited_entries
+
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
 
@@ -836,9 +838,9 @@ class TestListPatientNotesAudit:
         assert response.json()["total"] == 2
 
         viewed = {
-            call.args[0].resource_id
-            for call in mock_audit_service._repo.append.call_args_list
-            if call.args[0].action == AuditAction.SESSION_VIEWED.value
+            entry.resource_id
+            for entry in audited_entries(mock_audit_service)
+            if entry.action == AuditAction.SESSION_VIEWED.value
         }
         assert viewed == {first.id, second.id}
 

@@ -48,6 +48,7 @@ from app.notes.client_present import (
 )
 from app.notes.diagnoses import diagnosis_text
 from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
+from app.notes.visit_gaps import is_visit_gap
 from app.notes.visit_times import (
     PSYCHOTHERAPY_SECTION_KEY,
     PSYCHOTHERAPY_TIME_FIELD,
@@ -85,7 +86,8 @@ def _is_empty(value: Any) -> bool:
 
 
 def _says_not_covered(value: Any) -> bool:
-    return str(value or "").strip().rstrip(".").lower() in NOT_COVERED
+    text = str(value or "").strip()
+    return text.rstrip(".").lower() in NOT_COVERED or is_visit_gap(text)
 
 
 def _text(value: Any) -> str:

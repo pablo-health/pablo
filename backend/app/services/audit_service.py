@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
 from ..models.audit import (
@@ -22,6 +23,7 @@ from ..repositories.audit import AuditRepository, InMemoryAuditRepository
 from ..request_context import extract_request_context
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from datetime import datetime
 
     from fastapi import Request
@@ -94,6 +96,44 @@ class AuditService:
 
     def __init__(self, repo: AuditRepository) -> None:
         self._repo = repo
+        # Entries collected by :meth:`batched`; None outside a batch.
+        self._batch: list[AuditLogEntry] | None = None
+
+    @contextmanager
+    def batched(self) -> Iterator[None]:
+        """Persist every entry logged inside the block together, on exit.
+
+        For a list view that audits one read per row this turns N Redis
+        round-trips, N INSERT flushes and N mirror writes into one of each.
+        The rows are the same rows: one per record, same coalescing window,
+        and a failed write still fails the request. Only the trip count
+        changes. Nested blocks join the outermost one.
+
+        If the block raises, nothing collected is written. The response
+        that would have disclosed those records was never sent, so there is
+        no access to record; the exception is the record of what happened.
+        """
+        if self._batch is not None:
+            yield
+            return
+        self._batch = []
+        try:
+            yield
+        except BaseException:
+            self._batch = None
+            raise
+        entries, self._batch = self._batch, None
+        self._persist_many(entries)
+
+    @staticmethod
+    def _coalesce_ttl() -> int:
+        from ..settings import get_settings
+
+        return get_settings().audit_read_coalesce_seconds
+
+    @staticmethod
+    def _coalesce_key(entry: AuditLogEntry) -> str:
+        return f"audit:seen:{entry.user_id}:{entry.action}:{entry.resource_id}"
 
     def _should_skip_duplicate(self, entry: AuditLogEntry) -> bool:
         """True if this exact read was already recorded in the active window.
@@ -112,9 +152,7 @@ class AuditService:
         posture. Redis only decides WHETHER to write; Postgres remains the
         synchronous system-of-record and never stores the event itself.
         """
-        from ..settings import get_settings
-
-        ttl = get_settings().audit_read_coalesce_seconds
+        ttl = self._coalesce_ttl()
         if ttl <= 0 or entry.action not in _COALESCED_READ_ACTION_VALUES:
             return False
         try:
@@ -123,27 +161,66 @@ class AuditService:
             redis = get_redis_client()
             if redis is None:
                 return False
-            key = f"audit:seen:{entry.user_id}:{entry.action}:{entry.resource_id}"
             # True when the key was set (first access), None when it already
             # existed (already logged this window) -> skip the duplicate.
-            first_time = redis.set(key, "1", nx=True, ex=ttl)
+            first_time = redis.set(self._coalesce_key(entry), "1", nx=True, ex=ttl)
             return first_time is None
         except Exception:
             logger.warning("Audit coalesce check failed; writing row (fail-open)", exc_info=True)
             return False
 
-    def _persist(self, entry: AuditLogEntry) -> None:
-        if self._should_skip_duplicate(entry):
-            return
+    def _duplicates_in(self, entries: list[AuditLogEntry]) -> list[bool]:
+        """The batch form of :meth:`_should_skip_duplicate`: one flag per entry.
+
+        Every coalescable entry's ``SET NX`` goes to Redis in one pipeline,
+        so a hundred-row page costs one round-trip. Two reads of the same
+        record in one batch collapse the same way two requests would: the
+        second ``SET NX`` finds the first one's key. Fails open as a whole;
+        a Redis problem writes every row.
+        """
+        skip = [False] * len(entries)
+        ttl = self._coalesce_ttl()
+        if ttl <= 0:
+            return skip
+        gated = [i for i, e in enumerate(entries) if e.action in _COALESCED_READ_ACTION_VALUES]
+        if not gated:
+            return skip
+        try:
+            from ..redis_client import get_redis_client
+
+            redis = get_redis_client()
+            if redis is None:
+                return skip
+            pipe = redis.pipeline()
+            for i in gated:
+                pipe.set(self._coalesce_key(entries[i]), "1", nx=True, ex=ttl)
+            for i, first_time in zip(gated, pipe.execute(), strict=True):
+                skip[i] = first_time is None
+        except Exception:
+            logger.warning("Audit coalesce check failed; writing rows (fail-open)", exc_info=True)
+            return [False] * len(entries)
+        return skip
+
+    @staticmethod
+    def _prepare(entry: AuditLogEntry) -> None:
         if entry.changes is not None:
             _assert_changes_phi_free(entry.changes)
         if entry.actor_component is not None:
             # A component label is a developer-supplied constant, so a value
             # too long for the column is a bug in the caller, not user input.
             # Truncate rather than raise: losing the tail of a label is a far
-            # better outcome than losing the audit row (see the re-raise
-            # below — a failed audit write fails the request).
+            # better outcome than losing the audit row (a failed audit write
+            # fails the request).
             entry.actor_component = entry.actor_component[:ACTOR_COMPONENT_MAX_LENGTH]
+
+    def _persist(self, entry: AuditLogEntry) -> None:
+        if self._batch is not None:
+            self._prepare(entry)
+            self._batch.append(entry)
+            return
+        if self._should_skip_duplicate(entry):
+            return
+        self._prepare(entry)
         try:
             self._repo.append(entry)
         except Exception:
@@ -154,27 +231,55 @@ class AuditService:
                 "Failed to persist audit log entry id=%s action=%s", entry.id, entry.action
             )
             raise
-        # Postgres write succeeded (system of record). Best-effort dual-write
-        # to Cloud Logging for tamper-evident retention. Import is inside the
-        # conditional so environments without google-cloud-logging installed
-        # (tests, local dev with the flag off) never load it. The outer
-        # try/except is belt-and-suspenders defense: the inner function
-        # already swallows, but we never want a refactor in that module to
-        # turn a mirror-write failure into a request failure.
+        self._mirror([entry])
+
+    def _persist_many(self, entries: list[AuditLogEntry]) -> None:
+        skip = self._duplicates_in(entries)
+        kept = [e for e, s in zip(entries, skip, strict=True) if not s]
+        if not kept:
+            return
+        try:
+            self._repo.append_many(kept)
+        except Exception:
+            logger.exception(
+                "Failed to persist %d audit log entries (first id=%s action=%s)",
+                len(kept),
+                kept[0].id,
+                kept[0].action,
+            )
+            raise
+        self._mirror(kept)
+
+    @staticmethod
+    def _mirror(entries: list[AuditLogEntry]) -> None:
+        """Best-effort dual-write to Cloud Logging, after Postgres succeeded.
+
+        Postgres is the system of record; Cloud Logging is the tamper-evident
+        mirror. The import sits inside the flag check so environments without
+        google-cloud-logging installed (tests, local dev with the flag off)
+        never load it. The try/except is belt-and-suspenders: the writer
+        already swallows, but a refactor there must never turn a mirror-write
+        failure into a request failure.
+        """
         from ..settings import get_settings
 
-        if get_settings().audit_dual_write_enabled:
-            try:
-                from .audit_cloud_logging import write_to_cloud_logging
+        if not get_settings().audit_dual_write_enabled:
+            return
+        try:
+            from .audit_cloud_logging import write_many_to_cloud_logging, write_to_cloud_logging
 
-                write_to_cloud_logging(entry)
-            except Exception:
-                logger.warning(
-                    "Audit dual-write to Cloud Logging failed for entry id=%s "
-                    "(Postgres row already persisted)",
-                    entry.id,
-                    exc_info=True,
-                )
+            if len(entries) == 1:
+                write_to_cloud_logging(entries[0])
+            else:
+                write_many_to_cloud_logging(entries)
+        except Exception:
+            logger.warning(
+                "Audit dual-write to Cloud Logging failed for %d entries (first id=%s); "
+                "Postgres rows already persisted",
+                len(entries),
+                entries[0].id,
+                exc_info=True,
+            )
 
     def log(
         self,

@@ -163,8 +163,11 @@ def get_engine() -> Engine:
 
     if settings.db_use_cloud_sql_connector:
         return _build_cloud_sql_engine(settings, option_parts)
+    return _build_direct_engine(settings, option_parts)
 
-    # Default path: plain DSN via DATABASE_URL.
+
+def _build_direct_engine(settings: Settings, option_parts: list[str]) -> Engine:
+    """Build the default engine: a plain DSN via ``DATABASE_URL``."""
     if not settings.database_url:
         msg = "DATABASE_URL is required when database_backend=postgres"
         raise ValueError(msg)
@@ -192,6 +195,11 @@ def get_engine() -> Engine:
         pool_recycle=settings.database_pool_recycle_seconds,
         echo=settings.debug,
         connect_args=connect_args,
+        # A failed statement's exception text otherwise embeds its bound
+        # parameters: a patient's name on a rejected INSERT, say. That text
+        # becomes the logged traceback and the Error Reporting event. The
+        # statement itself still appears; the values do not.
+        hide_parameters=True,
     )
 
 
@@ -279,6 +287,9 @@ def _build_cloud_sql_engine(settings: Settings, option_parts: list[str]) -> Engi
         pool_pre_ping=True,
         pool_recycle=settings.database_pool_recycle_seconds,
         echo=settings.debug,
+        # Same reason as the direct engine above: keep bound values out of
+        # exception text and therefore out of logs and Error Reporting.
+        hide_parameters=True,
     )
 
 
@@ -2355,39 +2366,6 @@ def rls_forced_tenant_tables() -> set[str]:
         if scoping_cols & {c.name for c in table.columns}:
             result.add(table_name)
     return result
-
-
-def enable_rls_on_all_practice_schemas(engine: Engine | None = None) -> None:
-    """Apply RLS to every existing practice_* schema (excluding the template).
-
-    An operator command, for a schema the registry does not know about or
-    one being repaired out of band. The routine path no longer needs it:
-    the per-tenant migrate fan-out reconciles every registered schema on
-    every run (``migrate_tenants.fan_out``), so policies reach existing
-    practices without anyone remembering to call this.
-
-    Skips the base 'practice' template schema and the 'platform' schema.
-    """
-    import logging
-
-    logger = logging.getLogger(__name__)
-
-    if engine is None:
-        engine = get_engine()
-
-    with Session(engine) as session:
-        schemas = session.execute(
-            text(
-                "SELECT schema_name FROM information_schema.schemata "
-                "WHERE schema_name LIKE 'practice_%'"
-            )
-        ).fetchall()
-
-        for (schema_name,) in schemas:
-            if schema_name == DEFAULT_PRACTICE_SCHEMA:
-                continue
-            logger.info("Applying RLS to schema '%s'", schema_name)
-            enable_rls_on_schema(session, schema_name)
 
 
 # Re-export the off-request tenant-session primitives so callers can

@@ -31,19 +31,13 @@ from ..chart_history.service import (
     HistoryFieldEmptyError,
     UnknownHistoryFieldError,
 )
-from ..models import AuditAction, Patient, User
+from ..models import AuditAction, User
 from ..repositories import PatientRepository  # noqa: TC001 — FastAPI resolves at runtime
 from ..services import AuditService, get_audit_service
+from ._deps import patient_not_found, visible_patient
 from .patients import get_patient_repository
 
 router = APIRouter(prefix="/api/patients", tags=["chart-history"])
-
-
-def _patient_or_404(repo: PatientRepository, patient_id: str, user: User) -> Patient:
-    patient = repo.get(patient_id, user.id)
-    if patient is None:
-        raise NotFoundError("Patient not found", {"patient_id": patient_id})
-    return patient
 
 
 def _history_change(change: str, key: str) -> dict[str, object]:
@@ -59,7 +53,7 @@ def get_chart_history(
     service: ChartHistoryService = Depends(get_chart_history_service),
     audit: AuditService = Depends(get_audit_service),
 ) -> ChartHistoryResponse:
-    patient = _patient_or_404(patients, patient_id, user)
+    patient = visible_patient(patients, patient_id, user.id, patient_not_found)
     response = history_response(service.entries(patient.id), service.revisions(patient.id))
     audit.log_patient_action(
         AuditAction.PATIENT_VIEWED,
@@ -82,7 +76,7 @@ def set_chart_history_field(
     service: ChartHistoryService = Depends(get_chart_history_service),
     audit: AuditService = Depends(get_audit_service),
 ) -> HistoryFieldResponse:
-    patient = _patient_or_404(patients, patient_id, user)
+    patient = visible_patient(patients, patient_id, user.id, patient_not_found)
     try:
         service.set(patient.id, key, user.id, body.text, body.source_note_id)
     except UnknownHistoryFieldError as exc:
@@ -110,7 +104,7 @@ def remove_chart_history_field(
     service: ChartHistoryService = Depends(get_chart_history_service),
     audit: AuditService = Depends(get_audit_service),
 ) -> None:
-    patient = _patient_or_404(patients, patient_id, user)
+    patient = visible_patient(patients, patient_id, user.id, patient_not_found)
     try:
         service.remove(patient.id, key, user.id)
     except UnknownHistoryFieldError as exc:

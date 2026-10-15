@@ -20,13 +20,10 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -46,17 +43,6 @@ pytestmark = pytest.mark.skipif(
 _CLINICIAN_A = "1a3d0a8e-6f0c-5f7e-9c6b-6c2f5a1c1a01"
 _CLINICIAN_B = "2b4e1b9f-7a1d-5a8f-8d7c-7d3a6b2d2b02"
 _TABLES = ("claims", "claim_lines")
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_db_url, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 @pytest.fixture(scope="module")

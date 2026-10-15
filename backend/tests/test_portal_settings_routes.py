@@ -25,6 +25,7 @@ from app.models.audit import AuditAction, ResourceType
 from app.portal import settings_routes
 from app.portal.portal_settings import InMemoryPortalSettingsStore, get_portal_settings_store
 from app.portal.practice_routes import PracticeAddress
+from app.routes import _deps
 from app.services.audit_service import get_audit_service
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -61,9 +62,7 @@ def minted(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         return PracticeAddress(slug="example-therapy", display_name="Example", enabled=True)
 
     monkeypatch.setattr(settings_routes, "ensure_practice_slug", _mint)
-    monkeypatch.setattr(
-        settings_routes, "_resolve_practice_from_email", lambda _email: (PRACTICE_ID, TENANT)
-    )
+    monkeypatch.setattr(_deps, "_resolve_practice_from_email", lambda _email: (PRACTICE_ID, TENANT))
     monkeypatch.setattr(
         settings_routes, "get_settings", lambda: SimpleNamespace(portal_module_names=CONFIGURED)
     )
@@ -193,7 +192,7 @@ def test_an_only_if_undecided_answer_is_taken_when_nobody_has_answered(
 def test_a_caller_with_no_practice_gets_a_conflict(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(settings_routes, "_resolve_practice_from_email", lambda _email: None)
+    monkeypatch.setattr(_deps, "_resolve_practice_from_email", lambda _email: None)
 
     assert client.get(URL).status_code == 409
     assert client.put(URL, json={"enabled": True}).status_code == 409

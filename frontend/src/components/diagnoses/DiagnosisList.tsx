@@ -13,22 +13,12 @@
 
 import { Trash2 } from "lucide-react"
 import type { DiagnosticAssessment } from "@/types/diagnoses"
+import { formatDateOrRaw } from "@/lib/dates"
 
 interface DiagnosisListProps {
   assessments: DiagnosticAssessment[]
   onDelete: (assessment: DiagnosticAssessment) => void
   deletingId?: string | null
-}
-
-function formatDate(iso: string): string {
-  const d = new Date(iso)
-  return Number.isNaN(d.getTime())
-    ? iso
-    : d.toLocaleDateString(undefined, {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-      })
 }
 
 export function DiagnosisList({
@@ -52,7 +42,7 @@ export function DiagnosisList({
               {a.diagnosis_label ?? a.instrument}
             </span>
             <span className="text-xs text-neutral-500">
-              {formatDate(a.assessed_at)}
+              {formatDateOrRaw(a.assessed_at)}
             </span>
           </div>
           <div className="flex shrink-0 items-center gap-2">

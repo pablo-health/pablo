@@ -34,6 +34,7 @@ from .bedrock_structured_llm_gateway import (
     system_content,
 )
 from .chat_llm_gateway import (
+    PATIENT_CONTEXT_DELIMITER,
     ChatLLMGateway,
     FinishReason,
     StreamEvent,
@@ -134,9 +135,15 @@ class BedrockChatLLMGateway(ChatLLMGateway):
 
         assert_no_held_db_connection("chat-llm")
         normalized_model = strip_provider_prefix(model)
+        # The chat service appends the patient's chart to the system prompt
+        # after the delimiter. Only the part before it is stable across
+        # conversations, so only that part sits ahead of the cache point.
+        stable, delimiter, patient_context = system_prompt.partition(PATIENT_CONTEXT_DELIMITER)
         request: dict[str, Any] = {
             "modelId": normalized_model,
-            "system": system_content(system_prompt, normalized_model),
+            "system": system_content(
+                stable, normalized_model, uncached_suffix=delimiter + patient_context
+            ),
             "messages": to_converse_messages(prior_turns, new_user_text),
             "inferenceConfig": {"maxTokens": max_output_tokens, "temperature": temperature},
         }

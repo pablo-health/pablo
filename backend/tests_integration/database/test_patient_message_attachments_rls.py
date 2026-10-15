@@ -37,13 +37,10 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 
 if TYPE_CHECKING:
@@ -70,17 +67,6 @@ _STRANGER_CLINICIAN = "9a4e62d8-1f07-5b35-a6c8-7e20d4f91b56"
 # The revision this one follows. Rolling a schema back to it and forward
 # again replays exactly the revision under test.
 _PARENT_REVISION = "c5e1a9f0d248"
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_DB_URL, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 def _new_schema(engine: Engine, label: str) -> str:

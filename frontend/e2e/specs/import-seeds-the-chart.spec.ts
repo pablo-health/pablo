@@ -130,7 +130,11 @@ test("an imported note fills an empty chart from its page, and the next follow-u
     await expect(started).toContainText("Active")
 
     // The next follow-up is drafted against the chart the import filled.
-    const startAt = new Date(Date.now() - 2 * 60 * 60 * 1000)
+    // Keep this appointment away from the fixed slots used by other workers;
+    // the fresh patient's UUID gives this test a deterministic unique slot.
+    const patientSlotOffsetMs =
+      Number.parseInt(patient.id.replaceAll("-", "").slice(-6), 16) * 60 * 1000
+    const startAt = new Date(Date.now() - 2 * 60 * 60 * 1000 - patientSlotOffsetMs)
     const appointment = await api.post<Appointment>("/api/appointments", {
       patient_id: patient.id,
       title: "Follow-up",

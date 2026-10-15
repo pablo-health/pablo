@@ -35,8 +35,6 @@ SYSTEM_PROMPT = (
     "infer, judge or add. Return only the JSON object asked for."
 )
 
-NOT_STATED = "Not stated."
-
 _INSTRUCTIONS = """\
 Draft each field below from this visit. The clinician's dictation after the {term}'s last \
 line is the clinician's own and the first source for these fields.
@@ -51,7 +49,8 @@ only where the field records thoughts or acts of harm; protective factors, the o
 and the safety plan are the clinician's findings, with none.
 - The safety plan only if ideation, self-harm or violence was reported, else empty. Advice \
 or crisis numbers given to the {term} are not a finding about self-harm.
-- "Not stated." for a field the visit did not cover, unless its hint says to leave it empty."""
+- A field the visit did not cover reads as its hint says ("Not assessed this visit."), unless \
+its hint says to leave it empty."""
 
 _EVIDENCE = {"type": "array", "items": {"type": "integer"}}
 _QUOTED_FIELD: dict[str, Any] = {

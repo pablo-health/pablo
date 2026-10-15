@@ -30,11 +30,12 @@ from fastapi import APIRouter, Depends, Request, status
 from pydantic import BaseModel, Field
 
 from ..api_errors import ConflictError, NotFoundError, UnprocessableEntityError
-from ..auth.service import _resolve_practice_from_email, require_active_subscription
+from ..auth.service import require_active_subscription
 from ..models import User  # noqa: TC001 — fastapi resolves the annotation at runtime
 from ..models.audit import AuditAction, ResourceType
 from ..repositories import get_patient_repository
 from ..repositories.patient import PatientRepository  # noqa: TC001
+from ..routes._deps import practice_id_or_409
 from ..services.audit_service import AuditService, get_audit_service
 from .clinicians import ClinicianName, get_primary_clinician_name
 from .delivery import PortalInviteDelivery, RenderedInviteDelivery
@@ -99,13 +100,6 @@ class ClientInvitePreview(BaseModel):
     text: str | None = None
 
 
-def _practice_id(user: User) -> str:
-    practice = _resolve_practice_from_email(user.email)
-    if practice is None:
-        raise ConflictError("No practice is associated with this account yet.")
-    return practice[0]
-
-
 def _editable(delivery: PortalInviteDelivery) -> bool:
     return isinstance(delivery, RenderedInviteDelivery)
 
@@ -137,7 +131,7 @@ def get_invite_template(
     delivery: Annotated[PortalInviteDelivery, Depends(get_invite_delivery)],
 ) -> InviteTemplateResponse:
     """The practice's invitation wording, or the default."""
-    return _template_response(store.get(_practice_id(user)), delivery)
+    return _template_response(store.get(practice_id_or_409(user)), delivery)
 
 
 @router.put("/api/portal/invite-template", response_model=InviteTemplateResponse)
@@ -160,7 +154,7 @@ def save_invite_template(
         raise UnprocessableEntityError(
             " ".join(problems), {"problems": problems}, code="PORTAL_INVITE_TEMPLATE_INVALID"
         )
-    practice_id = _practice_id(user)
+    practice_id = practice_id_or_409(user)
     store.save(practice_id, template)
     return _template_response(store.get(practice_id), delivery)
 
@@ -172,7 +166,7 @@ def reset_invite_template(
     delivery: Annotated[PortalInviteDelivery, Depends(get_invite_delivery)],
 ) -> InviteTemplateResponse:
     """Go back to the default wording."""
-    store.reset(_practice_id(user))
+    store.reset(practice_id_or_409(user))
     return _template_response(None, delivery)
 
 
@@ -183,7 +177,7 @@ def preview_invite_template(
 ) -> RenderedPreview:
     """A draft, rendered for an example client, and what would stop it saving."""
     draft = InviteTemplate(subject=body.subject, body=body.body)
-    address = ensure_practice_slug(_practice_id(user))
+    address = ensure_practice_slug(practice_id_or_409(user))
     rendered = compose(
         draft,
         InviteFacts(
@@ -227,7 +221,7 @@ def preview_client_invite(  # noqa: PLR0913 — FastAPI Depends-injected params 
     if not _editable(delivery):
         return ClientInvitePreview(available=False)
 
-    practice_id = _practice_id(user)
+    practice_id = practice_id_or_409(user)
     rendered = compose(
         store.get(practice_id),
         InviteFacts(

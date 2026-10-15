@@ -95,23 +95,13 @@ class PostgresAuditRepository(AuditRepository):
         return [_row_to_entry(row) for row in self._session.execute(query).scalars().all()]
 
     def append(self, entry: AuditLogEntry) -> None:
-        row = AuditLogRow(
-            id=entry.id,
-            timestamp=datetime.fromisoformat(entry.timestamp),
-            expires_at=datetime.fromisoformat(entry.expires_at),
-            user_id=entry.user_id,
-            actor_type=entry.actor_type,
-            actor_component=entry.actor_component,
-            action=entry.action,
-            resource_type=entry.resource_type,
-            resource_id=entry.resource_id,
-            patient_id=entry.patient_id,
-            session_id=entry.session_id,
-            ip_address=entry.ip_address,
-            user_agent=entry.user_agent,
-            changes=entry.changes,
-        )
-        self._session.add(row)
+        self._session.add(_entry_to_row(entry))
+        self._session.flush()
+
+    def append_many(self, entries: list[AuditLogEntry]) -> None:
+        # One flush for the lot: SQLAlchemy batches same-table inserts into
+        # a single executemany, so a list view's rows cost one round-trip.
+        self._session.add_all([_entry_to_row(e) for e in entries])
         self._session.flush()
 
     def metadata_for_review(
@@ -197,6 +187,25 @@ class PostgresAuditRepository(AuditRepository):
 
         _assert_phi_free(out)
         return out
+
+
+def _entry_to_row(entry: AuditLogEntry) -> AuditLogRow:
+    return AuditLogRow(
+        id=entry.id,
+        timestamp=datetime.fromisoformat(entry.timestamp),
+        expires_at=datetime.fromisoformat(entry.expires_at),
+        user_id=entry.user_id,
+        actor_type=entry.actor_type,
+        actor_component=entry.actor_component,
+        action=entry.action,
+        resource_type=entry.resource_type,
+        resource_id=entry.resource_id,
+        patient_id=entry.patient_id,
+        session_id=entry.session_id,
+        ip_address=entry.ip_address,
+        user_agent=entry.user_agent,
+        changes=entry.changes,
+    )
 
 
 def _row_to_entry(row: AuditLogRow) -> AuditLogEntry:

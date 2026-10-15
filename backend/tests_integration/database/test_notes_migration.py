@@ -20,13 +20,10 @@ import json
 import os
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
 if TYPE_CHECKING:
@@ -50,18 +47,6 @@ pytestmark = pytest.mark.skipif(
 # reference ``patients(id)`` — so the fixture seeds these patient rows.
 _PATIENT_ID_MIG = "11111111-1111-1111-1111-111111111111"
 _PATIENT_ID_P1 = "22222222-2222-2222-2222-222222222222"
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-
-    eng = create_engine(_db_url, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 @pytest.fixture

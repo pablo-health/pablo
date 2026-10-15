@@ -102,15 +102,6 @@ def pg_session(engine: Engine) -> Iterator[Session]:
         session.close()
 
 
-@pytest.fixture(scope="module")
-def fastapi_app() -> FastAPI:
-    """Import the FastAPI app lazily, after pytestmark has gated on
-    ``DATABASE_URL`` being set (``app.db`` reads settings on import)."""
-    from app.main import app  # noqa: PLC0415  # deferred — settings read at import
-
-    return app
-
-
 @pytest.fixture
 def e2e_user() -> User:
     return User(

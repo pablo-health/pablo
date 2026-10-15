@@ -20,9 +20,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
-from ..api_errors import ConflictError, UnprocessableEntityError
-from ..auth.service import _resolve_practice_from_email, require_active_subscription
+from ..api_errors import UnprocessableEntityError
+from ..auth.service import require_active_subscription
 from ..models import User  # noqa: TC001 — fastapi resolves the annotation at runtime
+from ..routes._deps import practice_id_or_409
 from .practice_routes import ensure_practice_slug
 from .welcome import (
     DEFAULT_WELCOME,
@@ -57,13 +58,6 @@ class PortalWelcomeRequest(BaseModel):
     body: str = Field(max_length=20_000)
 
 
-def _practice_id(user: User) -> str:
-    practice = _resolve_practice_from_email(user.email)
-    if practice is None:
-        raise ConflictError("No practice is associated with this account yet.")
-    return practice[0]
-
-
 def _welcome_response(stored: PortalWelcome | None, practice_id: str) -> PortalWelcomeResponse:
     welcome = stored or DEFAULT_WELCOME
     name = ensure_practice_slug(practice_id).display_name.strip() or UNNAMED_PRACTICE
@@ -85,7 +79,7 @@ def get_portal_welcome(
     store: Annotated[PortalWelcomeStore, Depends(get_portal_welcome_store)],
 ) -> PortalWelcomeResponse:
     """The practice's portal welcome, or the default."""
-    practice_id = _practice_id(user)
+    practice_id = practice_id_or_409(user)
     return _welcome_response(store.get(practice_id), practice_id)
 
 
@@ -102,7 +96,7 @@ def save_portal_welcome(
         raise UnprocessableEntityError(
             " ".join(problems), {"problems": problems}, code="PORTAL_WELCOME_INVALID"
         )
-    practice_id = _practice_id(user)
+    practice_id = practice_id_or_409(user)
     store.save(practice_id, welcome)
     return _welcome_response(store.get(practice_id), practice_id)
 
@@ -113,6 +107,6 @@ def reset_portal_welcome(
     store: Annotated[PortalWelcomeStore, Depends(get_portal_welcome_store)],
 ) -> PortalWelcomeResponse:
     """Go back to the default welcome."""
-    practice_id = _practice_id(user)
+    practice_id = practice_id_or_409(user)
     store.reset(practice_id)
     return _welcome_response(None, practice_id)

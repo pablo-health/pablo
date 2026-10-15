@@ -24,13 +24,10 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import UTC, date, datetime, timedelta
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -73,17 +70,6 @@ def _ruleset():  # type: ignore[no-untyped-def]
             ),
         ],
     )
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_db_url, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 @pytest.fixture(scope="module")

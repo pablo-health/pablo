@@ -98,22 +98,31 @@ _TOOL_NAME = "emit_structured_output"
 
 # Bedrock evaluates Converse cache checkpoints in tools -> system -> messages
 # order. Placing one after the stable system prompt therefore makes both the
-# tool schema and system instructions reusable while leaving patient/session
-# input in the uncached user message.
+# tool schema and system instructions reusable. Everything after the
+# checkpoint is sent uncached: the user message, and for a caller that passes
+# ``uncached_suffix``, the per-patient part of its system prompt.
 _CACHE_POINT: dict[str, dict[str, str]] = {"cachePoint": {"type": "default"}}
 
 
-def system_content(system_prompt: str, model: str) -> list[dict[str, Any]]:
+def system_content(
+    system_prompt: str, model: str, *, uncached_suffix: str | None = None
+) -> list[dict[str, Any]]:
     """Build Converse system content, caching the stable prefix for Claude.
 
     Cache points are model-specific in Bedrock. The gateway can also be used
     with Nova or another provider, so only Anthropic Claude requests receive
     the explicit checkpoint. Omitting ``ttl`` selects Bedrock's broadly
     supported five-minute cache instead of rejecting models without 1h TTL.
+
+    ``uncached_suffix`` is system text that follows the checkpoint, so it is
+    sent on every call and written to no cache. The model reads the two text
+    blocks as one system prompt.
     """
     blocks: list[dict[str, Any]] = [{"text": system_prompt}]
     if "anthropic.claude-" in model:
         blocks.append(_CACHE_POINT)
+    if uncached_suffix:
+        blocks.append({"text": uncached_suffix})
     return blocks
 
 

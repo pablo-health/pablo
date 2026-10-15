@@ -27,6 +27,7 @@ import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { ALLOWED_DOCUMENT_MIME_TYPES } from "@/types/patientDocuments"
+import { formatCompactFileSize } from "@/lib/utils/fileValidation"
 import { ExpectationNotice } from "./ExpectationNotice"
 
 /** One file already uploaded and waiting to be sent. */
@@ -55,12 +56,6 @@ export interface MessageComposerProps {
 }
 
 /** Round sizes the way a file manager does; the exact byte count helps nobody. */
-export function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
 export function MessageComposer({
   onSend,
   sending,
@@ -154,7 +149,7 @@ export function MessageComposer({
                 >
                   <span>{attachment.filename}</span>
                   <span className="text-xs text-neutral-500">
-                    {formatFileSize(attachment.sizeBytes)}
+                    {formatCompactFileSize(attachment.sizeBytes, 0)}
                   </span>
                   <button
                     type="button"

@@ -29,6 +29,7 @@ from app.repositories import (
     InMemoryPatientProblemRepository,
     InMemoryUserRepository,
 )
+from app.services.chart_field_extraction import SCHEMA_TITLE
 from app.services.note_generation_service import RegistryNoteGenerationService
 from app.services.session_service import SessionService
 from app.services.structured_llm_gateway import FakeStructuredLLMGateway, StructuredCompletion
@@ -107,8 +108,14 @@ def _system_prompt(template: str, person: str) -> str:
         definition=definition,
         chart=ChartContext(person=person),
     )
-    # The note's own call has no schema title; every parallel lane does.
-    draft = next(c for c in gateway.calls if c["response_schema"].get("title") is None)
+    # The note's own call, the template's system prompt. The extraction, the section
+    # calls and the turn labels run beside it, in no fixed order, each with its own.
+    draft = next(
+        c
+        for c in gateway.calls
+        if c["response_schema"].get("title") != SCHEMA_TITLE
+        and str(c["system_prompt"]).startswith(spec["system_prompt"][:40])
+    )
     return str(draft["system_prompt"])
 
 

@@ -43,7 +43,6 @@ from app.repositories import (
     InMemoryPatientIntakeArtifactRepository,
     InMemoryPatientIntakeAssignmentRepository,
 )
-from app.repositories.audit import InMemoryAuditRepository
 from app.repositories.coverage import (
     InMemoryPatientCoverageRepository,
     InMemoryPayerRepository,
@@ -64,6 +63,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from app.models.eligibility import EligibilityTrigger
+    from app.repositories.audit import InMemoryAuditRepository
 
 _PATIENT_A = "11111111-1111-4111-8111-111111111111"
 _TOKEN_A = "credential-of-patient-a"
@@ -115,11 +115,6 @@ def _auth() -> dict[str, str]:
 
 
 @pytest.fixture
-def packets() -> InMemoryIntakePacketRepository:
-    return InMemoryIntakePacketRepository()
-
-
-@pytest.fixture
 def assignments() -> InMemoryPatientIntakeAssignmentRepository:
     repo = InMemoryPatientIntakeAssignmentRepository()
     repo.grant_access(_PATIENT_A, _CLINICIAN)
@@ -139,11 +134,6 @@ def payers() -> InMemoryPayerRepository:
 @pytest.fixture
 def scheduler() -> _Scheduler:
     return _Scheduler()
-
-
-@pytest.fixture
-def audit_repo() -> InMemoryAuditRepository:
-    return InMemoryAuditRepository()
 
 
 @pytest.fixture

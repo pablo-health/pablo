@@ -15,13 +15,10 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -40,17 +37,6 @@ pytestmark = pytest.mark.skipif(
 )
 
 _CLINICIAN = "7a1d3e95-4c2b-5f60-9e18-3b6d8a2c4f71"
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_DB_URL, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 @pytest.fixture(scope="module")

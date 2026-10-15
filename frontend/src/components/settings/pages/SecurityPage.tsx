@@ -9,15 +9,7 @@ import { SettingsBadge, SettingsCard, SettingsRow } from "../ui"
 import { useSettingsUserStatus } from "../useSettingsPreferences"
 import { Button } from "@/components/ui/button"
 import { useConfig } from "@/lib/config"
-
-function formatDate(value: string | null): string | null {
-  if (!value) return null
-  return new Date(value).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  })
-}
+import { MEDIUM_DATE, formatDate } from "@/lib/dates"
 
 /**
  * You > Sign-in & security.
@@ -30,8 +22,12 @@ export function SecurityPage() {
   const { passkeysEnabled } = useConfig()
   const { data: status } = useSettingsUserStatus()
 
-  const enrolledOn = formatDate(status?.mfa_enrolled_at ?? null)
-  const guideAckOn = formatDate(status?.security_guide_acknowledged_at ?? null)
+  const enrolledOn = status?.mfa_enrolled_at
+    ? formatDate(status.mfa_enrolled_at, MEDIUM_DATE, "en-US")
+    : null
+  const guideAckOn = status?.security_guide_acknowledged_at
+    ? formatDate(status.security_guide_acknowledged_at, MEDIUM_DATE, "en-US")
+    : null
 
   return (
     <>

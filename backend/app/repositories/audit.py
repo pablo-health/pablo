@@ -42,6 +42,16 @@ class AuditRepository(ABC):
     def append(self, entry: AuditLogEntry) -> None:
         """Persist a new audit log entry. Never updates existing entries."""
 
+    def append_many(self, entries: list[AuditLogEntry]) -> None:
+        """Persist several new entries in one write where the store allows it.
+
+        The default is one :meth:`append` per entry; a store with a cheaper
+        bulk path overrides it. Same contract otherwise: all or nothing is
+        NOT promised, and a failure still raises.
+        """
+        for entry in entries:
+            self.append(entry)
+
     @abstractmethod
     def list_for_user(
         self,

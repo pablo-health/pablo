@@ -67,11 +67,6 @@ def document_service(documents: InMemoryIntakeDocumentRepository) -> IntakeDocum
 
 
 @pytest.fixture
-def packets() -> InMemoryIntakePacketRepository:
-    return InMemoryIntakePacketRepository()
-
-
-@pytest.fixture
 def packet_service(
     packets: InMemoryIntakePacketRepository, documents: IntakeDocumentRepository
 ) -> IntakePacketService:

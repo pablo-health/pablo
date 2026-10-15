@@ -174,11 +174,6 @@ _ANSWERS: dict[str, dict[str, object]] = {
 
 
 @pytest.fixture
-def packets() -> InMemoryIntakePacketRepository:
-    return InMemoryIntakePacketRepository()
-
-
-@pytest.fixture
 def assignments_repo() -> InMemoryPatientIntakeAssignmentRepository:
     """Granted to one clinician by name, so "no grant" is a real state here."""
     repo = InMemoryPatientIntakeAssignmentRepository()

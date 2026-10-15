@@ -45,12 +45,11 @@ from __future__ import annotations
 
 import os
 import uuid
-from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 from ._soft_webauthn import SoftWebAuthnAuthenticator
 
@@ -81,36 +80,6 @@ _ORIGIN = "http://localhost:3000"
 
 _BASE = "/api/auth/passkey"
 _REDEEM = f"{_BASE}/recovery-code/redeem"
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    """Engine bound to the integration Postgres with alembic head applied.
-
-    ``platform.passkey_credentials`` / ``platform.passkey_challenges`` and the
-    ``user_id`` FK to ``platform.users`` come from migration
-    ``9f4c1a7b2e60`` — run alembic explicitly rather than relying on
-    ``Base.metadata.create_all``.
-    """
-    from alembic import command  # noqa: PLC0415
-    from alembic.config import Config  # noqa: PLC0415
-
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-
-    eng = create_engine(_db_url, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
-
-
-@pytest.fixture(scope="module")
-def fastapi_app() -> FastAPI:
-    """Import the real app lazily, after the Postgres gate."""
-    from app.main import app  # noqa: PLC0415
-
-    return app
 
 
 @pytest.fixture
