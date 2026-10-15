@@ -48,6 +48,7 @@ from ..logging_config import (
     user_id_var,
 )
 from ..route_introspection import iter_app_routes
+from .client_info import classify_client
 
 # Dedicated logger for the per-request completion line. Distinct name
 # (``pablo.access``) keeps the access log filterable in Cloud Logging
@@ -204,6 +205,14 @@ def resolve_route_template(request: Request) -> str | None:
     return None
 
 
+def _client_fields(request: Request) -> dict[str, str]:
+    """The client classification, or nothing — never at the cost of the line."""
+    try:
+        return classify_client(request.headers).log_fields()
+    except Exception:
+        return {}
+
+
 class RequestContextMiddleware(BaseHTTPMiddleware):
     """Populate request-scoped contextvars for the JSON log formatter.
 
@@ -272,6 +281,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                         "method": request.method,
                         "status_code": status_code,
                         "latency_ms": latency_ms,
+                        **_client_fields(request),
                         **log_identity.outcome_fields(),
                     },
                 )
