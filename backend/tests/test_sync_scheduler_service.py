@@ -5,28 +5,33 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 
-from app.models import User
+from app.models import AuditAction, User
+from app.models.audit import ACTOR_TYPE_CLINICIAN, ACTOR_TYPE_SYSTEM
 from app.models.user import UserPreferences
 from app.repositories.audit import InMemoryAuditRepository
 from app.repositories.google_calendar_token import GoogleCalendarTokenDoc
 from app.repositories.ical_sync_config import ICalSyncConfig
+from app.routes.ical_sync import sync_ical_calendar
 from app.scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from app.scheduling_engine.models.availability import AvailabilityRule, RuleType
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.services.audit_service import AuditService
 from app.services.google_calendar_follow import GoogleChangeFollower
 from app.services.google_calendar_service import CalendarGoneError, PushedEvent
+from app.services.ical_sync_service import SyncResult
 from app.services.sync_scheduler_service import (
+    ICAL_SYNC_COMPONENT,
     SyncSchedulerService,
     _is_within_working_hours,
     _read_window,
 )
 from app.settings import get_settings
 from app.utcnow import utc_now
+from fastapi import Request
 from google.auth.exceptions import RefreshError
 
 if TYPE_CHECKING:
@@ -559,3 +564,78 @@ class TestRecordsGoogleReads:
         service.execute("user1", on_request=True)
 
         service._ical_sync_service.sync.assert_called_once_with("user1")  # type: ignore[attr-defined]
+
+
+def _audited(changed: int = 0, unmatched: int = 0) -> tuple[SyncSchedulerService, list[Any]]:
+    """A scheduler whose feed read returns one result, and the audit rows it leaves."""
+    service = _make_service()
+    repo = InMemoryAuditRepository()
+    service._audit_service = AuditService(repo)
+    service._ical_sync_service.sync.return_value = [  # type: ignore[attr-defined]
+        SyncResult(
+            created=changed,
+            unchanged=4,
+            unmatched_events=[{"ical_uid": f"u{i}"} for i in range(unmatched)],
+        )
+    ]
+    return service, repo._entries
+
+
+class TestAuditsScheduledFeedReads:
+    """A scheduled read is the system's doing; a read someone asked for is theirs."""
+
+    def test_a_scheduled_read_that_changed_nothing_leaves_no_row(self) -> None:
+        service, rows = _audited(changed=0, unmatched=2)
+
+        service.execute("user1")
+
+        assert rows == []
+
+    def test_a_scheduled_read_that_changed_appointments_is_the_systems(self) -> None:
+        service, rows = _audited(changed=2, unmatched=1)
+
+        service.execute("user1")
+
+        assert len(rows) == 1
+        row = rows[0]
+        assert row.action == AuditAction.ICAL_CALENDAR_SYNCED.value
+        assert row.actor_type == ACTOR_TYPE_SYSTEM
+        assert row.actor_component == ICAL_SYNC_COMPONENT
+        assert row.user_id == "user1"
+        assert row.ip_address is None
+        assert row.user_agent is None
+        assert row.changes == {"created": 2, "updated": 0, "deleted": 0, "unmatched": 1}
+
+    def test_a_read_on_request_is_left_to_the_route_that_answered(self) -> None:
+        service, rows = _audited(changed=2)
+
+        service.execute("user1", on_request=True)
+
+        assert rows == []
+
+    def test_a_feed_sync_someone_asked_for_stays_the_clinicians(self) -> None:
+        repo = InMemoryAuditRepository()
+        feeds = MagicMock()
+        feeds.sync.return_value = [SyncResult(unchanged=3)]
+        user = User(
+            id="user1",
+            email="therapist@example.com",
+            name="Therapist",
+            created_at=datetime.fromisoformat("2026-01-01T00:00:00+00:00"),
+        )
+        request = Request({"type": "http", "headers": [(b"user-agent", b"Browser")]})
+
+        sync_ical_calendar(
+            request,
+            ctx=MagicMock(user_id="user1"),
+            service=feeds,
+            user=user,
+            audit=AuditService(repo),
+        )
+
+        assert len(repo._entries) == 1
+        row = repo._entries[0]
+        assert row.action == AuditAction.ICAL_CALENDAR_SYNCED.value
+        assert row.actor_type == ACTOR_TYPE_CLINICIAN
+        assert row.user_id == "user1"
+        assert row.user_agent == "Browser"

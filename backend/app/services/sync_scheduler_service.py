@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..calendar_providers.source_identity import GOOGLE_CALENDAR_SOURCE
-from ..models.audit import ACTOR_TYPE_SYSTEM, AuditAction
+from ..models.audit import ACTOR_TYPE_SYSTEM, AuditAction, ResourceType
 from ..scheduling_engine.models.availability import RuleType
 from ..settings import get_settings
 from ..utcnow import utc_now
@@ -53,6 +53,8 @@ BOOKED_FROM_MAIN_CALENDAR = "booked_from_main_calendar"
 #: Beside that reason when the event's title named the chart, rather than a
 #: remembered answer: the matcher's word for a match on a full name.
 MATCHED_ON_FULL_NAME = "full_name"
+#: Who the audit trail names when a scheduled read of a feed changed appointments.
+ICAL_SYNC_COMPONENT = "ical_feed_sync"
 
 
 @dataclass
@@ -88,6 +90,16 @@ class ExecuteSummary:
     outside_sessions_followed: int = 0
     reminders_sent: int = 0
     errors: list[str] = field(default_factory=list)
+    # What the feeds changed. Left out of to_dict(): the audit trail reads
+    # them, the response does not carry them.
+    ical_created: int = 0
+    ical_updated: int = 0
+    ical_deleted: int = 0
+    ical_unmatched: int = 0
+
+    @property
+    def ical_changed(self) -> bool:
+        return bool(self.ical_created or self.ical_updated or self.ical_deleted)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -199,15 +211,9 @@ class SyncSchedulerService:
         max_failures = get_settings().calendar_sync_max_consecutive_failures
 
         # 1. iCal feed sync
-        try:
-            for result in self._sync_feeds(user_id, None if on_request else max_failures):
-                if result.errors:
-                    summary.ical_errors += 1
-                else:
-                    summary.ical_sources_synced += 1
-        except Exception:
-            logger.exception("iCal sync failed for scheduled run")
-            summary.ical_errors += 1
+        self._read_feeds(user_id, None if on_request else max_failures, summary)
+        if not on_request:
+            self._record_scheduled_feed_read(user_id, summary)
 
         # 2. Google Calendar sync
         google_token = self._google_token_repo.get(user_id)
@@ -252,6 +258,46 @@ class SyncSchedulerService:
             logger.exception("Reminder check failed for scheduled run")
 
         return summary
+
+    def _read_feeds(self, user_id: str, max_failures: int | None, summary: ExecuteSummary) -> None:
+        """Read the user's feeds into ``summary``. A failure is counted, never raised."""
+        try:
+            for result in self._sync_feeds(user_id, max_failures):
+                if result.errors:
+                    summary.ical_errors += 1
+                else:
+                    summary.ical_sources_synced += 1
+                summary.ical_created += result.created
+                summary.ical_updated += result.updated
+                summary.ical_deleted += result.deleted
+                summary.ical_unmatched += len(result.unmatched_events)
+        except Exception:
+            logger.exception("iCal sync failed for scheduled run")
+            summary.ical_errors += 1
+
+    def _record_scheduled_feed_read(self, user_id: str, summary: ExecuteSummary) -> None:
+        """Leave one audit row when a scheduled feed read changed appointments.
+
+        The schedule reads on its own and shows nobody anything, so the row
+        names the sync, never the clinician, and a read that changed nothing
+        leaves no row. A read someone asked for is audited by the route that
+        answered them.
+        """
+        if not summary.ical_changed:
+            return
+        self._audit().log_system_action(
+            AuditAction.ICAL_CALENDAR_SYNCED,
+            scope_user_id=user_id,
+            resource_type=ResourceType.APPOINTMENT,
+            resource_id="calendar-sync",
+            actor_component=ICAL_SYNC_COMPONENT,
+            changes={
+                "created": summary.ical_created,
+                "updated": summary.ical_updated,
+                "deleted": summary.ical_deleted,
+                "unmatched": summary.ical_unmatched,
+            },
+        )
 
     def _sync_feeds(self, user_id: str, max_failures: int | None) -> list[Any]:
         """Read the user's feeds, leaving out those past ``max_failures``.
