@@ -274,7 +274,7 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
         # level. Keep the shared gateway contract for older Gemini models,
         # while sending the native setting Argon accepts.
         thinking_config = (
-            types.ThinkingConfig(thinking_level="LOW")
+            types.ThinkingConfig(thinking_level=types.ThinkingLevel.LOW)
             if normalized_model == "gemini-4-argon"
             else types.ThinkingConfig(thinking_budget=thinking_budget)
             if thinking_budget is not None
