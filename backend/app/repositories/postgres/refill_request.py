@@ -15,11 +15,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String, Uuid, bindparam, or_, select, text, update
+from sqlalchemy import String, Uuid, bindparam, select, text, update
 
 from ...db.models import PatientClinicianRow, PatientMedicationRow, PatientRow, RefillRequestRow
 from ...models.refill_request import REFILL_STATUS_REQUESTED, RefillQueueEntry, RefillRequest
-from ...utcnow import utc_now
 from ..refill_request import (
     RECENT_DECISIONS_LIMIT,
     RefillQueueView,
@@ -27,6 +26,7 @@ from ..refill_request import (
     RefillRequestAlreadyDecidedError,
     RefillRequestRepository,
 )
+from ._grants import live_grant
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -74,11 +74,7 @@ def _entry_query(user_id: str) -> Select[tuple[RefillRequestRow, str, str, str |
         .join(PatientRow, PatientRow.id == RefillRequestRow.patient_id)
         .join(PatientClinicianRow, PatientClinicianRow.patient_id == RefillRequestRow.patient_id)
         .where(
-            PatientClinicianRow.user_id == user_id,
-            or_(
-                PatientClinicianRow.expires_at.is_(None),
-                PatientClinicianRow.expires_at > utc_now(),
-            ),
+            *live_grant(user_id),
         )
     )
 

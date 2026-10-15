@@ -12,11 +12,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String, Uuid, bindparam, case, nulls_last, or_, select, text
+from sqlalchemy import String, Uuid, bindparam, case, nulls_last, select, text
 
 from ...db.models import PatientClinicianRow, PatientMedicationRow
 from ...utcnow import utc_now
 from ..medication import MedicationRepository, PatientMedicationAccessDeniedError
+from ._grants import live_grant
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -74,11 +75,7 @@ class PostgresMedicationRepository(MedicationRepository):
             )
             .where(
                 PatientMedicationRow.id == medication_id,
-                PatientClinicianRow.user_id == user_id,
-                or_(
-                    PatientClinicianRow.expires_at.is_(None),
-                    PatientClinicianRow.expires_at > utc_now(),
-                ),
+                *live_grant(user_id),
             )
         ).scalar_one_or_none()
         return _row_to_dict(row) if row else None
@@ -164,11 +161,7 @@ class PostgresMedicationRepository(MedicationRepository):
             )
             .where(
                 PatientMedicationRow.id == medication_id,
-                PatientClinicianRow.user_id == user_id,
-                or_(
-                    PatientClinicianRow.expires_at.is_(None),
-                    PatientClinicianRow.expires_at > utc_now(),
-                ),
+                *live_grant(user_id),
             )
         ).scalar_one_or_none()
         if orm_row is None:

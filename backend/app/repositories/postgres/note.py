@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String, Uuid, bindparam, func, or_, select, text
+from sqlalchemy import String, Uuid, bindparam, func, select, text
 
 from ...db.models import (
     NoteAddendumRow,
@@ -33,6 +33,7 @@ from ...models.note import Note
 from ...models.note_signing import NoteAddendum, NoteSignature
 from ...utcnow import utc_now
 from ..note import NotesRepository, PatientAccessDeniedError
+from ._grants import live_grant
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -82,11 +83,7 @@ class PostgresNotesRepository(NotesRepository):
             .where(
                 NoteRow.id == note_id,
                 NoteRow.deleted_at.is_(None),
-                PatientClinicianRow.user_id == user_id,
-                or_(
-                    PatientClinicianRow.expires_at.is_(None),
-                    PatientClinicianRow.expires_at > utc_now(),
-                ),
+                *live_grant(user_id),
             )
         ).scalar_one_or_none()
         return _row_to_note(row) if row else None
@@ -101,11 +98,7 @@ class PostgresNotesRepository(NotesRepository):
             .where(
                 NoteRow.session_id == session_id,
                 NoteRow.deleted_at.is_(None),
-                PatientClinicianRow.user_id == user_id,
-                or_(
-                    PatientClinicianRow.expires_at.is_(None),
-                    PatientClinicianRow.expires_at > utc_now(),
-                ),
+                *live_grant(user_id),
             )
         ).scalar_one_or_none()
         return _row_to_note(row) if row else None
@@ -123,11 +116,7 @@ class PostgresNotesRepository(NotesRepository):
                 .where(
                     NoteRow.session_id.in_(session_ids),
                     NoteRow.deleted_at.is_(None),
-                    PatientClinicianRow.user_id == user_id,
-                    or_(
-                        PatientClinicianRow.expires_at.is_(None),
-                        PatientClinicianRow.expires_at > utc_now(),
-                    ),
+                    *live_grant(user_id),
                 )
             )
             .scalars()
@@ -176,11 +165,7 @@ class PostgresNotesRepository(NotesRepository):
                 NoteRow.restricted.is_(False),
                 NoteRow.finalized_at.is_not(None),
                 NoteRow.deleted_at.is_(None),
-                PatientClinicianRow.user_id == user_id,
-                or_(
-                    PatientClinicianRow.expires_at.is_(None),
-                    PatientClinicianRow.expires_at > utc_now(),
-                ),
+                *live_grant(user_id),
             )
             .order_by(NoteRow.finalized_at.desc())
         )
@@ -211,11 +196,7 @@ class PostgresNotesRepository(NotesRepository):
                     NoteRow.finalized_at.is_(None),
                     NoteRow.deleted_at.is_(None),
                     ~imported.exists(),
-                    PatientClinicianRow.user_id == user_id,
-                    or_(
-                        PatientClinicianRow.expires_at.is_(None),
-                        PatientClinicianRow.expires_at > utc_now(),
-                    ),
+                    *live_grant(user_id),
                 )
             )
             or 0

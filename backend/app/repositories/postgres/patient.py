@@ -28,6 +28,7 @@ from ...models.enums import ClinicianRole
 from ...models.patient_facing import PATIENT_SELF_WRITABLE_COLUMNS, PatientFacingPatient
 from ...utcnow import utc_now
 from ..patient import PatientRepository, PracticeClient
+from ._grants import grant_not_expired, live_grant
 from .patient_problem import seed_problem_from_free_text
 
 if TYPE_CHECKING:
@@ -73,23 +74,6 @@ def _is_uuid(value: str) -> bool:
     return True
 
 
-def _live_grant_filter(user_id: str) -> tuple:
-    """SQL predicates for "user has a non-expired patient_clinicians grant".
-
-    Returns a tuple usable in ``.filter(*predicates)`` calls. Used by
-    every method that joins through ``PatientClinicianRow``; keeping it
-    in one place ensures expiration semantics never drift between
-    methods.
-    """
-    return (
-        PatientClinicianRow.user_id == user_id,
-        or_(
-            PatientClinicianRow.expires_at.is_(None),
-            PatientClinicianRow.expires_at > utc_now(),
-        ),
-    )
-
-
 class PostgresPatientRepository(PatientRepository):
     def __init__(self, session: Session) -> None:
         self._session = session
@@ -121,7 +105,7 @@ class PostgresPatientRepository(PatientRepository):
                 .where(
                     PatientRow.id == patient_id,
                     PatientRow.deleted_at.is_(None),
-                    *_live_grant_filter(user_id),
+                    *live_grant(user_id),
                 )
             )
             .scalars()
@@ -210,7 +194,7 @@ class PostgresPatientRepository(PatientRepository):
                     func.lower(PatientRow.email) == email.lower(),
                     PatientRow.deleted_at.is_(None),
                     PatientRow.status != "pending",
-                    *_live_grant_filter(user_id),
+                    *live_grant(user_id),
                 )
                 .order_by(PatientRow.created_at)
                 .limit(1)
@@ -229,7 +213,7 @@ class PostgresPatientRepository(PatientRepository):
             .where(
                 PatientRow.id == patient_id,
                 PatientRow.deleted_at.is_(None),
-                *_live_grant_filter(user_id),
+                *live_grant(user_id),
             )
         )
         return last_name
@@ -247,7 +231,7 @@ class PostgresPatientRepository(PatientRepository):
             self._session.execute(
                 select(PatientClinicianRow.patient_id).where(
                     PatientClinicianRow.patient_id == patient_id,
-                    *_live_grant_filter(user_id),
+                    *live_grant(user_id),
                 )
             ).first()
         )
@@ -255,18 +239,15 @@ class PostgresPatientRepository(PatientRepository):
     def live_grant_pairs(self, pairs: set[tuple[str, str]]) -> set[tuple[str, str]]:
         if not pairs:
             return set()
-        # One query for all (user_id, patient_id) pairs. The expiry predicate
-        # can't reuse _live_grant_filter (that pins a single user_id), so the
-        # not-expired clause is inlined; the tuple IN matches each pair exactly.
+        # One query for all (user_id, patient_id) pairs. live_grant pins a
+        # single user_id, so only its not-expired half applies here; the tuple
+        # IN matches each pair exactly.
         rows = self._session.execute(
             select(PatientClinicianRow.user_id, PatientClinicianRow.patient_id).where(
                 tuple_(PatientClinicianRow.user_id, PatientClinicianRow.patient_id).in_(
                     [(uid, pid) for (uid, pid) in pairs]
                 ),
-                or_(
-                    PatientClinicianRow.expires_at.is_(None),
-                    PatientClinicianRow.expires_at > utc_now(),
-                ),
+                grant_not_expired(),
             )
         ).all()
         return {(row.user_id, row.patient_id) for row in rows}
@@ -281,7 +262,7 @@ class PostgresPatientRepository(PatientRepository):
                 .where(
                     PatientRow.id.in_(patient_ids),
                     PatientRow.deleted_at.is_(None),
-                    *_live_grant_filter(user_id),
+                    *live_grant(user_id),
                 )
             )
             .scalars()
@@ -314,7 +295,7 @@ class PostgresPatientRepository(PatientRepository):
             .where(
                 PatientRow.deleted_at.is_(None),
                 PatientRow.status != "pending",
-                *_live_grant_filter(user_id),
+                *live_grant(user_id),
             )
         )
 
@@ -466,7 +447,7 @@ class PostgresPatientRepository(PatientRepository):
                     PatientRow.deleted_at.isnot(None),
                     PatientRow.deleted_at > cutoff,
                     PatientRow.status != "pending",
-                    *_live_grant_filter(user_id),
+                    *live_grant(user_id),
                 )
                 .order_by(PatientRow.last_name_lower, PatientRow.first_name_lower)
             )

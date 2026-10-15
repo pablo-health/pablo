@@ -20,13 +20,13 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import Depends
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 
 from ..auth.service import TenantContext, get_tenant_context
 from ..db import get_db_session, read_once_as
 from ..db.models import PatientClinicianRow
 from ..db.platform_models import EmailTenantMappingRow, PlatformUserRow, PracticeRow
-from ..utcnow import utc_now
+from ..repositories.postgres._grants import grant_not_expired
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -77,10 +77,7 @@ def primary_clinician_name(session: Session, schema: str, patient_id: str) -> st
                 PatientClinicianRow.patient_id == patient_id,
                 PatientClinicianRow.user_id == clinician_id,
                 PatientClinicianRow.role == "primary",
-                or_(
-                    PatientClinicianRow.expires_at.is_(None),
-                    PatientClinicianRow.expires_at > utc_now(),
-                ),
+                grant_not_expired(),
             ),
         )
         if rows:
