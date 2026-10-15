@@ -270,6 +270,16 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
         client = self._get_client()
         normalized_model = strip_provider_prefix(model)
         schema = _to_gemini_schema(types, response_schema)
+        # Gemini 4 Argon replaced the legacy token budget with a thinking
+        # level. Keep the shared gateway contract for older Gemini models,
+        # while sending the native setting Argon accepts.
+        thinking_config = (
+            types.ThinkingConfig(thinking_level="LOW")
+            if normalized_model == "gemini-4-argon"
+            else types.ThinkingConfig(thinking_budget=thinking_budget)
+            if thinking_budget is not None
+            else None
+        )
         config = types.GenerateContentConfig(
             system_instruction=system_prompt,
             response_mime_type="application/json",
@@ -283,11 +293,7 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
             max_output_tokens=max_output_tokens,
             # Default thinking when None; an explicit budget (incl. 0 to
             # disable) is forwarded for mechanical extraction callers.
-            thinking_config=(
-                types.ThinkingConfig(thinking_budget=thinking_budget)
-                if thinking_budget is not None
-                else None
-            ),
+            thinking_config=thinking_config,
         )
         policy = retry_policy or LLM_REQUEST
         started = time.monotonic()
