@@ -163,8 +163,11 @@ def get_engine() -> Engine:
 
     if settings.db_use_cloud_sql_connector:
         return _build_cloud_sql_engine(settings, option_parts)
+    return _build_direct_engine(settings, option_parts)
 
-    # Default path: plain DSN via DATABASE_URL.
+
+def _build_direct_engine(settings: Settings, option_parts: list[str]) -> Engine:
+    """Build the default engine: a plain DSN via ``DATABASE_URL``."""
     if not settings.database_url:
         msg = "DATABASE_URL is required when database_backend=postgres"
         raise ValueError(msg)
@@ -192,6 +195,11 @@ def get_engine() -> Engine:
         pool_recycle=settings.database_pool_recycle_seconds,
         echo=settings.debug,
         connect_args=connect_args,
+        # A failed statement's exception text otherwise embeds its bound
+        # parameters: a patient's name on a rejected INSERT, say. That text
+        # becomes the logged traceback and the Error Reporting event. The
+        # statement itself still appears; the values do not.
+        hide_parameters=True,
     )
 
 
@@ -279,6 +287,9 @@ def _build_cloud_sql_engine(settings: Settings, option_parts: list[str]) -> Engi
         pool_pre_ping=True,
         pool_recycle=settings.database_pool_recycle_seconds,
         echo=settings.debug,
+        # Same reason as the direct engine above: keep bound values out of
+        # exception text and therefore out of logs and Error Reporting.
+        hide_parameters=True,
     )
 
 
