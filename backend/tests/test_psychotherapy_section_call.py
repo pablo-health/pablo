@@ -194,6 +194,29 @@ def test_a_reply_that_wrote_nothing_leaves_the_whole_block_empty(empty: Any) -> 
     assert set(content["psychotherapy"].values()) == {""}
 
 
+def test_a_reply_of_gaps_worded_field_by_field_leaves_the_whole_block_empty() -> None:
+    """A visit with no therapy, each field saying so in its own words, is still a
+    visit with no therapy: the block stays empty."""
+    gaps = {
+        "issues_addressed": "No psychotherapy issues discussed.",
+        "modality_interventions": "Not discussed.",
+        "goal_plan": "No goal or assignment discussed.",
+        "progress": "Not reported.",
+        "therapy_cadence": "Frequency not specified.",
+    }
+    reply = {"psychotherapy": {k: gaps.get(k, "Not stated.") for k in THERAPY_FIELDS}}
+    reply["psychotherapy"]["response"] = {"text": "None discussed.", "quotes": []}
+    content = compose(reply, _fields(), SEGMENTS, "client")
+    assert content == empty_block(_fields())
+
+
+def test_a_gap_worded_for_its_field_is_kept_as_written_beside_a_written_field() -> None:
+    reply = _reply(modality_interventions="Reviewed the thought record.")
+    reply["psychotherapy"]["therapy_cadence"] = "Frequency not specified."
+    content = compose(reply, _fields(), SEGMENTS, "client")
+    assert content["psychotherapy"]["therapy_cadence"] == "Frequency not specified."
+
+
 # ---------------------------------------------------------------------------
 # Routing
 # ---------------------------------------------------------------------------

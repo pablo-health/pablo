@@ -23,6 +23,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from ..chart_proposals.evidence import segment_texts
+from ..notes.visit_gaps import is_visit_gap
 from .risk_section_call import verified_words
 from .source_attribution_service import format_transcript_with_segment_ids
 
@@ -151,7 +152,7 @@ def compose_chief_complaint(
     A quotation whose cited lines do not hold its words is dropped; the reason
     stands alone, and reads ``uncovered`` when there is none.
     """
-    reason = "" if _is_uncovered(text) else text.strip()
+    reason = "" if _is_uncovered(text) or is_visit_gap(text) else text.strip()
     said = [
         f'The {person} said: "{words}"'
         for q in (quotes if isinstance(quotes, list) else [])

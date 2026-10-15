@@ -36,6 +36,10 @@ NAMED_PATTERNS = {
     # words to match a reference's terms, and no value is read out of them.
     "references.py": "words of section names, for matching",
     "transcript_normalize.py": "transcripts from a transcription provider or an upload",
+    # Recognises bounded statements that a visit did not cover a field so they
+    # remain empty rather than becoming a finding. This disappears when every
+    # draft lane returns gap state separately from display text.
+    "visit_gaps.py": "bounded gap statements in drafted fields (model text; to be structured)",
 }
 
 

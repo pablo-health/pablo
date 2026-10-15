@@ -25,6 +25,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ..chart_proposals.evidence import segment_texts
+from ..notes.visit_gaps import is_visit_gap
 from ..notes.visit_times import THERAPY
 from .hpi_section_call import compose_chief_complaint, uncovered_text
 from .source_attribution_service import format_transcript_with_segment_ids
@@ -163,6 +164,11 @@ def _is_uncovered(text: str) -> bool:
     return text.strip().rstrip(".").strip().lower() in _UNCOVERED
 
 
+def _wrote_nothing(text: str) -> bool:
+    """Empty, or a gap however the field words it ("No goal or assignment discussed.")."""
+    return _is_uncovered(text) or is_visit_gap(text)
+
+
 def _raw(reply: Mapping[str, Any], f: SectionField) -> Any:
     section = reply.get(f.section)
     return section.get(f.field.key) if isinstance(section, dict) else None
@@ -192,7 +198,7 @@ def compose(
         isinstance(raw, dict) and raw.get("quotes")
         for raw in (_raw(reply, f) for f in fields if f.quotes)
     )
-    if not quoted and all(_is_uncovered(_text_of(_raw(reply, f))) for f in fields):
+    if not quoted and all(_wrote_nothing(_text_of(_raw(reply, f))) for f in fields):
         return empty_block(fields)
     content: dict[str, dict[str, Any]] = {}
     for f in fields:
