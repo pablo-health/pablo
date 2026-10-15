@@ -17,8 +17,9 @@ Hard failures, any one of which fails the run:
 
 - **Covered fields are filled.** A field the visit or the clinician's
   dictation covered must not come back empty.
-- **Gaps say so.** A field the visit did not cover must read "Not stated." or
-  "Not asked." rather than something the model supplied.
+- **Gaps say so.** A field the visit did not cover must say so, worded for
+  the field ("Not asked.", "None discussed.", "Not assessed this visit."),
+  rather than something the model supplied.
 - **Sections that must stay empty do.** The psychotherapy portion of a visit
   billed as a psychiatric diagnostic evaluation has no content.
 - **Diagnoses as stated.** Every stated diagnosis is there with its code, no
@@ -35,7 +36,7 @@ Hard failures, any one of which fails the run:
 | Case | Template | Sample |
 |---|---|---|
 | `psychiatric-evaluation-new-client` | `psychiatric_evaluation` | a new-client evaluation by video, with the clinician's dictated addendum; three diagnoses, one a rule-out; billed 90792 |
-| `psychiatric-follow-up-dictated-addendum` | `psychiatric_follow_up` | a short medication check by video, drafted as a two-channel call; risk and mental status are stated only in the addendum dictated after the client left, and must come back quoted; self-harm, orientation and cognition are covered nowhere and must read "Not stated." |
+| `psychiatric-follow-up-dictated-addendum` | `psychiatric_follow_up` | a short medication check by video, drafted as a two-channel call; risk and mental status are stated only in the addendum dictated after the client left, and must come back quoted; self-harm, orientation and cognition are covered nowhere and must say they were not covered |
 | `psychiatric-follow-up-therapy-start` | `psychiatric_follow_up` | a medication check, then a long therapy block the client asks for; no turn of the medication check is labeled therapy, and the first therapy turn is where the client asks for it. The clinician dictates the minutes but no clock times; once the start is confirmed, the psychotherapy time field must read the confirmed window, and no field may still call a psychotherapy time "Not stated." |
 | `psychiatric-follow-up-redraft-keeps-facts` | `psychiatric_follow_up` | a medication check with a home blood pressure and a refill sent to the pharmacy, then therapy. Drafted, then drafted again with one more line dictated for the plan, as "Dictate more" does: the blood pressure, the supply and the pharmacy must survive, the dictated line must be added, and the redraft is graded like the first draft |
 
