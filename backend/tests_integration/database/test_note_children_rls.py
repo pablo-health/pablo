@@ -26,13 +26,10 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -53,17 +50,6 @@ _CHILDREN = ("note_signatures", "note_addenda", "session_dictations")
 _AUTHOR = "1b7e4c2a-6d3f-5a80-9c21-7e4d2f8a6b13"
 _CO_TREATER = "8d2f6a19-3c5e-5b74-a0d8-2f9c4e7b1a65"
 _OUTSIDER = "4e9a1c73-8b2d-5f06-b3e7-6a1d9c2f8e47"
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_DB_URL, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 @pytest.fixture(scope="module")

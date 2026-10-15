@@ -45,7 +45,6 @@ from app.intake.starters import (
 from app.main import app as real_app
 from app.models.audit import AuditAction, ResourceType
 from app.repositories import InMemoryIntakeDocumentRepository, InMemoryIntakePacketRepository
-from app.repositories.audit import InMemoryAuditRepository
 from app.routes import intake_documents
 from app.routes.intake_documents import (
     get_document_values,
@@ -62,6 +61,8 @@ from fastapi.testclient import TestClient
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from app.repositories.audit import InMemoryAuditRepository
 
 BASE = "/api/intake/documents"
 PORTAL = "/api/patient/intake/documents"
@@ -104,12 +105,6 @@ def _auth(token: str) -> dict[str, str]:
 @pytest.fixture
 def documents() -> InMemoryIntakeDocumentRepository:
     return InMemoryIntakeDocumentRepository()
-
-
-@pytest.fixture
-def audit_repo() -> InMemoryAuditRepository:
-    """The real AuditService with its storage swapped."""
-    return InMemoryAuditRepository()
 
 
 @pytest.fixture

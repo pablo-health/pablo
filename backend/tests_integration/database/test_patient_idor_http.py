@@ -44,15 +44,12 @@ from __future__ import annotations
 
 import os
 import uuid
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -86,17 +83,6 @@ _CLINICIAN = "2a7e4c19-5f83-4d6b-8c02-9e1a7b3f5d84"
 # search_path, same connection pool. Only the row policy separates them.
 _TOKEN_A = "credential-belonging-to-patient-a"  # noqa: S105 - test credential
 _TOKEN_B = "credential-belonging-to-patient-b"  # noqa: S105 - test credential
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_DB_URL, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 @pytest.fixture(scope="module")

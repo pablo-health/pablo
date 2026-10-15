@@ -65,11 +65,6 @@ def migration_sql() -> str:
 
 
 @pytest.fixture
-def packets() -> InMemoryIntakePacketRepository:
-    return InMemoryIntakePacketRepository()
-
-
-@pytest.fixture
 def assignments() -> InMemoryPatientIntakeAssignmentRepository:
     repo = InMemoryPatientIntakeAssignmentRepository()
     repo.grant_all_access()

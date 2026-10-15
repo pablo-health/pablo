@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 import jwt
 import pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -58,22 +58,6 @@ def _enrollment(install_id: str) -> dict[str, Any]:
         "device_public_key_jwk": _public_jwk(),
         "key_storage": "hardware",
     }
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    from pathlib import Path  # noqa: PLC0415
-
-    from alembic import command  # noqa: PLC0415
-    from alembic.config import Config  # noqa: PLC0415
-
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_db_url, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 @pytest.fixture(scope="module")

@@ -29,11 +29,6 @@ def _iso(ts: datetime) -> str:
 
 
 @pytest.fixture
-def audit_repo() -> InMemoryAuditRepository:
-    return InMemoryAuditRepository()
-
-
-@pytest.fixture
 def patient_repo() -> InMemoryPatientRepository:
     return InMemoryPatientRepository()
 

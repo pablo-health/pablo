@@ -48,7 +48,6 @@ from app.repositories import (
     InMemoryPatientRepository,
     get_patient_repository,
 )
-from app.repositories.audit import InMemoryAuditRepository
 from app.repositories.coverage import (
     InMemoryPatientCoverageRepository,
     InMemoryPayerRepository,
@@ -78,6 +77,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from app.models.audit import AuditLogEntry
+    from app.repositories.audit import InMemoryAuditRepository
 
 _PATIENT_A = "11111111-1111-4111-8111-111111111111"
 _PATIENT_B = "22222222-2222-4222-8222-222222222222"
@@ -141,21 +141,10 @@ def _patient(patient_id: str, first: str, last: str) -> Patient:
 
 
 @pytest.fixture
-def packets() -> InMemoryIntakePacketRepository:
-    return InMemoryIntakePacketRepository()
-
-
-@pytest.fixture
 def assignments() -> InMemoryPatientIntakeAssignmentRepository:
     repo = InMemoryPatientIntakeAssignmentRepository()
     repo.grant_all_access()
     return repo
-
-
-@pytest.fixture
-def audit_repo() -> InMemoryAuditRepository:
-    """The real AuditService with its storage swapped."""
-    return InMemoryAuditRepository()
 
 
 @pytest.fixture

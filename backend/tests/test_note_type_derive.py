@@ -23,7 +23,6 @@ from app.repositories import (
     InMemoryPracticeNoteTypeRepository,
     get_practice_note_type_repository,
 )
-from app.repositories.audit import InMemoryAuditRepository
 from app.routes.note_type_derive import get_note_type_derive_service
 from app.routes.note_types import get_registry
 from app.services.audit_service import AuditService, get_audit_service
@@ -47,6 +46,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     from app.models import User
+    from app.repositories.audit import InMemoryAuditRepository
 
 # Synthetic: written for this test, about no one.
 SAMPLE = """\
@@ -130,11 +130,6 @@ def gateway() -> FakeStructuredLLMGateway:
 @pytest.fixture
 def repo() -> InMemoryPracticeNoteTypeRepository:
     return InMemoryPracticeNoteTypeRepository()
-
-
-@pytest.fixture
-def audit_repo() -> InMemoryAuditRepository:
-    return InMemoryAuditRepository()
 
 
 @pytest.fixture(autouse=True)

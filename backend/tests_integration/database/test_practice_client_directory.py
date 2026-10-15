@@ -40,7 +40,6 @@ from unittest.mock import MagicMock
 
 import pytest
 from alembic import command
-from alembic.config import Config
 from sqlalchemy import create_engine, make_url, text
 from sqlalchemy.exc import DBAPIError, ProgrammingError
 from sqlalchemy.orm import Session
@@ -94,17 +93,6 @@ _A = "0b5c2e81-3f6d-5a47-9c18-4e7d2a90b1c3"
 _B = "7e14a9d2-6c0b-5f83-a2d5-91b6c3e8f047"
 _FAMILY = "family@example.com"
 _COLUMNS = ["id", "first_name", "last_name", "date_of_birth", "email", "clinician_ids"]
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_DB_URL, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 def _new_schema(engine: Engine, label: str) -> str:

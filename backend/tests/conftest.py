@@ -85,6 +85,7 @@ from app.repositories import (  # noqa: E402
     InMemoryEhrPromptRepository,
     InMemoryEhrRouteRepository,
     InMemoryIdentityRepository,
+    InMemoryIntakePacketRepository,
     InMemoryLlmUsageRepository,
     InMemoryNotesRepository,
     InMemoryPatientProblemRepository,
@@ -96,6 +97,7 @@ from app.repositories import (  # noqa: E402
     get_identity_repository,
     get_user_repository,
 )
+from app.repositories.audit import InMemoryAuditRepository  # noqa: E402
 from app.repositories.external_calendar_event import (  # noqa: E402
     InMemoryExternalCalendarEventRepository,
 )
@@ -379,6 +381,17 @@ def audited_entries(service: AuditService) -> list[AuditLogEntry]:
     for call in repo.append_many.call_args_list:
         entries.extend(call.args[0])
     return entries
+
+
+@pytest.fixture
+def audit_repo() -> InMemoryAuditRepository:
+    """In-memory audit storage, for a test that reads back what was audited."""
+    return InMemoryAuditRepository()
+
+
+@pytest.fixture
+def packets() -> InMemoryIntakePacketRepository:
+    return InMemoryIntakePacketRepository()
 
 
 @pytest.fixture

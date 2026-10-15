@@ -13,13 +13,20 @@ so the env var must be set before app code is imported.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import create_engine
 from tests.placeholder_db import database_url_is_placeholder
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from fastapi import FastAPI
+    from sqlalchemy.engine import Engine
 
 # Disable the Cloud Logging audit dual-write, exactly as ``tests/conftest.py``
 # does for the unit suite — this file never got the same line, and every
@@ -350,3 +357,30 @@ def test_user_id() -> str:
 def test_user_id_2() -> str:
     """Second test user ID for multi-tenant tests."""
     return "integration-test-user-456"
+
+
+@pytest.fixture(scope="module")
+def engine() -> Iterator[Engine]:
+    """The integration Postgres with the tenant chain at head; one engine per module.
+
+    Module-scoped, as every copy of it was: each module gets a fresh pool, so
+    session-level state a module leaves on its connections (a ``search_path``,
+    a GUC set with ``is_local = false``) is disposed with it rather than handed
+    to the next module. A module that needs something else defines its own.
+    """
+    backend_dir = Path(__file__).resolve().parents[1]
+    cfg = Config(str(backend_dir / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
+    command.upgrade(cfg, "head")
+    eng = create_engine(os.environ.get("DATABASE_URL", ""), pool_pre_ping=True)
+    yield eng
+    eng.dispose()
+
+
+@pytest.fixture(scope="module")
+def fastapi_app() -> FastAPI:
+    """The app, imported here rather than at module top: settings are read and
+    cached on import, so it must follow ``pytest_configure``."""
+    from app.main import app  # noqa: PLC0415
+
+    return app

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import io
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
@@ -30,7 +30,6 @@ from app.repositories import (
     InMemoryPatientMessageRepository,
     InMemoryPatientRepository,
 )
-from app.repositories.audit import InMemoryAuditRepository
 from app.routes.patient_documents import (
     get_message_repository_for_documents,
     get_patient_documents_service,
@@ -47,6 +46,9 @@ from app.settings import Settings
 from fastapi.testclient import TestClient  # noqa: TC002 — runtime fixture type
 from google.cloud.exceptions import NotFound
 from reportlab.pdfgen import canvas
+
+if TYPE_CHECKING:
+    from app.repositories.audit import InMemoryAuditRepository
 
 # ---- fake GCS plumbing (mirrors test_patient_documents_service) ------
 
@@ -144,11 +146,6 @@ def doc_repo() -> InMemoryPatientDocumentRepository:
 @pytest.fixture
 def fake_gcs() -> _FakeStorageClient:
     return _FakeStorageClient()
-
-
-@pytest.fixture
-def audit_repo() -> InMemoryAuditRepository:
-    return InMemoryAuditRepository()
 
 
 @pytest.fixture(autouse=True)

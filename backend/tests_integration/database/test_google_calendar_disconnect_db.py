@@ -21,12 +21,9 @@ import json
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from app.calendar_providers.disconnect import Forgotten, forget_google_calendar
 from app.db import _current_tenant_schema, arm_current_user_id, set_tenant_schema
 from app.models.patient import Patient
@@ -62,17 +59,6 @@ pytestmark = pytest.mark.skipif(
 
 GOOGLE = "google_calendar"
 FEED = "ical:sessions_health"
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_db_url, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 @pytest.fixture(scope="module")
