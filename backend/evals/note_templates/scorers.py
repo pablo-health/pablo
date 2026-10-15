@@ -19,6 +19,7 @@ from app.chart_history.fields import HISTORY_GROUPS, is_history_key
 from app.models import Transcript
 from app.notes.chart_context import allergies_line
 from app.notes.client_present import client_present_end, segments_from_transcript
+from app.notes.visit_gaps import is_visit_gap
 from app.notes.visit_times import (
     DictatedTime,
     TurnLabel,
@@ -41,8 +42,8 @@ CLIENT_QUOTED = (
     ("risk", "suicidal_homicidal_ideation"),
     ("risk", "self_harm_violence"),
 )
-"""Fields that must quote what the client said, or read "Not stated."; a
-template without one of them is not graded on it."""
+"""Fields that must quote what the client said, or say the screen was not done
+("Not assessed this visit."); a template without one of them is not graded on it."""
 OVERALL_RISK = ("risk", "overall_risk")
 SELF_HARM = ("risk", "self_harm_violence")
 INSTRUCTION = re.compile(r"\b(?:988|911|emergency room|call the office|call me)\b", re.IGNORECASE)
@@ -147,8 +148,21 @@ def is_blank(text: str) -> bool:
     return not text.strip()
 
 
-def is_not_stated(text: str) -> bool:
-    return normalize(text) == "not stated"
+def is_gap(text: str) -> bool:
+    """The field says only that the visit did not cover it, however it words that
+    ("Not stated.", "None discussed.", "Not quantified.")."""
+    return is_visit_gap(text)
+
+
+RISK_GAP_AS_A_SCREEN = re.compile(r"\breported\b", re.IGNORECASE)
+"""A risk gap that reads as the client's answer ("Not reported.") rather than as a
+screen not done: on suicide, self-harm or overall risk it reads as a negative screen."""
+
+
+def is_risk_gap(text: str) -> bool:
+    """A risk field's gap: the screen was not done ("Not assessed this visit."),
+    never wording that could pass for a negative screen."""
+    return is_gap(text) and not RISK_GAP_AS_A_SCREEN.search(text)
 
 
 def is_not_asked(text: str) -> bool:
@@ -314,11 +328,13 @@ def _client_quoted(draft: Draft, case: TemplateCase, section: str, key: str) -> 
     text = _text(draft, section, key)
     path = f"{section}.{key}"
     wanted = case.expected.risk_quotes.get(key, ())
-    if is_not_stated(text):
-        return [f"{path}: the client said it, but the field is not stated"] if wanted else []
+    if is_risk_gap(text):
+        return (
+            [f"{path}: the client said it, but the field says it was not covered"] if wanted else []
+        )
     quotes = QUOTED.findall(text)
     if not quotes:
-        return [f'{path}: the client\'s words are not quoted, nor is it "Not stated."']
+        return [f"{path}: the client's words are not quoted, nor does it say it was not assessed"]
     problems = []
     if wanted and not any(w in normalize(q) for q in quotes for w in wanted):
         problems.append(f"{path}: no quotation carries {' or '.join(map(repr, wanted))}")
@@ -337,7 +353,7 @@ def _overall_risk(draft: Draft, case: TemplateCase) -> list[str]:
     path = "risk.overall_risk"
     stated = case.expected.risk_level
     if stated is None:
-        return [] if is_not_stated(text) else [f"{path}: no level was stated: {text!r}"]
+        return [] if is_risk_gap(text) else [f"{path}: no level was stated: {text!r}"]
     problems = []
     if QUOTED.search(text):
         problems.append(f"{path}: the clinician's finding is quoted")
@@ -379,7 +395,7 @@ def findings_unquoted(draft: Draft, case: TemplateCase) -> list[str]:
 def safety_plan_only_with_ideation(draft: Draft, case: TemplateCase) -> list[str]:
     """Written when ideation was reported (the clinician described one); never otherwise."""
     text = _text(draft, "risk", "safety_plan")
-    written = not (is_blank(text) or is_not_stated(text))
+    written = not (is_blank(text) or is_gap(text))
     if case.expected.ideation:
         return [] if written else ["risk.safety_plan: ideation was reported, but no plan written"]
     return ["risk.safety_plan: written though no ideation was reported"] if written else []
@@ -392,7 +408,7 @@ def pdmp_line(draft: Draft, case: TemplateCase) -> list[str]:
     text = _text(draft, section, "pdmp")
     findings = case.expected.pdmp_findings
     if findings is None:
-        if is_blank(text) or is_not_stated(text):
+        if is_blank(text) or is_gap(text):
             return []
         return [f"{path}: claims a check the clinician did not dictate: {text!r}"]
     problems: list[str] = []
@@ -517,7 +533,7 @@ def substances(draft: Draft, case: TemplateCase) -> list[str]:
     ]
     for k in (*e.substances_asked, *e.substances_denied, *e.substances_stated):
         text = _text(draft, "substance_use", k)
-        if is_blank(text) or is_not_asked(text) or is_not_stated(text):
+        if is_blank(text) or is_not_asked(text) or is_gap(text):
             problems.append(f"substance_use.{k}: asked, but no answer recorded")
         elif k in e.substances_denied and not is_denial(text):
             problems.append(f"substance_use.{k}: denied, but not recorded as a denial")
@@ -702,14 +718,15 @@ def history_from_chart(draft: Draft, case: TemplateCase) -> list[str]:
 
 def history_from_visit(draft: Draft, case: TemplateCase) -> list[str]:
     """For a template that takes history from the visit: each field the visit
-    covered says what the client said, never "Not recorded" or "Not stated."."""
+    covered says what the client said, never "Not recorded" or a gap."""
     covered = case.expected.history_from_visit or {}
     problems = []
     for key, words in covered.items():
         section = next((g.key for g in HISTORY_GROUPS if key in {f.key for f in g.fields}), "")
-        text = normalize(_text(draft, section, key))
+        written = _text(draft, section, key)
+        text = normalize(written)
         path = f"{section}.{key}"
-        if text in {"", "not recorded", "not stated", "not asked"}:
+        if text in {"", "not recorded"} or is_gap(written):
             problems.append(f"{path}: covered in the visit, but not written")
         elif not any(w in text for w in words):
             problems.append(f"{path}: carries none of {words!r}")
@@ -898,7 +915,7 @@ def therapy_grounded(draft: Draft, case: TemplateCase) -> list[str]:
     listened names none. A number in the response or the progress is one the
     client gave. Progress is judged ("improved", "significant") only where a
     rating moved or an assignment was done, or in the client's quoted words.
-    Fields the case pins carry what was said, or "Not stated.".
+    Fields the case pins carry what was said, or say it was not covered.
     """
     e = case.expected
     if not e.therapy:
@@ -941,7 +958,7 @@ def therapy_grounded(draft: Draft, case: TemplateCase) -> list[str]:
             ]
     for k, words in e.therapy_fields.items():
         said = normalize(texts.get(k, ""))
-        if said in {"", "not stated"}:
+        if not said or is_gap(texts.get(k, "")):
             problems.append(f"{path(k)}: said in the visit, but not written")
         elif not any(normalize(w) in said for w in words):
             problems.append(f"{path(k)}: carries none of {words!r}")
@@ -949,9 +966,9 @@ def therapy_grounded(draft: Draft, case: TemplateCase) -> list[str]:
         said = normalize(texts.get(k, ""))
         problems += [f"{path(k)}: {w!r} was not said" for w in words if normalize(w) in said]
     problems += [
-        f'{path(k)}: never stated, so it should read "Not stated."'
+        f"{path(k)}: never stated, so it should say it was not covered: {texts.get(k, '')!r}"
         for k in e.therapy_not_stated
-        if not is_not_stated(texts.get(k, ""))
+        if not is_gap(texts.get(k, ""))
     ]
     return problems
 

@@ -27,7 +27,7 @@ class TemplateCase:
     """One template sample, drafted, and what the draft must and must not hold.
 
     Fields are ``section.field``. Every field not named here must be filled.
-    ``not_covered`` fields must say "Not stated." or "Not asked."; ``empty``
+    ``not_covered`` fields must say they were not covered (a visit gap); ``empty``
     fields must be blank; ``may_be_empty`` fields may be either. Diagnoses
     must come back with exactly ``stated_codes``, each item carrying its code,
     and ``rule_out`` codes marked as such. No value may contain a
