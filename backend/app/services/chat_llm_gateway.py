@@ -120,8 +120,19 @@ def is_transient_failure(exc: BaseException) -> bool:
 # ---------------------------------------------------------------------------
 
 
+#: Separates the stable part of a chat system prompt from the part composed
+#: per conversation (the patient's chart context). A gateway that caches
+#: prompt prefixes may cache what comes before this and must not cache what
+#: comes after it: the text after it is one patient's chart.
+PATIENT_CONTEXT_DELIMITER = "\n\n--- PATIENT CONTEXT ---\n"
+
+
 class ChatLLMGateway(ABC):
-    """Abstract streaming completion gateway used by the chat service."""
+    """Abstract streaming completion gateway used by the chat service.
+
+    ``system_prompt`` may contain :data:`PATIENT_CONTEXT_DELIMITER`; see it
+    for what an implementation may do with the two halves.
+    """
 
     # Declared without ``async`` so subclasses can ship ``async def`` generator
     # bodies — mypy treats ``async def`` + ``yield`` as ``AsyncIterator``, but
