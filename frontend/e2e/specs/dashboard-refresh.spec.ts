@@ -45,18 +45,17 @@ test("an appointment booked from the calendar is on the dashboard without a relo
   await markCalendarSetupComplete(api)
 
   // Today lists every session on the day, earlier ones included, so the time
-  // only has to fall on today's date. A fixed window inside the working hours
-  // declared here keeps the booking clear of the out-of-hours dialog and of
-  // midnight, whatever the hour the suite runs; a random five minutes in it
-  // keeps reruns from booking over each other.
+  // only has to fall on today's date. Working hours declared here keep the
+  // booking clear of the out-of-hours dialog and of midnight, whatever the
+  // hour the suite runs. The time is one the form offers as open: earlier
+  // specs on this worker leave appointments on today's calendar, and a time
+  // picked blind can land on one, which the app refuses as a double booking.
   const today = browserToday()
   // `day_of_week` is Monday-based; JS weekdays are Sunday-based.
   const hours = await giveWorkingHours(api, (today.weekday + 6) % 7, {
     start: OPENS_AT,
     end: CLOSES_AT,
   })
-  const slot = Math.floor(Math.random() * 60)
-  const bookAt = `${String(10 + Math.floor(slot / 12)).padStart(2, "0")}:${String((slot % 12) * 5).padStart(2, "0")}`
   let appointmentId: string | undefined
 
   // Both go again afterwards. Hours left on today's weekday refuse what a
@@ -83,7 +82,9 @@ test("an appointment booked from the calendar is on the dashboard without a relo
     await patientPicker.fill(patient.first_name)
     await page.getByRole("option", { name: `${patient.last_name}, ${patient.first_name}` }).click()
     await page.getByLabel("Date", { exact: true }).fill(today.iso)
-    await page.getByLabel("Time", { exact: true }).fill(bookAt)
+    const openSlot = page.getByRole("group", { name: "Open slots" }).getByRole("button").first()
+    await openSlot.click()
+    await expect(openSlot).toHaveAttribute("aria-pressed", "true")
 
     const created = page.waitForResponse(
       (response) =>
