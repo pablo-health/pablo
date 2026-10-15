@@ -35,7 +35,8 @@ from ..services.practice_domain_service import (
     PracticeDomainService,
     get_practice_domain_service,
 )
-from .practice_domains import _manageable_practice_id, _practice_id
+from ._deps import practice_id_or_404
+from .practice_domains import _manageable_practice_id
 
 router = APIRouter(prefix="/api/practice/domains/connect", tags=["practice"])
 
@@ -48,7 +49,7 @@ def list_domain_connect_offers(
     audit: AuditService = Depends(get_audit_service),
 ) -> DomainConnectResponse:
     """Per domain, whether one-click setup is offered, and its link."""
-    practice_id = _practice_id(user)
+    practice_id = practice_id_or_404(user)
     try:
         can_manage = _manageable_practice_id(user) == practice_id
     except ForbiddenError:

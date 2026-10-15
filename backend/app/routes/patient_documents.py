@@ -44,12 +44,15 @@ from pydantic import BaseModel, Field
 
 from ..api_errors import (
     BadRequestError,
-    ForbiddenError,
     NotFoundError,
     ServerError,
     UnprocessableEntityError,
 )
-from ..auth.patient_context import AuthStrength, PatientContext, get_patient_context
+from ..auth.patient_context import (
+    PatientContext,
+    get_patient_context,
+    require_stepped_up,
+)
 from ..auth.route_access import subscription_exempt
 from ..auth.service import (
     TenantContext,
@@ -695,16 +698,6 @@ patient_router = APIRouter(prefix="/api/patient/documents", tags=["patient-docum
 CurrentPatient = Annotated[PatientContext, Depends(get_patient_context)]
 
 
-def _require_stepped_up(patient: PatientContext) -> None:
-    """Refuse a single-factor principal on every route here.
-
-    Same bar as the rest of the patient surface, for the same reason: one
-    factor reaching the wrong person should not open a chart.
-    """
-    if patient.auth_strength is not AuthStrength.STEPPED_UP:
-        raise ForbiddenError("Confirm it is you to continue.", code="STEP_UP_REQUIRED")
-
-
 def get_patient_documents_service_for_patient(
     settings: Settings = Depends(get_settings),
     patient: PatientContext = Depends(get_patient_context),
@@ -761,7 +754,7 @@ def init_patient_document_upload(
     The row is inserted with ``finalized_at=NULL``, so an upload that is
     started and abandoned never appears anywhere.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     get_patient_document_init_limiter().check(patient.patient_id)
 
     try:
@@ -832,7 +825,7 @@ def finalize_patient_document_upload(
     Idempotent: calling it again on a finished upload returns the same
     document, so a retry after a dropped connection is not a second one.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
 
     try:
         document = service.finalize_patient_upload(
@@ -898,7 +891,7 @@ def list_own_documents(
     surface IS recorded, the download beside it is recorded, and so is every
     clinician read of the same rows — those are disclosures to somebody else.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     documents = service.list_for_patient_principal(patient.patient_id)
     return PatientDocumentListResponse(
         data=[PatientDocumentResponse.from_document(d) for d in documents],
@@ -925,7 +918,7 @@ def download_own_document_file(
     record before the URL is returned, so a connection dropped afterwards
     still leaves the access logged.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
 
     try:
         result = service.signed_download_url_for_patient(

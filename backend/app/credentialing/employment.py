@@ -240,21 +240,6 @@ def gaps_in(
     return sorted(found, key=lambda g: (g.start, g.end, g.source_id or g.before_id or ""))
 
 
-def unexplained_gaps(
-    session: Session,
-    user_id: str,
-    *,
-    threshold_days: int = CAQH_GAP_THRESHOLD_DAYS,
-    today: date | None = None,
-) -> list[EmploymentGap]:
-    """The gaps that would stall an application. What a submission gate reads."""
-    return [
-        g
-        for g in gaps(session, user_id, threshold_days=threshold_days, today=today)
-        if not g.explained
-    ]
-
-
 def _breaks(
     positions: list[Position],
     academic: list[AcademicPeriod],

@@ -362,21 +362,6 @@ def check_leie(
     )
 
 
-def download_leie(url: str = LEIE_DOWNLOAD_URL) -> str:
-    """Fetch the current LEIE CSV.
-
-    Separate from parsing so that whatever ends up owning the refresh — a job,
-    a cache, a table — can hold the bytes without this module having an opinion
-    about where they live. It is 15 MB; do not call it inside a request.
-    """
-    try:
-        response = httpx.get(url, timeout=TIMEOUT_SECONDS, follow_redirects=True)
-        response.raise_for_status()
-    except httpx.HTTPError as exc:
-        raise ExclusionCheckError(f"Could not fetch the LEIE: {exc}") from exc
-    return response.text
-
-
 def check_sam(
     subject: Subject,
     *,

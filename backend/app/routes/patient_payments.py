@@ -96,6 +96,7 @@ from ..repositories import (
 from ..repositories.patient_payment import PaymentAlreadyInFlightError
 from ..scheduling_engine.services.rate_resolver import resolve_rate_cents
 from ..services import AuditService, get_audit_service
+from ._deps import client_not_found, visible_patient
 
 if TYPE_CHECKING:
     from ..models import Patient, User
@@ -192,20 +193,6 @@ def _to_card_response(card: CardOnFile) -> CardOnFileResponse:
         exp_year=card.card_exp_year,
         chargeable=card.chargeable,
     )
-
-
-def _require_patient(patients: PatientRepository, patient_id: str, user_id: str) -> Patient:
-    """404 unless this client is visible to this clinician in this practice.
-
-    A client in another practice's schema is absent from the tenant-scoped
-    repository; one this clinician holds no grant on is filtered out by the row
-    policy. Both collapse to "not found" on purpose — a 403 would confirm the
-    id exists.
-    """
-    patient = patients.get(patient_id, user_id)
-    if patient is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found.")
-    return patient
 
 
 def _require_credentials(practice_id: str | None) -> PaymentCredentials:
@@ -333,7 +320,7 @@ def start_card_setup(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Card payments are not configured.",
         )
-    _require_patient(patients, patient_id, user.id)
+    visible_patient(patients, patient_id, user.id, client_not_found)
 
     card = payments.get_card_on_file(patient_id)
     if card is None:
@@ -427,7 +414,7 @@ def complete_card_setup(
     409 when the SetupIntent has not succeeded — there is nothing to store yet.
     """
     credentials = _require_credentials(tenant.practice_id)
-    _require_patient(patients, patient_id, user.id)
+    visible_patient(patients, patient_id, user.id, client_not_found)
 
     card = payments.get_card_on_file(patient_id)
     if card is None:
@@ -504,7 +491,7 @@ def get_card_on_file(
     object every caller would have to special-case.
     """
     _require_credentials(tenant.practice_id)
-    _require_patient(patients, patient_id, user.id)
+    visible_patient(patients, patient_id, user.id, client_not_found)
 
     card = payments.get_card_on_file(patient_id)
     if card is None or not card.chargeable:
@@ -543,7 +530,7 @@ def get_charge_amount(
     rather than offering a one-click charge for a number nobody chose.
     """
     _require_credentials(tenant.practice_id)
-    patient = _require_patient(patients, patient_id, user.id)
+    patient = visible_patient(patients, patient_id, user.id, client_not_found)
 
     amount_cents = _effective_rate_cents(
         patient, appointment_id, user.id, appointments, appointment_types
@@ -587,7 +574,7 @@ def create_charge(
     discards both.
     """
     credentials = _require_credentials(tenant.practice_id)
-    patient = _require_patient(patients, patient_id, user.id)
+    patient = visible_patient(patients, patient_id, user.id, client_not_found)
 
     card = payments.get_card_on_file(patient_id)
     if card is None or not card.chargeable:
@@ -804,7 +791,7 @@ def charge_balance(
     either way, and the figure can only be short.
     """
     credentials = _require_credentials(tenant.practice_id)
-    _require_patient(patients, patient_id, user.id)
+    visible_patient(patients, patient_id, user.id, client_not_found)
 
     card = payments.get_card_on_file(patient_id)
     if card is None or not card.chargeable:
@@ -963,7 +950,7 @@ def list_charges(
     answered a 503 for every chart in a practice that takes no cards, and hid
     the history of one that had taken cards and since disconnected.
     """
-    _require_patient(patients, patient_id, user.id)
+    visible_patient(patients, patient_id, user.id, client_not_found)
 
     audit.log(
         AuditAction.PATIENT_CHARGES_VIEWED,
@@ -995,7 +982,7 @@ def get_patient_balance(
     because no card processor is configured would be answering a question
     nobody asked.
     """
-    _require_patient(patients, patient_id, user.id)
+    visible_patient(patients, patient_id, user.id, client_not_found)
 
     # The same disclosure as the ledger read beside it, over strictly fewer
     # facts — the totals are derived from exactly those rows — so it is

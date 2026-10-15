@@ -69,6 +69,7 @@ from ..rate_limit import (
 )
 from ..repositories import get_patient_repository
 from ..repositories.patient import PatientRepository
+from ..routes._deps import visible_patient
 from ..services.audit_service import AuditService, get_audit_service
 from ..settings import get_settings
 from ..utcnow import utc_now
@@ -105,7 +106,6 @@ from .tenant_gateway import (
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from ..models.patient import Patient
     from .service import PatientSession
 
 logger = logging.getLogger(__name__)
@@ -215,18 +215,8 @@ def _session_response(minted: PatientSession) -> PatientSessionResponse:
     )
 
 
-def _patient_or_404(patients: PatientRepository, patient_id: str, user_id: str) -> Patient:
-    """The patient this clinician may act on, or a 404.
-
-    Through the repository rather than a direct row read, so the clinician's
-    access grant decides. A clinician with no grant on this chart gets the
-    same 404 as an id that does not exist — there is nothing to learn here
-    about who another practitioner treats.
-    """
-    patient = patients.get(patient_id, user_id)
-    if patient is None:
-        raise NotFoundError("Patient not found.")
-    return patient
+def _patient_not_found(_patient_id: str) -> Exception:
+    return NotFoundError("Patient not found.")
 
 
 # ── clinician: issue, inspect, revoke ───────────────────────────────────
@@ -304,7 +294,7 @@ def issue_portal_invite(  # noqa: PLR0913 — FastAPI Depends-injected params ar
     is resolved here — minted on the first invitation rather than made into a
     step a clinician has to go and do first.
     """
-    patient = _patient_or_404(patients, patient_id, user.id)
+    patient = visible_patient(patients, patient_id, user.id, _patient_not_found)
     if not patient.email or not patient.phone:
         raise UnprocessableEntityError(
             "Add an email address and a mobile number to this chart first.",
@@ -376,7 +366,7 @@ def get_portal_access(
     patient said. A read of access state rather than of chart content, so no
     audit entry.
     """
-    _patient_or_404(patients, patient_id, user.id)
+    visible_patient(patients, patient_id, user.id, _patient_not_found)
     now = int(utc_now().timestamp())
     practice = _resolve_practice_from_email(user.email)
     return PortalAccessState(
@@ -407,7 +397,7 @@ def revoke_portal_access(  # noqa: PLR0913 — FastAPI Depends-injected params a
 
     Idempotent — revoking access nobody has returns zeros, not an error.
     """
-    patient = _patient_or_404(patients, patient_id, user.id)
+    patient = visible_patient(patients, patient_id, user.id, _patient_not_found)
     # Revocation sends nothing, so the kill switch takes the refusing stub
     # as its gateway rather than a real one — it must keep working when a
     # provider is down, and it is the control that matters most precisely

@@ -101,7 +101,3 @@ def is_history_key(key: str) -> bool:
 
 def field_label(key: str) -> str:
     return _BY_KEY[key][1].label
-
-
-def group_of(key: str) -> HistoryGroup:
-    return _BY_KEY[key][0]
