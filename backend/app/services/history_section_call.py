@@ -18,8 +18,9 @@ BACKGROUND_SCHEMA_TITLE = "BackgroundHistorySections"
 
 SYSTEM_PROMPT = (
     "You draft related history sections of a clinician's note from one visit's transcript. "
-    "Write only what the visit says, without inference or attribution phrasing. Return only "
-    "the JSON object requested."
+    "Write only what the visit says, without inference or attribution phrasing, except that "
+    "a field whose instructions say it comes from the chart follows the chart's rules when "
+    "a chart is given. Return only the JSON object requested."
 )
 
 _UNCOVERED = frozenset({"", "not discussed", "not asked", "not stated"})
