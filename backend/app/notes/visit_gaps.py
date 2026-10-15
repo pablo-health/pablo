@@ -53,8 +53,9 @@ _FINDING_WORD = rf"(?:and|but|or|{_CLAIM})"
 
 _WORD = rf"(?!{_FINDING_WORD}\b)[\w/'-]+"
 
-_ITEM_WORD = rf"(?!{_CLAIM}\b)[\w/'-]+"
-"""A word of what "No ..." names, which may be a list ("No goal or assignment")."""
+_ITEM_WORD = rf"(?!(?:{_CLAIM}|reported|stated)\b)[\w/'-]+"
+"""A word of what "No ..." names, which may be a list ("No goal or assignment"). Never
+the client's answer: "No other substances reported when asked." is a denial."""
 
 _SUBJECT = rf"(?:{_WORD}\s+){{0,5}}"
 

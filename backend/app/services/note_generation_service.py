@@ -1094,8 +1094,8 @@ _ADDENDUM_PLACING = (
 )
 _ADDENDUM_TAIL = (
     "The addendum is not session time and is not something the client said. "
-    'An item covered by neither the session nor the addendum is "Not stated."; '
-    "never fill it in."
+    "An item covered by neither the session nor the addendum says so, worded for "
+    'that item ("Not reported.", "Not assessed this visit."); never fill it in.'
 )
 _ADDENDUM_ITEMS = "a prescription monitoring check, consent, or a decision and its reasons"
 _ADDENDUM_INSTRUCTIONS = (

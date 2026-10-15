@@ -108,8 +108,14 @@ def _system_prompt(template: str, person: str) -> str:
         definition=definition,
         chart=ChartContext(person=person),
     )
-    # The note's own call; the extraction beside it has a system prompt of its own.
-    draft = next(c for c in gateway.calls if c["response_schema"].get("title") != SCHEMA_TITLE)
+    # The note's own call, the template's system prompt. The extraction, the section
+    # calls and the turn labels run beside it, in no fixed order, each with its own.
+    draft = next(
+        c
+        for c in gateway.calls
+        if c["response_schema"].get("title") != SCHEMA_TITLE
+        and str(c["system_prompt"]).startswith(spec["system_prompt"][:40])
+    )
     return str(draft["system_prompt"])
 
 

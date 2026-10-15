@@ -49,6 +49,9 @@ def test_a_gap_worded_for_its_field_reads_as_a_gap(text: str) -> None:
         "Denies.",
         "Denies SI and HI.",
         "No SI reported.",
+        # Seen from a real model: a denial given when asked, not a question never put.
+        "No other substances reported when asked.",
+        "No side effects stated when asked.",
         "No suicidal ideation, intent or plan.",
         "Denies SI and HI not assessed.",
         "Not assessed this visit, but endorsed passive thoughts of death.",

@@ -12,8 +12,8 @@
   "spec": {
     "label": "Psychiatric follow-up (E/M + psychotherapy)",
     "description": "Medication-management follow-up, with a psychotherapy section for visits that include therapy.",
-    "system_prompt": "You are a documentation assistant for a psychiatric nurse practitioner. You draft a medication-management follow-up note from the transcript of the visit and from values the clinician entered.\n\nThe transcript has two speakers. Therapist is the clinician; Client is the {term}. The clinician sometimes keeps recording after the {term} has left and dictates observations: everything the Therapist says after the Client's last line is the clinician's dictated addendum. Treat the addendum as the clinician's own statements; it is the preferred source for risk, mental status, the monitoring-program check, consent and the clinician's decisions.\n\nWrite in the clinical register of a coded progress note: concise, third person, past tense, the {term} referred to as \"the {term}\". Prefer the clinician's own wording for findings. Never assign a level, score or code that the clinician did not state or enter. When a field was not covered in the visit or the addendum, write \"Not stated.\" rather than leaving it out. Refer to the person seen as \"the {term}\" or with they/them; never he, she, his or her, unless the chart records their pronouns.",
-    "user_template": "Draft the note with these sections and fields:\n\n{fields}\n\nValues the clinician entered before the visit (\"not provided\" means blank):\n- Date of service: {session_date}\n- Place of service: {inputs.place_of_service}\n- Client location (telehealth): {inputs.client_location}\n- Provider location (telehealth): {inputs.provider_location}\n\n{chart}\n\nRules:\n- Copy entered values exactly.\n- The note is the clinician's own statement. Write what the clinician said or dictated (mental status, risk findings, protective factors, the monitoring-program check, consent, decisions) as findings, declarative and without quotation marks. In no field write who said, asked, noted or dictated something: no \"Clinician dictated:\", \"Clinician stated\", \"clinician noted\", \"per clinician\", \"Client responded:\" or the like.\n- In the risk fields, the {term}'s own words about suicide, self-harm or violence are quoted verbatim and framed as theirs (Asked about thoughts of harming self or others, the {term} said: \"...\"), never paraphrased. Overall risk is only the clinician's stated judgment; never a level the clinician did not say. \"Not stated.\" when nothing was said.\n- Billing codes, psychotherapy start and end times, and the prescription monitoring check come ONLY from the clinician's own words, usually the dictated addendum. Never infer a code, a time or a check that the clinician did not state; write \"Not stated.\" instead.\n\nTranscript:\n{transcript}",
+    "system_prompt": "You are a documentation assistant for a psychiatric nurse practitioner. You draft a medication-management follow-up note from the transcript of the visit and from values the clinician entered.\n\nThe transcript has two speakers. Therapist is the clinician; Client is the {term}. The clinician sometimes keeps recording after the {term} has left and dictates observations: everything the Therapist says after the Client's last line is the clinician's dictated addendum. Treat the addendum as the clinician's own statements; it is the preferred source for risk, mental status, the monitoring-program check, consent and the clinician's decisions.\n\nWrite in the clinical register of a coded progress note: concise, third person, past tense, the {term} referred to as \"the {term}\". Prefer the clinician's own wording for findings. Never assign a level, score or code that the clinician did not state or enter. When a field was not covered in the visit or the addendum, say so in a few words fitted to the item (e.g. \"Not reported.\", \"None discussed.\") rather than leaving it out. Refer to the person seen as \"the {term}\" or with they/them; never he, she, his or her, unless the chart records their pronouns.",
+    "user_template": "Draft the note with these sections and fields:\n\n{fields}\n\nValues the clinician entered before the visit (\"not provided\" means blank):\n- Date of service: {session_date}\n- Place of service: {inputs.place_of_service}\n- Client location (telehealth): {inputs.client_location}\n- Provider location (telehealth): {inputs.provider_location}\n\n{chart}\n\nRules:\n- Copy entered values exactly.\n- The note is the clinician's own statement. Write what the clinician said or dictated (mental status, risk findings, protective factors, the monitoring-program check, consent, decisions) as findings, declarative and without quotation marks. In no field write who said, asked, noted or dictated something: no \"Clinician dictated:\", \"Clinician stated\", \"clinician noted\", \"per clinician\", \"Client responded:\" or the like.\n- In the risk fields, the {term}'s own words about suicide, self-harm or violence are quoted verbatim and framed as theirs (Asked about thoughts of harming self or others, the {term} said: \"...\"), never paraphrased. Overall risk is only the clinician's stated judgment; never a level the clinician did not say. A risk item that was not asked reads \"Not assessed this visit.\", never a denial nobody gave.\n- Billing codes, psychotherapy start and end times, and the prescription monitoring check come ONLY from the clinician's own words, usually the dictated addendum. Never infer a code, a time or a check that the clinician did not state: a code or a time not stated reads \"Not stated.\", and the check reads as its field says.\n\nTranscript:\n{transcript}",
     "sections": [
       {
         "key": "encounter",
@@ -344,31 +344,31 @@
             "key": "suicidal_homicidal_ideation",
             "label": "Suicidal / homicidal ideation",
             "kind": "text",
-            "ai_hint": "What was asked and answered about suicidal or homicidal thoughts, intent, plan or means: the client's own words quoted verbatim and framed as theirs, and the clinician's finding as dictated, unquoted (e.g. Denies SI and HI. Asked about thoughts of harming self or others, the client said: \"...\"). Never a paraphrase of the client, never a level the clinician did not say. \"Not stated.\" if nothing was said."
+            "ai_hint": "What was asked and answered about suicidal or homicidal thoughts, intent, plan or means: the client's own words quoted verbatim and framed as theirs, and the clinician's finding as dictated, unquoted (e.g. Denies SI and HI. Asked about thoughts of harming self or others, the client said: \"...\"). Never a paraphrase of the client, never a level the clinician did not say. \"Not assessed this visit.\" if it was not asked; never a denial nobody gave."
           },
           {
             "key": "self_harm_violence",
             "label": "Self-harm / violent behavior",
             "kind": "text",
-            "ai_hint": "What was reported or observed about self-harm or violence: the client's own words quoted verbatim and framed as theirs, and the clinician's finding as dictated, unquoted. Advice or instructions given to the client belong in Emergency instructions, not here. Never a paraphrase of the client, never a level the clinician did not say. \"Not stated.\" if nothing was said."
+            "ai_hint": "What was reported or observed about self-harm or violence: the client's own words quoted verbatim and framed as theirs, and the clinician's finding as dictated, unquoted. Advice or instructions given to the client belong in Emergency instructions, not here. Never a paraphrase of the client, never a level the clinician did not say. \"No self-harm or violence discussed.\" if nothing was said about it; never a denial nobody gave."
           },
           {
             "key": "risk_protective_factors",
             "label": "Risk and protective factors",
             "kind": "text",
-            "ai_hint": "Risk factors and protective factors as the clinician or client named them, written as findings (e.g. Protective factors: employed, engaged in treatment.). Never one nobody named. \"Not stated.\" if none were named."
+            "ai_hint": "Risk factors and protective factors as the clinician or client named them, written as findings (e.g. Protective factors: employed, engaged in treatment.). Never one nobody named. \"None discussed.\" if none were named."
           },
           {
             "key": "overall_risk",
             "label": "Overall acute risk",
             "kind": "text",
-            "ai_hint": "Only the clinician's own stated judgment of overall acute risk, written as a finding (e.g. Overall acute risk is low.). Never a level the clinician did not say. \"Not stated.\" if the clinician did not state one."
+            "ai_hint": "Only the clinician's own stated judgment of overall acute risk, written as a finding (e.g. Overall acute risk is low.). Never a level the clinician did not say. \"Overall risk level not stated.\" if the clinician did not state one."
           },
           {
             "key": "safety_plan",
             "label": "Safety plan",
             "kind": "text",
-            "ai_hint": "Only if any ideation, self-harm or violence was reported: the safety planning the clinician described (warning signs, coping, supports, crisis contacts, means safety), in the clinician's own words, unquoted; never a summary that drops a step. Otherwise leave empty."
+            "ai_hint": "Only if any ideation, self-harm or violence was reported: the safety planning the clinician described (warning signs, coping, supports, crisis contacts, means safety), in the clinician's own words, unquoted; never a summary that drops a step. If one was reported and no safety planning was described, \"Safety plan not discussed this visit.\" Otherwise leave empty."
           }
         ]
       },
@@ -502,7 +502,7 @@
             "key": "pdmp",
             "label": "PDMP",
             "kind": "text",
-            "ai_hint": "If the clinician said the state prescription monitoring program (PDMP) was checked, write \"State prescription monitoring program (PDMP) reviewed on <date>: <finding as stated>.\" where <date> is the calendar date the clinician gave, or the date of service when the clinician said \"today\" or gave no date (never the word \"today\"). If a controlled substance was prescribed or continued and the clinician did not mention the check, write \"Not stated.\" If no controlled substance was involved, leave empty."
+            "ai_hint": "If the clinician said the state prescription monitoring program (PDMP) was checked, write \"State prescription monitoring program (PDMP) reviewed on <date>: <finding as stated>.\" where <date> is the calendar date the clinician gave, or the date of service when the clinician said \"today\" or gave no date (never the word \"today\"). If a controlled substance was prescribed or continued and the clinician did not mention the check, write \"PDMP review not documented this visit.\" If no controlled substance was involved, leave empty."
           },
           {
             "key": "informed_consent",

@@ -232,6 +232,43 @@ def test_good_medication_only_draft_passes() -> None:
     assert _failed(MEDICATION_ONLY_DRAFT, FOLLOW_UP_MEDICATION_ONLY) == {}
 
 
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("self_harm_violence", "Not assessed this visit."),
+        ("self_harm_violence", "Self-harm not assessed this visit."),
+        ("overall_risk", "Not assessed this visit."),
+        ("overall_risk", "Overall risk not stated."),
+    ],
+)
+def test_a_risk_field_the_visit_did_not_cover_may_say_so_in_its_own_words(
+    key: str, value: str
+) -> None:
+    draft = _with(MEDICATION_ONLY_DRAFT, "risk", key, value)
+    assert _failed(draft, FOLLOW_UP_MEDICATION_ONLY) == {}
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        # Empty: a safety-critical field says the screen was not done.
+        ("self_harm_violence", ""),
+        ("overall_risk", ""),
+        # Worded as the client's answer, it passes for a negative screen.
+        ("self_harm_violence", "Not reported."),
+        ("overall_risk", "None reported."),
+        # A finding nobody gave.
+        ("self_harm_violence", "Denies self-harm and violence."),
+        ("overall_risk", "Overall acute risk is low."),
+    ],
+)
+def test_a_risk_field_the_visit_did_not_cover_is_never_empty_or_a_finding(
+    key: str, value: str
+) -> None:
+    draft = _with(MEDICATION_ONLY_DRAFT, "risk", key, value)
+    assert "risk_as_said" in _failed(draft, FOLLOW_UP_MEDICATION_ONLY)
+
+
 def test_what_the_visit_changed_may_follow_a_history_fields_chart_text() -> None:
     draft = _with(
         THERAPY_DRAFT,
@@ -1295,6 +1332,16 @@ def test_a_grounded_psychotherapy_block_passes() -> None:
     assert therapy_grounded(PLAN_NOT_STATED_BLOCK, FOLLOW_UP_THERAPY_PLAN_NOT_STATED) == []
 
 
+def test_a_therapy_field_never_stated_may_say_so_in_its_own_words() -> None:
+    draft = _with(PLAN_NOT_STATED_BLOCK, "psychotherapy", "progress", "Not reported.")
+    draft = _with(draft, "psychotherapy", "therapy_cadence", "Frequency not specified.")
+    assert therapy_grounded(draft, FOLLOW_UP_THERAPY_PLAN_NOT_STATED) == []
+    draft = _with(
+        SUPPORTIVE_BLOCK, "psychotherapy", "goal_plan", "No goal or assignment discussed."
+    )
+    assert therapy_grounded(draft, FOLLOW_UP_SUPPORTIVE_ONLY) == []
+
+
 def test_a_visit_with_no_therapy_is_not_graded_here() -> None:
     """An empty block on a medication visit is psychotherapy_section's to judge."""
     assert therapy_grounded(MEDICATION_ONLY_DRAFT, FOLLOW_UP_MEDICATION_ONLY) == []
@@ -1342,9 +1389,9 @@ def test_ungrounded_therapy_claims_are_caught(key: str, value: str, problem: str
         ("response", "Mood rated 4/10, tearful.", "4 is not a number"),
         ("response", "Rated sadness at eight.", "8 is not a number"),
         # A goal nobody set.
-        ("goal_plan", "Process grief and build supports.", 'should read "Not stated."'),
+        ("goal_plan", "Process grief and build supports.", "should say it was not covered"),
         # Progress judged on a visit with no goal and no assignment.
-        ("progress", "Meaningful progress in processing grief.", 'should read "Not stated."'),
+        ("progress", "Meaningful progress in processing grief.", "should say it was not covered"),
     ],
 )
 def test_a_listening_visit_is_not_written_up_as_a_technique(
@@ -1359,7 +1406,7 @@ def test_a_listening_visit_is_not_written_up_as_a_technique(
     ("key", "value", "problem"),
     [
         # The next visit's interval passed off as a plan for therapy.
-        ("therapy_cadence", "Every six weeks.", 'should read "Not stated."'),
+        ("therapy_cadence", "Every six weeks.", "should say it was not covered"),
         # A goal nobody set, written as an improvement.
         (
             "goal_plan",
