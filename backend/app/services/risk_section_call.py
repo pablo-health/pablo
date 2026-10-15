@@ -19,6 +19,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from ..chart_proposals.evidence import cited_evidence, segment_texts
+from ..notes.visit_gaps import is_visit_gap
 from .source_attribution_service import format_transcript_with_segment_ids
 
 if TYPE_CHECKING:
@@ -188,7 +189,7 @@ def compose_quoted(text: str, quotes: Any, segments: Mapping[int, str], person: 
             parts.append(f'{frame}: "{words}"')
         elif asked:
             parts.append(f"{asked}.")
-    if kept and finding.rstrip(".").lower() == NOT_STATED.rstrip(".").lower():
+    if kept and is_visit_gap(finding):
         finding = ""
     return " ".join(p for p in (finding, *parts) if p)
 

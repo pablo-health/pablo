@@ -11,9 +11,11 @@ review; there is no transcript evidence to cite.
 
 A field's value reads one of three ways:
 
-- Nothing to record: empty, "Not asked.", "Not stated.", "Not recorded" or
-  "None recorded" alone, or a mark that states nothing ("(not asked this
-  visit)", "(asked this visit: no change)"), alone or after "Not recorded".
+- Nothing to record: empty, "Not recorded" or "None recorded" alone, a gap
+  worded for the field ("Not asked.", "None discussed.", "Not reported.";
+  :func:`app.notes.visit_gaps.is_visit_gap`), or a mark that states nothing
+  ("(not asked this visit)", "(asked this visit: no change)"), alone or
+  after "Not recorded".
 - A chart-fed field the chart was empty for: "(stated this visit: …)", or
   "Not recorded (stated this visit: …)" as a note drafted before printed it.
   What the mark quotes is recorded; a substance screen marked "(stated this
@@ -42,6 +44,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from ..notes.visit_gaps import is_visit_gap
 from .denials import NKDA, NKDA_TEXT, is_allergy_denial
 from .families import ALLERGIES, chart_key_for
 from .models import RECORDED_THIS_VISIT, DraftedProposal
@@ -93,7 +96,9 @@ def recorded_text(text: str) -> str:
         stated = stated[len(_STATED_OPEN) : -1].strip().strip('"“”').strip()
         if stated.lower().rstrip(".").strip() in _DENIED_MARKS:
             return DENIES
-    return "" if stated.lower().rstrip(".").strip() in _NOTHING_STATED else stated
+    if stated.lower().rstrip(".").strip() in _NOTHING_STATED or is_visit_gap(stated):
+        return ""
+    return stated
 
 
 def stated_history(content: Mapping[str, Any]) -> dict[str, str]:

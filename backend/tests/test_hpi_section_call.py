@@ -139,6 +139,17 @@ def test_a_chief_complaint_with_nothing_kept_reads_not_stated_and_gives_way_to_a
     assert kept == 'The client said: "Low, honestly"'
 
 
+def test_a_chief_complaint_gap_worded_for_the_field_gives_way_to_a_kept_quote() -> None:
+    kept = compose_chief_complaint(
+        "Reason for the visit not stated.",
+        [_quote("Low, honestly", [3])],
+        SEGMENTS,
+        "client",
+        NOT_STATED,
+    )
+    assert kept == 'The client said: "Low, honestly"'
+
+
 def test_the_chief_complaint_frames_a_quotation_with_the_charts_word_for_the_person() -> None:
     text = compose_chief_complaint("", [_quote("Low", [3])], SEGMENTS, "patient", NOT_STATED)
     assert text == 'The patient said: "Low"'

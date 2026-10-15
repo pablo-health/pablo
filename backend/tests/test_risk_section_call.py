@@ -135,6 +135,19 @@ def test_not_stated_gives_way_to_a_kept_quotation_and_stays_without_one() -> Non
     assert compose_quoted("Not stated.", [], SEGMENTS, "client") == "Not stated."
 
 
+def test_a_gap_worded_for_the_field_gives_way_to_a_kept_quotation_and_stays_without_one() -> None:
+    """A field cannot say the screen was not done and then quote the answer to it."""
+    gap = "Not assessed this visit."
+    kept = compose_quoted(gap, [_quote("Nothing like that", [3])], SEGMENTS, "client")
+    assert kept == 'Asked about thoughts of harming self, the client said: "Nothing like that"'
+    assert compose_quoted(gap, [], SEGMENTS, "client") == gap
+
+
+def test_a_finding_beside_a_kept_quotation_is_never_taken_for_a_gap() -> None:
+    kept = compose_quoted("Denies SI and HI.", [_quote("Nothing like that", [3])], SEGMENTS, "c")
+    assert kept.startswith("Denies SI and HI. Asked about thoughts of harming self")
+
+
 def test_a_quotation_is_framed_with_the_charts_word_for_the_person() -> None:
     text = compose_quoted("", [_quote("Nothing like that", [3], asked="")], SEGMENTS, "patient")
     assert text == 'The patient said: "Nothing like that"'

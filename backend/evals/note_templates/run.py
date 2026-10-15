@@ -36,6 +36,7 @@ from app.services.structured_llm_gateway import (
     resolve_structured_llm_gateway,
 )
 
+from evals.anthropic_api import direct_anthropic_gateway, direct_anthropic_model
 from evals.note_templates.cases import ALL_CASES, TemplateCase
 from evals.note_templates.scorers import (
     grade,
@@ -53,12 +54,16 @@ def draft(case: TemplateCase, model: str | None) -> GeneratedNote:
     patient = Patient(id="preview", first_name="", last_name="", created_at=now, updated_at=now)
     # One model alone, with no fallback behind it, so two providers can be
     # compared on the same cases.
-    generator = RegistryNoteGenerationService(
-        llm_gateway=(
-            resolve_structured_llm_gateway(model) if model else get_default_structured_llm_gateway()
-        ),
-        model=model,
+    direct = model is not None and model.startswith(("anthropic-api:", "anthropic-api-auto:"))
+    gateway = (
+        direct_anthropic_gateway()
+        if direct
+        else resolve_structured_llm_gateway(model)
+        if model
+        else get_default_structured_llm_gateway()
     )
+    resolved_model = direct_anthropic_model(model) if direct and model is not None else model
+    generator = RegistryNoteGenerationService(llm_gateway=gateway, model=resolved_model)
     generated = generator.generate_note(
         definition.key,
         Transcript(format="txt", content=case.transcript),
@@ -121,7 +126,9 @@ def main(argv: list[str] | None = None) -> int:
         for case in cases:
             print(f"{case.name}  ({case.template} / {case.sample})")
         return 0
-    on_vertex = not (args.model or "").startswith("bedrock:")
+    on_vertex = not (args.model or "").startswith(
+        ("bedrock:", "anthropic-api:", "anthropic-api-auto:")
+    )
     if on_vertex and not os.environ.get("GOOGLE_CLOUD_PROJECT"):
         print("Set GOOGLE_CLOUD_PROJECT to a project with Vertex access.", file=sys.stderr)
         return 2

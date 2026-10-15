@@ -296,6 +296,12 @@ def test_a_note_proposes_each_stated_field_the_chart_lacks_as_written(key: str) 
         ),
         ('Not recorded (stated this visit: "a few times a month.")', "a few times a month."),
         ("Married 19 years.", "Married 19 years."),
+        # A gap worded for its field states nothing for the chart either.
+        ("None discussed.", ""),
+        ("Not reported.", ""),
+        ("Work history not obtained this visit.", ""),
+        ("No collateral information obtained during this visit.", ""),
+        ("No prior hospitalizations reported.", "No prior hospitalizations reported."),
     ],
 )
 def test_a_chart_fed_field_records_only_what_the_visit_stated(text: str, recorded: str) -> None:
