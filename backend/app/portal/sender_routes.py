@@ -23,11 +23,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
-from ..api_errors import ForbiddenError, NotFoundError, UnprocessableEntityError
+from ..api_errors import ForbiddenError, UnprocessableEntityError
 from ..auth.service import require_active_subscription
 from ..models import User  # noqa: TC001 — fastapi resolves the annotation at runtime
 from ..models.audit import AuditAction, ResourceType
-from ..routes.users import _get_own_practice_as_owner, _resolve_practice_id_for
+from ..routes._deps import practice_id_or_404
+from ..routes.users import _get_own_practice_as_owner
 from ..services.audit_service import AuditService, get_audit_service
 from .client_sender import (
     REPLY_TO_MAX,
@@ -86,13 +87,6 @@ class EmailSenderResponse(BaseModel):
     effective: EffectiveSender
 
 
-def _practice_id(user: User) -> str:
-    practice_id = _resolve_practice_id_for(user)
-    if practice_id is None:
-        raise NotFoundError("No practice mapping for this account", code="NO_PRACTICE")
-    return practice_id
-
-
 def _can_edit(user: User) -> bool:
     try:
         _get_own_practice_as_owner(user)
@@ -131,7 +125,7 @@ def get_email_sender(
     delivery: Annotated[PortalInviteDelivery, Depends(get_invite_delivery)],
 ) -> EmailSenderResponse:
     """The practice's client-email sender settings, and what they come to."""
-    view = store.view(_practice_id(user))
+    view = store.view(practice_id_or_404(user))
     return _response(
         view, can_edit=_can_edit(user), applies=isinstance(delivery, PracticeSenderDelivery)
     )

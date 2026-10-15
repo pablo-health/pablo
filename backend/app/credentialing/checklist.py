@@ -664,15 +664,6 @@ def fields_for_tier(tier: Tier) -> tuple[ChecklistField, ...]:
     return tuple(f for f in CHECKLIST_FIELDS if f.tier is tier)
 
 
-def fields_for_section(section: CaqhSection) -> tuple[ChecklistField, ...]:
-    """Everything that exports into one portal section, across all tiers.
-
-    What an export builder reads: the portal wants a section at a time, and it
-    does not care which sitting each answer came from.
-    """
-    return tuple(f for f in CHECKLIST_FIELDS if f.section is section)
-
-
 def applicable(
     fields: tuple[ChecklistField, ...],
     *,

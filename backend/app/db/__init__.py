@@ -2357,39 +2357,6 @@ def rls_forced_tenant_tables() -> set[str]:
     return result
 
 
-def enable_rls_on_all_practice_schemas(engine: Engine | None = None) -> None:
-    """Apply RLS to every existing practice_* schema (excluding the template).
-
-    An operator command, for a schema the registry does not know about or
-    one being repaired out of band. The routine path no longer needs it:
-    the per-tenant migrate fan-out reconciles every registered schema on
-    every run (``migrate_tenants.fan_out``), so policies reach existing
-    practices without anyone remembering to call this.
-
-    Skips the base 'practice' template schema and the 'platform' schema.
-    """
-    import logging
-
-    logger = logging.getLogger(__name__)
-
-    if engine is None:
-        engine = get_engine()
-
-    with Session(engine) as session:
-        schemas = session.execute(
-            text(
-                "SELECT schema_name FROM information_schema.schemata "
-                "WHERE schema_name LIKE 'practice_%'"
-            )
-        ).fetchall()
-
-        for (schema_name,) in schemas:
-            if schema_name == DEFAULT_PRACTICE_SCHEMA:
-                continue
-            logger.info("Applying RLS to schema '%s'", schema_name)
-            enable_rls_on_schema(session, schema_name)
-
-
 # Re-export the off-request tenant-session primitives so callers can
 # import them from the package root without knowing the sub-module.
 from .tenant_session import run_in_tenant, tenant_db_session  # noqa: E402

@@ -24,7 +24,7 @@ from fastapi import APIRouter, Depends, Request, status
 
 from ..api_errors import BadRequestError, ConflictError, NotFoundError
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
-from ..models import AuditAction, Patient, User
+from ..models import AuditAction, User
 from ..problems.dependencies import get_problem_service
 from ..problems.schemas import (
     AddProblemRequest,
@@ -44,6 +44,7 @@ from ..repositories import (
     get_diagnostic_assessment_repository as _diagnostic_repo_factory,
 )
 from ..services import AuditService, get_audit_service
+from ._deps import patient_not_found, visible_patient
 from .patients import get_patient_repository
 
 if TYPE_CHECKING:
@@ -57,13 +58,6 @@ def get_problem_diagnostic_repository(
     _ctx: TenantContext = Depends(get_tenant_context),
 ) -> DiagnosticAssessmentRepository:
     return _diagnostic_repo_factory()
-
-
-def _patient_or_404(repo: PatientRepository, patient_id: str, user: User) -> Patient:
-    patient = repo.get(patient_id, user.id)
-    if patient is None:
-        raise NotFoundError("Patient not found", {"patient_id": patient_id})
-    return patient
 
 
 def _list_response(problems: list[Problem]) -> ProblemListResponse:
@@ -89,7 +83,7 @@ def list_problems(
     service: ProblemService = Depends(get_problem_service),
     audit: AuditService = Depends(get_audit_service),
 ) -> ProblemListResponse:
-    patient = _patient_or_404(patients, patient_id, user)
+    patient = visible_patient(patients, patient_id, user.id, patient_not_found)
     problems = service.problems(patient.id)
     audit.log_patient_action(
         AuditAction.PATIENT_VIEWED,
@@ -116,7 +110,7 @@ def add_problem(
     assessments: DiagnosticAssessmentRepository = Depends(get_problem_diagnostic_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> ProblemResponse:
-    patient = _patient_or_404(patients, patient_id, user)
+    patient = visible_patient(patients, patient_id, user.id, patient_not_found)
 
     assessment: dict[str, object] | None = None
     if body.diagnostic_assessment_id is not None:
@@ -164,7 +158,7 @@ def reorder_problems(
     service: ProblemService = Depends(get_problem_service),
     audit: AuditService = Depends(get_audit_service),
 ) -> ProblemListResponse:
-    patient = _patient_or_404(patients, patient_id, user)
+    patient = visible_patient(patients, patient_id, user.id, patient_not_found)
     try:
         problems = service.reorder(patient.id, body.problem_ids)
     except InvalidProblemOrderError as exc:
@@ -190,7 +184,7 @@ def update_problem(
     service: ProblemService = Depends(get_problem_service),
     audit: AuditService = Depends(get_audit_service),
 ) -> ProblemResponse:
-    patient = _patient_or_404(patients, patient_id, user)
+    patient = visible_patient(patients, patient_id, user.id, patient_not_found)
     try:
         problem = service.update(patient.id, problem_id, body)
     except ProblemNotFoundError as exc:
@@ -215,7 +209,7 @@ def remove_problem(
     service: ProblemService = Depends(get_problem_service),
     audit: AuditService = Depends(get_audit_service),
 ) -> None:
-    patient = _patient_or_404(patients, patient_id, user)
+    patient = visible_patient(patients, patient_id, user.id, patient_not_found)
     try:
         service.remove(patient.id, problem_id)
     except ProblemNotFoundError as exc:

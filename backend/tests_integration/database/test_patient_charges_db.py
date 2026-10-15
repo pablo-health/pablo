@@ -1049,7 +1049,7 @@ class TestCrossClinicianIsolation:
         """Below the route: B's own session counts zero of A's ledger rows.
 
         The routes refuse first, so without this the 404s above would only
-        prove the route's ``_require_patient`` check works — not that the
+        prove the route's ``visible_patient`` check works — not that the
         table would hold if a future route forgot it.
         """
         conn = _armed(engine, tenant_schema, _CLINICIAN_A)

@@ -47,6 +47,7 @@ from app.portal.practice_routes import PracticeAddress
 from app.portal.store import InMemoryPortalAuthStore, InMemoryPortalSessionStore
 from app.portal.tenant_gateway import PortalStores, get_portal_stores
 from app.repositories import get_patient_repository
+from app.routes import _deps
 from app.services.audit_service import get_audit_service
 from app.settings import get_settings
 from fastapi import FastAPI
@@ -295,10 +296,11 @@ def _portal_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 @pytest.fixture(autouse=True)
 def _practice(monkeypatch: pytest.MonkeyPatch) -> None:
     address = PracticeAddress(slug="example-therapy", display_name=PRACTICE_NAME, enabled=True)
-    for module in (routes, invite_template_routes):
+    for module in (routes, _deps):
         monkeypatch.setattr(
             module, "_resolve_practice_from_email", lambda _email: (PRACTICE_ID, TENANT)
         )
+    for module in (routes, invite_template_routes):
         monkeypatch.setattr(module, "ensure_practice_slug", lambda _practice_id: address)
 
 

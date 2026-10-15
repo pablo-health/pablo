@@ -37,8 +37,12 @@ from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, Request, status
 
-from ..api_errors import ConflictError, ForbiddenError, NotFoundError, UnprocessableEntityError
-from ..auth.patient_context import AuthStrength, PatientContext, get_patient_context
+from ..api_errors import ConflictError, NotFoundError, UnprocessableEntityError
+from ..auth.patient_context import (
+    PatientContext,
+    get_patient_context,
+    require_stepped_up,
+)
 from ..auth.route_access import subscription_exempt
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
 from ..db import current_practice_schema, get_db_session
@@ -148,16 +152,11 @@ DocumentValues = Annotated[dict[str, str], Depends(get_document_values)]
 PatientDocumentValues = Annotated[dict[str, str], Depends(get_patient_document_values)]
 
 
-def _require_stepped_up(patient: PatientContext) -> None:
-    """Refuse a single-factor principal on the portal route.
-
-    Same bar as the rest of the patient intake surface. A consent document
-    is the practice's own text rather than anybody's record, but it is read
-    on the way to signing something, and one factor reaching the wrong
-    person should not put a signature in front of them.
-    """
-    if patient.auth_strength is not AuthStrength.STEPPED_UP:
-        raise ForbiddenError("Confirm it is you to continue.", code="STEP_UP_REQUIRED")
+# A single-factor principal is refused on the portal route (require_stepped_up).
+# Same bar as the rest of the patient intake surface. A consent document
+# is the practice's own text rather than anybody's record, but it is read
+# on the way to signing something, and one factor reaching the wrong
+# person should not put a signature in front of them.
 
 
 def _signer_roles(value: object) -> list[str]:
@@ -374,7 +373,7 @@ def read_document(
     does not hold the practice's subscription, and paperwork they were
     asked to read should not fail for a billing state they cannot see.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     row = service.get(document_id)
     if row is None or row["published_at"] is None:
         raise NotFoundError("Document not found", {"document_id": document_id})

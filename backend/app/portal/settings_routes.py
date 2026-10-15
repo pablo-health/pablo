@@ -28,10 +28,11 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
-from ..api_errors import ConflictError, UnprocessableEntityError
-from ..auth.service import _resolve_practice_from_email, require_active_subscription
+from ..api_errors import UnprocessableEntityError
+from ..auth.service import require_active_subscription
 from ..models import User  # noqa: TC001 — fastapi resolves the annotation at runtime
 from ..models.audit import AuditAction, ResourceType
+from ..routes._deps import practice_id_or_409
 from ..services.audit_service import AuditService, get_audit_service
 from ..settings import get_settings
 from .modules import known_modules, mounted_modules_on
@@ -65,13 +66,6 @@ class PortalSettingsRequest(BaseModel):
     #: prompt sends it: a "not now" from a screen loaded before a colleague
     #: turned the portal on must not turn it off for the whole practice.
     only_if_undecided: bool = False
-
-
-def _practice_id(user: User) -> str:
-    practice = _resolve_practice_from_email(user.email)
-    if practice is None:
-        raise ConflictError("No practice is associated with this account yet.")
-    return practice[0]
 
 
 def _choosable(request: Request) -> tuple[str, ...]:
@@ -124,7 +118,7 @@ def get_portal_settings(
     store: Annotated[PortalSettingsStore, Depends(get_portal_settings_store)],
 ) -> PortalSettingsResponse:
     """Whether the caller's practice offers the portal, and which parts."""
-    return _response(store.get(_practice_id(user)), _choosable(request))
+    return _response(store.get(practice_id_or_409(user)), _choosable(request))
 
 
 @router.put("/api/portal/settings", response_model=PortalSettingsResponse)
@@ -136,7 +130,7 @@ def save_portal_settings(
     audit: Annotated[AuditService, Depends(get_audit_service)],
 ) -> PortalSettingsResponse:
     """Turn the practice's portal on or off, and choose what clients can do."""
-    practice_id = _practice_id(user)
+    practice_id = practice_id_or_409(user)
     choosable = _choosable(request)
     before = store.get(practice_id)
     if body.only_if_undecided and before.decided_at is not None:

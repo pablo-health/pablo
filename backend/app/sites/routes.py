@@ -47,7 +47,8 @@ from ..models import User  # noqa: TC001 — fastapi resolves the annotation at 
 from ..portal.hosted import hosted_domain
 from ..portal.practice_hosts import get_portal_host_cache
 from ..portal.practice_routes import ensure_practice_slug
-from ..routes.practice_domains import _manageable_practice_id, _practice_id
+from ..routes._deps import practice_id_or_404
+from ..routes.practice_domains import _manageable_practice_id
 from .files import MAX_ARCHIVE_BYTES, SiteFilesError, SiteTooLargeError, read_zip
 from .hosts import get_site_host_cache
 from .service import (
@@ -187,7 +188,7 @@ def get_practice_site(
     service: PracticeSiteService = Depends(get_practice_site_service),
 ) -> PracticeSiteResponse:
     """The practice's website: what is live, where, the draft and the kept versions."""
-    return _response(service, _practice_id(user))
+    return _response(service, practice_id_or_404(user))
 
 
 @router.post("/draft", response_model=PracticeSiteResponse)

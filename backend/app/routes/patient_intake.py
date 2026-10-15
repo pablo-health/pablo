@@ -51,8 +51,12 @@ from typing import TYPE_CHECKING, Annotated, Protocol
 from fastapi import APIRouter, Depends, Request, status
 from pydantic import BaseModel
 
-from ..api_errors import BadRequestError, ForbiddenError, NotFoundError
-from ..auth.patient_context import AuthStrength, PatientContext, get_patient_context
+from ..api_errors import BadRequestError, NotFoundError
+from ..auth.patient_context import (
+    PatientContext,
+    get_patient_context,
+    require_stepped_up,
+)
 from ..auth.route_access import subscription_exempt
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
 from ..models import User  # noqa: TC001 — fastapi resolves the annotation at runtime
@@ -118,16 +122,6 @@ def get_intake_outcome_measure_service(
     cannot satisfy and should not.
     """
     return OutcomeMeasureService(repo)
-
-
-def _require_stepped_up(patient: PatientContext) -> None:
-    """Refuse a single-factor principal on every route here.
-
-    Same bar as the patient chat surface, for the same reason: one factor
-    reaching the wrong person should not open a chart.
-    """
-    if patient.auth_strength is not AuthStrength.STEPPED_UP:
-        raise ForbiddenError("Confirm it is you to continue.", code="STEP_UP_REQUIRED")
 
 
 def _instrument_form(code: str) -> IntakeInstrumentResponse:
@@ -202,7 +196,7 @@ def get_intake_form(
     subscription, and a form they were asked to fill in should not fail for a
     billing state they cannot see.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
 
     own = patients.get_for_patient_principal(patient.patient_id)
     if own is None:
@@ -242,7 +236,7 @@ def submit_intake(
     that produced them. Scoring runs before any write, so a form that fails
     validation leaves nothing behind.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     get_intake_submit_limiter().check(patient.patient_id)
 
     answers = {"phq9": body.phq9, "gad7": body.gad7}

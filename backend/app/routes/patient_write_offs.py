@@ -56,7 +56,8 @@ from ..repositories import (
 )
 from ..services import AuditService, get_audit_service
 from ..services.practice_billing_profile import load_billing_profile
-from .patient_payments import _require_patient, _to_charge_response
+from ._deps import client_not_found, visible_patient
+from .patient_payments import _to_charge_response
 
 if TYPE_CHECKING:
     from ..models import User
@@ -143,7 +144,7 @@ def create_write_off(
     the balance is only ever too STRICT when the balance is short, and
     courtesy is a policy switch that has nothing to do with the figure.
     """
-    _require_patient(patients, patient_id, user.id)
+    visible_patient(patients, patient_id, user.id, client_not_found)
 
     if payload.reason not in WRITE_OFF_REASONS:
         raise HTTPException(
@@ -235,7 +236,7 @@ def record_payment(
     family. 422 for a method outside the fixed set, for ``card``, and for
     ``other`` with no reference.
     """
-    _require_patient(patients, patient_id, user.id)
+    visible_patient(patients, patient_id, user.id, client_not_found)
 
     if payload.method not in PAYMENT_METHODS:
         raise HTTPException(

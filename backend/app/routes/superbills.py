@@ -40,7 +40,8 @@ from ..repositories import (
 from ..services import AuditService, get_audit_service
 from ..services.practice_billing_profile import load_billing_tax_id
 from ..utcnow import utc_now
-from .claims import _practice_timezone, _require_patient
+from ._deps import client_not_found, visible_patient
+from .claims import _practice_timezone
 from .people_term import people_words_for
 
 if TYPE_CHECKING:
@@ -102,7 +103,7 @@ def generate_superbill(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="The period's end date is before its start date.",
         )
-    patient = _require_patient(patients, patient_id, user.id)
+    patient = visible_patient(patients, patient_id, user.id, client_not_found)
     people = people_words_for(user.id, users, clinician_profiles)
     generated_at = utc_now()
     try:

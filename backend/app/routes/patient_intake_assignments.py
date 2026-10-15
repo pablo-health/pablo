@@ -68,8 +68,12 @@ from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, Request, Response, status
 
-from ..api_errors import ConflictError, ForbiddenError, NotFoundError, UnprocessableEntityError
-from ..auth.patient_context import AuthStrength, PatientContext, get_patient_context
+from ..api_errors import ConflictError, NotFoundError, UnprocessableEntityError
+from ..auth.patient_context import (
+    PatientContext,
+    get_patient_context,
+    require_stepped_up,
+)
 from ..auth.route_access import subscription_exempt
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
 from ..claims.eligibility import (
@@ -279,16 +283,6 @@ ClinicianArtifacts = Annotated[
 ]
 
 
-def _require_stepped_up(patient: PatientContext) -> None:
-    """Refuse a single-factor principal on every patient route here.
-
-    Same bar as the rest of the patient intake surface, for the same
-    reason: one factor reaching the wrong person should not open a chart.
-    """
-    if patient.auth_strength is not AuthStrength.STEPPED_UP:
-        raise ForbiddenError("Confirm it is you to continue.", code="STEP_UP_REQUIRED")
-
-
 def _progress(completion: Completion) -> IntakeProgressResponse:
     return IntakeProgressResponse(
         complete=completion.complete,
@@ -374,7 +368,7 @@ def list_my_assignments(
     does not hold the practice's subscription, and a form they were asked
     to fill in should not fail for a billing state they cannot see.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     return [
         _patient_view(_assignment_response(service, row, patient.patient_id))
         for row in service.list_for_patient(patient.patient_id)
@@ -401,7 +395,7 @@ def get_my_assignment(
     that does not exist — so the surface never confirms that somebody
     else's form is real.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     assignment = _own_assignment(service, assignment_id, patient.patient_id)
     saved = service.answers(assignment_id, patient.patient_id)
     base = _patient_view(_assignment_response(service, assignment, patient.patient_id))
@@ -455,7 +449,7 @@ def save_my_answer(
     — it is not that the form is closed, it is that this part of it is
     settled and the rest is what they are waiting on.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     assignment = _own_assignment(service, assignment_id, patient.patient_id)
 
     try:
@@ -523,7 +517,7 @@ def list_my_signatures(
     the settled principle behind the patient-principal audit model — and the
     signing event itself is already on the record.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     _own_assignment(service, assignment_id, patient.patient_id)
     return [
         _signature_response(row)
@@ -569,7 +563,7 @@ def sign_my_consent_document(
     it lives on the signature row, and a second copy in the compliance log
     would be a person's name in a place no question needs it.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     assignment = _own_assignment(service, assignment_id, patient.patient_id)
     ip_address, user_agent = extract_request_context(request)
 
@@ -691,7 +685,7 @@ def submit_my_assignment(
     On success the answers stop being drafts, every measure on the form is
     scored onto the chart, and the response carries the receipt.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     assignment = _own_assignment(service, assignment_id, patient.patient_id)
     correcting = service.open_correction(assignment, patient.patient_id) is not None
 
@@ -885,7 +879,7 @@ def attach_my_artifact(
     What is recorded: which document arrived and which side of a card it is.
     Never the filename — people name files after what is in them.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     assignment = _own_assignment(service, assignment_id, patient.patient_id)
 
     try:
@@ -965,7 +959,7 @@ def remove_my_artifact(
     being filled in, so it was never sent to the practice, and the
     practice's record of what arrived has nothing to keep.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     assignment = _own_assignment(service, assignment_id, patient.patient_id)
 
     try:
@@ -1050,7 +1044,7 @@ def save_my_intake_coverage(
     member id, the group or the subscriber — those are the card, and the
     card is not something a compliance log needs a copy of.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     assignment = _own_assignment(service, assignment_id, patient.patient_id)
 
     try:

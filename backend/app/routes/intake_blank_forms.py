@@ -39,12 +39,15 @@ from pydantic import BaseModel, Field
 
 from ..api_errors import (
     BadRequestError,
-    ForbiddenError,
     NotFoundError,
     ServerError,
     UnprocessableEntityError,
 )
-from ..auth.patient_context import AuthStrength, PatientContext, get_patient_context
+from ..auth.patient_context import (
+    PatientContext,
+    get_patient_context,
+    require_stepped_up,
+)
 from ..auth.route_access import subscription_exempt
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
 from ..intake.items import UPLOAD_MIME_TYPES
@@ -112,16 +115,11 @@ PatientBlankForms = Annotated[
 ]
 
 
-def _require_stepped_up(patient: PatientContext) -> None:
-    """Refuse a single-factor principal on the portal route.
-
-    Same bar as the rest of the patient intake surface. A blank form holds
-    nothing about anybody, but it is read from inside a form somebody is
-    filling in, and the whole surface is held to one bar rather than to a
-    judgement per route.
-    """
-    if patient.auth_strength is not AuthStrength.STEPPED_UP:
-        raise ForbiddenError("Confirm it is you to continue.", code="STEP_UP_REQUIRED")
+# A single-factor principal is refused on the portal route (require_stepped_up).
+# Same bar as the rest of the patient intake surface. A blank form holds
+# nothing about anybody, but it is read from inside a form somebody is
+# filling in, and the whole surface is held to one bar rather than to a
+# judgement per route.
 
 
 class InitBlankFormRequest(BaseModel):
@@ -327,7 +325,7 @@ def download_blank_form_for_patient(
     does not hold the practice's subscription, and a form they were asked
     to fill in should not fail for a billing state they cannot see.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     url = _signed_url_or_404(service, form_id, disposition)
     audit.log_patient_principal_action(
         action=AuditAction.PATIENT_DOCUMENT_DOWNLOADED,
