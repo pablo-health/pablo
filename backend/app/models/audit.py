@@ -206,6 +206,16 @@ class AuditAction(StrEnum):
     # passwordless sign-in event, audited alongside recovery so login
     # monitoring covers the whole authenticator surface.
     PASSKEY_AUTHENTICATED = "passkey_authenticated"
+    # The desktop recording app exchanged its one-time code for a session:
+    # the app was opened and signed in. Written whether or not the device
+    # enrolled, so "has this clinician ever used the recording app" has an
+    # answer in their own audit trail. The payload is the enrollment outcome
+    # and platform only.
+    COMPANION_SIGNED_IN = "companion_signed_in"
+    # That sign-in also bound a device key to the account (a new install, or
+    # an existing one re-enrolling). Carries the install id, platform and key
+    # storage — device facts, never anything about a client.
+    COMPANION_DEVICE_ENROLLED = "companion_device_enrolled"
     # One row per sign-in, whatever the method: written when the identity
     # provider's sign-in hook asks the backend whether the account may sign
     # in, which happens after every factor has been verified. The

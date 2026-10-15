@@ -740,6 +740,7 @@ class AuditService:
         action: AuditAction | str,
         user_id: str,
         request: Request | None,
+        changes: dict[str, Any] | None = None,
     ) -> AuditLogEntry:
         """Record an account-security event keyed by ``user_id`` alone.
 
@@ -748,6 +749,8 @@ class AuditService:
         known after the assertion verifies. Resource is SELF; the payload
         carries no PHI. ``request`` is ``None`` when the request did not come
         from the user's own device, so no address or agent is recorded.
+        ``changes`` holds facts about the account or device (an enrollment
+        outcome, a platform), never anything about a client.
         """
         ip_address, user_agent = extract_request_context(request)
         entry = AuditLogEntry(
@@ -757,6 +760,7 @@ class AuditService:
             resource_id=user_id,
             ip_address=ip_address,
             user_agent=user_agent,
+            changes=changes,
         )
         self._persist(entry)
         return entry
