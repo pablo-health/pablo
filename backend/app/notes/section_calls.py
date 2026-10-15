@@ -69,6 +69,11 @@ SECTION_CALLS: Mapping[str, str] = {
 }
 """Section key to the call that drafts it."""
 
+CHART_CALLS = frozenset({CLINICAL_HISTORY, BACKGROUND})
+"""Calls drafting history a type may print from the chart: a field whose
+instructions say it comes from the chart is matched to the chart history by
+key, so these calls are handed the chart the main draft is."""
+
 QUOTING_SECTIONS = frozenset({"risk"})
 """Sections whose text fields carry the client's own words, each citing the lines it is from."""
 
