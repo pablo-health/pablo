@@ -14,15 +14,25 @@ boilerplate that was scattered across the routes layer.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import replace
 from typing import Any
 
 from fastapi import FastAPI, Request, status
-from fastapi.exception_handlers import http_exception_handler
+from fastapi.exception_handlers import (
+    http_exception_handler,
+    request_validation_exception_handler,
+)
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .logging_config import LOG_HTTP_REQUEST_EXTRA, LogHttpRequest, RequestLogIdentity
+from .logging_config import (
+    LOG_HTTP_REQUEST_EXTRA,
+    LogHttpRequest,
+    RequestLogIdentity,
+    record_log_outcome,
+)
 from .request_context import extract_request_context
 
 _auth_logger = logging.getLogger("pablo.auth")
@@ -169,25 +179,7 @@ def _log_auth_failed(request: Request, exc: StarletteHTTPException) -> None:
     any exception inside the emit is swallowed.
     """
     try:
-        code = _extract_error_code(exc.detail)
-        if code == "UNKNOWN" and not request.headers.get("authorization"):
-            # Nothing was presented, so nothing was rejected. Credential
-            # attacks require a credential: stuffing, spraying and replay all
-            # SEND something and see what sticks. A request with no
-            # Authorization header is a client that has not signed in yet, and
-            # on this deployment that is the overwhelming majority of 401s —
-            # the app asks /api/auth/session whether it has a session before it
-            # can possibly know, and every page boot fans out a handful more.
-            #
-            # Inferred rather than raised because the raisers here are
-            # framework-level: fastapi's own security dependency answers with a
-            # plain-string detail, which carries no envelope code and so
-            # arrived as UNKNOWN — matching nothing in the exempt set below and
-            # counting every unauthenticated page load as attack signal.
-            #
-            # Auth on this deployment is bearer-only (no cookie is ever read
-            # for it), so the header's absence is the whole test.
-            code = NO_CREDENTIALS
+        code = _auth_failure_code(request, exc)
         if code in _AUTH_FAILED_EXEMPT_CODES:
             return
         ip, ua = extract_request_context(request)
@@ -205,6 +197,68 @@ def _log_auth_failed(request: Request, exc: StarletteHTTPException) -> None:
     except Exception:
         # Don't shadow the original auth failure if logging itself breaks.
         _auth_logger.exception("auth_failed emit raised")
+
+
+def _auth_failure_code(request: Request, exc: StarletteHTTPException) -> str:
+    """The envelope code of a 401/403, or ``NO_CREDENTIALS`` when nothing was sent."""
+    code = _extract_error_code(exc.detail)
+    if code == "UNKNOWN" and not request.headers.get("authorization"):
+        # Nothing was presented, so nothing was rejected. Credential
+        # attacks require a credential: stuffing, spraying and replay all
+        # SEND something and see what sticks. A request with no
+        # Authorization header is a client that has not signed in yet, and
+        # on this deployment that is the overwhelming majority of 401s —
+        # the app asks /api/auth/session whether it has a session before it
+        # can possibly know, and every page boot fans out a handful more.
+        #
+        # Inferred rather than raised because the raisers here are
+        # framework-level: fastapi's own security dependency answers with a
+        # plain-string detail, which carries no envelope code and so
+        # arrived as UNKNOWN — matching nothing in the exempt set and
+        # counting every unauthenticated page load as attack signal.
+        #
+        # Auth on this deployment is bearer-only (no cookie is ever read
+        # for it), so the header's absence is the whole test.
+        return NO_CREDENTIALS
+    return code
+
+
+def _http_error_code(request: Request, exc: StarletteHTTPException) -> str:
+    """A fixed code for an HTTPException, for the access line.
+
+    The envelope code when the raiser gave one; otherwise ``HTTP_<status>``.
+    A plain-string detail is never used: it is free text and can name things.
+    """
+    if exc.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN):
+        code = _auth_failure_code(request, exc)
+    else:
+        code = _extract_error_code(exc.detail)
+    return f"HTTP_{exc.status_code}" if code == "UNKNOWN" else code
+
+
+#: A validation error's ``loc`` names the schema's fields, but a dict-typed
+#: field puts the CLIENT's key in the path too, and that key is free text.
+#: Only identifier-shaped segments are kept; anything else becomes ``*``.
+_FIELD_SEGMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+_MAX_ERROR_FIELDS = 20
+
+
+def _validation_error_fields(exc: RequestValidationError) -> tuple[str, ...]:
+    """The dotted field paths a validation failure named — never the values."""
+    paths: list[str] = []
+    for error in exc.errors():
+        segments = [
+            str(part)
+            if isinstance(part, int) or (isinstance(part, str) and _FIELD_SEGMENT.match(part))
+            else "*"
+            for part in error.get("loc", ())
+        ]
+        path = ".".join(segments)
+        if path and path not in paths:
+            paths.append(path)
+        if len(paths) >= _MAX_ERROR_FIELDS:
+            break
+    return tuple(paths)
 
 
 def _unhandled_log_extra(request: Request) -> dict[str, object]:
@@ -256,7 +310,21 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(APIError)
     async def _api_error_handler(_request: Request, exc: APIError) -> JSONResponse:
+        record_log_outcome(
+            error_code=exc.code,
+            auth_failure=exc.code if exc.status_code == status.HTTP_401_UNAUTHORIZED else None,
+        )
         return JSONResponse(status_code=exc.status_code, content=_envelope(exc))
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation_error_handler(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        """FastAPI's own 422 response, with the failing field paths recorded."""
+        record_log_outcome(
+            error_code="VALIDATION_ERROR", error_fields=_validation_error_fields(exc)
+        )
+        return await request_validation_exception_handler(request, exc)
 
     @app.exception_handler(StarletteHTTPException)
     async def _http_exception_handler(
@@ -270,6 +338,12 @@ def register_exception_handlers(app: FastAPI) -> None:
         ``StarletteHTTPException`` so it catches both raw Starlette and
         FastAPI ``HTTPException`` (FastAPI's is a subclass).
         """
+        if exc.status_code >= status.HTTP_400_BAD_REQUEST:
+            code = _http_error_code(request, exc)
+            record_log_outcome(
+                error_code=code,
+                auth_failure=code if exc.status_code == status.HTTP_401_UNAUTHORIZED else None,
+            )
         if exc.status_code in (
             status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,

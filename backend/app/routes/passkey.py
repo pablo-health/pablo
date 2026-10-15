@@ -30,6 +30,7 @@ from ..auth.providers import VerifiedIdentity
 from ..auth.route_security import truly_public
 from ..auth.service import _verify_request_identity, get_current_user_no_mfa
 from ..db import arm_current_user_id, get_db_session, set_tenant_schema
+from ..logging_config import bind_log_user_id
 from ..models.audit import AuditAction, ResourceType
 from ..models.passkey import (
     PasskeyAuthenticationBegin,
@@ -234,6 +235,8 @@ def authenticate_finish(
         raise BadRequestError("Passkey assertion could not be verified.") from err
     except PasskeyAssertionError as err:
         raise UnauthorizedError("Passkey authentication failed.") from err
+
+    bind_log_user_id(outcome.user_id)
 
     # Durable login record, scoped to the authenticated user's tenant. The route
     # is usernameless, so the request session sits on the default schema —
