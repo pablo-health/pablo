@@ -35,6 +35,10 @@ from app.notes.section_calls import (
 from app.notes.spec_templates import TEMPLATES_DIR
 from app.services import note_generation_service
 from app.services.chart_field_extraction import SCHEMA_TITLE as EXTRACTION_TITLE
+from app.services.history_section_call import (
+    BACKGROUND_SCHEMA_TITLE,
+    CLINICAL_HISTORY_SCHEMA_TITLE,
+)
 from app.services.hpi_section_call import SCHEMA_TITLE as HPI_TITLE
 from app.services.note_generation_service import (
     PSYCHOTHERAPY_SECTION_FAILED_EVENT,
@@ -282,7 +286,14 @@ def test_the_schema_asks_for_the_responses_quotes_apart_and_never_for_the_time()
 # Through the generation service
 # ---------------------------------------------------------------------------
 
-SIDE_TITLES = (SCHEMA_TITLE, HPI_TITLE, RISK_TITLE, EXTRACTION_TITLE)
+SIDE_TITLES = (
+    SCHEMA_TITLE,
+    HPI_TITLE,
+    RISK_TITLE,
+    EXTRACTION_TITLE,
+    CLINICAL_HISTORY_SCHEMA_TITLE,
+    BACKGROUND_SCHEMA_TITLE,
+)
 
 
 def _shape(schema: dict[str, Any]) -> Any:
