@@ -273,7 +273,8 @@ _FROM_THE_CHART = "From the chart"
 
 
 def _chart_fed_fields(user_prompt: str) -> set[str]:
-    """The fields the prompt says are printed from the chart (``* key (kind) — From the chart``).
+    """The fields the prompt says are printed from the chart: ``* key (kind) — From the
+    chart`` in the main draft, ``- section.key (Label): From the chart`` in a history call.
 
     A model writes "Not recorded" in such a field when the chart has nothing
     for it, rather than drafting it from the visit. String operations only:
@@ -284,6 +285,11 @@ def _chart_fed_fields(user_prompt: str) -> set[str]:
         head, dash, hint = line.partition(" — ")
         if dash and hint.startswith(_FROM_THE_CHART) and head.lstrip().startswith("* "):
             fields.add(head.lstrip()[2:].partition(" ")[0])
+            continue
+        head, colon, hint = line.partition("): ")
+        path = head.removeprefix("- ").partition(" (")[0]
+        if colon and hint.startswith(_FROM_THE_CHART) and line.startswith("- ") and "." in path:
+            fields.add(path.rpartition(".")[2])
     return fields
 
 
