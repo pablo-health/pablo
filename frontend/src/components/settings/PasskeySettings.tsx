@@ -28,16 +28,12 @@ import {
   type PasskeyCredentialSummary,
 } from "@/lib/api/passkey"
 import { ListRow } from "./ui"
+import { formatDate } from "@/lib/dates"
 
 const PASSKEYS_QUERY_KEY = ["passkeys"] as const
 
-function formatDate(value: string | null): string {
-  if (!value) return "never"
-  return new Date(value).toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  })
+function formatUsedDate(value: string | null): string {
+  return value ? formatDate(value) : "never"
 }
 
 function enrollErrorMessage(err: unknown): string | null {
@@ -174,7 +170,7 @@ function PasskeyRow({
     <ListRow
       icon={Fingerprint}
       title={passkey.device_label || "Passkey"}
-      subtitle={`Added ${formatDate(passkey.created_at)} · Last used ${formatDate(passkey.last_used_at)}`}
+      subtitle={`Added ${formatUsedDate(passkey.created_at)} · Last used ${formatUsedDate(passkey.last_used_at)}`}
     >
       <Button
         variant="ghost"

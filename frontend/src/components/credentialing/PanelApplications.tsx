@@ -9,6 +9,7 @@ import type {
   PanelApplication,
   PanelApplicationStatus,
 } from "@/types/credentialing"
+import { formatDate } from "@/lib/dates"
 
 /**
  * Where her panel applications stand, and the short list of things we need
@@ -166,14 +167,6 @@ function waitingLine(application: PanelApplication): string {
     } ago`
   }
   return `Submitted ${weeks} weeks ago`
-}
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  })
 }
 
 //: Written for her rather than for us. "in_review" is the payer's word and

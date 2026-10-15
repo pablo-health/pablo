@@ -73,6 +73,16 @@ export function formatFileSize(bytes: number): string {
 }
 
 /**
+ * Format a file size compactly ("512 B", "1.5 KB", "2.0 MB").
+ * `kbDigits` is how many decimals a size in KB shows.
+ */
+export function formatCompactFileSize(bytes: number, kbDigits = 1): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(kbDigits)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+/**
  * Check if file format is accepted
  */
 export function isAcceptedFormat(filename: string): boolean {

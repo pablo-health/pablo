@@ -10,6 +10,7 @@ import { describe, it, expect } from "vitest"
 import {
   validateTranscriptFile,
   getFileExtension,
+  formatCompactFileSize,
   formatFileSize,
   isAcceptedFormat,
   ACCEPTED_FORMATS,
@@ -224,6 +225,15 @@ describe("fileValidation", () => {
     it("rounds to 2 decimal places", () => {
       expect(formatFileSize(1234)).toBe("1.21 KB")
       expect(formatFileSize(1234567)).toBe("1.18 MB")
+    })
+  })
+
+  describe("formatCompactFileSize", () => {
+    it("shows bytes, then KB with the given decimals, then MB to one decimal", () => {
+      expect(formatCompactFileSize(512)).toBe("512 B")
+      expect(formatCompactFileSize(1536)).toBe("1.5 KB")
+      expect(formatCompactFileSize(1536, 0)).toBe("2 KB")
+      expect(formatCompactFileSize(2 * 1024 * 1024)).toBe("2.0 MB")
     })
   })
 

@@ -18,6 +18,7 @@ import {
   useUploadComplianceDocument,
 } from "@/hooks/useCompliance"
 import { downloadComplianceDocument } from "@/lib/api/compliance"
+import { formatCompactFileSize } from "@/lib/utils/fileValidation"
 import {
   COMPLIANCE_DOC_ALLOWED_MIME_TYPES,
   COMPLIANCE_DOC_MAX_BYTES,
@@ -162,7 +163,9 @@ function DocumentRow({
         <p className="text-sm font-medium text-neutral-900 truncate">
           {doc.filename}
         </p>
-        <p className="text-xs text-neutral-500 mt-0.5">{formatSize(doc.size_bytes)}</p>
+        <p className="text-xs text-neutral-500 mt-0.5">
+          {formatCompactFileSize(doc.size_bytes, 0)}
+        </p>
       </div>
       <Button
         variant="ghost"
@@ -203,10 +206,4 @@ function EmptyState() {
       </p>
     </div>
   )
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
