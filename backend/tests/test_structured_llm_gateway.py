@@ -395,6 +395,20 @@ class TestGeminiAttemptTimeout:
         thinking = models.configs[0].thinking_config
         assert thinking.thinking_level == "LOW"
 
+    def test_gemini_three_uses_thinking_level_for_zero_budget(self) -> None:
+        gw, models = self._gateway(stalls=0)
+        self._complete(gw, model="gemini-3.1-pro-preview", thinking_budget=0)
+        thinking = models.configs[0].thinking_config
+        assert thinking.thinking_level == "MINIMAL"
+        assert thinking.thinking_budget is None
+
+    def test_gemini_three_maps_positive_budget_to_level(self) -> None:
+        gw, models = self._gateway(stalls=0)
+        self._complete(gw, model="gemini-3.5-flash", thinking_budget=8192)
+        thinking = models.configs[0].thinking_config
+        assert thinking.thinking_level == "MEDIUM"
+        assert thinking.thinking_budget is None
+
     def test_a_stalled_attempt_is_retried_once(self) -> None:
         gw, models = self._gateway(stalls=1)
         assert self._complete(gw, timeout_seconds=10.0).data == {"ok": True}
