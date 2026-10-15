@@ -860,12 +860,17 @@ def list_sessions(
                 _embed_note(notes.get(s.id)),
             )
         )
-        # This list embeds the full SOAP note in each item (see _embed_note),
-        # so reading it is a per-record content read on par with the
-        # GET /api/sessions/{id} detail view — audit one session_viewed per
-        # session. The read-coalescing gate collapses repeats of the same
-        # session within the window, so refetches don't flood the audit sink.
-        audit.log_session_action(AuditAction.SESSION_VIEWED, user, request, s, patient)
+    # This list embeds the full SOAP note in each item (see _embed_note),
+    # so reading it is a per-record content read on par with the
+    # GET /api/sessions/{id} detail view — audit one session_viewed per
+    # session. The read-coalescing gate collapses repeats of the same
+    # session within the window, so refetches don't flood the audit sink;
+    # the batch writes the page's rows in one trip.
+    with audit.batched():
+        for s in sessions:
+            audit.log_session_action(
+                AuditAction.SESSION_VIEWED, user, request, s, patients.get(s.patient_id)
+            )
 
     return SessionListResponse(
         data=session_responses,
@@ -921,11 +926,16 @@ def get_today_sessions(
                 updated_at=s.updated_at,
             )
         )
-        # This view discloses patient names and free-text session notes, so each
-        # row is a per-record content read — audit one session_viewed per session,
-        # matching GET /api/sessions. The read-coalescing gate collapses repeats
-        # of the same session within the window so polling doesn't flood the sink.
-        audit.log_session_action(AuditAction.SESSION_VIEWED, user, request, s, patient)
+    # This view discloses patient names and free-text session notes, so each
+    # row is a per-record content read — audit one session_viewed per session,
+    # matching GET /api/sessions. The read-coalescing gate collapses repeats
+    # of the same session within the window so polling doesn't flood the sink;
+    # the batch writes the day's rows in one trip.
+    with audit.batched():
+        for s in sessions:
+            audit.log_session_action(
+                AuditAction.SESSION_VIEWED, user, request, s, patients.get(s.patient_id)
+            )
 
     return TodaySessionListResponse(data=data, total=len(data))
 

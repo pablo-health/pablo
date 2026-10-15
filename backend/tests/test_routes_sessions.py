@@ -31,6 +31,8 @@ from app.services import AuditService  # noqa: TC002 — runtime fixture type
 from fastapi import HTTPException, status
 from fastapi.testclient import TestClient  # noqa: TC002 — runtime fixture type
 
+from .conftest import audited_entries
+
 # A clinician who is NOT the test's authenticated user (conftest's mock_user).
 _OTHER_CLINICIAN = "other-clinician-999"
 
@@ -136,9 +138,9 @@ class TestSessionListAudit:
         assert resp.status_code == 200
 
         viewed = {
-            call.args[0].resource_id
-            for call in mock_audit_service._repo.append.call_args_list
-            if call.args[0].action == AuditAction.SESSION_VIEWED.value
+            entry.resource_id
+            for entry in audited_entries(mock_audit_service)
+            if entry.action == AuditAction.SESSION_VIEWED.value
         }
         assert viewed == {first.id, second.id}
 
@@ -164,9 +166,9 @@ class TestTodaySessionsAudit:
         assert resp.status_code == 200
 
         viewed = {
-            call.args[0].resource_id
-            for call in mock_audit_service._repo.append.call_args_list
-            if call.args[0].action == AuditAction.SESSION_VIEWED.value
+            entry.resource_id
+            for entry in audited_entries(mock_audit_service)
+            if entry.action == AuditAction.SESSION_VIEWED.value
         }
         assert viewed == {first.id, second.id}
 

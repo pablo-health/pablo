@@ -583,17 +583,19 @@ def list_patient_notes(
     # so it is a bulk per-record content read. Emit one note-scoped viewed
     # event per note (resource_type=session, the clinical-artifact family) so
     # the audit-of-record is consistent with how single notes are surfaced via
-    # the session detail view. The read-coalescing gate keeps repeats cheap.
-    for n in notes:
-        audit.log_note_action(
-            action=AuditAction.SESSION_VIEWED,
-            user=user,
-            request=http_request,
-            note_id=n.id,
-            patient_id=patient.id,
-            session_id=n.session_id,
-            changes=_restricted_change(n) or None,
-        )
+    # the session detail view. The read-coalescing gate keeps repeats cheap;
+    # the batch writes the patient's rows in one trip.
+    with audit.batched():
+        for n in notes:
+            audit.log_note_action(
+                action=AuditAction.SESSION_VIEWED,
+                user=user,
+                request=http_request,
+                note_id=n.id,
+                patient_id=patient.id,
+                session_id=n.session_id,
+                changes=_restricted_change(n) or None,
+            )
     imported = imported_note_ids(notes, sessions, user.id)
     return PatientNotesListResponse(
         data=[NoteResponse.from_note(n, imported=n.id in imported) for n in notes],

@@ -134,7 +134,11 @@ def get_dashboard_summary(
                 note_finalized_at=note.finalized_at if note else None,
             )
         )
-        audit.log_session_action(AuditAction.SESSION_VIEWED, user, request, s, patient)
+    with audit.batched():
+        for s in recent:
+            audit.log_session_action(
+                AuditAction.SESSION_VIEWED, user, request, s, review_patients.get(s.patient_id)
+            )
 
     return DashboardSummaryResponse(
         today_appointments=[

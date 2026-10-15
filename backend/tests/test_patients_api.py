@@ -17,6 +17,8 @@ from app.utcnow import utc_now
 from fastapi import status
 from fastapi.testclient import TestClient
 
+from .conftest import audited_entries
+
 # Priority 1: CRUD Happy Path Tests
 
 
@@ -87,9 +89,9 @@ def test_list_patients_audits_view_per_returned_patient(
     assert response.status_code == status.HTTP_200_OK
 
     viewed = {
-        call.args[0].resource_id
-        for call in mock_audit_service._repo.append.call_args_list
-        if call.args[0].action == AuditAction.PATIENT_VIEWED.value
+        entry.resource_id
+        for entry in audited_entries(mock_audit_service)
+        if entry.action == AuditAction.PATIENT_VIEWED.value
     }
     assert viewed == {first, second}
 
