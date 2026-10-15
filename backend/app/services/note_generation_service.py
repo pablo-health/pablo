@@ -63,6 +63,7 @@ from ..notes.practice_types import PromptBlocks, render_system_prompt, render_us
 from ..notes.prompts.soap import SOAP_SYSTEM_PROMPT
 from ..notes.section_calls import (
     BACKGROUND,
+    CHART_CALLS,
     CLINICAL_HISTORY,
     HPI,
     PSYCHOTHERAPY,
@@ -453,8 +454,9 @@ class RegistryNoteGenerationService(NoteGenerationService):
         # The clinician's word for the person seen, which a type's prompts may
         # place as {term}; the chart carries it from whoever reads the note.
         person = chart.person if chart is not None else ChartContext().person
+        chart_block = _chart_block(definition, chart, rendered)
         routed, drafted = self._start_section_calls(
-            definition, person, transcript.content, current_note
+            definition, person, transcript.content, current_note, chart_block
         )
         # No client in the recording, no therapy: the block stays empty, unasked.
         therapy = self._start_psychotherapy(
@@ -482,7 +484,6 @@ class RegistryNoteGenerationService(NoteGenerationService):
                 definition = _without_psychotherapy(definition)
 
         system_prompt = _system_prompt(definition, person)
-        chart_block = _chart_block(definition, chart, rendered)
         if definition.prompt_builder is not None:
             user_prompt = definition.prompt_builder(definition, transcript, patient, session_date)
             # A hand-tuned prompt has no place for the chart; it goes first.
@@ -626,15 +627,24 @@ class RegistryNoteGenerationService(NoteGenerationService):
         person: str,
         transcript_content: str,
         current_note: Mapping[str, Any] | None,
+        chart_block: str | None,
     ) -> tuple[dict[str, list[SectionField]], list[Future[dict[str, dict[str, Any]]]]]:
         """Each section call's fields for ``definition``, and those with any started.
 
-        The psychotherapy call is not started here: whether it runs is decided
-        first (:meth:`_start_psychotherapy`).
+        The history calls (:data:`CHART_CALLS`) are handed ``chart_block``, the
+        chart as the main draft carries it. The psychotherapy call is not
+        started here: whether it runs is decided first (:meth:`_start_psychotherapy`).
         """
         routed = {call: section_call_fields(definition, call) for call in SECTION_DRAFTS}
         started = [
-            self._start_section_call(call, fields, person, transcript_content, current_note)
+            self._start_section_call(
+                call,
+                fields,
+                person,
+                transcript_content,
+                current_note,
+                (chart_block or "") if call in CHART_CALLS else "",
+            )
             for call, fields in routed.items()
             if fields and call != PSYCHOTHERAPY
         ]
@@ -691,14 +701,14 @@ class RegistryNoteGenerationService(NoteGenerationService):
         person: str,
         transcript_content: str,
         current_note: Mapping[str, Any] | None,
-        entered: str = "",
+        given: str = "",
     ) -> Callable[[], dict[str, dict[str, Any]]]:
         """A section call (:data:`SECTION_DRAFTS`) ready to run, on any thread.
 
         Drafted like the main call (same budgets and retry), on the model its
         own key names, else the note model. A redraft's current note goes to it
-        for its own fields only, with the same rule the main call gets; values
-        the clinician entered go with it where given.
+        for its own fields only, with the same rule the main call gets; ``given``
+        (the values the clinician entered, or the chart) goes with it where given.
         """
         section_draft = SECTION_DRAFTS[call]
 
@@ -715,7 +725,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
 
         paths = {(f.section, f.field.key) for f in fields}
         current = _current_note_block(_only_fields(current_note, paths)) if current_note else None
-        context_note = "\n\n".join(p for p in (entered, current) if p) or None
+        context_note = "\n\n".join(p for p in (given, current) if p) or None
         return functools.partial(
             _section_call_logged,
             section_draft,
@@ -733,12 +743,15 @@ class RegistryNoteGenerationService(NoteGenerationService):
         person: str,
         transcript_content: str,
         current_note: Mapping[str, Any] | None,
+        given: str = "",
     ) -> Future[dict[str, dict[str, Any]]]:
         """A section call (:data:`SECTION_DRAFTS`), started beside the draft."""
         context = contextvars.copy_context()
         return _extraction_executor().submit(
             context.run,
-            self._section_call_runner(call, fields, person, transcript_content, current_note),
+            self._section_call_runner(
+                call, fields, person, transcript_content, current_note, given
+            ),
         )
 
     def _complete_labels(self, prompt: str) -> dict[str, Any]:
