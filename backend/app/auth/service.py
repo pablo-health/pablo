@@ -16,7 +16,12 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth as firebase_auth
 from firebase_admin import exceptions as firebase_exceptions
 
-from ..logging_config import bind_log_claimed_user_id, bind_log_tenant_id, bind_log_user_id
+from ..logging_config import (
+    bind_log_auth_session,
+    bind_log_claimed_user_id,
+    bind_log_tenant_id,
+    bind_log_user_id,
+)
 from ..models import User
 from ..repositories import (
     AllowlistRepository,
@@ -154,6 +159,7 @@ def _note_expired_token_subject(token: str) -> None:
     """
     with contextlib.suppress(Exception):
         claims = jwt.decode(token, options={"verify_signature": False, "verify_exp": False})
+        _bind_auth_session(claims, claimed=True)
         subject = claims.get("sub")
         if isinstance(subject, str) and subject:
             user_id = get_identity_repository().get_user_id("firebase", subject)
@@ -323,6 +329,7 @@ def _verify_request_identity(request: Request | None, token: str) -> VerifiedIde
         stashed = getattr(request.state, "verified_identity", None)
         stashed_token = getattr(request.state, "verified_identity_token", None)
         if isinstance(stashed, VerifiedIdentity) and stashed_token == token:
+            _bind_auth_session(stashed.claims)
             return stashed
     cached = _get_cached_token(request, token)
     if cached is not None:
@@ -336,7 +343,17 @@ def _verify_request_identity(request: Request | None, token: str) -> VerifiedIde
     if request is not None:
         request.state.verified_identity = identity
         request.state.verified_identity_token = token
+    _bind_auth_session(identity.claims)
     return identity
+
+
+def _bind_auth_session(claims: dict[str, Any], *, claimed: bool = False) -> None:
+    """Put this sign-in's opaque session id on the request's access line."""
+    from . import idle_session
+
+    with contextlib.suppress(Exception):
+        if (key := idle_session.session_log_key(claims)) is not None:
+            bind_log_auth_session(key, claimed=claimed)
 
 
 def _identity_for_decoded(
@@ -355,6 +372,7 @@ def _identity_for_decoded(
         stashed = getattr(request.state, "verified_identity", None)
         if isinstance(stashed, VerifiedIdentity) and stashed.claims is decoded_token:
             return stashed
+    _bind_auth_session(decoded_token)
     return FirebaseVerifier().verify_from_decoded(decoded_token)
 
 

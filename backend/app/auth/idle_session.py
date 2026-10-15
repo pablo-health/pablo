@@ -45,6 +45,7 @@ The pure function ``check_and_touch`` is wired in via
 separate to avoid a circular import between service.py and this module.
 """
 
+import hashlib
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -124,6 +125,21 @@ def _session_identifiers(decoded_token: dict[str, Any]) -> tuple[str, int]:
             },
         )
     return str(subject), auth_time
+
+
+def session_log_key(decoded_token: dict[str, Any]) -> str | None:
+    """A short opaque id for one sign-in, for grouping log lines.
+
+    The same (subject, auth_time) pair the idle markers are keyed on, hashed
+    so neither the provider's user id nor the sign-in time reaches a log.
+    Stable across token refreshes; a new sign-in gets a new one. ``None``
+    when the token lacks either part — this never refuses anything.
+    """
+    try:
+        subject, auth_time = _session_identifiers(decoded_token)
+    except HTTPException:
+        return None
+    return hashlib.sha256(f"{subject}:{auth_time}".encode()).hexdigest()[:16]
 
 
 def check_and_touch(decoded_token: dict[str, Any]) -> None:
