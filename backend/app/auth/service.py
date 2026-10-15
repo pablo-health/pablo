@@ -2,6 +2,7 @@
 
 """Firebase authentication service with practice-based access control."""
 
+import contextlib
 import logging
 import re
 from dataclasses import dataclass
@@ -9,12 +10,13 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import jwt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth as firebase_auth
 from firebase_admin import exceptions as firebase_exceptions
 
-from ..logging_config import bind_log_tenant_id, bind_log_user_id
+from ..logging_config import bind_log_claimed_user_id, bind_log_tenant_id, bind_log_user_id
 from ..models import User
 from ..repositories import (
     AllowlistRepository,
@@ -141,6 +143,24 @@ def _resolve_pablo_user_id(
     return pablo_id
 
 
+def _note_expired_token_subject(token: str) -> None:
+    """Put the user an expired token names on this request's access line.
+
+    Only for an EXPIRED token, whose signature Firebase has already checked
+    before it looked at the expiry. The claim is read without verification
+    and goes to the log as ``claimed_user_id`` only; nothing decides
+    anything with it. It lets the burst of 401s a browser sends just before
+    signing in again be read as that person's session.
+    """
+    with contextlib.suppress(Exception):
+        claims = jwt.decode(token, options={"verify_signature": False, "verify_exp": False})
+        subject = claims.get("sub")
+        if isinstance(subject, str) and subject:
+            user_id = get_identity_repository().get_user_id("firebase", subject)
+            if user_id is not None:
+                bind_log_claimed_user_id(str(user_id))
+
+
 def verify_firebase_token(token: str) -> dict[str, Any]:
     """Verify a Firebase ID token (project-level, single-pass).
 
@@ -162,6 +182,7 @@ def verify_firebase_token(token: str) -> dict[str, Any]:
         # distinguishable from revoked / malformed tokens when triaging
         # 401s. No PHI: the failure reason only, never token material.
         logger.warning("Firebase ID token rejected: expired (TOKEN_EXPIRED)")
+        _note_expired_token_subject(token)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
@@ -770,7 +791,14 @@ def get_session_peek_claims(
     ``tests/test_route_mfa_guardrails.py``.
     """
     token = auth_credentials.credentials
-    return _verify_request_identity(request, token).claims
+    identity = _verify_request_identity(request, token)
+    # Log attribution only. The idle controller polls this from every open
+    # tab, so a person's session shows up as theirs rather than anonymous.
+    with contextlib.suppress(Exception):
+        user_id = get_identity_repository().get_user_id(identity.provider, identity.subject_id)
+        if user_id is not None:
+            bind_log_user_id(str(user_id))
+    return identity.claims
 
 
 def _resolve_user(

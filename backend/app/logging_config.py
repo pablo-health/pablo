@@ -98,10 +98,35 @@ class RequestLogIdentity:
 
     One instance per request, created by ``RequestContextMiddleware`` and
     dropped when the request ends, so nothing carries over to the next one.
+
+    It also carries how the request ended, for the access line: the error
+    code of a failed request, the field paths a validation failure named,
+    the reason a credential was refused, and — for an expired token only —
+    the user the token claimed to be. Every value is an opaque id or a fixed
+    code; none is a message, a submitted value or a resolved path.
     """
 
     user_id: str | None = None
     tenant_id: str | None = None
+    # Who an EXPIRED token said it was. Never verified and never used to
+    # decide anything; it lets a burst of 401s before a re-sign-in be read
+    # as one person's session instead of an anonymous one.
+    claimed_user_id: str | None = None
+    auth_failure: str | None = None
+    error_code: str | None = None
+    error_fields: tuple[str, ...] | None = None
+    error_type: str | None = None
+
+    def outcome_fields(self) -> dict[str, object]:
+        """The outcome fields that were set, keyed as the access line names them."""
+        fields: dict[str, object] = {
+            "claimed_user_id": self.claimed_user_id,
+            "auth_failure": self.auth_failure,
+            "error_code": self.error_code,
+            "error_fields": list(self.error_fields) if self.error_fields else None,
+            "error_type": self.error_type,
+        }
+        return {key: value for key, value in fields.items() if value is not None}
 
 
 _request_log_identity_var: ContextVar[RequestLogIdentity | None] = ContextVar(
@@ -131,6 +156,38 @@ def bind_log_tenant_id(tenant_id: str) -> None:
     tenant_id_var.set(tenant_id)
     if (identity := _request_log_identity_var.get()) is not None:
         identity.tenant_id = tenant_id
+
+
+def bind_log_claimed_user_id(user_id: str) -> None:
+    """Note who an expired token claimed to be, for this request's access line."""
+    if (identity := _request_log_identity_var.get()) is not None:
+        identity.claimed_user_id = user_id
+
+
+def record_log_outcome(
+    *,
+    error_code: str | None = None,
+    error_fields: tuple[str, ...] | None = None,
+    error_type: str | None = None,
+    auth_failure: str | None = None,
+) -> None:
+    """Record how this request failed. The first value recorded for a field wins.
+
+    First-wins because the innermost handler knows the most: a validation
+    handler names the fields, and the middleware's catch-all that runs after
+    it must not overwrite that with a generic code.
+    """
+    identity = _request_log_identity_var.get()
+    if identity is None:
+        return
+    if error_code is not None and identity.error_code is None:
+        identity.error_code = error_code
+    if error_fields and identity.error_fields is None:
+        identity.error_fields = error_fields
+    if error_type is not None and identity.error_type is None:
+        identity.error_type = error_type
+    if auth_failure is not None and identity.auth_failure is None:
+        identity.auth_failure = auth_failure
 
 
 def current_log_user_id() -> str | None:

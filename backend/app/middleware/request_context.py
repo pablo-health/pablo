@@ -41,6 +41,7 @@ from ..logging_config import (
     begin_request_log_identity,
     end_request_log_identity,
     log_http_request_var,
+    record_log_outcome,
     request_id_var,
     route_template_var,
     tenant_id_var,
@@ -246,14 +247,19 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             response.headers[REQUEST_ID_HEADER] = request_id
             status_code = response.status_code
             return response
+        except Exception as exc:
+            # Escapes to the app's last-resort handler, which answers 500.
+            record_log_outcome(error_code="INTERNAL_ERROR", error_type=type(exc).__name__)
+            raise
         finally:
             # Emit one `event=request_completed` record per request. Feeds
             # the 5xx-rate alert (THERAPY-8uww) and the per-route latency
             # widgets on the ops dashboard. PHI-free — only the HTTP
             # method, the matched route template (never the resolved URL),
-            # the status code, and the elapsed time. route_template,
-            # request_id, user_id, and tenant_id are merged in by the
-            # JSON formatter via contextvars.
+            # the status code, and the elapsed time, plus for a failed
+            # request its error code and the reason a credential was
+            # refused. route_template, request_id, user_id, and tenant_id
+            # are merged in by the JSON formatter via contextvars.
             latency_ms = round((time.perf_counter() - start) * 1000.0, 2)
             # Access logging must never break a response — swallow any
             # exception out of the finally block rather than letting it
@@ -266,6 +272,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                         "method": request.method,
                         "status_code": status_code,
                         "latency_ms": latency_ms,
+                        **log_identity.outcome_fields(),
                     },
                 )
             request_id_var.reset(rid_token)
