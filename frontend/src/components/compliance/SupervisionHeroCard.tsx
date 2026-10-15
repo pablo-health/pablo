@@ -14,6 +14,7 @@ import type {
 } from "@/types/supervision"
 import { daysUntil, formatDueLabel } from "./urgency"
 import { horizonFor } from "./horizons"
+import { MEDIUM_DATE, formatDateOrRaw } from "@/lib/dates"
 
 /**
  * Provider cockpit — supervision and delegation hero card.
@@ -101,7 +102,7 @@ function RelationshipCard({
               {formatDueLabel(days)}
             </span>
             <p className="text-[10px] text-neutral-400 mt-0.5">
-              {formatDate(rel.next_review_date)}
+              {formatDateOrRaw(rel.next_review_date, MEDIUM_DATE, "en-US")}
             </p>
           </div>
         )}
@@ -200,7 +201,7 @@ function HoursPanel({ relationshipId }: { relationshipId: string }) {
                 {entry.hours.toFixed(1)} hrs
               </span>
               <p className="text-[10px] text-neutral-400">
-                {formatDate(entry.logged_date)}
+                {formatDateOrRaw(entry.logged_date, MEDIUM_DATE, "en-US")}
               </p>
             </div>
           </li>
@@ -223,18 +224,6 @@ function Pill({ label, value }: { label: string; value: string }) {
       <span className="text-[11px] font-mono text-neutral-700">{value}</span>
     </div>
   )
-}
-
-function formatDate(iso: string): string {
-  try {
-    return new Intl.DateTimeFormat("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    }).format(new Date(iso))
-  } catch {
-    return iso
-  }
 }
 
 function reviewBadgeFor(

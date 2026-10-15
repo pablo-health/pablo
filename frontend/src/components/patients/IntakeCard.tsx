@@ -14,14 +14,10 @@ import { usePatientIntakeSubmissions } from "@/hooks/usePatientIntakeSubmissions
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import type { IntakeAssignment } from "@/lib/api/intakeReview"
 import type { PatientIntakeSubmission } from "@/types/patientIntakeSubmissions"
+import { NUMERIC_DATE, formatDateOrRaw } from "@/lib/dates"
 
 interface IntakeCardProps {
   patientId: string
-}
-
-function formatDate(iso: string): string {
-  const parsed = new Date(iso)
-  return Number.isNaN(parsed.getTime()) ? iso : parsed.toLocaleDateString()
 }
 
 function needsAttention(submission: PatientIntakeSubmission): boolean {
@@ -192,7 +188,7 @@ export function IntakeCard({ patientId }: IntakeCardProps) {
       <div className="mb-4 flex items-center justify-between gap-4">
         {latest ? (
           <p className="text-sm text-neutral-500">
-            Submitted {formatDate(latest.submitted_at)}
+            Submitted {formatDateOrRaw(latest.submitted_at, NUMERIC_DATE)}
           </p>
         ) : (
           <span />
@@ -228,7 +224,7 @@ export function IntakeCard({ patientId }: IntakeCardProps) {
                   className="rounded-lg border border-border p-4"
                 >
                   <p className="mb-2 text-sm text-neutral-500">
-                    Submitted {formatDate(submission.submitted_at)}
+                    Submitted {formatDateOrRaw(submission.submitted_at, NUMERIC_DATE)}
                   </p>
                   <SubmissionBody submission={submission} />
                 </div>

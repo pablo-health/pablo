@@ -24,6 +24,7 @@ import type {
   MedicationCategory,
   MedicationStatus,
 } from "@/types/medications"
+import { formatDate } from "@/lib/dates"
 
 interface MedicationsTabProps {
   patientId: string
@@ -50,12 +51,6 @@ const STATUS_BADGE: Record<
 const CATEGORY_LABELS: Record<MedicationCategory, string> = {
   psychiatric: "Psychiatric",
   other: "Other",
-}
-
-function formatDate(iso: string | null): string | null {
-  if (!iso) return null
-  const d = new Date(iso)
-  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
 }
 
 export function MedicationsTab({ patientId }: MedicationsTabProps) {

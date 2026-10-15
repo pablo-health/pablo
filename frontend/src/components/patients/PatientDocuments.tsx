@@ -20,6 +20,7 @@ import { ApiError } from "@/lib/api/client"
 import { getPatientDocumentDownloadUrl } from "@/lib/api/patientDocuments"
 import { queryKeys } from "@/lib/api/queryKeys"
 import type { PeopleWords } from "@/lib/peopleTerm"
+import { formatCompactFileSize } from "@/lib/utils/fileValidation"
 import { DocumentViewerSheet } from "@/components/patients/DocumentViewerSheet"
 import {
   EXTRACTION_POLL_TIMEOUT_TICKS,
@@ -97,12 +98,6 @@ interface PatientDocumentsProps {
 }
 
 const ACCEPT = ALLOWED_DOCUMENT_MIME_TYPES.join(",")
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
 
 function formatDate(iso: string): string {
   try {
@@ -344,7 +339,7 @@ export function PatientDocuments({ patientId }: PatientDocumentsProps) {
                     )}
                   </p>
                   <p className="text-xs text-neutral-500">
-                    {formatBytes(doc.size_bytes)} · uploaded{" "}
+                    {formatCompactFileSize(doc.size_bytes)} · uploaded{" "}
                     {formatDate(doc.created_at)}
                     {categoryBadge(doc.category) && ` · ${categoryBadge(doc.category)}`}
                   </p>
