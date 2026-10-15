@@ -73,6 +73,7 @@ from app.auth.service import (  # noqa: E402
 from app.calendar_providers import pkce_store  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import User  # noqa: E402
+from app.models.audit import AuditLogEntry  # noqa: E402
 from app.portal import module_gate as portal_module_gate  # noqa: E402
 from app.portal import practice_hosts as portal_practice_hosts  # noqa: E402
 from app.portal.portal_settings import NOT_OFFERED  # noqa: E402
@@ -364,6 +365,20 @@ def mock_audit_service() -> AuditService:
     mock_db = MagicMock()
     mock_db.collection.return_value.document.return_value.set = MagicMock()
     return AuditService(mock_db)
+
+
+def audited_entries(service: AuditService) -> list[AuditLogEntry]:
+    """Every entry ``mock_audit_service`` persisted, in order.
+
+    A list view writes its rows through ``append_many`` (one trip per page);
+    everything else goes through ``append``. A test asserting on what was
+    audited should not care which, so read both.
+    """
+    repo = service._repo
+    entries: list[AuditLogEntry] = [call.args[0] for call in repo.append.call_args_list]
+    for call in repo.append_many.call_args_list:
+        entries.extend(call.args[0])
+    return entries
 
 
 @pytest.fixture
