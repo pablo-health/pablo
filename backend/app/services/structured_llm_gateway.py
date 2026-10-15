@@ -64,6 +64,8 @@ _MISTRAL_VERTEX_REGION = os.environ.get("MISTRAL_VERTEX_REGION", "us-central1")
 #: Floor on an attempt's timeout, so a spent budget still times out at once
 #: rather than reading as "no timeout" to the SDK.
 _MIN_ATTEMPT_TIMEOUT_SECONDS = 0.001
+_GEMINI_THINKING_LOW_MAX_BUDGET = 2_048
+_GEMINI_THINKING_MEDIUM_MAX_BUDGET = 8_192
 
 
 def _attempt_timeout(timeout_seconds: float, started: float, policy: RetryPolicy) -> float:
@@ -80,6 +82,28 @@ def _attempt_timeout(timeout_seconds: float, started: float, policy: RetryPolicy
         return timeout_seconds
     remaining = deadline - (time.monotonic() - started)
     return max(min(timeout_seconds, remaining), _MIN_ATTEMPT_TIMEOUT_SECONDS)
+
+
+def _gemini_thinking_config(types: Any, model: str, budget: int | None) -> Any:
+    """Build native thinking config for Gemini 3.x/4.x and legacy models."""
+    if budget is None:
+        return None
+    normalized = model.lower()
+    if not (normalized.startswith("gemini-3") or normalized.startswith("gemini-4")):
+        return types.ThinkingConfig(thinking_budget=budget)
+    if normalized == "gemini-4-argon":
+        # Argon's latency/quality evals were run with LOW for explicit calls.
+        level = types.ThinkingLevel.LOW
+    elif budget == 0:
+        # Gemini 3.x has no budget=0 switch; MINIMAL is its lowest level.
+        level = types.ThinkingLevel.MINIMAL
+    elif budget <= _GEMINI_THINKING_LOW_MAX_BUDGET:
+        level = types.ThinkingLevel.LOW
+    elif budget <= _GEMINI_THINKING_MEDIUM_MAX_BUDGET:
+        level = types.ThinkingLevel.MEDIUM
+    else:
+        level = types.ThinkingLevel.HIGH
+    return types.ThinkingConfig(thinking_level=level)
 
 
 class StructuredOutputTruncatedError(ValueError):
@@ -270,6 +294,7 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
         client = self._get_client()
         normalized_model = strip_provider_prefix(model)
         schema = _to_gemini_schema(types, response_schema)
+        thinking_config = _gemini_thinking_config(types, normalized_model, thinking_budget)
         config = types.GenerateContentConfig(
             system_instruction=system_prompt,
             response_mime_type="application/json",
@@ -283,11 +308,7 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
             max_output_tokens=max_output_tokens,
             # Default thinking when None; an explicit budget (incl. 0 to
             # disable) is forwarded for mechanical extraction callers.
-            thinking_config=(
-                types.ThinkingConfig(thinking_budget=thinking_budget)
-                if thinking_budget is not None
-                else None
-            ),
+            thinking_config=thinking_config,
         )
         policy = retry_policy or LLM_REQUEST
         started = time.monotonic()

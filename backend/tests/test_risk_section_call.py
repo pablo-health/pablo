@@ -148,6 +148,19 @@ def test_a_finding_beside_a_kept_quotation_is_never_taken_for_a_gap() -> None:
     assert kept.startswith("Denies SI and HI. Asked about thoughts of harming self")
 
 
+def test_the_same_verified_words_are_quoted_only_once() -> None:
+    kept = compose_quoted(
+        "Denies SI and HI.",
+        [
+            _quote("Nothing like that", [3], asked="Asked about harm"),
+            _quote("nothing like that", [3], asked="Asked about self-harm"),
+        ],
+        SEGMENTS,
+        "client",
+    )
+    assert kept == ('Denies SI and HI. Asked about harm, the client said: "Nothing like that"')
+
+
 def test_a_quotation_is_framed_with_the_charts_word_for_the_person() -> None:
     text = compose_quoted("", [_quote("Nothing like that", [3], asked="")], SEGMENTS, "patient")
     assert text == 'The patient said: "Nothing like that"'

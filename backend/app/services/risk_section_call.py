@@ -176,6 +176,7 @@ def compose_quoted(text: str, quotes: Any, segments: Mapping[int, str], person: 
     """
     finding = text.strip()
     parts: list[str] = []
+    seen_words: set[str] = set()
     kept = False
     for q in quotes if isinstance(quotes, list) else []:
         if not isinstance(q, dict):
@@ -183,6 +184,10 @@ def compose_quoted(text: str, quotes: Any, segments: Mapping[int, str], person: 
         asked = _asked(q.get("asked"))
         words = verified_words(str(q.get("words") or ""), q.get("segment_ids"), segments)
         if words:
+            canonical = " ".join(words.casefold().split())
+            if canonical in seen_words:
+                continue
+            seen_words.add(canonical)
             kept = True
             frame = f"{asked}, the {person} said" if asked else f"The {person} said"
             parts.append(f'{frame}: "{words}"')
