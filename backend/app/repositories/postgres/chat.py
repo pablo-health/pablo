@@ -24,13 +24,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Select, String, Uuid, bindparam, delete, func, or_, select, text
+from sqlalchemy import Select, String, Uuid, bindparam, delete, func, select, text
 
 from ...db.models import ChatConversationRow, ChatMessageRow, PatientClinicianRow
 from ...models import ChatConversation, ChatMessage
-from ...utcnow import utc_now
 from ..chat import ChatRepository
 from ..note import PatientAccessDeniedError
+from ._grants import live_grant
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -43,23 +43,6 @@ _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindpara
     bindparam("pid", type_=Uuid(as_uuid=False)),
     bindparam("uid", type_=String()),
 )
-
-
-def _grant_filters(user_id: str) -> tuple:
-    """Predicates for "user has a non-expired grant on the joined row's patient_id".
-
-    Same shape as :func:`postgres.session._grant_filters` — keeping the
-    two helpers separate (rather than hoisting to a shared module) so
-    each repository stays self-contained and tests can read it
-    end-to-end without cross-file jumps.
-    """
-    return (
-        PatientClinicianRow.user_id == user_id,
-        or_(
-            PatientClinicianRow.expires_at.is_(None),
-            PatientClinicianRow.expires_at > utc_now(),
-        ),
-    )
 
 
 def _clinician_owned() -> ColumnElement[bool]:
@@ -188,7 +171,7 @@ class PostgresChatRepository(ChatRepository):
             .where(
                 ChatConversationRow.id == conversation_id,
                 _clinician_owned(),
-                *_grant_filters(user_id),
+                *live_grant(user_id),
             )
         ).scalar_one_or_none()
         return _row_to_conversation(row) if row is not None else None
@@ -257,7 +240,7 @@ class PostgresChatRepository(ChatRepository):
             .where(
                 ChatMessageRow.conversation_id == conversation_id,
                 _clinician_owned(),
-                *_grant_filters(user_id),
+                *live_grant(user_id),
             )
             .order_by(ChatMessageRow.sequence.asc())
         )
@@ -290,7 +273,7 @@ class PostgresChatRepository(ChatRepository):
             .where(
                 ChatMessageRow.conversation_id == conversation_id,
                 _clinician_owned(),
-                *_grant_filters(user_id),
+                *live_grant(user_id),
             )
         )
 

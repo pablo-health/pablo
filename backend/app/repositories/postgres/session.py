@@ -16,12 +16,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String, Uuid, bindparam, func, or_, select, text
+from sqlalchemy import String, Uuid, bindparam, func, select, text
 
 from ...db.models import PatientClinicianRow, TherapySessionRow
 from ...models.session import TherapySession, Transcript
 from ...utcnow import utc_now
 from ..session import TherapySessionRepository, _compute_day_boundaries
+from ._grants import live_grant
 
 if TYPE_CHECKING:
     from collections.abc import Collection
@@ -34,17 +35,6 @@ _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindpara
     bindparam("pid", type_=Uuid(as_uuid=False)),
     bindparam("uid", type_=String()),
 )
-
-
-def _grant_filters(user_id: str) -> tuple:
-    """Predicates for "user has a non-expired grant on the joined row's patient_id"."""
-    return (
-        PatientClinicianRow.user_id == user_id,
-        or_(
-            PatientClinicianRow.expires_at.is_(None),
-            PatientClinicianRow.expires_at > utc_now(),
-        ),
-    )
 
 
 class PostgresTherapySessionRepository(TherapySessionRepository):
@@ -61,7 +51,7 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
             .where(
                 TherapySessionRow.id == session_id,
                 TherapySessionRow.deleted_at.is_(None),
-                *_grant_filters(user_id),
+                *live_grant(user_id),
             )
         ).scalar_one_or_none()
         return _row_to_session(row) if row else None
@@ -77,7 +67,7 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
                 .where(
                     TherapySessionRow.patient_id == patient_id,
                     TherapySessionRow.deleted_at.is_(None),
-                    *_grant_filters(user_id),
+                    *live_grant(user_id),
                 )
                 .order_by(TherapySessionRow.session_date.desc())
             )
@@ -99,7 +89,7 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
                 .where(
                     TherapySessionRow.id.in_(session_ids),
                     TherapySessionRow.deleted_at.is_(None),
-                    *_grant_filters(user_id),
+                    *live_grant(user_id),
                 )
             )
             .scalars()
@@ -121,7 +111,7 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
                 .where(
                     TherapySessionRow.patient_id == patient_id,
                     TherapySessionRow.deleted_at.is_(None),
-                    *_grant_filters(user_id),
+                    *live_grant(user_id),
                 )
                 .order_by(TherapySessionRow.session_date.desc())
             )
@@ -151,7 +141,7 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
             )
             .where(
                 TherapySessionRow.deleted_at.is_(None),
-                *_grant_filters(user_id),
+                *live_grant(user_id),
             )
         )
         total = self._session.scalar(select(func.count()).select_from(base.subquery())) or 0
@@ -203,7 +193,7 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
                     TherapySessionRow.scheduled_at >= start_utc,
                     TherapySessionRow.scheduled_at < end_utc,
                     TherapySessionRow.deleted_at.is_(None),
-                    *_grant_filters(user_id),
+                    *live_grant(user_id),
                 )
                 .order_by(TherapySessionRow.scheduled_at)
             )
@@ -221,7 +211,7 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
             )
             .where(
                 TherapySessionRow.deleted_at.is_(None),
-                *_grant_filters(user_id),
+                *live_grant(user_id),
             )
             .group_by(TherapySessionRow.status)
         ).all()
@@ -240,7 +230,7 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
                 .where(
                     TherapySessionRow.status == status,
                     TherapySessionRow.deleted_at.is_(None),
-                    *_grant_filters(user_id),
+                    *live_grant(user_id),
                 )
                 .order_by(TherapySessionRow.session_date.desc())
                 .limit(limit)
@@ -271,7 +261,7 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
                 TherapySessionRow.patient_id == patient_id,
                 TherapySessionRow.deleted_at.is_(None),
                 effective_date > after,
-                *_grant_filters(user_id),
+                *live_grant(user_id),
             )
         )
         if exclude_statuses:
