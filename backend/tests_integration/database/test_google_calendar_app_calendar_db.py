@@ -18,13 +18,10 @@ import base64
 import os
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from app.calendar_providers import pkce_store
 from app.calendar_providers.capabilities import CalendarWriteTarget
 from app.db import _current_tenant_schema, arm_current_user_id, set_tenant_schema
@@ -34,7 +31,7 @@ from app.repositories.postgres.google_calendar_token import (
 )
 from app.services.google_calendar_service import GoogleCalendarService
 from app.settings import get_settings
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from tests.calendar_oauth_fakes import FakePkceRedis, authorized_state
 
@@ -55,17 +52,6 @@ pytestmark = pytest.mark.skipif(
 
 _FIRST = "first@group.calendar.google.com"
 _SECOND = "second@group.calendar.google.com"
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_db_url, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 @pytest.fixture(scope="module")

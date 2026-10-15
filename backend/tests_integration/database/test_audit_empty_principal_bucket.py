@@ -40,14 +40,11 @@ from __future__ import annotations
 
 import os
 import uuid
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from app.db import _current_patient_id, _current_user_id
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, InternalError, ProgrammingError
 from sqlalchemy.orm import sessionmaker
 
@@ -88,17 +85,6 @@ def _clean_principal_contextvars() -> Iterator[None]:
     yield
     _current_patient_id.reset(patient_token)
     _current_user_id.reset(user_token)
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_db_url, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 @pytest.fixture

@@ -29,19 +29,16 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from app.models.patient_facing import (
     APPOINTMENT_COLUMN_DECISIONS,
     PATIENT_COLUMN_DECISIONS,
     shown_columns,
     withheld_columns,
 )
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -64,17 +61,6 @@ _CLINICIAN = "1f4b2c07-6a9e-4d31-b8f2-5c0e7a913d46"
 _DIAGNOSIS = "F41.1 generalised anxiety, provisional"
 _SLIDING_SCALE_NOTE = "agreed 90 a session while between jobs"
 _CLINICIAN_NOTE = "flat affect again, raise at supervision"
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_DB_URL, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 @pytest.fixture(scope="module")

@@ -37,13 +37,10 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -68,18 +65,6 @@ os.environ.setdefault("ENVIRONMENT", "development")
 
 _USER_A = "9d1c4b2a-7e63-4f10-9a2b-1c0d5e6f7a80"
 _USER_B = "2f8e6d5c-4b3a-4291-8c7d-6e5f4a3b2c10"
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-
-    eng = create_engine(_db_url, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 def _provision_schema(engine: Engine, label: str) -> str:
@@ -112,13 +97,6 @@ def tenant_b_schema(engine: Engine) -> Iterator[str]:
     with engine.connect() as conn:
         conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
         conn.commit()
-
-
-@pytest.fixture(scope="module")
-def fastapi_app() -> FastAPI:
-    from app.main import app  # noqa: PLC0415
-
-    return app
 
 
 def _user(user_id: str, email: str):

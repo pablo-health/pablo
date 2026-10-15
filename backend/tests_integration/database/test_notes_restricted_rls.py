@@ -34,13 +34,10 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -62,17 +59,6 @@ _NOTES = "notes"
 _AUTHOR = "6c2a8f13-9d4e-5b70-a1c3-2e8f5d7b4a91"
 # Holds a grant on the same patient; wrote nothing.
 _CO_TREATER = "9f1d3b57-2c8a-5e46-b7d0-4a6c1e9f8b23"
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_DB_URL, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 @pytest.fixture(scope="module")

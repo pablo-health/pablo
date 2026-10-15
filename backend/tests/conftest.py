@@ -84,6 +84,7 @@ from app.repositories import (  # noqa: E402
     InMemoryEhrPromptRepository,
     InMemoryEhrRouteRepository,
     InMemoryIdentityRepository,
+    InMemoryIntakePacketRepository,
     InMemoryLlmUsageRepository,
     InMemoryNotesRepository,
     InMemoryPatientProblemRepository,
@@ -95,6 +96,7 @@ from app.repositories import (  # noqa: E402
     get_identity_repository,
     get_user_repository,
 )
+from app.repositories.audit import InMemoryAuditRepository  # noqa: E402
 from app.repositories.external_calendar_event import (  # noqa: E402
     InMemoryExternalCalendarEventRepository,
 )
@@ -364,6 +366,17 @@ def mock_audit_service() -> AuditService:
     mock_db = MagicMock()
     mock_db.collection.return_value.document.return_value.set = MagicMock()
     return AuditService(mock_db)
+
+
+@pytest.fixture
+def audit_repo() -> InMemoryAuditRepository:
+    """In-memory audit storage, for a test that reads back what was audited."""
+    return InMemoryAuditRepository()
+
+
+@pytest.fixture
+def packets() -> InMemoryIntakePacketRepository:
+    return InMemoryIntakePacketRepository()
 
 
 @pytest.fixture

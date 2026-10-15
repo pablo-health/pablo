@@ -57,10 +57,8 @@ from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from jsonschema import Draft202012Validator
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 from tests_integration.database.export_wiring import export_service_for
 
@@ -143,17 +141,6 @@ def _encryption_key() -> Iterator[None]:
         else:
             os.environ["GOOGLE_CALENDAR_ENCRYPTION_KEY"] = previous
         get_settings.cache_clear()
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_db_url, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 @pytest.fixture(scope="module")

@@ -30,13 +30,10 @@ import os
 import tarfile
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
@@ -57,17 +54,6 @@ pytestmark = pytest.mark.skipif(
 _ADMIN_A = "3b8e1f47-6a2d-5c91-8e04-7d1f9a3c6b52"
 # A second clinician on the same chart.
 _CLINICIAN_B = "d47a2c19-8f3e-5b06-9c21-5e8b7f4a1d63"
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_DB_URL, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 @pytest.fixture(scope="module")

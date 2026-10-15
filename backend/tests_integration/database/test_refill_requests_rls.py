@@ -27,13 +27,10 @@ import os
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
@@ -54,17 +51,6 @@ pytestmark = pytest.mark.skipif(
 
 _TREATING_CLINICIAN = "5c0e9a41-2b7d-5f18-9d63-1e4a7b20c8f5"
 _STRANGER_CLINICIAN = "b27f4d19-8e60-5a3c-9f17-4d2c6e81a0b3"
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_DB_URL, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 @pytest.fixture(scope="module")

@@ -50,7 +50,6 @@ from app.repositories import (
     InMemoryPatientRepository,
     get_patient_repository,
 )
-from app.repositories.audit import InMemoryAuditRepository
 from app.repositories.client_ai_consent import InMemoryClientAiConsentRepository
 from app.repositories.coverage import (
     InMemoryPatientCoverageRepository,
@@ -83,6 +82,8 @@ from fastapi.testclient import TestClient
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from app.repositories.audit import InMemoryAuditRepository
 
 _PATIENT_A = "11111111-1111-4111-8111-111111111111"
 _PATIENT_B = "22222222-2222-4222-8222-222222222222"
@@ -144,11 +145,6 @@ def _patient(patient_id: str, first: str, last: str, email: str) -> Patient:
 
 
 @pytest.fixture
-def packets() -> InMemoryIntakePacketRepository:
-    return InMemoryIntakePacketRepository()
-
-
-@pytest.fixture
 def assignments_repo() -> InMemoryPatientIntakeAssignmentRepository:
     repo = InMemoryPatientIntakeAssignmentRepository()
     repo.grant_all_access()
@@ -158,11 +154,6 @@ def assignments_repo() -> InMemoryPatientIntakeAssignmentRepository:
 @pytest.fixture
 def signatures_repo() -> InMemoryPatientIntakeSignatureRepository:
     return InMemoryPatientIntakeSignatureRepository()
-
-
-@pytest.fixture
-def audit_repo() -> InMemoryAuditRepository:
-    return InMemoryAuditRepository()
 
 
 @pytest.fixture

@@ -23,8 +23,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from app.db.models import AuditLogRow
@@ -47,7 +45,7 @@ from app.services.practice_domain_reconciler import (
     challenge_record,
 )
 from app.services.practice_domain_service import PracticeDomainService
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from tests.practice_domain_serving_fake import FakeDomainServing
@@ -85,17 +83,6 @@ class Practice:
     id: str
     schema: str
     owner: str
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_db_url, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 @pytest.fixture

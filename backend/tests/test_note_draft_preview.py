@@ -17,7 +17,6 @@ from app.repositories import (
     InMemoryPracticeNoteTypeRepository,
     get_practice_note_type_repository,
 )
-from app.repositories.audit import InMemoryAuditRepository
 from app.routes.note_types import get_registry, preview_note_draft
 from app.routes.notes import get_note_generation_service
 from app.services.audit_service import AuditService, get_audit_service
@@ -34,6 +33,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from app.models import User
+    from app.repositories.audit import InMemoryAuditRepository
 
 TRANSCRIPT = {"format": "txt", "content": "[00:01] Therapist: Hello\n[00:03] Client: Hi"}
 DRAFT = {
@@ -50,11 +50,6 @@ class _LockedAuthorizer:
 @pytest.fixture
 def repo() -> InMemoryPracticeNoteTypeRepository:
     return InMemoryPracticeNoteTypeRepository()
-
-
-@pytest.fixture
-def audit_repo() -> InMemoryAuditRepository:
-    return InMemoryAuditRepository()
 
 
 @pytest.fixture

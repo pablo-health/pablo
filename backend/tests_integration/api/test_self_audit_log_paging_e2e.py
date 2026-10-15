@@ -96,13 +96,6 @@ def pg_session(engine: Engine) -> Iterator[Session]:
         session.close()
 
 
-@pytest.fixture(scope="module")
-def fastapi_app() -> FastAPI:
-    from app.main import app  # noqa: PLC0415  # deferred — DB connect at import
-
-    return app
-
-
 @pytest.fixture
 def e2e_user() -> User:
     return User(

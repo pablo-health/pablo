@@ -26,13 +26,12 @@ import os
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -50,28 +49,6 @@ pytestmark = pytest.mark.skipif(
 )
 
 os.environ.setdefault("ENVIRONMENT", "development")
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    from alembic import command  # noqa: PLC0415
-    from alembic.config import Config  # noqa: PLC0415
-
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-
-    eng = create_engine(_db_url, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
-
-
-@pytest.fixture(scope="module")
-def fastapi_app() -> FastAPI:
-    from app.main import app  # noqa: PLC0415  # deferred — DB connect at import
-
-    return app
 
 
 def _arm(conn: Connection, schema: str, user_id: str) -> None:

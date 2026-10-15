@@ -31,18 +31,13 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from sqlalchemy.engine import Engine
 
 _db_url = os.environ.get("DATABASE_URL", "")
@@ -54,17 +49,6 @@ pytestmark = pytest.mark.skipif(
 
 _CLINICIAN_A = "11111111-1111-4111-8111-111111111111"
 _CLINICIAN_B = "22222222-2222-4222-8222-222222222222"
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_db_url, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 class _ArmedSession:
