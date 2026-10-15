@@ -180,12 +180,20 @@ class TestSuccess:
         _call(gw)
         sent = client.requests[0]
         assert sent["modelId"] == "us.anthropic.claude-haiku-4-5-20251001-v1:0"
-        assert sent["system"] == [{"text": "SYSTEM"}]
+        assert sent["system"] == [
+            {"text": "SYSTEM"},
+            {"cachePoint": {"type": "default"}},
+        ]
         assert sent["messages"] == [{"role": "user", "content": [{"text": "9 to 5"}]}]
         assert sent["inferenceConfig"] == {"maxTokens": 256, "temperature": 0.0}
         spec = sent["toolConfig"]["tools"][0]["toolSpec"]
         assert spec["inputSchema"] == {"json": to_json_schema(_SCHEMA)}
         assert sent["toolConfig"]["toolChoice"] == {"tool": {"name": spec["name"]}}
+
+    def test_non_claude_model_does_not_receive_a_cache_point(self) -> None:
+        gw, client = _gateway(_response({"proposals": []}))
+        _call(gw, model="bedrock:us.amazon.nova-pro-v1:0")
+        assert client.requests[0]["system"] == [{"text": "SYSTEM"}]
 
     def test_guardrail_is_reported_as_safety(self) -> None:
         gw, _ = _gateway(_response({"proposals": []}, stop_reason="guardrail_intervened"))
