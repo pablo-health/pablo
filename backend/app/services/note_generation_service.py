@@ -62,6 +62,8 @@ from ..notes.dictated_numbers import (
 from ..notes.practice_types import PromptBlocks, render_system_prompt, render_user_prompt
 from ..notes.prompts.soap import SOAP_SYSTEM_PROMPT
 from ..notes.section_calls import (
+    BACKGROUND,
+    CLINICAL_HISTORY,
     HPI,
     PSYCHOTHERAPY,
     RISK_MSE,
@@ -79,7 +81,7 @@ from ..notes.visit_times import (
     dictated_time_text,
 )
 from ..settings import get_settings
-from . import hpi_section_call, psychotherapy_section_call, risk_section_call
+from . import history_section_call, hpi_section_call, psychotherapy_section_call, risk_section_call
 from .ai_features import AIFeature
 from .chart_field_extraction import SCHEMA_TITLE, extract_statements
 from .hedged_structured_llm_gateway import generation_gateway
@@ -434,7 +436,8 @@ class RegistryNoteGenerationService(NoteGenerationService):
         and left out of the model's request; what the visit said about them comes
         from a small extraction call that runs beside the draft. The history of
         present illness, the risk, mental status and measures sections, and the
-        psychotherapy block are each drafted by a call of their own beside it too
+        related history and background sections, and the psychotherapy block are
+        each drafted by a call of their own beside it too
         (:mod:`app.notes.section_calls`), and are left out of the main request.
         The psychotherapy block's call runs only when the visit had therapy
         (:meth:`_start_psychotherapy`).
@@ -1263,6 +1266,12 @@ HPI_SECTION_FAILED_EVENT = "hpi_section_failed"
 PSYCHOTHERAPY_SECTION_FAILED_EVENT = "psychotherapy_section_failed"
 """Logged when the psychotherapy call fails, the same way."""
 
+CLINICAL_HISTORY_SECTION_FAILED_EVENT = "clinical_history_section_failed"
+"""Logged when the clinical-history call fails, the same way."""
+
+BACKGROUND_SECTION_FAILED_EVENT = "background_section_failed"
+"""Logged when the background-history call fails, the same way."""
+
 
 @dataclass(frozen=True)
 class SectionDraft:
@@ -1277,6 +1286,22 @@ class SectionDraft:
 
 
 SECTION_DRAFTS: Mapping[str, SectionDraft] = {
+    CLINICAL_HISTORY: SectionDraft(
+        history_section_call.CLINICAL_HISTORY_SCHEMA_TITLE,
+        functools.partial(
+            history_section_call.draft_sections,
+            title=history_section_call.CLINICAL_HISTORY_SCHEMA_TITLE,
+        ),
+        CLINICAL_HISTORY_SECTION_FAILED_EVENT,
+    ),
+    BACKGROUND: SectionDraft(
+        history_section_call.BACKGROUND_SCHEMA_TITLE,
+        functools.partial(
+            history_section_call.draft_sections,
+            title=history_section_call.BACKGROUND_SCHEMA_TITLE,
+        ),
+        BACKGROUND_SECTION_FAILED_EVENT,
+    ),
     HPI: SectionDraft(
         hpi_section_call.SCHEMA_TITLE, hpi_section_call.draft_sections, HPI_SECTION_FAILED_EVENT
     ),

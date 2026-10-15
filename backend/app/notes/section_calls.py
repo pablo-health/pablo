@@ -10,12 +10,16 @@ quoted live in that call alone. The history of present illness is drafted by
 another (:mod:`app.services.hpi_section_call`): the follow-up's ``subjective``
 section (chief complaint, the symptom domains, course, stressors, functioning,
 adherence and side effects) and the evaluation's ``chief_complaint``, ``hpi``
-and ``psychiatric_ros``. The psychotherapy block (``psychotherapy``, in both)
-is drafted by a third (:mod:`app.services.psychotherapy_section_call`), all but
-its time, which code writes from what the clinician dictated or the labelled
-turns. Every field of a routed section goes with it, a field a practice added
-to a based type included; the main draft's schema and prompt no longer carry
-them.
+and ``psychiatric_ros``. Related initial-evaluation history is divided between
+clinical history (substance use, psychiatric history and trauma) and background
+(social, medical and family history and outside providers); medications remain
+in the chart-aware main draft; both
+use :mod:`app.services.history_section_call`. The psychotherapy block
+(``psychotherapy``, in both) is drafted by another call
+(:mod:`app.services.psychotherapy_section_call`), all but its time, which code
+writes from what the clinician dictated or the labelled turns. Every field of
+a routed section goes with it, a field a practice added to a based type included;
+the main draft's schema and prompt no longer carry them.
 
 Only a type written as a spec is routed (the prescriber templates, a type based
 on one, a practice's own): the formats written in code keep one call.
@@ -40,6 +44,12 @@ HPI = "hpi"
 PSYCHOTHERAPY = "psychotherapy"
 """The call drafting the psychotherapy block, when the visit had therapy."""
 
+CLINICAL_HISTORY = "clinical_history"
+"""The call drafting substance use, psychiatric history and trauma history."""
+
+BACKGROUND = "background"
+"""The call drafting social, medical and family context and care relationships."""
+
 SECTION_CALLS: Mapping[str, str] = {
     "risk": RISK_MSE,
     "mse": RISK_MSE,
@@ -49,6 +59,13 @@ SECTION_CALLS: Mapping[str, str] = {
     "hpi": HPI,
     "psychiatric_ros": HPI,
     "psychotherapy": PSYCHOTHERAPY,
+    "substance_use": CLINICAL_HISTORY,
+    "psychiatric_history": CLINICAL_HISTORY,
+    "trauma_history": CLINICAL_HISTORY,
+    "social_history": BACKGROUND,
+    "medical_history": BACKGROUND,
+    "family_history": BACKGROUND,
+    "other_providers": BACKGROUND,
 }
 """Section key to the call that drafts it."""
 

@@ -35,6 +35,10 @@ from app.notes.section_calls import (
 from app.notes.spec_templates import TEMPLATES_DIR
 from app.services import note_generation_service
 from app.services.chart_field_extraction import SCHEMA_TITLE as EXTRACTION_TITLE
+from app.services.history_section_call import (
+    BACKGROUND_SCHEMA_TITLE,
+    CLINICAL_HISTORY_SCHEMA_TITLE,
+)
 from app.services.hpi_section_call import (
     NOT_DISCUSSED,
     NOT_STATED,
@@ -320,7 +324,13 @@ def test_the_schema_asks_for_the_chief_complaints_quotes_apart_and_plain_text_el
 # Through the generation service
 # ---------------------------------------------------------------------------
 
-SIDE_TITLES = (SCHEMA_TITLE, RISK_TITLE, EXTRACTION_TITLE)
+SIDE_TITLES = (
+    SCHEMA_TITLE,
+    RISK_TITLE,
+    EXTRACTION_TITLE,
+    CLINICAL_HISTORY_SCHEMA_TITLE,
+    BACKGROUND_SCHEMA_TITLE,
+)
 
 
 def _shape(schema: dict[str, Any]) -> Any:
@@ -458,7 +468,9 @@ def test_the_history_call_drafts_its_fields_into_the_note_with_the_quote_checked
     assert content["subjective"]["mania"] == NOT_DISCUSSED
     assert content["assessment"]["formulation"] == "Drafted by the model."
     assert {c["response_schema"].get("title") for c in gateway.calls} == {
-        *SIDE_TITLES,
+        SCHEMA_TITLE,
+        RISK_TITLE,
+        EXTRACTION_TITLE,
         None,
     }
 

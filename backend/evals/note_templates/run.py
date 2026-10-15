@@ -54,7 +54,9 @@ def draft(case: TemplateCase, model: str | None) -> GeneratedNote:
     patient = Patient(id="preview", first_name="", last_name="", created_at=now, updated_at=now)
     # One model alone, with no fallback behind it, so two providers can be
     # compared on the same cases.
-    direct = model is not None and model.startswith(("anthropic-api:", "anthropic-api-auto:"))
+    direct = model is not None and model.startswith(
+        ("anthropic-api:", "anthropic-api-auto:", "anthropic-api-strict:")
+    )
     gateway = (
         direct_anthropic_gateway()
         if direct
@@ -127,7 +129,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{case.name}  ({case.template} / {case.sample})")
         return 0
     on_vertex = not (args.model or "").startswith(
-        ("bedrock:", "anthropic-api:", "anthropic-api-auto:")
+        ("bedrock:", "anthropic-api:", "anthropic-api-auto:", "anthropic-api-strict:")
     )
     if on_vertex and not os.environ.get("GOOGLE_CLOUD_PROJECT"):
         print("Set GOOGLE_CLOUD_PROJECT to a project with Vertex access.", file=sys.stderr)

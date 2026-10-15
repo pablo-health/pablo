@@ -355,9 +355,11 @@ class TestGeminiAttemptTimeout:
         gw._client = type("_Client", (), {"models": models})()
         return gw, models
 
-    def _complete(self, gw: GeminiStructuredLLMGateway, **extra: Any) -> StructuredCompletion:
+    def _complete(
+        self, gw: GeminiStructuredLLMGateway, *, model: str = "gemini-3.5-flash", **extra: Any
+    ) -> StructuredCompletion:
         return gw.complete_structured(
-            model="gemini-3.5-flash",
+            model=model,
             system_prompt="s",
             user_prompt="u",
             response_schema={"type": "object", "properties": {"ok": {"type": "boolean"}}},
@@ -386,6 +388,26 @@ class TestGeminiAttemptTimeout:
         gw, models = self._gateway(stalls=0)
         self._complete(gw)
         assert models.configs[0].automatic_function_calling.disable is True
+
+    def test_argon_uses_thinking_level_instead_of_budget(self) -> None:
+        gw, models = self._gateway(stalls=0)
+        self._complete(gw, model="gemini-4-argon", thinking_budget=0)
+        thinking = models.configs[0].thinking_config
+        assert thinking.thinking_level == "LOW"
+
+    def test_gemini_three_uses_thinking_level_for_zero_budget(self) -> None:
+        gw, models = self._gateway(stalls=0)
+        self._complete(gw, model="gemini-3.1-pro-preview", thinking_budget=0)
+        thinking = models.configs[0].thinking_config
+        assert thinking.thinking_level == "MINIMAL"
+        assert thinking.thinking_budget is None
+
+    def test_gemini_three_maps_positive_budget_to_level(self) -> None:
+        gw, models = self._gateway(stalls=0)
+        self._complete(gw, model="gemini-3.5-flash", thinking_budget=8192)
+        thinking = models.configs[0].thinking_config
+        assert thinking.thinking_level == "MEDIUM"
+        assert thinking.thinking_budget is None
 
     def test_a_stalled_attempt_is_retried_once(self) -> None:
         gw, models = self._gateway(stalls=1)
