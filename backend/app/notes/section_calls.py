@@ -12,7 +12,8 @@ section (chief complaint, the symptom domains, course, stressors, functioning,
 adherence and side effects) and the evaluation's ``chief_complaint``, ``hpi``
 and ``psychiatric_ros``. Related initial-evaluation history is divided between
 clinical history (substance use, psychiatric history and trauma) and background
-(social, medical and family history, medications and outside providers); both
+(social, medical and family history and outside providers); medications remain
+in the chart-aware main draft; both
 use :mod:`app.services.history_section_call`. The psychotherapy block
 (``psychotherapy``, in both) is drafted by another call
 (:mod:`app.services.psychotherapy_section_call`), all but its time, which code
@@ -64,7 +65,6 @@ SECTION_CALLS: Mapping[str, str] = {
     "social_history": BACKGROUND,
     "medical_history": BACKGROUND,
     "family_history": BACKGROUND,
-    "medications": BACKGROUND,
     "other_providers": BACKGROUND,
 }
 """Section key to the call that drafts it."""
