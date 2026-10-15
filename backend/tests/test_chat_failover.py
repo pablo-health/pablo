@@ -23,6 +23,7 @@ from app.services.bedrock_chat_llm_gateway import BedrockChatLLMGateway, to_conv
 from app.services.bedrock_structured_llm_gateway import BedrockStructuredLLMGateway
 from app.services.chat_failover import FailoverChatLLMGateway, failover_chat_gateway
 from app.services.chat_llm_gateway import (
+    PATIENT_CONTEXT_DELIMITER,
     ChatLLMGateway,
     FakeChatLLMGateway,
     StreamEvent,
@@ -50,13 +51,15 @@ _ANSWER = [
 ]
 
 
-def _stream(gateway: ChatLLMGateway, model: str = "primary") -> list[StreamEvent]:
+def _stream(
+    gateway: ChatLLMGateway, model: str = "primary", system_prompt: str = "You help."
+) -> list[StreamEvent]:
     async def run() -> list[StreamEvent]:
         return [
             e
             async for e in gateway.stream_completion(
                 model=model,
-                system_prompt="You help.",
+                system_prompt=system_prompt,
                 prior_turns=[],
                 new_user_text=SAID,
                 max_output_tokens=64,
@@ -253,6 +256,23 @@ class TestBedrockChat:
         assert client.requests[0]["system"] == [
             {"text": "You help."},
             {"cachePoint": {"type": "default"}},
+        ]
+
+    def test_patient_context_follows_the_cache_point(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """One patient's chart is sent after the checkpoint, never written to the cache."""
+        _no_db_guard(monkeypatch)
+        gateway, client = _bedrock([{"messageStop": {"stopReason": "end_turn"}}])
+
+        _stream(
+            gateway,
+            "bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            system_prompt="You help." + PATIENT_CONTEXT_DELIMITER + "Jane Roe, 44, ...",
+        )
+
+        assert client.requests[0]["system"] == [
+            {"text": "You help."},
+            {"cachePoint": {"type": "default"}},
+            {"text": PATIENT_CONTEXT_DELIMITER + "Jane Roe, 44, ..."},
         ]
 
     def test_a_throttled_request_is_a_transient_error(

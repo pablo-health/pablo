@@ -44,7 +44,7 @@ from .chat_context_bundler import (
     default_source_selection,
 )
 from .chat_failover import failover_chat_gateway
-from .chat_llm_gateway import StreamEvent, UserAssistantTurn
+from .chat_llm_gateway import PATIENT_CONTEXT_DELIMITER, StreamEvent, UserAssistantTurn
 from .llm_telemetry import RetrievedDocumentRef, retrieval_span
 
 if TYPE_CHECKING:
@@ -851,7 +851,7 @@ def _compose_system_prompt(
     Regression-tested by the chat-hallu-005 case in
     ``backend/evals/datasets/chat.yaml``.
     """
-    parts = [caller_system_prompt.strip(), "\n\n--- PATIENT CONTEXT ---\n"]
+    parts = [caller_system_prompt.strip(), PATIENT_CONTEXT_DELIMITER]
     parts.append(context_text if context_text else _EMPTY_CHART_MARKER)
     return "".join(parts)
 
