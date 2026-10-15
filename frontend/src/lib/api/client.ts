@@ -333,6 +333,21 @@ export function buildApiUrl(endpoint: string): string {
 }
 
 /**
+ * The `X-Client-Build` header naming the commit this bundle was built from, or
+ * nothing when the build did not record one (a local `next dev`, a build made
+ * outside CI). It lets a failed request be matched to the build the person was
+ * actually running. The API never requires it.
+ *
+ * Read on each call rather than once at import: Next inlines the literal
+ * `process.env.NEXT_PUBLIC_…` reference at build time either way, and reading it
+ * late is what lets a test set it.
+ */
+function clientBuildHeader(): Record<string, string> {
+  const build = process.env.NEXT_PUBLIC_CLIENT_BUILD
+  return build ? { "X-Client-Build": build } : {}
+}
+
+/**
  * Read the backend error ``code`` from a non-OK JSON response *without*
  * consuming its body — clones first so the caller can still read the
  * full error payload afterward. Returns null for non-JSON or unparseable
@@ -369,6 +384,7 @@ export async function apiClient<T>(
       ...(fetchOptions.body instanceof FormData
         ? {}
         : { "Content-Type": "application/json" }),
+      ...clientBuildHeader(),
       ...(fetchOptions.headers as Record<string, string>),
       ...(await getAuthHeader(token, forceRefresh)),
     }

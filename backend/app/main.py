@@ -257,6 +257,23 @@ app.add_middleware(SecurityHeadersMiddleware, settings=settings)
 app.add_middleware(HTTPSEnforcementMiddleware, settings=settings)
 
 # CORS configuration
+# Request headers a cross-origin browser may send. The X-Client-* headers
+# describe the client (its build, app, device, browser and version) and are
+# optional: a client that sends none of them is served the same way. They are
+# listed so a deployment whose frontend and API sit on different origins does
+# not start failing preflight when a newer client begins sending one.
+CORS_ALLOW_HEADERS = [
+    "Authorization",
+    "Content-Type",
+    "X-Tenant-ID",
+    "X-Client-Version",
+    "X-Client-Platform",
+    "X-Client-Build",
+    "X-Client-App",
+    "X-Client-Device",
+    "X-Client-Browser",
+]
+
 # Parse CORS origins (comma-separated string to list)
 cors_origins = [origin.strip() for origin in settings.cors_origins.split(",")]
 app.add_middleware(
@@ -264,13 +281,7 @@ app.add_middleware(
     allow_origins=cors_origins,
     allow_credentials=settings.cors_allow_credentials,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=[
-        "Authorization",
-        "Content-Type",
-        "X-Tenant-ID",
-        "X-Client-Version",
-        "X-Client-Platform",
-    ],
+    allow_headers=CORS_ALLOW_HEADERS,
     # A download saves under the name the route sends; a cross-origin page
     # cannot read that header unless it is listed here.
     expose_headers=["Content-Disposition"],
