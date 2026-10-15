@@ -112,6 +112,10 @@ class RequestLogIdentity:
     # decide anything; it lets a burst of 401s before a re-sign-in be read
     # as one person's session instead of an anonymous one.
     claimed_user_id: str | None = None
+    # One sign-in, hashed (see auth.idle_session.session_log_key); the
+    # claimed_ variant comes from an expired token, like claimed_user_id.
+    auth_session: str | None = None
+    claimed_auth_session: str | None = None
     auth_failure: str | None = None
     error_code: str | None = None
     error_fields: tuple[str, ...] | None = None
@@ -120,6 +124,8 @@ class RequestLogIdentity:
     def outcome_fields(self) -> dict[str, object]:
         """The outcome fields that were set, keyed as the access line names them."""
         fields: dict[str, object] = {
+            "auth_session": self.auth_session,
+            "claimed_auth_session": self.claimed_auth_session,
             "claimed_user_id": self.claimed_user_id,
             "auth_failure": self.auth_failure,
             "error_code": self.error_code,
@@ -162,6 +168,15 @@ def bind_log_claimed_user_id(user_id: str) -> None:
     """Note who an expired token claimed to be, for this request's access line."""
     if (identity := _request_log_identity_var.get()) is not None:
         identity.claimed_user_id = user_id
+
+
+def bind_log_auth_session(key: str, *, claimed: bool = False) -> None:
+    """Group this request's access line with the rest of one sign-in."""
+    if (identity := _request_log_identity_var.get()) is not None:
+        if claimed:
+            identity.claimed_auth_session = key
+        else:
+            identity.auth_session = key
 
 
 def record_log_outcome(
