@@ -276,7 +276,9 @@ class TestCompanionDeviceEnrollment:
 
         assert resp.status_code == 200
         assert resp.json()["enrollment"] is None
-        mock_get_repo.assert_not_called()
+        # No enrollment block, so nothing is created: no identity row, no
+        # device. (The sign-in audit does a read-only user lookup.)
+        mock_get_repo.return_value.resolve_or_create.assert_not_called()
         mock_get_svc.assert_not_called()
 
     def test_enrollment_with_invalid_jwk_does_not_break_exchange(self, client: TestClient) -> None:

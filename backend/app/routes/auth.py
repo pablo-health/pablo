@@ -23,15 +23,20 @@ from ..auth.firebase_init import initialize_firebase_app
 from ..auth.providers import second_factor_satisfied
 from ..auth.route_security import truly_public
 from ..auth.service import get_session_peek_claims
+from ..db import arm_current_user_id, get_db_session, set_tenant_schema
+from ..logging_config import bind_log_user_id
+from ..models.audit import AuditAction
 from ..models.companion_device import CompanionEnrollment
 from ..rate_limit import require_rate_limit
 from ..repositories import get_identity_repository
+from ..services import AuditService, get_audit_service
 from ..services.auth_code_store import create_auth_code, exchange_auth_code
 from ..services.companion_device_service import (
     DeviceRevokedError,
     InvalidDeviceJWKError,
     get_companion_device_service,
 )
+from ..services.session_generation_worker import resolve_tenant_schema_for_user
 from ..settings import get_settings
 from ..version_check import check_client_version
 
@@ -147,6 +152,8 @@ def create_native_code(
 @router.post("/native/exchange", response_model=ExchangeAuthCodeResponse)
 def exchange_native_code(
     request: ExchangeAuthCodeRequest,
+    http_request: Request,
+    audit: AuditService = Depends(get_audit_service),
     _: None = Depends(require_rate_limit),
     _public: None = Depends(truly_public),
 ) -> ExchangeAuthCodeResponse:
@@ -171,6 +178,35 @@ def exchange_native_code(
     enrollment: EnrollmentStatus | None = None
     if request.enrollment is not None:
         enrollment = _enroll_companion_device(entry.firebase_uid, request.enrollment)
+
+    # The recording app was opened and signed in: record it in the user's
+    # own trail, and the device enrollment with it. Best-effort — a sign-in
+    # must not be refused because the audit store hiccuped.
+    user_id = _arm_audit_trail_for(entry.firebase_uid)
+    if user_id is not None:
+        try:
+            audit.log_account_security_event(
+                AuditAction.COMPANION_SIGNED_IN,
+                user_id,
+                http_request,
+                changes={
+                    "enrollment": enrollment or "not_requested",
+                    "platform": request.enrollment.platform if request.enrollment else None,
+                },
+            )
+            if request.enrollment is not None and enrollment == "enrolled":
+                audit.log_account_security_event(
+                    AuditAction.COMPANION_DEVICE_ENROLLED,
+                    user_id,
+                    http_request,
+                    changes={
+                        "install_id": request.enrollment.install_id,
+                        "platform": request.enrollment.platform,
+                        "key_storage": request.enrollment.key_storage,
+                    },
+                )
+        except Exception:
+            logger.warning("companion_sign_in_audit_failed user_id=%s", user_id, exc_info=True)
 
     return ExchangeAuthCodeResponse(
         id_token=entry.id_token,
@@ -233,6 +269,36 @@ def touch_session(
     """
     idle_session.check_and_touch(claims)
     return _session_status(idle_session.peek(claims))
+
+
+def _arm_audit_trail_for(firebase_uid: str | None) -> str | None:
+    """Point this request's session at the user's own practice, for an audit write.
+
+    Same shape as the passkey sign-in record: the route is public, so the
+    request sits on the default schema until the user's practice is resolved
+    and the session re-armed. Returns the internal user id, or ``None`` when
+    there is no trail to write to (an unknown account, or one with no
+    practice, as on a self-hosted install with no tenant). Never raises.
+    """
+    if firebase_uid is None:
+        return None
+    try:
+        found = get_identity_repository().get_user_id("firebase", firebase_uid)
+        if found is None:
+            return None
+        user_id = str(found)
+        bind_log_user_id(user_id)
+        schema = resolve_tenant_schema_for_user(user_id)
+        if schema is None:
+            logger.info("companion_sign_in_no_tenant user_id=%s", user_id)
+            return None
+        session = get_db_session()
+        set_tenant_schema(session, schema)
+        arm_current_user_id(session, user_id)
+    except Exception:
+        logger.warning("companion_sign_in_audit_arm_failed", exc_info=True)
+        return None
+    return user_id
 
 
 def _enroll_companion_device(
