@@ -635,6 +635,52 @@ def test_a_history_field_keeps_the_charts_text_and_adds_what_the_visit_changed(
     assert social["supports"] == "Sister nearby."
 
 
+CHART_FED_HINT = "From the chart; write it exactly as given, or 'Not recorded'"
+
+
+@pytest.mark.parametrize(
+    ("history", "expected"),
+    [
+        ((), "Not recorded"),
+        (
+            (ChartHistoryField("work_school", "Works at the library.", date(2026, 7, 14)),),
+            "Works at the library.",
+        ),
+    ],
+)
+def test_a_practice_types_chart_fed_history_field_reads_the_chart(
+    stand_in: list[str], history: tuple[ChartHistoryField, ...], expected: str
+) -> None:
+    """A social history field the practice feeds from the chart by its instructions is
+    drafted by the background call, which must be handed the chart to print it."""
+    spec = PracticeNoteTypeSpec.model_validate(
+        {
+            "label": "Follow-up",
+            "sections": [
+                {
+                    "key": "social_history",
+                    "label": "Social history",
+                    "fields": [
+                        {"key": "work_school", "label": "Work or school", "ai_hint": CHART_FED_HINT}
+                    ],
+                }
+            ],
+        }
+    )
+    definition = to_definition("custom.follow_up", 1, spec)
+
+    generated = _service().generate_note(
+        definition.key,
+        TRANSCRIPT,
+        PATIENT,
+        NOW,
+        definition=definition,
+        chart=ChartContext(history=history),
+    )
+
+    assert generated.content["social_history"]["work_school"] == expected
+
+
 @pytest.mark.parametrize(
     "line",
     [
