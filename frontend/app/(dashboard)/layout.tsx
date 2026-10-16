@@ -101,6 +101,12 @@ export default async function DashboardLayout({
             : "/login?reason=session_expired",
         )
       }
+      // Same loop, different cause: the sign-in is valid but its email
+      // already belongs to another account. Retrying cannot fix it, so land
+      // on /login with the reason the login screen explains.
+      if (error instanceof ApiError && error.code === "ACCOUNT_CONFLICT") {
+        redirect("/login?reason=account_conflict")
+      }
       redirect("/login")
     }
 

@@ -37,6 +37,12 @@ class PostgresUserRepository(UserRepository):
             return None
         return _row_to_user(row)
 
+    def get_by_email(self, email: str) -> User | None:
+        row = self._session.execute(
+            select(PlatformUserRow).where(PlatformUserRow.email == email)
+        ).scalar_one_or_none()
+        return _row_to_user(row) if row is not None else None
+
     def update(self, user: User) -> User:
         row = self._session.get(PlatformUserRow, user.id)
         if row is None:

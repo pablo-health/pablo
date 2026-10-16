@@ -63,15 +63,18 @@ export function FirebaseLoginScreen() {
   const [forcedLogoutReason] = useState(() => getUrlParam("reason"))
   const cameFromForcedLogout =
     forcedLogoutReason === "idle_timeout" ||
-    forcedLogoutReason === "session_expired"
+    forcedLogoutReason === "session_expired" ||
+    forcedLogoutReason === "account_conflict"
 
   // Message surfaced in the credential block's error slot. Seeded with the
   // forced-logout notice, which is knowable at first render.
   const [notice, setNotice] = useState(() => {
     if (!cameFromForcedLogout) return ""
-    return forcedLogoutReason === "idle_timeout"
-      ? "You were signed out due to inactivity."
-      : "Your session expired. Please sign in again."
+    if (forcedLogoutReason === "idle_timeout") return "You were signed out due to inactivity."
+    if (forcedLogoutReason === "account_conflict") {
+      return "This email is already linked to a different sign-in. Contact your administrator to restore access."
+    }
+    return "Your session expired. Please sign in again."
   })
 
   // Clean up after a forced logout: strip the reason param and clear the

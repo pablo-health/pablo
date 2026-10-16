@@ -28,7 +28,7 @@ vi.mock("@/components/auth", () => ({
   AuthCard: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   AuthFooter: () => null,
   AuthHeader: () => null,
-  CredentialBlock: () => null,
+  CredentialBlock: ({ notice }: { notice?: string }) => <p>{notice}</p>,
 }))
 vi.mock("@/components/theme/ThemeSwitcher", () => ({ ThemeSwitcher: () => null }))
 
@@ -61,5 +61,19 @@ describe("FirebaseLoginScreen forced-logout arrival", () => {
     expect(clearStaleSession).toHaveBeenCalledOnce()
     expect(clearStaleSession).toHaveBeenCalledWith(FIREBASE_AUTH)
     expect(window.location.pathname + window.location.search).toBe("/login")
+  })
+
+  // The dashboard sends a sign-in whose email belongs to another account here.
+  // Without clearing the session, the still-valid sign-in bounces straight
+  // back to the dashboard and loops.
+  it("explains an account conflict and clears the session", () => {
+    window.history.replaceState({}, "", "/login?reason=account_conflict")
+    getFirebaseAuth.mockReturnValue(FIREBASE_AUTH)
+    authState.loading = false
+
+    const { getByText } = render(<FirebaseLoginScreen />)
+
+    expect(getByText(/already linked to a different sign-in/)).toBeTruthy()
+    expect(clearStaleSession).toHaveBeenCalledWith(FIREBASE_AUTH)
   })
 })

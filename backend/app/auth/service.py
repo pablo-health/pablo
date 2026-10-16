@@ -912,6 +912,30 @@ def _resolve_user(
                 },
             )
 
+        # An identity with no user row whose email already belongs to a
+        # user is a different sign-in for that email — most often a
+        # provider account deleted and re-created, which mints a new uid.
+        # Refuse it before linking anything. Never attach the new identity
+        # to the existing user by email: that would hand the account to
+        # whoever holds the new identity.
+        if email and user_repo.get_by_email(email) is not None:
+            logger.warning(
+                "Refused sign-in: email already belongs to another user: uid=%s", subject_id
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": {
+                        "code": "ACCOUNT_CONFLICT",
+                        "message": (
+                            "This email is already linked to a different sign-in. "
+                            "Contact your administrator to restore access."
+                        ),
+                        "details": {},
+                    }
+                },
+            )
+
         # Allowlist passed — link the identity (or no-op if already linked
         # via the legacy backfill) so downstream queries see a stable
         # Pablo user_id.
