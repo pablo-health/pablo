@@ -18,6 +18,11 @@ class UserRepository(ABC):
         pass
 
     @abstractmethod
+    def get_by_email(self, email: str) -> User | None:
+        """Get the user whose stored email is exactly ``email``."""
+        pass
+
+    @abstractmethod
     def update(self, user: User) -> User:
         """Update an existing user."""
         pass
@@ -77,6 +82,9 @@ class InMemoryUserRepository(UserRepository):
 
     def get(self, user_id: str) -> User | None:
         return self._users.get(user_id)
+
+    def get_by_email(self, email: str) -> User | None:
+        return next((u for u in self._users.values() if u.email == email), None)
 
     def update(self, user: User) -> User:
         self._users[user.id] = user
