@@ -17,6 +17,7 @@ import { pabloNoteLines, pickNoteLine, type PabloNoteLine } from "../pabloNoteLi
 const extensions = vi.hoisted(() => ({
   append: [] as PabloNoteLine[],
   hide: [] as string[],
+  hideWhenOn: {} as Record<string, string>,
 }))
 const runtime = vi.hoisted(() => ({
   config: {
@@ -78,6 +79,7 @@ describe("Pablo note lines", () => {
     vi.useRealTimers()
     extensions.append = []
     extensions.hide = []
+    extensions.hideWhenOn = {}
     runtime.features = {}
     runtime.companion = false
     runtime.config = { publicBookingEnabled: false, googleCalendarEnabled: false, passkeysEnabled: false }
@@ -146,6 +148,24 @@ describe("Pablo note lines", () => {
     const shown = shownIds()
     expect(shown.has("appended")).toBe(true)
     expect(shown.has("drag-appointment")).toBe(false)
+  })
+
+  it("hides a base line only while the feature the slot names for it is on", () => {
+    vi.useFakeTimers()
+    extensions.hideWhenOn = { "drag-appointment": "calendar_v2" }
+
+    expect(shownIds().has("drag-appointment")).toBe(true)
+
+    runtime.features = { calendar_v2: true }
+    expect(shownIds().has("drag-appointment")).toBe(false)
+  })
+
+  it("answers a hiding feature from the same runtime toggle as a gate", () => {
+    vi.useFakeTimers()
+    extensions.hideWhenOn = { "review-sign": "companion" }
+    runtime.companion = true
+
+    expect(shownIds().has("review-sign")).toBe(false)
   })
 
   it("shows nothing when every line is gated off", () => {
