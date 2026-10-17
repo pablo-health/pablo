@@ -13,6 +13,7 @@ moves on. Nothing here waits on an archive being read.
 """
 
 import logging
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -22,26 +23,31 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from ..api_errors import BadRequestError, ConflictError, NotFoundError, UnprocessableEntityError
-from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
-from ..db import get_db_session, release_db_connection
+from ..auth.service import (
+    TenantContext,
+    get_tenant_context,
+    require_baa_acceptance,
+    require_cloud_tasks_invoker,
+)
+from ..db import arm_current_user_id, get_db_session, release_db_connection, set_tenant_schema
+from ..jobs.task_queue import enqueue
 from ..migration.apply import ArchiveApplier
-from ..migration.jobs import archive_base, run_apply, run_preview
+from ..migration.jobs import archive_base, archive_store, run_apply, run_preview
 from ..migration.ledger import (
     ArchiveError,
     archive_file,
-    archive_path,
-    delete_archive,
     get_run,
     list_runs,
     new_run,
-    store_archive,
     sweep_expired_archives,
 )
 from ..migration.preview import decisions_complete
 from ..migration.readers.simplepractice import SOURCE_SYSTEM
 from ..models import User
 from ..models.audit import ResourceType
+from ..repositories import UserRepository, get_user_repository
 from ..services import AuditService, get_audit_service
+from ..services.session_generation_worker import resolve_tenant_for_user
 from ..settings import get_settings
 from ..utcnow import utc_now
 
@@ -141,15 +147,143 @@ def _run_or_404(run_id: str) -> Any:
     return run
 
 
-async def _read_upload(file: UploadFile) -> bytes:
-    chunks: list[bytes] = []
+async def _spool_upload(file: UploadFile, into: Path) -> int:
+    """Write the upload to ``into`` a chunk at a time and return its size.
+
+    An export can be most of a gigabyte; it is never held in memory whole.
+    """
     total = 0
-    while chunk := await file.read(_READ_CHUNK):
-        total += len(chunk)
-        if total > MAX_UPLOAD_BYTES:
-            raise UnprocessableEntityError("That archive is too large to import.")
-        chunks.append(chunk)
-    return b"".join(chunks)
+    with into.open("wb") as out:
+        while chunk := await file.read(_READ_CHUNK):
+            total += len(chunk)
+            if total > MAX_UPLOAD_BYTES:
+                raise UnprocessableEntityError("That archive is too large to import.")
+            out.write(chunk)
+    return total
+
+
+# --------------------------------------------------------------- the two steps
+#
+# Preview and apply read every file in the export and can run for minutes, so
+# they run off the request: on Cloud Tasks where a queue is configured, as a
+# request background task in development or where there is none. Either way
+# the step takes only ids and finds its run through its own session, and the
+# archive comes from the store, which any instance can read.
+
+
+class ImportStepJob(BaseModel):
+    """A Cloud Tasks payload: which run to work on, as whom.
+
+    The tenant is resolved from ``user_id`` by the worker, never read from
+    the payload: the caller is the Cloud Tasks service account, and the
+    user's own tenant is the only one their run can be in.
+    """
+
+    user_id: str
+    run_id: str
+
+
+def _dispatch(
+    background: BackgroundTasks,
+    step: Literal["preview", "apply"],
+    ctx: TenantContext,
+    user_id: str,
+    run_id: str,
+) -> None:
+    settings = get_settings()
+    if settings.is_development:
+        if step == "preview":
+            background.add_task(run_preview, _schema(ctx), user_id, run_id)
+        else:
+            background.add_task(run_apply, _schema(ctx), user_id, run_id, ctx.practice_id)
+        return
+    enqueue(
+        settings.import_task_queue,
+        f"/api/internal/jobs/import-{step}",
+        ImportStepJob(user_id=user_id, run_id=run_id).model_dump(),
+        dedup_key=f"import-{step}-{run_id}",
+    )
+
+
+internal_jobs_router = APIRouter(tags=["migration"])
+
+
+def _run_step(
+    step: Literal["preview", "apply"], payload: ImportStepJob, user_repo: UserRepository
+) -> User | None:
+    """Scope the worker to the job's tenant and run the step; the owner comes
+    back for the route to audit against, ``None`` when there is no tenant.
+
+    Invoked only by Cloud Tasks (service-account OIDC, enforced by
+    ``require_cloud_tasks_invoker``). A ``user_id`` that resolves to no active
+    tenant is dropped as non-retryable; otherwise the step never raises and
+    always leaves the run in a state. A retry re-reads the archive (preview)
+    or finds nothing left to land (apply).
+    """
+    resolved = resolve_tenant_for_user(payload.user_id)
+    if resolved is None:
+        logger.warning("import-%s job: no active tenant for the user; dropping", step)
+        return None
+    practice_id, schema = resolved
+    if step == "preview":
+        run_preview(schema, payload.user_id, payload.run_id)
+    else:
+        run_apply(schema, payload.user_id, payload.run_id, practice_id)
+    # The step wrote through its own session; the audit entry goes through the
+    # request's, pointed at the same tenant and armed for the same user.
+    session = get_db_session()
+    set_tenant_schema(session, schema)
+    arm_current_user_id(session, payload.user_id)
+    owner = user_repo.get(payload.user_id)
+    if owner is None:
+        logger.warning("import-%s job: owner not found for audit on run %s", step, payload.run_id)
+    return owner
+
+
+@internal_jobs_router.post("/api/internal/jobs/import-preview", status_code=status.HTTP_200_OK)
+def import_preview_job(
+    payload: ImportStepJob,
+    http_request: Request,
+    _invoker: None = Depends(require_cloud_tasks_invoker),
+    user_repo: UserRepository = Depends(get_user_repository),
+    audit: AuditService = Depends(get_audit_service),
+) -> dict[str, str]:
+    """Worker: read the run's archive and store what it would become."""
+    owner = _run_step("preview", payload, user_repo)
+    if owner is None:
+        return {"status": "unknown_tenant"}
+    audit.log(
+        "import_preview_ran",
+        owner,
+        http_request,
+        resource_type=ResourceType.IMPORT_RUN,
+        resource_id=payload.run_id,
+        changes={"runner": "cloud_tasks"},
+    )
+    return {"status": "done"}
+
+
+@internal_jobs_router.post("/api/internal/jobs/import-apply", status_code=status.HTTP_200_OK)
+def import_apply_job(
+    payload: ImportStepJob,
+    http_request: Request,
+    _invoker: None = Depends(require_cloud_tasks_invoker),
+    user_repo: UserRepository = Depends(get_user_repository),
+    audit: AuditService = Depends(get_audit_service),
+) -> dict[str, str]:
+    """Worker: land the run with the decisions stored on it."""
+    owner = _run_step("apply", payload, user_repo)
+    if owner is None:
+        return {"status": "unknown_tenant"}
+    audit.log(
+        "import_apply_ran",
+        owner,
+        http_request,
+        resource_type=ResourceType.IMPORT_RUN,
+        resource_id=payload.run_id,
+        changes={"runner": "cloud_tasks"},
+    )
+    return {"status": "done"}
 
 
 @router.post("/runs", status_code=status.HTTP_202_ACCEPTED, response_model=ImportRunDetail)
@@ -169,14 +303,16 @@ async def start_import(
     It is used to unpack the archive and kept nowhere: not on the run, not in
     the audit trail, not in a log.
     """
-    data = await _read_upload(file)
-    base = archive_base()
+    store = archive_store()
     session = get_db_session()
-    sweep_expired_archives(session, base, _schema(ctx), utc_now())
-    try:
-        ref = store_archive(base, _schema(ctx), data, password or None)
-    except ArchiveError as exc:
-        raise BadRequestError(str(exc), code=exc.code) from exc
+    sweep_expired_archives(session, store, _schema(ctx), utc_now())
+    with tempfile.TemporaryDirectory(prefix="pablo-import-upload-") as spool:
+        upload = Path(spool) / "export.zip"
+        size = await _spool_upload(file, upload)
+        try:
+            ref = store.put(_schema(ctx), upload, password or None)
+        except ArchiveError as exc:
+            raise BadRequestError(str(exc), code=exc.code) from exc
     run = new_run(
         session, source_system=SOURCE_SYSTEM, scope=scope, started_by=user.id, archive_ref=ref
     )
@@ -186,12 +322,12 @@ async def start_import(
         request,
         resource_type=ResourceType.IMPORT_RUN,
         resource_id=run.id,
-        changes={"scope": scope, "bytes": len(data)},
+        changes={"scope": scope, "bytes": size},
     )
     detail = _detail(run)
-    # Commit before the background step opens its own session to find the run.
+    # Commit before the step opens its own session to find the run.
     release_db_connection()
-    background.add_task(run_preview, _schema(ctx), user.id, run.id)
+    _dispatch(background, "preview", ctx, user.id, run.id)
     return detail
 
 
@@ -204,7 +340,7 @@ def list_imports(
 ) -> ImportRunList:
     """Import history, newest first."""
     session = get_db_session()
-    sweep_expired_archives(session, archive_base(), _schema(ctx), utc_now())
+    sweep_expired_archives(session, archive_store(), _schema(ctx), utc_now())
     runs = list_runs(session)
     audit.log(
         "import_history_viewed",
@@ -287,7 +423,7 @@ def apply_import(
     )
     detail = _detail(run)
     release_db_connection()
-    background.add_task(run_apply, _schema(ctx), user.id, run.id, ctx.practice_id)
+    _dispatch(background, "apply", ctx, user.id, run.id)
     return detail
 
 
@@ -340,7 +476,7 @@ def delete_import_archive(
 ) -> ImportRunDetail:
     """Delete the uploaded archive now rather than waiting for its expiry."""
     run = _run_or_404(run_id)
-    deleted = delete_archive(archive_base(), _schema(ctx), run.archive_ref)
+    deleted = archive_store().delete(_schema(ctx), run.archive_ref)
     run.archive_ref = None
     run.archive_expires_at = None
     audit.log(
@@ -365,7 +501,7 @@ def view_import_file(
 ) -> FileResponse:
     """Open one file from the uploaded archive, so a record can be told apart."""
     run = _run_or_404(run_id)
-    root = archive_path(archive_base(), _schema(ctx), run.archive_ref or "")
+    root = archive_store().path(_schema(ctx), run.archive_ref or "")
     if root is None:
         raise NotFoundError("The uploaded archive is no longer available.")
     known = {r["path"] for r in (run.preview or {}).get("records", [])}
