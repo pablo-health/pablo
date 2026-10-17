@@ -31,7 +31,6 @@ const mockChargeBalance = vi.fn()
 const mockFetchStatement = vi.fn()
 const mockCreateWriteOff = vi.fn()
 const mockRecordPayment = vi.fn()
-const mockFeature = vi.fn((_name: string) => false)
 
 vi.mock("@/hooks/usePayments", () => ({
   usePatientBalance: (...args: unknown[]) => mockUsePatientBalance(...args),
@@ -49,10 +48,6 @@ vi.mock("@/hooks/usePayments", () => ({
     mutate: mockRecordPayment,
     isPending: false,
   }),
-}))
-
-vi.mock("@/lib/featureGates", () => ({
-  useFeature: (name: string) => mockFeature(name),
 }))
 
 // The superbill dialog reads the client's diagnosis setting off the chart.
@@ -143,7 +138,6 @@ function setup({
 describe("BalanceTab", () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockFeature.mockReturnValue(false)
   })
 
   describe("the total", () => {
@@ -358,14 +352,7 @@ describe("BalanceTab", () => {
   })
 
   describe("the superbill", () => {
-    it("is not offered where the deployment has not turned superbills on", () => {
-      setup()
-
-      expect(screen.queryByRole("button", { name: /Superbill/ })).not.toBeInTheDocument()
-    })
-
-    it("opens with the diagnosis left off when superbills are on", async () => {
-      mockFeature.mockImplementation((name: string) => name === "superbills")
+    it("opens with the diagnosis left off", async () => {
       setup()
 
       await userEvent.click(screen.getByRole("button", { name: /Superbill/ }))

@@ -41,7 +41,6 @@ vi.mock("@/lib/api/payments", async (importOriginal) => ({
   fetchPatientBalance: vi.fn(),
 }))
 vi.mock("@/lib/api/coverage")
-vi.mock("@/lib/featureGates", () => ({ useFeature: () => false }))
 
 const createWrapper = () => {
   const queryClient = new QueryClient({

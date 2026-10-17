@@ -304,7 +304,7 @@ class TestRefusal:
     def test_line_without_a_service_code_is_reported_not_dropped(self) -> None:
         findings = _refusal(claims=[claim(), _second_claim(lines=[_second_line(cpt="  ")])])
         assert [f.field for f in findings] == ["lines[1].cpt"]
-        assert "2026-09-08" in findings[0].message
+        assert "09/08/2026" in findings[0].message
 
     def test_line_whose_pointers_name_no_diagnosis_is_reported(self) -> None:
         findings = _refusal(claims=[claim(diagnosis_codes=[]), _second_claim()])
@@ -326,13 +326,35 @@ class TestRefusal:
             "lines[0].diagnosis_codes",
         ]
 
+    def test_a_practice_gap_says_where_in_settings_to_fill_it(self) -> None:
+        findings = _refusal(billing=billing_snapshot(npi=None), tax_id=None)
+        assert [f.message for f in findings] == [
+            "Add your NPI in Settings, under Practice identity.",
+            "Add your tax ID in Settings, under Practice identity.",
+        ]
+
+    def test_a_partial_address_is_one_gap_not_one_per_part(self) -> None:
+        findings = _refusal(billing=billing_snapshot(city=None, postal_code=None))
+        assert [(f.field, f.message) for f in findings] == [
+            (
+                "billing_provider.city",
+                "Add your practice's billing address in Settings, under Practice identity.",
+            ),
+        ]
+
+    def test_a_chart_gap_uses_the_practice_word_for_the_person(self) -> None:
+        findings = _refusal(patient=person(date_of_birth=None))
+        assert [f.message for f in findings] == [
+            "Add this client's date of birth to their chart.",
+        ]
+
     def test_a_visit_with_no_code_says_to_fix_the_appointment(self) -> None:
         findings = _refusal(
             claims=[], appointments=[_unclaimed(service_code=None)], rate_for=lambda _a: 1
         )
         assert [f.field for f in findings] == ["lines[0].cpt"]
         assert findings[0].message == (
-            "The service on 2026-09-03 has no service code. Add it to the appointment."
+            "The service on 09/03/2026 has no service code. Add it to the appointment."
         )
 
     def test_a_visit_with_no_fee_says_where_the_rate_is_set(self) -> None:

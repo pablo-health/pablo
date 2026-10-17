@@ -106,8 +106,7 @@ const baseLines: PabloNoteLine[] = [
   },
   {
     id: "superbills",
-    text: "A superbill for any date range is in Settings, under Superbills & rates.",
-    requiresFlag: "superbills",
+    text: "Download a superbill for any date range from a {person}’s Billing tab.",
   },
   {
     id: "passkeys",

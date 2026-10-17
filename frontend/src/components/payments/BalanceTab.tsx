@@ -30,7 +30,6 @@ import {
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
-import { useFeature } from "@/lib/featureGates"
 import { isPaymentsUnconfigured, fetchStatement, STATEMENT_FILENAME } from "@/lib/api/payments"
 import { formatCents } from "@/lib/money"
 import {
@@ -67,7 +66,6 @@ export function BalanceTab({ patientId }: BalanceTabProps) {
   const chargeBalance = useChargeBalance()
   const { readOnly } = useReadOnlyMode()
   const people = usePeopleTerm()
-  const superbillsOn = useFeature("superbills")
 
   const [result, setResult] = useState<ChargeResponse | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
@@ -155,12 +153,10 @@ export function BalanceTab({ patientId }: BalanceTabProps) {
             <FileText className="mr-2 h-4 w-4" />
             {downloading ? "Preparing..." : "Statement"}
           </Button>
-          {superbillsOn && (
-            <Button variant="outline" onClick={() => setSuperbillOpen(true)}>
-              <Receipt className="mr-2 h-4 w-4" />
-              Superbill
-            </Button>
-          )}
+          <Button variant="outline" onClick={() => setSuperbillOpen(true)}>
+            <Receipt className="mr-2 h-4 w-4" />
+            Superbill
+          </Button>
           {!readOnly && owed > 0 && (
             <Button variant="outline" onClick={() => setWriteOffOpen(true)}>
               <ReceiptText className="mr-2 h-4 w-4" />
@@ -234,13 +230,11 @@ export function BalanceTab({ patientId }: BalanceTabProps) {
           onOpenChange={setWriteOffOpen}
         />
       )}
-      {superbillsOn && (
-        <SuperbillDialog
-          patientId={patientId}
-          open={superbillOpen}
-          onOpenChange={setSuperbillOpen}
-        />
-      )}
+      <SuperbillDialog
+        patientId={patientId}
+        open={superbillOpen}
+        onOpenChange={setSuperbillOpen}
+      />
       {!readOnly && (
         <RecordPaymentDialog
           patientId={patientId}

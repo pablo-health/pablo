@@ -105,13 +105,13 @@ describe("SuperbillDialog", () => {
         {
           severity: "blocking",
           code: "missing_field",
-          message: "The service on 2026-04-15 has no service code. Add it to the appointment.",
+          message: "The service on 04/15/2026 has no service code. Add it to the appointment.",
           field: "lines[0].cpt",
         },
         {
           severity: "blocking",
           code: "missing_field",
-          message: "rendering_provider.npi is required.",
+          message: "Add your NPI in Settings, under Practice identity.",
           field: "rendering_provider.npi",
         },
       ]),
@@ -122,7 +122,7 @@ describe("SuperbillDialog", () => {
 
     const list = await screen.findByRole("list", { name: "What is missing" })
     expect(list).toHaveTextContent("has no service code")
-    expect(list).toHaveTextContent("rendering_provider.npi is required.")
+    expect(list).toHaveTextContent("Add your NPI in Settings, under Practice identity.")
     expect(mockOnOpenChange).not.toHaveBeenCalledWith(false)
   })
 
