@@ -250,8 +250,9 @@ class TestMultiTenantRun:
 
         def fake_review(
             practice_schema: str, window_hours: int, review_mode: str, gcs_bucket
-        ) -> None:
+        ) -> hipaa_log_review.TenantScan:
             calls.append(practice_schema)
+            return hipaa_log_review.TenantScan(total_entries=1, rows_hidden=False)
 
         with (
             patch.object(hipaa_log_review, "_assert_schema_flag_consistency", return_value=[]),
@@ -329,11 +330,14 @@ class TestMultiTenantRun:
         monkeypatch.delenv("REVIEW_WINDOW_HOURS", raising=False)
         calls: list[str] = []
 
-        def flaky(practice_schema: str, window_hours: int, review_mode: str, gcs_bucket) -> None:
+        def flaky(
+            practice_schema: str, window_hours: int, review_mode: str, gcs_bucket
+        ) -> hipaa_log_review.TenantScan:
             calls.append(practice_schema)
             if practice_schema == "practice_b":
                 msg = "synthetic failure"
                 raise RuntimeError(msg)
+            return hipaa_log_review.TenantScan(total_entries=1, rows_hidden=False)
 
         with (
             patch.object(hipaa_log_review, "_assert_schema_flag_consistency", return_value=[]),
@@ -429,3 +433,86 @@ class TestMultiTenantRun:
         assert "Overall severity: NONE" in written
         assert "cross-tenant" not in written.lower() or "foreign-actor" in written.lower()
         mock_notify.assert_not_called()
+
+
+def _clean_payload(total: int) -> dict:  # type: ignore[type-arg]
+    return {
+        "entries": [],
+        "user_aggregates": [],
+        "summary": {
+            "total_entries": total,
+            "entries_sent": 0,
+            "distinct_users": 1,
+            "distinct_patients": 1,
+            "needs_model_review": False,
+        },
+    }
+
+
+class TestBlindReview:
+    """A review that cannot see the audit rows must not read as a quiet day.
+
+    The probe itself runs against real Postgres roles in
+    tests_integration/database/test_hipaa_review_visibility_probe.py; these
+    pin the wiring around it.
+    """
+
+    def _run(self, monkeypatch, scans: dict[str, hipaa_log_review.TenantScan]) -> int:  # type: ignore[no-untyped-def]
+        monkeypatch.delenv("REVIEW_WINDOW_HOURS", raising=False)
+        with (
+            patch.object(hipaa_log_review, "_assert_schema_flag_consistency", return_value=[]),
+            patch.object(hipaa_log_review, "_list_practice_schemas", return_value=list(scans)),
+            patch.object(
+                hipaa_log_review,
+                "_review_tenant",
+                side_effect=lambda practice_schema, **_: scans[practice_schema],
+            ),
+        ):
+            return hipaa_log_review.run()
+
+    def test_hidden_rows_fail_the_run_and_name_the_schema(self, monkeypatch, caplog) -> None:  # type: ignore[no-untyped-def]
+        scans = {
+            "practice_a": hipaa_log_review.TenantScan(total_entries=0, rows_hidden=True),
+            "practice_b": hipaa_log_review.TenantScan(total_entries=3, rows_hidden=False),
+        }
+        with caplog.at_level(logging.INFO, logger="hipaa_log_review"):
+            exit_code = self._run(monkeypatch, scans)
+
+        assert exit_code == 1
+        blind = [r for r in caplog.records if r.getMessage().startswith("hipaa_log_review_blind")]
+        assert len(blind) == 1
+        assert blind[0].levelno == logging.ERROR
+        assert "hidden=1" in blind[0].getMessage()
+        assert "schemas=practice_a" in blind[0].getMessage()
+
+    def test_every_tenant_quiet_is_not_blind(self, monkeypatch, caplog) -> None:  # type: ignore[no-untyped-def]
+        scans = {
+            "practice_a": hipaa_log_review.TenantScan(total_entries=0, rows_hidden=False),
+            "practice_b": hipaa_log_review.TenantScan(total_entries=0, rows_hidden=False),
+        }
+        with caplog.at_level(logging.INFO, logger="hipaa_log_review"):
+            exit_code = self._run(monkeypatch, scans)
+
+        assert exit_code == 0
+        messages = [r.getMessage() for r in caplog.records]
+        assert "hipaa_log_review_run_done tenants=2 zero_window=2 hidden=0" in messages
+        assert not any(m.startswith("hipaa_log_review_blind") for m in messages)
+        assert not any(r.levelno >= logging.ERROR for r in caplog.records)
+
+    @pytest.mark.parametrize(("total", "probed"), [(0, True), (5, False)])
+    def test_only_an_empty_window_is_probed(self, total: int, probed: bool) -> None:
+        with (
+            patch.object(
+                hipaa_log_review, "_load_review_payload", return_value=_clean_payload(total)
+            ),
+            patch.object(hipaa_log_review, "_write_report", return_value="stdout://x"),
+            patch.object(hipaa_log_review, "_audit_rows_hidden", return_value=True) as probe,
+        ):
+            scan = hipaa_log_review._review_tenant(
+                practice_schema="practice_q",
+                window_hours=24,
+                review_mode="daily",
+                gcs_bucket=None,
+            )
+        assert probe.called is probed
+        assert scan == hipaa_log_review.TenantScan(total_entries=total, rows_hidden=probed)
