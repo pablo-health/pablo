@@ -23,11 +23,14 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
+from app.chart_proposals.dependencies import get_chart_proposal_repository
+from app.chart_proposals.models import ChartProposal, Decision
 from app.main import app
 from app.models import Patient, SessionStatus
 from app.models.audit import AuditAction
 from app.models.note import Note
 from app.models.session import TherapySession, Transcript
+from app.repositories import InMemoryChartProposalRepository
 from app.routes.scheduling import get_scheduling_service
 from app.scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
@@ -83,9 +86,30 @@ def _session(user_id: str, patient_id: str, n: int, status: SessionStatus) -> Th
     )
 
 
+def _proposal(patient_id: str, field_key: str, decision: Decision = "pending") -> ChartProposal:
+    return ChartProposal(
+        id=str(uuid.uuid4()),
+        note_id=str(uuid.uuid4()),
+        patient_id=patient_id,
+        field_key=field_key,
+        item_key="",
+        proposed_text="Works at the library.",
+        what_changed="New job",
+        evidence=(),
+        origin="note",
+        created_at=datetime.now(UTC),
+        decision=decision,
+    )
+
+
 @pytest.fixture
 def audit_spy() -> MagicMock:
     return MagicMock(spec=AuditService)
+
+
+@pytest.fixture
+def chart_proposals() -> InMemoryChartProposalRepository:
+    return InMemoryChartProposalRepository()
 
 
 @pytest.fixture
@@ -96,6 +120,7 @@ def seeded_client(
     mock_notes_repo: InMemoryNotesRepository,
     mock_user_id: str,
     audit_spy: MagicMock,
+    chart_proposals: InMemoryChartProposalRepository,
 ):
     """The shared client plus a seeded calendar + audit spy for the dashboard."""
     # Two patients: P1 has today's appointment, P2 has none. P2 must never be
@@ -153,6 +178,7 @@ def seeded_client(
 
     app.dependency_overrides[get_scheduling_service] = lambda: SchedulingService(appt_repo)
     app.dependency_overrides[get_audit_service] = lambda: audit_spy
+    app.dependency_overrides[get_chart_proposal_repository] = lambda: chart_proposals
     # The `client` fixture clears all overrides (including these) on teardown.
     return client
 
@@ -257,3 +283,49 @@ def test_an_imported_note_is_never_counted_as_awaiting_signature(
     assert body["awaiting_review_total"] == 7
     assert body["notes_pending_count"] == 3
     assert imported.id not in {row["session_id"] for row in body["awaiting_review"]}
+
+
+def test_chart_updates_waiting_are_counted_for_todays_clients_and_in_total(
+    seeded_client, chart_proposals: InMemoryChartProposalRepository, mock_user_id: str
+) -> None:
+    """Today's client carries its pending count; the total counts clients, not updates."""
+    elsewhere = "patient-of-another-clinician"
+    chart_proposals.withhold(elsewhere, mock_user_id)
+    chart_proposals.add(
+        [
+            _proposal(P1, "work_school"),
+            _proposal(P1, "supports"),
+            # Decided already: no longer waiting.
+            _proposal(P1, "living_situation", decision="accepted"),
+            # P2 has no appointment today, so only the total sees it.
+            _proposal(P2, "work_school"),
+            # No grant on this one: never counted.
+            _proposal(elsewhere, "work_school"),
+        ]
+    )
+
+    body = _get_summary(seeded_client)
+
+    assert body["pending_chart_updates_by_patient"] == {P1: 2}
+    assert body["pending_chart_updates_total"] == 2
+
+
+def test_no_chart_updates_waiting_leaves_the_rows_bare(seeded_client) -> None:
+    body = _get_summary(seeded_client)
+
+    assert body["pending_chart_updates_by_patient"] == {}
+    assert body["pending_chart_updates_total"] == 0
+
+
+def test_deciding_the_last_update_takes_the_client_off_the_count(
+    seeded_client, chart_proposals: InMemoryChartProposalRepository, mock_user_id: str
+) -> None:
+    waiting = _proposal(P1, "work_school")
+    chart_proposals.add([waiting])
+    assert _get_summary(seeded_client)["pending_chart_updates_by_patient"] == {P1: 1}
+
+    chart_proposals.decide(waiting.id, "accepted", None, mock_user_id, datetime.now(UTC))
+
+    body = _get_summary(seeded_client)
+    assert body["pending_chart_updates_by_patient"] == {}
+    assert body["pending_chart_updates_total"] == 0

@@ -64,9 +64,13 @@ function mockSummary(
   today_appointments: AppointmentResponse[],
   last_visit_by_patient: Record<string, string | null> = {},
   isLoading = false,
+  chartUpdates: {
+    pending_chart_updates_by_patient?: Record<string, number>
+    pending_chart_updates_total?: number
+  } = {},
 ) {
   useDashboardSummary.mockReturnValue({
-    data: { today_appointments, last_visit_by_patient },
+    data: { today_appointments, last_visit_by_patient, ...chartUpdates },
     isLoading,
   })
 }
@@ -116,6 +120,75 @@ describe("TodayPanel", () => {
     expect(screen.queryByText(/no sessions today/i)).not.toBeInTheDocument()
     screen.getByRole("button", { name: "Try again" }).click()
     expect(refetch).toHaveBeenCalledTimes(1)
+  })
+
+  describe("chart updates waiting", () => {
+    it("shows the count on a scheduled client's row, linking to the chart", () => {
+      mockSummary(
+        [
+          makeAppointment({ id: "a-1", patient_id: "patient-1", title: "Jordan Rivera" }),
+          makeAppointment({ id: "a-2", patient_id: "patient-2", title: "Sam Lee" }),
+        ],
+        {},
+        false,
+        { pending_chart_updates_by_patient: { "patient-1": 3 }, pending_chart_updates_total: 1 },
+      )
+
+      renderPanel()
+
+      const link = screen.getByRole("link", { name: "3 chart updates waiting" })
+      expect(link).toHaveAttribute("href", "/dashboard/patients/patient-1")
+      const [jordan, sam] = screen.getAllByRole("listitem")
+      expect(jordan).toContainElement(link)
+      // A client with nothing waiting gets nothing extra.
+      expect(sam).not.toHaveTextContent(/chart update/)
+    })
+
+    it("says one update in the singular", () => {
+      mockSummary([makeAppointment()], {}, false, {
+        pending_chart_updates_by_patient: { "patient-1": 1 },
+        pending_chart_updates_total: 1,
+      })
+
+      renderPanel()
+
+      expect(screen.getByRole("link", { name: "1 chart update waiting" })).toBeInTheDocument()
+    })
+
+    it("counts clients with updates under the heading, linking to the list", () => {
+      mockSummary([], {}, false, {
+        pending_chart_updates_by_patient: {},
+        pending_chart_updates_total: 4,
+      })
+
+      renderPanel()
+
+      const link = screen.getByRole("link", { name: "4 clients have chart updates waiting" })
+      expect(link).toHaveAttribute("href", "/dashboard/patients")
+      // Shown on an empty day too: the updates are not about today's sessions.
+      expect(screen.getByText(/no sessions today/i)).toBeInTheDocument()
+    })
+
+    it("names one client in the singular", () => {
+      mockSummary([], {}, false, { pending_chart_updates_total: 1 })
+
+      renderPanel()
+
+      expect(
+        screen.getByRole("link", { name: "1 client has chart updates waiting" }),
+      ).toBeInTheDocument()
+    })
+
+    it("shows nothing when nothing is waiting", () => {
+      mockSummary([makeAppointment()], {}, false, {
+        pending_chart_updates_by_patient: {},
+        pending_chart_updates_total: 0,
+      })
+
+      renderPanel()
+
+      expect(screen.queryByText(/chart update/)).not.toBeInTheDocument()
+    })
   })
 
   it("renders appointments sorted by start time", () => {

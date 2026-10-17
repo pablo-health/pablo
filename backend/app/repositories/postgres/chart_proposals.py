@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from ...chart_proposals.models import (
     ChartProposal,
@@ -20,13 +20,20 @@ from ...chart_proposals.models import (
     MedicationChange,
     ProposalRun,
 )
-from ...db.models import NoteChartProposalRow, NoteChartProposalRunRow
+from ...db.models import (
+    NoteChartProposalRow,
+    NoteChartProposalRunRow,
+    NoteRow,
+    PatientClinicianRow,
+)
 from ..chart_proposals import ChartProposalRepository
+from ._grants import live_grant
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Collection, Iterable
     from datetime import datetime
 
+    from sqlalchemy import Select
     from sqlalchemy.orm import Session
 
     from ...chart_proposals.models import (
@@ -98,6 +105,33 @@ class PostgresChartProposalRepository(ChartProposalRepository):
             .order_by(NoteChartProposalRow.created_at, NoteChartProposalRow.id)
         ).all()
         return [_proposal(row) for row in rows]
+
+    def count_pending_by_patient(
+        self, user_id: str, patient_ids: Collection[str]
+    ) -> dict[str, int]:
+        ids = list(patient_ids)
+        if not ids:
+            return {}
+        rows = self._session.execute(
+            _pending_visible_to(
+                user_id,
+                select(NoteChartProposalRow.patient_id, func.count()),
+            )
+            .where(NoteChartProposalRow.patient_id.in_(ids))
+            .group_by(NoteChartProposalRow.patient_id)
+        ).all()
+        return {str(patient_id): int(count) for patient_id, count in rows}
+
+    def count_patients_with_pending(self, user_id: str) -> int:
+        return (
+            self._session.scalar(
+                _pending_visible_to(
+                    user_id,
+                    select(func.count(func.distinct(NoteChartProposalRow.patient_id))),
+                )
+            )
+            or 0
+        )
 
     def add(self, proposals: Iterable[ChartProposal]) -> None:
         for p in proposals:
@@ -175,6 +209,27 @@ class PostgresChartProposalRepository(ChartProposalRepository):
             for c in run.considered
         ]
         self._session.flush()
+
+
+def _pending_visible_to[T: tuple[Any, ...]](user_id: str, query: Select[T]) -> Select[T]:
+    """Restrict ``query`` to pending proposals the clinician could open.
+
+    Through a live grant on the patient and a note that is not deleted, the
+    same reach the chart's own listing has; the row policy backs it.
+    """
+    return (
+        query.select_from(NoteChartProposalRow)
+        .join(NoteRow, NoteRow.id == NoteChartProposalRow.note_id)
+        .join(
+            PatientClinicianRow,
+            PatientClinicianRow.patient_id == NoteChartProposalRow.patient_id,
+        )
+        .where(
+            NoteChartProposalRow.decision == "pending",
+            NoteRow.deleted_at.is_(None),
+            *live_grant(user_id),
+        )
+    )
 
 
 def _considered(raw: dict[str, Any]) -> Considered:

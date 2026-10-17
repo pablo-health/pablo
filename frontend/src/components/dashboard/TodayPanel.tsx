@@ -15,6 +15,7 @@ import { appointmentBadge } from "@/lib/appointmentBadge"
 import { isCompanionAvailable } from "@/lib/companion"
 import { useCompanionAccess } from "@/lib/companion.extensions"
 import type { AppointmentResponse } from "@/types/scheduling"
+import { ChartUpdatesWaitingLink, PeopleWithChartUpdates } from "./ChartUpdatesLinks"
 import { CompanionGetDialog } from "./CompanionGetDialog"
 import { StartSessionButton } from "./StartSessionButton"
 
@@ -64,6 +65,7 @@ export function TodayPanel() {
           <p className="text-sm text-neutral-600 mt-1">
             Sessions scheduled for {todayLabel(timeZone)}.
           </p>
+          <PeopleWithChartUpdates count={data?.pending_chart_updates_total ?? 0} />
         </div>
         <div className="flex items-center gap-4">
           {/* Before recording is where the script is needed, and Today is
@@ -96,6 +98,7 @@ export function TodayPanel() {
                 key={a.id}
                 appointment={a}
                 lastVisit={lastVisitByPatient.get(a.patient_id) ?? null}
+                chartUpdates={data?.pending_chart_updates_by_patient?.[a.patient_id] ?? 0}
                 timeZone={timeZone}
                 companionEnrolled={companionEnrolled}
                 platformSupported={offerDownload}
@@ -125,6 +128,8 @@ export function TodayPanel() {
 interface AppointmentRowProps {
   appointment: AppointmentResponse
   lastVisit: string | null
+  /** Chart updates waiting on this client's chart; 0 shows nothing. */
+  chartUpdates: number
   timeZone: string
   /** The user has at least one enrolled companion install on a supported OS. */
   companionEnrolled: boolean
@@ -136,6 +141,7 @@ interface AppointmentRowProps {
 function AppointmentRow({
   appointment,
   lastVisit,
+  chartUpdates,
   timeZone,
   companionEnrolled,
   platformSupported,
@@ -167,6 +173,7 @@ function AppointmentRow({
           {appointment.video_platform ? ` · ${appointment.video_platform}` : ""}
           {lastVisitLabel ? ` · ${lastVisitLabel}` : ""}
         </p>
+        <ChartUpdatesWaitingLink patientId={appointment.patient_id} count={chartUpdates} />
       </div>
       {badge && (
         <span className={`text-xs px-2 py-0.5 rounded-full ${badge.cls}`}>
