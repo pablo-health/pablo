@@ -10,6 +10,7 @@ import { AdminNav } from "./AdminNav"
 import { HelpNavItem } from "./HelpNavItem"
 import { NavBadge } from "./NavBadge"
 import { PabloNote } from "./PabloNote"
+import { SidebarCard } from "./SidebarCard"
 import { SidebarFooter } from "./SidebarFooter"
 import { clinicianNavigation, settingsItem } from "./sidebarExtensions"
 import { useNavVisibility } from "./sidebarVisibility"
@@ -70,6 +71,7 @@ export function Sidebar({ isAdmin = false, hideClinicianMenus = false }: Sidebar
         {isAdmin && <AdminNav />}
       </nav>
 
+      <SidebarCard />
       <PabloNote />
       <SidebarFooter />
     </div>
