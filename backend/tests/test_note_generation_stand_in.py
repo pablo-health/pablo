@@ -229,7 +229,7 @@ def test_the_route_dependency_uses_the_stand_in_only_when_configured(
         environment="development",
         note_generation_base_url=BASE_URL,
     )
-    monkeypatch.setattr("app.routes.notes.get_settings", lambda: configured)
+    monkeypatch.setattr("app.services.note_generation_factory.get_settings", lambda: configured)
     service = get_note_generation_service()
     assert isinstance(service, RegistryNoteGenerationService)
     assert isinstance(service._llm_gateway, HttpStructuredLLMGateway)
@@ -237,7 +237,7 @@ def test_the_route_dependency_uses_the_stand_in_only_when_configured(
     unconfigured = Settings(
         database_url="postgresql://x:x@localhost:5432/x", environment="development"
     )
-    monkeypatch.setattr("app.routes.notes.get_settings", lambda: unconfigured)
+    monkeypatch.setattr("app.services.note_generation_factory.get_settings", lambda: unconfigured)
     service = get_note_generation_service()
     assert isinstance(service, RegistryNoteGenerationService)
     assert not isinstance(service._llm_gateway, HttpStructuredLLMGateway)

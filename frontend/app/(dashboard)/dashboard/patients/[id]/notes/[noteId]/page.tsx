@@ -24,6 +24,8 @@ import { NoteViewer } from "@/components/sessions/NoteViewer"
 import { NoteConsentLine } from "@/components/sessions/NoteConsentLine"
 import { OnlyYouBadge } from "@/components/notes/OnlyYouBadge"
 import { ChartUpdatesPanel } from "@/components/notes/chartUpdates/ChartUpdatesPanel"
+import { ImportedNoteNotice } from "@/components/sessions/ImportedNoteNotice"
+import { noteHeading } from "@/lib/noteDisplay"
 import { NoteSignaturePanel } from "@/components/notes/signing/NoteSignaturePanel"
 import { SignNoteDialog } from "@/components/notes/signing/SigningDialogs"
 import {
@@ -156,10 +158,10 @@ export default function StandaloneNotePage({ params }: PageProps) {
       </div>
 
       <div>
-        <h1 className="text-3xl font-display font-bold text-neutral-900 mb-1 capitalize">
-          {noteTypeLabel(note.note_type)} note
+        <h1 className="text-3xl font-display font-bold text-neutral-900 mb-1">
+          {noteHeading(noteTypeLabel(note.note_type), note)}
           {note.restricted && (
-            <span className="ml-3 align-middle normal-case">
+            <span className="ml-3 align-middle">
               <OnlyYouBadge />
             </span>
           )}
@@ -167,9 +169,19 @@ export default function StandaloneNotePage({ params }: PageProps) {
         <p className="text-neutral-600">{patientName}</p>
       </div>
 
+      {/* A reference copy of a note from another system says so, and where
+          it came from, before anything else. */}
+      {note.imported && (
+        <ImportedNoteNotice
+          sessionDate={note.source?.visit_date ?? null}
+          signer={note.source?.signed_by}
+          source={note.source}
+        />
+      )}
+
       {/* A note drafted from a recorded session carries the client's answer
           about AI-assisted notes; a note written by hand has no recording. */}
-      {!isManual && <NoteConsentLine patientId={patientId} />}
+      {!isManual && !note.imported && <NoteConsentLine patientId={patientId} />}
 
       {isGenerating ? (
         <div className="card p-12 text-center">
@@ -195,7 +207,9 @@ export default function StandaloneNotePage({ params }: PageProps) {
         />
       )}
 
-      {!isGenerating && !generationFailed && <NoteSignaturePanel note={note} />}
+      {!isGenerating && !generationFailed && !note.imported && (
+        <NoteSignaturePanel note={note} />
+      )}
 
       {readOnly && <ChartUpdatesPanel note={note} />}
 

@@ -25,8 +25,50 @@ from .note_signing import (
     NoteAddendum,
     NoteSignature,
 )
+from .note_source import NoteSource, note_source
 from .scheduling import VisitCodingFields
 from .transcript import TranscriptModel  # noqa: TC001 — runtime Pydantic field
+
+
+class NoteDiagnosisCode(BaseModel):
+    """A diagnosis code an imported note carried, as its export listed it."""
+
+    code: str
+    description: str
+
+
+class NoteSourceResponse(BaseModel):
+    """Where an imported note came from (see :mod:`app.models.note_source`)."""
+
+    #: The system it was exported from, as the importer names it (``simplepractice``).
+    system: str
+    #: The note's class there (``progress``, ``chart``, ``treatment_plan``...).
+    kind: str | None = None
+    #: The note's title there, as the export printed it.
+    title: str | None = None
+    #: Who signed it there, as the document writes it; never matched to a user.
+    signed_by: str | None = None
+    signed_at: datetime | None = None
+    created_at: datetime | None = None
+    #: The visit the note belongs to, when it has one.
+    visit_date: datetime | None = None
+    diagnoses: list[NoteDiagnosisCode] = Field(default_factory=list)
+
+    @staticmethod
+    def from_source(source: NoteSource) -> NoteSourceResponse:
+        return NoteSourceResponse(
+            system=source.system,
+            kind=source.kind,
+            title=source.title,
+            signed_by=source.signed_by,
+            signed_at=source.signed_at,
+            created_at=source.created_at,
+            visit_date=source.visit_date,
+            diagnoses=[
+                NoteDiagnosisCode(code=code, description=description)
+                for code, description in source.diagnoses
+            ],
+        )
 
 
 class NoteResponse(BaseModel):
@@ -51,13 +93,18 @@ class NoteResponse(BaseModel):
     #: Readable by its author alone (a psychotherapy note).
     restricted: bool = False
     #: A reference copy of a note signed where it was written: its session is
-    #: ``imported``. Never a draft, and never signed here.
+    #: ``imported``, or it carries its ``source``. Never a draft, and never
+    #: signed here.
     imported: bool = False
+    #: Where an archive import brought the note from; ``None`` for a note
+    #: written here or read from a single document.
+    source: NoteSourceResponse | None = None
     created_at: datetime
     updated_at: datetime
 
     @staticmethod
     def from_note(note: Note, *, imported: bool = False) -> NoteResponse:
+        source = note_source(note)
         return NoteResponse(
             id=note.id,
             patient_id=note.patient_id,
@@ -74,7 +121,8 @@ class NoteResponse(BaseModel):
             status=note.status,
             author_user_id=note.author_user_id,
             restricted=note.restricted,
-            imported=imported,
+            imported=imported or source is not None,
+            source=NoteSourceResponse.from_source(source) if source is not None else None,
             created_at=note.created_at,
             updated_at=note.updated_at,
         )

@@ -40,8 +40,14 @@ export function useImportRun(runId: string | null) {
     },
     enabled: runId !== null,
     refetchInterval: (query) => {
-      const state = query.state.data?.state
-      if (!state || !IMPORT_BUSY_STATES.has(state)) return false
+      const run = query.state.data
+      const state = run?.state
+      if (!state) return false
+      // Being read or landed; or landed, with the chart check that follows
+      // the import (client by client, after it applied) not yet reported.
+      const waiting =
+        IMPORT_BUSY_STATES.has(state) || (state === "applied" && !run?.report?.chart_updates)
+      if (!waiting) return false
       if (query.state.dataUpdateCount > POLL_LIMIT) return false
       return POLL_MS
     },

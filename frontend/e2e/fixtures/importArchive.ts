@@ -34,8 +34,15 @@ async function walk(dir: string): Promise<string[]> {
   return out
 }
 
-/** The fixture folder as the zip a practice would upload. */
-export async function exportZip(folder: string): Promise<{ name: string; mimeType: string; buffer: Buffer }> {
+/**
+ * The fixture folder as the zip a practice would upload. ``extras`` adds files
+ * at the given export-relative paths, for a spec that needs one more note than
+ * the capture has.
+ */
+export async function exportZip(
+  folder: string,
+  extras: Record<string, Buffer | Uint8Array> = {},
+): Promise<{ name: string; mimeType: string; buffer: Buffer }> {
   const zip = new JSZip()
   const top = "Export - Complete - e2e"
   for (const file of await walk(folder)) {
@@ -43,6 +50,7 @@ export async function exportZip(folder: string): Promise<{ name: string; mimeTyp
     if (rel === "README.md" || rel.endsWith(".py")) continue // fixture housekeeping, not export
     zip.file(`${top}/${rel.split(path.sep).join("/")}`, await readFile(file))
   }
+  for (const [rel, data] of Object.entries(extras)) zip.file(`${top}/${rel}`, data)
   const buffer = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" })
   return { name: "export.zip", mimeType: "application/zip", buffer }
 }

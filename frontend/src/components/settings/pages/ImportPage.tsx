@@ -45,12 +45,25 @@ function Receipt({ run }: { run: ImportRunDetail }) {
   const clients = (counts.contact?.created ?? 0) + (counts.contact?.merged ?? 0)
   const notes = counts.note?.new ?? 0
   const skipped = run.report?.not_landed.length ?? 0
+  // Clients whose imported notes proposed something for their chart; the
+  // proposals wait at the top of each one's Chart card.
+  const checked = run.report?.chart_updates
+  const charts = checked?.clients ?? 0
   return (
     <div role="status" data-testid="import-receipt" className="space-y-1 text-sm">
       <p className="text-foreground">
         Imported {clients} {clients === 1 ? people.one : people.many} and {notes}{" "}
         {notes === 1 ? "note" : "notes"}.
       </p>
+      {!checked && notes > 0 && (
+        <p className="text-xs text-muted-foreground">Reading the notes for chart updates…</p>
+      )}
+      {charts > 0 && (
+        <p className="text-foreground" data-testid="import-chart-updates">
+          Chart updates from the notes are ready to review on {charts}{" "}
+          {charts === 1 ? people.one : people.many}, at the top of each chart.
+        </p>
+      )}
       {skipped > 0 && (
         <p className="text-xs text-muted-foreground">
           {skipped === 1 ? "1 item stayed behind." : `${skipped} items stayed behind.`} History has the details.

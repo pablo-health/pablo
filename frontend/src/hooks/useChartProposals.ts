@@ -6,10 +6,12 @@ import type {
   ChartProposal,
   ChartProposalsResponse,
   DecideChartProposalRequest,
+  PatientChartProposalsResponse,
 } from "@/types/chartProposals"
 import {
   decideChartProposal,
   getChartProposals,
+  getPatientChartProposals,
   retryChartProposals,
 } from "@/lib/api/chartProposals"
 import { queryKeys } from "@/lib/api/queryKeys"
@@ -23,15 +25,28 @@ export function useChartProposals(noteId: string | undefined) {
   })
 }
 
-/** Accept, edit or discard one; an accept or an edit changes the chart, so it is read again. */
+/** What is still pending across the client's notes, grouped by note. */
+export function usePatientChartProposals(patientId: string | undefined) {
+  return useAuthQuery<PatientChartProposalsResponse>({
+    queryKey: queryKeys.chartProposals.byPatient(patientId ?? ""),
+    queryFn: () => getPatientChartProposals(patientId!),
+    enabled: !!patientId,
+  })
+}
+
+/**
+ * Accept, edit or discard one; an accept or an edit changes the chart, so it
+ * is read again. Every listing of proposals is refreshed, the note's and the
+ * client's: the same proposal can be on screen in both.
+ */
 export function useDecideChartProposal(patientId: string) {
   return useAuthMutation<
     ChartProposal,
     { noteId: string; proposalId: string; data: DecideChartProposalRequest }
   >({
     mutationFn: ({ noteId, proposalId, data }) => decideChartProposal(noteId, proposalId, data),
-    invalidateKeys: ({ noteId }) => [
-      queryKeys.chartProposals.byNote(noteId),
+    invalidateKeys: () => [
+      queryKeys.chartProposals.all,
       queryKeys.chartHistory.byPatient(patientId),
       queryKeys.patients.detail(patientId),
     ],

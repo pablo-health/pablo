@@ -20,7 +20,13 @@ import { useNoteTypeLabel } from "@/hooks/useNoteTypes"
 import { Skeleton } from "@/components/ui/skeleton"
 import { NewNoteButton } from "@/components/notes/NewNoteButton"
 import { OnlyYouBadge } from "@/components/notes/OnlyYouBadge"
-import { formatNoteDateTime, noteHref, noteStatus } from "@/lib/noteDisplay"
+import {
+  formatNoteDateTime,
+  noteHref,
+  noteListDate,
+  noteOrigin,
+  noteStatus,
+} from "@/lib/noteDisplay"
 
 interface PageProps {
   params: Promise<{ id: string }>
@@ -102,7 +108,7 @@ export default function PatientNotesListPage({ params }: PageProps) {
                   Source
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-neutral-600 uppercase tracking-wider">
-                  Updated
+                  Date
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-neutral-600 uppercase tracking-wider">
                   Status
@@ -130,11 +136,9 @@ export default function PatientNotesListPage({ params }: PageProps) {
                         </span>
                       )}
                     </td>
+                    <td className="px-4 py-4 text-sm text-neutral-600">{noteOrigin(note)}</td>
                     <td className="px-4 py-4 text-sm text-neutral-600">
-                      {note.session_id ? "Session" : "Standalone"}
-                    </td>
-                    <td className="px-4 py-4 text-sm text-neutral-600">
-                      {formatNoteDateTime(note.finalized_at ?? note.updated_at)}
+                      {formatNoteDateTime(noteListDate(note))}
                     </td>
                     <td className="px-4 py-4">
                       <span

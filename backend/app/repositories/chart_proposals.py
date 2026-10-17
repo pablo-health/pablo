@@ -26,6 +26,14 @@ class ChartProposalRepository(ABC):
         """Every proposal on the note, decided or not, oldest first."""
 
     @abstractmethod
+    def list_pending_for_patient(self, patient_id: str) -> list[ChartProposal]:
+        """Every proposal still pending across the patient's notes, oldest first.
+
+        The caller has loaded the patient, which is the access check; the row
+        policy backs it at the database.
+        """
+
+    @abstractmethod
     def add(self, proposals: Iterable[ChartProposal]) -> None:
         """Store new proposals."""
 
@@ -72,6 +80,10 @@ class InMemoryChartProposalRepository(ChartProposalRepository):
 
     def list_for_note(self, note_id: str) -> list[ChartProposal]:
         mine = [p for p in self._rows.values() if p.note_id == note_id]
+        return sorted(mine, key=lambda p: p.created_at)
+
+    def list_pending_for_patient(self, patient_id: str) -> list[ChartProposal]:
+        mine = [p for p in self._rows.values() if p.patient_id == patient_id and p.pending]
         return sorted(mine, key=lambda p: p.created_at)
 
     def add(self, proposals: Iterable[ChartProposal]) -> None:

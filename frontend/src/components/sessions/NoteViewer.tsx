@@ -115,6 +115,7 @@ export function NoteViewer({
       <NarrativeNoteView
         note={asNarrative(baseContent)}
         noteEdited={asNarrative(editedContent)}
+        imported={!!note.imported}
         readonly={viewOnly}
         pdfMetadata={pdfMetadata}
         onSave={onSave}
@@ -131,6 +132,7 @@ export function NoteViewer({
         note={asSchema(baseContent)}
         noteEdited={asSchema(editedContent)}
         newByHand={isNewByHand(note) && !pendingEdited}
+        imported={!!note.imported}
         readonly={viewOnly}
         pdfMetadata={pdfMetadata}
         onSave={onSave}
@@ -614,6 +616,8 @@ function NarrativeContent({ text }: { text: string }) {
 interface NarrativeViewProps {
   note: NarrativeNoteContent | null
   noteEdited: NarrativeNoteContent | null
+  /** A reference copy from another system: nothing here drafted or edited it. */
+  imported?: boolean
   readonly?: boolean
   pdfMetadata?: PDFExportMetadata
   onSave?: (editedNote: NoteContent) => void
@@ -623,6 +627,7 @@ interface NarrativeViewProps {
 function NarrativeNoteView({
   note,
   noteEdited,
+  imported = false,
   readonly = false,
   pdfMetadata,
   onSave,
@@ -691,7 +696,8 @@ function NarrativeNoteView({
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-2">
           <h3 className="text-lg font-semibold text-neutral-900">Narrative Note</h3>
-          {isManual ? null : isEdited ? (
+          {/* Neither badge fits a note written by hand or brought in from elsewhere. */}
+          {isManual || imported ? null : isEdited ? (
             <span className="px-2 py-1 bg-secondary-100 text-secondary-700 text-xs font-medium rounded">
               Edited
             </span>

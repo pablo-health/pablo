@@ -20,12 +20,22 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 
+from ..chart_proposals.step import ChartProposalStep
 from ..db.models import ImportRecordRow
 from ..db.tenant_session import tenant_db_session
-from ..repositories import get_patient_repository
+from ..repositories import (
+    get_chart_history_repository,
+    get_chart_proposal_repository,
+    get_medication_repository,
+    get_notes_repository,
+    get_patient_repository,
+)
+from ..services.note_generation_factory import note_generation_service
+from ..services.note_service import NoteService
 from ..settings import get_settings
 from ..utcnow import utc_now
 from .apply import ArchiveApplier, edited_since
+from .chart_seed import ChartSeeder, SeedReport
 from .ledger import archive_path, delete_archive, get_run, ledger_snapshot
 from .preview import ExistingPatient, PreviewInputs, build_preview
 from .readers.simplepractice import SOURCE_SYSTEM, read_simplepractice_archive
@@ -146,6 +156,48 @@ def run_apply(schema: str, user_id: str, run_id: str, practice_id: str | None) -
         delete_archive(base, schema, run.archive_ref)
         run.archive_ref = None
         run.archive_expires_at = None
+        landed = sorted(set(report.patients.values()))
+    # The import is applied and committed. What its notes say about each
+    # client's chart is proposed afterwards, one client per transaction, so
+    # a model call never holds the import open and a failure costs nothing
+    # already landed.
+    seeded = _seed_charts(schema, user_id, run_id, landed)
+    with tenant_db_session(schema, user_id) as session:
+        run = get_run(session, run_id)
+        if run is not None:
+            run.report = {**(run.report or {}), "chart_updates": seeded.as_dict()}
+
+
+def _seed_charts(schema: str, user_id: str, run_id: str, patient_ids: list[str]) -> SeedReport:
+    """Propose each landed client's chart from their imported notes. Never raises."""
+    report = SeedReport()
+    try:
+        # The same model the app drafts with: the end-to-end stack's stand-in
+        # when one is configured, else the real one.
+        generator = note_generation_service()
+    except Exception:
+        logger.exception("chart seeding skipped: no model to propose with")
+        return report
+    for patient_id in patient_ids:
+        try:
+            with tenant_db_session(schema, user_id):
+                patient = get_patient_repository().get(patient_id, user_id)
+                if patient is None:
+                    continue
+                step = ChartProposalStep(
+                    get_chart_proposal_repository(),
+                    get_chart_history_repository(),
+                    get_medication_repository(),
+                )
+                notes = NoteService(get_notes_repository()).list_notes_for_patient(
+                    patient_id, user_id
+                )
+                ChartSeeder(user_id, step, generator).seed(patient, notes, report)
+        except Exception:  # one client's failure never costs the others theirs
+            # The run, not the client: a client id is a patient identifier.
+            logger.exception("chart seeding failed for a client", extra={"import_run_id": run_id})
+            report.failed += 1
+    return report
 
 
 __all__ = ["archive_base", "run_apply", "run_preview"]

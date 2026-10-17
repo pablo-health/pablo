@@ -341,9 +341,14 @@ function projectContent(
     }
   }
   if (noteType === "narrative") {
+    // The registry stores a narrative note as its one section, `note.body`;
+    // that is what the backend writes (a drafted narrative, an archive
+    // import, chat's "save as note"). Rows written by this app before it
+    // followed suit carry a flat `body`, which is still read.
+    const section = isPlainObject(raw.note) ? raw.note : undefined
     return {
       note_type: "narrative",
-      body: (raw.body as string | undefined) ?? "",
+      body: (section?.body as string | undefined) ?? (raw.body as string | undefined) ?? "",
     }
   }
   const sections: Record<string, SchemaSectionValues> = {}
@@ -372,7 +377,7 @@ export function noteContentToJson(
   if (content.note_type === "schema") {
     return { ...content.sections }
   }
-  const { note_type: _t, ...rest } = content
-  void _t
-  return { ...rest }
+  // A narrative note is written the way the registry defines it, as its one
+  // section, so the backend's readers (the PDF, the chart) find the body.
+  return { note: { body: content.body } }
 }

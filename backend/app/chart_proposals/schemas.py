@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ..models.notes import NoteDiagnosisCode  # noqa: TC001 — pydantic field type
 from .families import family_for
 
 if TYPE_CHECKING:
@@ -141,3 +142,30 @@ def proposal_response(proposal: ChartProposal, chart: ChartContext) -> ChartProp
         decided_at=proposal.decided_at,
         created_at=proposal.created_at,
     )
+
+
+class NoteChartProposalGroup(BaseModel):
+    """One note's pending proposals, with enough about the note to head them."""
+
+    note_id: str
+    note_type: str
+    session_id: str | None
+    #: The visit the note records (its session's date, or an imported note's visit
+    #: date), else when the note was written.
+    date: datetime
+    #: Where an archive import brought the note from; ``None`` otherwise.
+    source_system: str | None
+    #: A reference copy of a note signed elsewhere.
+    imported: bool
+    #: The diagnosis codes an imported note carried from its system, offered to
+    #: the problem list beside the proposals; empty for a note written here.
+    source_diagnoses: list[NoteDiagnosisCode] = Field(default_factory=list)
+    proposals: list[ChartProposalResponse]
+
+
+class PatientChartProposalsResponse(BaseModel):
+    """A client's pending chart proposals, grouped by the note that made them,
+    newest note first. Decisions go through the note's own route."""
+
+    groups: list[NoteChartProposalGroup]
+    pending: int

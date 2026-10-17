@@ -25,6 +25,13 @@ export interface TranscriptViewerProps {
   transcript: TranscriptModel
   transcriptSegments?: TranscriptSegment[] | null
   highlightedSegments?: number[]
+  /**
+   * "document": the text is an imported document and the segments are its
+   * numbered paragraphs (`documentSegments`), shown with their number in
+   * place of a time and a speaker, so a proposal's source mark has a line to
+   * point at.
+   */
+  variant?: "transcript" | "document"
   className?: string
 }
 
@@ -39,9 +46,10 @@ function formatTimestamp(seconds: number): string {
 
 export const TranscriptViewer = forwardRef<TranscriptViewerHandle, TranscriptViewerProps>(
   function TranscriptViewer(
-    { transcript, transcriptSegments, highlightedSegments = [], className },
+    { transcript, transcriptSegments, highlightedSegments = [], variant = "transcript", className },
     ref,
   ) {
+    const isDocument = variant === "document"
     const [isExpanded, setIsExpanded] = useState(false)
     const [copiedRecently, setCopiedRecently] = useState(false)
     const containerRef = useRef<HTMLDivElement>(null)
@@ -96,7 +104,9 @@ export const TranscriptViewer = forwardRef<TranscriptViewerHandle, TranscriptVie
           {/* The transcript's format is how it was stored, not something
               the reader needs: a call recorded by the desktop app is stored
               as "google_meet" whatever the platform was. */}
-          <h3 className="text-lg font-semibold text-neutral-900">Transcript</h3>
+          <h3 className="text-lg font-semibold text-neutral-900">
+            {isDocument ? "Text as imported" : "Transcript"}
+          </h3>
 
           <Button
             variant="outline"
@@ -144,13 +154,24 @@ export const TranscriptViewer = forwardRef<TranscriptViewerHandle, TranscriptVie
                     )}
                   >
                     <div className="flex items-baseline gap-2">
-                      <span className="text-xs text-neutral-400 font-mono shrink-0">
-                        {formatTimestamp(seg.start_time)}
-                      </span>
-                      <span className="text-xs font-medium text-neutral-600 shrink-0">
-                        {seg.speaker}:
-                      </span>
-                      <span className="text-sm text-neutral-700 leading-relaxed">
+                      {isDocument ? (
+                        <span
+                          className="shrink-0 font-mono text-[11px] text-neutral-400"
+                          aria-label={`Paragraph ${seg.index + 1}`}
+                        >
+                          ¶{seg.index + 1}
+                        </span>
+                      ) : (
+                        <>
+                          <span className="text-xs text-neutral-400 font-mono shrink-0">
+                            {formatTimestamp(seg.start_time)}
+                          </span>
+                          <span className="text-xs font-medium text-neutral-600 shrink-0">
+                            {seg.speaker}:
+                          </span>
+                        </>
+                      )}
+                      <span className="whitespace-pre-wrap text-sm text-neutral-700 leading-relaxed">
                         {seg.text}
                       </span>
                     </div>

@@ -24,7 +24,7 @@ import { diagnosisText, statedDiagnoses, type StatedDiagnosis } from "@/lib/stat
 import type { ChartProposal, ProposalRun } from "@/types/chartProposals"
 import type { Note } from "@/types/notes"
 import { NotChecked, isNotChecked } from "./NotChecked"
-import { ProposalRow } from "./ProposalRow"
+import { ProposalLedger } from "./ProposalLedger"
 
 function fieldValue(note: Note, section: string, field: string): unknown {
   const read = (content: Record<string, unknown> | null) =>
@@ -82,16 +82,15 @@ export function UpdateChart({ note, updates }: { note: Note; updates: ChartUpdat
       {notChecked && updates.run && (
         <NotChecked noteId={note.id} run={updates.run} readOnly={readOnly} />
       )}
+      {pending.length > 0 && (
+        <ProposalLedger
+          noteId={note.id}
+          patientId={note.patient_id}
+          proposals={pending}
+          readOnly={readOnly}
+        />
+      )}
       <ul className="space-y-3">
-        {pending.map((proposal) => (
-          <ProposalRow
-            key={proposal.id}
-            noteId={note.id}
-            patientId={note.patient_id}
-            proposal={proposal}
-            readOnly={readOnly}
-          />
-        ))}
         {updates.diagnoses.map((dx) => (
           <li
             key={diagnosisText(dx)}

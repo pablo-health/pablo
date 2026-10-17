@@ -52,8 +52,33 @@ export interface Note {
   restricted: boolean
   /** A reference copy of a note signed where it was written; never signed here. */
   imported?: boolean
+  /** Where an archive import brought the note from; null for a note written here. */
+  source?: NoteSource | null
   created_at: string
   updated_at: string
+}
+
+/** A diagnosis code an imported note carried, as its export listed it. */
+export interface NoteDiagnosisCode {
+  code: string
+  description: string
+}
+
+/** Where an imported note came from, as its document and export state it. */
+export interface NoteSource {
+  /** The system it was exported from, as the importer names it ("simplepractice"). */
+  system: string
+  /** The note's class there ("progress", "chart", "treatment_plan"...). */
+  kind: string | null
+  /** The note's title there, as the export printed it. */
+  title: string | null
+  /** Who signed it there, as the document writes it; never a user here. */
+  signed_by: string | null
+  signed_at: string | null
+  created_at: string | null
+  /** The visit the note belongs to, when it has one. */
+  visit_date: string | null
+  diagnoses: NoteDiagnosisCode[]
 }
 
 export interface PatientNotesListResponse {

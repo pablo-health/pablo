@@ -59,6 +59,8 @@ export interface SchemaNoteViewProps {
    * blank one, with whatever was filled in from the chart.
    */
   newByHand?: boolean
+  /** A reference copy from another system: nothing here drafted or edited it. */
+  imported?: boolean
   readonly?: boolean
   onSave?: (editedNote: NoteContent) => void
   /** Offered beside each stated diagnosis while the note is not being edited. */
@@ -171,6 +173,7 @@ export function SchemaNoteBody({
   note,
   noteEdited,
   newByHand = false,
+  imported = false,
   readonly = false,
   onSave,
   diagnosisAction,
@@ -247,7 +250,8 @@ export function SchemaNoteBody({
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-2">
           <h3 className="text-lg font-semibold text-neutral-900">{definition.label}</h3>
-          {isManual ? null : isEdited ? (
+          {/* Neither badge fits a note written by hand or brought in from elsewhere. */}
+          {isManual || imported ? null : isEdited ? (
             <span className="px-2 py-1 bg-secondary-100 text-secondary-700 text-xs font-medium rounded">
               Edited
             </span>

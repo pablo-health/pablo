@@ -33,6 +33,14 @@ import { givePatient } from "../fixtures/scenarios"
 
 const IMPORT_URL = "/dashboard/settings/import"
 
+type ImportedNote = {
+  id: string
+  note_type: string
+  session_id: string | null
+  imported: boolean
+  source: { kind: string | null } | null
+}
+
 test("a SimplePractice export is imported, re-imported without duplicates, and undone", async ({
   api,
   signedInPage: page,
@@ -111,7 +119,52 @@ test("a SimplePractice export is imported, re-imported without duplicates, and u
   expect(await noteCount(api, bornJanuary!.id)).toBe(5)
   expect(await noteCount(api, bornMarch!.id)).toBe(4)
 
+  // --- what the chart shows: every kind of note readable, and marked --------
+  // The notes list names where each came from and the visit it records.
+  await page.goto(`/dashboard/patients/${existing.id}/notes`)
+  const noteRows = page.getByRole("row").filter({ hasText: "Imported from SimplePractice" })
+  await expect(noteRows).toHaveCount(6)
+
+  const notes = await api.get<{ data: ImportedNote[] }>(`/api/patients/${existing.id}/notes`)
+  const progress = notes.data.find((n) => n.session_id && n.source?.kind === "progress")
+  const chartNote = notes.data.find((n) => n.source?.kind === "chart")
+  const psychotherapy = notes.data.find((n) => n.note_type === "psychotherapy")
+  expect(progress?.imported, "a progress note is a reference copy").toBe(true)
+  expect(chartNote?.imported, "a chart note is a reference copy").toBe(true)
+
+  // A progress note: its visit, read-only, with the text in the note itself.
+  await page.goto(`/dashboard/sessions/${progress!.session_id}`)
+  const progressNotice = page.getByRole("region", { name: "Imported note" })
+  await expect(progressNotice).toContainText("Imported from SimplePractice")
+  await expect(progressNotice).toContainText("Progress note for the visit on September 2")
+  const progressBody = page.getByTestId("session-note")
+  await expect(progressBody).toContainText("No suicidal ideation, self-harm or violence reported.")
+  await expect(progressBody).not.toContainText("Nothing entered")
+  await expect(page.getByText("AI Generated")).toHaveCount(0)
+  await expect(page.getByRole("button", { name: /^Sign/ })).toHaveCount(0)
+
+  // A chart note: no visit, so no session; the same notice, the same text.
+  await page.goto(`/dashboard/patients/${existing.id}/notes/${chartNote!.id}`)
+  await expect(page.getByRole("heading", { level: 1, name: /^Chart note/ })).toBeVisible()
+  const chartNotice = page.getByRole("region", { name: "Imported note" })
+  await expect(chartNotice).toContainText("Imported from SimplePractice")
+  await expect(chartNotice).toContainText("Chart note, written there on September 26, 2026.")
+  await expect(page.getByText("Client left a voicemail asking to move next week's appointment")).toBeVisible()
+  await expect(page.getByText("AI Generated")).toHaveCount(0)
+  await expect(page.getByRole("button", { name: /^Sign/ })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Add addendum" })).toHaveCount(0)
+
+  // A psychotherapy note: restricted, and still a reference copy.
+  await page.goto(`/dashboard/patients/${existing.id}/notes/${psychotherapy!.id}`)
+  await expect(page.getByRole("heading", { level: 1, name: /^Psychotherapy note/ })).toBeVisible()
+  await expect(page.getByRole("region", { name: "Imported note" })).toContainText(
+    "Imported from SimplePractice",
+  )
+  await expect(page.getByRole("button", { name: /^Sign/ })).toHaveCount(0)
+
   // --- the same export again adds nothing ---------------------------------
+  await page.goto(IMPORT_URL)
+  await expect(page.getByRole("heading", { name: "Import from SimplePractice" })).toBeVisible()
   await page.getByTestId("import-archive-input").setInputFiles(await exportZip(MAIN_EXPORT))
   await expect(summary).toBeVisible({ timeout: 90_000 })
   await expect(summary).toContainText("Already here from an earlier import:")
