@@ -12,8 +12,9 @@
  * undone. Uploading the same export again adds only what is new.
  */
 
-import { useEffect, useState } from "react"
+import { Suspense, useEffect, useState } from "react"
 import Link from "next/link"
+import { useSearchParams } from "next/navigation"
 import { Loader2 } from "lucide-react"
 import { useQueryClient } from "@tanstack/react-query"
 import { SettingsCard } from "../ui"
@@ -83,11 +84,28 @@ function Receipt({ run }: { run: ImportRunDetail }) {
   )
 }
 
+/**
+ * Opens the run a link names (`?run=<id>`), so a chart's "Imported from" line
+ * lands on that import in history. Its own component behind a Suspense
+ * boundary, because reading search params suspends a client render; read
+ * through the router rather than `window.location`, which on an in-app link
+ * still shows the page the reader came from on first render.
+ */
+function RunFromLink({ onRun }: { onRun: (runId: string) => void }) {
+  const asked = useSearchParams().get("run")
+  useEffect(() => {
+    if (asked) onRun(asked)
+  }, [asked, onRun])
+  return null
+}
+
 export function ImportPage() {
   const queryClient = useQueryClient()
   const people = usePeopleTerm()
   const history = useImportHistory()
   const [activeId, setActiveId] = useState<string | null>(null)
+  // The run a link asked for, shown open in history.
+  const [openId, setOpenId] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   // Opens a protected export; sent with the upload, kept nowhere.
   const [password, setPassword] = useState("")
@@ -172,6 +190,9 @@ export function ImportPage() {
 
   return (
     <div className="space-y-6">
+      <Suspense fallback={null}>
+        <RunFromLink onRun={setOpenId} />
+      </Suspense>
       <SettingsCard
         title="Import from SimplePractice"
         description={`Upload your SimplePractice export to bring your ${people.many} and notes across. You can upload a newer export later; only what's new is added.`}
@@ -243,6 +264,7 @@ export function ImportPage() {
           <ImportHistory
             runs={history.data.runs}
             busyId={busyId}
+            openId={openId}
             onUndo={handleUndo}
             onDeleteArchive={handleDeleteArchive}
           />

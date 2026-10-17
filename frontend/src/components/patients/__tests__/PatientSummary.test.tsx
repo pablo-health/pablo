@@ -47,6 +47,27 @@ vi.mock("@/hooks/useAiConsent", () => ({
   useRecordAiConsent: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }))
 
+const mockUseImportOrigin = vi.fn()
+
+vi.mock("@/components/settings/import/useImport", () => ({
+  useImportOrigin: (...args: unknown[]) => mockUseImportOrigin(...args),
+}))
+
+function importedOn(state: "landed" | "updated" | "merged") {
+  return {
+    data: {
+      origin: {
+        run_id: "run-7",
+        source_system: "simplepractice",
+        started_at: "2026-10-17T11:57:00Z",
+        // Noon UTC, so the day is the same on every clock the test runs under.
+        finished_at: "2026-10-17T12:00:00Z",
+        state,
+      },
+    },
+  }
+}
+
 function balanceOf(balanceCents: number, outcomeKnown = true) {
   return {
     data: {
@@ -80,6 +101,58 @@ describe("PatientSummary", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockUsePatientBalance.mockReturnValue({ data: undefined })
+    mockUseImportOrigin.mockReturnValue({ data: undefined })
+  })
+
+  describe("where the client came from", () => {
+    /**
+     * A client an import brought in says so under the session dates: the
+     * system and the day, linking to that import in history. The line names
+     * no run and no ledger — those are the machinery, not the fact.
+     */
+    beforeEach(() => {
+      mockUsePatientCoverage.mockReturnValue({ data: null })
+    })
+
+    it("names the system and the day, and links to that import", () => {
+      mockUseImportOrigin.mockReturnValue(importedOn("landed"))
+
+      render(<PatientSummary patient={PATIENT} />)
+
+      const line = screen.getByTestId("import-origin")
+      expect(line).toHaveTextContent("Imported from SimplePractice on October 17, 2026")
+      expect(line.textContent).not.toMatch(/run|ledger|record/i)
+      expect(screen.getByRole("link", { name: /Imported from SimplePractice/ })).toHaveAttribute(
+        "href",
+        "/dashboard/settings/import?run=run-7",
+      )
+    })
+
+    it("reads the same for a client the import was merged into", () => {
+      mockUseImportOrigin.mockReturnValue(importedOn("merged"))
+
+      render(<PatientSummary patient={PATIENT} />)
+
+      expect(screen.getByTestId("import-origin")).toHaveTextContent(
+        "Imported from SimplePractice on October 17, 2026",
+      )
+    })
+
+    it("shows nothing for a client added by hand", () => {
+      mockUseImportOrigin.mockReturnValue({ data: { origin: null } })
+
+      render(<PatientSummary patient={PATIENT} />)
+
+      expect(screen.queryByTestId("import-origin")).not.toBeInTheDocument()
+    })
+
+    it("shows nothing while the answer is still loading", () => {
+      mockUseImportOrigin.mockReturnValue({ data: undefined })
+
+      render(<PatientSummary patient={PATIENT} />)
+
+      expect(screen.queryByTestId("import-origin")).not.toBeInTheDocument()
+    })
   })
 
   it("shows the plan's last answer beside the name", () => {

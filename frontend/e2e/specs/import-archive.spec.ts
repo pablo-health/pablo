@@ -119,6 +119,33 @@ test("a SimplePractice export is imported, re-imported without duplicates, and u
   expect(await noteCount(api, bornJanuary!.id)).toBe(5)
   expect(await noteCount(api, bornMarch!.id)).toBe(4)
 
+  // --- the chart says which import brought her in; the import lists everyone --
+  // Lulu was here first and the import was merged into her, so her chart
+  // carries the line too. The system and the day, nothing about runs.
+  await page.goto(`/dashboard/patients/${existing.id}`)
+  const origin = page.getByTestId("import-origin")
+  await expect(origin).toHaveText(/^Imported from SimplePractice on [A-Z][a-z]+ \d{1,2}, \d{4}$/)
+  const originLink = origin.getByRole("link")
+  const originHref = await originLink.getAttribute("href")
+  expect(originHref).toMatch(/^\/dashboard\/settings\/import\?run=/)
+  const runId = originHref!.split("run=")[1]
+
+  // Following it lands on that import in history, already open to its clients.
+  await originLink.click()
+  await page.waitForURL((url) => url.pathname === IMPORT_URL && url.searchParams.get("run") === runId)
+  const linkedRow = page.locator(`[data-testid="import-history-row"][data-run-id="${runId}"]`)
+  await expect(linkedRow).toContainText("Imported")
+  const listed = linkedRow.getByTestId("import-run-clients")
+  await expect(listed).toBeVisible()
+  await expect(listed.getByRole("listitem")).toHaveCount(3)
+  await expect(listed.locator('[data-state="merged"]')).toHaveText("Lulu Llama · added to a client already here")
+  await expect(listed.locator('[data-state="landed"]')).toHaveCount(2)
+  await expect(listed.locator('[data-state="landed"]').filter({ hasText: "Bear" })).toHaveCount(2)
+  await expect(listed.getByRole("link", { name: "Lulu Llama" })).toHaveAttribute(
+    "href",
+    `/dashboard/patients/${existing.id}`,
+  )
+
   // --- what the chart shows: every kind of note readable, and marked --------
   // The notes list names where each came from and the visit it records.
   await page.goto(`/dashboard/patients/${existing.id}/notes`)

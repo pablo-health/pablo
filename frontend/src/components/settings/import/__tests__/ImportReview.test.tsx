@@ -81,6 +81,7 @@ function run(): ImportRunDetail {
     decisions: null,
     report: null,
     missing: [],
+    clients: [],
   }
 }
 
