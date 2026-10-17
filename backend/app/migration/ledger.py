@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from sqlalchemy import select
 
@@ -58,6 +58,12 @@ class ArchiveError(ValueError):
     def __init__(self, message: str, *, code: str = "INVALID_ARCHIVE") -> None:
         super().__init__(message)
         self.code = code
+
+
+class ArchiveRemover(Protocol):
+    """What the sweep needs of an archive store: removal by practice and reference."""
+
+    def delete(self, practice_key: str, ref: str | None) -> bool: ...
 
 
 @dataclass(frozen=True)
@@ -168,15 +174,25 @@ def list_runs(session: Session, *, limit: int = 50) -> list[ImportRunRow]:
 # --------------------------------------------------------------------------- archives
 
 
+def practice_archive_key(practice_key: str) -> str:
+    """The name a practice's archives are filed under, on disk and in the object
+    store: a hash of the tenant identifier, never the practice's name or schema."""
+    return hashlib.sha256(practice_key.encode()).hexdigest()[:24]
+
+
 def practice_archive_dir(base: Path, practice_key: str) -> Path:
-    """Where this practice's uploaded archives live. The key is a hash of the
-    tenant identifier, never the practice's name or schema."""
-    digest = hashlib.sha256(practice_key.encode()).hexdigest()[:24]
-    return base / digest
+    """Where this practice's uploaded archives live on this instance."""
+    return base / practice_archive_key(practice_key)
 
 
-def store_archive(base: Path, practice_key: str, data: bytes, password: str | None = None) -> str:
+def store_archive(
+    base: Path, practice_key: str, data: Path | bytes, password: str | None = None
+) -> str:
     """Unpack an uploaded zip into a fresh directory and return its reference.
+
+    The local half of :class:`app.migration.archive_store.ArchiveStore`, which
+    is what the routes and jobs use; kept for a deployment that reads the
+    unpacked directory directly.
 
     The reference is the directory name, not a path: it is stored on the run
     row and resolved again through :func:`archive_path`, so a row never
@@ -192,7 +208,7 @@ def store_archive(base: Path, practice_key: str, data: bytes, password: str | No
     target = root / ref
     target.mkdir()
     try:
-        _extract_zip(data, target, password)
+        extract_zip(data, target, password)
     except Exception:
         shutil.rmtree(target, ignore_errors=True)
         raise
@@ -232,14 +248,21 @@ def delete_archive(base: Path, practice_key: str, ref: str | None) -> bool:
     return True
 
 
-def sweep_expired_archives(session: Session, base: Path, practice_key: str, now: datetime) -> int:
-    """Delete every archive whose run has passed ``archive_expires_at``."""
+def sweep_expired_archives(
+    session: Session, store: ArchiveRemover, practice_key: str, now: datetime
+) -> int:
+    """Delete every archive whose run has passed ``archive_expires_at``.
+
+    ``store`` is anything with ``delete(practice_key, ref)``: the configured
+    :class:`~app.migration.archive_store.ArchiveStore`, which clears the
+    object-store copy as well as this instance's.
+    """
     stmt = select(ImportRunRow).where(
         ImportRunRow.archive_ref.is_not(None), ImportRunRow.archive_expires_at < now
     )
     swept = 0
     for run in session.execute(stmt).scalars():
-        delete_archive(base, practice_key, run.archive_ref)
+        store.delete(practice_key, run.archive_ref)
         run.archive_ref = None
         run.archive_expires_at = None
         swept += 1
@@ -281,9 +304,14 @@ def _unlock(zf: zipfile.ZipFile, members: list[zipfile.ZipInfo], password: str |
         ) from exc
 
 
-def _extract_zip(data: bytes, target: Path, password: str | None = None) -> None:
+def extract_zip(source: Path | bytes, target: Path, password: str | None = None) -> None:
+    """Unpack ``source``, a zip on disk or in memory, into ``target``.
+
+    An upload is spooled to disk by the route and read from there, so a large
+    export never has to fit in memory twice.
+    """
     try:
-        zf = zipfile.ZipFile(BytesIO(data))
+        zf = zipfile.ZipFile(BytesIO(source) if isinstance(source, bytes) else source)
     except zipfile.BadZipFile as exc:
         raise ArchiveError("That file is not a zip archive.") from exc
     with zf:

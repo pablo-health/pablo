@@ -35,8 +35,9 @@ from ..services.note_service import NoteService
 from ..settings import get_settings
 from ..utcnow import utc_now
 from .apply import ArchiveApplier, edited_since
+from .archive_store import ArchiveStore, archive_store_from_settings
 from .chart_seed import ChartSeeder, SeedReport
-from .ledger import archive_path, delete_archive, get_run, ledger_snapshot
+from .ledger import get_run, ledger_snapshot
 from .preview import ExistingPatient, PreviewInputs, build_preview
 from .readers.simplepractice import SOURCE_SYSTEM, read_simplepractice_archive
 
@@ -51,6 +52,11 @@ _PATIENT_PAGE = 200
 
 def archive_base() -> Path:
     return Path(get_settings().import_archive_dir)
+
+
+def archive_store() -> ArchiveStore:
+    """Where uploaded exports are kept, as the deployment configured it."""
+    return archive_store_from_settings(get_settings())
 
 
 def _existing_patients(user_id: str) -> list[ExistingPatient]:
@@ -92,7 +98,7 @@ def run_preview(schema: str, user_id: str, run_id: str) -> None:
             return
         run.state = "previewing"
         session.flush()
-        path = archive_path(archive_base(), schema, run.archive_ref or "")
+        path = archive_store().path(schema, run.archive_ref or "")
         if path is None:
             _fail(run, "The uploaded archive is no longer available. Upload it again.")
             return
@@ -121,8 +127,8 @@ def run_apply(schema: str, user_id: str, run_id: str, practice_id: str | None) -
         run = get_run(session, run_id)
         if run is None or run.preview is None:
             return
-        base = archive_base()
-        path = archive_path(base, schema, run.archive_ref or "")
+        store = archive_store()
+        path = store.path(schema, run.archive_ref or "")
         if path is None:
             _fail(run, "The uploaded archive is no longer available. Upload it again.")
             return
@@ -153,7 +159,7 @@ def run_apply(schema: str, user_id: str, run_id: str, practice_id: str | None) -
                 _fail(run, "The import stopped part way and nothing was kept. Try again.")
             return
         # The archive has done its job; it is not kept past apply.
-        delete_archive(base, schema, run.archive_ref)
+        store.delete(schema, run.archive_ref)
         run.archive_ref = None
         run.archive_expires_at = None
         landed = sorted(set(report.patients.values()))

@@ -420,6 +420,7 @@ app.include_router(session_dictations.router)
 app.include_router(patient_documents.patient_documents_router)
 app.include_router(patient_documents.documents_router)
 app.include_router(patient_documents.internal_jobs_router)
+app.include_router(migration.internal_jobs_router)
 # The patient's own half of the same table. Unconditional rather than a
 # portal module: it is the seam the modules that DO gate — sending in what
 # an intake form asked for, attaching a file to a message — both upload

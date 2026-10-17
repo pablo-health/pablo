@@ -440,10 +440,33 @@ class Settings(BaseSettings):
             "Directory an uploaded records-system export is unpacked into while "
             "it is previewed and applied. One subdirectory per practice (a hash "
             "of the tenant, never its name). Archives are deleted on apply and "
-            "at most 48 hours after upload. Must be storage every backend "
-            "instance that serves the practice can read — a single-instance "
-            "deployment can use local disk; a multi-instance one needs a "
-            "shared volume."
+            "at most 48 hours after upload. On a deployment with more than one "
+            "backend instance this is only a per-instance cache: set "
+            "import_archive_storage_root too, so every instance can fetch the "
+            "archive."
+        ),
+    )
+    import_archive_storage_root: str | None = Field(
+        default=None,
+        description=(
+            "Where an uploaded export is kept so that any backend instance can "
+            "read it: gs://<bucket>[/prefix], s3://<bucket>[/prefix], or an "
+            "absolute directory every instance mounts. One plain zip per import "
+            "run, written unlocked (the export's password opens the upload once "
+            "and is kept nowhere), deleted on apply and at most 48 hours after "
+            "upload. Unset on a single-instance deployment: the unpacked copy in "
+            "import_archive_dir is then the only one."
+        ),
+    )
+    import_task_queue: str = Field(
+        default="pablo-soap-generation",
+        description=(
+            "Cloud Tasks queue for an import's preview and apply, which read "
+            "every file in the export and can run for minutes. Reuses the "
+            "pablo-soap-generation queue (same IAM, same retry profile) so it "
+            "ships with no new infrastructure; in development the steps run as "
+            "request background tasks instead, and a deployment without a queue "
+            "keeps doing that."
         ),
     )
     webauthn_attestation_roots_dir: str = Field(
