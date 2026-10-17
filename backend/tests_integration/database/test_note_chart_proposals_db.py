@@ -12,6 +12,8 @@ template carries the table.
   the rows are visible to the grantee.
 * Accepting writes the chart's history with the note as its source, and the
   evidence round-trips as stored.
+* The dashboard's waiting counts see exactly what the grantee could open:
+  pending proposals on live notes, none for an outsider.
 
 Run: ``make test-integration``.
 """
@@ -274,3 +276,66 @@ def test_a_medication_change_round_trips_and_accepting_writes_the_list(
         row["started_at"],
         row["source_note_id"],
     ) == ("hydroxyzine", "in the afternoon as needed", "psychiatric", date(2026, 10, 6), note.id)
+
+
+def test_waiting_counts_cover_pending_proposals_on_live_notes_for_the_grantee(
+    engine: Engine, tenant: str
+) -> None:
+    patient, note = _patient_and_note(engine, tenant)
+    _, deleted_note = _patient_and_note(engine, tenant)
+    other_patient, other_note = _patient_and_note(engine, tenant)
+    second = DraftedProposal(
+        field_key="supports",
+        proposed_text="Sister visits on weekends.",
+        what_changed="New support",
+        evidence=(Evidence(4, "[00:22] Client: My sister comes by on weekends."),),
+    )
+
+    # The tenant is shared across this module, so the total is measured as a
+    # change from what the earlier tests left behind.
+    with _session(engine, tenant, _CLINICIAN_A) as session:
+        baseline = PostgresChartProposalRepository(session).count_patients_with_pending(
+            _CLINICIAN_A
+        )
+
+    with _session(engine, tenant, _CLINICIAN_A) as session:
+        history = ChartHistoryService(PostgresChartHistoryRepository(session))
+        patients = PostgresPatientRepository(session)
+        service = ChartProposalService(
+            PostgresChartProposalRepository(session),
+            ChartWriters(history=history, patients=patients),
+        )
+        service.refresh(note, ChartContext(), {}, [_PROPOSAL, second])
+        service.refresh(other_note, ChartContext(), {}, [_PROPOSAL])
+        service.refresh(deleted_note, ChartContext(), {}, [_PROPOSAL])
+        session.execute(
+            text("UPDATE notes SET deleted_at = now() WHERE id = CAST(:id AS uuid)"),
+            {"id": deleted_note.id},
+        )
+        session.commit()
+        before = PostgresChartProposalRepository(session).count_pending_by_patient(
+            _CLINICIAN_A, [patient.id, deleted_note.patient_id]
+        )
+        assert before == {patient.id: 2}, "control: the grantee sees both, not the deleted note's"
+
+        current = patients.get(patient.id, _CLINICIAN_A)
+        assert current is not None
+        stored = service.proposals(note.id)
+        service.decide(note, current, stored[0].id, Choice("accept"), _CLINICIAN_A)
+        session.commit()
+
+    with _session(engine, tenant, _CLINICIAN_A) as session:
+        repo = PostgresChartProposalRepository(session)
+        after = repo.count_pending_by_patient(_CLINICIAN_A, [patient.id, other_patient.id])
+        total = repo.count_patients_with_pending(_CLINICIAN_A)
+        none_asked = repo.count_pending_by_patient(_CLINICIAN_A, [])
+    with _session(engine, tenant, _CLINICIAN_B) as session:
+        repo = PostgresChartProposalRepository(session)
+        outsider = repo.count_pending_by_patient(_CLINICIAN_B, [patient.id, other_patient.id])
+        outsider_total = repo.count_patients_with_pending(_CLINICIAN_B)
+
+    assert after == {patient.id: 1, other_patient.id: 1}
+    # Two clients with something waiting; the deleted note's client is not one.
+    assert total - baseline == 2
+    assert none_asked == {}
+    assert (outsider, outsider_total) == ({}, 0)

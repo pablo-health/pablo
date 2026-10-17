@@ -31,6 +31,7 @@ import { useFinalizeNote } from "../useNotes"
 import { useSignNote, useUnlockNote } from "../useNoteSigning"
 import { useDeletePatient, useRestorePatient } from "../usePatients"
 import { useImportNotes } from "../useImportNotes"
+import { useDecideChartProposal, useRetryChartProposals } from "../useChartProposals"
 import * as schedulingApi from "@/lib/api/scheduling"
 import * as sessionsApi from "@/lib/api/sessions"
 import * as notesApi from "@/lib/api/notes"
@@ -46,6 +47,7 @@ vi.mock("@/lib/api/sessions")
 vi.mock("@/lib/api/notes")
 vi.mock("@/lib/api/patients")
 vi.mock("@/lib/api/outsideSessions")
+vi.mock("@/lib/api/chartProposals")
 vi.mock("@/lib/config", () => ({ useConfig: () => ({ dataMode: "api" }) }))
 
 const SUMMARY_KEY = queryKeys.dashboard.summary({
@@ -61,6 +63,8 @@ const EMPTY_SUMMARY: DashboardSummary = {
   transcription_pending_count: 0,
   awaiting_review_total: 0,
   awaiting_review: [],
+  pending_chart_updates_by_patient: {},
+  pending_chart_updates_total: 0,
 }
 
 const APPOINTMENT = {
@@ -191,6 +195,18 @@ const CASES: Array<{ name: string; run: Run }> = [
     }),
   },
   { name: "restore a client", run: mutation(useRestorePatient, "patient-1") },
+  {
+    name: "decide a chart update",
+    run: mutation(() => useDecideChartProposal("patient-1"), {
+      noteId: "note-1",
+      proposalId: "proposal-1",
+      data: { decision: "accept" },
+    }),
+  },
+  {
+    name: "check a note for chart updates again",
+    run: mutation(useRetryChartProposals, { noteId: "note-1" }),
+  },
   {
     name: "import notes",
     run: async (queryClient) => {

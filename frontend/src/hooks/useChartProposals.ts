@@ -16,6 +16,7 @@ import {
 } from "@/lib/api/chartProposals"
 import { queryKeys } from "@/lib/api/queryKeys"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
+import { withDashboard } from "./dashboardFreshness"
 
 export function useChartProposals(noteId: string | undefined) {
   return useAuthQuery<ChartProposalsResponse>({
@@ -37,7 +38,8 @@ export function usePatientChartProposals(patientId: string | undefined) {
 /**
  * Accept, edit or discard one; an accept or an edit changes the chart, so it
  * is read again. Every listing of proposals is refreshed, the note's and the
- * client's: the same proposal can be on screen in both.
+ * client's: the same proposal can be on screen in both. So is the dashboard,
+ * whose Today panel counts what is still waiting.
  */
 export function useDecideChartProposal(patientId: string) {
   return useAuthMutation<
@@ -45,11 +47,12 @@ export function useDecideChartProposal(patientId: string) {
     { noteId: string; proposalId: string; data: DecideChartProposalRequest }
   >({
     mutationFn: ({ noteId, proposalId, data }) => decideChartProposal(noteId, proposalId, data),
-    invalidateKeys: () => [
-      queryKeys.chartProposals.all,
-      queryKeys.chartHistory.byPatient(patientId),
-      queryKeys.patients.detail(patientId),
-    ],
+    invalidateKeys: () =>
+      withDashboard([
+        queryKeys.chartProposals.all,
+        queryKeys.chartHistory.byPatient(patientId),
+        queryKeys.patients.detail(patientId),
+      ]),
   })
 }
 
@@ -57,6 +60,7 @@ export function useDecideChartProposal(patientId: string) {
 export function useRetryChartProposals() {
   return useAuthMutation<ChartProposalsResponse, { noteId: string }>({
     mutationFn: ({ noteId }) => retryChartProposals(noteId),
-    invalidateKeys: ({ noteId }) => [queryKeys.chartProposals.byNote(noteId)],
+    invalidateKeys: ({ noteId }) =>
+      withDashboard([queryKeys.chartProposals.byNote(noteId)]),
   })
 }
