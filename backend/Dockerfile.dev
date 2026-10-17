@@ -13,7 +13,7 @@
 # .github/workflows/base-image-bump.yml moves this digest with the
 # production ones, so dev and production track the same Python.
 
-FROM cgr.dev/chainguard/python:latest-dev@sha256:87729167739190d9309588120a8ac0ffbf2eb95dd895abb9bada6bb9ecbf5a04
+FROM cgr.dev/chainguard/python:latest-dev@sha256:439e88f0d55e95663ac372bc287d06cb749c9f13784b9f42d116c13afcd8c550
 
 WORKDIR /app
 
