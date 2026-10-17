@@ -81,5 +81,8 @@ export async function GET(request: NextRequest) {
     // time like the toggles above. Unset hides both, so a deployment that has
     // not chosen an address shows no contact line rather than a broken link.
     supportEmail: (process.env.SUPPORT_EMAIL || '').trim(),
+    // A page of help articles for this deployment, linked from Help in the
+    // sidebar beside the support address. Unset hides the link.
+    helpUrl: (process.env.HELP_URL || '').trim(),
   })
 }

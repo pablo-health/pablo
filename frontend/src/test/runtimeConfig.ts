@@ -21,6 +21,7 @@ export function testRuntimeConfig(overrides: Partial<RuntimeConfig> = {}): Runti
     publicBookingEnabled: false,
     googleCalendarEnabled: false,
     supportEmail: "",
+    helpUrl: "",
     pabloEdition: "core",
     features: {},
     ...overrides,

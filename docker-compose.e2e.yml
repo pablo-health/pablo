@@ -499,6 +499,8 @@ services:
       # A support address, so load errors and the sidebar show where to write
       # (support-contact.spec.ts). Unset, both are hidden.
       - SUPPORT_EMAIL=help@practice.example
+      # A help-articles page, linked under Help beside the address.
+      - HELP_URL=https://practice.example/help
       # The portal is served on a host of its own. One server answers both
       # names: localhost is the clinician app, 127.0.0.1 the portal, whose
       # `/{slug}` addresses are rewritten to the portal route and where

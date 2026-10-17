@@ -25,6 +25,33 @@ export function supportMailto(email: string): string {
   return `mailto:${email}`
 }
 
+/**
+ * The deployment's help-articles page, or null when there is none to link.
+ *
+ * Only an absolute http(s) URL counts, so a blank or mistyped value (or a
+ * javascript: URL) never becomes a link.
+ */
+export function helpUrlFrom(value: string | null | undefined): string | null {
+  const raw = (value ?? "").trim()
+  if (!raw) return null
+  try {
+    const url = new URL(raw)
+    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The help-articles page this deployment configured (HELP_URL on the frontend
+ * container, served by /api/config), or null. Read inside ConfigProvider only:
+ * unlike the support address, no error screen needs it.
+ */
+export function useHelpUrl(): string | null {
+  const config = useOptionalConfig()
+  return config ? helpUrlFrom(config.helpUrl) : null
+}
+
 // One lookup per page load for screens rendered outside ConfigProvider.
 let standaloneLookup: Promise<string | null> | null = null
 

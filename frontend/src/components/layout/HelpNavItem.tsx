@@ -4,11 +4,12 @@
 
 import { CircleHelp } from "lucide-react"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { supportMailto, useSupportEmail } from "@/lib/support"
+import { supportMailto, useHelpUrl, useSupportEmail } from "@/lib/support"
 
 /**
- * "Help" in the sidebar: opens a small popover with the deployment's support
- * address. Absent when the deployment has not configured one.
+ * "Help" in the sidebar: opens a small popover with the deployment's help
+ * articles and support address, whichever it has configured. Absent when it
+ * has neither.
  *
  * A popover rather than a bare mailto link because a mailto does nothing on a
  * machine with no mail app set up, which is common for someone who works
@@ -16,7 +17,8 @@ import { supportMailto, useSupportEmail } from "@/lib/support"
  */
 export function HelpNavItem() {
   const email = useSupportEmail()
-  if (!email) return null
+  const helpUrl = useHelpUrl()
+  if (!email && !helpUrl) return null
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -28,12 +30,28 @@ export function HelpNavItem() {
           Help
         </button>
       </PopoverTrigger>
-      <PopoverContent side="right" align="end" className="text-sm text-neutral-700">
-        Email{" "}
-        <a href={supportMailto(email)} className="text-primary-700 underline hover:text-primary-800">
-          {email}
-        </a>
-        .
+      <PopoverContent side="right" align="end" className="space-y-2 text-sm text-neutral-700">
+        {helpUrl && (
+          <p>
+            <a
+              href={helpUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary-700 underline hover:text-primary-800"
+            >
+              Help articles
+            </a>
+          </p>
+        )}
+        {email && (
+          <p>
+            Email{" "}
+            <a href={supportMailto(email)} className="text-primary-700 underline hover:text-primary-800">
+              {email}
+            </a>
+            .
+          </p>
+        )}
       </PopoverContent>
     </Popover>
   )

@@ -28,6 +28,11 @@ export interface RuntimeConfig {
    * `useSupportEmail`, which also screens out a malformed value.
    */
   supportEmail: string
+  /**
+   * A page of help articles for this deployment. Empty when it has none;
+   * read it through `useHelpUrl`, which also screens out a malformed value.
+   */
+  helpUrl: string
   /** The edition this deployment runs. */
   pabloEdition: string
   /**

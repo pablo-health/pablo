@@ -16,6 +16,8 @@
 import { expect, test } from "../fixtures/auth"
 
 const SUPPORT_EMAIL = "help@practice.example"
+// Set as HELP_URL beside SUPPORT_EMAIL in docker-compose.e2e.yml.
+const HELP_URL = "https://practice.example/help"
 
 // 503 is what the backend sends while it cannot serve a request, and the one
 // 5xx the server-error guard expects specs to see on purpose.
@@ -44,12 +46,15 @@ test("a dashboard panel that can't load names the support address", async ({
   await expect(page.getByText(/no sessions today/i)).toHaveCount(0)
 })
 
-test("Help in the sidebar shows the support address", async ({ signedInPage: page }) => {
+test("Help in the sidebar shows the help articles and the support address", async ({
+  signedInPage: page,
+}) => {
   await page.goto("/dashboard")
 
   const nav = page.getByRole("navigation", { name: "Main navigation" })
   await nav.getByRole("button", { name: "Help" }).click()
 
+  await expect(page.getByRole("link", { name: "Help articles" })).toHaveAttribute("href", HELP_URL)
   await expect(page.getByRole("link", { name: SUPPORT_EMAIL })).toHaveAttribute(
     "href",
     `mailto:${SUPPORT_EMAIL}`,
