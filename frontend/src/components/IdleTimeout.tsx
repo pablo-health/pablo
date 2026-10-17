@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useQueryClient } from "@tanstack/react-query"
+import { Button } from "@/components/ui/button"
 import { signOutAndClear } from "@/lib/auth/signOutAndClear"
 import { handleTerminalAuthLogout, returnToParam } from "@/lib/api/client"
 import { getSessionStatus, touchSession } from "@/lib/api/session"
@@ -284,12 +285,13 @@ export function IdleTimeout() {
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
-          <button
+          <Button
+            size="lg"
+            className="w-full"
             onClick={isExpired ? signInAgain : handleStaySignedIn}
-            className="w-full bg-primary-600 text-white px-6 py-2.5 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200"
           >
             {isExpired ? "Sign In" : "Stay Signed In"}
-          </button>
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

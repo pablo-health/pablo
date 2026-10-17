@@ -15,7 +15,7 @@ export function NavBadge({ kind }: { kind: NonNullable<NavItem["badge"]> }) {
   if (count === 0) return null
   return (
     <span
-      className="ml-auto rounded-full bg-primary-600 px-2 py-0.5 text-xs font-semibold text-white"
+      className="ml-auto rounded-full bg-primary-600 px-2 py-0.5 text-xs font-semibold text-on-honey"
       aria-label={`${count} open`}
       data-testid="nav-badge-inbox"
     >

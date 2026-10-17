@@ -6,6 +6,7 @@ import { useState } from "react"
 
 import { RENDERED_ITEM_TYPES, rendererFor } from "@/components/portal/forms/renderers/registry"
 import type { ReadOnlySource } from "@/components/portal/forms/renderers/types"
+import { Button } from "@/components/ui/button"
 import type { IntakeReviewItem } from "@/lib/api/intakeReview"
 import type { IntakeArtifact, IntakeForm } from "@/lib/api/patientIntake"
 import type { PeopleWords } from "@/lib/peopleTerm"
@@ -140,11 +141,11 @@ export function IntakeReviewItemRow(props: IntakeReviewItemRowProps) {
               <input type="text" className="input min-w-0 flex-1" value={entryText} aria-label={COPY.entryLabel}
                 onChange={(e) => setEntryText(e.target.value)}
                 data-testid={`intake-review-entry-input-${id}`} />
-              <button type="button" className="btn-primary text-xs" disabled={saving || entryText.trim() === ""}
+              <Button type="button" size="sm" disabled={saving || entryText.trim() === ""}
                 onClick={() => onSaveEntry(id, entryText.trim())}
                 data-testid={`intake-review-entry-save-${id}`}>
                 {COPY.entrySave}
-              </button>
+              </Button>
               <button type="button" className="text-xs text-neutral-500" onClick={() => setEntryOpen(false)}
                 data-testid={`intake-review-entry-cancel-${id}`}>
                 {COPY.entryCancel}

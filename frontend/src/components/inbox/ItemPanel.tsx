@@ -6,6 +6,7 @@ import Link from "next/link"
 import type { ReactNode } from "react"
 import { formatInUserTimeZone, useUserTimeZone } from "@/hooks/usePreferences"
 import type { InboxItem } from "@/lib/api/inbox"
+import { Button } from "@/components/ui/button"
 
 export const WHEN: Intl.DateTimeFormatOptions = {
   month: "short",
@@ -36,12 +37,10 @@ export function ItemPanel({ item, children }: { item: InboxItem; children?: Reac
 /** Where the item is actually handled. The Inbox links there rather than re-doing it. */
 export function OpenLink({ href, label }: { href: string; label: string }) {
   return (
-    <Link
-      href={href}
-      className="inline-flex rounded-lg bg-primary-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-700"
-      data-testid="inbox-open-link"
-    >
-      {label}
-    </Link>
+    <Button asChild size="sm">
+      <Link href={href} data-testid="inbox-open-link">
+        {label}
+      </Link>
+    </Button>
   )
 }
