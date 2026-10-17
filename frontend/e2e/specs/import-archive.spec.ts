@@ -145,7 +145,7 @@ test("a SimplePractice export is imported, re-imported without duplicates, and u
 
   // A chart note: no visit, so no session; the same notice, the same text.
   await page.goto(`/dashboard/patients/${existing.id}/notes/${chartNote!.id}`)
-  await expect(page.getByRole("heading", { name: /^Chart note/ })).toBeVisible()
+  await expect(page.getByRole("heading", { level: 1, name: /^Chart note/ })).toBeVisible()
   const chartNotice = page.getByRole("region", { name: "Imported note" })
   await expect(chartNotice).toContainText("Imported from SimplePractice")
   await expect(chartNotice).toContainText("Chart note, written there on September 26, 2026.")
@@ -156,7 +156,7 @@ test("a SimplePractice export is imported, re-imported without duplicates, and u
 
   // A psychotherapy note: restricted, and still a reference copy.
   await page.goto(`/dashboard/patients/${existing.id}/notes/${psychotherapy!.id}`)
-  await expect(page.getByRole("heading", { name: /^Psychotherapy note/ })).toBeVisible()
+  await expect(page.getByRole("heading", { level: 1, name: /^Psychotherapy note/ })).toBeVisible()
   await expect(page.getByRole("region", { name: "Imported note" })).toContainText(
     "Imported from SimplePractice",
   )

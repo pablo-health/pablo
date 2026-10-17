@@ -105,15 +105,12 @@ from ..services import (
     NoteGenerationService,
     NoteNotFoundError,
     NoteService,
-    RegistryNoteGenerationService,
     get_audit_service,
 )
-from ..services.ai_features import AIFeature
 from ..services.audio_retention import AudioOnSigning
 from ..services.file_storage import file_storage_from_settings
-from ..services.hedged_structured_llm_gateway import generation_gateway
-from ..services.http_structured_llm_gateway import HttpStructuredLLMGateway
 from ..services.imported_notes import imported_note_ids, refuse_imported_note
+from ..services.note_generation_factory import note_generation_service
 from ..services.note_generation_service import TransientNoteGenerationError
 from ..services.note_redraft import as_shown
 from ..services.note_signing import current_signature
@@ -168,11 +165,7 @@ def get_note_generation_service() -> NoteGenerationService:
     answers every model, fallbacks included, so the fallback order runs
     there as it does against real providers.
     """
-    base_url = get_settings().note_generation_base_url
-    if base_url:
-        stand_in = generation_gateway(AIFeature.NOTE_GENERATION, HttpStructuredLLMGateway(base_url))
-        return RegistryNoteGenerationService(llm_gateway=stand_in)
-    return RegistryNoteGenerationService()
+    return note_generation_service()
 
 
 def get_appointment_repository(

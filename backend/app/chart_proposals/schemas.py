@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ..models.notes import NoteDiagnosisCode  # noqa: TC001 — pydantic field type
 from .families import family_for
 
 if TYPE_CHECKING:
@@ -156,6 +157,9 @@ class NoteChartProposalGroup(BaseModel):
     source_system: str | None
     #: A reference copy of a note signed elsewhere.
     imported: bool
+    #: The diagnosis codes an imported note carried from its system, offered to
+    #: the problem list beside the proposals; empty for a note written here.
+    source_diagnoses: list[NoteDiagnosisCode] = Field(default_factory=list)
     proposals: list[ChartProposalResponse]
 
 

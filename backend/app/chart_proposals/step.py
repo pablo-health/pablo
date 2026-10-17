@@ -143,6 +143,40 @@ class ChartProposalStep:
         drafted = propose_from_document(complete, chart, document)
         return screened(drafted, chart, document_segments(document))
 
+    def seed_from_document(
+        self, generator: NoteGenerationService, chart: ChartContext, document: str
+    ) -> Drafted | None:
+        """The proposal call for a note an archive import landed, whatever its type.
+
+        The gate on which note types propose asks whether a draft was written
+        against the chart; it does not apply here. The note is a reference
+        copy, and the purpose is to seed an empty chart from what it says.
+        ``None`` only when no model is configured.
+        """
+        complete = generator.chart_proposal_completion()
+        if complete is None:
+            return None
+        drafted = propose_from_document(complete, chart, document)
+        return screened(drafted, chart, document_segments(document))
+
+    def store_seed(self, note: Note, chart: ChartContext, drafted: Drafted) -> None:
+        """After :meth:`seed_from_document`: the proposals replace what is pending on the
+        note and how the call ended is recorded, with no note-text proposals to recompute
+        (an imported narrative has no chart-shaped fields)."""
+        status: RunStatus = "failed" if drafted.error_class else "ok"
+        self._proposals.record_run(
+            ProposalRun(
+                note_id=note.id,
+                patient_id=note.patient_id,
+                status=status,
+                computed_at=utc_now(),
+                error_class=drafted.error_class,
+                considered=drafted.considered,
+            )
+        )
+        if not drafted.error_class:
+            ChartProposalService(self._proposals).refresh(note, chart, {}, drafted.proposals)
+
     def store(
         self,
         note: Note,

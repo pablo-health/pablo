@@ -180,12 +180,14 @@ the paragraph marks is the version kept.
 
 ## 3. Filling the chart from an archive import
 
-After an archive applies, for each client that received notes, one proposal
-call reads their most recent progress note together with their treatment
-plan (and the chart note, if any) as one document, paragraph-numbered, with
-the client's chart as it stands. The reply's proposals are stored pending on
-the most recent imported note, origin `document`, citing paragraphs, exactly
-as a single-document import's are. Nothing lands on the chart until accepted.
+After an archive applies, for each client that received notes, a proposal
+call reads their most recent progress note, and another their treatment
+plan, each paragraph-numbered, with the client's chart as it stands. Each
+reply's proposals are stored pending on the note they came from, origin
+`document`, citing its paragraphs, exactly as a single-document import's are,
+so the marks on a note's page point at that note's own text. A chart note (a
+voicemail, a scheduling remark) is not read; a psychotherapy note never is.
+Nothing lands on the chart until accepted.
 
 Diagnoses need no model: the export's ICD-10 codes are in each note's
 `__source`. They are offered beside the proposals as `Add to problem list`
@@ -195,7 +197,7 @@ The call runs inside the apply job, after the notes land, one client at a
 time, and never fails the import: a client whose call fails has a run marked
 `failed` and the usual *Pablo couldn't check this note for chart updates*
 with Retry on the note. The import receipt gains one line, `Chart updates
-are ready to review on N clients.`, linking to the client list.
+from the notes are ready to review on N clients, at the top of each chart.`
 
 The gate on which note types propose (`full_chart`) is about whether a drafted
 note was written against the chart. It does not apply here: the purpose is to

@@ -5,6 +5,8 @@
  * Kept beside the note, never in its content.
  */
 
+import type { NoteDiagnosisCode } from "./notes"
+
 export type ChartProposalDecision = "pending" | "accepted" | "edited" | "discarded"
 
 export interface ProposalEvidence {
@@ -89,6 +91,8 @@ export interface NoteChartProposalGroup {
   source_system: string | null
   /** A reference copy of a note signed elsewhere. */
   imported: boolean
+  /** The diagnosis codes an imported note carried, offered to the problem list. */
+  source_diagnoses: NoteDiagnosisCode[]
   proposals: ChartProposal[]
 }
 

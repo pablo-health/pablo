@@ -33,6 +33,7 @@ from ..chart_proposals.step import ChartProposalStep  # noqa: TC001 — FastAPI 
 from ..models import AuditAction, Note, User
 from ..models.enums import SessionStatus
 from ..models.note_source import note_source
+from ..models.notes import NoteDiagnosisCode
 from ..repositories import (  # noqa: TC001 — FastAPI resolves at runtime
     ChartProposalRepository,
     PatientRepository,
@@ -94,6 +95,10 @@ def list_patient_chart_proposals(
                 date=date,
                 source_system=source.system if source is not None else None,
                 imported=imported,
+                source_diagnoses=[
+                    NoteDiagnosisCode(code=code, description=description)
+                    for code, description in (source.diagnoses if source is not None else ())
+                ],
                 proposals=[proposal_response(p, chart) for p in pending if p.note_id == note_id],
             )
         )

@@ -14,11 +14,14 @@
 import { useState } from "react"
 import Link from "next/link"
 import { ChevronDown, ChevronUp } from "lucide-react"
+import { AddDiagnosisButton, isListed } from "@/components/sessions/AddToProblemList"
 import { Button } from "@/components/ui/button"
 import { usePatientChartProposals } from "@/hooks/useChartProposals"
 import { useNoteTypeLabel } from "@/hooks/useNoteTypes"
+import { usePatientProblems } from "@/hooks/useProblems"
 import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import { sourceSystemName } from "@/lib/noteDisplay"
+import { diagnosisText, type StatedDiagnosis } from "@/lib/statedDiagnoses"
 import type { NoteChartProposalGroup } from "@/types/chartProposals"
 import { ProposalLedger } from "./ProposalLedger"
 
@@ -84,6 +87,14 @@ export function ChartUpdatesWaiting({ patientId }: { patientId: string }) {
 function NoteGroup({ patientId, group }: { patientId: string; group: NoteChartProposalGroup }) {
   const noteTypeLabel = useNoteTypeLabel()
   const { readOnly } = useReadOnlyMode()
+  const { data: problems } = usePatientProblems(
+    group.source_diagnoses.length ? patientId : undefined,
+  )
+  // The diagnosis codes the note carried from its system, less those the
+  // problem list already has.
+  const diagnoses: StatedDiagnosis[] = group.source_diagnoses
+    .map((d) => ({ label: d.description || d.code, code: d.code, status: null }))
+    .filter((dx) => !isListed(dx, problems?.data ?? []))
   const system = sourceSystemName(group.source_system)
   const href = group.session_id
     ? `/dashboard/sessions/${group.session_id}`
@@ -110,6 +121,27 @@ function NoteGroup({ patientId, group }: { patientId: string; group: NoteChartPr
         proposals={group.proposals}
         readOnly={readOnly}
       />
+      {diagnoses.length > 0 && (
+        <section aria-label="Diagnoses" className="space-y-2">
+          <h4 className="border-b border-neutral-200 pb-1 text-sm font-semibold text-neutral-800">
+            Diagnoses
+          </h4>
+          <ul className="divide-y divide-neutral-100">
+            {diagnoses.map((dx) => (
+              <li
+                key={diagnosisText(dx)}
+                className="flex flex-wrap items-center justify-between gap-2 py-2"
+                data-testid="source-diagnosis"
+              >
+                <span className="text-sm text-neutral-900">{diagnosisText(dx)}</span>
+                {!readOnly && (
+                  <AddDiagnosisButton patientId={patientId} noteId={group.note_id} dx={dx} />
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   )
 }

@@ -105,6 +105,14 @@ export interface ImportRunDetail extends ImportRunSummary {
     not_landed: { key: string; reason: string }[]
     patients: Record<string, string>
     undo?: { removed: Record<string, number>; kept: { key: string; reason: string }[] }
+    /** What the imported notes proposed for each client's chart, once the import applied. */
+    chart_updates?: {
+      checked: number
+      clients: number
+      failed: number
+      nothing_to_read: number
+      patient_ids: string[]
+    }
   } | null
   missing: string[]
 }
