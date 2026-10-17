@@ -36,10 +36,12 @@ export function usePabloNoteVisibility(): (line: PabloNoteLine) => boolean {
     companion,
   }
 
+  const resolve = (flag: string | undefined): boolean =>
+    flag && flag in runtimeToggles ? runtimeToggles[flag] : isOn(flag)
+
   return (line: PabloNoteLine) => {
-    const flag = line.requiresFlag
-    if (flag && flag in runtimeToggles) return runtimeToggles[flag]
-    return isOn(flag)
+    if (line.hiddenWhenFlag && resolve(line.hiddenWhenFlag)) return false
+    return resolve(line.requiresFlag)
   }
 }
 

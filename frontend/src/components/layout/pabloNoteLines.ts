@@ -30,6 +30,12 @@ export interface PabloNoteLine {
    */
   requiresFlag?: string
   /**
+   * A feature that hides the line while it is on, answered the same way as
+   * `requiresFlag`. Set through the merge slot's `hideWhenOn`, for a line
+   * that a build says another way when that feature is on.
+   */
+  hiddenWhenFlag?: string
+  /**
    * A plan capability the line needs. The base build has no notion of plans
    * and ignores it; a downstream build answers it in `pabloNoteVisibility.ts`.
    */
@@ -42,10 +48,13 @@ export interface PabloNoteLine {
  *
  * - `append`: lines added after the base lines, in slot order.
  * - `hide`: ids of base lines to drop.
+ * - `hideWhenOn`: base line id → a feature that hides that line while the
+ *   feature is on. The line still shows wherever the feature is off.
  */
 export interface PabloNoteExtensions {
   append: PabloNoteLine[]
   hide: string[]
+  hideWhenOn?: Record<string, string>
 }
 
 const baseLines: PabloNoteLine[] = [
@@ -111,10 +120,17 @@ const baseLines: PabloNoteLine[] = [
   },
 ]
 
-/** Base lines minus the hidden ones, then the slot's appended lines. */
+/**
+ * Base lines minus the hidden ones, each carrying the feature that hides it
+ * while on (if the slot names one), then the slot's appended lines.
+ */
 export function mergeNoteLines(base: PabloNoteLine[], extensions: PabloNoteExtensions): PabloNoteLine[] {
   const hidden = new Set(extensions.hide)
-  return [...base.filter((line) => !hidden.has(line.id)), ...extensions.append]
+  const hideWhenOn = extensions.hideWhenOn ?? {}
+  const kept = base
+    .filter((line) => !hidden.has(line.id))
+    .map((line) => (line.id in hideWhenOn ? { ...line, hiddenWhenFlag: hideWhenOn[line.id] } : line))
+  return [...kept, ...extensions.append]
 }
 
 /** Every line this build knows about, before gating. */
