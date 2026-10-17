@@ -161,16 +161,22 @@ async def start_import(
     user: Annotated[User, Depends(require_baa_acceptance)],
     audit: Annotated[AuditService, Depends(get_audit_service)],
     scope: Annotated[Scope, Form()] = "both",
+    password: Annotated[str | None, Form()] = None,
 ) -> ImportRunDetail:
-    """Upload an export archive (a .zip of the export folder) and start its preview."""
+    """Upload an export archive (a .zip of the export folder) and start its preview.
+
+    ``password`` opens a protected export (SimplePractice protects every one).
+    It is used to unpack the archive and kept nowhere: not on the run, not in
+    the audit trail, not in a log.
+    """
     data = await _read_upload(file)
     base = archive_base()
     session = get_db_session()
     sweep_expired_archives(session, base, _schema(ctx), utc_now())
     try:
-        ref = store_archive(base, _schema(ctx), data)
+        ref = store_archive(base, _schema(ctx), data, password or None)
     except ArchiveError as exc:
-        raise BadRequestError(str(exc), code="INVALID_ARCHIVE") from exc
+        raise BadRequestError(str(exc), code=exc.code) from exc
     run = new_run(
         session, source_system=SOURCE_SYSTEM, scope=scope, started_by=user.id, archive_ref=ref
     )

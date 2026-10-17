@@ -89,6 +89,8 @@ export function ImportPage() {
   const history = useImportHistory()
   const [activeId, setActiveId] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
+  // Opens a protected export; sent with the upload, kept nowhere.
+  const [password, setPassword] = useState("")
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const active = useImportRun(activeId)
@@ -114,7 +116,7 @@ export function ImportPage() {
     setUploading(true)
     setError(null)
     try {
-      const started = await startImport(file)
+      const started = await startImport(file, "both", password.trim() || undefined)
       queryClient.setQueryData(importKeys.run(started.id), started)
       setActiveId(started.id)
       await queryClient.invalidateQueries({ queryKey: importKeys.runs() })
@@ -174,6 +176,25 @@ export function ImportPage() {
         title="Import from SimplePractice"
         description={`Upload your SimplePractice export to bring your ${people.many} and notes across. You can upload a newer export later; only what's new is added.`}
       >
+        {/* SimplePractice protects every export with a password and shows it
+            beside the download. It opens the zip once and is kept nowhere. */}
+        <div className="mb-4 max-w-sm space-y-1">
+          <label htmlFor="import-export-password" className="text-sm font-medium text-foreground">
+            Export password
+          </label>
+          <input
+            id="import-export-password"
+            type="password"
+            autoComplete="off"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            data-testid="import-archive-password"
+            className="border-input focus-visible:border-ring focus-visible:ring-ring/50 flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:ring-[3px]"
+          />
+          <p className="text-xs text-muted-foreground">
+            SimplePractice shows it when the export is ready to download.
+          </p>
+        </div>
         <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">
           {uploading && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
           {uploading ? "Uploading" : "Upload export (.zip)"}

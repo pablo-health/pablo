@@ -139,10 +139,20 @@ export function recordKey(recordType: string, sourceId: string): string {
   return `${recordType}:${sourceId}`
 }
 
-export async function startImport(file: File, scope: ImportScope = "both"): Promise<ImportRunDetail> {
+/**
+ * Upload an export and start its preview. `password` opens a protected
+ * export (SimplePractice protects every one); it travels with the upload and
+ * is kept nowhere.
+ */
+export async function startImport(
+  file: File,
+  scope: ImportScope = "both",
+  password?: string,
+): Promise<ImportRunDetail> {
   const form = new FormData()
   form.append("file", file)
   form.append("scope", scope)
+  if (password) form.append("password", password)
   return postForm<ImportRunDetail>("/api/migration/runs", form)
 }
 

@@ -48,7 +48,16 @@ MAX_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024
 
 
 class ArchiveError(ValueError):
-    """The uploaded archive could not be used as an export."""
+    """The uploaded archive could not be used as an export.
+
+    ``code`` tells the screen what to do about it: ``ARCHIVE_PASSWORD_REQUIRED``
+    and ``ARCHIVE_PASSWORD_WRONG`` point at the password field; anything else
+    is ``INVALID_ARCHIVE``, a different file.
+    """
+
+    def __init__(self, message: str, *, code: str = "INVALID_ARCHIVE") -> None:
+        super().__init__(message)
+        self.code = code
 
 
 @dataclass(frozen=True)
@@ -166,12 +175,16 @@ def practice_archive_dir(base: Path, practice_key: str) -> Path:
     return base / digest
 
 
-def store_archive(base: Path, practice_key: str, data: bytes) -> str:
+def store_archive(base: Path, practice_key: str, data: bytes, password: str | None = None) -> str:
     """Unpack an uploaded zip into a fresh directory and return its reference.
 
     The reference is the directory name, not a path: it is stored on the run
     row and resolved again through :func:`archive_path`, so a row never
     carries a filesystem location.
+
+    ``password`` opens an export the source system protected (SimplePractice
+    protects every one, with the traditional zip cipher). It is used here
+    once and kept nowhere: what lands on disk is the plain tree.
     """
     root = practice_archive_dir(base, practice_key)
     root.mkdir(parents=True, exist_ok=True)
@@ -179,7 +192,7 @@ def store_archive(base: Path, practice_key: str, data: bytes) -> str:
     target = root / ref
     target.mkdir()
     try:
-        _extract_zip(data, target)
+        _extract_zip(data, target, password)
     except Exception:
         shutil.rmtree(target, ignore_errors=True)
         raise
@@ -233,7 +246,42 @@ def sweep_expired_archives(session: Session, base: Path, practice_key: str, now:
     return swept
 
 
-def _extract_zip(data: bytes, target: Path) -> None:
+#: WinZip AES marks a member with this compression method; the standard library
+#: reads only the traditional cipher, which is the one SimplePractice uses.
+_AES_COMPRESSION = 99
+
+
+def _unlock(zf: zipfile.ZipFile, members: list[zipfile.ZipInfo], password: str | None) -> None:
+    """Set the archive's password when its members need one, and prove it opens them.
+
+    A protected export with no password, or the wrong one, is said plainly so
+    the screen can point at the password field rather than call the file bad.
+    """
+    encrypted = [m for m in members if m.flag_bits & 0x1]
+    if any(m.compress_type == _AES_COMPRESSION for m in encrypted):
+        raise ArchiveError(
+            "This zip is protected in a way Pablo can't open. Unzip it, then zip the "
+            "folder again without a password.",
+        )
+    if encrypted and not password:
+        raise ArchiveError(
+            "This export is protected with a password. Enter the one shown with the export.",
+            code="ARCHIVE_PASSWORD_REQUIRED",
+        )
+    if not password:
+        return
+    zf.setpassword(password.encode("utf-8"))
+    try:
+        with zf.open(encrypted[0] if encrypted else members[0]) as probe:
+            probe.read(1)
+    except RuntimeError as exc:  # the standard library's "Bad password" signal
+        raise ArchiveError(
+            "That password doesn't open this export. Check it and try again.",
+            code="ARCHIVE_PASSWORD_WRONG",
+        ) from exc
+
+
+def _extract_zip(data: bytes, target: Path, password: str | None = None) -> None:
     try:
         zf = zipfile.ZipFile(BytesIO(data))
     except zipfile.BadZipFile as exc:
@@ -243,6 +291,7 @@ def _extract_zip(data: bytes, target: Path) -> None:
         members = [m for m in zf.infolist() if not m.is_dir()]
         if not members:
             raise ArchiveError("The zip archive is empty.")
+        _unlock(zf, members, password)
         for member in members:
             name = member.filename
             if name.startswith("/") or ".." in Path(name).parts or "__MACOSX" in name:
