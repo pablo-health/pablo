@@ -579,6 +579,7 @@ def _row_to_patient(row: PatientRow) -> Patient:
         chart_closure_reason=row.chart_closure_reason,
         rate_cents=row.rate_cents,
         sliding_scale_note=row.sliding_scale_note,
+        superbill_includes_diagnosis=row.superbill_includes_diagnosis,
         origin=row.origin,
         address_line1=row.address_line1,
         address_line2=row.address_line2,
@@ -611,6 +612,7 @@ def _patient_to_row(patient: Patient, row: PatientRow) -> None:
     row.chart_closure_reason = patient.chart_closure_reason
     row.rate_cents = patient.rate_cents
     row.sliding_scale_note = patient.sliding_scale_note
+    row.superbill_includes_diagnosis = patient.superbill_includes_diagnosis
     row.origin = patient.origin
     row.address_line1 = patient.address_line1
     row.address_line2 = patient.address_line2

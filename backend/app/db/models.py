@@ -163,6 +163,12 @@ class PatientRow(Base):
     # The arrangement in the clinician's own words. Never parsed — it exists so
     # the REASON for a rate survives staff turnover.
     sliding_scale_note: Mapped[str | None] = mapped_column(Text)
+    # Whether this person's superbill prints their diagnosis. Off unless the
+    # clinician turns it on: printing it is what lets a client file with an
+    # insurer, and keeping it off is often why a client pays out of pocket.
+    superbill_includes_diagnosis: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     # Flags a row for human merge review. NULL = created by staff in the normal
     # chart flow (most rows, and not suspicious). Non-NULL means an
     # unauthenticated intake surface that cannot verify the caller's claimed

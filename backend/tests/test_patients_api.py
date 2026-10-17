@@ -704,6 +704,28 @@ def test_update_patient_status(client: TestClient, sample_patient_data: dict[str
     assert data["status"] == "inactive"
 
 
+def test_superbill_diagnosis_is_off_until_turned_on_and_stays_set(
+    client: TestClient, sample_patient_data: dict[str, Any]
+) -> None:
+    """A client's superbill leaves the diagnosis off until the clinician says otherwise.
+
+    An unrelated edit must not turn it back off, which a ``bool`` that
+    defaults to ``False`` on the update request would do.
+    """
+    created = client.post("/api/patients", json=sample_patient_data).json()
+    assert created["superbill_includes_diagnosis"] is False
+
+    patient_id = created["id"]
+    on = client.patch(f"/api/patients/{patient_id}", json={"superbill_includes_diagnosis": True})
+    assert on.json()["superbill_includes_diagnosis"] is True
+
+    renamed = client.patch(f"/api/patients/{patient_id}", json={"first_name": "Robin"})
+    assert renamed.json()["superbill_includes_diagnosis"] is True
+
+    off = client.patch(f"/api/patients/{patient_id}", json={"superbill_includes_diagnosis": False})
+    assert off.json()["superbill_includes_diagnosis"] is False
+
+
 def test_update_patient_email_and_phone(
     client: TestClient, sample_patient_data: dict[str, Any]
 ) -> None:

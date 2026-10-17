@@ -5,8 +5,12 @@
 What these pin down:
 
 * a client with claims in the period gets a PDF download with a name-free
-  filename, and the audit row carries the period and the claim, line and
-  charge ids — nothing off the chart;
+  filename, and the audit row carries the period, whether a diagnosis was
+  printed, and the appointment, claim, line and charge ids — nothing off the
+  chart;
+* a client who pays out of pocket, with no claim at all, gets a PDF priced
+  from the session charge;
+* the diagnosis is on the page only when the client's setting says so;
 * a refusal is 422 carrying every finding, no PDF, and an audit row naming
   the finding codes and field paths;
 * an unknown or ungranted client is 404, never 403, and a backwards period
@@ -30,6 +34,7 @@ from app.models.patient import Patient
 from app.models.payments import PatientCharge
 from app.repositories import (
     get_appointment_repository,
+    get_appointment_type_repository,
     get_claim_repository,
     get_clinician_profile_repository,
     get_patient_payment_repository,
@@ -44,8 +49,13 @@ from app.repositories.clinician_profile import (
 )
 from app.repositories.patient import InMemoryPatientRepository
 from app.repositories.user import InMemoryUserRepository
+from app.routes import claims as claim_routes
 from app.routes import superbills as superbill_routes
+from app.scheduling_engine.models.appointment import Appointment
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
+from app.scheduling_engine.repositories.appointment_type import (
+    InMemoryAppointmentTypeRepository,
+)
 from app.services import AuditService, get_audit_service, structured_llm_gateway, vertex_client
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -56,6 +66,15 @@ _NOW = datetime(2026, 9, 6, 15, 0, tzinfo=UTC)
 _DOB = "2000-01-01"
 _TAX_ID = "123456789"
 _URL = f"/api/patients/{PATIENT_ID}/superbill?start=2026-09-01&end=2026-09-30"
+_BILLING_PROFILE: dict[str, object] = {
+    "legal_name": "Pablo Test Practice",
+    "tax_id_type": "ein",
+    "address_line1": "123 Some St",
+    "city": "Atlanta",
+    "state": "GA",
+    "postal_code": "303010000",
+    "phone": "5553334444",
+}
 
 
 def _user(user_id: str = USER_ID) -> User:
@@ -133,6 +152,8 @@ def harness() -> dict[str, Any]:
     app.dependency_overrides[get_patient_payment_repository] = lambda: ledger
     app.dependency_overrides[get_clinician_profile_repository] = lambda: profiles
     app.dependency_overrides[get_appointment_repository] = lambda: appointments
+    app.dependency_overrides[get_appointment_type_repository] = InMemoryAppointmentTypeRepository
+    app.dependency_overrides[claim_routes.get_billing_profile_loader] = lambda: _BILLING_PROFILE
     app.dependency_overrides[get_user_repository] = InMemoryUserRepository
     app.dependency_overrides[superbill_routes.get_billing_tax_id_loader] = lambda: tax_id["value"]
     app.dependency_overrides[get_audit_service] = lambda: AuditService(audit_repo)
@@ -141,6 +162,9 @@ def harness() -> dict[str, Any]:
         "app": app,
         "client": client,
         "claims": claims,
+        "patients": patients,
+        "appointments": appointments,
+        "ledger": ledger,
         "audit": audit_repo,
         "tax_id": tax_id,
     }
@@ -183,6 +207,8 @@ def test_generation_is_audited_with_identifiers_only(harness: dict[str, Any]) ->
     assert row.changes == {
         "period_start": "2026-09-01",
         "period_end": "2026-09-30",
+        "includes_diagnosis": False,
+        "appointment_ids": [APPOINTMENT_ID],
         "claim_ids": [claim().id],
         "claim_line_ids": [claim().lines[0].id],
         "charge_ids": ["charge-1"],
@@ -205,12 +231,72 @@ def test_a_refusal_is_422_with_every_finding_and_no_pdf(harness: dict[str, Any])
     assert rows[0].changes == {
         "period_start": "2026-09-01",
         "period_end": "2026-09-30",
+        "includes_diagnosis": False,
         "findings": [{"code": "missing_field", "field": "billing_provider.tax_id"}],
     }
     _assert_nothing_off_the_chart(rows)
 
 
-def test_a_period_with_no_claims_is_refused(harness: dict[str, Any]) -> None:
+def _self_pay(harness: dict[str, Any]) -> None:
+    """No claim at all: one visit on the 3rd, charged $115 and paid."""
+    harness["app"].dependency_overrides[get_claim_repository] = InMemoryClaimRepository
+    harness["ledger"].charges = [
+        PatientCharge(
+            id="charge-1",
+            patient_id=PATIENT_ID,
+            appointment_id=_VISIT_ID,
+            amount_cents=11500,
+            currency="usd",
+            status="succeeded",
+            created_by_user_id=USER_ID,
+            created_at=BUILT_AT,
+        )
+    ]
+    harness["appointments"].create(
+        Appointment(
+            id=_VISIT_ID,
+            user_id=USER_ID,
+            patient_id=PATIENT_ID,
+            title="Session",
+            start_at=datetime(2026, 9, 3, 19, 0, tzinfo=UTC),
+            end_at=datetime(2026, 9, 3, 20, 0, tzinfo=UTC),
+            duration_minutes=53,
+            status="confirmed",
+            session_type="individual",
+            service_code="90837",
+            diagnosis_codes=["F41.1"],
+        )
+    )
+
+
+_VISIT_ID = "99999999-9999-4999-8999-999999999999"
+
+
+def test_a_client_who_pays_out_of_pocket_gets_a_pdf(harness: dict[str, Any]) -> None:
+    _self_pay(harness)
+    resp = harness["client"].get(_URL)
+    assert resp.status_code == 200, resp.text
+    assert b"$115.00" in resp.content
+    assert b"Therapy session" in resp.content
+    row = _audit_rows(harness)[0]
+    assert row.changes["appointment_ids"] == [_VISIT_ID]
+    assert row.changes["claim_ids"] == []
+
+
+def test_the_diagnosis_is_left_off_unless_the_client_wants_it(harness: dict[str, Any]) -> None:
+    _self_pay(harness)
+    assert b"F41.1" not in harness["client"].get(_URL).content
+
+    patient = harness["patients"].get(PATIENT_ID, USER_ID)
+    patient.superbill_includes_diagnosis = True
+    harness["patients"].update(patient)
+    resp = harness["client"].get(_URL)
+    assert resp.status_code == 200, resp.text
+    assert b"F41.1" in resp.content
+    assert _audit_rows(harness)[-1].changes["includes_diagnosis"] is True
+
+
+def test_a_period_with_no_visits_is_refused(harness: dict[str, Any]) -> None:
     resp = harness["client"].get(
         f"/api/patients/{PATIENT_ID}/superbill?start=2026-10-01&end=2026-10-31"
     )

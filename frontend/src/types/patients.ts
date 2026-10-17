@@ -46,6 +46,8 @@ export interface PatientResponse {
   /** The chart has no first or no last name yet — for one added from a
    * calendar event with the name left blank. Adding the name clears it. */
   needs_name?: boolean
+  /** Whether this person's superbills print their diagnosis. Off unless turned on. */
+  superbill_includes_diagnosis?: boolean
 }
 
 /**
@@ -116,6 +118,7 @@ export interface UpdatePatientRequest {
   state?: string
   postal_code?: string
   sex?: string
+  superbill_includes_diagnosis?: boolean
 }
 
 /**
