@@ -2,7 +2,6 @@
 
 "use client"
 
-import { FileText } from "lucide-react"
 import Image from "next/image"
 import { useMemo, useState } from "react"
 import { PanelLoadError } from "@/components/support/PanelLoadError"
@@ -13,22 +12,37 @@ import {
   useCompleteComplianceItem,
 } from "@/hooks/useCompliance"
 import type { ComplianceItem, ComplianceTemplate } from "@/types/compliance"
+import { ComplianceItemRow } from "./ComplianceItemRow"
 import { DocumentsDialog } from "./DocumentsDialog"
 import { HorizonStrip } from "./HorizonStrip"
 import { ReminderComposer } from "./ReminderComposer"
-import {
-  type EnrichedItem,
-  type HorizonId,
-  categoryDot,
-  enrichItems,
-  sortByDueDate,
-} from "./horizons"
-import { formatDueLabel } from "./urgency"
+import { type HorizonId, enrichItems, sortByDueDate } from "./horizons"
 import { SupervisionHeroCard } from "./SupervisionHeroCard"
 
 type Selection = HorizonId | "urgent" | "all"
 
-export function CompliancePanel() {
+export interface CompliancePanelProps {
+  /**
+   * An item to open on arrival: its horizon is selected, its row expanded and
+   * scrolled to. Other screens link here with `?item=<id>`; an id that matches
+   * nothing is ignored.
+   */
+  focusItemId?: string | null
+  /**
+   * "page" when the panel is the whole of a settings page, whose header
+   * already names it; the panel then drops its own title.
+   */
+  variant?: "panel" | "page"
+}
+
+/** The horizon tab that shows a given horizon's items. */
+function selectionFor(horizon: HorizonId): Selection {
+  if (horizon === "overdue" || horizon === "week" || horizon === "month") return "urgent"
+  if (horizon === "informational") return "all"
+  return horizon
+}
+
+export function CompliancePanel({ focusItemId = null, variant = "panel" }: CompliancePanelProps = {}) {
   const {
     data: itemsData,
     isLoading: itemsLoading,
@@ -41,7 +55,9 @@ export function CompliancePanel() {
   const [composerOpen, setComposerOpen] = useState(false)
   const [editingItem, setEditingItem] = useState<ComplianceItem | null>(null)
   const [docsItem, setDocsItem] = useState<ComplianceItem | null>(null)
-  const [selection, setSelection] = useState<Selection>("urgent")
+  // Null until the person picks a tab, so the focused item's horizon can be
+  // the starting tab once the items arrive, without an effect to sync it.
+  const [chosen, setChosen] = useState<Selection | null>(null)
 
   const templateByType = useMemo(() => {
     const m = new Map<string, ComplianceTemplate>()
@@ -53,6 +69,12 @@ export function CompliancePanel() {
     () => enrichItems(items, templateByType),
     [items, templateByType],
   )
+
+  const focused = useMemo(
+    () => (focusItemId ? enriched.find((e) => e.item.id === focusItemId) : undefined),
+    [enriched, focusItemId],
+  )
+  const selection: Selection = chosen ?? (focused ? selectionFor(focused.horizon) : "urgent")
 
   const counts = useMemo<Record<HorizonId, number>>(() => {
     const c: Record<HorizonId, number> = {
@@ -81,16 +103,21 @@ export function CompliancePanel() {
   )
 
   const visible = useMemo(() => {
-    if (selection === "urgent") return urgent
-    if (selection === "all") {
-      return [...enriched]
+    let list
+    if (selection === "urgent") list = urgent
+    else if (selection === "all") {
+      list = [...enriched]
         .filter((e) => e.horizon !== "informational")
         .sort(sortByDueDate)
+    } else {
+      list = enriched
+        .filter((e) => e.horizon === selection)
+        .sort(sortByDueDate)
     }
-    return enriched
-      .filter((e) => e.horizon === selection)
-      .sort(sortByDueDate)
-  }, [selection, enriched, urgent])
+    // An item with no date sits in no horizon; a link to it still shows it.
+    if (focused && !list.includes(focused)) list = [...list, focused]
+    return list
+  }, [selection, enriched, urgent, focused])
 
   function openComposerForAdd() {
     setEditingItem(null)
@@ -107,7 +134,7 @@ export function CompliancePanel() {
   if (itemsLoading) {
     return (
       <div className="card">
-        <PanelHeader onAdd={openComposerForAdd} hasAny={false} />
+        <PanelHeader onAdd={openComposerForAdd} hasAny={false} variant={variant} />
         <p className="text-sm text-neutral-500 py-6 text-center">Loading…</p>
       </div>
     )
@@ -118,7 +145,7 @@ export function CompliancePanel() {
   if (itemsFailed && !itemsData) {
     return (
       <div className="card">
-        <PanelHeader onAdd={openComposerForAdd} hasAny={false} />
+        <PanelHeader onAdd={openComposerForAdd} hasAny={false} variant={variant} />
         <PanelLoadError
           message="Your reminders didn’t load."
           onRetry={() => void refetchItems()}
@@ -130,7 +157,7 @@ export function CompliancePanel() {
   if (!hasAny) {
     return (
       <div className="card">
-        <PanelHeader onAdd={openComposerForAdd} hasAny={false} />
+        <PanelHeader onAdd={openComposerForAdd} hasAny={false} variant={variant} />
         <SupervisionHeroCard />
         <EmptyState onStart={openComposerForAdd} />
         <ReminderComposer
@@ -145,13 +172,13 @@ export function CompliancePanel() {
   }
 
   const noUrgent = urgent.length === 0
-  const showAllClear = selection === "urgent" && noUrgent
+  const showAllClear = selection === "urgent" && noUrgent && !focused
 
   return (
     <div className="card">
-      <PanelHeader onAdd={openComposerForAdd} hasAny />
+      <PanelHeader onAdd={openComposerForAdd} hasAny variant={variant} />
       <SupervisionHeroCard />
-      <HorizonStrip counts={counts} selected={selection} onSelect={setSelection} />
+      <HorizonStrip counts={counts} selected={selection} onSelect={setChosen} />
 
       {showAllClear ? (
         <AllClear />
@@ -160,9 +187,10 @@ export function CompliancePanel() {
       ) : (
         <ul className="space-y-1.5" role="list">
           {visible.map((entry) => (
-            <ItemRow
+            <ComplianceItemRow
               key={entry.item.id}
               entry={entry}
+              expanded={entry === focused}
               onEdit={() => openComposerForEdit(entry.item)}
               onOpenDocs={() => setDocsItem(entry.item)}
               onComplete={() => completeItem.mutate(entry.item.id)}
@@ -194,10 +222,22 @@ export function CompliancePanel() {
 function PanelHeader({
   onAdd,
   hasAny,
+  variant,
 }: {
   onAdd: () => void
   hasAny: boolean
+  variant: "panel" | "page"
 }) {
+  if (variant === "page") {
+    if (!hasAny) return null
+    return (
+      <div className="flex justify-end mb-4">
+        <Button variant="outline" size="sm" onClick={onAdd}>
+          Add reminder
+        </Button>
+      </div>
+    )
+  }
   return (
     <div className="flex items-start justify-between mb-4">
       <div>
@@ -215,100 +255,6 @@ function PanelHeader({
       )}
     </div>
   )
-}
-
-function ItemRow({
-  entry,
-  onEdit,
-  onOpenDocs,
-  onComplete,
-  completing,
-}: {
-  entry: EnrichedItem
-  onEdit: () => void
-  onOpenDocs: () => void
-  onComplete: () => void
-  completing: boolean
-}) {
-  const { item, days, horizon } = entry
-  const dot = categoryDot(item.item_type)
-  const duePill = pillFor(horizon)
-
-  // Row body opens the edit dialog; "Mark done" stopPropagation so the primary
-  // "I just did the thing" action never pops a dialog by accident.
-  return (
-    <li className="group flex items-center gap-3 rounded-lg border border-neutral-200/70 bg-white/60 px-3 py-2 hover:bg-white hover:border-neutral-300 transition-colors">
-      <span
-        className={`h-2.5 w-2.5 rounded-full shrink-0 ${dot}`}
-        aria-hidden
-      />
-      <button
-        type="button"
-        onClick={onEdit}
-        className="min-w-0 flex-1 text-left"
-        aria-label={`Edit ${item.label}`}
-      >
-        <p className="text-sm font-medium text-neutral-900 truncate">
-          {item.label}
-        </p>
-        <p className="text-xs text-neutral-500 mt-0.5 truncate">
-          {item.notes ?? labelForType(item.item_type)}
-        </p>
-      </button>
-      <span
-        className={`hidden sm:inline-flex items-center text-[10.5px] font-medium px-2 py-0.5 rounded-full ${duePill}`}
-      >
-        {formatDueLabel(days)}
-      </span>
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={(e) => {
-          e.stopPropagation()
-          onOpenDocs()
-        }}
-        className="opacity-70 group-hover:opacity-100 transition-opacity"
-        aria-label={`Documents for ${item.label}`}
-      >
-        <FileText className="h-4 w-4" aria-hidden />
-      </Button>
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={(e) => {
-          e.stopPropagation()
-          onComplete()
-        }}
-        disabled={completing}
-        className="opacity-70 group-hover:opacity-100 transition-opacity"
-      >
-        Mark done
-      </Button>
-    </li>
-  )
-}
-
-function pillFor(horizon: HorizonId): string {
-  switch (horizon) {
-    case "overdue":
-      return "bg-rose-100 text-rose-800"
-    case "week":
-      return "bg-amber-100 text-amber-800"
-    case "month":
-      return "bg-amber-50 text-amber-700"
-    case "quarter":
-      return "bg-emerald-50 text-emerald-700"
-    case "beyond":
-      return "bg-neutral-100 text-neutral-600"
-    default:
-      return "bg-neutral-100 text-neutral-500"
-  }
-}
-
-function labelForType(type: string): string {
-  return type
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
 const REMINDER_MONTHS = [
