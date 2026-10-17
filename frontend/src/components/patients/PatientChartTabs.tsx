@@ -16,6 +16,7 @@ import {
   Stethoscope,
 } from "lucide-react"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { ChartUpdatesWaiting } from "@/components/notes/chartUpdates/ChartUpdatesWaiting"
 import { Skeleton } from "@/components/ui/skeleton"
 import { NewNoteButton } from "@/components/notes/NewNoteButton"
 import { OnlyYouBadge } from "@/components/notes/OnlyYouBadge"
@@ -222,6 +223,9 @@ export function PatientChartTabs({ patientId, initialTab }: PatientChartTabsProp
       <h2 className="mb-4 text-xl font-display font-bold text-neutral-900">
         Chart
       </h2>
+      {/* What the client's notes would change on the chart, decided here
+          before the next visit; nothing when nothing is waiting. */}
+      <ChartUpdatesWaiting patientId={patientId} />
       <Tabs defaultValue={openOn}>
         <TabsList>
           <TabsTrigger value="notes">

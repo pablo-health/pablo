@@ -12,6 +12,7 @@ import type {
   ChartProposal,
   ChartProposalsResponse,
   DecideChartProposalRequest,
+  PatientChartProposalsResponse,
 } from "@/types/chartProposals"
 import { get, post } from "./client"
 
@@ -40,4 +41,12 @@ export async function retryChartProposals(
   token?: string,
 ): Promise<ChartProposalsResponse> {
   return post<ChartProposalsResponse>(`/api/notes/${noteId}/chart-proposals/retry`, {}, token)
+}
+
+/** `GET /api/patients/{patient_id}/chart-proposals` — what is still pending across the client's notes. */
+export async function getPatientChartProposals(
+  patientId: string,
+  token?: string,
+): Promise<PatientChartProposalsResponse> {
+  return get<PatientChartProposalsResponse>(`/api/patients/${patientId}/chart-proposals`, token)
 }

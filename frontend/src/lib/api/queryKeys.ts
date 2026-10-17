@@ -386,6 +386,8 @@ const baseQueryKeys = {
     all: ["chartProposals"] as const,
     byNote: (noteId: string) =>
       [...baseQueryKeys.chartProposals.all, "byNote", noteId] as const,
+    byPatient: (patientId: string) =>
+      [...baseQueryKeys.chartProposals.all, "byPatient", patientId] as const,
   },
 
   // Availability rule query keys

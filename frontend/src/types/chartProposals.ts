@@ -77,3 +77,23 @@ export interface DecideChartProposalRequest {
   /** The clinician's text, for an edit. */
   text?: string
 }
+
+/** One note's pending proposals, with enough about the note to head them. */
+export interface NoteChartProposalGroup {
+  note_id: string
+  note_type: string
+  session_id: string | null
+  /** The visit the note records, else when it was written. */
+  date: string
+  /** Where an archive import brought the note from; null otherwise. */
+  source_system: string | null
+  /** A reference copy of a note signed elsewhere. */
+  imported: boolean
+  proposals: ChartProposal[]
+}
+
+/** A client's pending proposals across their notes, newest note first. */
+export interface PatientChartProposalsResponse {
+  groups: NoteChartProposalGroup[]
+  pending: number
+}

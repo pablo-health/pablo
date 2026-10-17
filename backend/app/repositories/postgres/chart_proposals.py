@@ -88,6 +88,17 @@ class PostgresChartProposalRepository(ChartProposalRepository):
         ).all()
         return [_proposal(row) for row in rows]
 
+    def list_pending_for_patient(self, patient_id: str) -> list[ChartProposal]:
+        rows = self._session.scalars(
+            select(NoteChartProposalRow)
+            .where(
+                NoteChartProposalRow.patient_id == patient_id,
+                NoteChartProposalRow.decision == "pending",
+            )
+            .order_by(NoteChartProposalRow.created_at, NoteChartProposalRow.id)
+        ).all()
+        return [_proposal(row) for row in rows]
+
     def add(self, proposals: Iterable[ChartProposal]) -> None:
         for p in proposals:
             self._session.add(
