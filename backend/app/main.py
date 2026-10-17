@@ -100,6 +100,7 @@ from .routes import (
     patient_chart_proposals,
     patient_chat,
     patient_documents,
+    patient_import_origin,
     patient_intake,
     patient_intake_assignments,
     patient_intake_export,
@@ -415,6 +416,7 @@ app.include_router(notes.internal_jobs_router)
 app.include_router(note_redraft.router)
 app.include_router(note_chart_proposals.router)
 app.include_router(patient_chart_proposals.router)
+app.include_router(patient_import_origin.router)
 app.include_router(note_mdm.router)
 app.include_router(session_dictations.router)
 app.include_router(patient_documents.patient_documents_router)

@@ -35,21 +35,25 @@ from ..migration.apply import ArchiveApplier
 from ..migration.jobs import archive_base, archive_store, run_apply, run_preview
 from ..migration.ledger import (
     ArchiveError,
+    RecordState,
     archive_file,
+    client_records_for_run,
     get_run,
     list_runs,
     new_run,
+    record_state,
     sweep_expired_archives,
 )
 from ..migration.preview import decisions_complete
 from ..migration.readers.simplepractice import SOURCE_SYSTEM
 from ..models import User
 from ..models.audit import ResourceType
-from ..repositories import UserRepository, get_user_repository
+from ..repositories import PatientRepository, UserRepository, get_user_repository
 from ..services import AuditService, get_audit_service
 from ..services.session_generation_worker import resolve_tenant_for_user
 from ..settings import get_settings
 from ..utcnow import utc_now
+from .patients import get_patient_repository
 
 logger = logging.getLogger(__name__)
 
@@ -75,11 +79,28 @@ class ImportRunSummary(BaseModel):
     error: str | None
 
 
+class ImportRunClient(BaseModel):
+    """A client this run brought in, who is still in the chart.
+
+    ``state`` is ``landed`` for a client the run created, ``updated`` for one
+    it changed, ``merged`` for one who was already here and had the run's
+    records added to them.
+    """
+
+    patient_id: str
+    first_name: str
+    last_name: str
+    state: RecordState
+
+
 class ImportRunDetail(ImportRunSummary):
     preview: dict[str, Any] | None
     decisions: dict[str, Any] | None
     report: dict[str, Any] | None
     missing: list[str] = Field(default_factory=list)
+    #: Filled in when one run is read; empty on the responses that start,
+    #: apply or undo a run, which the screen follows with a read.
+    clients: list[ImportRunClient] = Field(default_factory=list)
 
 
 class ImportRunList(BaseModel):
@@ -122,7 +143,7 @@ def _summary(run: Any) -> dict[str, Any]:
     }
 
 
-def _detail(run: Any) -> ImportRunDetail:
+def _detail(run: Any, clients: list[ImportRunClient] | None = None) -> ImportRunDetail:
     missing = decisions_complete(run.preview, run.decisions or {}) if run.preview else []
     return ImportRunDetail(
         **_summary(run),
@@ -130,7 +151,32 @@ def _detail(run: Any) -> ImportRunDetail:
         decisions=run.decisions,
         report=run.report,
         missing=missing,
+        clients=clients or [],
     )
+
+
+def _clients(run: Any, patients: PatientRepository, user_id: str) -> list[ImportRunClient]:
+    """The run's clients who are still in the chart, as this clinician may see them.
+
+    The ledger names every patient the run landed on; the repository decides
+    which of them this clinician can still open (the grant, the row policy,
+    and whether the chart has since been deleted). One the repository leaves
+    out is simply not listed — no error, no placeholder.
+    """
+    records = client_records_for_run(get_db_session(), run.id)
+    found = patients.get_multiple([r.target_id for r in records], user_id)
+    clients = [
+        ImportRunClient(
+            patient_id=patient.id,
+            first_name=patient.first_name,
+            last_name=patient.last_name,
+            state=record_state(record),
+        )
+        for record in records
+        if (patient := found.get(record.target_id)) is not None
+    ]
+    clients.sort(key=lambda c: (c.last_name.casefold(), c.first_name.casefold()))
+    return clients
 
 
 def _schema(ctx: TenantContext) -> str:
@@ -359,19 +405,24 @@ def get_import(
     request: Request,
     _ctx: Annotated[TenantContext, Depends(get_tenant_context)],
     user: Annotated[User, Depends(require_baa_acceptance)],
+    patients: Annotated[PatientRepository, Depends(get_patient_repository)],
     audit: Annotated[AuditService, Depends(get_audit_service)],
 ) -> ImportRunDetail:
-    """One run: its state, and once previewed, what it would do and what it asks."""
+    """One run: its state, and once previewed, what it would do and what it asks.
+
+    Once applied, also the clients it brought in who are still in the chart.
+    """
     run = _run_or_404(run_id)
+    clients = _clients(run, patients, user.id)
     audit.log(
         "import_viewed",
         user,
         request,
         resource_type=ResourceType.IMPORT_RUN,
         resource_id=run.id,
-        changes={"state": run.state},
+        changes={"state": run.state, "clients": len(clients)},
     )
-    return _detail(run)
+    return _detail(run, clients)
 
 
 @router.post(

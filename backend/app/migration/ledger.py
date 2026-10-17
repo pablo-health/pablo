@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from sqlalchemy import select
 
@@ -140,6 +140,81 @@ def record_landed(session: Session, source_system: str, run_id: str, landed: Lan
 def records_for_run(session: Session, run_id: str) -> list[ImportRecordRow]:
     return list(
         session.execute(select(ImportRecordRow).where(ImportRecordRow.run_id == run_id)).scalars()
+    )
+
+
+#: How a standing ledger row reads on a screen. ``undone`` is not one: a row
+#: that was undone is filtered out before anything shows it.
+RecordState = Literal["landed", "updated", "merged"]
+
+
+def record_state(row: ImportRecordRow) -> RecordState:
+    """How a ledger row reads on a screen: ``landed``, ``updated`` or ``merged``.
+
+    A merge is marked in ``previous_payload`` rather than ``state`` (the state
+    column is what undo keys on, and a merged patient is never removed), so
+    the two are folded together here for anything that shows the row.
+    """
+    if row.state == "undone":
+        raise ValueError("an undone record is not shown")
+    if (row.previous_payload or {}).get("merged"):
+        return "merged"
+    return "updated" if row.state == "updated" else "landed"
+
+
+def client_records_for_run(session: Session, run_id: str) -> list[ImportRecordRow]:
+    """The run's contact records that still stand: each names a patient it landed on.
+
+    An undone record is left out; whether its patient still exists is for the
+    caller's patient lookup to say, under the clinician's own grant.
+    """
+    stmt = select(ImportRecordRow).where(
+        ImportRecordRow.run_id == run_id,
+        ImportRecordRow.record_type == "contact",
+        ImportRecordRow.target_table == "patients",
+        ImportRecordRow.state != "undone",
+    )
+    return list(session.execute(stmt).scalars())
+
+
+@dataclass(frozen=True)
+class ImportOrigin:
+    """The import that put (or merged) a record here, as the chart shows it."""
+
+    run_id: str
+    source_system: str
+    started_at: datetime
+    finished_at: datetime | None
+    state: RecordState
+
+
+def origin_of(session: Session, target_table: str, target_id: str) -> ImportOrigin | None:
+    """The latest standing import that landed on ``target_id``, or ``None``.
+
+    ``None`` for a row added by hand, and for one whose import was undone:
+    an undone run no longer accounts for anything in the chart.
+    """
+    stmt = (
+        select(ImportRecordRow, ImportRunRow)
+        .join(ImportRunRow, ImportRunRow.id == ImportRecordRow.run_id)
+        .where(
+            ImportRecordRow.target_table == target_table,
+            ImportRecordRow.target_id == target_id,
+            ImportRecordRow.state != "undone",
+        )
+        .order_by(ImportRecordRow.imported_at.desc())
+        .limit(1)
+    )
+    found = session.execute(stmt).first()
+    if found is None:
+        return None
+    record, run = found._tuple()
+    return ImportOrigin(
+        run_id=run.id,
+        source_system=run.source_system,
+        started_at=run.started_at,
+        finished_at=run.finished_at,
+        state=record_state(record),
     )
 
 
@@ -349,15 +424,20 @@ def extract_zip(source: Path | bytes, target: Path, password: str | None = None)
 __all__ = [
     "ARCHIVE_TTL",
     "ArchiveError",
+    "ImportOrigin",
     "Landed",
     "LedgerEntry",
+    "RecordState",
     "archive_path",
+    "client_records_for_run",
     "delete_archive",
     "get_run",
     "ledger_snapshot",
     "list_runs",
     "new_run",
+    "origin_of",
     "record_landed",
+    "record_state",
     "records_for_run",
     "store_archive",
     "sweep_expired_archives",
