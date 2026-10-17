@@ -161,14 +161,14 @@ def run_apply(schema: str, user_id: str, run_id: str, practice_id: str | None) -
     # client's chart is proposed afterwards, one client per transaction, so
     # a model call never holds the import open and a failure costs nothing
     # already landed.
-    seeded = _seed_charts(schema, user_id, landed)
+    seeded = _seed_charts(schema, user_id, run_id, landed)
     with tenant_db_session(schema, user_id) as session:
         run = get_run(session, run_id)
         if run is not None:
             run.report = {**(run.report or {}), "chart_updates": seeded.as_dict()}
 
 
-def _seed_charts(schema: str, user_id: str, patient_ids: list[str]) -> SeedReport:
+def _seed_charts(schema: str, user_id: str, run_id: str, patient_ids: list[str]) -> SeedReport:
     """Propose each landed client's chart from their imported notes. Never raises."""
     report = SeedReport()
     try:
@@ -194,7 +194,8 @@ def _seed_charts(schema: str, user_id: str, patient_ids: list[str]) -> SeedRepor
                 )
                 ChartSeeder(user_id, step, generator).seed(patient, notes, report)
         except Exception:  # one client's failure never costs the others theirs
-            logger.exception("chart seeding failed for a client", extra={"patient_id": patient_id})
+            # The run, not the client: a client id is a patient identifier.
+            logger.exception("chart seeding failed for a client", extra={"import_run_id": run_id})
             report.failed += 1
     return report
 
