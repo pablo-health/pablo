@@ -225,7 +225,7 @@ function AuthActionContent() {
           <a
             href={continueHref}
             rel="noopener noreferrer"
-            className="block w-full text-center bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200"
+            className="auth-primary block text-center"
           >
             {continueLabel}
           </a>
@@ -239,7 +239,7 @@ function AuthActionContent() {
           </AuthFeedback>
           <a
             href="/login"
-            className="block w-full text-center bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200"
+            className="auth-primary block text-center"
           >
             Back to Sign In
           </a>

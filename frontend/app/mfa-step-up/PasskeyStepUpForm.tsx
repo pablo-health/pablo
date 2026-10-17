@@ -82,7 +82,7 @@ export function PasskeyStepUpForm() {
         onClick={handleStepUp}
         disabled={loading}
         autoFocus
-        className="w-full rounded-lg bg-primary-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-primary-700 disabled:opacity-60"
+        className="auth-primary"
       >
         {loading ? "Waiting for your passkey…" : "Use passkey"}
       </button>

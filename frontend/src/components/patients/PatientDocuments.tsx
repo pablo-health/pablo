@@ -22,6 +22,7 @@ import { queryKeys } from "@/lib/api/queryKeys"
 import type { PeopleWords } from "@/lib/peopleTerm"
 import { formatCompactFileSize } from "@/lib/utils/fileValidation"
 import { DocumentViewerSheet } from "@/components/patients/DocumentViewerSheet"
+import { Button } from "@/components/ui/button"
 import {
   EXTRACTION_POLL_TIMEOUT_TICKS,
   useDeletePatientDocument,
@@ -274,9 +275,8 @@ export function PatientDocuments({ patientId }: PatientDocumentsProps) {
               className="hidden"
               data-testid="patient-document-file-input"
             />
-            <button
+            <Button
               type="button"
-              className="btn-primary inline-flex items-center gap-2"
               onClick={() => fileInputRef.current?.click()}
               disabled={upload.isPending}
             >
@@ -286,7 +286,7 @@ export function PatientDocuments({ patientId }: PatientDocumentsProps) {
                 <Upload className="w-4 h-4" />
               )}
               <span>Upload document</span>
-            </button>
+            </Button>
           </div>
         )}
       </div>

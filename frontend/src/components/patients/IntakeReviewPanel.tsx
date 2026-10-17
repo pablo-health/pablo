@@ -5,6 +5,7 @@
 import { useState } from "react"
 
 import { ApiError } from "@/lib/api/client"
+import { Button } from "@/components/ui/button"
 import type { PeopleWords } from "@/lib/peopleTerm"
 import { saveFile } from "@/lib/saveFile"
 import {
@@ -278,15 +279,15 @@ export function IntakeReviewPanel(props: { patientId: string; assignmentId: stri
             maxLength={MAX_CORRECTION_NOTE_LENGTH} onChange={(e) => setNote(e.target.value)}
             data-testid="intake-review-note" />
           <div className="mt-3 flex gap-2">
-            <button type="button" className="btn-primary" onClick={submitCorrection}
+            <Button type="button" onClick={submitCorrection}
               disabled={pending || selected.length === 0 || note.trim() === ""}
               data-testid="intake-review-request">
               {COPY.send}
-            </button>
-            <button type="button" className="btn-secondary" disabled={pending}
+            </Button>
+            <Button type="button" variant="secondary" disabled={pending}
               onClick={() => accept.mutate()} data-testid="intake-review-accept">
               {COPY.accept}
-            </button>
+            </Button>
           </div>
         </section>
       )}

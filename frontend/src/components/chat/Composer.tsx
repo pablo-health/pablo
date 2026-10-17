@@ -98,7 +98,7 @@ export function Composer({
           onClick={submit}
           disabled={inputDisabled || value.trim().length === 0 || overChars}
           aria-label="Send"
-          className="shrink-0 self-end mb-0.5 bg-primary-500 hover:bg-primary-600 text-white"
+          className="shrink-0 self-end mb-0.5"
         >
           <Send className="size-4" />
         </Button>

@@ -4,6 +4,7 @@
 
 import { Component, type ReactNode } from "react"
 import { SupportContactLine } from "@/components/support/SupportContactLine"
+import { Button } from "@/components/ui/button"
 import { reportFrontendError } from "@/lib/feErrorReporter"
 
 interface ErrorBoundaryProps {
@@ -57,12 +58,9 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             <p className="text-sm text-neutral-600">
               An unexpected error occurred. Please try again.
             </p>
-            <button
-              onClick={this.handleReset}
-              className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 transition-colors"
-            >
+            <Button onClick={this.handleReset}>
               Try again
-            </button>
+            </Button>
             <SupportContactLine lead="Still not working?" />
           </div>
         </div>

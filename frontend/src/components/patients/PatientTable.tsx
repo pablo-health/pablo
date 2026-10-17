@@ -151,7 +151,7 @@ export function PatientTable() {
             />
           </div>
           {!readOnly && (
-            <Button onClick={handleAddPatient} className="btn-primary">
+            <Button onClick={handleAddPatient}>
               Add {people.One}
             </Button>
           )}

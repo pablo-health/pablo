@@ -45,7 +45,7 @@ export function SetupStepper({ steps, activeIndex, onJump, reachable }: SetupSte
               className={[
                 "flex h-5 w-5 items-center justify-center rounded-full text-[11px]",
                 state === "current"
-                  ? "bg-primary-600 text-white"
+                  ? "bg-primary-600 text-on-honey"
                   : state === "done"
                     ? "bg-secondary-500 text-white"
                     : "bg-muted text-muted-foreground",

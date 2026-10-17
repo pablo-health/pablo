@@ -320,7 +320,7 @@ function DiagnosisForm({ patientId, prominence, onClose }: DiagnosisFormProps) {
                             <span
                               className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
                                 checked
-                                  ? "border-primary-500 bg-primary-500 text-white"
+                                  ? "border-primary-600 bg-primary-600 text-on-honey"
                                   : "border-neutral-300"
                               }`}
                             >
@@ -364,7 +364,7 @@ function DiagnosisForm({ patientId, prominence, onClose }: DiagnosisFormProps) {
                         <span
                           className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
                             checked
-                              ? "border-primary-500 bg-primary-500 text-white"
+                              ? "border-primary-600 bg-primary-600 text-on-honey"
                               : "border-neutral-300"
                           }`}
                         >
