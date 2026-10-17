@@ -138,15 +138,12 @@ export function SuperbillsPage() {
             icon={AlertCircle}
             tone="honey"
             title="The superbill was not generated"
-            description="Everything below has to be on file before the document can be issued. Nothing is filled in or guessed on your behalf."
+            description="Complete the items below, then generate the superbill again."
           >
             <ul className="mt-3 space-y-2" aria-label="What is missing">
               {findings.map((finding, index) => (
                 <li key={`${finding.field ?? finding.code}-${index}`} className="text-sm text-foreground">
                   {finding.message}
-                  {finding.field && (
-                    <span className="ml-2 font-mono text-xs text-muted-foreground">{finding.field}</span>
-                  )}
                 </li>
               ))}
             </ul>

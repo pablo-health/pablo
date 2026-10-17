@@ -121,6 +121,31 @@ _BILLING_PROVIDER_REQUIRED = [
 ]
 _PATIENT_REQUIRED = ["first_name", "last_name", "date_of_birth"]
 
+_PRACTICE_IDENTITY = "in Settings, under Practice identity."
+
+#: What to tell the clinician for each required provider field. Fields that
+#: share a sentence (the four address parts, the two halves of a name) are
+#: reported once.
+_PROVIDER_FIX: dict[str, str] = {
+    "rendering_provider.first_name": "Add your name in Settings, under Profile.",
+    "rendering_provider.last_name": "Add your name in Settings, under Profile.",
+    "rendering_provider.npi": f"Add your NPI {_PRACTICE_IDENTITY}",
+    "billing_provider.legal_name": f"Add your practice's legal business name {_PRACTICE_IDENTITY}",
+    "billing_provider.address_line1": f"Add your practice's billing address {_PRACTICE_IDENTITY}",
+    "billing_provider.city": f"Add your practice's billing address {_PRACTICE_IDENTITY}",
+    "billing_provider.state": f"Add your practice's billing address {_PRACTICE_IDENTITY}",
+    "billing_provider.postal_code": f"Add your practice's billing address {_PRACTICE_IDENTITY}",
+    "billing_provider.phone": f"Add your practice's phone number {_PRACTICE_IDENTITY}",
+    "billing_provider.tax_id_type": f"Choose your tax ID type {_PRACTICE_IDENTITY}",
+    "billing_provider.tax_id": f"Add your tax ID {_PRACTICE_IDENTITY}",
+}
+
+_PATIENT_FIX: dict[str, str] = {
+    "first_name": "Add this {one}'s full name to their chart.",
+    "last_name": "Add this {one}'s full name to their chart.",
+    "date_of_birth": "Add this {one}'s date of birth to their chart.",
+}
+
 
 @dataclass(frozen=True)
 class ProviderBlock:
@@ -299,15 +324,15 @@ def build_superbill(  # noqa: PLR0913 — every record the receipt is copied fro
                 Finding(
                     "blocking",
                     "no_visits",
-                    f"There is no visit between {period_start.isoformat()} and "
-                    f"{period_end.isoformat()}.",
+                    f"No visits between {_date(period_start)} and {_date(period_end)}. "
+                    "Choose other dates.",
                     "period",
                 )
             ]
         )
 
     findings = _provider_findings(billing, tax_id)
-    findings.extend(_patient_findings(patient))
+    findings.extend(_patient_findings(patient, people))
     findings.extend(_service_findings(services, includes_diagnosis, people))
     if findings:
         raise SuperbillRefusedError(findings)
@@ -462,19 +487,23 @@ def _provider_block(
 
 def _provider_findings(billing: BillingSnapshot, tax_id: str | None) -> list[Finding]:
     practice = {**billing.billing_provider.model_dump(), "tax_id": tax_id}
-    findings = [
-        _missing("rendering_provider", name)
+    fields = [
+        f"rendering_provider.{name}"
         for name in missing_fields(billing.rendering_provider, _RENDERING_PROVIDER_REQUIRED)
     ]
-    findings.extend(
-        _missing("billing_provider", name)
-        for name in missing_fields(practice, _BILLING_PROVIDER_REQUIRED)
+    fields.extend(
+        f"billing_provider.{name}" for name in missing_fields(practice, _BILLING_PROVIDER_REQUIRED)
     )
-    return findings
+    return _missing([(field, _PROVIDER_FIX[field]) for field in fields])
 
 
-def _patient_findings(patient: PersonSnapshot) -> list[Finding]:
-    return [_missing("patient", name) for name in missing_fields(patient, _PATIENT_REQUIRED)]
+def _patient_findings(patient: PersonSnapshot, people: PeopleWords) -> list[Finding]:
+    return _missing(
+        [
+            (f"patient.{name}", _PATIENT_FIX[name].format(one=people.one))
+            for name in missing_fields(patient, _PATIENT_REQUIRED)
+        ]
+    )
 
 
 def _service_findings(
@@ -482,7 +511,7 @@ def _service_findings(
 ) -> list[Finding]:
     findings: list[Finding] = []
     for position, service in enumerate(services):
-        when = service.service_date.isoformat()
+        when = _date(service.service_date)
         # A line printed from a claim keeps the claim's values until it is rebuilt.
         rebuild = ", then rebuild the claim" if service.claim_id else ""
         if not service.cpt:
@@ -519,8 +548,16 @@ def _service_findings(
     return findings
 
 
-def _missing(prefix: str, name: str) -> Finding:
-    return Finding("blocking", "missing_field", f"{prefix}.{name} is required.", f"{prefix}.{name}")
+def _missing(gaps: list[tuple[str, str]]) -> list[Finding]:
+    """One finding per sentence: the first field that needs it names it."""
+    said: set[str] = set()
+    findings: list[Finding] = []
+    for field, message in gaps:
+        if message in said:
+            continue
+        said.add(message)
+        findings.append(Finding("blocking", "missing_field", message, field))
+    return findings
 
 
 def _paid_by_appointment(

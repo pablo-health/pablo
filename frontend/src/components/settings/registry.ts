@@ -244,8 +244,7 @@ const baseGroups: SettingsGroup[] = [
         label: "Superbills & rates",
         icon: Receipt,
         page: SuperbillsPage,
-        feature: "superbills",
-        desc: "Out-of-network receipts generated from the chart.",
+        desc: "Itemized receipts of visits and payments.",
       },
       {
         id: BILLING_PROFILE_SETTINGS_ID,
