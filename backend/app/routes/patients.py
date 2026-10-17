@@ -104,6 +104,7 @@ _PATCHABLE_FIELDS: tuple[str, ...] = (
     "date_of_birth",
     "rate_cents",
     "sliding_scale_note",
+    "superbill_includes_diagnosis",
     "address_line1",
     "address_line2",
     "city",
@@ -328,6 +329,7 @@ def create_patient(
         diagnosis=request.diagnosis,
         rate_cents=request.rate_cents,
         sliding_scale_note=request.sliding_scale_note,
+        superbill_includes_diagnosis=bool(request.superbill_includes_diagnosis),
         address_line1=request.address_line1,
         address_line2=request.address_line2,
         city=request.city,
@@ -472,6 +474,7 @@ def update_patient(
     - **date_of_birth**: New date of birth (optional)
     - **rate_cents**: New per-patient rate override, in cents (optional)
     - **sliding_scale_note**: New sliding-scale note (optional)
+    - **superbill_includes_diagnosis**: Whether superbills print the diagnosis (optional)
     - **address_line1/address_line2/city/state/postal_code**: New mailing address (optional)
     - **sex**: New sex on insurance card, the X12 DMG03 code set - M, F, or U (optional)
 

@@ -211,6 +211,7 @@ PATIENT_COLUMN_DECISIONS: Final[Mapping[str, str | None]] = {
     "phi_email_consent_by": "Which staff member attested to it.",
     "rate_cents": "What this person is charged is a billing conversation, not a chart field.",
     "sliding_scale_note": "A staff note about this person's ability to pay.",
+    "superbill_includes_diagnosis": "A billing setting the clinician keeps for this person.",
     "origin": "Flags a row created through an unverified intake surface, for a human to review.",
     # The mailing address a claim carries. Shown for the same reason as the
     # contact fields above: it is the patient's own address, and they are the

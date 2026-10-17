@@ -147,7 +147,7 @@ class BillingRecordSource:
             claims=[_claim(c, self._receipts.list_for_claim(c.id)) for c in claims],
             statement=render_statement_pdf(statement),
             superbill=self._superbill(
-                patient.id,
+                patient,
                 claims,
                 charges,
                 appointments,
@@ -160,7 +160,7 @@ class BillingRecordSource:
 
     def _superbill(
         self,
-        patient_id: str,
+        patient: Patient,
         claims: Sequence[Claim],
         charges: Sequence[PatientCharge],
         appointments: Sequence[Appointment],
@@ -172,21 +172,28 @@ class BillingRecordSource:
 
         The route takes a period; here it is the first to the last service
         date on the client's claims. Left out where the route would refuse,
-        for the same reasons: a visit in that span with no claim, a provider
-        field the receipt needs, a line with no code. The tax id is read only
-        when there is a claim to print it on.
+        for the same reasons: a provider field the receipt needs, a line with
+        no code, and — as no rate is read here — a visit in that span with no
+        claim. The client and providers are the newest claim's, the diagnosis is printed
+        as the client's setting says, and the tax id is read only when there
+        is a claim to print it on.
         """
         dates = [line.service_date for claim in claims for line in claim.lines]
         if not dates:
             return None
+        newest = max(claims, key=lambda c: (c.created_at, c.id))
         try:
             superbill = build_superbill(
-                patient_id=patient_id,
+                patient_id=patient.id,
                 period_start=min(dates),
                 period_end=max(dates),
+                patient=newest.subscriber_snapshot.patient,
+                billing=newest.billing_snapshot,
                 claims=claims,
                 charges=charges,
                 appointments=appointments,
+                rate_for=lambda _appointment: None,
+                includes_diagnosis=patient.superbill_includes_diagnosis,
                 timezone=timezone,
                 tax_id=self._tax_id(),
                 license_for=self._license_for,

@@ -62,6 +62,7 @@ class CreatePatientRequest(BaseModel):
     diagnosis: str | None = None
     rate_cents: int | None = Field(None, ge=0)
     sliding_scale_note: str | None = Field(None, max_length=2000)
+    superbill_includes_diagnosis: bool | None = None
     address_line1: str | None = Field(None, max_length=255)
     address_line2: str | None = Field(None, max_length=255)
     city: str | None = Field(None, max_length=100)
@@ -108,6 +109,7 @@ class UpdatePatientRequest(BaseModel):
     diagnosis: str | None = None
     rate_cents: int | None = Field(None, ge=0)
     sliding_scale_note: str | None = Field(None, max_length=2000)
+    superbill_includes_diagnosis: bool | None = None
     address_line1: str | None = Field(None, max_length=255)
     address_line2: str | None = Field(None, max_length=255)
     city: str | None = Field(None, max_length=100)
@@ -165,6 +167,7 @@ class PatientResponse(BaseModel):
     allergies: list[AllergyEntry] = Field(default_factory=list)
     rate_cents: int | None = None
     sliding_scale_note: str | None = None
+    superbill_includes_diagnosis: bool = False
     session_count: int
     last_session_date: datetime | None = None
     next_session_date: datetime | None = None
@@ -213,6 +216,7 @@ class PatientResponse(BaseModel):
             allergies=[AllergyEntry.model_validate(a) for a in patient.allergies],
             rate_cents=patient.rate_cents,
             sliding_scale_note=patient.sliding_scale_note,
+            superbill_includes_diagnosis=patient.superbill_includes_diagnosis,
             session_count=patient.session_count,
             last_session_date=patient.last_session_date,
             next_session_date=patient.next_session_date,
@@ -313,6 +317,7 @@ class Patient:
     chart_closure_reason: str | None = None
     rate_cents: int | None = None
     sliding_scale_note: str | None = None
+    superbill_includes_diagnosis: bool = False
     origin: str | None = None
     address_line1: str | None = None
     address_line2: str | None = None
@@ -375,6 +380,7 @@ class Patient:
             chart_closure_reason=data.get("chart_closure_reason"),
             rate_cents=data.get("rate_cents"),
             sliding_scale_note=data.get("sliding_scale_note"),
+            superbill_includes_diagnosis=bool(data.get("superbill_includes_diagnosis", False)),
             address_line1=data.get("address_line1"),
             address_line2=data.get("address_line2"),
             city=data.get("city"),

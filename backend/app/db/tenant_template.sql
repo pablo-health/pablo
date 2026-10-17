@@ -1214,6 +1214,7 @@ CREATE TABLE __TENANT_SCHEMA__.patients (
     preferred_name character varying(255),
     allergy_status character varying(16) DEFAULT 'not_recorded'::character varying NOT NULL,
     allergies jsonb DEFAULT '[]'::jsonb NOT NULL,
+    superbill_includes_diagnosis boolean DEFAULT false NOT NULL,
     CONSTRAINT ck_patients_allergies_match_status CHECK ((((allergy_status)::text = 'recorded'::text) = (jsonb_array_length(allergies) > 0))),
     CONSTRAINT ck_patients_allergy_status CHECK (((allergy_status)::text = ANY ((ARRAY['not_recorded'::character varying, 'nkda'::character varying, 'recorded'::character varying])::text[]))),
     CONSTRAINT ck_patients_sex CHECK (((sex)::text = ANY ((ARRAY['M'::character varying, 'F'::character varying, 'U'::character varying])::text[])))
