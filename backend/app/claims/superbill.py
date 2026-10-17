@@ -500,9 +500,9 @@ def _service_findings(
                 Finding(
                     "blocking",
                     "missing_field",
-                    f"The service on {when} has no diagnosis code. Add it to the "
-                    f"appointment{rebuild}, or leave the diagnosis off this {people.one}'s "
-                    "superbills.",
+                    f"The service on {when} has no diagnosis. Add one to the "
+                    f'appointment{rebuild}, or turn off "Include the diagnosis" for this '
+                    f"{people.one}.",
                     f"lines[{position}].diagnosis_codes",
                 )
             )
@@ -600,7 +600,7 @@ def render_superbill_pdf(superbill: Superbill, people: PeopleWords) -> bytes:
         bottomMargin=0.8 * inch,
         title="Superbill",
         author=superbill.provider.practice_name or "",
-        subject="Itemised receipt",
+        subject="Itemized receipt",
         invariant=1,
         pageCompression=0,
     )
@@ -622,7 +622,7 @@ def _story(superbill: Superbill, people: PeopleWords) -> list:
     period = f"{_date(superbill.period_start)} to {_date(superbill.period_end)}"
     story: list = [
         Paragraph("Superbill", title),
-        Paragraph(f"Itemised receipt for services from {period}", body),
+        Paragraph(f"Itemized receipt for services from {period}", body),
         Spacer(1, 8),
         Paragraph("Provider", heading),
         _pairs(_provider_rows(superbill.provider)),

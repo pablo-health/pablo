@@ -500,7 +500,7 @@ class TestDiagnosisChoice:
             claims=[], appointments=[_unclaimed(diagnosis_codes=None)], rate_for=lambda _a: 1
         )
         assert [f.field for f in findings] == ["lines[0].diagnosis_codes"]
-        assert "leave the diagnosis off this client's superbills" in findings[0].message
+        assert 'turn off "Include the diagnosis" for this client' in findings[0].message
 
     def test_left_off_the_page_has_no_diagnosis_column(self) -> None:
         text = render_superbill_pdf(_build(includes_diagnosis=False), _CLIENTS).decode("latin-1")

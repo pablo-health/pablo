@@ -129,7 +129,7 @@ export function SuperbillDialog({ patientId, open, onOpenChange, today }: Superb
         <DialogHeader>
           <DialogTitle>Superbill</DialogTitle>
           <DialogDescription>
-            An itemised receipt of this {people.one}&rsquo;s visits and payments.
+            An itemized receipt of this {people.one}&rsquo;s visits and payments.
           </DialogDescription>
         </DialogHeader>
 
@@ -166,7 +166,7 @@ export function SuperbillDialog({ patientId, open, onOpenChange, today }: Superb
             <div>
               <Label htmlFor="superbill-diagnosis">Include the diagnosis</Label>
               <p className="text-xs text-neutral-500">
-                Needed to file with an insurer. Saved for this {people.one}.
+                For filing with an insurer. Remembered for this {people.one}.
               </p>
             </div>
           </div>

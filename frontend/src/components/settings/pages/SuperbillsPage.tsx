@@ -70,7 +70,7 @@ export function SuperbillsPage() {
     <>
       <SettingsCard
         title="Superbills"
-        description={`An itemised receipt of a ${people.one}'s visits and payments. You can also download one from the ${people.one}'s chart.`}
+        description={`An itemized receipt of a ${people.one}'s visits and payments. You can also download one from the ${people.one}'s chart.`}
       >
         <form onSubmit={handleSubmit} className="space-y-4" aria-label="Generate a superbill">
           <div className="space-y-2">
