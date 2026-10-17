@@ -38,7 +38,13 @@ import { usePatientDiagnoses } from "@/hooks/useDiagnoses"
 import { usePatientProblems } from "@/hooks/useProblems"
 import { usePatientMedications } from "@/hooks/useMedications"
 import { usePatientCharges } from "@/hooks/usePayments"
-import { formatNoteDateTime, noteHref, noteStatus } from "@/lib/noteDisplay"
+import {
+  formatNoteDateTime,
+  noteHref,
+  noteListDate,
+  noteOrigin,
+  noteStatus,
+} from "@/lib/noteDisplay"
 
 const PREVIEW_LIMIT = 3
 
@@ -155,13 +161,11 @@ function NotesTab({ patientId }: { patientId: string }) {
                     {noteTypeLabel(note.note_type)}
                   </span>
                   {note.restricted && <OnlyYouBadge />}
-                  <span className="text-xs text-neutral-500">
-                    {note.session_id ? "Session" : "Standalone"}
-                  </span>
+                  <span className="text-xs text-neutral-500">{noteOrigin(note)}</span>
                 </span>
                 <span className="flex shrink-0 items-center gap-3">
                   <span className="text-xs text-neutral-500">
-                    {formatNoteDateTime(note.finalized_at ?? note.updated_at)}
+                    {formatNoteDateTime(noteListDate(note))}
                   </span>
                   <span
                     className={`inline-flex rounded px-2 py-0.5 text-xs font-medium ${status.className}`}

@@ -121,7 +121,9 @@ export function NoteSignaturePanel({
   const addAddendum = useAddNoteAddendum()
   const [dialog, setDialog] = useState<"sign" | "unlock" | "addendum" | "draft" | null>(null)
 
-  if (!record) return null
+  // An imported note was signed where it was written: nothing here signs,
+  // unlocks or adds to it, and the page's imported notice names its signer.
+  if (!record || note.imported) return null
 
   const locked = !!note.finalized_at
   const signature = record.signature

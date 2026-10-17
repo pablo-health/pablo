@@ -39,6 +39,7 @@ import { FinalizeButton } from "@/components/sessions/FinalizeButton"
 import { ImportedNoteNotice } from "@/components/sessions/ImportedNoteNotice"
 import { OriginalFileButton } from "@/components/sessions/OriginalFileButton"
 import { ChartUpdatesPanel } from "@/components/notes/chartUpdates/ChartUpdatesPanel"
+import { noteHeading as noteHeadingFor } from "@/lib/noteDisplay"
 import { NoteSignaturePanel } from "@/components/notes/signing/NoteSignaturePanel"
 import { ChargeCardSection } from "@/components/payments/ChargeCardSection"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -233,7 +234,7 @@ export default function SessionDetailPage({ params }: PageProps) {
   const note = session.note
   const pendingEdited = localNoteEdited
   // A session with no note yet doesn't say which type it will be.
-  const noteHeading = note ? `${noteTypeLabel(note.note_type)} note` : "Note"
+  const noteHeading = note ? noteHeadingFor(noteTypeLabel(note.note_type), note) : "Note"
   const canReview =
     session.status === "pending_review" && note !== null
   // A reference copy of a note signed where the visit happened: read-only,
@@ -326,6 +327,7 @@ export default function SessionDetailPage({ params }: PageProps) {
                 <ImportedNoteNotice
                   sessionDate={session.session_date}
                   signer={session.source_signer}
+                  source={note?.source}
                 />
               </div>
             )}

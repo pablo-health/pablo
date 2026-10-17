@@ -438,10 +438,14 @@ class ArchiveApplier:
         return when or utc_now()
 
     def _land_session_note(self, note: NoteRecord, patient_id: str, author: str) -> str:
-        """A finalized imported session carrying the note, verbatim.
+        """An imported session carrying the note, verbatim.
 
-        Sessions carry no appointment column; the completed visit created
-        beside this session shares its date, and that date is the link.
+        The session lands in the ``imported`` status, the one a note read from
+        a single document gets: a reference copy of a visit documented and
+        signed elsewhere, never offered for signing here, with its chart
+        proposals decided on its page. Sessions carry no appointment column;
+        the completed visit created beside this session shares its date, and
+        that date is the link.
         """
         info = note.appointment
         if info is None:
@@ -458,9 +462,10 @@ class ArchiveApplier:
                 patient_id=patient_id,
                 session_date=starts,
                 session_number=self._sessions.get_session_number_for_patient(patient_id),
-                status=SessionStatus.FINALIZED,
+                status=SessionStatus.IMPORTED,
                 transcript=Transcript(format=TranscriptFormat.TXT, content=note.body),
                 source=SessionSource.IMPORTED.value,
+                source_signer=note.signed_by,
                 session_type=info.kind.lower(),
                 duration_minutes=info.duration_minutes,
                 created_at=now,
