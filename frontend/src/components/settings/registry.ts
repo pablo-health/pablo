@@ -15,6 +15,7 @@ import {
   LayoutTemplate,
   Mic,
   Palette,
+  ListChecks,
   Receipt,
   ScrollText,
   ShieldCheck,
@@ -30,6 +31,7 @@ import { AvailabilityPage } from "./pages/AvailabilityPage"
 import { BillingContactPage } from "./pages/BillingContactPage"
 import { BillingProfilePage } from "./pages/BillingProfilePage"
 import { CalendarsPage } from "./pages/CalendarsPage"
+import { CompliancePage } from "./pages/CompliancePage"
 import { CredentialingPage } from "./pages/CredentialingPage"
 import { CredentialingStartPage } from "./pages/CredentialingStartPage"
 import { DomainsPage } from "./pages/DomainsPage"
@@ -223,6 +225,13 @@ const baseGroups: SettingsGroup[] = [
         icon: FileArchive,
         page: PracticeExportPage,
         desc: "Everything in this practice, as one file.",
+      },
+      {
+        id: "compliance",
+        label: "Compliance",
+        icon: ListChecks,
+        page: CompliancePage,
+        desc: "Licenses, attestations and renewals.",
       },
     ],
   },
