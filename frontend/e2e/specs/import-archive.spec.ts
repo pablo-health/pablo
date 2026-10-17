@@ -142,9 +142,15 @@ test("a SimplePractice export is imported, re-imported without duplicates, and u
   expect(await noteCount(api, existing.id)).toBe(0)
 
   // The re-upload's archive can be deleted before it expires on its own.
-  const waiting = rows.filter({ hasText: "Ready to review" })
-  await waiting.getByRole("button", { name: "Delete it now" }).click()
-  await expect(waiting.getByRole("button", { name: "Delete it now" })).toHaveCount(0)
+  // Specs share one practice and run side by side, so another spec's
+  // previewed run may be waiting here too: delete one archive, count one fewer.
+  const deletable = rows
+    .filter({ hasText: "Ready to review" })
+    .getByRole("button", { name: "Delete it now" })
+  const before = await deletable.count()
+  expect(before).toBeGreaterThan(0)
+  await deletable.first().click()
+  await expect(deletable).toHaveCount(before - 1)
 
   await deletePatient(api, existing.id)
 })

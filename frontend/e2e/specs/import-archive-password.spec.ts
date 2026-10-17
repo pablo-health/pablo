@@ -14,6 +14,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
+import type { ApiClient } from "../fixtures/api"
 import { expect, test } from "../fixtures/auth"
 import { MAIN_EXPORT } from "../fixtures/importArchive"
 
@@ -66,8 +67,23 @@ test("a protected export opens with its password, and says so without one", asyn
   // The right one: the export previews as the unprotected one does.
   await page.getByLabel("Export password").fill(PASSWORD)
   await page.getByTestId("import-archive-input").setInputFiles(zip)
-  const summary = page.getByTestId("import-summary")
-  await expect(summary).toBeVisible({ timeout: 90_000 })
-  await expect(summary).toContainText("3 clients")
-  await expect(summary).toContainText("15 notes")
+  try {
+    const summary = page.getByTestId("import-summary")
+    await expect(summary).toBeVisible({ timeout: 90_000 })
+    await expect(summary).toContainText("3 clients")
+    await expect(summary).toContainText("15 notes")
+  } finally {
+    // Specs share one practice. A previewed run left with its archive would
+    // give the archive spec a second "Delete it now" to find; drop the archive.
+    await deletePreviewedArchives(api)
+  }
 })
+
+type RunRow = { id: string; state: string; has_archive: boolean }
+
+async function deletePreviewedArchives(api: ApiClient) {
+  const { runs } = await api.get<{ runs: RunRow[] }>("/api/migration/runs")
+  for (const run of runs.filter((r) => r.state === "previewed" && r.has_archive)) {
+    await api.request("DELETE", `/api/migration/runs/${run.id}/archive`)
+  }
+}
