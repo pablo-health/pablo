@@ -36,6 +36,7 @@ const TEST_CONFIG: RuntimeConfig = {
   publicBookingEnabled: false,
   googleCalendarEnabled: false,
   supportEmail: "",
+  helpUrl: "",
   pabloEdition: "core",
   features: {},
 }
