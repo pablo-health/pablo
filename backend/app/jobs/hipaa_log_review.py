@@ -24,7 +24,7 @@ import os
 import re
 import sys
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, NamedTuple
 
 from ..logging_config import configure_job_logging
 
@@ -175,9 +175,11 @@ def run(
     )
 
     exit_code = 0
+    zero_window = 0
+    hidden: list[str] = []
     for schema in schemas:
         try:
-            _review_tenant(
+            scan = _review_tenant(
                 practice_schema=schema,
                 window_hours=window_hours,
                 review_mode=review_mode,
@@ -186,6 +188,28 @@ def run(
         except Exception:
             logger.exception("Review failed for tenant schema=%s", schema)
             exit_code = 1
+            continue
+        if scan.total_entries == 0:
+            zero_window += 1
+        if scan.rows_hidden:
+            hidden.append(schema)
+
+    logger.info(
+        "hipaa_log_review_run_done tenants=%d zero_window=%d hidden=%d",
+        len(schemas),
+        zero_window,
+        len(hidden),
+    )
+    # A review that cannot see the rows it is meant to review has not run,
+    # however cleanly it exited, so it fails the job as well as logging.
+    if hidden:
+        logger.error(
+            "hipaa_log_review_blind tenants=%d hidden=%d schemas=%s",
+            len(schemas),
+            len(hidden),
+            ",".join(hidden),
+        )
+        exit_code = 1
 
     return exit_code
 
@@ -297,12 +321,17 @@ def _notify_invariant_violations(violations: list[str], gcs_bucket: str | None) 
     _notify_high_finding(report_path, tenant_schema=None)
 
 
+class TenantScan(NamedTuple):
+    total_entries: int
+    rows_hidden: bool
+
+
 def _review_tenant(
     practice_schema: str,
     window_hours: int,
     review_mode: str,
     gcs_bucket: str | None,
-) -> None:
+) -> TenantScan:
     payload = _load_review_payload(practice_schema, window_hours, review_mode)
     summary = payload["summary"]
     logger.info(
@@ -313,6 +342,11 @@ def _review_tenant(
         len(payload["user_aggregates"]),
         summary["needs_model_review"],
     )
+    # An empty window is usually a quiet practice. It is also what a reviewer
+    # that cannot see the table reads, so check which before calling it clean.
+    rows_hidden = summary["total_entries"] == 0 and _audit_rows_hidden(practice_schema)
+    if rows_hidden:
+        logger.error("schema=%s audit_logs has rows this review cannot see", practice_schema)
 
     # Deterministic triage: when the in-code pass classified every row as
     # provably routine and raised no aggregates, the window is "fine" and
@@ -333,6 +367,49 @@ def _review_tenant(
 
     if severity == "HIGH":
         _notify_high_finding(report_path, tenant_schema=practice_schema)
+
+    return TenantScan(total_entries=summary["total_entries"], rows_hidden=rows_hidden)
+
+
+def _audit_rows_hidden(practice_schema: str) -> bool:
+    """Whether ``practice_schema``'s audit_logs holds rows the review cannot see.
+
+    Read through the same kind of session the review reads through, so it
+    sees exactly what the review saw.
+    """
+    from ..db import create_standalone_session  # noqa: PLC0415
+
+    session = create_standalone_session(practice_schema=practice_schema)
+    try:
+        return audit_rows_hidden(session, practice_schema)
+    finally:
+        session.close()
+
+
+def audit_rows_hidden(conn: Any, practice_schema: str) -> bool:
+    """True when this connection reads audit_logs as empty while the table
+    statistics say it has live rows.
+
+    The statistics are kept by the server and are not subject to row-level
+    security, so they still count rows a role without access cannot read.
+    That is the failure this guards against: a review connecting as a role
+    the row policies hide every row from exits cleanly, reports nothing, and
+    looks identical to a quiet day. The check errs one way only: statistics
+    that were reset, or not yet flushed, read as zero and the table as not
+    hidden, never the reverse.
+    """
+    from sqlalchemy import text  # noqa: PLC0415
+
+    if conn.execute(text("SELECT EXISTS (SELECT 1 FROM audit_logs)")).scalar():
+        return False
+    live = conn.execute(
+        text(
+            "SELECT n_live_tup FROM pg_stat_user_tables"
+            " WHERE schemaname = :schema AND relname = 'audit_logs'"
+        ),
+        {"schema": practice_schema},
+    ).scalar()
+    return bool(live)
 
 
 def _deterministic_clean_report(summary: dict[str, Any], review_mode: str) -> str:
