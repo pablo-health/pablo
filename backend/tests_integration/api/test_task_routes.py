@@ -13,7 +13,11 @@ in-memory route tests cannot:
   tasks never meets a row it has no template for;
 * the filters, the self-referencing step link and its cascade, and the
   repeat rule work against Postgres and its constraints, not a stand-in;
-* one clinician cannot reach another's task through either surface.
+* one clinician cannot reach another's task through either surface;
+* a task tied to a client goes through that client's own access check, through
+  the real grant table: linking or listing a client the caller holds no grant
+  on is "not found", and a task whose client the caller can no longer open
+  keeps the link without naming them.
 """
 
 from __future__ import annotations
@@ -31,11 +35,15 @@ from app.api_errors import register_exception_handlers
 from app.auth.service import TenantContext, get_current_user, get_tenant_context
 from app.db import arm_current_user_id, set_tenant_schema
 from app.db.provisioning import create_practice_schema
-from app.models import User
+from app.models import AuditAction, User
 from app.repositories import get_compliance_item_repository, get_task_repository
+from app.repositories.audit import InMemoryAuditRepository
+from app.repositories.postgres.patient import PostgresPatientRepository
 from app.repositories.postgres.task import PostgresComplianceItemRepository, PostgresTaskRepository
 from app.routes import compliance as compliance_routes
 from app.routes import tasks as task_routes
+from app.routes.patients import get_patient_repository
+from app.services import AuditService, get_audit_service
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
@@ -116,15 +124,83 @@ def harness(engine: Engine) -> Iterator[dict[str, Any]]:
     app.dependency_overrides[get_compliance_item_repository] = lambda: (
         PostgresComplianceItemRepository(caller.armed())
     )
+    app.dependency_overrides[get_patient_repository] = lambda: PostgresPatientRepository(
+        caller.armed()
+    )
+    audit_log = InMemoryAuditRepository()
+    app.dependency_overrides[get_audit_service] = lambda: AuditService(audit_log)
     try:
-        yield {"client": TestClient(app), "caller": caller, "session": session}
+        yield {
+            "client": TestClient(app),
+            "caller": caller,
+            "session": session,
+            "audit": audit_log,
+        }
     finally:
         session.rollback()
         for user_id in (_ME, _SOMEONE_ELSE):
             arm_current_user_id(session, user_id)
             session.execute(text("DELETE FROM tasks"))
+            # A lapsed grant hides its client from the delete; renew it first.
+            session.execute(text("UPDATE patient_clinicians SET expires_at = NULL"))
+            session.execute(text("DELETE FROM patients"))
         session.commit()
         session.close()
+
+
+# The helpers below write through the harness's own session, armed as whoever
+# they act for: the requests run in that session's open transaction, so a
+# second connection would neither see their rows nor get past their locks.
+
+
+def _client_of(session: Session, clinician: str, first_name: str = "Omar") -> str:
+    """A client in the practice, with ``clinician`` holding the grant to open them."""
+    client_id = str(uuid.uuid4())
+    arm_current_user_id(session, clinician)
+    session.execute(
+        text(
+            "INSERT INTO patients (id, first_name, last_name, first_name_lower,"
+            " last_name_lower, status, session_count, created_at, updated_at)"
+            " VALUES (CAST(:pid AS uuid), :first, 'Haddad', lower(:first), 'haddad',"
+            " 'active', 0, now(), now())"
+        ),
+        {"pid": client_id, "first": first_name},
+    )
+    _grant(session, clinician, client_id)
+    return client_id
+
+
+def _grant(session: Session, clinician: str, client_id: str) -> None:
+    arm_current_user_id(session, clinician)
+    session.execute(
+        text(
+            "INSERT INTO patient_clinicians (patient_id, user_id, granted_by)"
+            " VALUES (CAST(:pid AS uuid), :u, :u)"
+        ),
+        {"pid": client_id, "u": clinician},
+    )
+
+
+def _set_grant(session: Session, clinician: str, client_id: str, *, live: bool) -> None:
+    """Let ``clinician``'s grant on the client lapse, or renew it."""
+    arm_current_user_id(session, clinician)
+    session.execute(
+        text(
+            "UPDATE patient_clinicians SET expires_at = "
+            "CASE WHEN :live THEN NULL ELSE now() - interval '1 day' END "
+            "WHERE patient_id = CAST(:pid AS uuid)"
+        ),
+        {"pid": client_id, "live": live},
+    )
+
+
+def _stored_link(session: Session, task_id: str) -> str | None:
+    arm_current_user_id(session, _ME)
+    value: str | None = session.execute(
+        text("SELECT patient_id::text FROM tasks WHERE id = CAST(:tid AS uuid)"),
+        {"tid": task_id},
+    ).scalar_one()
+    return value
 
 
 def _task(client: TestClient, **fields: Any) -> dict[str, Any]:
@@ -288,3 +364,129 @@ class TestIsolation:
 
         caller.user_id = _ME
         assert client.get(f"/api/tasks/{mine['id']}").status_code == 200
+
+
+class TestTasksAboutAClient:
+    def test_a_client_the_caller_cannot_open_cannot_be_linked(
+        self, harness: dict[str, Any]
+    ) -> None:
+        """The chart's own check: no grant, no link, and no hint the client exists."""
+        client, session = harness["client"], harness["session"]
+        theirs = _client_of(session, _SOMEONE_ELSE)
+
+        response = client.post(
+            "/api/tasks",
+            json={"category": "practice", "label": "Send the release form", "patient_id": theirs},
+        )
+        assert response.status_code == 404, response.text
+        assert client.get("/api/tasks").json() == []
+        # Nor can an existing task be pointed at them.
+        mine = _task(client, label="Send the release form")
+        moved = client.put(
+            f"/api/tasks/{mine['id']}",
+            json={"category": "practice", "label": "Send the release form", "patient_id": theirs},
+        )
+        assert moved.status_code == 404
+        assert _stored_link(session, mine["id"]) is None
+
+    def test_a_linked_task_lists_on_its_clients_chart_by_name(
+        self, harness: dict[str, Any]
+    ) -> None:
+        client, session = harness["client"], harness["session"]
+        omar = _client_of(session, _ME, "Omar")
+        linked = _task(client, label="Send the release form", patient_id=omar)
+        done = _task(client, label="Call the school counselor", patient_id=omar)
+        client.post(f"/api/tasks/{done['id']}/complete")
+        _task(client, label="Renew the office lease")
+
+        assert linked["patient_id"] == omar
+        assert linked["patient_name"] == "Omar Haddad"
+        chart = client.get(f"/api/tasks?patient_id={omar}&open_only=true")
+        assert chart.status_code == 200, chart.text
+        assert [t["id"] for t in chart.json()] == [linked["id"]]
+        # The Tasks list names the client on the linked one and nobody elsewhere.
+        names = {t["label"]: t["patient_name"] for t in client.get("/api/tasks").json()}
+        assert names["Send the release form"] == "Omar Haddad"
+        assert names["Renew the office lease"] is None
+
+    def test_listing_another_clinicians_clients_tasks_is_not_found(
+        self, harness: dict[str, Any]
+    ) -> None:
+        client, session = harness["client"], harness["session"]
+        theirs = _client_of(session, _SOMEONE_ELSE)
+        assert client.get(f"/api/tasks?patient_id={theirs}").status_code == 404
+
+    def test_a_co_treating_clinician_does_not_see_anothers_task_about_the_client(
+        self, harness: dict[str, Any]
+    ) -> None:
+        """Both hold a grant on the client; the task is still its owner's alone."""
+        client, caller, session = harness["client"], harness["caller"], harness["session"]
+        shared = _client_of(session, _ME)
+        _grant(session, _SOMEONE_ELSE, shared)
+        _task(client, label="Send the release form", patient_id=shared)
+
+        caller.user_id = _SOMEONE_ELSE
+        listed = client.get(f"/api/tasks?patient_id={shared}")
+        assert listed.status_code == 200, listed.text
+        assert listed.json() == []
+
+    def test_losing_access_hides_the_client_and_keeps_the_link(
+        self, harness: dict[str, Any]
+    ) -> None:
+        client, session = harness["client"], harness["session"]
+        omar = _client_of(session, _ME)
+        task = _task(client, label="Send the release form", patient_id=omar)
+
+        _set_grant(session, _ME, omar, live=False)
+        [listed] = client.get("/api/tasks").json()
+        assert listed["id"] == task["id"]
+        assert listed["patient_id"] is None
+        assert listed["patient_name"] is None
+        # Saving the task as it was shown does not cut a link the caller never saw.
+        saved = client.put(
+            f"/api/tasks/{task['id']}",
+            json={"category": "practice", "label": "Send the signed release form"},
+        )
+        assert saved.status_code == 200, saved.text
+        assert _stored_link(session, task["id"]) == omar
+
+        _set_grant(session, _ME, omar, live=True)
+        [back] = client.get("/api/tasks").json()
+        assert back["patient_name"] == "Omar Haddad"
+
+    def test_unlinking_a_client_the_caller_can_open(self, harness: dict[str, Any]) -> None:
+        client, session = harness["client"], harness["session"]
+        omar = _client_of(session, _ME)
+        task = _task(client, label="Send the release form", patient_id=omar)
+
+        saved = client.put(
+            f"/api/tasks/{task['id']}",
+            json={"category": "practice", "label": "Send the release form", "patient_id": None},
+        )
+        assert saved.status_code == 200, saved.text
+        assert _stored_link(session, task["id"]) is None
+
+    def test_a_response_naming_a_client_records_a_view_of_them(
+        self, harness: dict[str, Any]
+    ) -> None:
+        client, session, audit = harness["client"], harness["session"], harness["audit"]
+        omar = _client_of(session, _ME)
+        _task(client, label="Send the release form", patient_id=omar)
+        _task(client, label="Renew the office lease")
+
+        client.get("/api/tasks")
+        viewed = [e for e in audit.list_for_user(_ME) if e.action == AuditAction.PATIENT_VIEWED]
+        assert viewed, "a task naming a client was returned with no record of the view"
+        assert {e.patient_id for e in viewed} == {omar}
+
+    def test_deleting_the_client_leaves_the_task_unlinked(self, harness: dict[str, Any]) -> None:
+        client, session = harness["client"], harness["session"]
+        omar = _client_of(session, _ME)
+        task = _task(client, label="Send the release form", patient_id=omar)
+
+        arm_current_user_id(session, _ME)
+        session.execute(text("DELETE FROM patients WHERE id = CAST(:pid AS uuid)"), {"pid": omar})
+        session.expire_all()
+
+        assert client.get(f"/api/tasks/{task['id']}").status_code == 200
+        assert _stored_link(session, task["id"]) is None

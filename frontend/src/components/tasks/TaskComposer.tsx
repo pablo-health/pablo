@@ -23,6 +23,7 @@ import {
   type TaskCategory,
   taskToPayload,
 } from "@/types/tasks"
+import { ClientPicker, type PickedClient } from "./ClientPicker"
 
 export interface TaskComposerProps {
   open: boolean
@@ -36,6 +37,8 @@ export interface TaskComposerProps {
    * Offered while Compliance is the chosen category of a new task.
    */
   onChooseComplianceReminder?: () => void
+  /** The client a new task starts tied to: the chart it was added from. */
+  defaultClient?: PickedClient | null
 }
 
 /** Add or edit a task: a title, a category, an optional date and repeat, and notes. */
@@ -54,9 +57,17 @@ function ComposerForm({
   task,
   defaultCategory = "practice",
   onChooseComplianceReminder,
+  defaultClient = null,
   onClose,
 }: Omit<TaskComposerProps, "open" | "onOpenChange"> & { onClose: () => void }) {
   const [label, setLabel] = useState(task?.label ?? "")
+  const [client, setClient] = useState<PickedClient | null>(
+    task
+      ? task.patient_id && task.patient_name
+        ? { id: task.patient_id, name: task.patient_name }
+        : null
+      : defaultClient,
+  )
   const [category, setCategory] = useState<TaskCategory>(task?.category ?? defaultCategory)
   const [dueDate, setDueDate] = useState(task?.due_date ?? "")
   const [repeat, setRepeat] = useState<RepeatRule | "">(task?.repeat_rule ?? "")
@@ -78,6 +89,7 @@ function ComposerForm({
       due_date: dueDate || null,
       repeat_rule: repeat || null,
       notes: notes.trim() || null,
+      patient_id: client?.id ?? null,
     }
     try {
       if (task) {
@@ -159,6 +171,8 @@ function ComposerForm({
             </p>
           )}
         </fieldset>
+
+        <ClientPicker value={client} onChange={setClient} />
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="space-y-1">

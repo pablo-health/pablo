@@ -89,6 +89,20 @@ describe("TasksPanel", () => {
     vi.clearAllMocks()
   })
 
+  it("names the client on a task tied to one, and nobody on the rest", () => {
+    given([
+      { ...RENT, id: "release", label: "Send the release form", patient_id: "p-1", patient_name: "Omar Haddad" },
+      RENT,
+    ])
+    renderPanel()
+
+    const linked = screen.getByTestId("compliance-item-release")
+    expect(within(linked).getByTestId("task-client-name")).toHaveTextContent("Omar Haddad")
+    expect(
+      within(screen.getByTestId("compliance-item-rent")).queryByTestId("task-client-name"),
+    ).not.toBeInTheDocument()
+  })
+
   it("is titled Tasks on the dashboard", () => {
     given([SOON_LICENCE])
     renderPanel()

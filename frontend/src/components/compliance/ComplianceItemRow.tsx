@@ -21,6 +21,8 @@ export interface ComplianceItemRowProps {
   onOpenDocs?: () => void
   onComplete: () => void
   completing: boolean
+  /** Name the client a linked task is about; off where the client is already the page. */
+  showClient?: boolean
 }
 
 /** One task in the panel: a compliance reminder or any other task. */
@@ -31,8 +33,10 @@ export function ComplianceItemRow({
   onOpenDocs,
   onComplete,
   completing,
+  showClient = true,
 }: ComplianceItemRowProps) {
   const { item, days, horizon } = entry
+  const client = showClient ? item.patient_name : null
   const dot = dotFor(item)
   const kind = kindLabel(item)
   const repeats = REPEAT_RULES.find((r) => r.id === item.repeat_rule)?.label
@@ -71,7 +75,14 @@ export function ComplianceItemRow({
             {item.label}
           </p>
           {!expanded && (
-            <p className="text-xs text-neutral-500 mt-0.5 truncate">{item.notes ?? kind}</p>
+            <p className="text-xs text-neutral-500 mt-0.5 truncate">
+              {client && (
+                <span className="font-medium text-neutral-700" data-testid="task-client-name">
+                  {client} ·{" "}
+                </span>
+              )}
+              {item.notes ?? kind}
+            </p>
           )}
         </button>
         <span
@@ -108,8 +119,9 @@ export function ComplianceItemRow({
       </div>
       {expanded && (
         <div className="mt-2 pl-5 space-y-1 text-xs text-neutral-600" data-testid="compliance-item-details">
+          {client && <p className="text-neutral-800">{client}</p>}
           <p>{kind}</p>
-          {item.due_date && <p>Due {formatDueDate(item.due_date)}</p>}
+          {item.due_date &&<p>Due {formatDueDate(item.due_date)}</p>}
           {repeats && <p>{repeats}</p>}
           {item.notes && <p className="whitespace-pre-wrap">{item.notes}</p>}
           <Button variant="outline" size="sm" className="mt-1" onClick={onEdit}>

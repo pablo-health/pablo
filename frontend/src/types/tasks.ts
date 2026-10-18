@@ -9,7 +9,8 @@
  */
 
 export type TaskCategory = "compliance" | "practice" | "other"
-export type TaskSource = "manual" | "reminder" | "plan" | "import"
+/** `session`: accepted from what the clinician said they would do in a session. */
+export type TaskSource = "manual" | "reminder" | "plan" | "import" | "session"
 export type RepeatRule = "weekly" | "monthly" | "quarterly" | "yearly"
 
 export interface Task {
@@ -27,6 +28,12 @@ export interface Task {
   completed_at: string | null
   created_at: string
   updated_at: string
+  /**
+   * The client the task is about, and their name. Null for a task about
+   * nobody, or about a client this clinician can no longer open.
+   */
+  patient_id?: string | null
+  patient_name?: string | null
 }
 
 export interface TaskPayload {
@@ -39,6 +46,7 @@ export interface TaskPayload {
   parent_task_id?: string | null
   goal_key?: string | null
   source?: TaskSource
+  patient_id?: string | null
 }
 
 export interface TaskFilters {
@@ -46,6 +54,10 @@ export interface TaskFilters {
   parent_task_id?: string
   goal_key?: string
   source?: TaskSource
+  /** One client's tasks. */
+  patient_id?: string
+  /** Leave out the ones already done. */
+  open_only?: boolean
 }
 
 /** In the order the filter shows them: compliance first. */
@@ -77,5 +89,6 @@ export function taskToPayload(task: Task): TaskPayload {
     repeat_rule: task.repeat_rule,
     parent_task_id: task.parent_task_id,
     goal_key: task.goal_key,
+    patient_id: task.patient_id ?? null,
   }
 }

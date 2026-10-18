@@ -255,6 +255,7 @@ describe("ReminderComposer", () => {
           repeat_rule: null,
           parent_task_id: null,
           goal_key: null,
+          patient_id: null,
         },
       })
       expect(createMutate).not.toHaveBeenCalled()
