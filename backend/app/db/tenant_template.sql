@@ -752,7 +752,7 @@ CREATE TABLE __TENANT_SCHEMA__.note_chart_proposal_runs (
 
 CREATE TABLE __TENANT_SCHEMA__.note_chart_proposals (
     id uuid NOT NULL,
-    note_id uuid NOT NULL,
+    note_id uuid,
     patient_id uuid NOT NULL,
     field_key character varying(64) NOT NULL,
     item_key character varying(200) DEFAULT ''::character varying NOT NULL,
@@ -766,7 +766,9 @@ CREATE TABLE __TENANT_SCHEMA__.note_chart_proposals (
     decided_at timestamp with time zone,
     created_at timestamp with time zone NOT NULL,
     change jsonb,
-    CONSTRAINT ck_note_chart_proposals_decision CHECK (((decision)::text = ANY ((ARRAY['pending'::character varying, 'accepted'::character varying, 'edited'::character varying, 'discarded'::character varying])::text[])))
+    intake_assignment_id uuid,
+    CONSTRAINT ck_note_chart_proposals_decision CHECK (((decision)::text = ANY ((ARRAY['pending'::character varying, 'accepted'::character varying, 'edited'::character varying, 'discarded'::character varying])::text[]))),
+    CONSTRAINT ck_note_chart_proposals_one_source CHECK ((num_nonnulls(note_id, intake_assignment_id) = 1))
 );
 
 
@@ -1200,6 +1202,8 @@ CREATE TABLE __TENANT_SCHEMA__.patients (
     allergy_status character varying(16) DEFAULT 'not_recorded'::character varying NOT NULL,
     allergies jsonb DEFAULT '[]'::jsonb NOT NULL,
     superbill_includes_diagnosis boolean DEFAULT false NOT NULL,
+    pronouns character varying(64),
+    emergency_contact text,
     CONSTRAINT ck_patients_allergies_match_status CHECK ((((allergy_status)::text = 'recorded'::text) = (jsonb_array_length(allergies) > 0))),
     CONSTRAINT ck_patients_allergy_status CHECK (((allergy_status)::text = ANY ((ARRAY['not_recorded'::character varying, 'nkda'::character varying, 'recorded'::character varying])::text[]))),
     CONSTRAINT ck_patients_sex CHECK (((sex)::text = ANY ((ARRAY['M'::character varying, 'F'::character varying, 'U'::character varying])::text[])))
@@ -2664,6 +2668,10 @@ CREATE UNIQUE INDEX uq_intake_documents_draft ON __TENANT_SCHEMA__.intake_docume
 
 
 
+CREATE UNIQUE INDEX uq_note_chart_proposals_intake_field ON __TENANT_SCHEMA__.note_chart_proposals USING btree (intake_assignment_id, field_key, item_key) WHERE (intake_assignment_id IS NOT NULL);
+
+
+
 CREATE UNIQUE INDEX uq_patient_intake_artifacts_side ON __TENANT_SCHEMA__.patient_intake_artifacts USING btree (assignment_id, item_id, side) WHERE (side IS NOT NULL);
 
 
@@ -2859,6 +2867,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.intake_item_definitions
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.intake_packet_versions
     ADD CONSTRAINT fk_intake_packet_versions_template FOREIGN KEY (template_id) REFERENCES __TENANT_SCHEMA__.intake_packet_templates(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_chart_proposals
+    ADD CONSTRAINT fk_note_chart_proposals_intake FOREIGN KEY (intake_assignment_id, patient_id) REFERENCES __TENANT_SCHEMA__.patient_intake_assignments(id, patient_id) ON DELETE CASCADE;
 
 
 

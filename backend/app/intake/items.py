@@ -39,6 +39,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
 
+from ..chart_history.fields import HISTORY_KEYS
 from ..outcome_measures.instruments import INSTRUMENT_REGISTRY
 from ..outcome_measures.item_text import ITEM_TEXT
 from .rules import DISPLAY_ONLY_TARGETS, ReferencedItem, RuleError, VisibleWhen, check_rule
@@ -128,6 +129,17 @@ ITEM_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 _MAX_OPTIONS = 40
 
+#: The chart fields a written-answer question can fill, besides the history
+#: fields. An answer to such a question is proposed to that field when the
+#: form is accepted, for the clinician to accept, edit or discard; nothing
+#: reaches the chart without that. ``medications`` is read a line per
+#: medication. An emergency-contact question fills the chart's emergency
+#: contact by its type and needs no field named.
+PROFILE_CHART_FIELDS: tuple[str, ...] = ("preferred_name", "pronouns", "medications")
+
+#: Every value ``chart_field`` may take.
+CHART_FIELDS: tuple[str, ...] = (*PROFILE_CHART_FIELDS, *HISTORY_KEYS)
+
 #: Given a document key, the id of its newest published version — or
 #: ``None`` if that document has never been published. A callable rather
 #: than a repository so that this module keeps knowing nothing about
@@ -198,8 +210,24 @@ class InstructionsConfig(_BaseConfig):
 
 
 class FreeTextConfig(_BaseConfig):
+    """A written answer.
+
+    ``chart_field`` names the chart field the answer fills (one of
+    :data:`CHART_FIELDS`), so an accepted form proposes it there. ``None``
+    for an answer that stays on the form; such an answer can still suggest
+    chart updates when the client has agreed to AI tools, read like any
+    other written answer.
+    """
+
     item_type: Literal["free_text"]
     max_len: int = Field(default=2000, ge=1, le=10000)
+    chart_field: str | None = None
+
+    @model_validator(mode="after")
+    def _check(self) -> FreeTextConfig:
+        if self.chart_field is not None and self.chart_field not in CHART_FIELDS:
+            raise ValueError(f"{self.chart_field!r} is not a chart field an answer can fill")
+        return self
 
 
 class ChoiceOption(BaseModel):
@@ -524,6 +552,7 @@ def validate_item_list(
 
     seen: dict[str, ReferencedItem] = {}
     parsed: list[ItemConfig] = []
+    filled: dict[str, str] = {}
 
     for item in items:
         if not ITEM_KEY_PATTERN.match(item.key):
@@ -563,6 +592,14 @@ def validate_item_list(
             _check_instrument_rights(item.key, config.code, instrument_attested)
 
         _check_label(item)
+
+        if isinstance(config, FreeTextConfig) and config.chart_field is not None:
+            earlier = filled.setdefault(config.chart_field, item.key)
+            if earlier != item.key:
+                raise ItemConfigError(
+                    f"{item.key}: {earlier!r} already fills this chart field. "
+                    "One question per chart field."
+                )
 
         if config.visible_when is not None:
             _check_visibility(item.key, config.visible_when, seen)

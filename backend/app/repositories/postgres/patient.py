@@ -587,6 +587,9 @@ def _row_to_patient(row: PatientRow) -> Patient:
         state=row.state,
         postal_code=row.postal_code,
         sex=row.sex,
+        preferred_name=row.preferred_name,
+        pronouns=row.pronouns,
+        emergency_contact=row.emergency_contact,
     )
 
 
@@ -620,5 +623,8 @@ def _patient_to_row(patient: Patient, row: PatientRow) -> None:
     row.state = patient.state
     row.postal_code = patient.postal_code
     row.sex = patient.sex
+    row.preferred_name = patient.preferred_name
+    row.pronouns = patient.pronouns
+    row.emergency_contact = patient.emergency_contact
     row.created_at = patient.created_at
     row.updated_at = patient.updated_at

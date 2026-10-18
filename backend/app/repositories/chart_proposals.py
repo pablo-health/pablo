@@ -1,9 +1,10 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Note chart-proposal repository.
+"""Chart-proposal repository: the updates a note or an accepted intake form proposes.
 
 Callers reach a note's proposals only after loading the note through
-``NoteService.get_note``, which is the access check; the row policy
+``NoteService.get_note``, and a form's only after loading the form on the
+patient's chart, which is the access check; the row policy
 (``has_patient_access``) backs it at the database.
 """
 
@@ -26,8 +27,12 @@ class ChartProposalRepository(ABC):
         """Every proposal on the note, decided or not, oldest first."""
 
     @abstractmethod
+    def list_for_intake(self, assignment_id: str) -> list[ChartProposal]:
+        """Every proposal an accepted intake form made, decided or not, oldest first."""
+
+    @abstractmethod
     def list_pending_for_patient(self, patient_id: str) -> list[ChartProposal]:
-        """Every proposal still pending across the patient's notes, oldest first.
+        """Every proposal still pending across the patient's notes and forms, oldest first.
 
         The caller has loaded the patient, which is the access check; the row
         policy backs it at the database.
@@ -40,8 +45,8 @@ class ChartProposalRepository(ABC):
         """Pending proposals per patient, for those of ``patient_ids`` that have any.
 
         Counts only what the clinician could open: a live grant on the
-        patient, on a note that is not deleted. A patient with none is left
-        out of the answer rather than mapped to zero.
+        patient, on a note that is not deleted or on an intake form. A patient
+        with none is left out of the answer rather than mapped to zero.
         """
 
     @abstractmethod
@@ -111,6 +116,10 @@ class InMemoryChartProposalRepository(ChartProposalRepository):
 
     def list_for_note(self, note_id: str) -> list[ChartProposal]:
         mine = [p for p in self._rows.values() if p.note_id == note_id]
+        return sorted(mine, key=lambda p: p.created_at)
+
+    def list_for_intake(self, assignment_id: str) -> list[ChartProposal]:
+        mine = [p for p in self._rows.values() if p.intake_assignment_id == assignment_id]
         return sorted(mine, key=lambda p: p.created_at)
 
     def list_pending_for_patient(self, patient_id: str) -> list[ChartProposal]:

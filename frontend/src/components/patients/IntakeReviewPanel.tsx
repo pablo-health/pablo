@@ -2,7 +2,7 @@
 
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 
 import { ApiError } from "@/lib/api/client"
 import { Button } from "@/components/ui/button"
@@ -177,9 +177,21 @@ function FormHeading({ review }: { review: IntakeReview }) {
  * practice's timezone, which is what a release of information or a referral
  * needs and a copy of a screen is not.
  */
-export function IntakeReviewPanel(props: { patientId: string; assignmentId: string }) {
-  const { patientId, assignmentId } = props
+export function IntakeReviewPanel(props: {
+  patientId: string
+  assignmentId: string
+  /** A question to open the form at, marked: the answer a chart update cites. */
+  focusItemId?: string
+}) {
+  const { patientId, assignmentId, focusItemId } = props
   const { data, error, isLoading } = useIntakeReview(patientId, assignmentId)
+  const loaded = !!data
+  useEffect(() => {
+    if (!loaded || !focusItemId) return
+    document
+      .querySelector(`[data-testid="intake-review-item-${CSS.escape(focusItemId)}"]`)
+      ?.scrollIntoView({ block: "center" })
+  }, [loaded, focusItemId])
   const correction = useRequestIntakeCorrection(patientId, assignmentId)
   const accept = useAcceptIntakeAssignment(patientId, assignmentId)
   const entry = useEnterIntakeAnswer(patientId, assignmentId)
@@ -261,6 +273,7 @@ export function IntakeReviewPanel(props: { patientId: string; assignmentId: stri
       <ul className="mt-2" data-testid="intake-review-items">
         {items.map((item) => (
           <IntakeReviewItemRow key={item.id} item={item} form={data.form} readOnly={source}
+            focused={item.id === focusItemId}
             artifacts={artifactsFor(item.id, assignmentId, files ?? [])} shown={shown[item.key] !== false}
             selectable={isSubmitted} selected={selected.includes(item.id)} onSelect={onSelect}
             saving={entry.isPending} canEnter={canEnter}

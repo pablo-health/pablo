@@ -40,6 +40,10 @@ class DecideProposalRequest(BaseModel):
 class EvidenceResponse(BaseModel):
     segment_id: int
     text: str
+    item_id: str | None = None
+    """For an intake form's proposal, the question the cited answer was given to."""
+    question: str | None = None
+    """That question's wording."""
 
 
 class MedicationChangeResponse(BaseModel):
@@ -133,7 +137,10 @@ def proposal_response(proposal: ChartProposal, chart: ChartContext) -> ChartProp
         proposed_text=proposal.proposed_text,
         what_changed=proposal.what_changed,
         evidence=[
-            EvidenceResponse(segment_id=e.segment_id, text=e.text) for e in proposal.evidence
+            EvidenceResponse(
+                segment_id=e.segment_id, text=e.text, item_id=e.item_id, question=e.question
+            )
+            for e in proposal.evidence
         ],
         origin=proposal.origin,
         decision=proposal.decision,
@@ -163,9 +170,22 @@ class NoteChartProposalGroup(BaseModel):
     proposals: list[ChartProposalResponse]
 
 
+class IntakeChartProposalGroup(BaseModel):
+    """One accepted intake form's pending proposals, with enough about the form to
+    head them."""
+
+    assignment_id: str
+    packet_name: str
+    #: When the form was handed in, else when it was accepted.
+    date: datetime
+    proposals: list[ChartProposalResponse]
+
+
 class PatientChartProposalsResponse(BaseModel):
     """A client's pending chart proposals, grouped by the note that made them,
-    newest note first. Decisions go through the note's own route."""
+    newest note first, and by the intake form that made them, newest first.
+    Decisions go through the note's own route, or the form's."""
 
     groups: list[NoteChartProposalGroup]
+    intakes: list[IntakeChartProposalGroup] = Field(default_factory=list)
     pending: int

@@ -186,6 +186,13 @@ class PatientRow(Base):
     # segment expects, not a gender-identity field. Displayed as "Sex on
     # insurance card" in the UI.
     sex: Mapped[str | None] = mapped_column(String(1))
+    # The pronouns this person uses, in their own words ("they/them"). Free
+    # text: a fixed list would leave someone out. NULL when nobody has said.
+    pronouns: Mapped[str | None] = mapped_column(String(64))
+    # Who to call in an emergency, as written: a name, how they know the
+    # person, a phone number. Text rather than parts so it is entered and
+    # corrected the way it is read. NULL when none is recorded.
+    emergency_contact: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (
         # Backs PatientRepository.find_by_email, whose `lower(email) = ?`
@@ -1984,16 +1991,24 @@ class NoteChartProposalRow(Base):
     ``decision`` is ``pending`` until the clinician accepts, edits or
     discards it; ``decided_text`` is the clinician's text for an edit.
 
-    One row per note per field and entry. Carries ``patient_id`` so the
-    reconcile pass gives it the ``has_patient_access`` row policy.
+    A proposal comes from a note or from an accepted intake form, exactly one
+    of the two: ``note_id`` or ``intake_assignment_id``. An intake's evidence
+    entries also carry ``item_id`` and ``question``, the form question the
+    cited answer was given to; its ``segment_id`` is the question's position.
+    ``origin`` is ``intake`` for those.
+
+    One row per source per field and entry. Carries ``patient_id`` so the
+    reconcile pass gives it the ``has_patient_access`` row policy; the
+    intake's composite foreign key keeps that copy equal to the form's.
     """
 
     __tablename__ = "note_chart_proposals"
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
-    note_id: Mapped[str] = mapped_column(
-        Uuid(as_uuid=False), ForeignKey("notes.id", ondelete="CASCADE"), nullable=False
+    note_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("notes.id", ondelete="CASCADE")
     )
+    intake_assignment_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
     patient_id: Mapped[str] = mapped_column(
         Uuid(as_uuid=False), ForeignKey("patients.id", ondelete="CASCADE"), nullable=False
     )
@@ -2022,6 +2037,26 @@ class NoteChartProposalRow(Base):
 
     __table_args__ = (
         UniqueConstraint("note_id", "field_key", "item_key", name="uq_note_chart_proposals_field"),
+        # A unique index rather than a constraint, so the revision adding it can
+        # be written ``IF NOT EXISTS`` and stay idempotent under the fan-out.
+        Index(
+            "uq_note_chart_proposals_intake_field",
+            "intake_assignment_id",
+            "field_key",
+            "item_key",
+            unique=True,
+            postgresql_where=text("intake_assignment_id IS NOT NULL"),
+        ),
+        ForeignKeyConstraint(
+            ["intake_assignment_id", "patient_id"],
+            ["patient_intake_assignments.id", "patient_intake_assignments.patient_id"],
+            name="fk_note_chart_proposals_intake",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "num_nonnulls(note_id, intake_assignment_id) = 1",
+            name="ck_note_chart_proposals_one_source",
+        ),
         CheckConstraint(
             "decision IN ('pending', 'accepted', 'edited', 'discarded')",
             name="ck_note_chart_proposals_decision",

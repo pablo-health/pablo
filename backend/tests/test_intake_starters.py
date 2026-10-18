@@ -65,8 +65,11 @@ _VALUES = {"audio_retention": retention_phrase(365), "audio_retention_days": "36
 _AI_TOOLS_BODY = AI_TOOLS_CONSENT.body_markdown or ""
 
 
-@pytest.mark.parametrize("chosen", STARTERS, ids=lambda s: s.key)
-class TestEveryStarter:
+_DOCUMENT_STARTERS = [s for s in STARTERS if s.body_markdown is not None]
+
+
+@pytest.mark.parametrize("chosen", _DOCUMENT_STARTERS, ids=lambda s: s.key)
+class TestEveryDocumentStarter:
     def test_it_parses_into_a_document(self, chosen: Starter) -> None:
         body = chosen.body_markdown
         assert body is not None
@@ -91,6 +94,9 @@ class TestEveryStarter:
         ]
         validate_item_list(items, published_document=lambda _key: "version-1")
 
+
+@pytest.mark.parametrize("chosen", STARTERS, ids=lambda s: s.key)
+class TestEveryStarter:
     def test_it_passes_the_check_a_registered_one_does(self, chosen: Starter) -> None:
         check_starter(chosen)
 

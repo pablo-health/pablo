@@ -10,9 +10,14 @@ import type { NoteDiagnosisCode } from "./notes"
 export type ChartProposalDecision = "pending" | "accepted" | "edited" | "discarded"
 
 export interface ProposalEvidence {
+  /** The line or paragraph cited; for an intake form, the question's position on it. */
   segment_id: number
-  /** The cited transcript line (or imported document's paragraph) as written there. */
+  /** The cited transcript line (or imported document's paragraph, or intake answer) as written there. */
   text: string
+  /** For an intake form's proposal, the question the cited answer was given to. */
+  item_id?: string | null
+  /** That question's wording. */
+  question?: string | null
 }
 
 /** A change to the medication list, as the visit stated it. */
@@ -49,7 +54,8 @@ export interface ChartProposal {
   evidence: ProposalEvidence[]
   /**
    * "transcript": drafted from the visit; "document": drafted from an imported
-   * note's document; "note": the note's own text (an intake).
+   * note's document; "note": the note's own text (an intake note); "intake": an
+   * accepted intake form's answers.
    */
   origin: string
   decision: ChartProposalDecision
@@ -96,8 +102,19 @@ export interface NoteChartProposalGroup {
   proposals: ChartProposal[]
 }
 
-/** A client's pending proposals across their notes, newest note first. */
+/** One accepted intake form's pending proposals, with enough about the form to head them. */
+export interface IntakeChartProposalGroup {
+  assignment_id: string
+  packet_name: string
+  /** When the form was handed in, else when it was accepted. */
+  date: string
+  proposals: ChartProposal[]
+}
+
+/** A client's pending proposals across their notes and intake forms, newest first. */
 export interface PatientChartProposalsResponse {
   groups: NoteChartProposalGroup[]
+  /** Absent from a server that predates intake proposals. */
+  intakes?: IntakeChartProposalGroup[]
   pending: number
 }

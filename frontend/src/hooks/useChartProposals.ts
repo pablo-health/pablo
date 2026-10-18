@@ -10,6 +10,7 @@ import type {
 } from "@/types/chartProposals"
 import {
   decideChartProposal,
+  decideIntakeChartProposal,
   getChartProposals,
   getPatientChartProposals,
   retryChartProposals,
@@ -36,6 +37,15 @@ export function usePatientChartProposals(patientId: string | undefined) {
 }
 
 /**
+ * Where a proposal came from, which is the route it is decided through: a note,
+ * or an accepted intake form (`intakeAssignmentId`).
+ */
+export interface ProposalSource {
+  noteId?: string
+  intakeAssignmentId?: string
+}
+
+/**
  * Accept, edit or discard one; an accept or an edit changes the chart, so it
  * is read again. Every listing of proposals is refreshed, the note's and the
  * client's: the same proposal can be on screen in both. So is the dashboard,
@@ -44,9 +54,12 @@ export function usePatientChartProposals(patientId: string | undefined) {
 export function useDecideChartProposal(patientId: string) {
   return useAuthMutation<
     ChartProposal,
-    { noteId: string; proposalId: string; data: DecideChartProposalRequest }
+    ProposalSource & { proposalId: string; data: DecideChartProposalRequest }
   >({
-    mutationFn: ({ noteId, proposalId, data }) => decideChartProposal(noteId, proposalId, data),
+    mutationFn: ({ noteId, intakeAssignmentId, proposalId, data }) =>
+      intakeAssignmentId
+        ? decideIntakeChartProposal(patientId, intakeAssignmentId, proposalId, data)
+        : decideChartProposal(noteId ?? "", proposalId, data),
     invalidateKeys: () =>
       withDashboard([
         queryKeys.chartProposals.all,

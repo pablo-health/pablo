@@ -146,3 +146,49 @@ describe("ProposalLedger", () => {
     expect(screen.getByText("¶3")).toBeInTheDocument()
   })
 })
+
+describe("ProposalLedger for an intake form", () => {
+  const pronouns = proposal({
+    id: "pronouns",
+    field_key: "pronouns",
+    label: "Name and pronouns: Pronouns",
+    proposed_text: "they/them",
+    what_changed: "Answered on the intake",
+    origin: "intake",
+    evidence: [
+      { segment_id: 2, text: "they/them", item_id: "item-7", question: "What pronouns do you use?" },
+    ],
+  })
+
+  it("decides through the form, not a note", async () => {
+    decide.mockReset()
+    decide.mockResolvedValue({})
+    render(<ProposalLedger intakeAssignmentId="form-1" patientId="pt1" proposals={[pronouns]} />)
+
+    fireEvent.click(screen.getByRole("button", { name: "Accept" }))
+
+    await waitFor(() => expect(decide).toHaveBeenCalledTimes(1))
+    expect(decide.mock.calls[0][0]).toMatchObject({
+      intakeAssignmentId: "form-1",
+      proposalId: "pronouns",
+      data: { decision: "accept" },
+    })
+    expect(decide.mock.calls[0][0].noteId).toBeUndefined()
+  })
+
+  it("shows the answer under its question, and the question opens the form there", () => {
+    const open = vi.fn()
+    render(
+      <ProposalLedger
+        intakeAssignmentId="form-1"
+        patientId="pt1"
+        proposals={[pronouns]}
+        onAnswerClick={open}
+      />,
+    )
+
+    expect(screen.queryByText("¶3")).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "What pronouns do you use?" }))
+    expect(open).toHaveBeenCalledWith("item-7")
+  })
+})

@@ -43,6 +43,12 @@ export interface PatientResponse {
   postal_code: string | null
   /** X12 DMG03 administrative sex code (M/F/U) — "Sex on insurance card". */
   sex: string | null
+  /** What the person is called, when it is not their first name. */
+  preferred_name?: string | null
+  /** The pronouns the person uses, in their own words. */
+  pronouns?: string | null
+  /** Who to call in an emergency, as written. */
+  emergency_contact?: string | null
   /** The chart has no first or no last name yet — for one added from a
    * calendar event with the name left blank. Adding the name clears it. */
   needs_name?: boolean

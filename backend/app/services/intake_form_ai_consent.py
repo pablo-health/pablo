@@ -44,7 +44,7 @@ from ..intake.starters import (
     TELEHEALTH_LOCATION_ITEM_KEY,
 )
 from ..models.client_ai_consent import CLIENT_STATED_LOCATION_MAX
-from .client_ai_consent import record_ai_consent
+from .client_ai_consent import ai_consent_record, record_ai_consent
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -197,6 +197,15 @@ class FormAiConsentRecorder:
             today=accepted_at.date(),
             repo=self._consent,
         )
+
+    def consents(self, patient_id: str) -> bool:
+        """Whether the client's AI-notes answer on record is that they consent.
+
+        Asked after :meth:`record`, so a form that carries the question is
+        read under its own answer, and a form that does not, under the one
+        already on the chart. Nobody having asked is not consent."""
+        current = ai_consent_record(patient_id, repo=self._consent).current
+        return current is not None and current.decision == "consented"
 
 
 __all__ = [

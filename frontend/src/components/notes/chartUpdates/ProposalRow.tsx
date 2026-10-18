@@ -12,6 +12,10 @@
  * current list: accepted or discarded, never rewritten here, since it writes
  * a structured medication record. The list itself is edited on the client's
  * page.
+ *
+ * A proposal from an accepted intake form cites the client's answers: each
+ * shows under the question it answers, and the question opens the form at
+ * that answer.
  */
 
 "use client"
@@ -32,6 +36,9 @@ import { splitLabel } from "./ProposalLedger"
 
 /** Called with the cited segment ids when a source mark is clicked. */
 export type EvidenceHandler = (segmentIds: number[]) => void
+
+/** Called with the intake question's id when a cited answer's question is clicked. */
+export type AnswerHandler = (itemId: string) => void
 
 const DECIDED: Record<string, string> = {
   accepted: "Added to the chart",
@@ -82,21 +89,54 @@ export function SourceMark({
   )
 }
 
+/** An intake answer a proposal cites, under the question it answers. */
+function CitedAnswer({
+  evidence,
+  onClick,
+}: {
+  evidence: ProposalEvidence
+  onClick?: AnswerHandler
+}) {
+  const itemId = evidence.item_id
+  const question = evidence.question || "Answer"
+  return (
+    <div className="space-y-0.5" data-testid="cited-answer">
+      {onClick && itemId ? (
+        <button
+          type="button"
+          className="text-left font-medium text-primary-700 hover:underline"
+          title="Open the intake at this answer"
+          onClick={() => onClick(itemId)}
+        >
+          {question}
+        </button>
+      ) : (
+        <p className="font-medium text-neutral-700">{question}</p>
+      )}
+      <p className="whitespace-pre-wrap">{evidence.text}</p>
+    </div>
+  )
+}
+
 export function ProposalRow({
   noteId,
+  intakeAssignmentId,
   patientId,
   proposal,
   readOnly = false,
   busy = false,
   onEvidenceClick,
+  onAnswerClick,
 }: {
-  noteId: string
+  noteId?: string
+  intakeAssignmentId?: string
   patientId: string
   proposal: ChartProposal
   readOnly?: boolean
   /** The section is being accepted at once; the row's own buttons wait. */
   busy?: boolean
   onEvidenceClick?: EvidenceHandler
+  onAnswerClick?: AnswerHandler
 }) {
   const decide = useDecideChartProposal(patientId)
   const [editing, setEditing] = useState(false)
@@ -110,7 +150,7 @@ export function ProposalRow({
   const send = async (data: DecideChartProposalRequest) => {
     setFailed(false)
     try {
-      await decide.mutateAsync({ noteId, proposalId: proposal.id, data })
+      await decide.mutateAsync({ noteId, intakeAssignmentId, proposalId: proposal.id, data })
       setEditing(false)
     } catch {
       setFailed(true)
@@ -154,12 +194,16 @@ export function ProposalRow({
 
         {proposal.evidence.length > 0 && (
           <blockquote className="space-y-0.5 text-xs text-neutral-600">
-            {proposal.evidence.map((e) => (
-              <p key={e.segment_id} className="flex items-start gap-1.5">
-                <SourceMark evidence={e} onClick={onEvidenceClick} />
-                <span className="min-w-0">{e.text}</span>
-              </p>
-            ))}
+            {proposal.evidence.map((e) =>
+              e.item_id ? (
+                <CitedAnswer key={e.item_id} evidence={e} onClick={onAnswerClick} />
+              ) : (
+                <p key={e.segment_id} className="flex items-start gap-1.5">
+                  <SourceMark evidence={e} onClick={onEvidenceClick} />
+                  <span className="min-w-0">{e.text}</span>
+                </p>
+              ),
+            )}
           </blockquote>
         )}
 

@@ -138,6 +138,26 @@ describe("ItemConfigForm", () => {
     expect(lastConfig()).toEqual({ max_len: 5 })
   })
 
+  it("a written answer can name the chart field it fills", async () => {
+    const user = userEvent.setup()
+    form("free_text")
+
+    await user.click(screen.getByRole("combobox", { name: "Goes on the chart as" }))
+    await user.click(screen.getByRole("option", { name: "Pronouns" }))
+
+    expect(lastConfig()).toEqual({ chart_field: "pronouns" })
+  })
+
+  it("a written answer that names a chart field can go back to staying on the form", async () => {
+    const user = userEvent.setup()
+    form("free_text", { chart_field: "pronouns" })
+
+    await user.click(screen.getByRole("combobox", { name: "Goes on the chart as" }))
+    await user.click(screen.getByRole("option", { name: "Stays on the form" }))
+
+    expect(lastConfig()).toEqual({ chart_field: undefined })
+  })
+
   it("a pick-one question builds its list of answers", async () => {
     const user = userEvent.setup()
     form("single_choice")

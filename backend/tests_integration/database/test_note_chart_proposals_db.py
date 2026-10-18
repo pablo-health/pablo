@@ -47,7 +47,7 @@ from app.repositories.postgres.chart_proposals import PostgresChartProposalRepos
 from app.repositories.postgres.medication import PostgresMedicationRepository
 from app.repositories.postgres.patient import PostgresPatientRepository
 from sqlalchemy import create_engine, text
-from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
@@ -339,3 +339,127 @@ def test_waiting_counts_cover_pending_proposals_on_live_notes_for_the_grantee(
     assert total - baseline == 2
     assert none_asked == {}
     assert (outsider, outsider_total) == ({}, 0)
+
+
+# ---------------------------------------------------------------------------
+# Proposals from an accepted intake form
+# ---------------------------------------------------------------------------
+
+
+def _accepted_form(engine: Engine, schema: str, patient_id: str) -> str:
+    """An accepted intake form on ``patient_id``'s chart."""
+    template_id, version_id, assignment_id = (str(uuid.uuid4()) for _ in range(3))
+    with _session(engine, schema, _CLINICIAN_A) as session:
+        session.execute(
+            text(
+                "INSERT INTO intake_packet_templates (id, name, created_by, created_at) "
+                "VALUES (CAST(:tid AS uuid), 'Intake', CAST(:u AS uuid), now())"
+            ),
+            {"tid": template_id, "u": _CLINICIAN_A},
+        )
+        session.execute(
+            text(
+                "INSERT INTO intake_packet_versions "
+                "(id, template_id, version, published_at, published_by, created_at) "
+                "VALUES (CAST(:vid AS uuid), CAST(:tid AS uuid), 1, now(), "
+                "CAST(:u AS uuid), now())"
+            ),
+            {"vid": version_id, "tid": template_id, "u": _CLINICIAN_A},
+        )
+        session.execute(
+            text(
+                "INSERT INTO patient_intake_assignments "
+                "(id, patient_id, version_id, status, assigned_by, assigned_at, "
+                "submitted_at, accepted_at, updated_at) "
+                "VALUES (CAST(:id AS uuid), CAST(:pid AS uuid), CAST(:vid AS uuid), "
+                "'accepted', CAST(:u AS uuid), now(), now(), now(), now())"
+            ),
+            {"id": assignment_id, "pid": patient_id, "vid": version_id, "u": _CLINICIAN_A},
+        )
+        session.commit()
+    return assignment_id
+
+
+_PRONOUNS = DraftedProposal(
+    field_key="pronouns",
+    proposed_text="they/them",
+    what_changed="Answered on the intake",
+    evidence=(Evidence(2, "they/them", item_id="item-pronouns", question="What pronouns?"),),
+    origin="intake",
+)
+
+
+def test_a_form_s_proposals_round_trip_are_decided_and_stay_with_the_grantee(
+    engine: Engine, tenant: str
+) -> None:
+    patient, _note = _patient_and_note(engine, tenant)
+    form = _accepted_form(engine, tenant, patient.id)
+
+    with _session(engine, tenant, _CLINICIAN_A) as session:
+        repo = PostgresChartProposalRepository(session)
+        patients = PostgresPatientRepository(session)
+        service = ChartProposalService(
+            repo,
+            ChartWriters(
+                history=ChartHistoryService(PostgresChartHistoryRepository(session)),
+                patients=patients,
+            ),
+        )
+        service.refresh_intake(form, patient.id, [_PROPOSAL, _PRONOUNS])
+        session.commit()
+        (stored,) = [p for p in repo.list_for_intake(form) if p.field_key == "pronouns"]
+        assert stored.note_id is None
+        assert stored.intake_assignment_id == form
+        assert stored.evidence == _PRONOUNS.evidence
+        assert repo.count_pending_by_patient(_CLINICIAN_A, [patient.id]) == {patient.id: 2}
+
+        current = patients.get(patient.id, _CLINICIAN_A)
+        assert current is not None
+        service.decide_for_intake(form, current, stored.id, Choice("accept"), _CLINICIAN_A)
+        session.commit()
+        saved = patients.get(patient.id, _CLINICIAN_A)
+        assert saved is not None
+        assert saved.pronouns == "they/them"
+
+        # Proposing again replaces what is pending and keeps the decision.
+        service.refresh_intake(form, patient.id, [_PRONOUNS])
+        session.commit()
+        listed = repo.list_for_intake(form)
+        assert [(p.field_key, p.decision) for p in listed] == [("pronouns", "accepted")]
+
+    with _session(engine, tenant, _CLINICIAN_B) as session:
+        repo = PostgresChartProposalRepository(session)
+        assert repo.list_for_intake(form) == []
+        assert repo.list_pending_for_patient(patient.id) == []
+
+
+@pytest.mark.parametrize("case", ["neither", "both", "another chart"])
+def test_a_proposal_names_exactly_one_source_on_the_form_s_own_chart(
+    engine: Engine, tenant: str, case: str
+) -> None:
+    patient, note = _patient_and_note(engine, tenant)
+    other, _ = _patient_and_note(engine, tenant)
+    form = _accepted_form(engine, tenant, patient.id)
+    values = {
+        "neither": {"note": None, "form": None, "pid": patient.id},
+        "both": {"note": note.id, "form": form, "pid": patient.id},
+        "another chart": {"note": None, "form": form, "pid": other.id},
+    }[case]
+    expected = (
+        "fk_note_chart_proposals_intake"
+        if case == "another chart"
+        else "ck_note_chart_proposals_one_source"
+    )
+    with (
+        _session(engine, tenant, _CLINICIAN_A) as session,
+        pytest.raises(IntegrityError, match=expected),
+    ):
+        session.execute(
+            text(
+                "INSERT INTO note_chart_proposals (id, note_id, intake_assignment_id, "
+                "patient_id, field_key, proposed_text, what_changed, origin, created_at) "
+                "VALUES (CAST(:id AS uuid), CAST(:note AS uuid), CAST(:form AS uuid), "
+                "CAST(:pid AS uuid), 'pronouns', 'they/them', 'x', 'intake', now())"
+            ),
+            {"id": str(uuid.uuid4()), **values},
+        )

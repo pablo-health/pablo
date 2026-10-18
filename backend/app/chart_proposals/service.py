@@ -11,6 +11,12 @@ Accepting writes the proposed text to the chart, through the chart's own
 record, with the note as the source and the signer as the writer; editing is
 accepting the clinician's text instead. Whoever may open the note may decide
 its proposals. The note itself is never touched.
+
+An accepted intake form's proposals (``app.chart_proposals.intake``) are
+stored and decided the same way, against the form rather than a note.
+Storing them again replaces those still pending, so a form's proposals are
+always the latest reading of what it says; a decided one stays and its field
+is not proposed again from that form.
 """
 
 from __future__ import annotations
@@ -140,6 +146,41 @@ class ChartProposalService:
                 taken.add(key)
         self._repo.add(added)
 
+    def refresh_intake(
+        self, assignment_id: str, patient_id: str, drafted: Iterable[DraftedProposal]
+    ) -> list[ChartProposal]:
+        """Store an accepted form's proposals, replacing those still pending on it.
+
+        A decided proposal stays, and its field and entry are not proposed again
+        from this form, so a discard is never re-offered. Returns what was added."""
+        existing = self._repo.list_for_intake(assignment_id)
+        self._repo.delete(p.id for p in existing if p.pending)
+        taken = {_identity(p.field_key, p.item_key) for p in existing if not p.pending}
+        added: list[ChartProposal] = []
+        for proposal in drafted:
+            key = _identity(proposal.field_key, proposal.item_key)
+            if key in taken:
+                continue
+            taken.add(key)
+            added.append(
+                ChartProposal(
+                    id=str(uuid.uuid4()),
+                    note_id=None,
+                    intake_assignment_id=assignment_id,
+                    patient_id=patient_id,
+                    field_key=proposal.field_key,
+                    item_key=proposal.item_key,
+                    proposed_text=proposal.proposed_text,
+                    what_changed=proposal.what_changed,
+                    evidence=proposal.evidence,
+                    origin=proposal.origin,
+                    created_at=utc_now(),
+                    change=proposal.change,
+                )
+            )
+        self._repo.add(added)
+        return added
+
     def decide(
         self,
         note: Note,
@@ -152,10 +193,43 @@ class ChartProposalService:
 
         A change the chart can no longer take (a medication stopped since it was
         proposed) raises ``ChartChangedError`` and leaves the proposal pending."""
-        proposal = next((p for p in self._repo.list_for_note(note.id) if p.id == proposal_id), None)
-        family = family_for(proposal.field_key) if proposal is not None else None
-        if proposal is None or family is None:
+        proposal = self._find(self._repo.list_for_note(note.id), proposal_id)
+        self._decide(proposal, note.id, patient, choice, user_id)
+        return self._find(self._repo.list_for_note(note.id), proposal.id)
+
+    def decide_for_intake(
+        self,
+        assignment_id: str,
+        patient: Patient,
+        proposal_id: str,
+        choice: Choice,
+        user_id: str,
+    ) -> ChartProposal:
+        """:meth:`decide`, for a proposal an accepted intake form made. The chart's
+        records name no note as the source of what it writes."""
+        proposal = self._find(self._repo.list_for_intake(assignment_id), proposal_id)
+        self._decide(proposal, None, patient, choice, user_id)
+        return self._find(self._repo.list_for_intake(assignment_id), proposal.id)
+
+    @staticmethod
+    def _find(listed: list[ChartProposal], proposal_id: str) -> ChartProposal:
+        proposal = next((p for p in listed if p.id == proposal_id), None)
+        if proposal is None or family_for(proposal.field_key) is None:
             raise ProposalNotFoundError(proposal_id)
+        return proposal
+
+    def _decide(
+        self,
+        proposal: ChartProposal,
+        note_id: str | None,
+        patient: Patient,
+        choice: Choice,
+        user_id: str,
+    ) -> None:
+        family = family_for(proposal.field_key)
+        if family is None:
+            raise ProposalNotFoundError(proposal.id)
+        proposal_id = proposal.id
         if not proposal.pending:
             raise ProposalDecidedError(proposal_id)
         if choice.decision == "edit" and not family.editable:
@@ -167,10 +241,9 @@ class ChartProposalService:
             written = edited if edited is not None else proposal.proposed_text
             if not written:
                 raise ValueError("an edit needs the text to record")
-            source = WriteSource(user_id, note.id, self._visit_date)
+            source = WriteSource(user_id, note_id, self._visit_date)
             family.apply(self._writers, patient, proposal, written, source)
         self._repo.decide(proposal.id, _DECIDED[choice.decision], edited, user_id, utc_now())
-        return next(p for p in self._repo.list_for_note(note.id) if p.id == proposal.id)
 
     @staticmethod
     def _new(note: Note, drafted: DraftedProposal) -> ChartProposal:

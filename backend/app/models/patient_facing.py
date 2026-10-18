@@ -222,6 +222,8 @@ PATIENT_COLUMN_DECISIONS: Final[Mapping[str, str | None]] = {
     "state": SHOWN,
     "postal_code": SHOWN,
     "sex": "The administrative sex code a claim's demographic segment expects.",
+    "pronouns": "Recorded by the practice from what the client told it; no portal screen shows it.",
+    "emergency_contact": "Another person's contact details, recorded by the practice.",
 }
 
 #: Every column of ``appointments``, and what a patient-facing route does with
