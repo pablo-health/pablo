@@ -102,6 +102,9 @@ test("a commitment from the session, added at sign, is the clinician's task for 
     await expect(rows).toHaveCount(1)
     await rows.getByRole("button", { name: "Dismiss" }).click()
     await expect(dialog.getByRole("heading", { name: "You said you would" })).toHaveCount(0)
+    // The drafting stand-in also suggests homework from the plan; leave the chart as it is.
+    await dialog.getByRole("region", { name: "Homework" }).getByRole("button", { name: "Discard" }).click()
+    await expect(dialog.getByRole("heading", { name: "Update the chart" })).toHaveCount(0)
 
     await dialog.getByRole("button", { name: "Sign and lock" }).click()
     await expect
