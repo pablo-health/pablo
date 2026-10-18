@@ -112,6 +112,48 @@ def test_an_edited_soap_note_is_read_from_its_narrative_plan() -> None:
     }
 
 
+def test_a_dap_note_saved_as_section_strings_is_read_by_its_own_label() -> None:
+    """Not a SOAP special case: any type's section string is read under the type's
+    own field label."""
+    dap = get_default_registry().get("dap")
+    repo = InMemoryChartProposalRepository()
+    note = _note("dap")
+    saved = {
+        "plan": (
+            "**Interventions Used:**\n- Exposure planning.\n\n"
+            "**Homework Assignments:**\n- Client will ride the elevator twice.\n\n"
+            "**Next Session:** One week."
+        )
+    }
+    refresh_homework(repo, note, dap, saved)
+    assert _pending(repo, note) == {"plan.homework_assignments#0": "Ride the elevator twice."}
+
+
+def test_psychiatric_prose_saved_as_a_section_string_is_read_and_kept_while_quoted() -> None:
+    follow_up = get_default_registry().get("psychiatric_follow_up")
+    repo = InMemoryChartProposalRepository()
+    note = _note("psychiatric_follow_up")
+    saved = {
+        "plan": "**Medications:**\n- Increase sertraline to 100 mg.",
+        "psychotherapy": (
+            "**Goal and plan:** Continue CBT; client will log panic episodes daily.\n\n"
+            "**Therapy plan and cadence:** Weekly."
+        ),
+    }
+    drafter = _Drafter([{"text": "Log panic episodes daily", "quote": "log panic episodes daily"}])
+    drafted = _step(repo, drafter).draft(_Generator(), follow_up, ChartContext(), TRANSCRIPT, saved)
+    assert drafted is not None
+    (prompt,) = drafter.prompts
+    assert "log panic episodes daily" in prompt
+    assert "sertraline" not in prompt
+    refresh_homework(repo, note, follow_up, saved, drafted.homework)
+    assert list(_pending(repo, note)) == ["psychotherapy.goal_plan#0"]
+
+    edited = {**saved, "psychotherapy": "**Goal and plan:** Continue CBT."}
+    refresh_homework(repo, note, follow_up, edited)
+    assert _pending(repo, note) == {}
+
+
 def test_a_decided_suggestion_is_never_offered_again() -> None:
     soap = get_default_registry().get("soap")
     repo = InMemoryChartProposalRepository()

@@ -16,7 +16,7 @@ Idempotent, like every revision in this chain: it is fanned out once per
 practice schema.
 
 Revision ID: d3a7f1c58e20
-Revises: d2c8f4a1b693
+Revises: e3a8c5f1d702
 Create Date: 2026-10-18
 """
 
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "d3a7f1c58e20"
-down_revision: str | Sequence[str] | None = "d2c8f4a1b693"
+down_revision: str | Sequence[str] | None = "e3a8c5f1d702"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

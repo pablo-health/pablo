@@ -93,7 +93,7 @@ def _prose_fields(
     for source in sources_for_definition(definition):
         if source.shape != "text":
             continue
-        text = text_of(dict(content or {}), source)
+        text = text_of(dict(content or {}), source, labels.get(source.key))
         if text:
             fields.append(PlanField(source.key, labels.get(source.key) or source.field, text))
     return fields
