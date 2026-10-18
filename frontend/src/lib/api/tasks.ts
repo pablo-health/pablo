@@ -18,7 +18,7 @@ export async function listTaskTemplates(token?: string): Promise<ComplianceTempl
 export async function listTasks(filters: TaskFilters = {}, token?: string): Promise<Task[]> {
   const params = new URLSearchParams()
   for (const [key, value] of Object.entries(filters)) {
-    if (value) params.set(key, value)
+    if (value) params.set(key, String(value))
   }
   const query = params.toString()
   return get<Task[]>(query ? `/api/tasks?${query}` : "/api/tasks", token)
