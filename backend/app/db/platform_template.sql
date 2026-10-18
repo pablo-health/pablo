@@ -535,7 +535,8 @@ CREATE TABLE platform.practice_portal_settings (
     enabled_modules text[],
     decided_at timestamp with time zone,
     updated_at timestamp with time zone NOT NULL,
-    updated_by character varying(128)
+    updated_by character varying(128),
+    refill_turnaround_days smallint DEFAULT 2 NOT NULL
 );
 
 CREATE TABLE platform.practice_site_versions (

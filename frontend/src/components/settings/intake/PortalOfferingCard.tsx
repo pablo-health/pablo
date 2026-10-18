@@ -3,7 +3,7 @@
 "use client"
 
 import Link from "next/link"
-import { useState } from "react"
+import { Fragment, useState } from "react"
 
 import { SettingsCard, SettingsRow, Toggle } from "@/components/settings/ui"
 import { Button } from "@/components/ui/button"
@@ -18,6 +18,7 @@ import {
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { usePortalSettings, useSavePortalSettings } from "@/hooks/usePortalSettings"
 import { useSchedulingPolicy } from "@/hooks/useSchedulingPolicy"
+import { REFILL_TURNAROUND_MAX_DAYS, REFILL_TURNAROUND_MIN_DAYS } from "@/lib/api/portalSettings"
 import { portalModuleLabel } from "@/lib/portalModules"
 
 /**
@@ -75,21 +76,29 @@ export function PortalOfferingCard() {
         {modules.length > 0 && (
           <div data-testid="portal-modules">
             {modules.map(([name, on]) => (
-              <SettingsRow
-                key={name}
-                nested
-                label={portalModuleLabel(name)}
-                description={name === "appointments" ? <BookingLine /> : undefined}
-              >
-                <Toggle
-                  checked={on}
-                  onChange={(next) => save.mutate({ modules: { [name]: next } })}
+              <Fragment key={name}>
+                <SettingsRow
+                  nested
                   label={portalModuleLabel(name)}
-                  // The last part on stays on: a portal with nothing in it
-                  // is the portal switched off, and that has its own switch.
-                  disabled={!settings.enabled || save.isPending || (on && onCount === 1)}
-                />
-              </SettingsRow>
+                  description={name === "appointments" ? <BookingLine /> : undefined}
+                >
+                  <Toggle
+                    checked={on}
+                    onChange={(next) => save.mutate({ modules: { [name]: next } })}
+                    label={portalModuleLabel(name)}
+                    // The last part on stays on: a portal with nothing in it
+                    // is the portal switched off, and that has its own switch.
+                    disabled={!settings.enabled || save.isPending || (on && onCount === 1)}
+                  />
+                </SettingsRow>
+                {name === "refills" && on && settings.enabled && (
+                  <RefillTargetRow
+                    days={settings.refill_turnaround_days}
+                    disabled={save.isPending}
+                    onChange={(days) => save.mutate({ refill_turnaround_days: days })}
+                  />
+                )}
+              </Fragment>
             ))}
           </div>
         )}
@@ -119,6 +128,49 @@ export function PortalOfferingCard() {
         </DialogContent>
       </Dialog>
     </>
+  )
+}
+
+const REFILL_TARGET_CHOICES = Array.from(
+  { length: REFILL_TURNAROUND_MAX_DAYS - REFILL_TURNAROUND_MIN_DAYS + 1 },
+  (_, i) => REFILL_TURNAROUND_MIN_DAYS + i,
+)
+
+/**
+ * The practice's own target for answering a refill request. It dates each
+ * request on the Refills page and in the Inbox; clients never see it, which
+ * is why the row says "your own" rather than describing what clients are told.
+ */
+function RefillTargetRow({
+  days,
+  disabled,
+  onChange,
+}: {
+  days: number
+  disabled: boolean
+  onChange: (days: number) => void
+}) {
+  return (
+    <SettingsRow
+      nested
+      label="Answer refill requests within"
+      description="Your own target, counted on the days you have hours set, or Monday to Friday."
+    >
+      <select
+        aria-label="Refill request target"
+        data-testid="refill-turnaround"
+        value={days}
+        disabled={disabled}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className="rounded-md border border-neutral-200 px-3 py-2 text-sm"
+      >
+        {REFILL_TARGET_CHOICES.map((n) => (
+          <option key={n} value={n}>
+            {n === 1 ? "1 working day" : `${n} working days`}
+          </option>
+        ))}
+      </select>
+    </SettingsRow>
   )
 }
 

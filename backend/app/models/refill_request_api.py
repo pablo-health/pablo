@@ -122,6 +122,8 @@ class RefillRequestResponse(BaseModel):
     decided_at: datetime | None = None
     decided_by_user_id: str | None = None
     prescriber_note: str | None = None
+    #: The practice's own target for answering; never on the patient's view.
+    due_at: datetime | None = None
 
     @staticmethod
     def from_request(
@@ -140,6 +142,7 @@ class RefillRequestResponse(BaseModel):
             decided_at=request.decided_at,
             decided_by_user_id=request.decided_by_user_id,
             prescriber_note=request.prescriber_note,
+            due_at=request.due_at,
         )
 
     @staticmethod
