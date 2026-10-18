@@ -54,6 +54,8 @@ export interface IntakeReviewItemRowProps {
   canEnter: boolean
   saving: boolean
   onSaveEntry: (itemId: string, text: string) => void
+  /** The answer a chart update cites, which the form was opened at. */
+  focused?: boolean
 }
 
 /**
@@ -70,7 +72,7 @@ export interface IntakeReviewItemRowProps {
  * none of that.
  */
 export function IntakeReviewItemRow(props: IntakeReviewItemRowProps) {
-  const { item, form, readOnly, artifacts, shown, selectable, selected, onSelect, canEnter, saving, onSaveEntry } = props
+  const { item, form, readOnly, artifacts, shown, selectable, selected, onSelect, canEnter, saving, onSaveEntry, focused } = props
   const [showEarlier, setShowEarlier] = useState(false)
   const [entryOpen, setEntryOpen] = useState(false)
   const [entryText, setEntryText] = useState("")
@@ -85,7 +87,8 @@ export function IntakeReviewItemRow(props: IntakeReviewItemRowProps) {
   const Renderer = renderer.Component
 
   return (
-    <li className="border-t border-border py-4 first:border-t-0" data-testid={`intake-review-item-${id}`}
+    <li className={`border-t border-border py-4 first:border-t-0${focused ? " -mx-2 rounded-md bg-secondary-50 px-2 ring-1 ring-secondary-200 print:bg-transparent print:ring-0" : ""}`}
+      data-testid={`intake-review-item-${id}`} data-focused={focused ? "" : undefined}
       data-print-keep={item.item_type === "instrument" ? undefined : ""}>
       <div className="flex items-start gap-3">
         {selectable && isQuestion && (

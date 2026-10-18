@@ -87,6 +87,10 @@ class ChartContext:
     person: str = people_words(DEFAULT_PEOPLE_TERM).one
     """The clinician's word for the person the chart is about, singular: "client" or
     "patient". Prompts written from the chart use it (``app.people_term``)."""
+    profile: tuple[tuple[str, str], ...] = ()
+    """The recorded name, pronoun and contact fields (``preferred_name``, ``pronouns``,
+    ``emergency_contact``), each with its text. What an intake's proposals are measured
+    against; no prompt reads them."""
 
 
 def chart_context_for(
@@ -109,6 +113,11 @@ def chart_context_for(
         ),
         allergy_status=patient.allergy_status,
         allergies=tuple(patient.allergies),
+        profile=tuple(
+            (key, text.strip())
+            for key in ("preferred_name", "pronouns", "emergency_contact")
+            if (text := getattr(patient, key, None)) and text.strip()
+        ),
         medications=tuple(
             ChartMedication(
                 name=str(m["drug_name"]),

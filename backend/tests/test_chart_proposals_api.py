@@ -142,6 +142,8 @@ def test_a_note_lists_its_proposals_with_the_chart_and_the_cited_lines(
     assert proposal["current_text"] == SEPARATED
     assert proposal["proposed_text"] == FINALIZED
     assert proposal["decision"] == "pending"
+    # A note's evidence names no form question.
+    assert all(e.pop("item_id") is None and e.pop("question") is None for e in proposal["evidence"])
     assert proposal["evidence"] == [
         {"segment_id": 4, "text": "[00:31] Client: The divorce was finalized on April 2."}
     ]

@@ -185,6 +185,9 @@ class PatientResponse(BaseModel):
     state: str | None = None
     postal_code: str | None = None
     sex: str | None = None
+    preferred_name: str | None = None
+    pronouns: str | None = None
+    emergency_contact: str | None = None
     needs_name: bool = Field(
         default=False, description="The chart has no first or no last name yet"
     )
@@ -232,6 +235,9 @@ class PatientResponse(BaseModel):
             state=patient.state,
             postal_code=patient.postal_code,
             sex=patient.sex,
+            preferred_name=patient.preferred_name,
+            pronouns=patient.pronouns,
+            emergency_contact=patient.emergency_contact,
             needs_name=patient.needs_name,
         )
 
@@ -325,6 +331,13 @@ class Patient:
     state: str | None = None
     postal_code: str | None = None
     sex: str | None = None
+    #: What the person is called, when it is not their first name; see
+    #: ``PatientRow.preferred_name``.
+    preferred_name: str | None = None
+    #: The pronouns the person uses, in their own words.
+    pronouns: str | None = None
+    #: Who to call in an emergency, as written; ``None`` when none is recorded.
+    emergency_contact: str | None = None
 
     def __post_init__(self) -> None:
         """Auto-generate search fields if not provided."""

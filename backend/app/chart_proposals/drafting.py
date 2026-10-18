@@ -192,6 +192,30 @@ Cite only paragraphs that say it. A change no paragraph states is not a change.
 substance)."""
 
 
+_INTAKE_INSTRUCTIONS = """\
+The answers below are the client's own, written on an intake form they handed in, each \
+under the question it answers. Propose an update to a chart field for each lasting fact \
+about the client an answer states that the chart does not already say. An answer that \
+says nothing about a chart field, or only what the chart already says, needs no proposal. \
+What the client hopes to work on, and how they feel now, are for the clinician to read on \
+the form, not chart fields: propose only facts the fields below keep.
+
+For the medication list, a medication the client says they take now that the list lacks \
+is an add. An intake records what the client takes; it never starts, stops or changes a \
+medication.
+
+Refer to the person as "the {term}" or with they/them; never he, she, his or her, \
+whatever the answers use.
+
+For each change give:
+- field_key: the field's key as listed above.
+- proposed_text: the text the field should hold once updated, in the client's words.
+- what_changed: one short line saying what is new.
+- evidence_segment_ids: the numbers (n in [Sn]) of the answers that state it. Cite only \
+answers that say it. A change no answer states is not a change.
+- entry: only for a list field, the entry the change is about (for allergies, the \
+substance)."""
+
 _DOCUMENT_PRECEDENCE = """\
 For a document, where the rules for the fields read otherwise, these hold. A medication \
 named only in a block carried forward, and not in the plan or the part written for this \
@@ -358,6 +382,13 @@ def build_document_prompt(chart: ChartContext, segments: Mapping[int, str]) -> s
     parts = _chart_and_rules(chart, _DOCUMENT_INSTRUCTIONS)
     parts.extend(["", _DOCUMENT_PRECEDENCE])
     parts.extend(["", "Document (each paragraph numbered [Sn]):", _indexed(segments)])
+    return "\n".join(parts)
+
+
+def build_intake_prompt(chart: ChartContext, segments: Mapping[int, str]) -> str:
+    """The proposal prompt for an intake form's written answers, each numbered."""
+    parts = _chart_and_rules(chart, _INTAKE_INSTRUCTIONS)
+    parts.extend(["", "Answers (each numbered [Sn], under its question):", _indexed(segments)])
     return "\n".join(parts)
 
 
@@ -630,6 +661,22 @@ def propose_from_document(complete: CompleteStructured, chart: ChartContext, tex
         return Drafted(parse_proposals(reply, chart, segments, origin="document"))
 
     return _ask(complete, build_document_prompt(chart, segments), parse)
+
+
+def propose_from_intake(
+    complete: CompleteStructured, chart: ChartContext, segments: Mapping[int, str]
+) -> Drafted:
+    """Ask what an intake form's written answers add to the chart, citing the answers.
+    ``segments`` are the answers by their position on the form. Never raises."""
+    if not segments:
+        return Drafted([])
+
+    def parse(reply: Mapping[str, Any]) -> Drafted:
+        proposals = parse_proposals(reply, chart, segments, origin="intake")
+        # An intake only ever adds a medication the client takes.
+        return Drafted([p for p in proposals if p.change is None or p.change.action == "add"])
+
+    return _ask(complete, build_intake_prompt(chart, segments), parse)
 
 
 def _ask(

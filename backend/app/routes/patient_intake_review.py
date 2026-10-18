@@ -46,6 +46,12 @@ from fastapi import APIRouter, Depends, Request
 
 from ..api_errors import ConflictError, NotFoundError, UnprocessableEntityError
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
+from ..chart_proposals.dependencies import (
+    get_chart_proposal_repository,
+    get_chart_proposal_step,
+)
+from ..chart_proposals.intake_step import AcceptedForm, IntakeProposalStep
+from ..chart_proposals.step import ChartProposalStep  # noqa: TC001 — FastAPI resolves at runtime
 from ..db import get_db_session
 from ..intake.answers import AnswerError, validate_answer
 from ..intake.items import stored_config
@@ -63,6 +69,7 @@ from ..portal.delivery import PortalNoticeDelivery  # noqa: TC001 — fastapi re
 from ..portal.factory import get_notice_delivery
 from ..portal.notices import send_portal_notice
 from ..repositories import (
+    ChartProposalRepository,
     get_client_ai_consent_repository,
     get_intake_packet_repository,
     get_patient_intake_assignment_repository,
@@ -70,6 +77,10 @@ from ..repositories import (
 )
 from ..services.audit_service import AuditService, get_audit_service
 from ..services.intake_form_ai_consent import FormAiConsentRecorder
+from ..services.note_generation_factory import note_generation_service
+from ..services.note_generation_service import (  # noqa: TC001 — FastAPI resolves at runtime
+    NoteGenerationService,
+)
 from ..services.patient_intake_assignment_service import (
     IntakeAssignmentService,
     event_item_ids,
@@ -136,6 +147,15 @@ def get_form_ai_consent_recorder(
         get_patient_intake_signature_repository(),
         get_client_ai_consent_repository(),
     )
+
+
+def get_intake_proposal_generator() -> NoteGenerationService:
+    """The model an accepted form's written answers are read with, under consent.
+
+    The same service a note's proposal call uses; its own dependency so the
+    review routes do not import the note routes.
+    """
+    return note_generation_service()
 
 
 def get_practice_name(_ctx: TenantContext = Depends(get_tenant_context)) -> str | None:
@@ -323,6 +343,9 @@ def accept_intake_assignment(
     user: User = Depends(require_baa_acceptance),
     patients: PatientRepository = Depends(get_clinician_patient_repository),
     ai_consent: FormAiConsentRecorder = Depends(get_form_ai_consent_recorder),
+    proposals: ChartProposalRepository = Depends(get_chart_proposal_repository),
+    proposal_step: ChartProposalStep = Depends(get_chart_proposal_step),
+    generator: NoteGenerationService = Depends(get_intake_proposal_generator),
     audit: AuditService = Depends(get_audit_service),
 ) -> IntakeAssignmentResponse:
     """Close a reviewed form off.
@@ -335,6 +358,10 @@ def accept_intake_assignment(
     same version be sent to the same patient again later. A form carrying
     the AI-tools transcription question also puts the client's answer on
     their AI-notes record.
+
+    Accepting is also when the form's answers propose chart updates
+    (:mod:`app.chart_proposals.intake`), waiting on the chart for the
+    clinician to accept, edit or discard; nothing reaches the chart here.
     """
     patient = patients.get(patient_id, user.id)
     if patient is None:
@@ -382,6 +409,28 @@ def accept_intake_assignment(
                 "source": consent_event.source,
                 "intake_submission_id": assignment_id,
             },
+        )
+
+    # What the form proposes for the chart, from the answers as accepted. The
+    # AI-notes answer just recorded is the one the written answers are read
+    # under.
+    form = AcceptedForm(
+        assignment_id=assignment_id,
+        patient=patient,
+        items=assignments.items(str(assignment["version_id"])),
+        answers=assignments.answers_for_clinician(assignment_id, user.id),
+        ai_consented=ai_consent.consents(patient.id),
+    )
+    outcome = IntakeProposalStep(proposals, proposal_step, generator).propose(form, user.id)
+    if outcome.proposed or outcome.read in ("consent", "failed"):
+        audit.log(
+            action=AuditAction.INTAKE_CHART_UPDATES_PROPOSED,
+            user=user,
+            request=request,
+            resource_type=ResourceType.PATIENT_INTAKE_ASSIGNMENT,
+            resource_id=assignment_id,
+            patient=patient,
+            changes={"proposed": outcome.proposed, "written_answers": outcome.read},
         )
     return assignment_response(assignments, moved, patient_id)
 
@@ -545,6 +594,7 @@ __all__ = [
     "CORRECTION_NOTICE",
     "clinician_router",
     "get_clinician_signature_repository",
+    "get_intake_proposal_generator",
     "get_intake_review_service",
     "get_practice_name",
 ]

@@ -4,7 +4,9 @@
  * A note's chart updates as a ledger: grouped under the chart section they
  * belong to, each row a field and the text proposed for it, decided one at a
  * time or a section at once. The same ledger serves the sign step, a signed
- * or imported note's page, and the client's chart.
+ * or imported note's page, and the client's chart, which also lists what an
+ * accepted intake form proposes: those are decided through the form
+ * (`intakeAssignmentId`) rather than a note.
  *
  * "Accept all" on a section accepts what can be accepted without reading
  * further: a medication whose name the source may have misheard is left for
@@ -17,7 +19,7 @@ import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { useDecideChartProposal } from "@/hooks/useChartProposals"
 import type { ChartProposal } from "@/types/chartProposals"
-import { ProposalRow, type EvidenceHandler } from "./ProposalRow"
+import { ProposalRow, type AnswerHandler, type EvidenceHandler } from "./ProposalRow"
 
 /**
  * A proposal's label reads "<section>: <field>" ("Social history and
@@ -52,20 +54,27 @@ function acceptableAtOnce(proposal: ChartProposal): boolean {
 }
 
 export interface ProposalLedgerProps {
-  noteId: string
+  /** The note the proposals came from; or */
+  noteId?: string
+  /** the accepted intake form they came from. */
+  intakeAssignmentId?: string
   patientId: string
   proposals: ChartProposal[]
   readOnly?: boolean
   /** Lights the cited lines in the source pane; omitted where no pane is shown. */
   onEvidenceClick?: EvidenceHandler
+  /** Opens the intake form at a cited answer. */
+  onAnswerClick?: AnswerHandler
 }
 
 export function ProposalLedger({
   noteId,
+  intakeAssignmentId,
   patientId,
   proposals,
   readOnly = false,
   onEvidenceClick,
+  onAnswerClick,
 }: ProposalLedgerProps) {
   const sections = groupBySection(proposals)
   return (
@@ -74,10 +83,12 @@ export function ProposalLedger({
         <LedgerSection
           key={section.name}
           noteId={noteId}
+          intakeAssignmentId={intakeAssignmentId}
           patientId={patientId}
           section={section}
           readOnly={readOnly}
           onEvidenceClick={onEvidenceClick}
+          onAnswerClick={onAnswerClick}
         />
       ))}
     </div>
@@ -86,16 +97,20 @@ export function ProposalLedger({
 
 function LedgerSection({
   noteId,
+  intakeAssignmentId,
   patientId,
   section,
   readOnly,
   onEvidenceClick,
+  onAnswerClick,
 }: {
-  noteId: string
+  noteId?: string
+  intakeAssignmentId?: string
   patientId: string
   section: Section
   readOnly: boolean
   onEvidenceClick?: EvidenceHandler
+  onAnswerClick?: AnswerHandler
 }) {
   const decide = useDecideChartProposal(patientId)
   const [acceptingAll, setAcceptingAll] = useState(false)
@@ -107,7 +122,12 @@ function LedgerSection({
     setFailed(false)
     try {
       for (const proposal of atOnce) {
-        await decide.mutateAsync({ noteId, proposalId: proposal.id, data: { decision: "accept" } })
+        await decide.mutateAsync({
+          noteId,
+          intakeAssignmentId,
+          proposalId: proposal.id,
+          data: { decision: "accept" },
+        })
       }
     } catch {
       setFailed(true)
@@ -143,11 +163,13 @@ function LedgerSection({
           <ProposalRow
             key={proposal.id}
             noteId={noteId}
+            intakeAssignmentId={intakeAssignmentId}
             patientId={patientId}
             proposal={proposal}
             readOnly={readOnly}
             busy={acceptingAll}
             onEvidenceClick={onEvidenceClick}
+            onAnswerClick={onAnswerClick}
           />
         ))}
       </ul>

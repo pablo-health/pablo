@@ -17,6 +17,9 @@ import {
   CARD_SIDES_BOTH,
   CARD_SIDES_FRONT,
   CARD_SIDES_LABEL,
+  CHART_FIELD_CHOICES,
+  CHART_FIELD_LABEL,
+  CHART_FIELD_NONE,
   DOCUMENT_PICKER_LABEL,
   MEASURE_NEEDS_PERMISSION,
   NO_BLANK_FORM_CHOICE,
@@ -85,6 +88,9 @@ export interface OfferableBlankForm {
 
 /** The value a "no blank form" choice stores, since a Select needs one. */
 const NO_BLANK_FORM = "none"
+
+/** The value "stays on the form" stands for, since a Select needs one. */
+const NO_CHART_FIELD = "none"
 
 function text(config: ItemConfig, key: string): string {
   const value = config[key]
@@ -222,14 +228,37 @@ export function ItemConfigForm({
 
     case "free_text":
       return (
-        <div>
-          <Label htmlFor={`${idPrefix}-max-len`}>Longest answer, in characters</Label>
-          <Input
-            id={`${idPrefix}-max-len`}
-            type="number"
-            value={num(config, "max_len")}
-            onChange={(e) => setNumber("max_len", e.target.value)}
-          />
+        <div className="space-y-3">
+          <div>
+            <Label htmlFor={`${idPrefix}-max-len`}>Longest answer, in characters</Label>
+            <Input
+              id={`${idPrefix}-max-len`}
+              type="number"
+              value={num(config, "max_len")}
+              onChange={(e) => setNumber("max_len", e.target.value)}
+            />
+          </div>
+          <div>
+            <Label htmlFor={`${idPrefix}-chart-field`}>{CHART_FIELD_LABEL}</Label>
+            <Select
+              value={text(config, "chart_field") || NO_CHART_FIELD}
+              onValueChange={(value) =>
+                set("chart_field", value === NO_CHART_FIELD ? undefined : value)
+              }
+            >
+              <SelectTrigger id={`${idPrefix}-chart-field`} aria-label={CHART_FIELD_LABEL}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_CHART_FIELD}>{CHART_FIELD_NONE}</SelectItem>
+                {CHART_FIELD_CHOICES.map((choice) => (
+                  <SelectItem key={choice.key} value={choice.key}>
+                    {choice.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       )
 

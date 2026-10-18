@@ -41,6 +41,9 @@ if TYPE_CHECKING:
 
 ALLERGIES = "allergies"
 MEDICATIONS = "medications"
+PREFERRED_NAME = "preferred_name"
+PRONOUNS = "pronouns"
+EMERGENCY_CONTACT = "emergency_contact"
 
 #: Note field keys an older copy of a template uses for a chart field.
 CHART_KEY_ALIASES = {"nicotine": "tobacco_nicotine"}
@@ -82,10 +85,14 @@ class ChartWriters:
 
 @dataclass(frozen=True)
 class WriteSource:
-    """Who accepted a proposal, the note it came from, and the visit's date."""
+    """Who accepted a proposal, the note it came from, and the visit's date.
+
+    ``note_id`` is ``None`` for a proposal from an intake form: the chart's
+    records name a note as their source, and a form is not one. The audit
+    entry for the decision names the form."""
 
     user_id: str
-    note_id: str
+    note_id: str | None
     visit_date: date | None = None
 
 
@@ -302,13 +309,14 @@ class AllergyFamily(FieldFamily):
         allergies = [dict(entry) for entry in patient.allergies]
         entry = next((e for e in allergies if _same_substance(e, ref.item_key)), None)
         if entry is None:
-            allergies.append(
-                {"substance": ref.item_key, "reaction": text, "source_note_id": by.note_id}
-            )
+            entry = {"substance": ref.item_key, "reaction": text}
+            allergies.append(entry)
         else:
             # The entry's own words stay; what was said joins any earlier note.
             earlier = entry.get("note")
             entry["note"] = f"{earlier}\n{text}" if earlier and text not in earlier else text
+        # A form's proposal names no note; the entry keeps whatever source it had.
+        if by.note_id is not None:
             entry["source_note_id"] = by.note_id
         patient.allergies = allergies
         patient.allergy_status = "recorded"
@@ -620,11 +628,67 @@ class MedicationFamily(FieldFamily):
         service.update(str(row["id"]), by.user_id, update, source_note_id=by.note_id)
 
 
+_PROFILE_LABELS: dict[str, str] = {
+    PREFERRED_NAME: "Name and pronouns: Preferred name",
+    PRONOUNS: "Name and pronouns: Pronouns",
+    EMERGENCY_CONTACT: "Contacts: Emergency contact",
+}
+
+
+class ProfileFamily(FieldFamily):
+    """What the person is called, their pronouns and who to call in an emergency.
+
+    Columns on the client's own record, one text value each. Only an intake
+    form proposes them, from the answers to the questions that ask for them:
+    a visit's transcript or an imported note is never read for them, and they
+    are never put in a prompt. Accepting writes the value as accepted,
+    replacing what was there; what the chart said before is shown beside the
+    proposal, so replacing it is the clinician's choice.
+    """
+
+    @override
+    def field_keys(self) -> tuple[str, ...]:
+        return tuple(_PROFILE_LABELS)
+
+    @override
+    def label(self, ref: FieldRef) -> str:
+        return _PROFILE_LABELS[ref.field_key]
+
+    @override
+    def chart_lines(self, chart: ChartContext) -> list[str]:
+        """None: these fields are never put in a prompt."""
+        return []
+
+    @override
+    def rules(self) -> list[str]:
+        return []
+
+    @override
+    def current_text(self, chart: ChartContext, ref: FieldRef) -> str | None:
+        return dict(chart.profile).get(ref.field_key)
+
+    @override
+    def apply(
+        self, writers: ChartWriters, patient: Patient, ref: FieldRef, text: str, by: WriteSource
+    ) -> None:
+        limit = 64 if ref.field_key == PRONOUNS else 2000
+        value = text.strip()
+        if len(value) > limit:
+            raise ValueError(f"{self.label(ref)} is longer than the chart keeps")
+        setattr(patient, ref.field_key, value)
+        writers.patients.update(patient)
+
+
+#: The families a note's proposal call reads and writes: the prompt lists their fields
+#: and the reply schema names them.
 FAMILIES: tuple[FieldFamily, ...] = (HistoryFamily(), AllergyFamily(), MedicationFamily())
+
+#: Families only an intake form proposes to, kept out of every prompt.
+INTAKE_ONLY_FAMILIES: tuple[FieldFamily, ...] = (ProfileFamily(),)
 
 
 def family_for(field_key: str) -> FieldFamily | None:
-    return next((f for f in FAMILIES if f.owns(field_key)), None)
+    return next((f for f in (*FAMILIES, *INTAKE_ONLY_FAMILIES) if f.owns(field_key)), None)
 
 
 def proposable_keys() -> tuple[str, ...]:

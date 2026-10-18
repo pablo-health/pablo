@@ -96,6 +96,16 @@ export function PatientSummary({ patient }: PatientSummaryProps) {
             {balanceLine && <BalanceBadge line={balanceLine} />}
             <AiConsentLine patientId={patient.id} />
           </div>
+          {(patient.preferred_name || patient.pronouns) && (
+            <p className="-mt-2 mb-4 text-neutral-700" data-testid="chart-name-and-pronouns">
+              {[
+                patient.preferred_name ? `Goes by ${patient.preferred_name}` : null,
+                patient.pronouns,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-neutral-600">
             <div className="flex items-center gap-2">
@@ -115,6 +125,14 @@ export function PatientSummary({ patient }: PatientSummaryProps) {
               <span>Total Sessions: {patient.session_count}</span>
             </div>
             <ChartFacts patient={patient} />
+            {patient.emergency_contact && (
+              <div className="flex items-center gap-2 md:col-span-2" data-testid="chart-emergency-contact">
+                <Phone className="w-4 h-4" />
+                <span>
+                  <span className="font-semibold">Emergency contact:</span> {patient.emergency_contact}
+                </span>
+              </div>
+            )}
             {patient.last_session_date && (
               <div className="flex items-center gap-2">
                 <Calendar className="w-4 h-4" />

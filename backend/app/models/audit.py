@@ -522,6 +522,13 @@ class AuditAction(StrEnum):
     INTAKE_ACCEPTED = "intake_accepted"
     INTAKE_CLINICIAN_ENTRY = "intake_clinician_entry"
 
+    # An accepted form's answers proposed chart updates, and a clinician
+    # decided one. The first carries how many were proposed and whether the
+    # written answers were read; the second the field and the decision. Never
+    # an answer or a proposed text.
+    INTAKE_CHART_UPDATES_PROPOSED = "intake_chart_updates_proposed"
+    INTAKE_CHART_UPDATE_DECIDED = "intake_chart_update_decided"
+
     # A clinician opened the review of a form: every answer on it, the
     # earlier answers each one replaced, and what was asked for and by
     # whom. Wider than the submission read beside it, which is why it is

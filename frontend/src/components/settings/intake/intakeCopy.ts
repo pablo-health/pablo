@@ -259,3 +259,28 @@ export const VISIBILITY_ITEM_NUMBER_LABEL = "Question number"
 /** Shown on the first question on a form, which has nothing to depend on. */
 export const VISIBILITY_NOTHING_EARLIER =
   "This is the first question that can be answered, so there is nothing to base it on yet."
+
+/**
+ * Where a written answer goes on the chart. Accepting the form proposes the
+ * answer there, for the clinician to accept, edit or discard on the chart, so
+ * the label says where it goes and nothing more. Keys are the backend's
+ * (`app.intake.items.CHART_FIELDS`); the history labels match the chart's.
+ */
+export const CHART_FIELD_LABEL = "Goes on the chart as"
+export const CHART_FIELD_NONE = "Stays on the form"
+export const CHART_FIELD_CHOICES: { key: string; label: string }[] = [
+  { key: "preferred_name", label: "Preferred name" },
+  { key: "pronouns", label: "Pronouns" },
+  { key: "medications", label: "Current medications, one per line" },
+  { key: "psychotherapy_history", label: "Psychiatric history: Psychotherapy" },
+  { key: "medication_trials", label: "Psychiatric history: Psychiatric medications tried" },
+  { key: "prior_diagnoses", label: "Psychiatric history: Earlier diagnoses" },
+  { key: "hospitalizations", label: "Psychiatric history: Hospitalizations and programs" },
+  { key: "medical_history", label: "Medical history" },
+  { key: "living_situation", label: "Social history: Living situation" },
+  { key: "relationships", label: "Social history: Relationships" },
+  { key: "work_school", label: "Social history: Work or school" },
+  { key: "supports", label: "Social history: Supports" },
+  { key: "family_psychiatric", label: "Family history: Psychiatric" },
+  { key: "family_medical", label: "Family history: Medical" },
+]

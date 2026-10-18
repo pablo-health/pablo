@@ -223,7 +223,7 @@ export function PatientChartTabs({ patientId, initialTab }: PatientChartTabsProp
       <h2 className="mb-4 text-xl font-display font-bold text-neutral-900">
         Chart
       </h2>
-      {/* What the client's notes would change on the chart, decided here
+      {/* What the client's notes and intake forms would change on the chart, decided here
           before the next visit; nothing when nothing is waiting. */}
       <ChartUpdatesWaiting patientId={patientId} />
       <Tabs defaultValue={openOn}>

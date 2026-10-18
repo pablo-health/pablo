@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""PostgreSQL note chart-proposal repository.
+"""PostgreSQL chart-proposal repository, for notes' and intake forms' proposals.
 
 Runs inside the request's tenant-scoped session, so the row policy
 (``has_patient_access``) applies to every statement here.
@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 
 from ...chart_proposals.models import (
     ChartProposal,
@@ -63,16 +63,37 @@ def _change(raw: dict[str, Any] | None) -> MedicationChange | None:
     )
 
 
+def _evidence(raw: dict[str, Any]) -> Evidence:
+    item_id, question = raw.get("item_id"), raw.get("question")
+    return Evidence(
+        int(raw["segment_id"]),
+        str(raw["text"]),
+        item_id=str(item_id) if item_id is not None else None,
+        question=str(question) if question is not None else None,
+    )
+
+
+def _evidence_json(evidence: Evidence) -> dict[str, Any]:
+    """A cited segment as stored. An intake's carries its question; a note's does not,
+    which keeps a note's rows exactly as they were written before forms proposed."""
+    stored: dict[str, Any] = {"segment_id": evidence.segment_id, "text": evidence.text}
+    if evidence.item_id is not None:
+        stored["item_id"] = evidence.item_id
+        stored["question"] = evidence.question
+    return stored
+
+
 def _proposal(row: NoteChartProposalRow) -> ChartProposal:
     return ChartProposal(
         id=row.id,
         note_id=row.note_id,
+        intake_assignment_id=row.intake_assignment_id,
         patient_id=row.patient_id,
         field_key=row.field_key,
         item_key=row.item_key,
         proposed_text=row.proposed_text,
         what_changed=row.what_changed,
-        evidence=tuple(Evidence(int(e["segment_id"]), str(e["text"])) for e in row.evidence),
+        evidence=tuple(_evidence(e) for e in row.evidence),
         origin=cast("Origin", row.origin),
         created_at=row.created_at,
         decision=cast("Decision", row.decision),
@@ -91,6 +112,14 @@ class PostgresChartProposalRepository(ChartProposalRepository):
         rows = self._session.scalars(
             select(NoteChartProposalRow)
             .where(NoteChartProposalRow.note_id == note_id)
+            .order_by(NoteChartProposalRow.created_at, NoteChartProposalRow.id)
+        ).all()
+        return [_proposal(row) for row in rows]
+
+    def list_for_intake(self, assignment_id: str) -> list[ChartProposal]:
+        rows = self._session.scalars(
+            select(NoteChartProposalRow)
+            .where(NoteChartProposalRow.intake_assignment_id == assignment_id)
             .order_by(NoteChartProposalRow.created_at, NoteChartProposalRow.id)
         ).all()
         return [_proposal(row) for row in rows]
@@ -139,12 +168,13 @@ class PostgresChartProposalRepository(ChartProposalRepository):
                 NoteChartProposalRow(
                     id=p.id,
                     note_id=p.note_id,
+                    intake_assignment_id=p.intake_assignment_id,
                     patient_id=p.patient_id,
                     field_key=p.field_key,
                     item_key=p.item_key,
                     proposed_text=p.proposed_text,
                     what_changed=p.what_changed,
-                    evidence=[{"segment_id": e.segment_id, "text": e.text} for e in p.evidence],
+                    evidence=[_evidence_json(e) for e in p.evidence],
                     origin=p.origin,
                     decision=p.decision,
                     created_at=p.created_at,
@@ -214,19 +244,23 @@ class PostgresChartProposalRepository(ChartProposalRepository):
 def _pending_visible_to[T: tuple[Any, ...]](user_id: str, query: Select[T]) -> Select[T]:
     """Restrict ``query`` to pending proposals the clinician could open.
 
-    Through a live grant on the patient and a note that is not deleted, the
-    same reach the chart's own listing has; the row policy backs it.
+    Through a live grant on the patient, from a note that is not deleted or from
+    an intake form, the same reach the chart's own listing has; the row policy
+    backs it.
     """
     return (
         query.select_from(NoteChartProposalRow)
-        .join(NoteRow, NoteRow.id == NoteChartProposalRow.note_id)
+        .outerjoin(NoteRow, NoteRow.id == NoteChartProposalRow.note_id)
         .join(
             PatientClinicianRow,
             PatientClinicianRow.patient_id == NoteChartProposalRow.patient_id,
         )
         .where(
             NoteChartProposalRow.decision == "pending",
-            NoteRow.deleted_at.is_(None),
+            or_(
+                NoteChartProposalRow.intake_assignment_id.is_not(None),
+                NoteRow.deleted_at.is_(None) & NoteRow.id.is_not(None),
+            ),
             *live_grant(user_id),
         )
     )

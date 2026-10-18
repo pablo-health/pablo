@@ -11,13 +11,17 @@ if TYPE_CHECKING:
     from datetime import datetime
 
 Decision = Literal["pending", "accepted", "edited", "discarded"]
-Origin = Literal["transcript", "document", "note"]
+Origin = Literal["transcript", "document", "note", "intake"]
 """``transcript``: drafted from what was said. ``document``: drafted from an imported
 note's document, citing its paragraphs. ``note``: the note's own text, for a field the
-chart had nothing for."""
+chart had nothing for. ``intake``: an accepted intake form's answers, citing the
+questions they answer."""
 
 #: What a proposal from the note's own text says changed: the chart had nothing.
 RECORDED_THIS_VISIT = "Recorded this visit"
+
+#: What a proposal taken as written from an intake answer says changed.
+ANSWERED_ON_INTAKE = "Answered on the intake"
 
 
 RunStatus = Literal["ok", "failed", "skipped"]
@@ -119,10 +123,16 @@ class Drafted:
 
 @dataclass(frozen=True)
 class Evidence:
-    """A transcript segment a proposal cites, with its text as the transcript has it."""
+    """A transcript segment a proposal cites, with its text as the transcript has it.
+
+    For an intake, the answer it cites: ``segment_id`` is the question's position on
+    the form, ``text`` the answer as written, ``item_id`` the question and
+    ``question`` its wording, so the chart can open the form at that answer."""
 
     segment_id: int
     text: str
+    item_id: str | None = None
+    question: str | None = None
 
 
 @dataclass(frozen=True)
@@ -142,8 +152,11 @@ class DraftedProposal:
 
 @dataclass(frozen=True)
 class ChartProposal:
+    """A proposed update, from a note (``note_id``) or an accepted intake form
+    (``intake_assignment_id``): exactly one of the two is set."""
+
     id: str
-    note_id: str
+    note_id: str | None
     patient_id: str
     field_key: str
     item_key: str
@@ -157,6 +170,7 @@ class ChartProposal:
     decided_by: str | None = None
     decided_at: datetime | None = None
     change: MedicationChange | None = None
+    intake_assignment_id: str | None = None
 
     @property
     def pending(self) -> bool:

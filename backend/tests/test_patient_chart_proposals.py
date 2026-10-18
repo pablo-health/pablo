@@ -203,6 +203,7 @@ def test_an_archive_imported_note_s_group_names_its_system_and_its_visit(
 def test_a_client_with_nothing_pending_answers_empty(client: TestClient, patient: Patient) -> None:
     assert client.get(f"/api/patients/{patient.id}/chart-proposals").json() == {
         "groups": [],
+        "intakes": [],
         "pending": 0,
     }
 

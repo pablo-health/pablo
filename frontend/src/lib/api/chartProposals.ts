@@ -6,6 +6,8 @@
  * `GET  /api/notes/{note_id}/chart-proposals` — every proposal on the note,
  * `POST /api/notes/{note_id}/chart-proposals/retry` — check the note again after a failed check,
  * `POST /api/notes/{note_id}/chart-proposals/{proposal_id}/decision` — accept, edit or discard one.
+ * `POST /api/patients/{patient_id}/intake-assignments/{assignment_id}/chart-proposals/{proposal_id}/decision`
+ *   — the same, for one an accepted intake form proposed.
  */
 
 import type {
@@ -31,6 +33,20 @@ export async function decideChartProposal(
 ): Promise<ChartProposal> {
   return post<ChartProposal>(
     `/api/notes/${noteId}/chart-proposals/${proposalId}/decision`,
+    data,
+    token,
+  )
+}
+
+export async function decideIntakeChartProposal(
+  patientId: string,
+  assignmentId: string,
+  proposalId: string,
+  data: DecideChartProposalRequest,
+  token?: string,
+): Promise<ChartProposal> {
+  return post<ChartProposal>(
+    `/api/patients/${patientId}/intake-assignments/${assignmentId}/chart-proposals/${proposalId}/decision`,
     data,
     token,
   )

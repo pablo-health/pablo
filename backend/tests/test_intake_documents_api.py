@@ -567,6 +567,7 @@ class TestRegisteredStarters:
         # The one without a document is questions alone, and says so.
         assert listed == [
             ("ai_tools_consent", True),
+            ("client_details", False),
             ("cancellation_policy", True),
             ("previous_care", False),
         ]

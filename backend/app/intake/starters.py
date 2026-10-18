@@ -143,8 +143,57 @@ AI_TOOLS_CONSENT = Starter(
     ),
 )
 
+#: Questions whose answers the chart keeps. Each names the chart field it fills
+#: (an emergency contact fills the chart's by its type), so accepting the form
+#: proposes the answers there for the clinician to accept, edit or discard.
+#: Optional, except the emergency contact: a client may have nothing to say
+#: to the rest.
+CLIENT_DETAILS = Starter(
+    key="client_details",
+    title="About you",
+    questions=(
+        ItemDraft(
+            key="preferred_name",
+            item_type="free_text",
+            required=False,
+            label="What would you like to be called?",
+            help_text="Leave this blank if it is your first name.",
+            config={"max_len": 255, "chart_field": "preferred_name"},
+        ),
+        ItemDraft(
+            key="pronouns",
+            item_type="free_text",
+            required=False,
+            label="What pronouns do you use?",
+            config={"max_len": 64, "chart_field": "pronouns"},
+        ),
+        ItemDraft(
+            key="emergency_contact",
+            item_type="emergency_contact",
+            required=True,
+            label="Who should we contact in an emergency?",
+        ),
+        ItemDraft(
+            key="current_medications",
+            item_type="free_text",
+            required=False,
+            label="What medications do you take now?",
+            help_text="Put each one on its own line, with the dose and how often you take it.",
+            config={"chart_field": "medications"},
+        ),
+        ItemDraft(
+            key="prior_treatment",
+            item_type="free_text",
+            required=False,
+            label="Have you had therapy or counseling before?",
+            help_text="If you have, say when, for how long, and how it went.",
+            config={"chart_field": "psychotherapy_history"},
+        ),
+    ),
+)
+
 #: The built-in starters, in the order the editor lists them.
-STARTERS: tuple[Starter, ...] = (AI_TOOLS_CONSENT,)
+STARTERS: tuple[Starter, ...] = (AI_TOOLS_CONSENT, CLIENT_DETAILS)
 
 _registered: dict[str, Starter] = {}
 
@@ -223,6 +272,7 @@ __all__ = [
     "AI_TOOLS_DOCUMENT_ITEM_KEY",
     "AI_TRANSCRIPTION_DECISIONS",
     "AI_TRANSCRIPTION_ITEM_KEY",
+    "CLIENT_DETAILS",
     "STARTERS",
     "TELEHEALTH_DOCUMENT_ITEM_KEY",
     "TELEHEALTH_LOCATION_ITEM_KEY",
