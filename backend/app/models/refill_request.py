@@ -33,7 +33,9 @@ class RefillRequest:
     typed a name instead, ``medication_id`` is ``None``.
 
     ``prescriber_note`` is the practice's own note on the decision. It is
-    never shown to the patient.
+    never shown to the patient. Nor is ``due_at``, the time the practice
+    means to have answered by (see :mod:`app.services.refill_turnaround`);
+    ``None`` on requests from before the practice had a target.
     """
 
     id: str
@@ -48,6 +50,12 @@ class RefillRequest:
     decided_by_user_id: str | None = None
     decided_at: datetime | None = None
     prescriber_note: str | None = None
+    due_at: datetime | None = None
+
+
+def queue_order_key(request: RefillRequest) -> tuple[bool, datetime, datetime]:
+    """Soonest due first; requests with no due time after, oldest first."""
+    return (request.due_at is None, request.due_at or request.created_at, request.created_at)
 
 
 @dataclass(frozen=True)

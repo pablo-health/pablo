@@ -468,3 +468,78 @@ test("a prescriber answers a portal refill request from the Refills page @portal
   expect(seen?.status).toBe("approved")
   expect(JSON.stringify(seen)).not.toContain("private to the practice")
 })
+
+// --- Test: the practice's own turnaround target -----------------------------
+
+/**
+ * The target is set in Settings, stamps each request's due day when it
+ * arrives, and orders the Refills page by it — so a request asked later
+ * under a shorter target comes first. The target is the practice's: the
+ * patient's own view of the request carries no due time.
+ */
+test("the practice's refill target dates each request and orders the Refills page by it @portal", async ({
+  api,
+  request,
+  signedInPage: page,
+}) => {
+  const { email, phone } = givePortalContactDetails()
+  const patient = await givePatient(api, { email, phone })
+  const medication = await giveMedication(api, patient.id)
+  const headers = {
+    Authorization: `Bearer ${await givePortalSession(api, request, patient.id, email, phone)}`,
+  }
+  const ask = async (): Promise<PatientRefill> => {
+    const asked = await request.post(`${BACKEND_URL}${PATIENT_REFILLS}`, {
+      headers,
+      data: { medication_id: medication.id },
+    })
+    expect(asked.status()).toBe(201)
+    return (await asked.json()) as PatientRefill
+  }
+
+  try {
+    await page.goto("/dashboard/settings/portal")
+    const target = page.getByRole("combobox", { name: "Refill request target" })
+    await target.selectOption("5")
+    await expect.poll(async () => (await api.get<{ refill_turnaround_days: number }>(
+      "/api/portal/settings",
+    )).refill_turnaround_days).toBe(5)
+    const unhurried = await ask()
+
+    await target.selectOption("1")
+    await expect.poll(async () => (await api.get<{ refill_turnaround_days: number }>(
+      "/api/portal/settings",
+    )).refill_turnaround_days).toBe(1)
+    const urgent = await ask()
+
+    const first = await api.get<ClinicianRefill & { due_at: string }>(
+      `${CLINICIAN_REFILLS}/${unhurried.id}`,
+    )
+    const second = await api.get<ClinicianRefill & { due_at: string }>(
+      `${CLINICIAN_REFILLS}/${urgent.id}`,
+    )
+    expect(new Date(second.due_at).getTime(), "a shorter target is due sooner").toBeLessThan(
+      new Date(first.due_at).getTime(),
+    )
+    expect(unhurried, "the patient's view carries no due time").not.toHaveProperty("due_at")
+
+    await page.goto("/dashboard/refills")
+    const rows = page.locator('[data-testid^="refill-row-"]')
+    await expect(page.getByTestId(`refill-row-${urgent.id}`)).toBeVisible()
+    const order = await rows.evaluateAll((els) => els.map((el) => el.getAttribute("data-testid")))
+    expect(
+      order.indexOf(`refill-row-${urgent.id}`),
+      "the request due sooner is listed first, though it was asked later",
+    ).toBeLessThan(order.indexOf(`refill-row-${unhurried.id}`))
+    await expect(
+      page.getByTestId(`refill-row-${urgent.id}`).getByTestId("refill-due"),
+    ).toHaveText(/^Due /)
+
+    const mine = (await (
+      await request.get(`${BACKEND_URL}${PATIENT_REFILLS}`, { headers })
+    ).json()) as ListResponse<PatientRefill>
+    expect(JSON.stringify(mine), "no due time reaches the patient").not.toContain("due_at")
+  } finally {
+    await api.put("/api/portal/settings", { refill_turnaround_days: 2 })
+  }
+})

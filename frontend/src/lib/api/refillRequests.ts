@@ -30,6 +30,8 @@ export interface ClinicianRefillRequest {
   decided_at: string | null
   decided_by_user_id: string | null
   prescriber_note: string | null
+  /** The practice's own target for answering; null on requests from before it had one. */
+  due_at: string | null
 }
 
 export interface RefillQueueResponse {

@@ -19,13 +19,20 @@ from abc import ABC, abstractmethod
 from dataclasses import replace
 from typing import TYPE_CHECKING, Literal
 
-from ..models.refill_request import REFILL_STATUS_REQUESTED, RefillQueueEntry, RefillRequest
+from ..models.refill_request import (
+    REFILL_STATUS_REQUESTED,
+    RefillQueueEntry,
+    RefillRequest,
+    queue_order_key,
+)
 
 if TYPE_CHECKING:
     from datetime import datetime
 
-# ``pending`` is the queue: everything still waiting, oldest first, because
-# the request that has waited longest is the one to answer next. ``recent``
+# ``pending`` is the queue: everything still waiting, soonest due first,
+# because the request closest to the practice's own target is the one to
+# answer next. Requests from before there was a target have no due time and
+# follow, oldest first. ``recent``
 # is what was answered lately, newest answer first, bounded — it is there so
 # a prescriber can see what they just did, not to page through history.
 RefillQueueView = Literal["pending", "recent"]
@@ -168,7 +175,7 @@ class InMemoryRefillRequestRepository(RefillRequestRepository):
         if view == "pending":
             rows = sorted(
                 (r for r in visible if r.status == REFILL_STATUS_REQUESTED),
-                key=lambda r: r.created_at,
+                key=queue_order_key,
             )
         else:
             decided = [r for r in visible if r.decided_at is not None]

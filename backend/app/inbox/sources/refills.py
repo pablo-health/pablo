@@ -4,6 +4,7 @@
 
 Answered on the Refills page, which is where the item opens; once answered
 the request is no longer ``requested`` and leaves the Inbox on its own.
+Each item carries the request's due time, the practice's own target.
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ def _item(entry: RefillQueueEntry) -> InboxItem:
         title=f"Refill request: {request.medication_text}",
         detail=request.patient_note,
         occurred_at=request.created_at,
+        due_at=request.due_at,
         href="/dashboard/refills",
     )
 

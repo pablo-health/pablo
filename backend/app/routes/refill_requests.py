@@ -85,6 +85,7 @@ from ..services.refill_request_hooks import (
     RefillRequestEventKind,
     dispatch_refill_request_event,
 )
+from ..services.refill_turnaround import RefillDueClock, get_refill_due_clock
 from ..utcnow import utc_now
 from .patient_intake_assignments import get_clinician_patient_repository
 
@@ -187,6 +188,7 @@ def create_refill_request(
     patient: CurrentPatient,
     repo: RefillRequestRepository = Depends(get_refill_request_repository),
     audit: AuditService = Depends(get_audit_service),
+    due_clock: RefillDueClock = Depends(get_refill_due_clock),
     _: None = Depends(subscription_exempt),
 ) -> PatientRefillRequestResponse:
     """Ask for a refill of one medication.
@@ -195,6 +197,9 @@ def create_refill_request(
     anything else is a 404 that says nothing about whose it was. The name is
     copied onto the request so it keeps reading correctly if the list
     changes later.
+
+    The request is stamped with the practice's own due time as it is
+    stored. The response is the patient's view, which does not carry it.
     """
     get_refill_request_limiter().check(patient.patient_id)
 
@@ -219,6 +224,7 @@ def create_refill_request(
             status=REFILL_STATUS_REQUESTED,
             created_at=now,
             updated_at=now,
+            due_at=due_clock(patient.practice_schema, now),
         )
     )
     audit.log_patient_principal_action(
