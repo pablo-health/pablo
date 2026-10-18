@@ -26,8 +26,8 @@ export const HORIZONS: HorizonDef[] = [
   { id: "beyond", label: "Beyond", short: "90+ days", hint: "Far future" },
 ]
 
-export interface EnrichedItem {
-  item: ComplianceItem
+export interface EnrichedItem<T extends ComplianceItem = ComplianceItem> {
+  item: T
   template: ComplianceTemplate | undefined
   days: number | null
   horizon: HorizonId
@@ -43,10 +43,10 @@ export function horizonFor(days: number | null): HorizonId {
   return "beyond"
 }
 
-export function enrichItems(
-  items: ComplianceItem[],
+export function enrichItems<T extends ComplianceItem>(
+  items: T[],
   templateByType: Map<string, ComplianceTemplate>,
-): EnrichedItem[] {
+): EnrichedItem<T>[] {
   return items.map((item) => {
     const template = templateByType.get(item.item_type)
     const days = daysUntil(item.due_date)

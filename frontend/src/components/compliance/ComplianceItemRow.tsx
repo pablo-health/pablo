@@ -5,22 +5,25 @@
 import { FileText } from "lucide-react"
 import { useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
+import { REPEAT_RULES, TASK_CATEGORIES, type Task } from "@/types/tasks"
 import { type EnrichedItem, type HorizonId, categoryDot } from "./horizons"
 import { formatDueLabel } from "./urgency"
 
 export interface ComplianceItemRowProps {
-  entry: EnrichedItem
+  entry: EnrichedItem<Task>
   /**
    * Shown open, with its full notes and due date, and scrolled into view.
    * Set when a link elsewhere in the app pointed at this item.
    */
   expanded?: boolean
   onEdit: () => void
-  onOpenDocs: () => void
+  /** Omitted for a task with no evidence to attach — any non-compliance task. */
+  onOpenDocs?: () => void
   onComplete: () => void
   completing: boolean
 }
 
+/** One task in the panel: a compliance reminder or any other task. */
 export function ComplianceItemRow({
   entry,
   expanded = false,
@@ -30,7 +33,9 @@ export function ComplianceItemRow({
   completing,
 }: ComplianceItemRowProps) {
   const { item, days, horizon } = entry
-  const dot = categoryDot(item.item_type)
+  const dot = dotFor(item)
+  const kind = kindLabel(item)
+  const repeats = REPEAT_RULES.find((r) => r.id === item.repeat_rule)?.label
   const duePill = pillFor(horizon)
   const rowRef = useRef<HTMLLIElement>(null)
 
@@ -45,6 +50,7 @@ export function ComplianceItemRow({
     <li
       ref={rowRef}
       data-testid={`compliance-item-${item.id}`}
+      data-category={item.category}
       data-expanded={expanded ? "true" : undefined}
       aria-current={expanded ? "true" : undefined}
       className={`group rounded-lg border px-3 py-2 transition-colors ${
@@ -65,9 +71,7 @@ export function ComplianceItemRow({
             {item.label}
           </p>
           {!expanded && (
-            <p className="text-xs text-neutral-500 mt-0.5 truncate">
-              {item.notes ?? labelForType(item.item_type)}
-            </p>
+            <p className="text-xs text-neutral-500 mt-0.5 truncate">{item.notes ?? kind}</p>
           )}
         </button>
         <span
@@ -75,18 +79,20 @@ export function ComplianceItemRow({
         >
           {formatDueLabel(days)}
         </span>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={(e) => {
-            e.stopPropagation()
-            onOpenDocs()
-          }}
-          className="opacity-70 group-hover:opacity-100 transition-opacity"
-          aria-label={`Documents for ${item.label}`}
-        >
-          <FileText className="h-4 w-4" aria-hidden />
-        </Button>
+        {onOpenDocs && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation()
+              onOpenDocs()
+            }}
+            className="opacity-70 group-hover:opacity-100 transition-opacity"
+            aria-label={`Documents for ${item.label}`}
+          >
+            <FileText className="h-4 w-4" aria-hidden />
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="sm"
@@ -102,8 +108,9 @@ export function ComplianceItemRow({
       </div>
       {expanded && (
         <div className="mt-2 pl-5 space-y-1 text-xs text-neutral-600" data-testid="compliance-item-details">
-          <p>{labelForType(item.item_type)}</p>
+          <p>{kind}</p>
           {item.due_date && <p>Due {formatDueDate(item.due_date)}</p>}
+          {repeats && <p>{repeats}</p>}
           {item.notes && <p className="whitespace-pre-wrap">{item.notes}</p>}
           <Button variant="outline" size="sm" className="mt-1" onClick={onEdit}>
             Edit
@@ -129,6 +136,22 @@ function pillFor(horizon: HorizonId): string {
     default:
       return "bg-neutral-100 text-neutral-500"
   }
+}
+
+/** The row's second line when there are no notes: the template, or the category. */
+function kindLabel(task: Task): string {
+  if (task.category === "compliance") return labelForType(task.item_type)
+  return TASK_CATEGORIES.find((c) => c.id === task.category)?.label ?? "Task"
+}
+
+const CATEGORY_DOTS: Record<string, string> = {
+  practice: "bg-sky-400",
+  other: "bg-slate-400",
+}
+
+function dotFor(task: Task): string {
+  if (task.category === "compliance") return categoryDot(task.item_type)
+  return CATEGORY_DOTS[task.category] ?? "bg-slate-400"
 }
 
 function labelForType(type: string): string {

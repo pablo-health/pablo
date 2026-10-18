@@ -70,7 +70,7 @@ _SUFFIX = uuid.uuid4().hex[:8]
 _SCHEMA = f"practice_test_enrtask_{_SUFFIX}"
 
 #: Emptied between tests; the schema outlives them.
-_TABLES = ("compliance_items", "payer_enrollments", "payers", "practice_billing_profile")
+_TABLES = ("tasks", "payer_enrollments", "payers", "practice_billing_profile")
 
 _USER_ID = str(uuid.uuid4())
 _SIGNED_FORM_TASK = "01a0a1b2-3c4d-7e5f-8a6b-7c8d9e0f1a2b"

@@ -131,6 +131,7 @@ from .routes import (
     users,
     visit_times,
 )
+from .routes import tasks as task_routes
 from .settings import get_settings, log_startup_posture
 from .sites import public_routes as site_public_routes
 from .sites import routes as site_routes
@@ -457,6 +458,7 @@ app.include_router(migration.router)
 app.include_router(note_types.router)
 app.include_router(note_type_derive.router)
 app.include_router(compliance.router)
+app.include_router(task_routes.router)
 app.include_router(supervision.router)
 app.include_router(credentialing.router)
 app.include_router(outcome_measures_router)

@@ -60,7 +60,7 @@ export interface PabloNoteExtensions {
 const baseLines: PabloNoteLine[] = [
   {
     id: "compliance-renewals",
-    text: "Add CAQH or a license renewal in Settings > Compliance and I’ll show it on your dashboard as it comes due.",
+    text: "Add CAQH, a license renewal or any task with a date in Settings > Tasks and I’ll show it on your dashboard as it comes due.",
   },
   { id: "drag-appointment", text: "Drag an appointment to move it; double-click to change it." },
   {

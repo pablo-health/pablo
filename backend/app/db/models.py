@@ -2967,17 +2967,42 @@ class ICalSyncConfigRow(Base):
     title_style: Mapped[str | None] = mapped_column(String(16))
 
 
-class ComplianceItemRow(Base):
-    """Therapist compliance reminder (license, insurance, CAQH, etc.).
+#: What a task is about. ``compliance`` is the licence, insurance and training
+#: reminders this table started as; the rest are the clinician's own. Checked
+#: by the routes rather than a CHECK constraint, so a new kind of task is a
+#: code change and not a migration fanned out over every practice.
+TASK_CATEGORIES: tuple[str, ...] = ("compliance", "practice", "other")
 
-    Owned by the therapist, not patient-scoped — these are the clinician's
-    own credentials and are not PHI. ``item_type`` is a free-form string so
-    new categories (BAA expirations, CEU progress) can be added without a
-    migration. ``due_date`` is nullable for items the user wants to track
-    but hasn't filled in yet.
+#: How a task came to exist. A person typing it in is ``manual``; the others
+#: are filed for them — a reminder they set, a step of a plan they confirmed,
+#: or a row brought in from another system.
+TASK_SOURCES: tuple[str, ...] = ("manual", "reminder", "plan", "import")
+
+#: How a task comes back once it is done. NULL is a task that happens once.
+TASK_REPEAT_RULES: tuple[str, ...] = ("weekly", "monthly", "quarterly", "yearly")
+
+
+class TaskRow(Base):
+    """Something the clinician has to do, usually by a date.
+
+    Owned by the clinician, not patient-scoped. It began as the compliance
+    reminder table (licence renewal, malpractice insurance, CAQH) and every
+    one of those rows is a task with ``category = 'compliance'``; a task in
+    any other category is the clinician's own to-do.
+
+    ``item_type`` names the compliance template a compliance task follows
+    (:mod:`app.compliance.templates`) and is ``task`` on everything else.
+    ``due_date`` is nullable for a task the user wants to track but has not
+    dated yet.
+
+    ``parent_task_id`` makes a task a step of another. Deleting the parent
+    deletes its steps: a step means nothing without the plan it belongs to,
+    and leaving it behind would scatter orphaned steps across the dashboard.
+    ``goal_key`` links a task to a goal kept outside this table; the engine
+    stores it and filters on it and gives it no meaning of its own.
     """
 
-    __tablename__ = "compliance_items"
+    __tablename__ = "tasks"
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
@@ -2998,35 +3023,71 @@ class ComplianceItemRow(Base):
     route does not write cannot be edited away.
 
     Unique per ``(user_id, item_type)`` where it is set — see
-    ``ux_compliance_items_source_ref``, which is what makes the duplicate
-    impossible rather than merely unlikely.
+    ``ux_tasks_source_ref``, which is what makes the duplicate impossible
+    rather than merely unlikely.
     """
     due_date: Mapped[date | None] = mapped_column(Date)
     notes: Mapped[str | None] = mapped_column(Text)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # The server defaults are what every writer that predates tasks relies on:
+    # the claim listener, the credential clocks and supervision reviews all
+    # file compliance reminders and none of them names a category.
+    category: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="compliance", server_default="compliance"
+    )
+    source: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="manual", server_default="manual"
+    )
+    parent_task_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("tasks.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    goal_key: Mapped[str | None] = mapped_column(String(128))
+    repeat_rule: Mapped[str | None] = mapped_column(String(16))
 
     __table_args__ = (
         # One automatically-filed row per thing per clinician. Partial, because
         # ``source_ref`` is NULL on everything a person entered and several
         # licences with no source are not a conflict.
         Index(
-            "ux_compliance_items_source_ref",
+            "ux_tasks_source_ref",
             "user_id",
             "item_type",
             "source_ref",
             unique=True,
             postgresql_where=text("source_ref IS NOT NULL"),
         ),
+        Index(
+            "ix_tasks_user_goal_key",
+            "user_id",
+            "goal_key",
+            postgresql_where=text("goal_key IS NOT NULL"),
+        ),
+        CheckConstraint(
+            "source IN ('manual', 'reminder', 'plan', 'import')",
+            name="ck_tasks_source",
+        ),
+        CheckConstraint(
+            "repeat_rule IS NULL OR repeat_rule IN ('weekly', 'monthly', 'quarterly', 'yearly')",
+            name="ck_tasks_repeat_rule",
+        ),
     )
+
+
+#: The name this row had before compliance items became tasks. Kept for code
+#: that still imports it; it is the same mapped class, over the same table.
+ComplianceItemRow = TaskRow
 
 
 class ComplianceDocumentRow(Base):
     """Dormant data-model rail for the Phase 3 compliance vault.
 
     Will back uploaded artifacts (license PDFs, malpractice declarations, CAQH
-    attestations, BAAs) attached to a ``ComplianceItemRow``. Shipping the table
+    attestations, BAAs) attached to a compliance ``TaskRow``. Shipping the table
     now — no routes, storage wiring or UI — means self-hosters need no forced
     migration when the vault surface lands. ``storage_uri`` is opaque (gs://
     today, s3:// or local fs self-hosted) so the backend can swap without a
@@ -3039,7 +3100,7 @@ class ComplianceDocumentRow(Base):
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     compliance_item_id: Mapped[str | None] = mapped_column(
         Uuid(as_uuid=False),
-        ForeignKey("compliance_items.id", ondelete="CASCADE"),
+        ForeignKey("tasks.id", ondelete="CASCADE"),
         nullable=True,
         index=True,
     )
@@ -3062,9 +3123,9 @@ class SupervisionRelationshipRow(Base):
     delegation, NP collaborative agreements, PA supervision, pre-licensure
     clinical supervision. These describe the clinician's own professional
     standing and her named supervisor's, not any patient, so the table sits in
-    the practice schema beside ``compliance_items`` and is gated by ``user_id``.
+    the practice schema beside ``tasks`` and is gated by ``user_id``.
 
-    The review deadline rides an existing ``compliance_items`` row
+    The review deadline rides an existing compliance ``tasks`` row
     (``compliance_item_id``) to reuse the reminder machinery, with
     ``next_review_date`` mirroring that item's ``due_date``. Nullable, so a
     relationship can be recorded before its review item exists.
@@ -3078,7 +3139,7 @@ class SupervisionRelationshipRow(Base):
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
     compliance_item_id: Mapped[str | None] = mapped_column(
         Uuid(as_uuid=False),
-        ForeignKey("compliance_items.id", ondelete="CASCADE"),
+        ForeignKey("tasks.id", ondelete="CASCADE"),
         nullable=True,
         index=True,
     )
@@ -4747,7 +4808,7 @@ class RemittanceHoldRow(Base):
 #: ``enrollment_action_required`` has no claim behind it at all — it is raised
 #: when a PAYER wants the practice to sign something, with a synthesised
 #: ``claim_id`` and the vendor's request id for a control number — so it stays
-#: a ``compliance_items`` row, where the practice's own obligations live. See
+#: a compliance ``tasks`` row, where the practice's own obligations live. See
 #: ``app.claims.events.NON_CLAIM_KINDS``.
 CLAIM_REMINDER_KINDS: tuple[str, ...] = (
     "rejected",
@@ -4908,7 +4969,7 @@ class ImportRecordRow(Base):
 
 # ---------------------------------------------------------------------------
 # The clinician's credential record — the structured facts behind the
-# compliance clocks. ``compliance_items`` already tracks WHEN a licence
+# compliance clocks. ``tasks`` already tracks WHEN a licence
 # expires; nothing recorded what the licence was, nor any of the
 # biographical sections a payer application asks for.
 #

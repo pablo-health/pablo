@@ -29,8 +29,8 @@ if TYPE_CHECKING:
     from .patient_payment import PatientPaymentRepository
     from .patient_source_mapping import PatientSourceMappingRepository
     from .postgres.compliance_document import PostgresComplianceDocumentRepository
-    from .postgres.compliance_item import PostgresComplianceItemRepository
     from .postgres.supervision import PostgresSupervisionRepository
+    from .postgres.task import PostgresComplianceItemRepository, PostgresTaskRepository
     from .postgres.telehealth_connection import PostgresZoomConnectionStore
     from .remittance_hold import RemittanceHoldRepository
     from .session_dictation import SessionDictationRepository
@@ -347,9 +347,16 @@ def get_clinician_profile_repository() -> ClinicianProfileRepository:
     return PostgresClinicianProfileRepository(_get_pg_session())
 
 
+def get_task_repository() -> PostgresTaskRepository:
+    """Get task repository instance (postgres only)."""
+    from .postgres.task import PostgresTaskRepository
+
+    return PostgresTaskRepository(_get_pg_session())
+
+
 def get_compliance_item_repository() -> PostgresComplianceItemRepository:
-    """Get compliance-item repository instance (postgres only)."""
-    from .postgres.compliance_item import PostgresComplianceItemRepository
+    """The compliance view of the task table: its list is compliance tasks only."""
+    from .postgres.task import PostgresComplianceItemRepository
 
     return PostgresComplianceItemRepository(_get_pg_session())
 
@@ -654,6 +661,7 @@ __all__ = [
     "get_session_dictation_repository",
     "get_session_repository",
     "get_supervision_repository",
+    "get_task_repository",
     "get_user_repository",
     "get_zoom_connection_store",
 ]

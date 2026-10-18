@@ -12,13 +12,13 @@ const documentsState = vi.hoisted(() => ({
   isLoading: false,
 }))
 
-vi.mock("@/hooks/useCompliance", () => ({
-  useComplianceDocuments: () => documentsState,
-  useUploadComplianceDocument: () => ({
+vi.mock("@/hooks/useTasks", () => ({
+  useTaskDocuments: () => documentsState,
+  useUploadTaskDocument: () => ({
     mutate: uploadMutate,
     isPending: false,
   }),
-  useDeleteComplianceDocument: () => ({
+  useDeleteTaskDocument: () => ({
     mutate: deleteMutate,
     isPending: false,
     variables: undefined,
