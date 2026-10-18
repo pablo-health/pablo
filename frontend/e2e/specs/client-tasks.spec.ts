@@ -75,7 +75,8 @@ test("a task tied to a client by name on the Tasks page shows on their chart", a
     const dialog = page.getByRole("dialog")
     await dialog.getByRole("radio", { name: "Practice" }).click()
     await dialog.getByLabel("Title").fill(label)
-    await dialog.getByRole("combobox").fill(client.first_name)
+    // "Client" or "Patient", by the clinician's word; the form's other combobox is Repeats.
+    await dialog.getByRole("combobox", { name: /client|patient/i }).fill(client.first_name)
     await dialog.getByRole("option", { name: `${client.first_name} ${client.last_name}` }).click()
 
     const created = page.waitForResponse(
