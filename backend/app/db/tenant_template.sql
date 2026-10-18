@@ -1421,6 +1421,7 @@ CREATE TABLE __TENANT_SCHEMA__.refill_requests (
     prescriber_note text,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
+    due_at timestamp with time zone,
     CONSTRAINT ck_refill_requests_status CHECK (((status)::text = ANY ((ARRAY['requested'::character varying, 'approved'::character varying, 'needs_visit'::character varying, 'declined'::character varying])::text[])))
 );
 

@@ -413,6 +413,12 @@ class PracticePortalSettingsRow(PlatformBase):
     #: When the practice first answered whether to offer the portal, either
     #: way. ``None`` means it has not been asked yet.
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: The practice's own target for answering a refill request, in working
+    #: days. Sets each request's due time when it arrives; never shown to
+    #: clients.
+    refill_turnaround_days: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=2, server_default=text("2")
+    )
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     #: The clinician who last changed it. ``None`` for the rows the migration
     #: wrote.

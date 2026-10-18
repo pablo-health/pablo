@@ -43,9 +43,15 @@ def _with_state(item: InboxItem, state: InboxItemState) -> InboxItem:
 
 
 def _open_order(items: list[InboxItem]) -> list[InboxItem]:
-    """Urgent first, then newest first."""
+    """Urgent first; then items with a due time, soonest due first; then newest first.
+
+    An item with a due time carries a target the practice set itself, so the
+    one closest to it comes before anything that has merely arrived. Each
+    sort is stable, so the later keys only break the earlier ones' ties.
+    """
     newest = sorted(items, key=lambda item: item.occurred_at, reverse=True)
-    return sorted(newest, key=lambda item: item.severity != "urgent")
+    due = sorted(newest, key=lambda item: (0, item.due_at) if item.due_at else (1,))
+    return sorted(due, key=lambda item: item.severity != "urgent")
 
 
 class InboxService:

@@ -46,7 +46,16 @@ class PortalSettings:
     enabled_modules: tuple[str, ...] | None
     #: When the practice first answered; ``None`` means never asked.
     decided_at: datetime | None
+    #: The practice's own target for answering a refill request, in working
+    #: days. Internal to the practice: nothing a client sees states it.
+    refill_turnaround_days: int = 2
 
+
+#: The range a practice may set its refill target in. A week and a half is
+#: already a long wait on a prescription; past that the number stops being a
+#: target anyone is working to.
+REFILL_TURNAROUND_MIN_DAYS = 1
+REFILL_TURNAROUND_MAX_DAYS = 10
 
 #: What a practice with no row has.
 NOT_OFFERED = PortalSettings(enabled=False, enabled_modules=None, decided_at=None)
@@ -59,6 +68,7 @@ def _from_row(row: PracticePortalSettingsRow | None) -> PortalSettings:
         enabled=row.enabled,
         enabled_modules=None if row.enabled_modules is None else tuple(row.enabled_modules),
         decided_at=row.decided_at,
+        refill_turnaround_days=row.refill_turnaround_days,
     )
 
 
@@ -71,6 +81,9 @@ class PortalSettingsStore(Protocol):
 
     def set_modules(self, practice_id: str, *, modules: tuple[str, ...], by: str) -> PortalSettings:
         """Keep exactly these modules on for the practice's clients."""
+
+    def set_refill_turnaround(self, practice_id: str, *, days: int, by: str) -> PortalSettings:
+        """Set the practice's target for answering refill requests, in working days."""
 
 
 class PlatformPortalSettingsStore:
@@ -131,6 +144,27 @@ class PlatformPortalSettingsStore:
         finally:
             session.close()
 
+    def set_refill_turnaround(self, practice_id: str, *, days: int, by: str) -> PortalSettings:
+        now = utc_now()
+        session = create_standalone_session()
+        try:
+            statement = insert(PracticePortalSettingsRow).values(
+                practice_id=practice_id,
+                refill_turnaround_days=days,
+                updated_at=now,
+                updated_by=by,
+            )
+            session.execute(
+                statement.on_conflict_do_update(
+                    index_elements=["practice_id"],
+                    set_={"refill_turnaround_days": days, "updated_at": now, "updated_by": by},
+                )
+            )
+            session.commit()
+            return _from_row(session.get(PracticePortalSettingsRow, practice_id))
+        finally:
+            session.close()
+
 
 class InMemoryPortalSettingsStore:
     def __init__(self) -> None:
@@ -147,6 +181,11 @@ class InMemoryPortalSettingsStore:
 
     def set_modules(self, practice_id: str, *, modules: tuple[str, ...], by: str) -> PortalSettings:  # noqa: ARG002 — matches the port
         updated = replace(self.get(practice_id), enabled_modules=tuple(modules))
+        self.settings[practice_id] = updated
+        return updated
+
+    def set_refill_turnaround(self, practice_id: str, *, days: int, by: str) -> PortalSettings:  # noqa: ARG002 — matches the port
+        updated = replace(self.get(practice_id), refill_turnaround_days=days)
         self.settings[practice_id] = updated
         return updated
 
