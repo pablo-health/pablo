@@ -38,6 +38,9 @@ in one kept task) and words no kept task may contain.
 # On the note model this deployment is configured with (note_generation):
 GOOGLE_CLOUD_PROJECT=<project> scripts/run-homework-proposals-eval.sh
 
+# One Claude model alone, on the Anthropic API (ANTHROPIC_API_KEY):
+scripts/run-homework-proposals-eval.sh --model anthropic-api:<claude model id>
+
 # One model alone, on Amazon Bedrock:
 scripts/run-homework-proposals-eval.sh --model bedrock:<model or inference profile id>
 

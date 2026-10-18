@@ -22,7 +22,10 @@ Exit code: 0 when the gates hold, 1 when they do not, 2 on a setup problem.
     scripts/run-homework-proposals-eval.sh
     scripts/run-homework-proposals-eval.sh --case panic
     scripts/run-homework-proposals-eval.sh --json
+    scripts/run-homework-proposals-eval.sh --model anthropic-api:<claude model id>
     scripts/run-homework-proposals-eval.sh --model bedrock:<model or inference profile id>
+
+``anthropic-api:`` calls Claude on the Anthropic API with ``ANTHROPIC_API_KEY``.
 """
 
 from __future__ import annotations
@@ -34,12 +37,16 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any
 
+from evals.anthropic_api import direct_anthropic_gateway, direct_anthropic_model
 from evals.homework_proposals.cases import EvalCase, all_cases
 
 if TYPE_CHECKING:
     from app.homework.drafting import DraftedTask
 
 RECALL_GATE = 0.85
+
+#: Model prefixes that call Claude on the Anthropic API directly (synthetic evals only).
+_DIRECT = ("anthropic-api:", "anthropic-api-auto:", "anthropic-api-strict:")
 
 
 def _read(case: EvalCase, model: str | None) -> tuple[list[DraftedTask], int]:
@@ -51,11 +58,14 @@ def _read(case: EvalCase, model: str | None) -> tuple[list[DraftedTask], int]:
 
     fields = [PlanField(f.key, f.label, f.text) for f in case.fields]
     # With --model, that model alone, no fallback behind it; else the app's own routing.
-    drafter = (
-        HomeworkDrafter(llm_gateway=resolve_structured_llm_gateway(model), model=model)
-        if model
-        else HomeworkDrafter()
-    )
+    if model is not None and model.startswith(_DIRECT):
+        drafter = HomeworkDrafter(
+            llm_gateway=direct_anthropic_gateway(), model=direct_anthropic_model(model)
+        )
+    elif model:
+        drafter = HomeworkDrafter(llm_gateway=resolve_structured_llm_gateway(model), model=model)
+    else:
+        drafter = HomeworkDrafter()
     return drafter.read(fields)
 
 
@@ -114,8 +124,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    on_bedrock = (args.model or "").startswith("bedrock:")
-    if not on_bedrock and not (
+    elsewhere = (args.model or "").startswith(("bedrock:", *_DIRECT))
+    if not elsewhere and not (
         os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GCP_PROJECT_ID")
     ):
         print(
