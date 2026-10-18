@@ -23,7 +23,8 @@
   deployment serves hosts through the domain reconciler job, the host leaves
   the list at once and the job takes it down before its row goes.
 
-The writes are the practice owner's (see :func:`_manageable_practice_id`).
+The writes are the practice owner's or a practice admin's (see
+:func:`_manageable_practice_id`).
 The practice is always the caller's own, resolved from the caller, never taken
 from the request. Writes are audited: not PHI, but the primary portal host is
 where clients' links lead, so who changed it belongs on the record. So is the
@@ -64,7 +65,7 @@ from ..services.practice_domain_service import (
 from ..services.practice_domain_trigger import request_reconcile
 from ..sites.store import PracticeSiteStore
 from ._deps import practice_id_or_404
-from .users import _get_own_practice_as_owner
+from .users import _get_own_practice_as_admin
 
 router = APIRouter(prefix="/api/practice/domains", tags=["practice"])
 
@@ -72,11 +73,10 @@ router = APIRouter(prefix="/api/practice/domains", tags=["practice"])
 def _manageable_practice_id(user: User) -> str:
     """The caller's practice, if the caller may change its domains.
 
-    Owner-only today. When a practice-admin role exists, widening who may
-    manage domains is this function and nothing else.
+    The practice owner or a practice admin. Domains and Website both gate
+    here, so who may manage them changes in this function and nothing else.
     """
-    # Owner-only until a practice admin role exists; Domains and Website both widen here.
-    return _get_own_practice_as_owner(user).id
+    return _get_own_practice_as_admin(user).id
 
 
 def _hosted(practice_id: str) -> HostedAddressesResponse | None:

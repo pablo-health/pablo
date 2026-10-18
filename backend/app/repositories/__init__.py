@@ -139,6 +139,7 @@ from .patient_problem import (
     InMemoryPatientProblemRepository,
     PatientProblemRepository,
 )
+from .practice_admin import PracticeAdminRepository
 from .practice_note_type import (
     InMemoryPracticeNoteTypeRepository,
     PracticeNoteTypeRepository,
@@ -381,6 +382,13 @@ def get_instrument_license_repository() -> InstrumentLicenseRepository:
     return PostgresInstrumentLicenseRepository(_get_pg_session())
 
 
+def get_practice_admin_repository() -> PracticeAdminRepository:
+    """Get practice admin grant repository instance."""
+    from .postgres.practice_admin import PostgresPracticeAdminRepository
+
+    return PostgresPracticeAdminRepository(_get_pg_session())
+
+
 def get_practice_note_type_repository() -> PracticeNoteTypeRepository:
     """Get practice note-type repository instance."""
     from .postgres.practice_note_type import PostgresPracticeNoteTypeRepository
@@ -598,6 +606,7 @@ __all__ = [
     "PatientMessageRepository",
     "PatientProblemRepository",
     "PatientRepository",
+    "PracticeAdminRepository",
     "PracticeNoteTypeRepository",
     "RefillRequestRepository",
     "StoredNoteType",

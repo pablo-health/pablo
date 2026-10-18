@@ -105,7 +105,7 @@ const WITH_SUGGESTION = site({
 describe("WebsitePage", () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockStatus.mockResolvedValue({ is_practice_owner: true })
+    mockStatus.mockResolvedValue({ is_practice_owner: true, is_practice_admin: true })
   })
   afterEach(() => {
     vi.restoreAllMocks()
@@ -154,11 +154,11 @@ describe("WebsitePage", () => {
   })
 
   it("shows someone other than the owner the site, and no controls", async () => {
-    mockStatus.mockResolvedValue({ is_practice_owner: false })
+    mockStatus.mockResolvedValue({ is_practice_owner: false, is_practice_admin: false })
     mockGet.mockResolvedValue({ ...PUBLISHED, draft: WITH_DRAFT.draft })
     renderWithProviders(<WebsitePage />)
 
-    expect(await screen.findByText("Only the practice owner can change the website.")).toBeVisible()
+    expect(await screen.findByText("Only the practice owner or a practice admin can change the website.")).toBeVisible()
     expect(screen.getByTestId("website-version-1")).toBeVisible()
     expect(screen.queryByRole("button")).not.toBeInTheDocument()
   })
@@ -342,7 +342,7 @@ describe("WebsitePage", () => {
   })
 
   it("shows the suggestion without Accept or Edit to someone who can't change the website", async () => {
-    mockStatus.mockResolvedValue({ is_practice_owner: false })
+    mockStatus.mockResolvedValue({ is_practice_owner: false, is_practice_admin: false })
     mockGet.mockResolvedValue(WITH_SUGGESTION)
     renderWithProviders(<WebsitePage />)
 

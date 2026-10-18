@@ -228,6 +228,9 @@ def get_user_status(
             # Who may rename the practice or sign its BAA again. Same rule
             # the write routes enforce (_is_practice_owner).
             result["is_practice_owner"] = _is_practice_owner(practice_row, user)
+            # Who may change practice-wide settings: the owner, or a
+            # clinician the owner made a practice admin (_is_practice_admin).
+            result["is_practice_admin"] = _is_practice_admin(practice_row, user)
             # Who may read the activity on a client's record. The recorded
             # owner only — the same test the route and the row policy make,
             # which is narrower than the one above when a practice was
@@ -634,9 +637,9 @@ def update_professional_info(
     )
     if practice_fields_sent and _resolve_practice_id_for(user) is not None:
         # Name, address and phone belong to the practice, so only its owner
-        # may change them. Refuse before writing anything else, so a
-        # non-owner's request fails whole rather than half-applied.
-        _get_own_practice_as_owner(user)
+        # or a practice admin may change them. Refuse before writing anything
+        # else, so anyone else's request fails whole rather than half-applied.
+        _get_own_practice_as_admin(user)
 
     if request.legal_name is not None:
         user.legal_name = request.legal_name
@@ -748,6 +751,56 @@ def _get_own_practice_as_owner(user: User) -> "PracticeRow":
         )
 
     return practice
+
+
+def _is_practice_admin(practice: "PracticeRow", user: User) -> bool:
+    """Whether ``user`` may change ``practice``'s practice-wide settings.
+
+    The owner always may. Anyone else may when the owner has made them a
+    practice admin (``practice_admins`` in the practice's own schema, which
+    the request session is already pointed at).
+    """
+    if _is_practice_owner(practice, user):
+        return True
+    from ..repositories import get_practice_admin_repository
+
+    return get_practice_admin_repository().is_admin(user.id)
+
+
+def _get_own_practice_as_admin(user: User) -> "PracticeRow":
+    """Resolve the caller's own practice row, gated to its owner or an admin.
+
+    The owner-or-admin counterpart to ``_get_own_practice_as_owner``, which
+    stays the gate for what only the owner may do: granting and revoking
+    admins, and signing the BAA for the covered entity.
+    """
+    from ..db import get_db_session
+    from ..db.platform_models import PracticeRow
+
+    practice_id = _resolve_practice_id_for(user)
+    if practice_id is None:
+        raise NotFoundError("No practice mapping for this account", code="NO_PRACTICE")
+
+    practice = get_db_session().get(PracticeRow, practice_id)
+    if practice is None:
+        raise NotFoundError("Practice not found", {"practice_id": practice_id})
+
+    if not _is_practice_admin(practice, user):
+        raise ForbiddenError(
+            "Only the practice owner or a practice admin can change this setting",
+            code="NOT_PRACTICE_ADMIN",
+        )
+
+    return practice
+
+
+def require_practice_admin(user: User = Depends(get_current_user)) -> "PracticeRow":
+    """FastAPI dependency: the caller's practice, if they own it or are its admin.
+
+    For routes that change practice-wide settings. 403 for any other
+    clinician; MFA is required, as for every settings write.
+    """
+    return _get_own_practice_as_admin(user)
 
 
 @router.get("/me/practice/audio-retention")

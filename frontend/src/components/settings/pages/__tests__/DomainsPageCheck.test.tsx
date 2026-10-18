@@ -71,7 +71,7 @@ function row(): HTMLElement {
 describe("DomainsPage records table", () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockStatus.mockResolvedValue({ is_practice_owner: true })
+    mockStatus.mockResolvedValue({ is_practice_owner: true, is_practice_admin: true })
     mockWriteText.mockResolvedValue(undefined)
   })
 
@@ -142,7 +142,7 @@ describe("DomainsPage Check now", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.useFakeTimers({ shouldAdvanceTime: true })
-    mockStatus.mockResolvedValue({ is_practice_owner: true })
+    mockStatus.mockResolvedValue({ is_practice_owner: true, is_practice_admin: true })
   })
 
   afterEach(() => {
@@ -265,7 +265,7 @@ describe("DomainsPage Check now", () => {
 describe("DomainsPage portal address with the portal off", () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockStatus.mockResolvedValue({ is_practice_owner: true })
+    mockStatus.mockResolvedValue({ is_practice_owner: true, is_practice_admin: true })
   })
 
   it("says to turn the portal on, and links to it, while the practice doesn't offer it", async () => {

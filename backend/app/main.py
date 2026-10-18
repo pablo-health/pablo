@@ -114,6 +114,7 @@ from .routes import (
     patients,
     payment_webhooks,
     people_term,
+    practice_admins,
     practice_ai_notes_consent,
     practice_balances,
     practice_billing,
@@ -312,6 +313,7 @@ app.include_router(patient_problems.router)
 app.include_router(patient_chart_history.router)
 app.include_router(practice_billing.router)
 app.include_router(practice_domains.router)
+app.include_router(practice_admins.router)
 # The practice's website: managed in Settings > Website, served to its hosts.
 app.include_router(site_routes.router)
 app.include_router(site_public_routes.router)

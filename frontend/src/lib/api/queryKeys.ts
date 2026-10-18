@@ -365,6 +365,11 @@ const baseQueryKeys = {
     all: ["audioRetention"] as const,
   },
 
+  // Who besides the owner may change practice-wide settings
+  practiceAdmins: {
+    all: ["practiceAdmins"] as const,
+  },
+
   // Medication list query keys
   medications: {
     all: ["medications"] as const,
