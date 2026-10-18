@@ -23,11 +23,21 @@ import { queryKeys } from "@/lib/api/queryKeys"
 import { withDashboard } from "./dashboardFreshness"
 import { useAuthQuery, useAuthMutation } from "./useAuthQuery"
 
-export function usePatientList(params?: PatientListParams, token?: string) {
+/**
+ * A page of the roster. Reading it records a view of every client on the
+ * page, so a picker that may go unused passes `enabled: false` until someone
+ * starts looking.
+ */
+export function usePatientList(
+  params?: PatientListParams,
+  token?: string,
+  options?: { enabled?: boolean },
+) {
   return useAuthQuery({
     queryKey: queryKeys.patients.list(params),
     queryFn: () => listPatients(params, token),
     staleTime: 60 * 1000,
+    enabled: options?.enabled ?? true,
   })
 }
 

@@ -40,6 +40,8 @@ class Task:
     parent_task_id: str | None = None
     goal_key: str | None = None
     repeat_rule: str | None = None
+    patient_id: str | None = None
+    """The client the task is about; ``None`` for a task about nobody in particular."""
 
 
 @dataclass(frozen=True)
@@ -50,6 +52,9 @@ class TaskFilter:
     parent_task_id: str | None = None
     goal_key: str | None = None
     source: str | None = None
+    patient_id: str | None = None
+    open_only: bool = False
+    """Only the tasks not yet done."""
 
 
 class PostgresTaskRepository:
@@ -67,6 +72,10 @@ class PostgresTaskRepository:
             query = query.where(TaskRow.goal_key == f.goal_key)
         if f.source is not None:
             query = query.where(TaskRow.source == f.source)
+        if f.patient_id is not None:
+            query = query.where(TaskRow.patient_id == f.patient_id)
+        if f.open_only:
+            query = query.where(TaskRow.completed_at.is_(None))
         rows = self._session.execute(query.order_by(TaskRow.created_at)).scalars().all()
         return [_row_to_task(r) for r in rows]
 
@@ -117,6 +126,8 @@ class PostgresComplianceItemRepository(PostgresTaskRepository):
                 parent_task_id=f.parent_task_id,
                 goal_key=f.goal_key,
                 source=f.source,
+                patient_id=f.patient_id,
+                open_only=f.open_only,
             ),
         )
 
@@ -137,6 +148,7 @@ def _row_to_task(row: TaskRow) -> Task:
         parent_task_id=row.parent_task_id,
         goal_key=row.goal_key,
         repeat_rule=row.repeat_rule,
+        patient_id=row.patient_id,
     )
 
 
@@ -157,3 +169,4 @@ def _task_to_row(task: Task, row: TaskRow) -> None:
     row.parent_task_id = task.parent_task_id
     row.goal_key = task.goal_key
     row.repeat_rule = task.repeat_rule
+    row.patient_id = task.patient_id

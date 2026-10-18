@@ -3106,6 +3106,13 @@ class TaskRow(Base):
     and leaving it behind would scatter orphaned steps across the dashboard.
     ``goal_key`` links a task to a goal kept outside this table; the engine
     stores it and filters on it and gives it no meaning of its own.
+
+    ``patient_id`` ties a task to one client ("send Omar the release form").
+    The task is still its owner's: the row policy stays keyed on ``user_id``,
+    so a co-treating clinician never sees another's task about a shared
+    client. Linking a client, and reading the link back, go through the
+    client's own access check in the route. Deleting the client unlinks the
+    task rather than deleting it: the clinician may still have the thing to do.
     """
 
     __tablename__ = "tasks"
@@ -3154,6 +3161,9 @@ class TaskRow(Base):
     )
     goal_key: Mapped[str | None] = mapped_column(String(128))
     repeat_rule: Mapped[str | None] = mapped_column(String(16))
+    patient_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("patients.id", ondelete="SET NULL")
+    )
 
     __table_args__ = (
         # One automatically-filed row per thing per clinician. Partial, because
@@ -3173,8 +3183,15 @@ class TaskRow(Base):
             "goal_key",
             postgresql_where=text("goal_key IS NOT NULL"),
         ),
+        # A client's open tasks, read on their chart.
+        Index(
+            "ix_tasks_user_patient_id",
+            "user_id",
+            "patient_id",
+            postgresql_where=text("patient_id IS NOT NULL"),
+        ),
         CheckConstraint(
-            "source IN ('manual', 'reminder', 'plan', 'import')",
+            "source IN ('manual', 'reminder', 'plan', 'import', 'session')",
             name="ck_tasks_source",
         ),
         CheckConstraint(

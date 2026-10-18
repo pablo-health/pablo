@@ -1596,8 +1596,9 @@ CREATE TABLE __TENANT_SCHEMA__.tasks (
     parent_task_id uuid,
     goal_key character varying(128),
     repeat_rule character varying(16),
+    patient_id uuid,
     CONSTRAINT ck_tasks_repeat_rule CHECK (((repeat_rule IS NULL) OR ((repeat_rule)::text = ANY ((ARRAY['weekly'::character varying, 'monthly'::character varying, 'quarterly'::character varying, 'yearly'::character varying])::text[])))),
-    CONSTRAINT ck_tasks_source CHECK (((source)::text = ANY ((ARRAY['manual'::character varying, 'reminder'::character varying, 'plan'::character varying, 'import'::character varying])::text[])))
+    CONSTRAINT ck_tasks_source CHECK (((source)::text = ANY ((ARRAY['manual'::character varying, 'reminder'::character varying, 'plan'::character varying, 'import'::character varying, 'session'::character varying])::text[])))
 );
 
 
@@ -2662,6 +2663,10 @@ CREATE INDEX ix_tasks_user_id ON __TENANT_SCHEMA__.tasks USING btree (user_id);
 
 
 
+CREATE INDEX ix_tasks_user_patient_id ON __TENANT_SCHEMA__.tasks USING btree (user_id, patient_id) WHERE (patient_id IS NOT NULL);
+
+
+
 CREATE INDEX ix_therapy_sessions_deleted_at_partial ON __TENANT_SCHEMA__.therapy_sessions USING btree (deleted_at) WHERE (deleted_at IS NOT NULL);
 
 
@@ -3230,6 +3235,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.supervision_relationships
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.tasks
     ADD CONSTRAINT tasks_parent_task_id_fkey FOREIGN KEY (parent_task_id) REFERENCES __TENANT_SCHEMA__.tasks(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.tasks
+    ADD CONSTRAINT tasks_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE SET NULL;
 
 
 

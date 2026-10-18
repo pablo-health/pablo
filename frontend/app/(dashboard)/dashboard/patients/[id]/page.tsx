@@ -5,6 +5,7 @@
 import { use } from "react"
 import { ArrowLeft } from "lucide-react"
 import Link from "next/link"
+import { ClientTasks } from "@/components/patients/ClientTasks"
 import { EditPatientButton } from "@/components/patients/EditPatientButton"
 import { PatientExport } from "@/components/patients/PatientExport"
 import { PatientSummary } from "@/components/patients/PatientSummary"
@@ -97,6 +98,8 @@ export default function PatientDetailPage({ params, searchParams }: PatientDetai
       </div>
 
       <PatientSummary patient={patient} />
+
+      <ClientTasks patientId={patient.id} patientName={`${patient.first_name} ${patient.last_name}`} />
 
       <PatientChartTabs patientId={patient.id} initialTab={tab} />
 

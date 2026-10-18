@@ -300,7 +300,7 @@ const baseQueryKeys = {
   tasks: {
     all: ["tasks"] as const,
     templates: () => [...baseQueryKeys.tasks.all, "templates"] as const,
-    list: (filters: Record<string, string | undefined> = {}) =>
+    list: (filters: Record<string, string | boolean | undefined> = {}) =>
       [...baseQueryKeys.tasks.all, "list", filters] as const,
     documents: (taskId: string) => [...baseQueryKeys.tasks.all, "documents", taskId] as const,
   },
