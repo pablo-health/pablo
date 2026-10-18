@@ -164,13 +164,49 @@ class ListItem:
     text: str
 
 
-def list_items(content: dict[str, Any] | None, source: HomeworkSource) -> list[ListItem]:
+_NARRATIVE_LABEL = re.compile(r"\*\*([^*\n]+):\*\*")
+_BULLET = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
+
+
+def narrative_items(text: str, label: str) -> list[str] | None:
+    """A list field's items as a narrative section writes them, ``None`` without its label.
+
+    A SOAP note the clinician has edited is kept one string per section, each
+    field under its bold label (``**Homework Assignments:**``) as a bulleted
+    list. Lines under the label up to the next one are the items, a bullet
+    stripped; a line with no bullet continues the item before it.
+    """
+    labels = list(_NARRATIVE_LABEL.finditer(text))
+    for at, found in enumerate(labels):
+        if found.group(1).strip().lower() != label.strip().lower():
+            continue
+        end = labels[at + 1].start() if at + 1 < len(labels) else len(text)
+        items: list[str] = []
+        for line in text[found.end() : end].splitlines():
+            if not line.strip():
+                continue
+            if _BULLET.match(line) or not items:
+                items.append(_BULLET.sub("", line).strip())
+            else:
+                items[-1] = f"{items[-1]} {line.strip()}"
+        return items
+    return None
+
+
+def list_items(
+    content: dict[str, Any] | None, source: HomeworkSource, label: str | None = None
+) -> list[ListItem]:
     """The homework list's items as proposals, placeholders and empties dropped.
 
     ``item_index`` is the item's position in the list as stored, so it stays
-    the same however many placeholders sit before it.
+    the same however many placeholders sit before it. A section kept as one
+    narrative string (an edited SOAP note) is read under the field's
+    ``label``.
     """
     value = field_value(content, source)
+    block = (content or {}).get(source.section)
+    if value is None and isinstance(block, str) and label:
+        value = narrative_items(block, label)
     items = value if isinstance(value, list) else [value]
     out: list[ListItem] = []
     for index, item in enumerate(items):

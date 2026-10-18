@@ -79,14 +79,16 @@ def _suggestion(field: str, index: int, quote: str, text: str) -> DraftedProposa
     )
 
 
+def _labels(definition: NoteTypeDefinition | None) -> dict[str, str]:
+    if definition is None:
+        return {}
+    return {f"{s.key}.{f.key}": f.label for s in definition.sections for f in s.fields}
+
+
 def _prose_fields(
     definition: NoteTypeDefinition | None, content: Mapping[str, Any] | None
 ) -> list[PlanField]:
-    labels = (
-        {f"{s.key}.{f.key}": f.label for s in definition.sections for f in s.fields}
-        if definition is not None
-        else {}
-    )
+    labels = _labels(definition)
     fields: list[PlanField] = []
     for source in sources_for_definition(definition):
         if source.shape != "text":
@@ -127,10 +129,11 @@ def _from_list(
     definition: NoteTypeDefinition | None, content: Mapping[str, Any] | None
 ) -> dict[str, DraftedProposal]:
     seeds: dict[str, DraftedProposal] = {}
+    labels = _labels(definition)
     for source in sources_for_definition(definition):
         if source.shape != "list":
             continue
-        for item in list_items(dict(content or {}), source):
+        for item in list_items(dict(content or {}), source, labels.get(source.key)):
             seed = _suggestion(item.source_field, item.item_index, item.quote, item.text)
             seeds[seed.item_key] = seed
     return seeds

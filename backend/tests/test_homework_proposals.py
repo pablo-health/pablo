@@ -90,6 +90,28 @@ def test_a_soap_note_is_suggested_its_homework_when_stored_and_after_an_edit() -
     assert _pending(repo, note) == {"plan.homework_assignments#0": "Keep a worry log each evening."}
 
 
+def test_an_edited_soap_note_is_read_from_its_narrative_plan() -> None:
+    """The editor saves a SOAP note one string per section; dropping its homework
+    there would empty the review the moment the clinician touched the note."""
+    soap = get_default_registry().get("soap")
+    repo = InMemoryChartProposalRepository()
+    note = _note("soap")
+    refresh_homework(repo, note, soap, _soap("Client will keep a worry log.", "Walk after dinner."))
+    narrative = {
+        "plan": (
+            "**Interventions Used:**\n- Cognitive restructuring.\n\n"
+            "**Homework Assignments:**\n- Client will keep a worry log.\n- Walk after\n  dinner.\n"
+            "- Call a friend this weekend.\n\n**Next Session:** Two weeks."
+        )
+    }
+    refresh_homework(repo, note, soap, narrative)
+    assert _pending(repo, note) == {
+        "plan.homework_assignments#0": "Keep a worry log.",
+        "plan.homework_assignments#1": "Walk after dinner.",
+        "plan.homework_assignments#2": "Call a friend this weekend.",
+    }
+
+
 def test_a_decided_suggestion_is_never_offered_again() -> None:
     soap = get_default_registry().get("soap")
     repo = InMemoryChartProposalRepository()

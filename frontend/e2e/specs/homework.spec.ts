@@ -60,16 +60,20 @@ interface ChartUpdates {
 
 let visits = 0
 
+/**
+ * A SOAP note's edited body as the editor saves it: one narrative string per
+ * section, each field under its bold label, a list field as bullets.
+ */
 function soapWithHomework(homework: string[]) {
   return {
-    subjective: { chief_complaint: [{ text: "Worry about work presentations." }] },
-    objective: { mood_affect: [{ text: "Anxious, congruent." }] },
-    assessment: { progress: [{ text: "Using thought records with some success." }] },
-    plan: {
-      interventions_used: [{ text: "Cognitive restructuring." }],
-      homework_assignments: homework.map((text) => ({ text })),
-      next_steps: [{ text: "Review homework next session." }],
-    },
+    subjective: "**Chief Complaint:** Worry about work presentations.",
+    objective: "**Affect Observed:** Anxious, congruent.",
+    assessment: "**Progress:** Using thought records with some success.",
+    plan: [
+      "**Interventions Used:**\n- Cognitive restructuring.",
+      `**Homework Assignments:**\n${homework.map((t) => `- ${t}`).join("\n")}`,
+      "**Next Steps:**\n- Review homework next session.",
+    ].join("\n\n"),
   }
 }
 
@@ -264,13 +268,14 @@ test("homework is decided at signing, with the note's other chart updates", asyn
   const noteId = detail.note?.id
   if (!noteId) throw new Error(`session ${session.id} has no note`)
 
-  // The clinician's edit to the plan is what the review suggests.
-  await api.patch(`/api/notes/${noteId}`, {
-    content_edited: soapWithHomework(["Keep a worry log.", "Walk after dinner."]),
-  })
-  await api.patch(`/api/notes/${noteId}`, {
-    content_edited: soapWithHomework(["Keep a worry log each evening.", "Walk after dinner."]),
-  })
+  // The draft's homework is suggested as drafted; the clinician's edits to the
+  // plan are what the review ends up suggesting.
+  for (const homework of [
+    ["Keep a worry log.", "Walk after dinner."],
+    ["Keep a worry log each evening.", "Walk after dinner."],
+  ]) {
+    await api.patch(`/api/notes/${noteId}`, { content_edited: soapWithHomework(homework) })
+  }
 
   await page.goto(`/dashboard/sessions/${session.id}`)
   await page.getByRole("button", { name: "Sign and lock" }).click()

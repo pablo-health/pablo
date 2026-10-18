@@ -25,6 +25,17 @@ const isNoteRequest = (suffix: string, method = "POST") => (response: {
 
 const SIGNER = "Sam Ortiz"
 
+/**
+ * The note's own Edit button. A signed note can still show the chart updates
+ * left undecided at signing (the drafting stand-in suggests homework), each
+ * with an Edit of its own; those are not the note's.
+ */
+function noteEdit(page: Page) {
+  return page.locator(
+    'xpath=//button[normalize-space()="Edit"][not(ancestor::*[@data-testid="chart-updates"])]',
+  )
+}
+
 async function signInDialog(page: Page, credentials: string) {
   const dialog = page.getByRole("dialog", { name: "Sign and lock note" })
   await dialog.getByLabel("Your name").fill(SIGNER)
@@ -66,7 +77,7 @@ test("sign and lock a note, add to it, unlock it with a reason and sign it again
   await page.reload()
   const block = page.getByTestId("signature-block")
   await expect(block).toContainText(`Electronically signed by ${SIGNER}, LMFT ${marker}`)
-  await expect(page.getByRole("button", { name: /^Edit$/ })).toHaveCount(0)
+  await expect(noteEdit(page)).toHaveCount(0)
   const panel = page.getByRole("region", { name: "Signature" })
   await expect(panel.getByRole("button", { name: "Add addendum" })).toBeVisible()
   await expect(panel.getByRole("button", { name: "Unlock" })).toBeVisible()
@@ -95,7 +106,7 @@ test("sign and lock a note, add to it, unlock it with a reason and sign it again
   // Edit the note, then sign it again.
   const correction = `Practice paced breathing ${marker}`
   await expect(unlockDialog).toBeHidden()
-  await page.getByRole("button", { name: /^Edit$/ }).click()
+  await noteEdit(page).click()
   await page.getByLabel("Next Steps").fill(correction)
   const saved = page.waitForResponse(isNoteRequest("", "PATCH"))
   await page.getByRole("button", { name: "Save Changes" }).click()
