@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ..models.audit import (
@@ -74,6 +75,50 @@ _COALESCED_READ_ACTIONS: frozenset[AuditAction] = frozenset(
 )
 _COALESCED_READ_ACTION_VALUES: frozenset[str] = frozenset(a.value for a in _COALESCED_READ_ACTIONS)
 
+# A per-day key is dated, so it only has to outlive its own day.
+_CALENDAR_DAY_KEY_TTL_SECONDS = 2 * 24 * 60 * 60
+
+
+@dataclass(frozen=True)
+class CoalesceWindow:
+    """How long repeat reads of one record by one user collapse to one audit row.
+
+    Exactly one of the two: ``seconds`` is a fixed window from the first read
+    (the same rule as ``audit_read_coalesce_seconds``); ``calendar_day`` is
+    one row per record per user per UTC day, whatever the time of the read.
+    """
+
+    seconds: int = 0
+    calendar_day: bool = False
+
+    def __post_init__(self) -> None:
+        if (self.seconds > 0) == self.calendar_day:
+            msg = "CoalesceWindow needs exactly one of seconds > 0 or calendar_day"
+            raise ValueError(msg)
+
+
+# Read actions registered with their own window (``register_coalesced_read``).
+# Independent of ``audit_read_coalesce_seconds``: registering one action never
+# changes how any other action is recorded.
+_REGISTERED_WINDOWS: dict[str, CoalesceWindow] = {}
+
+
+def register_coalesced_read(action: AuditAction | str, window: CoalesceWindow) -> None:
+    """Coalesce repeat reads recorded as ``action`` within ``window``.
+
+    For a read that discloses identifiers or short facts, not record content,
+    and repeats on every page load: a screen listing who needs attention
+    today, say, which would otherwise record the same disclosure each time it
+    refreshes. Never register an action that discloses record content; those
+    keep one row per read. Applies only where Redis is configured, and fails
+    open like the built-in gate: a Redis problem writes every row.
+    """
+    value = _action_value(action)
+    if value in _COALESCED_READ_ACTION_VALUES:
+        msg = f"{value} is already coalesced by audit_read_coalesce_seconds"
+        raise ValueError(msg)
+    _REGISTERED_WINDOWS[value] = window
+
 
 def _action_value(action: AuditAction | str) -> str:
     """The stored string for an action.
@@ -135,6 +180,28 @@ class AuditService:
     def _coalesce_key(entry: AuditLogEntry) -> str:
         return f"audit:seen:{entry.user_id}:{entry.action}:{entry.resource_id}"
 
+    def _coalesce_gate(self, entry: AuditLogEntry) -> tuple[str, int] | None:
+        """The Redis key and expiry that gate ``entry``, or ``None`` if it is never coalesced.
+
+        A registered action (``register_coalesced_read``) uses its own window
+        whatever ``audit_read_coalesce_seconds`` says. A built-in coalesced
+        read uses that setting, and is not coalesced when it is 0. A
+        calendar-day window dates its key by the entry's own UTC timestamp,
+        so the first read of each day writes its row.
+        """
+        window = _REGISTERED_WINDOWS.get(entry.action)
+        if window is not None:
+            if window.calendar_day:
+                day = entry.timestamp[:10]
+                return f"{self._coalesce_key(entry)}:{day}", _CALENDAR_DAY_KEY_TTL_SECONDS
+            return self._coalesce_key(entry), window.seconds
+        if entry.action not in _COALESCED_READ_ACTION_VALUES:
+            return None
+        ttl = self._coalesce_ttl()
+        if ttl <= 0:
+            return None
+        return self._coalesce_key(entry), ttl
+
     def _should_skip_duplicate(self, entry: AuditLogEntry) -> bool:
         """True if this exact read was already recorded in the active window.
 
@@ -152,9 +219,10 @@ class AuditService:
         posture. Redis only decides WHETHER to write; Postgres remains the
         synchronous system-of-record and never stores the event itself.
         """
-        ttl = self._coalesce_ttl()
-        if ttl <= 0 or entry.action not in _COALESCED_READ_ACTION_VALUES:
+        gate = self._coalesce_gate(entry)
+        if gate is None:
             return False
+        key, ttl = gate
         try:
             from ..redis_client import get_redis_client
 
@@ -163,7 +231,7 @@ class AuditService:
                 return False
             # True when the key was set (first access), None when it already
             # existed (already logged this window) -> skip the duplicate.
-            first_time = redis.set(self._coalesce_key(entry), "1", nx=True, ex=ttl)
+            first_time = redis.set(key, "1", nx=True, ex=ttl)
             return first_time is None
         except Exception:
             logger.warning("Audit coalesce check failed; writing row (fail-open)", exc_info=True)
@@ -179,10 +247,11 @@ class AuditService:
         a Redis problem writes every row.
         """
         skip = [False] * len(entries)
-        ttl = self._coalesce_ttl()
-        if ttl <= 0:
-            return skip
-        gated = [i for i, e in enumerate(entries) if e.action in _COALESCED_READ_ACTION_VALUES]
+        gated = [
+            (i, gate)
+            for i, entry in enumerate(entries)
+            if (gate := self._coalesce_gate(entry)) is not None
+        ]
         if not gated:
             return skip
         try:
@@ -192,9 +261,9 @@ class AuditService:
             if redis is None:
                 return skip
             pipe = redis.pipeline()
-            for i in gated:
-                pipe.set(self._coalesce_key(entries[i]), "1", nx=True, ex=ttl)
-            for i, first_time in zip(gated, pipe.execute(), strict=True):
+            for _i, (key, ttl) in gated:
+                pipe.set(key, "1", nx=True, ex=ttl)
+            for (i, _gate), first_time in zip(gated, pipe.execute(), strict=True):
                 skip[i] = first_time is None
         except Exception:
             logger.warning("Audit coalesce check failed; writing rows (fail-open)", exc_info=True)
