@@ -239,7 +239,7 @@ def _entries(audit: AuditService) -> list[Any]:
     return [call.args[0] for call in audit._repo.append.call_args_list]
 
 
-def _refill(world: World) -> str:
+def _refill(world: World, due_at: datetime | None = None) -> str:
     now = utc_now()
     request = RefillRequest(
         id=_id(),
@@ -251,6 +251,7 @@ def _refill(world: World) -> str:
         status=REFILL_STATUS_REQUESTED,
         created_at=now,
         updated_at=now,
+        due_at=due_at,
     )
     world.refills.add(request)
     return request.id
@@ -696,6 +697,22 @@ class TestListAndCount:
         world.registry.register_enricher(Flag())
 
         assert _ids(_open(client)) == [urgent, new, old]
+
+    def test_items_with_a_due_time_come_before_the_rest_soonest_due_first(
+        self, world: World, client: TestClient
+    ) -> None:
+        # Catches the Inbox listing a refill by when it arrived, so the one
+        # nearest the practice's target sinks under newer messages.
+        message = _client_message(world, _id(), at=utc_now() - timedelta(hours=1), body="new")
+        later = _refill(world, due_at=utc_now() + timedelta(days=3))
+        sooner = _refill(world, due_at=utc_now() + timedelta(days=1))
+        undated = _refill(world)
+
+        items = _open(client)
+
+        # The undated refill arrived after the message, so newest first holds there.
+        assert _ids(items) == [sooner, later, undated, message]
+        assert items[0]["due_at"] is not None
 
 
 # ── the seams ────────────────────────────────────────────────────────────

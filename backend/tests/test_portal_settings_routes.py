@@ -102,7 +102,12 @@ def client(
 
 
 def test_a_practice_that_was_never_asked_does_not_offer_the_portal(client: TestClient) -> None:
-    assert client.get(URL).json() == {"enabled": False, "decided": False, "modules": ALL_ON}
+    assert client.get(URL).json() == {
+        "enabled": False,
+        "decided": False,
+        "modules": ALL_ON,
+        "refill_turnaround_days": 2,
+    }
 
 
 def test_turning_it_on_mints_the_address_and_records_the_decision(
@@ -111,7 +116,12 @@ def test_turning_it_on_mints_the_address_and_records_the_decision(
     response = client.put(URL, json={"enabled": True})
 
     assert response.status_code == 200
-    assert response.json() == {"enabled": True, "decided": True, "modules": ALL_ON}
+    assert response.json() == {
+        "enabled": True,
+        "decided": True,
+        "modules": ALL_ON,
+        "refill_turnaround_days": 2,
+    }
     assert minted == [PRACTICE_ID]
     assert store.get(PRACTICE_ID).enabled is True
 
@@ -278,3 +288,40 @@ def test_a_module_change_is_audited_with_the_lists_only(
             "new": ["intake", "messaging", "refills"],
         }
     }
+
+
+# ── the refill turnaround target ────────────────────────────────────────
+
+
+def test_the_refill_target_starts_at_two_working_days(client: TestClient) -> None:
+    assert client.get(URL).json()["refill_turnaround_days"] == 2
+
+
+def test_the_refill_target_is_saved_and_audited_old_and_new(
+    client: TestClient, store: InMemoryPortalSettingsStore, audit: _RecordingAudit
+) -> None:
+    response = client.put(URL, json={"refill_turnaround_days": 3})
+
+    assert response.status_code == 200
+    assert response.json()["refill_turnaround_days"] == 3
+    assert store.get(PRACTICE_ID).refill_turnaround_days == 3
+    assert audit.entries[-1]["changes"] == {"refill_turnaround_days": {"old": 2, "new": 3}}
+
+
+def test_saving_the_same_refill_target_writes_no_audit_entry(
+    client: TestClient, audit: _RecordingAudit
+) -> None:
+    client.put(URL, json={"refill_turnaround_days": 2})
+
+    assert audit.entries == []
+
+
+@pytest.mark.parametrize("days", [0, 11, -1])
+def test_a_refill_target_outside_the_range_is_refused(
+    client: TestClient, store: InMemoryPortalSettingsStore, days: int
+) -> None:
+    # Catches a zero-day target, which would make every request overdue on arrival.
+    response = client.put(URL, json={"refill_turnaround_days": days})
+
+    assert response.status_code == 422
+    assert store.get(PRACTICE_ID).refill_turnaround_days == 2

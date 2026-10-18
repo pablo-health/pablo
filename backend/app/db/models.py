@@ -2139,6 +2139,11 @@ class RefillRequestRow(Base):
     decided_by_user_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     prescriber_note: Mapped[str | None] = mapped_column(Text)
+    #: When the practice means to have answered by: the end of the last
+    #: working day of its turnaround target, fixed when the request arrives.
+    #: The practice's own target, never on the patient surface. ``None`` on
+    #: requests from before the target existed; those sort by ``created_at``.
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 

@@ -16,8 +16,9 @@ patient router stays unmounted unless configured is asserted at the end.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 import pytest
 from app.api_errors import register_exception_handlers
@@ -49,6 +50,8 @@ from app.services.refill_request_hooks import (
     RefillRequestEvent,
     get_refill_request_hook_registry,
 )
+from app.services.refill_turnaround import get_refill_due_clock
+from app.services.working_days import WorkingCalendar, due_at
 from app.utcnow import utc_now
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -123,6 +126,22 @@ def notices() -> CapturingNoticeDelivery:
     return CapturingNoticeDelivery()
 
 
+class _RecordingDueClock:
+    """The practice's calendar, without the database: Monday to Friday in New York."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, datetime]] = []
+
+    def __call__(self, practice_schema: str, submitted_at: datetime) -> datetime:
+        self.calls.append((practice_schema, submitted_at))
+        return due_at(submitted_at, 2, WorkingCalendar(), ZoneInfo("America/New_York"))
+
+
+@pytest.fixture
+def due_clock() -> _RecordingDueClock:
+    return _RecordingDueClock()
+
+
 @pytest.fixture(autouse=True)
 def hooks() -> RefillRequestHookRegistry:
     registry = get_refill_request_hook_registry()
@@ -137,6 +156,7 @@ def refill_client(
     refill_repo: InMemoryRefillRequestRepository,
     patients: InMemoryPatientRepository,
     notices: CapturingNoticeDelivery,
+    due_clock: _RecordingDueClock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> TestClient:
     """Both refill routers on one app, sharing the shared app's overrides.
@@ -153,6 +173,7 @@ def refill_client(
     app.dependency_overrides[get_clinician_refill_request_repository] = lambda: refill_repo
     app.dependency_overrides[get_clinician_patient_repository] = lambda: patients
     app.dependency_overrides[get_notice_delivery] = lambda: notices
+    app.dependency_overrides[get_refill_due_clock] = lambda: due_clock
     monkeypatch.setattr(patient_context_module, "get_db_session", object)
     monkeypatch.setattr(patient_context_module, "set_tenant_schema", lambda _s, _schema: None)
     monkeypatch.setattr(patient_context_module, "arm_current_patient_id", lambda _s, _p: None)
@@ -256,6 +277,25 @@ class TestPatientAsks:
         assert [r.id for r in refill_repo.list_for_patient(_PATIENT_A)] == [body["id"]]
         assert refill_repo.list_for_patient(_PATIENT_B) == []
 
+    def test_the_request_is_stamped_with_the_practices_due_time_when_it_arrives(
+        self,
+        refill_client: TestClient,
+        refill_repo: InMemoryRefillRequestRepository,
+        due_clock: _RecordingDueClock,
+    ) -> None:
+        # Catches a request stored with no due time (it would sort last
+        # forever) or one dated from anything but its own arrival.
+        body = _ask(refill_client, medication_id=_MED_A)
+
+        (stored,) = refill_repo.list_for_patient(_PATIENT_A)
+        assert due_clock.calls == [("practice_test", stored.created_at)]
+        assert stored.due_at == due_clock(*due_clock.calls[0])
+        assert stored.due_at > stored.created_at
+        # The practice's own target: the patient's view does not carry it.
+        assert "due_at" not in body
+        mine = refill_client.get(PATIENT_BASE, headers=_auth(_TOKEN_A)).json()
+        assert "due_at" not in mine["data"][0]
+
     def test_they_see_their_own_requests_newest_first_and_nobody_elses(
         self, refill_client: TestClient
     ) -> None:
@@ -347,6 +387,7 @@ def _seed(
     *,
     minutes_ago: int,
     status: str = "requested",
+    due_in_hours: int | None = None,
 ) -> None:
     created = utc_now() - timedelta(minutes=minutes_ago)
     repo.add(
@@ -361,11 +402,31 @@ def _seed(
             created_at=created,
             updated_at=created,
             decided_at=None if status == "requested" else created,
+            due_at=None if due_in_hours is None else utc_now() + timedelta(hours=due_in_hours),
         )
     )
 
 
 class TestClinicianQueue:
+    def test_pending_is_soonest_due_first_then_the_undated_oldest_first(
+        self,
+        refill_client: TestClient,
+        refill_repo: InMemoryRefillRequestRepository,
+        mock_user_id: str,
+    ) -> None:
+        # Catches the queue still ordering by arrival, which puts a request
+        # that is due today under one that arrived earlier and is due later.
+        _seed(refill_repo, "undated", _PATIENT_A, minutes_ago=500)
+        _seed(refill_repo, "due-later", _PATIENT_A, minutes_ago=300, due_in_hours=48)
+        _seed(refill_repo, "due-today", _PATIENT_A, minutes_ago=5, due_in_hours=3)
+        refill_repo.grant_access(_PATIENT_A, mock_user_id)
+
+        body = refill_client.get(CLINICIAN_BASE).json()
+
+        assert [r["id"] for r in body["data"]] == ["due-today", "due-later", "undated"]
+        assert body["data"][0]["due_at"] is not None
+        assert body["data"][2]["due_at"] is None
+
     def test_pending_is_oldest_first_and_only_granted_patients(
         self,
         refill_client: TestClient,

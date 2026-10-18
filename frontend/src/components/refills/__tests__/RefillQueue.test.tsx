@@ -54,6 +54,7 @@ function request(overrides: Partial<ClinicianRefillRequest> = {}): ClinicianRefi
     decided_at: null,
     decided_by_user_id: null,
     prescriber_note: null,
+    due_at: null,
     ...overrides,
   }
 }
@@ -111,6 +112,35 @@ describe("RefillQueue", () => {
       "href",
       "/dashboard/patients/patient-1",
     )
+  })
+
+  it("shows each request's due day, in the order the queue comes in", () => {
+    // Catches the page re-sorting by arrival, or dropping the due day.
+    vi.useFakeTimers({ toFake: ["Date"] })
+    vi.setSystemTime(new Date("2026-10-12T14:00:00Z")) // Monday morning in New York
+    try {
+      queues({
+        data: {
+          data: [
+            request({ id: "overdue", due_at: "2026-10-09T03:59:59Z" }),
+            request({ id: "thursday", due_at: "2026-10-16T03:59:59Z" }),
+            request({ id: "undated", due_at: null }),
+          ],
+          total: 3,
+        },
+      })
+      render(<RefillQueue />)
+
+      const rows = screen.getAllByRole("listitem").map((li) => li.getAttribute("data-testid"))
+      expect(rows).toEqual(["refill-row-overdue", "refill-row-thursday", "refill-row-undated"])
+      expect(screen.getByTestId("refill-row-overdue")).toHaveTextContent("Was due Thursday")
+      expect(screen.getByTestId("refill-row-thursday")).toHaveTextContent("Due Thursday")
+      expect(
+        screen.getByTestId("refill-row-undated").querySelector("[data-testid=refill-due]"),
+      ).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it("records a decision in two clicks, with the note trimmed", async () => {

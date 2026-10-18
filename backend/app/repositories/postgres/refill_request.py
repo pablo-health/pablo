@@ -59,6 +59,7 @@ def _request(row: RefillRequestRow) -> RefillRequest:
         decided_by_user_id=row.decided_by_user_id,
         decided_at=row.decided_at,
         prescriber_note=row.prescriber_note,
+        due_at=row.due_at,
     )
 
 
@@ -125,6 +126,7 @@ class PostgresRefillRequestRepository(RefillRequestRepository):
             pharmacy_text=request.pharmacy_text,
             patient_note=request.patient_note,
             status=request.status,
+            due_at=request.due_at,
             created_at=request.created_at,
             updated_at=request.updated_at,
         )
@@ -149,8 +151,9 @@ class PostgresRefillRequestRepository(RefillRequestRepository):
     def list_queue(self, user_id: str, view: RefillQueueView) -> list[RefillQueueEntry]:
         query = _entry_query(user_id)
         if view == "pending":
+            # Mirrors :func:`~app.models.refill_request.queue_order_key`.
             query = query.where(RefillRequestRow.status == REFILL_STATUS_REQUESTED).order_by(
-                RefillRequestRow.created_at.asc()
+                RefillRequestRow.due_at.asc().nulls_last(), RefillRequestRow.created_at.asc()
             )
         else:
             query = (

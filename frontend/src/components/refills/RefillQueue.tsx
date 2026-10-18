@@ -2,7 +2,8 @@
 
 /**
  * The prescriber's refill queue: what patients have asked for from the
- * portal, oldest first, and the last answers given.
+ * portal, soonest due first by the practice's own target (the order the
+ * server sends), and the last answers given.
  *
  * A decision is two clicks on purpose — pick the answer, then confirm it —
  * because it is recorded once and the patient sees it. The optional note is
@@ -25,6 +26,7 @@ import { useToast } from "@/components/ui/Toast"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { formatInUserTimeZone, useUserTimeZone } from "@/hooks/usePreferences"
 import { isAlreadyAnswered, useDecideRefill, useRefillQueue } from "@/hooks/useRefillRequests"
+import { DueBadge } from "./DueBadge"
 import type {
   ClinicianRefillRequest,
   RefillDecision,
@@ -158,8 +160,11 @@ function PendingRow({ request }: { request: ClinicianRefillRequest }) {
             </p>
           )}
         </div>
-        <span className="shrink-0 text-xs text-neutral-500">
-          Asked {formatInUserTimeZone(request.created_at, timeZone, DATE_FORMAT)}
+        <span className="shrink-0 text-right text-xs text-neutral-500">
+          {request.due_at && <DueBadge dueAt={request.due_at} timeZone={timeZone} />}
+          <span className="block">
+            Asked {formatInUserTimeZone(request.created_at, timeZone, DATE_FORMAT)}
+          </span>
         </span>
       </div>
 
