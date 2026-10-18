@@ -46,6 +46,27 @@ export function useFeature(name: string | undefined): boolean {
 }
 
 /**
+ * The same answer as `useFeature`, but only once it is final: `null` while a
+ * per-account answer is still loading, then `true` or `false`.
+ *
+ * `useFeature` answers from the deployment until the account answer arrives,
+ * which is right for a nav item (nothing unreleased flashes in) and wrong for
+ * a decision that cannot be taken back. A route that calls `notFound()` on
+ * that provisional "no" 404s for good on a direct load of a page the account
+ * does have, because the account answer arrives one render too late. Gate
+ * those on this, and render nothing while it is `null`.
+ */
+export function useSettledFeature(name: string | undefined): boolean | null {
+  const { features: deploymentFeatures } = useConfig()
+  const { features: accountFeatures, resolved } = useAccountFeatures()
+
+  if (!name) return true
+  if (!resolved) return null
+  if (name in accountFeatures) return accountFeatures[name]
+  return deploymentFeatures?.[name] ?? false
+}
+
+/**
  * Predicate form, for filtering a list in one render. Same rules as
  * `useFeature`; call this once rather than calling the hook per item.
  */
