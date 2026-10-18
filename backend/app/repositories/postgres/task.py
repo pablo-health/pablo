@@ -92,6 +92,28 @@ class PostgresTaskRepository:
         self._session.flush()
         return task
 
+    def file_once(self, task: Task, *, source_ref: str) -> Task:
+        """File ``task`` for what ``source_ref`` names, or return the one already filed.
+
+        For a filer that can be asked twice for the same thing (an accept retried
+        after a dropped response). ``ux_tasks_source_ref`` makes a second row
+        impossible even when two requests race past this lookup."""
+        existing = self._session.execute(
+            select(TaskRow).where(
+                TaskRow.user_id == task.user_id,
+                TaskRow.item_type == task.item_type,
+                TaskRow.source_ref == source_ref,
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return _row_to_task(existing)
+        row = TaskRow()
+        _task_to_row(task, row)
+        row.source_ref = source_ref
+        self._session.add(row)
+        self._session.flush()
+        return task
+
     def update(self, task: Task) -> Task:
         row = self._session.get(TaskRow, task.id)
         if row is None or row.user_id != task.user_id:

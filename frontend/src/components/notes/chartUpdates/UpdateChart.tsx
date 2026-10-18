@@ -21,7 +21,7 @@ import { useNoteType } from "@/hooks/useNoteTypes"
 import { usePatientProblems } from "@/hooks/useProblems"
 import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import { diagnosisText, statedDiagnoses, type StatedDiagnosis } from "@/lib/statedDiagnoses"
-import type { ChartProposal, ProposalRun } from "@/types/chartProposals"
+import { isSessionTask, type ChartProposal, type ProposalRun } from "@/types/chartProposals"
 import type { Note } from "@/types/notes"
 import { NotChecked, isNotChecked } from "./NotChecked"
 import { ProposalLedger } from "./ProposalLedger"
@@ -47,7 +47,7 @@ export interface ChartUpdates {
   proposals: ChartProposal[]
   /** Stated in the note and not on the problem list. */
   diagnoses: StatedDiagnosis[]
-  /** Proposals not yet decided, and diagnoses not yet added. */
+  /** Chart updates not yet decided, and diagnoses not yet added. */
   undecided: number
   /** How the check for chart updates last ended. */
   run: ProposalRun | null
@@ -62,7 +62,11 @@ export function useChartUpdates(note: Note | undefined): ChartUpdates {
   return {
     proposals,
     diagnoses,
-    undecided: proposals.filter((p) => p.decision === "pending").length + diagnoses.length,
+    // Chart updates only: a task left undecided waits on the signed note, and
+    // signing past it is not signing "without updating" the chart.
+    undecided:
+      proposals.filter((p) => p.decision === "pending" && !isSessionTask(p)).length +
+      diagnoses.length,
     run: data?.run ?? null,
   }
 }
@@ -70,9 +74,40 @@ export function useChartUpdates(note: Note | undefined): ChartUpdates {
 export function UpdateChart({ note, updates }: { note: Note; updates: ChartUpdates }) {
   const { readOnly } = useReadOnlyMode()
   const pending = updates.proposals.filter((p) => p.decision === "pending")
+  // What the clinician said they would do goes to their tasks, not the chart:
+  // its own section, shown even on a note type that updates no chart.
+  const chartPending = pending.filter((p) => !isSessionTask(p))
+  const tasks = pending.filter(isSessionTask)
   const notChecked = isNotChecked(updates.run)
-  if (pending.length === 0 && updates.diagnoses.length === 0 && !notChecked) return null
+  const updatesChart = chartPending.length > 0 || updates.diagnoses.length > 0 || notChecked
+  if (!updatesChart && tasks.length === 0) return null
 
+  return (
+    <div className="space-y-5">
+      {tasks.length > 0 && (
+        <ProposalLedger
+          noteId={note.id}
+          patientId={note.patient_id}
+          proposals={tasks}
+          readOnly={readOnly}
+        />
+      )}
+      {updatesChart && <UpdateChartSection note={note} updates={updates} pending={chartPending} />}
+    </div>
+  )
+}
+
+function UpdateChartSection({
+  note,
+  updates,
+  pending,
+}: {
+  note: Note
+  updates: ChartUpdates
+  pending: ChartProposal[]
+}) {
+  const { readOnly } = useReadOnlyMode()
+  const notChecked = isNotChecked(updates.run)
   return (
     <section aria-label="Update the chart" className="space-y-3" data-testid="update-chart">
       <div>

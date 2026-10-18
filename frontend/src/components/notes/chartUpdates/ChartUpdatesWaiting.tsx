@@ -28,9 +28,10 @@ import { usePatientProblems } from "@/hooks/useProblems"
 import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import { sourceSystemName } from "@/lib/noteDisplay"
 import { diagnosisText, type StatedDiagnosis } from "@/lib/statedDiagnoses"
-import type {
-  IntakeChartProposalGroup,
-  NoteChartProposalGroup,
+import {
+  isSessionTask,
+  type IntakeChartProposalGroup,
+  type NoteChartProposalGroup,
 } from "@/types/chartProposals"
 import { ProposalLedger } from "./ProposalLedger"
 
@@ -56,11 +57,26 @@ export function sourcesText(notes: number, intakes: number): string {
     .join(" and ")
 }
 
+/**
+ * What is waiting, by kind: "2 chart updates", "1 task", "2 chart updates and
+ * 1 task". A task is something the clinician said in a session they would do,
+ * which goes to their tasks rather than the chart.
+ */
+export function waitingText(pending: number, tasks: number): string {
+  return [
+    pending - tasks > 0 ? count(pending - tasks, "chart update", "chart updates") : null,
+    tasks > 0 ? count(tasks, "task", "tasks") : null,
+  ]
+    .filter(Boolean)
+    .join(" and ")
+}
+
 export function ChartUpdatesWaiting({ patientId }: { patientId: string }) {
   const { data } = usePatientChartProposals(patientId)
   const [open, setOpen] = useState(true)
   if (!data || data.pending === 0) return null
   const intakes = data.intakes ?? []
+  const tasks = data.groups.flatMap((g) => g.proposals).filter(isSessionTask).length
 
   return (
     <section
@@ -70,9 +86,7 @@ export function ChartUpdatesWaiting({ patientId }: { patientId: string }) {
     >
       <div className="flex items-center justify-between gap-3 px-4 py-2.5">
         <p className="text-sm text-neutral-900">
-          <span className="font-semibold">
-            {data.pending} chart {data.pending === 1 ? "update" : "updates"} waiting
-          </span>
+          <span className="font-semibold">{waitingText(data.pending, tasks)} waiting</span>
           <span className="text-neutral-600">
             {" "}
             from {sourcesText(data.groups.length, intakes.length)}

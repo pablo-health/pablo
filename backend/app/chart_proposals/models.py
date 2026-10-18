@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from datetime import datetime
+    from datetime import date, datetime
 
 Decision = Literal["pending", "accepted", "edited", "discarded"]
 Origin = Literal["transcript", "document", "note", "intake"]
@@ -51,6 +51,18 @@ class MedicationChange:
     """The medication words copied exactly from the cited source."""
     name_uncertain: bool = False
     """Whether the heard name is unknown or does not support ``drug_name``."""
+
+
+@dataclass(frozen=True)
+class Commitment:
+    """When something the clinician said they would do is due, as the session said it.
+
+    ``due_said`` is the words naming when ("by Friday"), copied from the cited
+    lines; ``due_date`` the day they name, counted from the visit. Both empty
+    when no time was said: a date is never guessed."""
+
+    due_date: date | None = None
+    due_said: str = ""
 
 
 ConsideredReason = Literal["novelty", "transient", "interview", "present-not-past", "elsewhere"]
@@ -119,6 +131,10 @@ class Drafted:
     kept: tuple[MedicationKept, ...] = ()
     considered: tuple[Considered, ...] = ()
     """The history proposals not offered, with their reasons; stored on the run."""
+    commitments: tuple[DraftedProposal, ...] | None = None
+    """What the clinician said they would do (:mod:`.commitments`), each a task to
+    propose; ``None`` when that call did not run, or failed (``commitment_error``)."""
+    commitment_error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -148,6 +164,8 @@ class DraftedProposal:
     origin: Origin = "transcript"
     change: MedicationChange | None = None
     """The structured change, for a family whose proposals are actions (the medication list)."""
+    commitment: Commitment | None = None
+    """For a task the clinician said they would do, when it is due."""
 
 
 @dataclass(frozen=True)
@@ -171,6 +189,7 @@ class ChartProposal:
     decided_at: datetime | None = None
     change: MedicationChange | None = None
     intake_assignment_id: str | None = None
+    commitment: Commitment | None = None
 
     @property
     def pending(self) -> bool:
