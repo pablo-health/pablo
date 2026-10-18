@@ -72,7 +72,7 @@ function row(host: string): HTMLElement {
 describe("DomainsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockStatus.mockResolvedValue({ is_practice_owner: true })
+    mockStatus.mockResolvedValue({ is_practice_owner: true, is_practice_admin: true })
     mockDescribe.mockImplementation(describeLikeTheServer)
   })
 
@@ -393,13 +393,23 @@ describe("DomainsPage", () => {
   })
 
   it("is read-only for anyone but the owner", async () => {
-    mockStatus.mockResolvedValue({ is_practice_owner: false })
+    mockStatus.mockResolvedValue({ is_practice_owner: false, is_practice_admin: false })
     mockList.mockResolvedValue({ domains: [domain("portal.example.com")] })
     renderWithProviders(<DomainsPage />)
 
-    expect(await screen.findByText("Only the practice owner can change domains.")).toBeVisible()
+    expect(await screen.findByText("Only the practice owner or a practice admin can change domains.")).toBeVisible()
     expect(screen.getByTestId("domain-row-portal.example.com")).toBeVisible()
     expect(screen.queryByRole("button")).toBeNull()
     expect(screen.queryByLabelText("Domain")).toBeNull()
+  })
+
+  it("lets a practice admin who is not the owner manage domains", async () => {
+    mockStatus.mockResolvedValue({ is_practice_owner: false, is_practice_admin: true })
+    mockList.mockResolvedValue({ domains: [domain("portal.example.com")] })
+    renderWithProviders(<DomainsPage />)
+
+    expect(await screen.findByTestId("domain-row-portal.example.com")).toBeVisible()
+    expect(await screen.findByLabelText("Domain")).toBeVisible()
+    expect(screen.queryByText(/Only the practice owner/)).toBeNull()
   })
 })

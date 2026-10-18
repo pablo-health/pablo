@@ -16,9 +16,9 @@
 * ``POST /api/practice/website/versions/{version}/live`` — make a kept version
   live again (roll back).
 
-The changes are for whoever may change the practice's domains — the owner
-today (:func:`app.routes.practice_domains._manageable_practice_id`), so
-widening one widens both. The practice is always the caller's own. Uploads,
+The changes are for whoever may change the practice's domains — the owner or
+a practice admin (:func:`app.routes.practice_domains._manageable_practice_id`),
+so the two always agree. The practice is always the caller's own. Uploads,
 publishes and roll backs are audited by the service, with the version, file
 count and bytes. Old versions and replaced drafts are tidied away after the
 change commits, as a background task. A publish or roll back also forgets this

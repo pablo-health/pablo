@@ -1094,6 +1094,12 @@ _CORE_NOT_ROW_SCOPED: frozenset[str] = frozenset(
         # ledger beside it, needs no entry: its key is the source system's
         # record id, so it has none of the columns the pre-flight looks for.
         "import_runs",
+        # ``practice_admins`` — who the owner has made a practice admin. Its
+        # ``user_id`` would earn it the generic "your own rows" policy, but
+        # the owner reads every row to decide who is an admin, and any
+        # clinician's request asks whether they are one. The schema is the
+        # boundary; the grant and revoke routes are the owner's alone.
+        "practice_admins",
     }
 )
 

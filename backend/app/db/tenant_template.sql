@@ -1262,6 +1262,14 @@ CREATE TABLE __TENANT_SCHEMA__.payers (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.practice_admins (
+    user_id uuid NOT NULL,
+    granted_by uuid NOT NULL,
+    granted_at timestamp with time zone NOT NULL
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.practice_billing_profile (
     id smallint NOT NULL,
     legal_name character varying(255),
@@ -1933,6 +1941,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.llm_usage
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.payer_enrollments
     ADD CONSTRAINT pk_payer_enrollments PRIMARY KEY (payer_id, transaction_type);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.practice_admins
+    ADD CONSTRAINT practice_admins_pkey PRIMARY KEY (user_id);
 
 
 

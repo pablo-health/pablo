@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from app.models import User
+    from app.repositories.practice_admin import InMemoryPracticeAdminRepository
 
 PRACTICE_ID = "practice-1"
 URL = "/api/practice/website"
@@ -241,7 +242,7 @@ class TestSomeoneElse:
     def test_cannot_upload(self, client: TestClient, service: _StubService) -> None:
         response = _upload(client, _zip({"index.html": b"hi"}))
         assert response.status_code == 403
-        assert _code(response) == "NOT_PRACTICE_OWNER"
+        assert _code(response) == "NOT_PRACTICE_ADMIN"
         assert service.calls == []
 
     def test_cannot_write_a_header(self, client: TestClient, service: _StubService) -> None:
@@ -256,6 +257,19 @@ class TestSomeoneElse:
         response = client.request(method, url)
         assert response.status_code == 403
         assert service.calls == []
+
+    def test_a_practice_admin_can_write_a_header(
+        self,
+        client: TestClient,
+        service: _StubService,
+        mock_user: User,
+        practice_admins: InMemoryPracticeAdminRepository,
+    ) -> None:
+        """The website follows the domains gate: owner or practice admin."""
+        practice_admins.grant(mock_user.id, granted_by="owner", granted_at=datetime.now(UTC))
+        response = client.put(f"{URL}/draft/header", json={"subtitle": "Therapy"})
+        assert response.status_code == 200
+        assert service.calls == [("set_draft_header", (PRACTICE_ID, {"subtitle": "Therapy"}))]
 
 
 class TestRefusals:

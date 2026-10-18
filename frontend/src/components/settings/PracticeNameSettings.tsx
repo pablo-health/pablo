@@ -10,7 +10,7 @@ import { useUpdateProfessionalInfo } from "@/hooks/useProfessionalInfo"
 
 interface PracticeNameSettingsProps {
   currentName: string
-  /** Only the practice owner may rename it; everyone else sees it read-only. */
+  /** The practice owner or a practice admin may rename it; everyone else sees it read-only. */
   canEdit: boolean
 }
 
@@ -53,7 +53,7 @@ export function PracticeNameSettings({ currentName, canEdit }: PracticeNameSetti
         />
         {!canEdit && (
           <p className="text-[12.5px] text-muted-foreground">
-            Only the practice owner can change this.
+            Only the practice owner or a practice admin can change this.
           </p>
         )}
       </div>

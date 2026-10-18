@@ -905,6 +905,27 @@ class InstrumentLicenseAttestationRow(Base):
     )
 
 
+class PracticeAdminRow(Base):
+    """A clinician the practice owner has made a practice admin.
+
+    An admin may change practice-wide settings alongside the owner. The owner
+    is never stored here: ownership is on the practice row, and the owner is
+    an admin by being the owner. Revoking deletes the row; the audit log keeps
+    who granted and revoked what, and when.
+
+    Registered not-row-scoped in :mod:`app.db`. It carries a ``user_id``, so
+    the generic RLS arm would give it a "your own rows" policy, and the owner
+    deciding who is an admin has to read every row. Its isolation boundary is
+    the practice schema; the routes that write it are the owner's alone.
+    """
+
+    __tablename__ = "practice_admins"
+
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    granted_by: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class PracticeNoteTypeRow(Base):
     """One saved version of a note type the practice defined itself.
 

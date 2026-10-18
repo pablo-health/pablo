@@ -186,6 +186,11 @@ class AuditAction(StrEnum):
     PRACTICE_RENAMED = "practice_renamed"
     BAA_RESIGNED = "baa_resigned"
 
+    # The practice owner making a clinician a practice admin, or taking that
+    # away. No PHI; ``changes`` carries the clinician's user id.
+    PRACTICE_ADMIN_GRANTED = "practice_admin_granted"
+    PRACTICE_ADMIN_REVOKED = "practice_admin_revoked"
+
     # The authorisation letting Pablo apply to insurance panels on a
     # clinician's behalf: sign her name to a payer's form, and ring the payer
     # to chase it. Not a HIPAA event — no PHI is involved — but the moment

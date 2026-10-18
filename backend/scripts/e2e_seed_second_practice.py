@@ -80,6 +80,9 @@ class SeededPractice:
     #: A portal address given to the practice directly, for one the minter
     #: would never hand out.
     slug: str | None = None
+    #: More addresses that sign into the same practice as clinicians who do
+    #: not own it. The owner is ``email``.
+    colleagues: tuple[str, ...] = ()
 
 
 SECOND_PRACTICE = SeededPractice(
@@ -190,6 +193,18 @@ FRESH_RETENTION = SeededPractice(
     email="e2e-fresh-retention@example.com",
     name="Fresh Practice Retention",
 )
+# A practice with two clinicians, for the spec about practice admins: the
+# owner makes the colleague an admin and takes it away again. The shared
+# practice cannot host it, because it is registered under no owner address and
+# so treats every clinician as its owner. Grants are emptied on every bring-up.
+FRESH_ADMINS = SeededPractice(
+    id="e2e-fresh-admins",
+    schema="practice_e2e_fresh_admins",
+    email="e2e-fresh-admins@example.com",
+    name="Fresh Practice Admins",
+    emptied=("practice_admins",),
+    colleagues=("e2e-fresh-admins-colleague@example.com",),
+)
 SEEDED = (
     SECOND_PRACTICE,
     FRESH_YES,
@@ -202,6 +217,7 @@ SEEDED = (
     FRESH_HOURS,
     FRESH_CONSENT,
     FRESH_RETENTION,
+    FRESH_ADMINS,
 )
 
 # Kept for anything that still reads the second practice by its old names.
@@ -246,42 +262,43 @@ def _seed(practice: SeededPractice) -> bool:
             )
             logger.info("registered practice %s", practice.id)
 
-        existing = session.get(EmailTenantMappingRow, practice.email)
-        if existing is None:
-            session.add(
-                EmailTenantMappingRow(
-                    email=practice.email,
-                    tenant_id=practice.id,
-                    practice_id=practice.id,
-                    created_at=now,
+        for email in (practice.email, *practice.colleagues):
+            existing = session.get(EmailTenantMappingRow, email)
+            if existing is None:
+                session.add(
+                    EmailTenantMappingRow(
+                        email=email,
+                        tenant_id=practice.id,
+                        practice_id=practice.id,
+                        created_at=now,
+                    )
                 )
-            )
-            logger.info("mapped %s onto %s", practice.email, practice.id)
-        elif existing.practice_id != practice.id:
-            # Loud, because the alternative is a suite that silently proves
-            # nothing: the isolation spec would sign both users into the same
-            # practice and its "cannot reach" assertions would pass vacuously.
-            logger.error(
-                "%s already resolves to %s, not %s -- the specs using it would "
-                "run in the wrong practice and pass without proving anything",
-                practice.email,
-                existing.practice_id,
-                practice.id,
-            )
-            return False
+                logger.info("mapped %s onto %s", email, practice.id)
+            elif existing.practice_id != practice.id:
+                # Loud, because the alternative is a suite that silently proves
+                # nothing: the isolation spec would sign both users into the same
+                # practice and its "cannot reach" assertions would pass vacuously.
+                logger.error(
+                    "%s already resolves to %s, not %s -- the specs using it would "
+                    "run in the wrong practice and pass without proving anything",
+                    email,
+                    existing.practice_id,
+                    practice.id,
+                )
+                return False
 
-        if session.get(PlatformAllowedEmailRow, practice.email) is None:
-            # Without this the address passes the sign-up gate and is then
-            # refused on every API call, which is a confusing way to discover
-            # the same fact.
-            session.add(
-                PlatformAllowedEmailRow(
-                    email=practice.email,
-                    practice_id=practice.id,
-                    added_by="e2e-seed",
-                    added_at=now,
+            if session.get(PlatformAllowedEmailRow, email) is None:
+                # Without this the address passes the sign-up gate and is then
+                # refused on every API call, which is a confusing way to discover
+                # the same fact.
+                session.add(
+                    PlatformAllowedEmailRow(
+                        email=email,
+                        practice_id=practice.id,
+                        added_by="e2e-seed",
+                        added_at=now,
+                    )
                 )
-            )
 
         if practice.slug is not None and session.get(PortalPracticeSlugRow, practice.slug) is None:
             session.add(
