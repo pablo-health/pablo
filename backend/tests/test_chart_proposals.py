@@ -544,7 +544,12 @@ def test_the_step_proposes_only_for_a_practice_type() -> None:
     assert follow_up is not None
     assert [p.field_key for p in follow_up.proposals] == ["relationships"]
 
-    assert step.draft(generator, get_default_registry().get("soap"), chart, TRANSCRIPT, {}) is None
+    # A SOAP note proposes no chart updates; its session is still read for what the
+    # clinician said they would do, which is its own call.
+    soap = step.draft(generator, get_default_registry().get("soap"), chart, TRANSCRIPT, {})
+    assert soap is not None
+    assert soap.proposals == []
+    assert soap.commitments == ()
     assert (
         step.draft(
             MockNoteGenerationService(), _definition("psychiatric_follow_up"), chart, TRANSCRIPT, {}

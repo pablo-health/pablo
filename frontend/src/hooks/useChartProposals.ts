@@ -49,7 +49,8 @@ export interface ProposalSource {
  * Accept, edit or discard one; an accept or an edit changes the chart, so it
  * is read again. Every listing of proposals is refreshed, the note's and the
  * client's: the same proposal can be on screen in both. So is the dashboard,
- * whose Today panel counts what is still waiting.
+ * whose Today panel counts what is still waiting, and the task lists, which
+ * an accepted task from a session joins.
  */
 export function useDecideChartProposal(patientId: string) {
   return useAuthMutation<
@@ -65,6 +66,7 @@ export function useDecideChartProposal(patientId: string) {
         queryKeys.chartProposals.all,
         queryKeys.chartHistory.byPatient(patientId),
         queryKeys.patients.detail(patientId),
+        queryKeys.tasks.all,
         // An accepted homework suggestion is a new assignment.
         queryKeys.homework.byPatient(patientId),
       ]),

@@ -383,7 +383,14 @@ class NoteRedraftService:
             raise SOAPGenerationFailedError from exc
 
         drafted = (
-            step.draft(self.note_generation_service, definition, chart, transcript, generated)
+            step.draft(
+                self.note_generation_service,
+                definition,
+                chart,
+                transcript,
+                generated,
+                visit_date=session.session_date.date(),
+            )
             if step is not None
             else None
         )

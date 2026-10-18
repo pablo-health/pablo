@@ -18,8 +18,9 @@
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { useDecideChartProposal } from "@/hooks/useChartProposals"
-import type { ChartProposal } from "@/types/chartProposals"
+import { isSessionTask, type ChartProposal } from "@/types/chartProposals"
 import { ProposalRow, type AnswerHandler, type EvidenceHandler } from "./ProposalRow"
+import { SessionTaskRow } from "./SessionTaskRow"
 
 /**
  * A proposal's label reads "<section>: <field>" ("Social history and
@@ -48,9 +49,15 @@ export function groupBySection(proposals: ChartProposal[]): Section[] {
   return [...sections].map(([name, list]) => ({ name, proposals: list }))
 }
 
-/** Pending, and acceptable without reading the source first. */
+/**
+ * Pending, and acceptable without reading the source first. A task the
+ * clinician said they would do is added one at a time: each is work they take
+ * on, with a title and a date to check.
+ */
 function acceptableAtOnce(proposal: ChartProposal): boolean {
-  return proposal.decision === "pending" && !proposal.change?.name_uncertain
+  return (
+    proposal.decision === "pending" && !proposal.change?.name_uncertain && !isSessionTask(proposal)
+  )
 }
 
 export interface ProposalLedgerProps {
@@ -159,7 +166,17 @@ function LedgerSection({
         </p>
       )}
       <ul className="divide-y divide-neutral-100">
-        {section.proposals.map((proposal) => (
+        {section.proposals.map((proposal) =>
+          isSessionTask(proposal) ? (
+            <SessionTaskRow
+              key={proposal.id}
+              noteId={noteId}
+              patientId={patientId}
+              proposal={proposal}
+              readOnly={readOnly}
+              onEvidenceClick={onEvidenceClick}
+            />
+          ) : (
           <ProposalRow
             key={proposal.id}
             noteId={noteId}
@@ -171,7 +188,8 @@ function LedgerSection({
             onEvidenceClick={onEvidenceClick}
             onAnswerClick={onAnswerClick}
           />
-        ))}
+          ),
+        )}
       </ul>
     </section>
   )

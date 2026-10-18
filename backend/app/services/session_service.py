@@ -323,7 +323,14 @@ class SessionService:
         )
         step = self.proposal_step
         drafted = (
-            step.draft(self.note_generation_service, definition, chart, session.transcript, result)
+            step.draft(
+                self.note_generation_service,
+                definition,
+                chart,
+                session.transcript,
+                result,
+                visit_date=session.session_date.date(),
+            )
             if step is not None
             else None
         )

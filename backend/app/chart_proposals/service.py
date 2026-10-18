@@ -22,11 +22,11 @@ is not proposed again from that form.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal
 
 from ..utcnow import utc_now
-from .families import WriteSource, family_for
+from .families import WriteSource, family_for, is_session_task
 from .models import ChartProposal, Decision
 from .recorded import recorded_proposals
 
@@ -50,12 +50,20 @@ _DECIDED: dict[DecisionRequest, Decision] = {
 }
 
 
+#: A task proposal's due date left as proposed.
+AS_PROPOSED: Literal["as_proposed"] = "as_proposed"
+
+
 @dataclass(frozen=True)
 class Choice:
-    """What the clinician did with a proposal; ``text`` is theirs, for an edit."""
+    """What the clinician did with a proposal; ``text`` is theirs, for an edit.
+
+    ``due_date``, for a task the clinician said they would do, is when they
+    want it due instead (``None`` for undated); left as proposed by default."""
 
     decision: DecisionRequest
     text: str | None = None
+    due_date: date | None | Literal["as_proposed"] = AS_PROPOSED
 
 
 class ProposalNotFoundError(LookupError):
@@ -110,7 +118,10 @@ class ChartProposalService:
         the document's paragraphs, the conflicting one included. A decided
         proposal is never replaced or offered again.
         """
-        existing = self._repo.list_for_note(note.id)
+        # A session's tasks are kept by :meth:`refresh_session_tasks`, never here.
+        existing = [
+            p for p in self._repo.list_for_note(note.id) if not is_session_task(p.field_key)
+        ]
         seeds = {
             _identity(p.field_key, p.item_key): p
             for p in recorded_proposals(
@@ -144,6 +155,21 @@ class ChartProposalService:
             if key not in taken:
                 added.append(self._new(note, proposal))
                 taken.add(key)
+        self._repo.add(added)
+
+    def refresh_session_tasks(self, note: Note, drafted: Iterable[DraftedProposal]) -> None:
+        """Store what the clinician said they would do, replacing the tasks still
+        pending on the note. One accepted or dismissed stays, and is not proposed
+        again from the line it was said on."""
+        existing = [p for p in self._repo.list_for_note(note.id) if is_session_task(p.field_key)]
+        self._repo.delete(p.id for p in existing if p.pending)
+        taken = {_identity(p.field_key, p.item_key) for p in existing if not p.pending}
+        added = []
+        for proposal in drafted:
+            key = _identity(proposal.field_key, proposal.item_key)
+            if key not in taken:
+                taken.add(key)
+                added.append(self._new(note, proposal))
         self._repo.add(added)
 
     def refresh_intake(
@@ -234,6 +260,10 @@ class ChartProposalService:
             raise ProposalDecidedError(proposal_id)
         if choice.decision == "edit" and not family.editable:
             raise ProposalNotEditableError(proposal_id)
+        if choice.due_date != AS_PROPOSED and proposal.commitment is not None:
+            proposal = replace(
+                proposal, commitment=replace(proposal.commitment, due_date=choice.due_date)
+            )
         edited = (choice.text or "").strip() if choice.decision == "edit" else None
         if choice.decision != "discard":
             if self._writers is None:
@@ -259,4 +289,5 @@ class ChartProposalService:
             origin=drafted.origin,
             created_at=utc_now(),
             change=drafted.change,
+            commitment=drafted.commitment,
         )

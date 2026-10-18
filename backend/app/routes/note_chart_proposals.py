@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, Request
 
-from ..api_errors import ConflictError, NotFoundError
+from ..api_errors import ConflictError, NotFoundError, UnprocessableEntityError
 from ..auth.service import require_baa_acceptance
 from ..chart_history.dependencies import get_chart_history_repository
 from ..chart_history.service import ChartHistoryService
@@ -35,7 +35,7 @@ from ..chart_proposals.dependencies import (
     get_chart_proposal_step,
     get_proposal_medication_repository,
 )
-from ..chart_proposals.families import ChartChangedError, ChartWriters
+from ..chart_proposals.families import ChartChangedError, ChartWriters, is_session_task
 from ..chart_proposals.schemas import (
     ChartProposalResponse,
     ChartProposalsResponse,
@@ -63,11 +63,15 @@ from ..notes import (  # noqa: TC001 — FastAPI resolves at runtime
     NoteTypeDefinition,
     NoteTypeRegistry,
 )
-from ..repositories import (  # noqa: TC001 — FastAPI resolves at runtime
+from ..repositories import (
     ChartHistoryRepository,
     ChartProposalRepository,
     PatientRepository,
     TherapySessionRepository,
+    get_task_repository,
+)
+from ..repositories.postgres.task import (  # noqa: TC001 — FastAPI resolves at runtime
+    PostgresTaskRepository,
 )
 from ..repositories.session_dictation import (  # noqa: TC001 — FastAPI resolves at runtime
     SessionDictationRepository,
@@ -161,6 +165,7 @@ def decide_chart_proposal(
     medications: MedicationRepository = Depends(get_proposal_medication_repository),
     sessions: TherapySessionRepository = Depends(get_session_repository),
     proposals: ChartProposalRepository = Depends(get_chart_proposal_repository),
+    tasks: PostgresTaskRepository = Depends(get_task_repository),
     step: ChartProposalStep = Depends(get_chart_proposal_step),
     audit: AuditService = Depends(get_audit_service),
 ) -> ChartProposalResponse:
@@ -169,14 +174,18 @@ def decide_chart_proposal(
         history=ChartHistoryService(history),
         patients=patients,
         medications=MedicationService(medications),
+        tasks=tasks,
         # An accepted homework suggestion becomes the client's assignment.
         homework=HomeworkRepository(get_db_session()),
     )
     service = ChartProposalService(proposals, writers, visit_date=_visit_date(note, sessions, user))
+    choice = Choice(
+        body.decision,
+        body.text,
+        **({"due_date": body.due_date} if "due_date" in body.model_fields_set else {}),
+    )
     try:
-        decided = service.decide(
-            note, patient, proposal_id, Choice(body.decision, body.text), user.id
-        )
+        decided = service.decide(note, patient, proposal_id, choice, user.id)
     except ProposalNotFoundError as exc:
         raise NotFoundError("No such proposal on this note", {"proposal_id": proposal_id}) from exc
     except ProposalDecidedError as exc:
@@ -192,6 +201,9 @@ def decide_chart_proposal(
         raise ConflictError(
             "The chart has changed since this was proposed", {"proposal_id": proposal_id}
         ) from exc
+    except ValueError as exc:
+        # What the clinician wrote is more than the record keeps (a task title).
+        raise UnprocessableEntityError(str(exc), {"proposal_id": proposal_id}) from exc
     change = {"chart_proposal": decided.decision, "field_key": decided.field_key}
     audit.log_note_action(
         action=AuditAction.SESSION_UPDATED,
@@ -202,7 +214,8 @@ def decide_chart_proposal(
         session_id=note.session_id,
         changes=change,
     )
-    if decided.decision != "discarded":
+    # An accepted task goes to the clinician's own tasks; the chart is not changed.
+    if decided.decision != "discarded" and not is_session_task(decided.field_key):
         audit.log_patient_action(
             AuditAction.PATIENT_UPDATED,
             user,
@@ -245,7 +258,9 @@ def retry_chart_proposals(
     drafted = (
         step.draft_from_document(generator, definition, chart, transcript.content)
         if session.source == SessionSource.IMPORTED
-        else step.draft(generator, definition, chart, transcript, shown)
+        else step.draft(
+            generator, definition, chart, transcript, shown, visit_date=session.session_date.date()
+        )
     )
     step.store(note, definition, chart, drafted, shown)
     response = _listing(note, chart, proposals)

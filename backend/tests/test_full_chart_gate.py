@@ -129,4 +129,8 @@ def test_a_format_written_in_code_gets_the_problem_list_alone_and_proposes_nothi
     assert "Penicillin" not in prompt
     assert "Sertraline" not in prompt
     assert "Teacher, full time." not in prompt
-    assert step.draft(_Proposing(), definition, CHART, TRANSCRIPT, {}) is None
+    # The session is still read for what the clinician said they would do, which
+    # is its own call; the chart proposal call's answer is never asked for.
+    drafted = step.draft(_Proposing(), definition, CHART, TRANSCRIPT, {})
+    assert drafted is not None
+    assert drafted.proposals == []

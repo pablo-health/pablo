@@ -650,7 +650,35 @@ _TITLED_CALLS: dict[str, Callable[[NoteCall], dict[str, Any]]] = {
     ),
     "PsychotherapySections": lambda call: _section_call(call.response_schema, call.user_prompt),
     "ChartProposals": _proposals_reply,
+    "SessionCommitments": lambda call: {"commitments": _commitments(call.user_prompt)},
 }
+
+
+#: What the clinician says they will do, as a spec writes it:
+#: "Clinician: Commitment: Send the release form; by Friday; 2026-10-16".
+#: After the task come the words that say when and the day they name; either
+#: may be left empty, as a session that names no time leaves them.
+_COMMITMENT = "Clinician: Commitment: "
+
+
+def _commitments(user_prompt: str) -> list[dict[str, Any]]:
+    """One commitment per numbered "Commitment: ..." line, citing it."""
+    found = []
+    for line in user_prompt.splitlines():
+        head, marked, rest = line.partition(_COMMITMENT)
+        if not marked or not head.startswith("[S"):
+            continue
+        segment = head[2:].partition("]")[0]
+        task, due_said, due_date = ([*rest.split(";"), "", ""])[:3]
+        found.append(
+            {
+                "task": task.strip(),
+                "evidence_segment_ids": [int(segment)] if segment.isdigit() else [],
+                "due_said": due_said.strip(),
+                "due_date": due_date.strip(),
+            }
+        )
+    return found
 
 
 def _chart_proposals(user_prompt: str) -> list[dict[str, Any]]:

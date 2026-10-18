@@ -29,6 +29,7 @@ from ..homework.proposals import draft_homework, proposes_homework, refresh_home
 from ..notes.chart_context import chart_context_for
 from ..notes.chart_fields import rendered_fields
 from ..utcnow import utc_now
+from .commitments import propose_commitments
 from .drafting import (
     document_segments,
     propose_chart_updates,
@@ -37,11 +38,12 @@ from .drafting import (
     screened,
     transcript_segments,
 )
-from .models import ProposalRun, RunStatus
+from .models import Drafted, ProposalRun, RunStatus
 from .service import ChartProposalService
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+    from datetime import date
     from typing import Any
 
     from ..medications.repository import MedicationRepository
@@ -52,12 +54,19 @@ if TYPE_CHECKING:
     from ..problems.models import Problem
     from ..repositories import ChartHistoryRepository, ChartProposalRepository
     from ..services.note_generation_service import GeneratedNote, NoteGenerationService
-    from .models import Drafted
+    from .models import DraftedProposal
 
 
 def proposes_chart_updates(definition: NoteTypeDefinition | None) -> bool:
     """Whether notes of this type propose chart updates: those drafted against the full chart."""
     return definition is not None and definition.reads_chart and definition.full_chart
+
+
+def proposes_commitments(definition: NoteTypeDefinition | None) -> bool:
+    """Whether a session drafted as this type proposes what the clinician said they would
+    do: any type with a client in it. Never a restricted type (a psychotherapy note),
+    which is written by hand and whose session is not read for it."""
+    return definition is not None and definition.reads_chart and not definition.restricted
 
 
 def extracted_fields(definition: NoteTypeDefinition | None) -> frozenset[str]:
@@ -111,15 +120,17 @@ class ChartProposalStep:
         """``user_id``'s word for the person seen, singular; ``None`` when not known here."""
         return self._people.person(user_id) if self._people is not None else None
 
-    def draft(
+    def draft(  # noqa: PLR0913 — visit_date is keyword-only, named at each call site
         self,
         generator: NoteGenerationService,
         definition: NoteTypeDefinition | None,
         chart: ChartContext | None,
         transcript: Transcript,
         note: GeneratedNote | Mapping[str, Any],
+        *,
+        visit_date: date | None = None,
     ) -> Drafted | None:
-        """The proposal call, holding no connection. ``None`` when it does not run.
+        """The proposal calls, holding no connection. ``None`` when neither runs.
 
         ``note`` is the draft just generated, whose extraction call says what the
         visit said about the chart's fields and on which lines. A note's content
@@ -127,10 +138,29 @@ class ChartProposalStep:
         stated this visit instead.
 
         The reply's history proposals are then checked for materiality: one not worth
-        offering is kept on the run as considered, with its reason (:mod:`.materiality`)."""
+        offering is kept on the run as considered, with its reason (:mod:`.materiality`).
+
+        Any type with a client in it also asks what the clinician said they would do
+        (:mod:`.commitments`), its spoken deadlines read from ``visit_date``, the day
+        of the session (today when not given). A type that proposes no chart updates
+        answers with that alone."""
         complete = generator.chart_proposal_completion()
-        if complete is None or chart is None or not proposes_chart_updates(definition):
+        if complete is None:
             return None
+        commitments: list[DraftedProposal] | None = None
+        commitment_error: str | None = None
+        if proposes_commitments(definition):
+            commitments, commitment_error = propose_commitments(
+                complete, transcript, visit_date or utc_now().date()
+            )
+        if chart is None or not proposes_chart_updates(definition):
+            if commitments is None and commitment_error is None:
+                return None
+            return Drafted(
+                [],
+                commitments=tuple(commitments) if commitments is not None else None,
+                commitment_error=commitment_error,
+            )
         draft, statements = (
             (note, None) if isinstance(note, Mapping) else (note.content, note.chart_statements)
         )
@@ -138,10 +168,14 @@ class ChartProposalStep:
             complete, chart, transcript, draft=draft, statements=statements
         )
         said = said_this_visit(extracted_fields(definition), statements, draft)
-        result = screened(drafted, chart, transcript_segments(transcript), said)
-        # Beside the call, still holding nothing: the draft's prose plan, for homework.
         drafter = self._homework_drafter or HomeworkDrafter(complete)
-        return replace(result, homework=draft_homework(definition, draft, drafter))
+        return replace(
+            screened(drafted, chart, transcript_segments(transcript), said),
+            commitments=tuple(commitments) if commitments is not None else None,
+            commitment_error=commitment_error,
+            # Beside the calls, still holding nothing: the draft's prose plan, for homework.
+            homework=draft_homework(definition, draft, drafter),
+        )
 
     def draft_from_document(
         self,
@@ -200,9 +234,13 @@ class ChartProposalStep:
         shown: Mapping[str, Any],
     ) -> None:
         """After a draft, redraft or retry: ``drafted`` replaces what is pending, and how
-        the call ended is recorded. ``shown`` is the note as it reads."""
+        the call ended is recorded. ``shown`` is the note as it reads.
+
+        The run records the chart call alone: a type that proposes no chart updates is
+        ``skipped`` whether or not its session proposed tasks. Those tasks replace the
+        ones still pending on the note; a failed commitment call keeps them."""
         status: RunStatus = "skipped"
-        if drafted is not None:
+        if drafted is not None and proposes_chart_updates(definition):
             status = "failed" if drafted.error_class else "ok"
         self._proposals.record_run(
             ProposalRun(
@@ -219,6 +257,8 @@ class ChartProposalStep:
             answered = drafted is not None and not drafted.error_class
             proposals = drafted.proposals if drafted is not None and answered else None
             ChartProposalService(self._proposals).refresh(note, chart, shown, proposals)
+        if drafted is not None and drafted.commitments is not None:
+            ChartProposalService(self._proposals).refresh_session_tasks(note, drafted.commitments)
         homework = drafted.homework if drafted is not None else None
         refresh_homework(self._proposals, note, definition, shown, homework)
 

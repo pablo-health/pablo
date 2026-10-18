@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime  # noqa: TC003 — pydantic resolves field types at runtime
+from datetime import date, datetime  # noqa: TC003 — pydantic resolves field types at runtime
 from typing import TYPE_CHECKING, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -29,6 +29,9 @@ class DecideProposalRequest(BaseModel):
 
     decision: Literal["accept", "edit", "discard"]
     text: str | None = Field(None, max_length=20_000)
+    due_date: date | None = None
+    """For a task the clinician said they would do: when it is due instead, ``null``
+    for undated. Left out, the proposed date stands."""
 
     @model_validator(mode="after")
     def _edit_has_text(self) -> Self:
@@ -57,6 +60,14 @@ class MedicationChangeResponse(BaseModel):
     name_uncertain: bool
 
 
+class CommitmentResponse(BaseModel):
+    """When a task the clinician said they would do is due, as the session said it."""
+
+    due_date: date | None
+    due_said: str
+    """The words that say when ("by Friday"); empty when no time was said."""
+
+
 class ChartProposalResponse(BaseModel):
     id: str
     field_key: str
@@ -67,6 +78,9 @@ class ChartProposalResponse(BaseModel):
     change is accepted or discarded."""
     change: MedicationChangeResponse | None
     """The structured change, for a medication proposal; ``None`` for free text."""
+    commitment: CommitmentResponse | None = None
+    """For a task the clinician said they would do (``field_key`` ``session_task``), when
+    it is due; accepting files it to their tasks, tied to the client."""
     current_text: str | None
     """What the chart says now, ``None`` when nothing is recorded."""
     proposed_text: str
@@ -131,6 +145,13 @@ def proposal_response(proposal: ChartProposal, chart: ChartContext) -> ChartProp
         change=(
             MedicationChangeResponse(**asdict(proposal.change))
             if proposal.change is not None
+            else None
+        ),
+        commitment=(
+            CommitmentResponse(
+                due_date=proposal.commitment.due_date, due_said=proposal.commitment.due_said
+            )
+            if proposal.commitment is not None
             else None
         ),
         current_text=family.current_text(chart, proposal),
