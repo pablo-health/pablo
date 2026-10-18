@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen } from "@testing-library/react"
 
 const routeParams = vi.hoisted(() => ({ section: "appearance" }))
-const gate = vi.hoisted(() => ({ allow: true }))
+const gate = vi.hoisted(() => ({ allow: true as boolean | null }))
 
 const notFound = vi.hoisted(() =>
   vi.fn(() => {
@@ -18,8 +18,9 @@ vi.mock("next/navigation", () => ({
 }))
 
 vi.mock("@/lib/featureGates", () => ({
-  useFeature: () => gate.allow,
-  useFeaturePredicate: () => () => gate.allow,
+  useFeature: () => gate.allow === true,
+  useSettledFeature: (name: string | undefined) => (name ? gate.allow : true),
+  useFeaturePredicate: () => () => gate.allow === true,
 }))
 
 vi.mock("@/components/settings/registry", () => ({
@@ -66,4 +67,15 @@ describe("SettingsSectionPage", () => {
     expect(notFound).toHaveBeenCalled()
   })
 
+  it("waits for the account's answer before refusing a gated item", () => {
+    // A direct load of a page this account was given: the deployment says no
+    // until the per-account answer lands, and a 404 there is final.
+    routeParams.section = "portal"
+    gate.allow = null
+
+    const { container } = render(<SettingsSectionPage />)
+
+    expect(notFound).not.toHaveBeenCalled()
+    expect(container).toBeEmptyDOMElement()
+  })
 })
