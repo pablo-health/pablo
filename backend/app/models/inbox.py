@@ -78,6 +78,9 @@ class InboxItem(BaseModel):
     needs beyond the common fields (a thread id, an appointment's status),
     as strings, so the shape stays the same for every kind.
 
+    ``due_at`` is when the practice means to have the item done by, for a
+    kind that has a target (a refill request); ``None`` for the rest.
+
     The last three fields are filled from :class:`InboxItemState` for an item
     the clinician has handled, and are empty on an open one.
     """
@@ -89,6 +92,7 @@ class InboxItem(BaseModel):
     title: str
     detail: str | None = None
     occurred_at: datetime
+    due_at: datetime | None = None
     severity: Severity = "normal"
     href: str
     context: dict[str, str] = Field(default_factory=dict)

@@ -36,25 +36,28 @@ vi.mock("@/lib/api/schedulingPolicy", async (importOriginal) => ({
 type Modules = Record<string, boolean>
 const ALL_ON: Modules = { intake: true, messaging: true, appointments: true, refills: true }
 
-let current = { enabled: false, decided: false, modules: ALL_ON }
+let current = { enabled: false, decided: false, modules: ALL_ON, refill_turnaround_days: 2 }
 
 function settingsAre(enabled: boolean, modules: Modules = ALL_ON) {
-  current = { enabled, decided: true, modules }
+  current = { enabled, decided: true, modules, refill_turnaround_days: 2 }
 }
 
 describe("PortalOfferingCard", () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    current = { enabled: false, decided: false, modules: ALL_ON }
+    current = { enabled: false, decided: false, modules: ALL_ON, refill_turnaround_days: 2 }
     mockGet.mockImplementation(() => Promise.resolve(current))
-    mockSave.mockImplementation((change: { enabled?: boolean; modules?: Modules }) => {
-      current = {
-        enabled: change.enabled ?? current.enabled,
-        decided: true,
-        modules: { ...current.modules, ...change.modules },
-      }
-      return Promise.resolve(current)
-    })
+    mockSave.mockImplementation(
+      (change: { enabled?: boolean; modules?: Modules; refill_turnaround_days?: number }) => {
+        current = {
+          enabled: change.enabled ?? current.enabled,
+          decided: true,
+          modules: { ...current.modules, ...change.modules },
+          refill_turnaround_days: change.refill_turnaround_days ?? current.refill_turnaround_days,
+        }
+        return Promise.resolve(current)
+      },
+    )
     mockPolicy.mockResolvedValue({ self_book_existing: false, self_book_mode: "request" })
   })
 
@@ -156,6 +159,28 @@ describe("PortalOfferingCard", () => {
       "href",
       "/dashboard/settings/scheduling",
     )
+  })
+
+  it("sets the refill target in working days under Refill requests", async () => {
+    settingsAre(true)
+    renderWithProviders(<PortalOfferingCard />)
+
+    const target = await screen.findByRole("combobox", { name: "Refill request target" })
+    expect(target).toHaveValue("2")
+    expect(screen.getByRole("option", { name: "1 working day" })).toBeInTheDocument()
+    await userEvent.selectOptions(target, "3")
+
+    expect(mockSave).toHaveBeenCalledWith({ refill_turnaround_days: 3 })
+    await waitFor(() => expect(target).toHaveValue("3"))
+  })
+
+  it("offers no refill target while refill requests are off", async () => {
+    // Catches a target that reads as live for a part clients cannot use.
+    settingsAre(true, { ...ALL_ON, refills: false })
+    renderWithProviders(<PortalOfferingCard />)
+
+    await screen.findByRole("switch", { name: "Refill requests" })
+    expect(screen.queryByTestId("refill-turnaround")).not.toBeInTheDocument()
   })
 
   it("renders nothing where the deployment has no portal", async () => {

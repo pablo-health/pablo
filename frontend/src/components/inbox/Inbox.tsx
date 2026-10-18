@@ -21,6 +21,7 @@ import Link from "next/link"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { useState } from "react"
 import { Inbox as InboxIcon } from "lucide-react"
+import { DueBadge } from "@/components/refills/DueBadge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
@@ -246,6 +247,11 @@ function ItemList({ items, isLoading, isError, onRetry, selected, onOpen }: Item
                 </div>
                 {item.patient_name && <p className="truncate text-sm text-neutral-700">{item.title}</p>}
                 {item.detail && <p className="truncate text-sm text-neutral-500">{item.detail}</p>}
+                {item.due_at && !item.disposition && (
+                  <p className="text-xs">
+                    <DueBadge dueAt={item.due_at} timeZone={timeZone} />
+                  </p>
+                )}
                 {item.disposition && (
                   <p className="text-xs text-neutral-500" data-testid="inbox-row-disposition">
                     {dispositionLabel(item, timeZone)}
