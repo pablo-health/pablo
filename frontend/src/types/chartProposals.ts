@@ -37,6 +37,21 @@ export interface MedicationChange {
   name_uncertain: boolean
 }
 
+/** When something the clinician said they would do is due, as the session said it. */
+export interface Commitment {
+  /** The day the words name; null when no single day was said. */
+  due_date: string | null
+  /** The words that say when ("by Friday"); "" when no time was said. */
+  due_said: string
+}
+
+/** The field key of a task the clinician said they would do. */
+export const SESSION_TASK = "session_task"
+
+export function isSessionTask(proposal: ChartProposal): boolean {
+  return proposal.field_key === SESSION_TASK
+}
+
 export interface ChartProposal {
   id: string
   field_key: string
@@ -47,6 +62,11 @@ export interface ChartProposal {
   editable: boolean
   /** The structured change, for a medication; null for free text. */
   change: MedicationChange | null
+  /**
+   * For a task the clinician said they would do: when it is due. Accepting
+   * files it to their tasks, tied to the client. Absent from an older server.
+   */
+  commitment?: Commitment | null
   /** What the chart says now; null when nothing is recorded. */
   current_text: string | null
   proposed_text: string
@@ -84,6 +104,8 @@ export interface DecideChartProposalRequest {
   decision: "accept" | "edit" | "discard"
   /** The clinician's text, for an edit. */
   text?: string
+  /** For a task: when it is due instead, null for undated. Left out, the proposed day stands. */
+  due_date?: string | null
 }
 
 /** One note's pending proposals, with enough about the note to head them. */

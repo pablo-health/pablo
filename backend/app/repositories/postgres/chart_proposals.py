@@ -9,12 +9,14 @@ Runs inside the request's tenant-scoped session, so the row policy
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import date
 from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import delete, func, or_, select
 
 from ...chart_proposals.models import (
     ChartProposal,
+    Commitment,
     Considered,
     Evidence,
     MedicationChange,
@@ -45,8 +47,34 @@ if TYPE_CHECKING:
     )
 
 
+def _commitment(raw: dict[str, Any] | None) -> Commitment | None:
+    """A task proposal's ``change`` is ``{"commitment": {"due_date", "due_said"}}``."""
+    held = (raw or {}).get("commitment")
+    if not isinstance(held, dict):
+        return None
+    due = held.get("due_date")
+    return Commitment(
+        due_date=date.fromisoformat(due) if due else None,
+        due_said=str(held.get("due_said") or ""),
+    )
+
+
+def _change_json(p: ChartProposal) -> dict[str, Any] | None:
+    if p.change is not None:
+        return asdict(p.change)
+    if p.commitment is not None:
+        due = p.commitment.due_date
+        return {
+            "commitment": {
+                "due_date": due.isoformat() if due is not None else None,
+                "due_said": p.commitment.due_said,
+            }
+        }
+    return None
+
+
 def _change(raw: dict[str, Any] | None) -> MedicationChange | None:
-    if not raw:
+    if not raw or "commitment" in raw:
         return None
     return MedicationChange(
         action=cast("MedicationAction", raw["action"]),
@@ -101,6 +129,7 @@ def _proposal(row: NoteChartProposalRow) -> ChartProposal:
         decided_by=row.decided_by,
         decided_at=row.decided_at,
         change=_change(row.change),
+        commitment=_commitment(row.change),
     )
 
 
@@ -178,7 +207,7 @@ class PostgresChartProposalRepository(ChartProposalRepository):
                     origin=p.origin,
                     decision=p.decision,
                     created_at=p.created_at,
-                    change=asdict(p.change) if p.change is not None else None,
+                    change=_change_json(p),
                 )
             )
         self._session.flush()

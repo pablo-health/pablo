@@ -16,6 +16,7 @@ proposal; the evidence is checked the same way for both.
 from __future__ import annotations
 
 import re
+import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, cast, override
@@ -24,9 +25,10 @@ from ..chart_history.fields import HISTORY_GROUPS, HISTORY_KEYS, SUBSTANCE_KEYS,
 from ..drug_names.names import drug_named, name_key, same_drug
 from ..medications.schemas import CreateMedicationRequest, UpdateMedicationRequest
 from ..notes.chart_context import allergies_line, medication_line
+from ..repositories.postgres.task import Task
 from ..utcnow import utc_now
 from .denials import NKDA, is_allergy_denial
-from .models import DraftedProposal, MedicationChange
+from .models import ChartProposal, DraftedProposal, MedicationChange
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -37,6 +39,7 @@ if TYPE_CHECKING:
     from ..models import Patient
     from ..notes.chart_context import ChartContext, ChartMedication
     from ..repositories import PatientRepository
+    from ..repositories.postgres.task import PostgresTaskRepository
     from .models import Evidence, MedicationAction
 
 ALLERGIES = "allergies"
@@ -81,6 +84,8 @@ class ChartWriters:
     history: ChartHistoryService
     patients: PatientRepository
     medications: MedicationService | None = None
+    tasks: PostgresTaskRepository | None = None
+    """The clinician's tasks, which an accepted commitment is filed to."""
 
 
 @dataclass(frozen=True)
@@ -679,6 +684,82 @@ class ProfileFamily(FieldFamily):
         writers.patients.update(patient)
 
 
+SESSION_TASK = "session_task"
+
+#: How a task proposal reads, and the heading its section of the ledger takes.
+SESSION_TASK_LABEL = "You said you would"
+
+#: The longest title a task keeps (``tasks.label``).
+TASK_TITLE_LIMIT = 255
+
+
+class SessionTaskFamily(FieldFamily):
+    """Something the clinician said in a session they would do: a task, not a chart field.
+
+    Drafted by its own call (:mod:`.commitments`) from the session's transcript,
+    stored and decided beside the note's chart updates, and never put in the chart
+    proposal prompt. The proposed text is the task's title; the clinician may
+    rewrite it and change when it is due before accepting. Accepting files a task
+    of the clinician's own, tied to the client, once: the proposal's id is the
+    task's ``source_ref``, so a retried accept finds the task it already filed.
+    """
+
+    @override
+    def field_keys(self) -> tuple[str, ...]:
+        return (SESSION_TASK,)
+
+    @override
+    def label(self, ref: FieldRef) -> str:
+        return SESSION_TASK_LABEL
+
+    @override
+    def chart_lines(self, chart: ChartContext) -> list[str]:
+        """None: a task is never put in the chart proposal prompt."""
+        return []
+
+    @override
+    def rules(self) -> list[str]:
+        return []
+
+    @override
+    def current_text(self, chart: ChartContext, ref: FieldRef) -> str | None:
+        return None
+
+    @override
+    def admits(self, ref: FieldRef, proposed_text: str, chart: ChartContext) -> bool:
+        return bool(proposed_text.strip())
+
+    @override
+    def apply(
+        self, writers: ChartWriters, patient: Patient, ref: FieldRef, text: str, by: WriteSource
+    ) -> None:
+        if writers.tasks is None:
+            raise RuntimeError("accepting a task needs the task list")
+        if not isinstance(ref, ChartProposal):
+            raise TypeError("a task is filed from a stored proposal")
+        title = text.strip()
+        if len(title) > TASK_TITLE_LIMIT:
+            raise ValueError(f"A task title keeps {TASK_TITLE_LIMIT} characters at most")
+        now = utc_now()
+        writers.tasks.file_once(
+            Task(
+                id=str(uuid.uuid4()),
+                user_id=by.user_id,
+                item_type="task",
+                label=title,
+                due_date=ref.commitment.due_date if ref.commitment is not None else None,
+                notes=None,
+                completed_at=None,
+                created_at=now,
+                updated_at=now,
+                category="practice",
+                source="session",
+                patient_id=patient.id,
+            ),
+            source_ref=ref.id,
+        )
+
+
 #: The families a note's proposal call reads and writes: the prompt lists their fields
 #: and the reply schema names them.
 FAMILIES: tuple[FieldFamily, ...] = (HistoryFamily(), AllergyFamily(), MedicationFamily())
@@ -686,9 +767,23 @@ FAMILIES: tuple[FieldFamily, ...] = (HistoryFamily(), AllergyFamily(), Medicatio
 #: Families only an intake form proposes to, kept out of every prompt.
 INTAKE_ONLY_FAMILIES: tuple[FieldFamily, ...] = (ProfileFamily(),)
 
+#: Families a session proposes to by a call of their own, kept out of the chart prompt.
+SESSION_ONLY_FAMILIES: tuple[FieldFamily, ...] = (SessionTaskFamily(),)
+
 
 def family_for(field_key: str) -> FieldFamily | None:
-    return next((f for f in (*FAMILIES, *INTAKE_ONLY_FAMILIES) if f.owns(field_key)), None)
+    return next(
+        (
+            f
+            for f in (*FAMILIES, *INTAKE_ONLY_FAMILIES, *SESSION_ONLY_FAMILIES)
+            if f.owns(field_key)
+        ),
+        None,
+    )
+
+
+def is_session_task(field_key: str) -> bool:
+    return field_key == SESSION_TASK
 
 
 def proposable_keys() -> tuple[str, ...]:
