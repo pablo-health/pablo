@@ -18,16 +18,21 @@
  */
 
 import { test, expect } from "../fixtures/auth"
+import { BROWSER_TIME_ZONE } from "../fixtures/clock"
 
 type ComplianceItem = { id: string; label: string; due_date: string | null }
 type Task = ComplianceItem & { category: string; source: string; repeat_rule: string | null }
 
-/** `days` from today, as the date input and the API write it. */
+/**
+ * `days` after today as the browser counts it, as the date input and the API
+ * write it. "Today" is the browser's, not the runner's: the panel counts days
+ * from the browser's midnight, and the two calendars disagree for part of
+ * every day (the runner is UTC).
+ */
 function daysFromNow(days: number): string {
-  const day = new Date()
-  day.setDate(day.getDate() + days)
-  const pad = (n: number) => String(n).padStart(2, "0")
-  return `${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}`
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: BROWSER_TIME_ZONE })
+  const [y, m, d] = today.split("-").map(Number)
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10)
 }
 
 test("a compliance item filed through the old API is a compliance task on Settings > Tasks", async ({
