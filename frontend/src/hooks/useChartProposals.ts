@@ -65,6 +65,8 @@ export function useDecideChartProposal(patientId: string) {
         queryKeys.chartProposals.all,
         queryKeys.chartHistory.byPatient(patientId),
         queryKeys.patients.detail(patientId),
+        // An accepted homework suggestion is a new assignment.
+        queryKeys.homework.byPatient(patientId),
       ]),
   })
 }

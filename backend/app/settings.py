@@ -1519,7 +1519,8 @@ class Settings(BaseSettings):
         default="intake,messaging,appointments",
         description=(
             "Comma-separated patient-facing portal modules to serve: any of "
-            "intake, messaging, documents, appointments, refills, billing, chat. A "
+            "intake, messaging, documents, appointments, homework, refills, billing, "
+            "chat. A "
             "module left out has its patient-facing routes unmounted, so "
             "they answer 404 rather than merely being hidden. Unknown names "
             "are ignored."
@@ -1644,7 +1645,7 @@ class Settings(BaseSettings):
             "configurable per deployment; nothing is set by default.\n\n"
             "Keys read by this codebase (others may be read by extensions):\n"
             "- ``note_generation``: drafting a note of any type, and the "
-            "source-attribution calls that follow it.\n"
+            "source-attribution, chart-update and homework calls that follow it.\n"
             "- ``note_import``: reading an imported note into a note type.\n"
             "- ``note_type_derive``: proposing a note type from samples.\n"
             "- ``availability_parse``: reading hours a clinician describes. "

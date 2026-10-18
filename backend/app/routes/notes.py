@@ -28,7 +28,7 @@ from ..auth.service import (
     require_cloud_tasks_invoker,
 )
 from ..chart_proposals.dependencies import get_chart_proposal_step
-from ..chart_proposals.step import ChartProposalStep, proposes_chart_updates
+from ..chart_proposals.step import ChartProposalStep, refreshes_on_edit
 from ..db import arm_current_user_id, get_db_session, release_db_connection, set_tenant_schema
 from ..jobs.task_queue import enqueue
 from ..models import (
@@ -338,7 +338,7 @@ def _refresh_chart_proposals(
     except KeyError:
         definition = None
     patient = patients.get(note.patient_id, user.id)
-    if patient is not None and proposes_chart_updates(definition):
+    if patient is not None and refreshes_on_edit(definition):
         step.edited(
             note, definition, patient, as_shown(note.note_type, note.content, note.content_edited)
         )

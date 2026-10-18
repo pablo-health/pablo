@@ -75,6 +75,7 @@ from .routes import (
     domain_connect,
     ehr_routes,
     ext_auth,
+    homework,
     ical_sync,
     inbox,
     instrument_licenses,
@@ -393,6 +394,7 @@ def _portal_module_router_pairs(modules: Iterable[str]) -> list[tuple[str, APIRo
         "messaging": patient_messages.patient_messages_router,
         "appointments": patient_appointments.router,
         "refills": refill_requests.patient_refills_router,
+        "homework": homework.patient_homework_router,
     }
     return [(name, router) for name, router in by_module.items() if name in wanted]
 
@@ -438,6 +440,10 @@ app.include_router(patient_documents.patient_router)
 app.include_router(patient_messages.patient_threads_router)
 app.include_router(patient_messages.message_threads_router)
 app.include_router(refill_requests.refill_requests_router)
+# The clinician's half of homework: reading a note's plan, confirming what
+# it proposes. Unconditional, like the chart it sits on; the client's half
+# went up with the portal modules above.
+app.include_router(homework.router)
 # One list of everything that needs the clinician. Its sources are
 # registered here like a deployment's own would be; one a deployment already
 # registered for the same kind is kept.

@@ -100,6 +100,9 @@ PHI_PATH_MARKERS: tuple[str, ...] = (
     # letter from a prior provider — and the routes hand back signed URLs to
     # the files themselves. Marked for the same reason as the line above.
     "/patient/documents",
+    # The client's own homework: what their clinician asked them to work on,
+    # and the note they leave when they finish it.
+    "/patient/homework",
 )
 
 FORBIDDEN_UNDERSCORE_PARAMS: frozenset[str] = frozenset({"_audit", "_http_request"})
@@ -146,6 +149,10 @@ AUDIT_EXEMPT_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # clinician read and decision on the same rows.
         ("get", "/api/patient/refills"),
         ("get", "/api/patient/refills/medications"),
+        # homework.py — the client reading their OWN confirmed homework. Same
+        # principle as the two above. Marking one done or not done IS
+        # recorded, and so is every clinician read and decision.
+        ("get", "/api/patient/homework"),
         # patient_intake_assignments.py — the patient reading a form they
         # were asked to fill in, and what they have saved against it so
         # far. Same principle as the two above: the audit log records

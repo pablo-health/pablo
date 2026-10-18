@@ -6,6 +6,7 @@ import { useEffect, type ReactNode } from "react"
 import Link from "next/link"
 import {
   Activity,
+  ClipboardCheck,
   ClipboardList,
   CreditCard,
   FileText,
@@ -23,6 +24,7 @@ import { OnlyYouBadge } from "@/components/notes/OnlyYouBadge"
 import { PatientDocuments } from "@/components/patients/PatientDocuments"
 import { OutcomeMeasuresTab } from "@/components/outcomeMeasures/OutcomeMeasuresTab"
 import { DiagnosesTab } from "@/components/diagnoses/DiagnosesTab"
+import { HomeworkTab } from "@/components/homework/HomeworkTab"
 import { ProblemListTab } from "@/components/problems/ProblemListTab"
 import { ChartHistoryTab } from "@/components/chartHistory/ChartHistoryTab"
 import { MedicationsTab } from "@/components/medications/MedicationsTab"
@@ -60,6 +62,7 @@ const TABS = [
   "intake",
   "documents",
   "measures",
+  "homework",
   "problems",
   "history",
   "diagnoses",
@@ -247,6 +250,10 @@ export function PatientChartTabs({ patientId, initialTab }: PatientChartTabsProp
             Measures
             <CountBadge count={measureCount} />
           </TabsTrigger>
+          <TabsTrigger value="homework">
+            <ClipboardCheck className="h-4 w-4" />
+            Homework
+          </TabsTrigger>
           <TabsTrigger value="problems">
             <ListChecks className="h-4 w-4" />
             Problems
@@ -283,6 +290,9 @@ export function PatientChartTabs({ patientId, initialTab }: PatientChartTabsProp
         </TabsContent>
         <TabsContent value="measures" className="pt-4">
           <OutcomeMeasuresTab patientId={patientId} />
+        </TabsContent>
+        <TabsContent value="homework" className="pt-4">
+          <HomeworkTab patientId={patientId} />
         </TabsContent>
         <TabsContent value="problems" className="pt-4">
           <ProblemListTab patientId={patientId} />

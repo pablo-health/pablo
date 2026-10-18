@@ -10,6 +10,7 @@ const PORTAL_MODULE_LABELS: Record<string, string> = {
   messaging: "Messages",
   documents: "Documents",
   appointments: "Appointments",
+  homework: "Homework",
   refills: "Refill requests",
   billing: "Billing",
 }

@@ -51,7 +51,8 @@ from ..chart_proposals.service import (
     ProposalNotFoundError,
 )
 from ..chart_proposals.step import ChartProposalStep, proposes_chart_updates
-from ..db import release_db_connection
+from ..db import get_db_session, release_db_connection
+from ..homework.repository import HomeworkRepository
 from ..medications.repository import (  # noqa: TC001 — FastAPI resolves at runtime
     MedicationRepository,
 )
@@ -168,6 +169,8 @@ def decide_chart_proposal(
         history=ChartHistoryService(history),
         patients=patients,
         medications=MedicationService(medications),
+        # An accepted homework suggestion becomes the client's assignment.
+        homework=HomeworkRepository(get_db_session()),
     )
     service = ChartProposalService(proposals, writers, visit_date=_visit_date(note, sessions, user))
     try:
