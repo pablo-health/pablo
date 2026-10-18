@@ -100,10 +100,10 @@ test("a commitment from the session, added at sign, is the clinician's task for 
     )
     await referral.getByRole("button", { name: "Add to my tasks" }).click()
     expect((await decided).status()).toBe(200)
-    const workbook = rows.filter({ hasNotText: "by Friday" })
-    await workbook.getByRole("button", { name: "Dismiss" }).click()
-    await expect(dialog.getByText("Added to your tasks")).toBeVisible()
-    await expect(dialog.getByText("Dismissed")).toBeVisible()
+    // The sign step lists what is still undecided: the added one leaves it.
+    await expect(rows).toHaveCount(1)
+    await rows.getByRole("button", { name: "Dismiss" }).click()
+    await expect(dialog.getByRole("heading", { name: "You said you would" })).toHaveCount(0)
 
     await dialog.getByRole("button", { name: "Sign and lock" }).click()
     await expect
