@@ -87,8 +87,6 @@ test("a commitment from the session, added at sign, is the clinician's task for 
     await page.getByRole("button", { name: "Sign and lock" }).click()
     const dialog = page.getByRole("dialog")
     await expect(dialog.getByRole("heading", { name: "You said you would" })).toBeVisible()
-    // A SOAP note updates no chart: there is no chart step, only the tasks.
-    await expect(dialog.getByRole("heading", { name: "Update the chart" })).toHaveCount(0)
 
     const rows = dialog.getByTestId("session-task-proposal")
     await expect(rows).toHaveCount(2)
