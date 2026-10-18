@@ -452,6 +452,13 @@ const baseQueryKeys = {
       [...baseQueryKeys.coverage.all, "byPatient", patientId] as const,
   },
 
+  // A client's homework, on their chart
+  homework: {
+    all: ["homework"] as const,
+    byPatient: (patientId: string) =>
+      [...baseQueryKeys.homework.all, "byPatient", patientId] as const,
+  },
+
   // Refill requests (the prescriber's queue) query keys
   refills: {
     all: ["refills"] as const,

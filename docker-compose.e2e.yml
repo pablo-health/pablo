@@ -202,9 +202,10 @@ services:
       - PORTAL_INVITE_DELIVERY=smtp
       - PORTAL_SMS_GATEWAY=capture
       - PORTAL_SMS_CAPTURE_URL=http://fake-sms:8026
-      # The default modules plus refills, which is off by default and which
-      # portal-refills.spec.ts drives end to end.
-      - PORTAL_MODULES=intake,messaging,appointments,refills
+      # The default modules plus refills and homework, which are off by
+      # default and which portal-refills.spec.ts and homework.spec.ts drive
+      # end to end.
+      - PORTAL_MODULES=intake,messaging,appointments,homework,refills
       # What Settings > Domains tells a practice to point its own hosts at;
       # practice-domains.spec.ts reads it back from the page.
       - PRACTICE_DOMAIN_CNAME_TARGET=sites.e2e-stack.example

@@ -9,6 +9,12 @@ record of how the call ended. After a clinician's edit is saved only the
 proposals from the note's own text are recomputed; the proposal call is not
 run again. Only the types drafted against the full chart propose updates to
 it; for the rest the run is ``skipped``.
+
+Homework suggestions (``app.homework.proposals``) ride the same step for every
+type that has a homework field, whether or not it proposes chart updates: a
+psychiatric note's prose plan is read beside the call, and every content
+change brings the suggestions up to date, so they are decided at signing with
+the rest.
 """
 
 from __future__ import annotations
@@ -18,6 +24,8 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from ..chart_history.fields import is_history_key
+from ..homework.drafting import HomeworkDrafter
+from ..homework.proposals import draft_homework, proposes_homework, refresh_homework
 from ..notes.chart_context import chart_context_for
 from ..notes.chart_fields import rendered_fields
 from ..utcnow import utc_now
@@ -77,11 +85,13 @@ class ChartProposalStep:
         history: ChartHistoryRepository,
         medications: MedicationRepository | None = None,
         people: PeopleTermLookup | None = None,
+        homework_drafter: HomeworkDrafter | None = None,
     ) -> None:
         self._proposals = proposals
         self._history = history
         self._medications = medications
         self._people = people
+        self._homework_drafter = homework_drafter
 
     def chart(
         self,
@@ -158,10 +168,13 @@ class ChartProposalStep:
             complete, chart, transcript, draft=draft, statements=statements
         )
         said = said_this_visit(extracted_fields(definition), statements, draft)
+        drafter = self._homework_drafter or HomeworkDrafter(complete)
         return replace(
             screened(drafted, chart, transcript_segments(transcript), said),
             commitments=tuple(commitments) if commitments is not None else None,
             commitment_error=commitment_error,
+            # Beside the calls, still holding nothing: the draft's prose plan, for homework.
+            homework=draft_homework(definition, draft, drafter),
         )
 
     def draft_from_document(
@@ -246,6 +259,8 @@ class ChartProposalStep:
             ChartProposalService(self._proposals).refresh(note, chart, shown, proposals)
         if drafted is not None and drafted.commitments is not None:
             ChartProposalService(self._proposals).refresh_session_tasks(note, drafted.commitments)
+        homework = drafted.homework if drafted is not None else None
+        refresh_homework(self._proposals, note, definition, shown, homework)
 
     def edited(
         self,
@@ -254,6 +269,13 @@ class ChartProposalStep:
         patient: Patient,
         shown: Mapping[str, Any],
     ) -> None:
-        """After a clinician's edit is saved: what the note's own text proposes, again."""
+        """After a clinician's edit is saved: what the note's own text proposes, again,
+        its homework included."""
         if proposes_chart_updates(definition):
             ChartProposalService(self._proposals).refresh(note, self.chart(patient), shown)
+        refresh_homework(self._proposals, note, definition, shown)
+
+
+def refreshes_on_edit(definition: NoteTypeDefinition | None) -> bool:
+    """Whether a saved edit has anything to recompute: chart updates or homework."""
+    return proposes_chart_updates(definition) or proposes_homework(definition)

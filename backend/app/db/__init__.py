@@ -1250,6 +1250,11 @@ PATIENT_READABLE_TABLES: dict[str, str] = {
     # see what the prescriber decided. The clinician side reaches the same
     # rows through ``has_patient_access``.
     "refill_requests": "patient_id",
+    # What a client was asked to do between visits. Only open and done rows
+    # are the client's to read: one the clinician withdrew is off their list.
+    # So the table takes a bespoke predicate that adds the status test — see
+    # ``_patient_principal_predicate_for``.
+    "homework_assignments": "patient_id",
     # The patient's medication list, read so they can pick what to ask a
     # refill of. Row-level only, like every entry here: the row also carries
     # the practice's notes and stop reasons, and the one patient route that
@@ -1384,6 +1389,14 @@ PATIENT_WRITABLE_TABLES: dict[str, str] = {
     # route updates a request, and the decision columns are written only by
     # the clinician's decision route.
     "refill_requests": "patient_id",
+    # Marking an assignment done, or not done after all, is a patient UPDATE
+    # of ``status``, ``completed_at`` and ``client_note``, and that is all a
+    # patient does here. The grant is wider — RLS cannot give UPDATE and
+    # withhold INSERT, and has no column granularity — so the narrowing is
+    # the route layer's: no patient route inserts a row or changes its text.
+    # The bespoke predicate carries into WITH CHECK, so a patient can never
+    # move a row to a status outside ``assigned`` / ``done``.
+    "homework_assignments": "patient_id",
     # A patient starts their own conversations and archives or purges them,
     # so the conversation row is writable. The turn loop then writes the
     # message rows — the user's turn and the assistant's reply — which is
@@ -1507,6 +1520,10 @@ def _patient_principal_predicate_for(
     ``chat_messages`` has no owning column at all — not ``patient_id``, not
     ``user_id`` — so it is scoped through the parent conversation, and
     inherits both halves of the test above by construction.
+
+    ``homework_assignments`` carries the right column, but a row the clinician
+    withdrew is no longer the client's. The status test keeps it off the
+    portal even if a route forgot.
     """
     if table_name == "patient_documents":
         from ..models import PATIENT_FACING_CATEGORIES
@@ -1518,6 +1535,12 @@ def _patient_principal_predicate_for(
         return f"{_patient_principal_predicate(key_column)} AND {qualified}.category IN ({allowed})"
     if table_name == "chat_conversations":
         return f"{_patient_principal_predicate(key_column)} AND {qualified}.owner_user_id IS NULL"
+    if table_name == "homework_assignments":
+        # A withdrawn assignment is no longer the client's.
+        return (
+            f"{_patient_principal_predicate(key_column)} "
+            f"AND {qualified}.status IN ('assigned', 'done')"
+        )
     if table_name == "chat_messages":
         # ``schema_name`` and ``qualified`` are validated identifiers (see
         # ``_validate_schema_name``) composed with fixed table names; the

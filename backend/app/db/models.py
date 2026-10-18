@@ -2157,6 +2157,72 @@ class RefillRequestRow(Base):
     )
 
 
+class HomeworkAssignmentRow(Base):
+    """Something a client was asked to do between visits, and whether they did it.
+
+    A record rather than a sentence in a note's plan. Every row is an
+    assignment the clinician made: either by accepting a homework suggestion
+    from a signed note (a ``note_chart_proposals`` row of the ``homework``
+    family; ``proposal_id``, ``note_id`` and ``source_field`` say which), or
+    by writing one by hand (origin ``clinician``). Suggestions themselves live
+    with the other chart updates, never here.
+
+    ``body`` is what the client reads; ``proposed_text`` is the wording that
+    was suggested, kept so an edit is visible later. ``client_note`` is the
+    client's own short note when they marked it done. ``withdrawn`` is one
+    the clinician took back: off the client's list, which the patient row
+    policy also enforces (``status IN ('assigned','done')``).
+
+    One assignment per accepted suggestion (``proposal_id`` is unique).
+    """
+
+    __tablename__ = "homework_assignments"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    note_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("notes.id", ondelete="SET NULL")
+    )
+    proposal_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("note_chart_proposals.id", ondelete="SET NULL")
+    )
+    source_field: Mapped[str | None] = mapped_column(String(200))
+    proposed_text: Mapped[str | None] = mapped_column(Text)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    origin: Mapped[str] = mapped_column(String(16), nullable=False)
+    assigned_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    withdrawn_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    withdrawn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    client_note: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('assigned','done','withdrawn')",
+            name="ck_homework_assignments_status",
+        ),
+        CheckConstraint(
+            "origin IN ('note','clinician')",
+            name="ck_homework_assignments_origin",
+        ),
+        Index(
+            "uq_homework_assignments_proposal",
+            "proposal_id",
+            unique=True,
+            postgresql_where=text("proposal_id IS NOT NULL"),
+        ),
+    )
+
+
 # Fail-fast guard: the CHECK constraint string above and OutcomeMeasureSource
 # must enumerate the same set.  If a contributor adds a value to one without
 # the other, this trips at import (and therefore in every test run) instead of

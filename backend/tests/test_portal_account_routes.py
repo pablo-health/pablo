@@ -387,6 +387,7 @@ class TestTheCapabilityDocument:
             "messaging": False,
             "documents": False,
             "appointments": False,
+            "homework": False,
             "refills": False,
             "billing": False,
             "chat": False,

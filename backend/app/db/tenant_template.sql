@@ -558,6 +558,30 @@ CREATE TABLE __TENANT_SCHEMA__.google_created_calendars (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.homework_assignments (
+    id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    note_id uuid,
+    proposal_id uuid,
+    source_field character varying(200),
+    proposed_text text,
+    body text NOT NULL,
+    status character varying(16) NOT NULL,
+    origin character varying(16) NOT NULL,
+    assigned_by uuid,
+    assigned_at timestamp with time zone NOT NULL,
+    withdrawn_by uuid,
+    withdrawn_at timestamp with time zone,
+    completed_at timestamp with time zone,
+    client_note character varying(500),
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_homework_assignments_origin CHECK (((origin)::text = ANY ((ARRAY['note'::character varying, 'clinician'::character varying])::text[]))),
+    CONSTRAINT ck_homework_assignments_status CHECK (((status)::text = ANY ((ARRAY['assigned'::character varying, 'done'::character varying, 'withdrawn'::character varying])::text[])))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.ical_sync_configs (
     doc_id character varying(300) NOT NULL,
     user_id uuid NOT NULL,
@@ -1752,6 +1776,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.google_created_calendars
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.homework_assignments
+    ADD CONSTRAINT homework_assignments_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.ical_sync_configs
     ADD CONSTRAINT ical_sync_configs_pkey PRIMARY KEY (doc_id);
 
@@ -2326,6 +2355,10 @@ CREATE INDEX ix_external_calendar_events_user_answer ON __TENANT_SCHEMA__.extern
 
 
 
+CREATE INDEX ix_homework_assignments_patient_id ON __TENANT_SCHEMA__.homework_assignments USING btree (patient_id);
+
+
+
 CREATE INDEX ix_ical_sync_configs_user_id ON __TENANT_SCHEMA__.ical_sync_configs USING btree (user_id);
 
 
@@ -2666,6 +2699,10 @@ CREATE UNIQUE INDEX uq_appointments_user_start_active ON __TENANT_SCHEMA__.appoi
 
 
 
+CREATE UNIQUE INDEX uq_homework_assignments_proposal ON __TENANT_SCHEMA__.homework_assignments USING btree (proposal_id) WHERE (proposal_id IS NOT NULL);
+
+
+
 CREATE UNIQUE INDEX uq_instrument_license_attestations_active ON __TENANT_SCHEMA__.instrument_license_attestations USING btree (instrument_code) WHERE (revoked_at IS NULL);
 
 
@@ -2968,6 +3005,21 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.payer_enrollments
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.payers
     ADD CONSTRAINT fk_payers_carveout_of_payers FOREIGN KEY (carveout_of) REFERENCES __TENANT_SCHEMA__.payers(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.homework_assignments
+    ADD CONSTRAINT homework_assignments_note_id_fkey FOREIGN KEY (note_id) REFERENCES __TENANT_SCHEMA__.notes(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.homework_assignments
+    ADD CONSTRAINT homework_assignments_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.homework_assignments
+    ADD CONSTRAINT homework_assignments_proposal_id_fkey FOREIGN KEY (proposal_id) REFERENCES __TENANT_SCHEMA__.note_chart_proposals(id) ON DELETE SET NULL;
 
 
 

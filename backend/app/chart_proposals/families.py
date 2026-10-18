@@ -77,6 +77,22 @@ class FieldRef(Protocol):
         """The structured change, for a family whose proposals are actions."""
 
 
+class HomeworkWriter(Protocol):
+    """Where an accepted homework suggestion becomes an assignment."""
+
+    def assign_suggestion(  # noqa: PLR0913 — one keyword per thing the assignment records
+        self,
+        patient_id: str,
+        *,
+        text: str,
+        proposed_text: str,
+        note_id: str | None,
+        proposal_id: str,
+        source_field: str,
+        user_id: str,
+    ) -> None: ...
+
+
 @dataclass(frozen=True)
 class ChartWriters:
     """What an accepted proposal writes through."""
@@ -86,6 +102,8 @@ class ChartWriters:
     medications: MedicationService | None = None
     tasks: PostgresTaskRepository | None = None
     """The clinician's tasks, which an accepted commitment is filed to."""
+    homework: HomeworkWriter | None = None
+    """The client's homework, which an accepted homework suggestion is assigned to."""
 
 
 @dataclass(frozen=True)
@@ -760,6 +778,73 @@ class SessionTaskFamily(FieldFamily):
         )
 
 
+HOMEWORK = "homework"
+
+
+class HomeworkFamily(FieldFamily):
+    """Homework a note's plan gives the client, suggested as an assignment.
+
+    Read from the draft's own plan fields in the chart-update step, kept current
+    as the clinician edits the note, and decided at signing with the note's other
+    updates (:mod:`app.homework.proposals`). Never read from a transcript and
+    never put in the chart proposal prompt. One suggestion per task; its
+    ``item_key`` names the note field and the task's place in it
+    (``plan.homework_assignments#1``), so a note's suggestions are told apart and
+    a dismissed one is not offered again. Accepting, as written or edited, makes
+    the assignment the client sees in the portal; nothing on the chart is
+    replaced, so there is no current text.
+    """
+
+    itemized = True
+
+    @override
+    def field_keys(self) -> tuple[str, ...]:
+        return (HOMEWORK,)
+
+    @override
+    def label(self, ref: FieldRef) -> str:
+        return "Homework: Assignment"
+
+    @override
+    def chart_lines(self, chart: ChartContext) -> list[str]:
+        """None: homework is never put in a prompt."""
+        return []
+
+    @override
+    def rules(self) -> list[str]:
+        return []
+
+    @override
+    def current_text(self, chart: ChartContext, ref: FieldRef) -> str | None:
+        return None
+
+    @override
+    def apply(
+        self, writers: ChartWriters, patient: Patient, ref: FieldRef, text: str, by: WriteSource
+    ) -> None:
+        if writers.homework is None:
+            raise RuntimeError("accepting homework needs the homework writer")
+        value = text.strip()
+        if len(value) > HOMEWORK_TEXT_MAX:
+            raise ValueError("Homework is longer than an assignment keeps")
+        writers.homework.assign_suggestion(
+            patient.id,
+            text=value,
+            proposed_text=str(getattr(ref, "proposed_text", value)),
+            note_id=by.note_id,
+            proposal_id=str(getattr(ref, "id", "")),
+            source_field=ref.item_key.split("#", 1)[0],
+            user_id=by.user_id,
+        )
+
+
+#: Longest assignment kept, the same limit the homework routes apply.
+HOMEWORK_TEXT_MAX = 300
+
+#: Families the note's own plan suggests to beside its chart updates, kept out of every prompt.
+PLAN_ONLY_FAMILIES: tuple[FieldFamily, ...] = (HomeworkFamily(),)
+
+
 #: The families a note's proposal call reads and writes: the prompt lists their fields
 #: and the reply schema names them.
 FAMILIES: tuple[FieldFamily, ...] = (HistoryFamily(), AllergyFamily(), MedicationFamily())
@@ -775,7 +860,12 @@ def family_for(field_key: str) -> FieldFamily | None:
     return next(
         (
             f
-            for f in (*FAMILIES, *INTAKE_ONLY_FAMILIES, *SESSION_ONLY_FAMILIES)
+            for f in (
+                *FAMILIES,
+                *INTAKE_ONLY_FAMILIES,
+                *SESSION_ONLY_FAMILIES,
+                *PLAN_ONLY_FAMILIES,
+            )
             if f.owns(field_key)
         ),
         None,

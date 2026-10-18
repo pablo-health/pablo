@@ -23,7 +23,7 @@ beforeEach(() => {
 })
 
 describe("portal modules", () => {
-  it("registers forms, then messaging, then appointments, then refills", async () => {
+  it("registers forms, then messaging, then appointments, then homework, then refills", async () => {
     await import("../modules")
     const { getPortalSlots } = await import("../slots")
 
@@ -31,6 +31,7 @@ describe("portal modules", () => {
       "forms",
       "messaging",
       "appointments",
+      "homework",
       "refills",
     ])
   })
@@ -50,6 +51,7 @@ describe("portal modules", () => {
       ["forms", "intake"],
       ["messaging", "messaging"],
       ["appointments", "appointments"],
+      ["homework", "homework"],
       ["refills", "refills"],
     ])
   })

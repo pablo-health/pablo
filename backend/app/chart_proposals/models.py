@@ -11,11 +11,12 @@ if TYPE_CHECKING:
     from datetime import date, datetime
 
 Decision = Literal["pending", "accepted", "edited", "discarded"]
-Origin = Literal["transcript", "document", "note", "intake"]
+Origin = Literal["transcript", "document", "note", "intake", "homework"]
 """``transcript``: drafted from what was said. ``document``: drafted from an imported
 note's document, citing its paragraphs. ``note``: the note's own text, for a field the
 chart had nothing for. ``intake``: an accepted intake form's answers, citing the
-questions they answer."""
+questions they answer. ``homework``: a homework suggestion read from the note's own
+plan (:mod:`app.homework.proposals`), kept current by its own refresh, never ``refresh``'s."""
 
 #: What a proposal from the note's own text says changed: the chart had nothing.
 RECORDED_THIS_VISIT = "Recorded this visit"
@@ -135,6 +136,9 @@ class Drafted:
     """What the clinician said they would do (:mod:`.commitments`), each a task to
     propose; ``None`` when that call did not run, or failed (``commitment_error``)."""
     commitment_error: str | None = None
+    homework: tuple[DraftedProposal, ...] | None = None
+    """The homework read from the draft's prose plan fields (``app.homework.proposals``),
+    beside the call; ``None`` when there was no such read or it failed."""
 
 
 @dataclass(frozen=True)

@@ -603,6 +603,18 @@ class AuditAction(StrEnum):
     REFILL_REQUEST_QUEUE_VIEWED = "refill_request_queue_viewed"
     REFILL_REQUEST_DECIDED = "refill_request_decided"
 
+    # Homework. VIEWED is a clinician opening a client's homework; ADDED is
+    # one the clinician wrote by hand; WITHDRAWN is one taken back;
+    # EDITED is a reworded assignment; MARKED is the client marking one done
+    # or not done. Accepting a suggestion is recorded where chart updates
+    # are decided. Payloads carry ids, never the task's words or the
+    # client's note.
+    HOMEWORK_VIEWED = "homework_viewed"
+    HOMEWORK_ADDED = "homework_added"
+    HOMEWORK_WITHDRAWN = "homework_withdrawn"
+    HOMEWORK_EDITED = "homework_edited"
+    HOMEWORK_MARKED = "homework_marked"
+
     # The Inbox. VIEWED is the list, one row per patient on it — what it
     # discloses is per patient: that something of theirs waits, and what.
     # COUNTED is the nav badge's one number, about the clinician rather than
@@ -795,6 +807,7 @@ class ResourceType(StrEnum):
     PATIENT_COVERAGE = "patient_coverage"
     PATIENT_MESSAGE_THREAD = "patient_message_thread"
     REFILL_REQUEST = "refill_request"
+    HOMEWORK_ASSIGNMENT = "homework_assignment"
     INBOX_ITEM = "inbox_item"
     INVITATION = "invitation"
     PRACTICE_PORTAL = "practice_portal"
