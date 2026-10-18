@@ -32,17 +32,30 @@ from app.services.structured_llm_gateway import (
     resolve_structured_llm_gateway,
 )
 
+from evals.anthropic_api import direct_anthropic_gateway, direct_anthropic_model
 from evals.session_commitments.cases import ALL_CASES, VISIT, CommitmentCase
 from evals.session_commitments.scorers import grade
 
+_DIRECT = ("anthropic-api:", "anthropic-api-auto:", "anthropic-api-strict:")
 
-def run_case(case: CommitmentCase, model: str | None, run: int) -> dict[str, Any]:
-    generator = RegistryNoteGenerationService(
+
+def _generator(model: str | None) -> RegistryNoteGenerationService:
+    """The note path's own service, on ``model``. An ``anthropic-api:`` model runs
+    on the eval-only direct gateway (``evals.anthropic_api``), with no fallback."""
+    if model is not None and model.startswith(_DIRECT):
+        return RegistryNoteGenerationService(
+            llm_gateway=direct_anthropic_gateway(), model=direct_anthropic_model(model)
+        )
+    return RegistryNoteGenerationService(
         llm_gateway=(
             resolve_structured_llm_gateway(model) if model else get_default_structured_llm_gateway()
         ),
         model=model,
     )
+
+
+def run_case(case: CommitmentCase, model: str | None, run: int) -> dict[str, Any]:
+    generator = _generator(model)
     started = time.monotonic()
     proposals, error = propose_commitments(
         generator.chart_proposal_completion(),
@@ -139,7 +152,8 @@ def main(argv: list[str] | None = None) -> int:
     if not cases:
         print(f"no case matches {args.case!r}", file=sys.stderr)
         return 2
-    if not (args.model or "").startswith("bedrock:") and not os.environ.get("GOOGLE_CLOUD_PROJECT"):
+    off_vertex = (args.model or "").startswith(("bedrock:", *_DIRECT))
+    if not off_vertex and not os.environ.get("GOOGLE_CLOUD_PROJECT"):
         print("Set GOOGLE_CLOUD_PROJECT to a project with Vertex access.", file=sys.stderr)
         return 2
     results = [run_case(c, args.model, n) for n in range(1, args.runs + 1) for c in cases]

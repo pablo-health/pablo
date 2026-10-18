@@ -45,17 +45,24 @@ Every session is on Wednesday 14 October 2026.
 
 ## Running it
 
-Always on the model the note path uses (Sonnet 4.6 on Bedrock today):
+On the model the note path uses (Sonnet 4.6), through the direct Anthropic API
+for evals (`anthropic-api:`, `ANTHROPIC_API_KEY`; `evals/anthropic_api.py`),
+and on a second family so the score is not one model's:
 
 ```bash
-scripts/run-session-commitment-eval.sh --model bedrock:us.anthropic.claude-sonnet-4-6
-scripts/run-session-commitment-eval.sh --model bedrock:us.anthropic.claude-sonnet-4-6 --runs 3
+scripts/run-session-commitment-eval.sh --model anthropic-api:claude-sonnet-4-6 --runs 3
+scripts/run-session-commitment-eval.sh --model google:gemini-3.1-pro-preview --runs 3
 ```
 
-## Recorded run, 2026-10-18
+## Recorded runs, 2026-10-18
 
-Sonnet 4.6 on Bedrock (`us-east-1`), three runs of each of the twelve cases:
-36 of 36 passed. Recall 1.0 (24 of 24 expected commitments), precision 1.0 (no
-proposal the clinician did not make), client work given to the clinician 0,
-dates right 24 of 24 (the nine dated ones on the day said, the fifteen others
-undated), no call failed.
+Three runs of each of the twelve cases, on each model:
+
+| Model | Cases | Recall | Invented | Client work given to the clinician | Dates right |
+|---|---|---|---|---|---|
+| Sonnet 4.6, `anthropic-api:` | 36/36 | 24/24 | 0 | 0 | 24/24 |
+| Sonnet 4.6, Bedrock `us-east-1` | 36/36 | 24/24 | 0 | 0 | 24/24 |
+| Gemini 3.1 Pro, Vertex `global` | 36/36 | 24/24 | 0 | 0 | 24/24 |
+
+Dates right counts the nine dated commitments on the day said and the fifteen
+others left undated. No call failed.
