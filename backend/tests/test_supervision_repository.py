@@ -16,9 +16,9 @@ from decimal import Decimal
 from unittest.mock import MagicMock
 
 from app.db.models import (
-    ComplianceItemRow,
     SupervisionHoursRow,
     SupervisionRelationshipRow,
+    TaskRow,
 )
 from app.repositories.postgres.supervision import (
     PostgresSupervisionRepository,
@@ -111,7 +111,7 @@ class TestCreateRelationship:
         # No compliance item created/linked.
         assert rel.compliance_item_id is None
         for call in session.add.call_args_list:
-            assert not isinstance(call.args[0], ComplianceItemRow)
+            assert not isinstance(call.args[0], TaskRow)
 
     def test_creates_and_links_review_item_when_label_given(self) -> None:
         session = MagicMock()
@@ -121,15 +121,11 @@ class TestCreateRelationship:
         repo.create_relationship(rel, review_item_label="Delegation annual review")
 
         added_types = [type(c.args[0]) for c in session.add.call_args_list]
-        assert ComplianceItemRow in added_types
+        assert TaskRow in added_types
         assert SupervisionRelationshipRow in added_types
         # The relationship is now linked to the freshly-created item.
         assert rel.compliance_item_id is not None
-        item = next(
-            c.args[0]
-            for c in session.add.call_args_list
-            if isinstance(c.args[0], ComplianceItemRow)
-        )
+        item = next(c.args[0] for c in session.add.call_args_list if isinstance(c.args[0], TaskRow))
         assert item.id == rel.compliance_item_id
         assert item.user_id == rel.user_id
         assert item.due_date == date(2027, 3, 1)
@@ -144,7 +140,7 @@ class TestCreateRelationship:
         repo.create_relationship(rel, review_item_label="ignored")
 
         for call in session.add.call_args_list:
-            assert not isinstance(call.args[0], ComplianceItemRow)
+            assert not isinstance(call.args[0], TaskRow)
         assert rel.compliance_item_id == "existing-item"
 
 

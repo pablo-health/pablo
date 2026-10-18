@@ -402,6 +402,18 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ),  # lists evidence docs for therapist's own item
         ("get", "/api/compliance/documents/{document_id}/file"),  # streams evidence doc bytes
         ("delete", "/api/compliance/documents/{document_id}"),  # removes evidence doc
+        # tasks.py — the clinician's own tasks; compliance items are one category of them
+        ("get", "/api/tasks"),  # clinician's own tasks
+        ("get", "/api/tasks/templates"),  # compliance template catalog
+        ("get", "/api/tasks/{task_id}"),  # one of the clinician's own tasks
+        ("post", "/api/tasks"),  # creates a clinician task
+        ("put", "/api/tasks/{task_id}"),  # updates a clinician task
+        ("post", "/api/tasks/{task_id}/complete"),  # marks a clinician task done
+        ("delete", "/api/tasks/{task_id}"),  # deletes a clinician task and its steps
+        ("post", "/api/tasks/{task_id}/documents"),  # uploads evidence doc for own task
+        ("get", "/api/tasks/{task_id}/documents"),  # lists evidence docs for own task
+        ("get", "/api/tasks/documents/{document_id}/file"),  # streams evidence doc bytes
+        ("delete", "/api/tasks/documents/{document_id}"),  # removes evidence doc
         # ehr_routes.py — EHR UI-navigation config (selectors/steps), no patient data
         ("get", "/api/ehr-routes/{ehr_system}"),  # navigation route config
         ("patch", "/api/ehr-routes/{ehr_system}/steps/{step_index}"),  # updates a nav step

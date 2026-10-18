@@ -50,7 +50,7 @@ describe("settings registry merge", () => {
       "website",
       "import",
       "export",
-      "compliance",
+      "tasks",
     ])
     expect(findSettingsItem("note-types")?.label).toBe("Note types")
   })

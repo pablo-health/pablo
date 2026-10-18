@@ -37,7 +37,7 @@ export function useCreateComplianceItem(token?: string) {
   return useAuthMutation({
     mutationFn: (payload: ComplianceItemPayload) =>
       createComplianceItem(payload, token),
-    invalidateKeys: [queryKeys.compliance.items()],
+    invalidateKeys: [queryKeys.compliance.items(), queryKeys.tasks.all],
   })
 }
 
@@ -50,21 +50,21 @@ export function useUpdateComplianceItem(token?: string) {
       id: string
       payload: ComplianceItemPayload
     }) => updateComplianceItem(id, payload, token),
-    invalidateKeys: [queryKeys.compliance.items()],
+    invalidateKeys: [queryKeys.compliance.items(), queryKeys.tasks.all],
   })
 }
 
 export function useCompleteComplianceItem(token?: string) {
   return useAuthMutation({
     mutationFn: (id: string) => completeComplianceItem(id, token),
-    invalidateKeys: [queryKeys.compliance.items()],
+    invalidateKeys: [queryKeys.compliance.items(), queryKeys.tasks.all],
   })
 }
 
 export function useDeleteComplianceItem(token?: string) {
   return useAuthMutation({
     mutationFn: (id: string) => deleteComplianceItem(id, token),
-    invalidateKeys: [queryKeys.compliance.items()],
+    invalidateKeys: [queryKeys.compliance.items(), queryKeys.tasks.all],
   })
 }
 
@@ -94,7 +94,7 @@ export function useUploadComplianceDocument(itemId: string, token?: string) {
       description?: string
     }) =>
       uploadComplianceDocument(itemId, file, documentType, description, token),
-    invalidateKeys: [queryKeys.compliance.documents(itemId)],
+    invalidateKeys: [queryKeys.compliance.documents(itemId), queryKeys.tasks.documents(itemId)],
   })
 }
 
@@ -102,6 +102,6 @@ export function useDeleteComplianceDocument(itemId: string, token?: string) {
   return useAuthMutation({
     mutationFn: (documentId: string) =>
       deleteComplianceDocument(documentId, token),
-    invalidateKeys: [queryKeys.compliance.documents(itemId)],
+    invalidateKeys: [queryKeys.compliance.documents(itemId), queryKeys.tasks.documents(itemId)],
   })
 }
