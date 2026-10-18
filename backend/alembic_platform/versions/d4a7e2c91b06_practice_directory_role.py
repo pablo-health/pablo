@@ -23,6 +23,10 @@ role that could log in or bypass RLS, and a membership that inherits.
 
 A superuser passes the membership check trivially, and is not RLS-bound anyway.
 
+**Two migrations may race for it.** The role is per server, not per database,
+so two databases migrating on one server at once can both find it missing.
+The one that loses the race to create it carries on to the grant.
+
 **Only the role running this is granted it.** Each practice's function is
 handed to the directory role when that practice is provisioned, and
 provisioning runs as the user the app connects as. When migrations run as a
@@ -71,7 +75,13 @@ ENSURE_ROLE_SQL = """
           IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pablo_practice_directory') THEN
             BEGIN
               CREATE ROLE pablo_practice_directory NOLOGIN NOBYPASSRLS;
-            EXCEPTION WHEN insufficient_privilege THEN
+            EXCEPTION
+              -- Another migration on the same server made it after the check
+              -- above. It exists now, which is all this step is for; the
+              -- checks below still look at how it was made.
+              WHEN unique_violation OR duplicate_object THEN
+                NULL;
+              WHEN insufficient_privilege THEN
               RAISE EXCEPTION USING MESSAGE =
                 'Could not create the database role pablo_practice_directory: the role '
                 'running migrations lacks CREATEROLE.' || how_to;
