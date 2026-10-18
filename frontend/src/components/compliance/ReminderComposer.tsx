@@ -14,14 +14,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import {
-  useCreateComplianceItem,
-  useUpdateComplianceItem,
-} from "@/hooks/useCompliance"
-import type {
-  ComplianceItem,
-  ComplianceTemplate,
-} from "@/types/compliance"
+import { useCreateTask, useUpdateTask } from "@/hooks/useTasks"
+import type { ComplianceTemplate } from "@/types/compliance"
+import { type Task, taskToPayload } from "@/types/tasks"
 import { CATEGORIES, categoryFor, type CategoryId } from "./categories"
 
 type ComposerView =
@@ -29,16 +24,16 @@ type ComposerView =
   | {
       mode: "edit"
       template: ComplianceTemplate
-      existing: ComplianceItem | null
+      existing: Task | null
     }
 
 export interface ReminderComposerProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   templates: ComplianceTemplate[]
-  items: ComplianceItem[]
+  items: Task[]
   /** When provided, the composer opens directly into edit mode for this item. */
-  initialItem?: ComplianceItem | null
+  initialItem?: Task | null
 }
 
 export function ReminderComposer({
@@ -67,8 +62,8 @@ export function ReminderComposer({
 
 interface ComposerBodyProps {
   templates: ComplianceTemplate[]
-  items: ComplianceItem[]
-  initialItem?: ComplianceItem | null
+  items: Task[]
+  initialItem?: Task | null
   onClose: () => void
 }
 
@@ -149,9 +144,9 @@ function ComposerBody({
 
 interface BrowseViewProps {
   templates: ComplianceTemplate[]
-  items: ComplianceItem[]
+  items: Task[]
   onPickTemplate: (t: ComplianceTemplate) => void
-  onPickExisting: (i: ComplianceItem) => void
+  onPickExisting: (i: Task) => void
   onClose: () => void
 }
 
@@ -175,7 +170,7 @@ function BrowseView({
   }, [templates])
 
   const itemsByType = useMemo(() => {
-    const m = new Map<string, ComplianceItem[]>()
+    const m = new Map<string, Task[]>()
     for (const i of items) {
       const arr = m.get(i.item_type) ?? []
       arr.push(i)
@@ -243,9 +238,9 @@ function BrowseView({
 
 interface TemplateCardProps {
   template: ComplianceTemplate
-  trackedItems: ComplianceItem[]
+  trackedItems: Task[]
   onPickTemplate: () => void
-  onPickExisting: (i: ComplianceItem) => void
+  onPickExisting: (i: Task) => void
 }
 
 function TemplateCard({
@@ -350,7 +345,7 @@ function StatusBadge({
 
 interface EditViewProps {
   template: ComplianceTemplate
-  existing: ComplianceItem | null
+  existing: Task | null
   onBack: () => void
   onSaved: (stayOnTemplate: boolean) => void
   onClose: () => void
@@ -369,8 +364,8 @@ function EditView({
     existing?.label ?? (template.multi_instance ? "" : template.label),
   )
 
-  const createItem = useCreateComplianceItem()
-  const updateItem = useUpdateComplianceItem()
+  const createItem = useCreateTask()
+  const updateItem = useUpdateTask()
 
   const isSaving = createItem.isPending || updateItem.isPending
   const labelOk = template.multi_instance
@@ -379,16 +374,20 @@ function EditView({
   const canSave = labelOk && (dueDate.length > 0 || notes.length > 0)
 
   async function save(addAnother: boolean) {
-    const payload = {
+    const fields = {
       item_type: template.item_type,
       label: template.multi_instance ? label.trim() : template.label,
       due_date: dueDate || null,
       notes: notes || null,
     }
     if (existing) {
-      await updateItem.mutateAsync({ id: existing.id, payload })
+      // A full replace: carry what this form does not edit.
+      await updateItem.mutateAsync({
+        id: existing.id,
+        payload: { ...taskToPayload(existing), ...fields },
+      })
     } else {
-      await createItem.mutateAsync(payload)
+      await createItem.mutateAsync({ ...fields, category: "compliance" })
     }
     onSaved(addAnother)
   }

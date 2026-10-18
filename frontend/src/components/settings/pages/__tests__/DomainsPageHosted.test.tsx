@@ -51,7 +51,7 @@ function domain(host: string, overrides: Partial<PracticeDomain> = {}): Practice
 describe("DomainsPage hosted addresses", () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockStatus.mockResolvedValue({ is_practice_owner: true })
+    mockStatus.mockResolvedValue({ is_practice_owner: true, is_practice_admin: true })
   })
 
   it("shows nothing of them where the deployment has no hosted domain", async () => {

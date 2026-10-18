@@ -12,9 +12,18 @@ const notFound = vi.hoisted(() =>
   })
 )
 
+const redirect = vi.hoisted(() =>
+  vi.fn((href: string) => {
+    throw new Error(`NEXT_REDIRECT ${href}`)
+  })
+)
+const search = vi.hoisted(() => ({ current: new URLSearchParams() }))
+
 vi.mock("next/navigation", () => ({
   notFound,
+  redirect,
   useParams: () => routeParams,
+  useSearchParams: () => search.current,
 }))
 
 vi.mock("@/lib/featureGates", () => ({
@@ -29,6 +38,8 @@ vi.mock("@/components/settings/registry", () => ({
       appearance: { id: "appearance", page: () => <div data-testid="appearance-page" /> },
       portal: { id: "portal", feature: "patient_portal", page: () => <div data-testid="portal-page" /> },
     })[id],
+  movedSettingsHref: (section: string, params: URLSearchParams) =>
+    section === "compliance" ? `/dashboard/settings/tasks?${params.toString()}` : null,
 }))
 
 import SettingsSectionPage from "../page"
@@ -42,7 +53,9 @@ describe("SettingsSectionPage", () => {
   beforeEach(() => {
     routeParams.section = "appearance"
     gate.allow = true
+    search.current = new URLSearchParams()
     notFound.mockClear()
+    redirect.mockClear()
   })
 
   it("renders the page for a known, allowed item", () => {
@@ -77,5 +90,16 @@ describe("SettingsSectionPage", () => {
 
     expect(notFound).not.toHaveBeenCalled()
     expect(container).toBeEmptyDOMElement()
+  })
+
+  it("sends a section that moved on to its new address, query and all", () => {
+    routeParams.section = "compliance"
+    search.current = new URLSearchParams("item=abc")
+
+    expect(() => render(<SettingsSectionPage />)).toThrow(
+      "NEXT_REDIRECT /dashboard/settings/tasks?item=abc",
+    )
+    expect(redirect).toHaveBeenCalled()
+    expect(notFound).not.toHaveBeenCalled()
   })
 })

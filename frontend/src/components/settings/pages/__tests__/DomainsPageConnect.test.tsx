@@ -87,7 +87,7 @@ describe("DomainsPage one-click setup", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     window.history.replaceState({}, "", "/dashboard/settings/domains")
-    mockStatus.mockResolvedValue({ is_practice_owner: true })
+    mockStatus.mockResolvedValue({ is_practice_owner: true, is_practice_admin: true })
     mockList.mockResolvedValue({
       domains: [host("portal.example.com"), host("example.com", { purpose: "site" })],
     })
@@ -128,10 +128,10 @@ describe("DomainsPage one-click setup", () => {
   })
 
   it("asks nothing and shows nothing to someone who is not the owner", async () => {
-    mockStatus.mockResolvedValue({ is_practice_owner: false })
+    mockStatus.mockResolvedValue({ is_practice_owner: false, is_practice_admin: false })
     renderWithProviders(<DomainsPage />)
 
-    expect(await screen.findByText("Only the practice owner can change domains.")).toBeVisible()
+    expect(await screen.findByText("Only the practice owner or a practice admin can change domains.")).toBeVisible()
     expect(mockConnect).not.toHaveBeenCalled()
     expect(screen.queryByRole("link", { name: /Set up with/ })).toBeNull()
   })

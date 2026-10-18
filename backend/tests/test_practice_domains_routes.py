@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from app.models import User
+    from app.repositories.practice_admin import InMemoryPracticeAdminRepository
 
 PRACTICE_ID = "practice-1"
 OTHER_PRACTICE = "practice-2"
@@ -357,8 +358,22 @@ class TestAdd:
         response = client.post(URL, json={"domain": "ours.example", "purpose": "portal"})
 
         assert response.status_code == 403
-        assert _code(response) == "NOT_PRACTICE_OWNER"
+        assert _code(response) == "NOT_PRACTICE_ADMIN"
         assert repo.get("ours.example") is None
+
+    @pytest.mark.parametrize("owner_email", ["someone-else@example.com"])
+    def test_a_practice_admin_can_add(
+        self,
+        client: TestClient,
+        repo: InMemoryPracticeDomainRepository,
+        mock_user: User,
+        practice_admins: InMemoryPracticeAdminRepository,
+    ) -> None:
+        practice_admins.grant(mock_user.id, granted_by="owner", granted_at=datetime.now(UTC))
+        response = client.post(URL, json={"domain": "ours.example", "purpose": "portal"})
+
+        assert response.status_code == 201, response.text
+        assert repo.get("ours.example") is not None
 
 
 LIMIT_MESSAGE = "Message supplied by the deployment."

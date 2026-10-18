@@ -58,6 +58,7 @@ patch("app.db.get_engine", return_value=_mock_engine).start()
 patch("app.db.get_session_factory", return_value=_mock_session_factory).start()
 
 import pytest  # noqa: E402
+from app import repositories as app_repositories  # noqa: E402
 from app.auth.firebase_init import initialize_firebase_app  # noqa: E402
 from app.auth.service import (  # noqa: E402
     TenantContext,
@@ -104,6 +105,7 @@ from app.repositories.external_calendar_event import (  # noqa: E402
 from app.repositories.patient_source_mapping import (  # noqa: E402
     InMemoryPatientSourceMappingRepository,
 )
+from app.repositories.practice_admin import InMemoryPracticeAdminRepository  # noqa: E402
 from app.repositories.session_dictation import (  # noqa: E402
     InMemorySessionDictationRepository,
 )
@@ -202,6 +204,21 @@ def no_practice_portal_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
     Postgres in ``tests_integration/database/test_portal_hosts_db.py``.
     """
     monkeypatch.setattr(portal_practice_hosts, "primary_portal_host_for_slug", lambda _slug: None)
+
+
+@pytest.fixture(autouse=True)
+def practice_admins(monkeypatch: pytest.MonkeyPatch) -> InMemoryPracticeAdminRepository:
+    """A practice whose owner has made nobody an admin, unless a test grants it.
+
+    Autouse because the owner-or-admin check (``app.routes.users``) asks the
+    practice's own schema, and this suite stands a mock in for the session,
+    whose every answer would read as a grant. A test that needs an admin takes
+    this fixture and grants one. The table itself is proven against Postgres
+    in ``tests_integration/api/test_practice_admin_routes.py``.
+    """
+    repo = InMemoryPracticeAdminRepository()
+    monkeypatch.setattr(app_repositories, "get_practice_admin_repository", lambda: repo)
+    return repo
 
 
 @pytest.fixture(autouse=True)

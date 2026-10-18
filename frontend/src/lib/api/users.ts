@@ -73,6 +73,12 @@ export interface UserStatusBase {
    */
   is_practice_owner?: boolean
   /**
+   * Whether this user may change practice-wide settings: the owner, or a
+   * clinician the owner made a practice admin. Undefined when no practice
+   * resolves for the user.
+   */
+  is_practice_admin?: boolean
+  /**
    * Whether this user may read who acted on a client's record: the account
    * the practice recorded as its owner. Undefined when no practice resolves.
    */

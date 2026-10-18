@@ -295,6 +295,16 @@ const baseQueryKeys = {
       [...baseQueryKeys.compliance.all, "documents", itemId] as const,
   },
 
+  // Task query keys. Compliance items are tasks too, so a write to either
+  // invalidates both families.
+  tasks: {
+    all: ["tasks"] as const,
+    templates: () => [...baseQueryKeys.tasks.all, "templates"] as const,
+    list: (filters: Record<string, string | undefined> = {}) =>
+      [...baseQueryKeys.tasks.all, "list", filters] as const,
+    documents: (taskId: string) => [...baseQueryKeys.tasks.all, "documents", taskId] as const,
+  },
+
   // Supervision / delegation query keys
   supervision: {
     all: ["supervision"] as const,
@@ -353,6 +363,11 @@ const baseQueryKeys = {
   // When the practice deletes session audio
   audioRetention: {
     all: ["audioRetention"] as const,
+  },
+
+  // Who besides the owner may change practice-wide settings
+  practiceAdmins: {
+    all: ["practiceAdmins"] as const,
   },
 
   // Medication list query keys

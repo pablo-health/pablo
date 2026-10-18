@@ -78,7 +78,7 @@ export function WebsitePage() {
   return (
     <>
       {userStatus && !canManage && (
-        <p className="mb-3 text-[12.5px] text-muted-foreground">Only the practice owner can change the website.</p>
+        <p className="mb-3 text-[12.5px] text-muted-foreground">Only the practice owner or a practice admin can change the website.</p>
       )}
       {failureMessage && (
         <p role="alert" className="mb-3 text-[12.5px] text-red-700">
