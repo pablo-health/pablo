@@ -192,7 +192,9 @@ def test_existing_compliance_items_become_compliance_tasks(engine, tenant_at_par
 
 def test_names_match_a_freshly_provisioned_practice(engine, tenant_at_parent) -> None:
     migrated = tenant_at_parent
-    _migrate(engine, migrated, to=_UNDER_TEST)
+    # To head, not just this revision: a fresh practice is built at head, so a
+    # later revision's index on ``tasks`` must be compared on both sides too.
+    _migrate(engine, migrated, to="head")
     fresh = f"practice_test_tasks_fresh_{uuid.uuid4().hex[:8]}"
     create_practice_schema(engine, fresh)
     try:
