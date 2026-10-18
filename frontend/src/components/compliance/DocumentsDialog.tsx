@@ -13,11 +13,11 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import {
-  useComplianceDocuments,
-  useDeleteComplianceDocument,
-  useUploadComplianceDocument,
-} from "@/hooks/useCompliance"
-import { downloadComplianceDocument } from "@/lib/api/compliance"
+  useDeleteTaskDocument,
+  useTaskDocuments,
+  useUploadTaskDocument,
+} from "@/hooks/useTasks"
+import { downloadTaskDocument } from "@/lib/api/tasks"
 import { formatCompactFileSize } from "@/lib/utils/fileValidation"
 import {
   COMPLIANCE_DOC_ALLOWED_MIME_TYPES,
@@ -38,9 +38,9 @@ export interface DocumentsDialogProps {
  * a copy, or remove one. Wraps the /api/compliance/{id}/documents endpoints.
  */
 export function DocumentsDialog({ open, onOpenChange, item }: DocumentsDialogProps) {
-  const { data: documents = [], isLoading } = useComplianceDocuments(item.id, open)
-  const upload = useUploadComplianceDocument(item.id)
-  const remove = useDeleteComplianceDocument(item.id)
+  const { data: documents = [], isLoading } = useTaskDocuments(item.id, open)
+  const upload = useUploadTaskDocument(item.id)
+  const remove = useDeleteTaskDocument(item.id)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [error, setError] = useState<string | null>(null)
@@ -144,7 +144,7 @@ function DocumentRow({
   async function handleDownload() {
     setDownloading(true)
     try {
-      const blob = await downloadComplianceDocument(doc.id)
+      const blob = await downloadTaskDocument(doc.id)
       const url = URL.createObjectURL(blob)
       const a = document.createElement("a")
       a.href = url

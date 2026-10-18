@@ -31,7 +31,6 @@ import { AvailabilityPage } from "./pages/AvailabilityPage"
 import { BillingContactPage } from "./pages/BillingContactPage"
 import { BillingProfilePage } from "./pages/BillingProfilePage"
 import { CalendarsPage } from "./pages/CalendarsPage"
-import { CompliancePage } from "./pages/CompliancePage"
 import { CredentialingPage } from "./pages/CredentialingPage"
 import { CredentialingStartPage } from "./pages/CredentialingStartPage"
 import { DomainsPage } from "./pages/DomainsPage"
@@ -46,6 +45,7 @@ import { SchedulingPage } from "./pages/SchedulingPage"
 import { SecurityPage } from "./pages/SecurityPage"
 import { SessionsPage } from "./pages/SessionsPage"
 import { SuperbillsPage } from "./pages/SuperbillsPage"
+import { TasksPage } from "./pages/TasksPage"
 import { WebsitePage } from "./pages/WebsitePage"
 import {
   BILLING_CONTACT_SETTINGS_ID,
@@ -227,11 +227,11 @@ const baseGroups: SettingsGroup[] = [
         desc: "Everything in this practice, as one file.",
       },
       {
-        id: "compliance",
-        label: "Compliance",
+        id: "tasks",
+        label: "Tasks",
         icon: ListChecks,
-        page: CompliancePage,
-        desc: "Licenses, attestations and renewals.",
+        page: TasksPage,
+        desc: "Licenses, renewals and anything else with a date.",
       },
     ],
   },
@@ -356,3 +356,31 @@ export function findSettingsItem(id: string): ResolvedSettingsItem | undefined {
 
 /** Where `/dashboard/settings` sends you. */
 export const DEFAULT_SETTINGS_ITEM = "profile"
+
+/**
+ * Sections that moved, by their old id: where each lives now, and the query
+ * the old address implied. People bookmark these URLs and other screens
+ * linked them, so an old one lands on the right page instead of a 404.
+ */
+const MOVED_SECTIONS: Record<string, { to: string; query: Record<string, string> }> = {
+  // Compliance items became tasks; the old page showed only compliance.
+  compliance: { to: "tasks", query: { category: "compliance" } },
+}
+
+/**
+ * Where an old section URL now points, keeping any query it carried (an
+ * `?item=` deep link, say). Null for a section that has not moved.
+ */
+export function movedSettingsHref(
+  section: string,
+  search: URLSearchParams | null | undefined,
+): string | null {
+  const moved = MOVED_SECTIONS[section]
+  if (!moved) return null
+  const query = new URLSearchParams(search ?? undefined)
+  for (const [key, value] of Object.entries(moved.query)) {
+    if (!query.has(key)) query.set(key, value)
+  }
+  const qs = query.toString()
+  return `/dashboard/settings/${moved.to}${qs ? `?${qs}` : ""}`
+}

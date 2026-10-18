@@ -5,7 +5,7 @@
 Clinicians who work under physician delegation, NP collaborative practice
 agreements, PA supervision orders, or pre-licensure supervision track those
 relationships here. Each relationship can optionally link to a
-``compliance_items`` review item so the review deadline is picked up by the
+compliance ``tasks`` review item so the review deadline is picked up by the
 existing reminder machinery.
 
 All routes are user-scoped: a clinician only ever reads and writes their own
@@ -196,7 +196,7 @@ def create_supervision_relationship(
 ) -> SupervisionRelationshipResponse:
     """Create a supervision relationship.
 
-    When ``next_review_date`` is provided a linked ``compliance_items``
+    When ``next_review_date`` is provided a linked compliance ``tasks``
     review item is created in the same transaction so the deadline rides
     the existing reminder machinery. The label defaults to
     ``"<supervisor_name> supervision review"`` and the item type is

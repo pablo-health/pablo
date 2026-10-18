@@ -23,7 +23,7 @@ import { MEDIUM_DATE, formatDateOrRaw } from "@/lib/dates"
  * the compliance view. Shows supervisor details, next-review countdown,
  * and (for clinical_supervision) an expandable accrued-hours summary.
  *
- * Rendered above the item list in CompliancePanel when the user has at
+ * Rendered above the task list in TasksPanel when the user has at
  * least one relationship configured. Empty if the backend returns none
  * (no call made for users with no supervision relationships on record).
  */

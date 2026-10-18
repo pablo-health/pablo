@@ -1683,7 +1683,7 @@ class CredentialLicenseRow(PlatformBase):
     practice_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     # Free text: the abbreviations differ by state and discipline (LMFT,
     # LCSW, LPCC, PMHNP-BC), and a new one shouldn't need a migration. Same
-    # posture as ``compliance_items.item_type``.
+    # posture as ``tasks.item_type``.
     license_type: Mapped[str] = mapped_column(String(50), nullable=False)
     license_number: Mapped[str] = mapped_column(String(100), nullable=False)
     state: Mapped[str] = mapped_column(String(2), nullable=False)

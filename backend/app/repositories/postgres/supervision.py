@@ -5,7 +5,7 @@
 Backs the structured oversight relationships a clinician must keep
 current (physician delegation, NP collaborative, PA supervision,
 pre-licensure clinical supervision) plus an accrued-hour log. The
-relationship's review deadline rides a ``compliance_items`` row so it
+relationship's review deadline rides a compliance ``tasks`` row so it
 reuses the existing reminder machinery — ``create_relationship`` can
 create and link that item in the same flush.
 
@@ -25,9 +25,9 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 
 from ...db.models import (
-    ComplianceItemRow,
     SupervisionHoursRow,
     SupervisionRelationshipRow,
+    TaskRow,
 )
 
 if TYPE_CHECKING:
@@ -87,7 +87,7 @@ class PostgresSupervisionRepository:
 
         When ``review_item_label`` is supplied and the relationship has a
         ``next_review_date`` but no ``compliance_item_id`` yet, a
-        ``compliance_items`` row is created in the same flush and linked
+        compliance ``tasks`` row is created in the same flush and linked
         so the review deadline rides the existing reminder machinery
         (the item's ``due_date`` mirrors ``next_review_date``).
         """
@@ -97,7 +97,7 @@ class PostgresSupervisionRepository:
             and relationship.next_review_date is not None
         ):
             now = datetime.now(UTC)
-            item = ComplianceItemRow()
+            item = TaskRow()
             item.id = str(uuid.uuid4())
             item.user_id = relationship.user_id
             item.item_type = "supervision_review"

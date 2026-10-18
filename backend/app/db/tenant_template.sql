@@ -449,21 +449,6 @@ CREATE TABLE __TENANT_SCHEMA__.compliance_documents (
 
 
 
-CREATE TABLE __TENANT_SCHEMA__.compliance_items (
-    id uuid NOT NULL,
-    user_id uuid NOT NULL,
-    item_type character varying(50) NOT NULL,
-    label character varying(255) NOT NULL,
-    due_date date,
-    notes text,
-    completed_at timestamp with time zone,
-    created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL,
-    source_ref character varying(128)
-);
-
-
-
 CREATE TABLE __TENANT_SCHEMA__.diagnostic_assessments (
     id uuid NOT NULL,
     patient_id uuid NOT NULL,
@@ -1558,6 +1543,28 @@ CREATE TABLE __TENANT_SCHEMA__.supervision_relationships (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.tasks (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    item_type character varying(50) NOT NULL,
+    label character varying(255) NOT NULL,
+    due_date date,
+    notes text,
+    completed_at timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    source_ref character varying(128),
+    category character varying(32) DEFAULT 'compliance'::character varying NOT NULL,
+    source character varying(16) DEFAULT 'manual'::character varying NOT NULL,
+    parent_task_id uuid,
+    goal_key character varying(128),
+    repeat_rule character varying(16),
+    CONSTRAINT ck_tasks_repeat_rule CHECK (((repeat_rule IS NULL) OR ((repeat_rule)::text = ANY ((ARRAY['weekly'::character varying, 'monthly'::character varying, 'quarterly'::character varying, 'yearly'::character varying])::text[])))),
+    CONSTRAINT ck_tasks_source CHECK (((source)::text = ANY ((ARRAY['manual'::character varying, 'reminder'::character varying, 'plan'::character varying, 'import'::character varying])::text[])))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.telehealth_connections (
     user_id uuid NOT NULL,
     provider character varying(16) NOT NULL,
@@ -1693,11 +1700,6 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.companion_sessions
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.compliance_documents
     ADD CONSTRAINT compliance_documents_pkey PRIMARY KEY (id);
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.compliance_items
-    ADD CONSTRAINT compliance_items_pkey PRIMARY KEY (id);
 
 
 
@@ -1996,6 +1998,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.supervision_relationships
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.tasks
+    ADD CONSTRAINT tasks_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.telehealth_connections
     ADD CONSTRAINT telehealth_connections_pkey PRIMARY KEY (user_id, provider);
 
@@ -2273,10 +2280,6 @@ CREATE INDEX ix_compliance_documents_compliance_item_id ON __TENANT_SCHEMA__.com
 
 
 CREATE INDEX ix_compliance_documents_uploaded_by_user_id ON __TENANT_SCHEMA__.compliance_documents USING btree (uploaded_by_user_id);
-
-
-
-CREATE INDEX ix_compliance_items_user_id ON __TENANT_SCHEMA__.compliance_items USING btree (user_id);
 
 
 
@@ -2596,6 +2599,18 @@ CREATE INDEX ix_supervision_relationships_user_id ON __TENANT_SCHEMA__.supervisi
 
 
 
+CREATE INDEX ix_tasks_parent_task_id ON __TENANT_SCHEMA__.tasks USING btree (parent_task_id);
+
+
+
+CREATE INDEX ix_tasks_user_goal_key ON __TENANT_SCHEMA__.tasks USING btree (user_id, goal_key) WHERE (goal_key IS NOT NULL);
+
+
+
+CREATE INDEX ix_tasks_user_id ON __TENANT_SCHEMA__.tasks USING btree (user_id);
+
+
+
 CREATE INDEX ix_therapy_sessions_deleted_at_partial ON __TENANT_SCHEMA__.therapy_sessions USING btree (deleted_at) WHERE (deleted_at IS NOT NULL);
 
 
@@ -2668,10 +2683,6 @@ CREATE UNIQUE INDEX ux_chat_messages_conversation_sequence ON __TENANT_SCHEMA__.
 
 
 
-CREATE UNIQUE INDEX ux_compliance_items_source_ref ON __TENANT_SCHEMA__.compliance_items USING btree (user_id, item_type, source_ref) WHERE (source_ref IS NOT NULL);
-
-
-
 CREATE UNIQUE INDEX ux_inbox_item_states_live ON __TENANT_SCHEMA__.inbox_item_states USING btree (user_id, source_kind, source_id) WHERE (superseded_by IS NULL);
 
 
@@ -2693,6 +2704,10 @@ CREATE UNIQUE INDEX ux_patient_coverage_active_primary ON __TENANT_SCHEMA__.pati
 
 
 CREATE UNIQUE INDEX ux_patient_payment_methods_patient_id ON __TENANT_SCHEMA__.patient_payment_methods USING btree (patient_id);
+
+
+
+CREATE UNIQUE INDEX ux_tasks_source_ref ON __TENANT_SCHEMA__.tasks USING btree (user_id, item_type, source_ref) WHERE (source_ref IS NOT NULL);
 
 
 
@@ -2750,7 +2765,7 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.client_ai_consent_events
 
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.compliance_documents
-    ADD CONSTRAINT compliance_documents_compliance_item_id_fkey FOREIGN KEY (compliance_item_id) REFERENCES __TENANT_SCHEMA__.compliance_items(id) ON DELETE CASCADE;
+    ADD CONSTRAINT compliance_documents_compliance_item_id_fkey FOREIGN KEY (compliance_item_id) REFERENCES __TENANT_SCHEMA__.tasks(id) ON DELETE CASCADE;
 
 
 
@@ -3130,7 +3145,12 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.supervision_hours
 
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.supervision_relationships
-    ADD CONSTRAINT supervision_relationships_compliance_item_id_fkey FOREIGN KEY (compliance_item_id) REFERENCES __TENANT_SCHEMA__.compliance_items(id) ON DELETE CASCADE;
+    ADD CONSTRAINT supervision_relationships_compliance_item_id_fkey FOREIGN KEY (compliance_item_id) REFERENCES __TENANT_SCHEMA__.tasks(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.tasks
+    ADD CONSTRAINT tasks_parent_task_id_fkey FOREIGN KEY (parent_task_id) REFERENCES __TENANT_SCHEMA__.tasks(id) ON DELETE CASCADE;
 
 
 

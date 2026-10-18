@@ -174,7 +174,7 @@ def test_create_relationship_persists_and_links_review_item(session: Session) ->
     assert returned.compliance_item_id is not None
     item = (
         session.execute(
-            text("SELECT user_id, item_type, label, due_date FROM compliance_items WHERE id = :id"),
+            text("SELECT user_id, item_type, label, due_date FROM tasks WHERE id = :id"),
             {"id": returned.compliance_item_id},
         )
         .mappings()
@@ -207,7 +207,7 @@ def test_create_relationship_without_label_creates_no_review_item(
 
     assert returned.compliance_item_id is None
     count = session.execute(
-        text("SELECT count(*) FROM compliance_items WHERE user_id = :u"),
+        text("SELECT count(*) FROM tasks WHERE user_id = :u"),
         {"u": user_id},
     ).scalar_one()
     assert count == 0

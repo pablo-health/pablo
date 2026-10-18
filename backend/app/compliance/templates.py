@@ -4,7 +4,7 @@
 
 Templates are the *catalog* of compliance reminders Pablo knows about
 (license renewal, CAQH attestation, etc.). User-entered values live in
-the ``compliance_items`` table and reference a template by ``item_type``.
+the ``tasks`` table (as compliance tasks) and reference a template by ``item_type``.
 
 Adding a new compliance reminder is a single edit to ``_TEMPLATES`` —
 no migration, no route changes. ``min_edition`` gates visibility:
@@ -67,12 +67,12 @@ class ComplianceTemplate:
     """One trackable compliance category.
 
     A template is metadata only — the user's actual date for, say, their
-    license renewal lives in a ``compliance_items`` row referencing this
+    license renewal lives in a compliance ``tasks`` row referencing this
     template by ``item_type``.
     """
 
     item_type: str
-    """Stable string ID. Stored on ``compliance_items.item_type``. Never
+    """Stable string ID. Stored on ``tasks.item_type``. Never
     rename a value once shipped — existing user rows reference it."""
 
     label: str

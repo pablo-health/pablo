@@ -41,7 +41,7 @@ from app.claims.events import (
     resolve_compliance_reminder,
 )
 from app.db import arm_current_user_id, set_tenant_schema
-from app.db.models import CLAIM_REMINDER_KINDS, ClaimReminderRow, ComplianceItemRow
+from app.db.models import CLAIM_REMINDER_KINDS, ClaimReminderRow, TaskRow
 from app.db.provisioning import create_practice_schema
 from sqlalchemy import Engine, create_engine, select, text
 from sqlalchemy.exc import IntegrityError
@@ -253,7 +253,7 @@ def engine(_database: Engine) -> Iterator[Engine]:
     yield _database
     with _database.connect() as conn:
         conn.execute(text(f"TRUNCATE {_SCHEMA}.claim_reminders CASCADE"))
-        conn.execute(text(f"TRUNCATE {_SCHEMA}.compliance_items CASCADE"))
+        conn.execute(text(f"TRUNCATE {_SCHEMA}.tasks CASCADE"))
         conn.commit()
 
 
@@ -348,7 +348,7 @@ def test_raising_listener_does_not_stop_the_callers_commit(engine: Engine) -> No
     with _session(engine) as session:
         # The caller's own state change, recorded before the event fires.
         session.add(
-            ComplianceItemRow(
+            TaskRow(
                 id=str(uuid.uuid4()),
                 user_id=_USER_ID,
                 item_type="license",
@@ -366,7 +366,7 @@ def test_raising_listener_does_not_stop_the_callers_commit(engine: Engine) -> No
     # The caller's own row survived the exploding listener, and the reminder
     # the surviving listener wrote is in its own table beside it.
     with _session(engine) as session:
-        items = list(session.execute(select(ComplianceItemRow)).scalars().all())
+        items = list(session.execute(select(TaskRow)).scalars().all())
     assert [i.item_type for i in items] == ["license"]
     assert [r.kind for r in _reminders(engine)] == ["rejected"]
 
@@ -515,7 +515,7 @@ def test_enrollment_reminder_is_a_compliance_item_and_keeps_the_instructions(
 
     assert _reminders(engine) == []
     with _session(engine) as session:
-        [item] = list(session.execute(select(ComplianceItemRow)).scalars().all())
+        [item] = list(session.execute(select(TaskRow)).scalars().all())
     assert item.item_type == "claim_enrollment_action_required"
     assert item.label == "Claim PCN20260 enrollment action needed for Aetna"
     assert item.source_ref == _CONTROL_NUMBER
@@ -545,7 +545,7 @@ def test_editing_the_notes_does_not_cause_a_second_enrollment_reminder(
     # She opens the reminder and replaces the note with her own words, exactly
     # as the compliance update route does.
     with _session(engine) as session:
-        [item] = list(session.execute(select(ComplianceItemRow)).scalars().all())
+        [item] = list(session.execute(select(TaskRow)).scalars().all())
         item.notes = "Called Aetna, form is in the post."
         session.commit()
 
@@ -555,7 +555,7 @@ def test_editing_the_notes_does_not_cause_a_second_enrollment_reminder(
         session.commit()
 
     with _session(engine) as session:
-        items = list(session.execute(select(ComplianceItemRow)).scalars().all())
+        items = list(session.execute(select(TaskRow)).scalars().all())
     assert len(items) == 1
     assert items[0].notes == "Called Aetna, form is in the post."
 
@@ -580,7 +580,7 @@ def test_a_second_enrollment_reminder_for_the_same_request_is_refused_by_the_dat
     now = datetime(2026, 9, 6, 16, 0, tzinfo=UTC)
     with _session(engine) as session:
         session.add(
-            ComplianceItemRow(
+            TaskRow(
                 id=str(uuid.uuid4()),
                 user_id=_USER_ID,
                 item_type="claim_enrollment_action_required",
@@ -609,7 +609,7 @@ def test_items_a_person_entered_do_not_collide_with_each_other(engine: Engine) -
     with _session(engine) as session:
         for label in ("BAA — Twilio", "BAA — Google"):
             session.add(
-                ComplianceItemRow(
+                TaskRow(
                     id=str(uuid.uuid4()),
                     user_id=_USER_ID,
                     item_type="baa",
@@ -625,7 +625,7 @@ def test_items_a_person_entered_do_not_collide_with_each_other(engine: Engine) -
         session.commit()
 
     with _session(engine) as session:
-        items = list(session.execute(select(ComplianceItemRow)).scalars().all())
+        items = list(session.execute(select(TaskRow)).scalars().all())
     assert len(items) == 2
 
 

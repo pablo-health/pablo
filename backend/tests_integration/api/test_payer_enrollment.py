@@ -59,10 +59,10 @@ from app.claims.enrollment import (
 )
 from app.db import arm_current_user_id, set_tenant_schema
 from app.db.models import (
-    ComplianceItemRow,
     PayerEnrollmentRow,
     PayerRow,
     PracticeBillingProfileRow,
+    TaskRow,
 )
 from app.db.provisioning import create_practice_schema
 from app.models.claims_transport import Enrollment, Payer
@@ -113,7 +113,7 @@ _PROFILE = {
 }
 
 #: Emptied between tests; the schema outlives them.
-_TABLES = ("compliance_items", "payer_enrollments", "payers", "practice_billing_profile")
+_TABLES = ("tasks", "payer_enrollments", "payers", "practice_billing_profile")
 
 
 @pytest.fixture(autouse=True)
@@ -212,7 +212,7 @@ def _rows(session: Session) -> dict[str, PayerEnrollmentRow]:
     }
 
 
-def _reminders(session: Session) -> list[ComplianceItemRow]:
+def _reminders(session: Session) -> list[TaskRow]:
     """Enrollment reminders are compliance items, and stay so.
 
     A payer wanting the practice to sign something has no claim and no
@@ -220,7 +220,7 @@ def _reminders(session: Session) -> list[ComplianceItemRow]:
     the one claim-event kind that did NOT move to ``claim_reminders`` when
     the rest did. See ``app.claims.events.NON_CLAIM_KINDS``.
     """
-    return list(session.execute(select(ComplianceItemRow)).scalars().all())
+    return list(session.execute(select(TaskRow)).scalars().all())
 
 
 def _listing_for(session: Session, status: str, *transaction_types: str) -> list[dict]:

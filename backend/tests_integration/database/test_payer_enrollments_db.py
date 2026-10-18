@@ -118,12 +118,12 @@ class _TenantSession:
 
 
 def _reminders_visible_to(engine: Engine, schema: str, user_id: str) -> list[Any]:
-    from app.db.models import ComplianceItemRow  # noqa: PLC0415
+    from app.db.models import TaskRow  # noqa: PLC0415
     from sqlalchemy import select  # noqa: PLC0415
 
     scoped = _TenantSession(engine, schema, user_id)
     try:
-        return list(scoped.session.execute(select(ComplianceItemRow)).scalars().all())
+        return list(scoped.session.execute(select(TaskRow)).scalars().all())
     finally:
         scoped.close()
 

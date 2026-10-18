@@ -75,7 +75,7 @@ _SUFFIX = uuid.uuid4().hex[:8]
 _SCHEMA = f"practice_test_enrroutes_{_SUFFIX}"
 
 #: Emptied between tests; the schema outlives them.
-_TABLES = ("compliance_items", "payer_enrollments", "payers", "practice_billing_profile")
+_TABLES = ("tasks", "payer_enrollments", "payers", "practice_billing_profile")
 
 _USER_ID = str(uuid.uuid4())
 _PATIENT_ID = str(uuid.uuid4())
