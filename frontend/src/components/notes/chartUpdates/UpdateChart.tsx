@@ -13,74 +13,118 @@
  * the note: a signed note keeps the chart it was drafted against.
  */
 
-"use client"
+"use client";
 
-import { AddDiagnosisButton, isListed } from "@/components/sessions/AddToProblemList"
-import { useChartProposals } from "@/hooks/useChartProposals"
-import { useNoteType } from "@/hooks/useNoteTypes"
-import { usePatientProblems } from "@/hooks/useProblems"
-import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
-import { diagnosisText, statedDiagnoses, type StatedDiagnosis } from "@/lib/statedDiagnoses"
-import { isSessionTask, type ChartProposal, type ProposalRun } from "@/types/chartProposals"
-import type { Note } from "@/types/notes"
-import { NotChecked, isNotChecked } from "./NotChecked"
-import { ProposalLedger } from "./ProposalLedger"
+import {
+  AddDiagnosisButton,
+  isListed,
+} from "@/components/sessions/AddToProblemList";
+import { useChartProposals } from "@/hooks/useChartProposals";
+import { useNoteType } from "@/hooks/useNoteTypes";
+import { usePatientProblems } from "@/hooks/useProblems";
+import { useReadOnlyMode } from "@/lib/access/readOnlyMode";
+import {
+  diagnosisText,
+  statedDiagnoses,
+  type StatedDiagnosis,
+} from "@/lib/statedDiagnoses";
+import {
+  isSessionTask,
+  type ChartProposal,
+  type ProposalRun,
+} from "@/types/chartProposals";
+import type { Note } from "@/types/notes";
+import { NotChecked, isNotChecked } from "./NotChecked";
+import { ProposalLedger } from "./ProposalLedger";
 
 function fieldValue(note: Note, section: string, field: string): unknown {
   const read = (content: Record<string, unknown> | null) =>
-    (content?.[section] as Record<string, unknown> | undefined)?.[field]
-  return read(note.content_edited) ?? read(note.content)
+    (content?.[section] as Record<string, unknown> | undefined)?.[field];
+  return read(note.content_edited) ?? read(note.content);
 }
 
-/** The diagnoses the note states, from its diagnoses fields, edits included. */
-function useStatedDiagnoses(note: Note | undefined): StatedDiagnosis[] {
-  const { data: definition } = useNoteType(note?.note_type ?? "", note?.note_type_version)
-  if (!note || !definition) return []
-  return definition.sections.flatMap((section) =>
+/**
+ * The diagnoses the note states, from its diagnoses fields, edits included;
+ * `loaded` once the note type that says which fields those are has answered.
+ */
+function useStatedDiagnoses(note: Note | undefined): {
+  stated: StatedDiagnosis[];
+  loaded: boolean;
+} {
+  const { data: definition, isPending } = useNoteType(
+    note?.note_type ?? "",
+    note?.note_type_version,
+  );
+  if (!note) return { stated: [], loaded: true };
+  if (!definition) return { stated: [], loaded: !isPending };
+  const stated = definition.sections.flatMap((section) =>
     section.fields
       .filter((field) => field.kind === "diagnoses")
-      .flatMap((field) => statedDiagnoses(fieldValue(note, section.key, field.key))),
-  )
+      .flatMap((field) =>
+        statedDiagnoses(fieldValue(note, section.key, field.key)),
+      ),
+  );
+  return { stated, loaded: true };
 }
 
 export interface ChartUpdates {
-  proposals: ChartProposal[]
+  proposals: ChartProposal[];
   /** Stated in the note and not on the problem list. */
-  diagnoses: StatedDiagnosis[]
+  diagnoses: StatedDiagnosis[];
   /** Chart updates not yet decided, and diagnoses not yet added. */
-  undecided: number
+  undecided: number;
   /** How the check for chart updates last ended. */
-  run: ProposalRun | null
+  run: ProposalRun | null;
+  /**
+   * Whether everything above has been asked for and answered. Until then
+   * `undecided` is a guess that can change a moment later, and a dialog that
+   * acted on it would change under the clinician's hands.
+   */
+  loaded: boolean;
 }
 
 export function useChartUpdates(note: Note | undefined): ChartUpdates {
-  const { data } = useChartProposals(note?.id)
-  const stated = useStatedDiagnoses(note)
-  const { data: problems } = usePatientProblems(stated.length ? note?.patient_id : undefined)
-  const proposals = data?.data ?? []
-  const diagnoses = stated.filter((dx) => !isListed(dx, problems?.data ?? []))
+  const { data, isPending: proposalsPending } = useChartProposals(note?.id);
+  const { stated, loaded: statedLoaded } = useStatedDiagnoses(note);
+  const { data: problems, isPending: problemsPending } = usePatientProblems(
+    stated.length ? note?.patient_id : undefined,
+  );
+  const proposals = data?.data ?? [];
+  const diagnoses = stated.filter((dx) => !isListed(dx, problems?.data ?? []));
   return {
     proposals,
     diagnoses,
     // Chart updates only: a task left undecided waits on the signed note, and
     // signing past it is not signing "without updating" the chart.
     undecided:
-      proposals.filter((p) => p.decision === "pending" && !isSessionTask(p)).length +
-      diagnoses.length,
+      proposals.filter((p) => p.decision === "pending" && !isSessionTask(p))
+        .length + diagnoses.length,
     run: data?.run ?? null,
-  }
+    loaded:
+      !note ||
+      (!proposalsPending &&
+        statedLoaded &&
+        (stated.length === 0 || !problemsPending)),
+  };
 }
 
-export function UpdateChart({ note, updates }: { note: Note; updates: ChartUpdates }) {
-  const { readOnly } = useReadOnlyMode()
-  const pending = updates.proposals.filter((p) => p.decision === "pending")
+export function UpdateChart({
+  note,
+  updates,
+}: {
+  note: Note;
+  updates: ChartUpdates;
+}) {
+  const { readOnly } = useReadOnlyMode();
+  const pending = updates.proposals.filter((p) => p.decision === "pending");
   // What the clinician said they would do goes to their tasks, not the chart:
   // its own section, shown even on a note type that updates no chart.
-  const chartPending = pending.filter((p) => !isSessionTask(p))
-  const tasks = pending.filter(isSessionTask)
-  const notChecked = isNotChecked(updates.run)
-  const updatesChart = chartPending.length > 0 || updates.diagnoses.length > 0 || notChecked
-  if (!updatesChart && tasks.length === 0) return null
+  const chartPending = pending.filter((p) => !isSessionTask(p));
+  const tasks = pending.filter(isSessionTask);
+  const notChecked = isNotChecked(updates.run);
+  const updatesChart =
+    chartPending.length > 0 || updates.diagnoses.length > 0 || notChecked;
+  if (!updatesChart && tasks.length === 0) return null;
 
   return (
     <div className="space-y-5">
@@ -92,9 +136,15 @@ export function UpdateChart({ note, updates }: { note: Note; updates: ChartUpdat
           readOnly={readOnly}
         />
       )}
-      {updatesChart && <UpdateChartSection note={note} updates={updates} pending={chartPending} />}
+      {updatesChart && (
+        <UpdateChartSection
+          note={note}
+          updates={updates}
+          pending={chartPending}
+        />
+      )}
     </div>
-  )
+  );
 }
 
 function UpdateChartSection({
@@ -102,17 +152,25 @@ function UpdateChartSection({
   updates,
   pending,
 }: {
-  note: Note
-  updates: ChartUpdates
-  pending: ChartProposal[]
+  note: Note;
+  updates: ChartUpdates;
+  pending: ChartProposal[];
 }) {
-  const { readOnly } = useReadOnlyMode()
-  const notChecked = isNotChecked(updates.run)
+  const { readOnly } = useReadOnlyMode();
+  const notChecked = isNotChecked(updates.run);
   return (
-    <section aria-label="Update the chart" className="space-y-3" data-testid="update-chart">
+    <section
+      aria-label="Update the chart"
+      className="space-y-3"
+      data-testid="update-chart"
+    >
       <div>
-        <h3 className="text-base font-semibold text-neutral-900">Update the chart</h3>
-        <p className="text-sm text-neutral-600">From what was said in this visit.</p>
+        <h3 className="text-base font-semibold text-neutral-900">
+          Update the chart
+        </h3>
+        <p className="text-sm text-neutral-600">
+          From what was said in this visit.
+        </p>
       </div>
       {notChecked && updates.run && (
         <NotChecked noteId={note.id} run={updates.run} readOnly={readOnly} />
@@ -135,10 +193,16 @@ function UpdateChartSection({
               <span className="font-semibold">Diagnosis: </span>
               {diagnosisText(dx)}
             </span>
-            {!readOnly && <AddDiagnosisButton patientId={note.patient_id} noteId={note.id} dx={dx} />}
+            {!readOnly && (
+              <AddDiagnosisButton
+                patientId={note.patient_id}
+                noteId={note.id}
+                dx={dx}
+              />
+            )}
           </li>
         ))}
       </ul>
     </section>
-  )
+  );
 }

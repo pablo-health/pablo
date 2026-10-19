@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"use client"
+"use client";
 
-import { useQuery } from "@tanstack/react-query"
+import { useQuery } from "@tanstack/react-query";
 import type {
   CreateNoteAddendumRequest,
   Note,
@@ -10,17 +10,17 @@ import type {
   NoteSigningRecord,
   SignNoteRequest,
   UnlockNoteRequest,
-} from "@/types/notes"
+} from "@/types/notes";
 import {
   addNoteAddendum,
   fetchNoteSigning,
   signNote,
   unlockNote,
-} from "@/lib/api/notes"
-import { queryKeys } from "@/lib/api/queryKeys"
-import { getUserStatus } from "@/lib/api/users"
-import { withDashboard } from "./dashboardFreshness"
-import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
+} from "@/lib/api/notes";
+import { queryKeys } from "@/lib/api/queryKeys";
+import { getUserStatus } from "@/lib/api/users";
+import { withDashboard } from "./dashboardFreshness";
+import { useAuthMutation, useAuthQuery } from "./useAuthQuery";
 
 /** The note's signature, signed versions and addenda. */
 export function useNoteSigning(noteId: string | undefined, token?: string) {
@@ -28,7 +28,7 @@ export function useNoteSigning(noteId: string | undefined, token?: string) {
     queryKey: queryKeys.notes.signing(noteId ?? ""),
     queryFn: () => fetchNoteSigning(noteId!, token),
     enabled: !!noteId,
-  })
+  });
 }
 
 /**
@@ -43,21 +43,21 @@ function signingKeys(noteId: string, patientId?: string) {
     ...(patientId ? [queryKeys.notes.byPatient(patientId)] : []),
     queryKeys.sessions.details(),
     queryKeys.sessions.lists(),
-  ])
+  ]);
 }
 
 export function useSignNote(token?: string) {
   return useAuthMutation<Note, { noteId: string; data: SignNoteRequest }>({
     mutationFn: ({ noteId, data }) => signNote(noteId, data, token),
     invalidateKeys: ({ noteId }, note) => signingKeys(noteId, note?.patient_id),
-  })
+  });
 }
 
 export function useUnlockNote(token?: string) {
   return useAuthMutation<Note, { noteId: string; data: UnlockNoteRequest }>({
     mutationFn: ({ noteId, data }) => unlockNote(noteId, data, token),
     invalidateKeys: ({ noteId }, note) => signingKeys(noteId, note?.patient_id),
-  })
+  });
 }
 
 export function useAddNoteAddendum(token?: string) {
@@ -71,15 +71,29 @@ export function useAddNoteAddendum(token?: string) {
       // A signed draft from a dictation stops being offered.
       ...(data.dictation_id ? [queryKeys.sessions.allDictations()] : []),
     ],
-  })
+  });
 }
 
-/** The name and credentials a signature starts from: the signer's own profile. */
-export function useSignerDefaults(): { name: string; credentials: string } {
-  const { data } = useQuery({
+/**
+ * The name and credentials a signature starts from: the signer's own profile.
+ *
+ * `loaded` says the profile has been asked for and answered (or refused). A
+ * dialog that showed the fields before then showed them empty and filled them
+ * in a moment later, under the clinician's hands.
+ */
+export function useSignerDefaults(): {
+  name: string;
+  credentials: string;
+  loaded: boolean;
+} {
+  const { data, isPending } = useQuery({
     queryKey: ["user", "status"],
     queryFn: () => getUserStatus(),
     staleTime: 5 * 60 * 1000,
-  })
-  return { name: data?.name ?? "", credentials: data?.credentials ?? "" }
+  });
+  return {
+    name: data?.name ?? "",
+    credentials: data?.credentials ?? "",
+    loaded: !isPending,
+  };
 }
