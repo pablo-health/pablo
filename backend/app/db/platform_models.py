@@ -650,6 +650,12 @@ class PracticeSiteRow(PlatformBase):
     #: The last publish or roll back.
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     published_by: Mapped[str | None] = mapped_column(String(128))
+    #: Ask search engines not to list the website: every answer on its hosts
+    #: carries ``X-Robots-Tag: noindex, nofollow`` and its ``robots.txt``
+    #: disallows everything (``frontend/src/lib/portal-host/practice-site.ts``).
+    hide_from_search: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 

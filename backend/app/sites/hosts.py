@@ -18,7 +18,7 @@ which is never served on a website's origin.
 Answers are kept for a minute either way, in the same bounded cache the portal
 uses; a publish or roll back reaches visitors within that minute.
 
-No PHI: hostnames, a practice id and a version number.
+No PHI: hostnames, a practice id, a version number and a yes or no.
 """
 
 from __future__ import annotations
@@ -48,6 +48,8 @@ class SiteHost:
     #: On a hosted website address only: the host the practice's portal is
     #: served on, where ``/portal`` there is sent.
     portal_host: str | None = None
+    #: The practice asks search engines not to list its website.
+    hide_from_search: bool = False
 
 
 def resolve_site_host(session: Session, host: str) -> SiteHost | None:
@@ -80,6 +82,7 @@ def resolve_site_host(session: Session, host: str) -> SiteHost | None:
         live_version=site.live_version,
         primary_host=primary,
         portal_host=portal_host,
+        hide_from_search=site.hide_from_search,
     )
 
 

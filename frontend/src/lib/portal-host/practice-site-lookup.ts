@@ -3,8 +3,9 @@
 /**
  * Asking the backend about a practice's website hosts, and fetching their files.
  *
- * `GET {API_URL}/api/sites/hosts/{host}` answers `{primary_host, portal_host}` for a
- * working website host of a practice that has published, and 404 for every
+ * `GET {API_URL}/api/sites/hosts/{host}` answers
+ * `{primary_host, portal_host, hide_from_search}` for a working website host
+ * of a practice that has published, and 404 for every
  * other; answers are kept for a minute like a portal host's
  * (`./practice-host-lookup`).
  *
@@ -15,16 +16,21 @@
  */
 
 import { createHostLookup, serverApiUrl } from "./practice-host-lookup"
-import { SITE_SECURITY_HEADERS, type SiteHost, siteCacheControl } from "./practice-site"
+import { type SiteHost, siteCacheControl, siteHeaders } from "./practice-site"
 
 const FILE_TIMEOUT_MS = 10_000
 
 export function parseSiteHost(body: unknown): SiteHost | "unavailable" {
   if (typeof body !== "object" || body === null) return "unavailable"
-  const { primary_host: primaryHost, portal_host: portalHost = null } = body as Record<string, unknown>
+  const {
+    primary_host: primaryHost,
+    portal_host: portalHost = null,
+    hide_from_search: hideFromSearch = false,
+  } = body as Record<string, unknown>
   if (primaryHost !== null && typeof primaryHost !== "string") return "unavailable"
   if (portalHost !== null && typeof portalHost !== "string") return "unavailable"
-  return { primaryHost, portalHost }
+  if (typeof hideFromSearch !== "boolean") return "unavailable"
+  return { primaryHost, portalHost, hideFromSearch }
 }
 
 export const lookupSiteHost = createHostLookup<SiteHost>(
@@ -41,6 +47,8 @@ export interface SiteFileRequest {
   pathname: string
   method: string
   ifNoneMatch: string | null
+  /** The practice asks search engines not to list its website. */
+  hideFromSearch?: boolean
 }
 
 export interface SiteFileOptions {
@@ -48,15 +56,16 @@ export interface SiteFileOptions {
   fetch?: typeof fetch
 }
 
-function plain(status: number, body: string, extra: Record<string, string> = {}): Response {
-  return new Response(body, {
-    status,
-    headers: { ...SITE_SECURITY_HEADERS, "Content-Type": "text/plain; charset=utf-8", ...extra },
+function unavailable(headers: Record<string, string>): Response {
+  return new Response("Service Unavailable", {
+    status: 503,
+    headers: { ...headers, "Content-Type": "text/plain; charset=utf-8", "Retry-After": "5" },
   })
 }
 
 /** The visitor's answer for one file of the website `request.hostname` serves. */
 export async function fetchSiteFile(request: SiteFileRequest, options: SiteFileOptions = {}): Promise<Response> {
+  const answerHeaders = siteHeaders(request.hideFromSearch ?? false)
   const fetchFn = options.fetch ?? fetch
   const base = (options.apiUrl ?? serverApiUrl)().replace(/\/+$/, "")
   const url =
@@ -71,10 +80,10 @@ export async function fetchSiteFile(request: SiteFileRequest, options: SiteFileO
       signal: AbortSignal.timeout(FILE_TIMEOUT_MS),
     })
   } catch {
-    return plain(503, "Service Unavailable", { "Retry-After": "5" })
+    return unavailable(answerHeaders)
   }
 
-  const headers = new Headers(SITE_SECURITY_HEADERS)
+  const headers = new Headers(answerHeaders)
   const etag = upstream.headers.get("etag")
   if (etag) headers.set("ETag", etag)
   switch (upstream.status) {
@@ -82,7 +91,7 @@ export async function fetchSiteFile(request: SiteFileRequest, options: SiteFileO
       // Relative to the address the visitor asked for (`about` -> `about/`);
       // a response from the proxy must carry it whole.
       const location = upstream.headers.get("location")
-      if (!location) return plain(503, "Service Unavailable", { "Retry-After": "5" })
+      if (!location) return unavailable(answerHeaders)
       headers.set("Location", new URL(location, request.address).toString())
       return new Response(null, { status: 301, headers })
     }
@@ -98,7 +107,7 @@ export async function fetchSiteFile(request: SiteFileRequest, options: SiteFileO
       return new Response(body, { status: upstream.status, headers })
     }
     default:
-      return plain(503, "Service Unavailable", { "Retry-After": "5" })
+      return unavailable(answerHeaders)
   }
 }
 

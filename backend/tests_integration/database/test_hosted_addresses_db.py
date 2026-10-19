@@ -366,6 +366,7 @@ def test_the_hosted_website_address_serves_once_a_version_is_live(
     assert _site(client, f"{slug}.{DOMAIN}").json() == {
         "primary_host": None,
         "portal_host": f"{slug}.portal.{DOMAIN}",
+        "hide_from_search": False,
     }
     assert _site(client, f"{unpublished_slug}.{DOMAIN}").status_code == 404
     # The portal address is not a website address.
@@ -384,9 +385,14 @@ def test_the_hosted_website_address_names_the_practices_own_primaries(
     assert _site(client, f"{slug}.{DOMAIN}").json() == {
         "primary_host": site_primary,
         "portal_host": portal_primary,
+        "hide_from_search": False,
     }
     # On the practice's own website host, /portal is the website's.
-    assert _site(client, site_primary).json() == {"primary_host": site_primary, "portal_host": None}
+    assert _site(client, site_primary).json() == {
+        "primary_host": site_primary,
+        "portal_host": None,
+        "hide_from_search": False,
+    }
 
 
 # ---------------------------------------------------------------------------

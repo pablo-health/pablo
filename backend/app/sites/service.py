@@ -156,6 +156,8 @@ class SiteStatus:
     draft: SiteDraft | None
     #: Retained versions, newest first.
     versions: list[SiteVersion]
+    #: The practice asks search engines not to list its website.
+    hide_from_search: bool = False
 
 
 def _version(row: PracticeSiteVersionRow) -> SiteVersion:
@@ -261,6 +263,27 @@ class PracticeSiteService:
             has_active_host=bool(hosts),
             draft=_draft(row),
             versions=[_version(v) for v in self._store.versions(practice_id)] if row else [],
+            hide_from_search=row.hide_from_search if row else False,
+        )
+
+    def set_hide_from_search(
+        self, practice_id: str, hide: bool, user: User, request: Request | None = None
+    ) -> None:
+        """Ask search engines not to list the website, or stop asking. A
+        setting of the practice's, so it can be made before anything is
+        published; an answer that changes nothing is not recorded."""
+        now = self._clock()
+        row = self._store.lock(practice_id, now)
+        if row.hide_from_search == hide:
+            return
+        row.hide_from_search = hide
+        row.updated_at = now
+        self._log(
+            AuditAction.PRACTICE_SITE_SEARCH_VISIBILITY_CHANGED,
+            user,
+            request,
+            practice_id,
+            {"hide_from_search": hide},
         )
 
     # --- Drafts -----------------------------------------------------------
@@ -511,7 +534,7 @@ class PracticeSiteService:
         user: User,
         request: Request | None,
         practice_id: str,
-        changes: dict[str, int | None],
+        changes: dict[str, int | bool | None],
     ) -> None:
         if self._audit is None:
             return

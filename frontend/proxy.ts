@@ -3,7 +3,12 @@ import { authProviderMiddleware } from "@/lib/auth/middleware"
 import { appHostsFromEnv, classifyHost, routePracticeHost } from "@/lib/portal-host/practice-host"
 import { browserScheme } from "@/lib/portal-host/practice-host-api"
 import { lookupPracticeHost } from "@/lib/portal-host/practice-host-lookup"
-import { SITE_METHODS, routeSiteHost } from "@/lib/portal-host/practice-site"
+import {
+  HIDDEN_FROM_SEARCH_HEADERS,
+  SITE_METHODS,
+  disallowRobotsResponse,
+  routeSiteHost,
+} from "@/lib/portal-host/practice-site"
 import { fetchSiteFile, lookupSiteHost } from "@/lib/portal-host/practice-site-lookup"
 import {
   type PortalHostDecision,
@@ -133,6 +138,8 @@ async function serveSiteHost(request: NextRequest, host: string, hostname: strin
   const { pathname, search, protocol } = request.nextUrl
   const found = await lookupSiteHost(hostname)
   const decision = routeSiteHost({ host, hostname, pathname, search, protocol, method: request.method }, found)
+  const hideFromSearch = typeof found === "object" && found !== null && found.hideFromSearch
+  const searchHeaders = hideFromSearch ? HIDDEN_FROM_SEARCH_HEADERS : {}
   switch (decision.kind) {
     case "serve":
       return fetchSiteFile({
@@ -141,11 +148,14 @@ async function serveSiteHost(request: NextRequest, host: string, hostname: strin
         pathname: decision.pathname,
         method: request.method,
         ifNoneMatch: request.headers.get("if-none-match"),
+        hideFromSearch,
       })
+    case "disallow-robots":
+      return disallowRobotsResponse(request.method)
     case "redirect":
-      return NextResponse.redirect(decision.location, 301)
+      return NextResponse.redirect(decision.location, { status: 301, headers: searchHeaders })
     case "method-not-allowed":
-      return new NextResponse(null, { status: 405, headers: { Allow: SITE_METHODS.join(", ") } })
+      return new NextResponse(null, { status: 405, headers: { ...searchHeaders, Allow: SITE_METHODS.join(", ") } })
     case "unavailable":
       return new NextResponse("Service Unavailable", {
         status: 503,

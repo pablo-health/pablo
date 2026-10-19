@@ -312,7 +312,7 @@ describe("frontend/proxy.ts website host", () => {
     vi.mocked(lookupPracticeHost).mockReset()
     vi.mocked(lookupPracticeHost).mockResolvedValue(null)
     vi.mocked(lookupSiteHost).mockReset()
-    vi.mocked(lookupSiteHost).mockResolvedValue({ primaryHost: SITE, portalHost: null })
+    vi.mocked(lookupSiteHost).mockResolvedValue({ primaryHost: SITE, portalHost: null, hideFromSearch: false })
     vi.mocked(fetchSiteFile).mockClear()
     vi.stubEnv("APP_HOSTS", APP)
   })
@@ -333,6 +333,7 @@ describe("frontend/proxy.ts website host", () => {
         pathname: path,
         method: "GET",
         ifNoneMatch: '"v2"',
+        hideFromSearch: false,
       })
       expect(response.headers.get("location")).toBeNull()
       expect(authProviderMiddleware).not.toHaveBeenCalled()
@@ -373,7 +374,7 @@ describe("frontend/proxy.ts website host", () => {
 
   it("sends /portal on a hosted website address to the practice's portal host", async () => {
     const hosted = "acme.hosted.example"
-    vi.mocked(lookupSiteHost).mockResolvedValue({ primaryHost: null, portalHost: "acme.portal.hosted.example" })
+    vi.mocked(lookupSiteHost).mockResolvedValue({ primaryHost: null, portalHost: "acme.portal.hosted.example", hideFromSearch: false })
 
     const response = await proxy(at(`https://${hosted}/portal/forms?from=email`, hosted))
 
@@ -389,6 +390,50 @@ describe("frontend/proxy.ts website host", () => {
     expect(response.status).toBe(405)
     expect(response.headers.get("allow")).toBe("GET, HEAD")
     expect(fetchSiteFile).not.toHaveBeenCalled()
+  })
+
+  it("leaves robots.txt and every answer to the website while the practice lets search engines list it", async () => {
+    for (const [host, path] of [
+      [SITE, "/robots.txt"],
+      [WWW, "/"],
+    ]) {
+      const response = await proxy(at(`https://${host}${path}`, host))
+      expect(response.headers.get("x-robots-tag"), `${host}${path}`).toBeNull()
+    }
+    expect(fetchSiteFile).toHaveBeenCalledWith(expect.objectContaining({ pathname: "/robots.txt", hideFromSearch: false }))
+  })
+
+  describe("for a practice that asks search engines not to list its website", () => {
+    beforeEach(() => {
+      vi.mocked(lookupSiteHost).mockResolvedValue({ primaryHost: SITE, portalHost: null, hideFromSearch: true })
+    })
+
+    it("asks for each file with the setting, so its answer says noindex", async () => {
+      await proxy(at(`https://${SITE}/about/`, SITE))
+
+      expect(fetchSiteFile).toHaveBeenCalledWith(expect.objectContaining({ pathname: "/about/", hideFromSearch: true }))
+    })
+
+    it.each([SITE, WWW])("answers robots.txt on %s itself, disallowing everything", async (host) => {
+      const response = await proxy(at(`https://${host}/robots.txt`, host))
+
+      expect(response.status).toBe(200)
+      expect(await response.text()).toBe("User-agent: *\nDisallow: /\n")
+      expect(response.headers.get("content-type")).toBe("text/plain; charset=utf-8")
+      expect(response.headers.get("x-robots-tag")).toBe("noindex, nofollow")
+      expect(response.headers.get("location")).toBeNull()
+      expect(fetchSiteFile).not.toHaveBeenCalled()
+    })
+
+    it("says noindex on the redirect to the primary and on a refused method", async () => {
+      const redirect = await proxy(at(`https://${WWW}/team/`, WWW))
+      expect(redirect.status).toBe(301)
+      expect(redirect.headers.get("x-robots-tag")).toBe("noindex, nofollow")
+
+      const refused = await proxy(at(`https://${SITE}/contact`, SITE, { method: "POST" }))
+      expect(refused.status).toBe(405)
+      expect(refused.headers.get("x-robots-tag")).toBe("noindex, nofollow")
+    })
   })
 
   it("leaves a portal host's files to the app, as before", async () => {

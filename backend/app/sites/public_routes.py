@@ -5,8 +5,10 @@
 * ``GET /api/sites/hosts/{host}`` — the web app asks this before it serves a
   request on a host it does not otherwise know and that is no practice's
   portal: is it a working website host of a practice that has published, and
-  which of the practice's website hosts is primary? Answers
-  ``{primary_host, portal_host}``; every other host is the same 404.
+  which of the practice's website hosts is primary, and does the practice ask
+  search engines not to list it? Answers
+  ``{primary_host, portal_host, hide_from_search}``; every other host is the
+  same 404.
 * ``GET /api/sites/hosts/{host}/file?path=`` — the web app's server fetches
   the file a visitor asked for here and answers the visitor itself
   (``frontend/src/lib/portal-host/practice-site.ts``). ``path`` is the
@@ -58,6 +60,9 @@ class SiteHostResponse(BaseModel):
     #: On the practice's hosted website address only: the host its portal is
     #: served on. ``/portal`` there is sent to it.
     portal_host: str | None = None
+    #: The practice asks search engines not to list its website, so the web
+    #: app answers ``noindex`` and a disallow-everything ``robots.txt``.
+    hide_from_search: bool = False
 
 
 def _bucket() -> str | None:
@@ -82,7 +87,11 @@ def resolve_site_host_route(
     found = _site_host(host, cache)
     if found is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found.")
-    return SiteHostResponse(primary_host=found.primary_host, portal_host=found.portal_host)
+    return SiteHostResponse(
+        primary_host=found.primary_host,
+        portal_host=found.portal_host,
+        hide_from_search=found.hide_from_search,
+    )
 
 
 @router.get("/api/sites/hosts/{host}/file", response_model=None)

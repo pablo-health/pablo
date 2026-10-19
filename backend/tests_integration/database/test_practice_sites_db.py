@@ -14,7 +14,9 @@ Proven here on committed rows, through the code's own sessions:
 * which website a host serves, behind the minute-long cache (the clock is
   injected), and which file each request path gets: ``/``, a folder, a folder
   without its slash, a missing file and a traversal attempt;
-* the draft's preview address, while its token works and not after.
+* the draft's preview address, while its token works and not after;
+* the setting that asks search engines not to list the website: kept, audited
+  once per change, and carried on the host answer.
 
 Zip reading, path rules and the routes' permission checks are unit-tested in
 ``tests/test_site_files.py``, ``tests/test_site_paths.py`` and
@@ -545,11 +547,47 @@ def test_a_published_site_answers_on_its_hosts(
     assert client.get(f"/api/sites/hosts/{primary}").json() == {
         "primary_host": primary,
         "portal_host": None,
+        "hide_from_search": False,
     }
     assert client.get(f"/api/sites/hosts/{alias.upper()}:443").json() == {
         "primary_host": primary,
         "portal_host": None,
+        "hide_from_search": False,
     }
+
+
+def test_a_site_hidden_from_search_says_so_to_the_web_app_and_is_audited(
+    client: TestClient, clock: _Clock, session: Session, bucket: str, rows: _Rows
+) -> None:
+    """Set before anything is published, kept through a publish, recorded once
+    per change, and carried on the host answer visitors are served by."""
+    audit = _RecordingAudit()
+    practice_id = rows.practice()
+    host = rows.host(practice_id, primary=True)
+    service = _service(session, bucket, audit)
+
+    service.set_hide_from_search(practice_id, True, PUBLISHER)
+    service.set_hide_from_search(practice_id, True, PUBLISHER)
+    session.commit()
+    _publish(session, bucket, practice_id)
+
+    assert _service(session, bucket).status(practice_id).hide_from_search is True
+    assert client.get(f"/api/sites/hosts/{host}").json()["hide_from_search"] is True
+    (entry,) = audit.entries
+    assert entry["action"] == AuditAction.PRACTICE_SITE_SEARCH_VISIBILITY_CHANGED
+    assert entry["changes"] == {"practice_id": practice_id, "hide_from_search": True}
+
+    service.set_hide_from_search(practice_id, False, PUBLISHER)
+    session.commit()
+    clock.now += 61
+    assert client.get(f"/api/sites/hosts/{host}").json()["hide_from_search"] is False
+    assert len(audit.entries) == 2
+
+
+def test_a_practice_with_no_website_is_not_hidden_from_search(
+    session: Session, bucket: str, rows: _Rows
+) -> None:
+    assert _service(session, bucket).status(rows.practice()).hide_from_search is False
 
 
 def test_a_host_that_serves_no_site_is_one_404(

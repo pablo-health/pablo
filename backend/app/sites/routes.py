@@ -15,16 +15,19 @@
   and make it live.
 * ``POST /api/practice/website/versions/{version}/live`` — make a kept version
   live again (roll back).
+* ``PUT /api/practice/website/search`` — ask search engines not to list the
+  website, or stop asking (``{hide_from_search}``).
 
 The changes are for whoever may change the practice's domains — the owner or
 a practice admin (:func:`app.routes.practice_domains._manageable_practice_id`),
 so the two always agree. The practice is always the caller's own. Uploads,
 publishes and roll backs are audited by the service, with the version, file
-count and bytes. Old versions and replaced drafts are tidied away after the
-change commits, as a background task. A publish or roll back also forgets this
-process's answers about website and portal hosts once it has committed, so the
-site and the theme the portal takes from it are served here at once; another
-process notices within the minute it keeps answers.
+count and bytes, and so is a change to the search setting. Old versions and
+replaced drafts are tidied away after the change commits, as a background task.
+A publish or roll back also forgets this process's answers about website and
+portal hosts once it has committed, so the site and the theme the portal takes
+from it are served here at once, and a change to the search setting forgets the
+website host answers; another process notices within the minute it keeps answers.
 """
 
 from __future__ import annotations
@@ -106,6 +109,12 @@ class PracticeSiteResponse(BaseModel):
     draft: SiteDraftResponse | None
     #: Kept versions, newest first.
     versions: list[SiteVersionResponse]
+    #: The practice asks search engines not to list its website.
+    hide_from_search: bool
+
+
+class SiteSearchRequest(BaseModel):
+    hide_from_search: bool
 
 
 class DraftHeaderLink(BaseModel):
@@ -158,6 +167,7 @@ def _response(service: PracticeSiteService, practice_id: str) -> PracticeSiteRes
             )
             for v in status.versions
         ],
+        hide_from_search=status.hide_from_search,
     )
 
 
@@ -294,4 +304,20 @@ def roll_back_practice_site(
     practice_id = _manageable_practice_id(user)
     _translated(lambda: service.roll_back(practice_id, version, user, http_request))
     background.add_task(_forget_host_answers)
+    return _response(service, practice_id)
+
+
+@router.put("/search", response_model=PracticeSiteResponse)
+def set_practice_site_search(
+    body: SiteSearchRequest,
+    http_request: Request,
+    background: BackgroundTasks,
+    user: User = Depends(require_active_subscription),
+    service: PracticeSiteService = Depends(get_practice_site_service),
+) -> PracticeSiteResponse:
+    """Ask search engines not to list the website, or stop asking. Visitors'
+    answers carry the change once this process forgets its website host answers."""
+    practice_id = _manageable_practice_id(user)
+    service.set_hide_from_search(practice_id, body.hide_from_search, user, http_request)
+    background.add_task(get_site_host_cache().clear)
     return _response(service, practice_id)

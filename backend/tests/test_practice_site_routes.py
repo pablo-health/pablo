@@ -58,6 +58,7 @@ class _StubService:
     def __init__(self) -> None:
         self.calls: list[tuple[str, Any]] = []
         self.refusal: Exception | None = None
+        self.hide_from_search = False
 
     def _call(self, name: str, *args: Any) -> None:
         self.calls.append((name, args))
@@ -74,7 +75,12 @@ class _StubService:
                 SiteVersion(2, 3, 120, WHEN, "u", theme=DRAFT_THEME.theme),
                 SiteVersion(1, 2, 80, WHEN, "u"),
             ],
+            hide_from_search=self.hide_from_search,
         )
+
+    def set_hide_from_search(self, practice_id: str, hide: bool, *_: Any) -> None:
+        self._call("set_hide_from_search", practice_id, hide)
+        self.hide_from_search = hide
 
     def save_draft(self, practice_id: str, site: Any, *_: Any) -> None:
         self._call("save_draft", practice_id, sorted(site.files))
@@ -151,6 +157,7 @@ CHANGES = [
     ("post", f"{URL}/publish"),
     ("post", f"{URL}/versions/1/live"),
 ]
+SEARCH_URL = f"{URL}/search"
 
 
 class TestTheOwner:
@@ -230,6 +237,28 @@ class TestTheOwner:
         response = client.put(f"{URL}/draft/header", json={"wordmark": "x" * 501})
         assert response.status_code == 422
 
+    def test_reads_whether_the_site_is_hidden_from_search(self, client: TestClient) -> None:
+        assert client.get(URL).json()["hide_from_search"] is False
+
+    def test_hides_the_site_from_search_and_visitors_get_it_without_waiting(
+        self, client: TestClient, service: _StubService
+    ) -> None:
+        with patch.object(routes, "get_site_host_cache") as site_hosts:
+            response = client.put(SEARCH_URL, json={"hide_from_search": True})
+        assert response.status_code == 200
+        assert response.json()["hide_from_search"] is True
+        assert service.calls == [("set_hide_from_search", (PRACTICE_ID, True))]
+        # The answer visitors' requests are served by carries the flag, so the
+        # kept one is forgotten.
+        site_hosts.return_value.clear.assert_called_once_with()
+
+    def test_a_search_setting_that_is_not_a_yes_or_no_is_refused(
+        self, client: TestClient, service: _StubService
+    ) -> None:
+        assert client.put(SEARCH_URL, json={"hide_from_search": "maybe"}).status_code == 422
+        assert client.put(SEARCH_URL, json={}).status_code == 422
+        assert service.calls == []
+
 
 class TestSomeoneElse:
     @pytest.fixture
@@ -256,6 +285,14 @@ class TestSomeoneElse:
     ) -> None:
         response = client.request(method, url)
         assert response.status_code == 403
+        assert service.calls == []
+
+    def test_cannot_change_the_search_setting(
+        self, client: TestClient, service: _StubService
+    ) -> None:
+        response = client.put(SEARCH_URL, json={"hide_from_search": True})
+        assert response.status_code == 403
+        assert _code(response) == "NOT_PRACTICE_ADMIN"
         assert service.calls == []
 
     def test_a_practice_admin_can_write_a_header(

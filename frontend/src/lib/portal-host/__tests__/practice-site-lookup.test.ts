@@ -18,7 +18,10 @@ function setup(answer: Response | Error) {
     if (answer instanceof Error) throw answer
     return answer
   })
-  const ask = (pathname: string, extra: { method?: string; ifNoneMatch?: string | null } = {}) =>
+  const ask = (
+    pathname: string,
+    extra: { method?: string; ifNoneMatch?: string | null; hideFromSearch?: boolean } = {},
+  ) =>
     fetchSiteFile(
       {
         hostname: "example.com",
@@ -26,6 +29,7 @@ function setup(answer: Response | Error) {
         pathname,
         method: extra.method ?? "GET",
         ifNoneMatch: extra.ifNoneMatch ?? null,
+        hideFromSearch: extra.hideFromSearch,
       },
       { apiUrl: () => `${API}/`, fetch: fetch as unknown as typeof globalThis.fetch },
     )
@@ -137,16 +141,56 @@ describe("fetchSiteFile", () => {
   })
 })
 
+describe("fetchSiteFile for a practice that asks search engines not to list its website", () => {
+  it.each<[string, Response | Error]>([
+    ["a page", upstream(200, "<h1>Home</h1>", { "Content-Type": "text/html; charset=utf-8" })],
+    ["a missing page", upstream(404, "<h1>Lost</h1>", { "Content-Type": "text/html; charset=utf-8" })],
+    ["a folder's redirect", upstream(301, null, { Location: "about/" })],
+    ["a 304", upstream(304, null, { ETag: '"v3"' })],
+    ["a backend failure", new Error("unreachable")],
+  ])("says noindex, nofollow on %s", async (_name, answer) => {
+    const { ask } = setup(answer)
+
+    const response = await ask("/about", { hideFromSearch: true })
+
+    expect(response.headers.get("x-robots-tag")).toBe("noindex, nofollow")
+    expect(response.headers.get("content-security-policy")).toBe(
+      "base-uri 'self'; object-src 'none'; frame-ancestors 'none'",
+    )
+  })
+
+  it("says nothing of the kind when the practice has not asked", async () => {
+    const { ask } = setup(upstream(200, "<h1>Home</h1>", { "Content-Type": "text/html; charset=utf-8" }))
+
+    const response = await ask("/", { hideFromSearch: false })
+
+    expect(response.headers.get("x-robots-tag")).toBeNull()
+  })
+})
+
 describe("parseSiteHost", () => {
+  it("reads whether the practice asks search engines not to list its website", () => {
+    expect(parseSiteHost({ primary_host: "example.com", portal_host: null, hide_from_search: true })).toEqual({
+      primaryHost: "example.com",
+      portalHost: null,
+      hideFromSearch: true,
+    })
+  })
+
+  it("makes nothing of a search setting that is not a yes or no", () => {
+    expect(parseSiteHost({ primary_host: "example.com", hide_from_search: "yes" })).toBe("unavailable")
+  })
+
   it("reads the primary and, on a hosted address, the portal's host", () => {
     expect(parseSiteHost({ primary_host: null, portal_host: "acme.portal.hosted.example" })).toEqual({
       primaryHost: null,
       portalHost: "acme.portal.hosted.example",
+      hideFromSearch: false,
     })
   })
 
   it("reads an answer with no portal host as one without", () => {
-    expect(parseSiteHost({ primary_host: "example.com" })).toEqual({ primaryHost: "example.com", portalHost: null })
+    expect(parseSiteHost({ primary_host: "example.com" })).toEqual({ primaryHost: "example.com", portalHost: null, hideFromSearch: false })
   })
 
   it("makes nothing of a portal host that is not a name", () => {
