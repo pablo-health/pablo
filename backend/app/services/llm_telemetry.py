@@ -190,7 +190,20 @@ def llm_span(request: LLMSpanRequest) -> Iterator[LLMSpanRecorder]:
     """
     tracer = trace.get_tracer(_TRACER_NAME)
     start = time.perf_counter()
-    with tracer.start_as_current_span(f"llm.{request.operation}") as span:
+    # ``start_span``, deliberately not ``start_as_current_span``. The latter
+    # attaches the span to the ambient context on entry and detaches it on
+    # exit. Under a streaming gateway the exit is the async generator's
+    # finalizer, which runs in whichever task closes the generator -- a
+    # consumer that breaks out of the stream early, or the event loop's
+    # garbage collector -- so the detach token belongs to another Context and
+    # OpenTelemetry logs "Failed to detach context" at ERROR for a request
+    # that already succeeded. Nothing under this span reads the current span,
+    # so not making it current loses nothing; the span is ended by hand in
+    # the outer ``finally``. Skipping ``start_as_current_span`` also skips
+    # its default exception event, which would record the exception message;
+    # only the class name belongs on a content-free span.
+    span = tracer.start_span(f"llm.{request.operation}")
+    try:
         span.set_attribute(SpanAttributes.OPENINFERENCE_SPAN_KIND, _span_kind(request.operation))
         span.set_attribute(SpanAttributes.LLM_MODEL_NAME, request.model)
         span.set_attribute(SpanAttributes.LLM_SYSTEM, request.provider)
@@ -215,6 +228,8 @@ def llm_span(request: LLMSpanRequest) -> Iterator[LLMSpanRecorder]:
         finally:
             latency_ms = round((time.perf_counter() - start) * 1000.0, 2)
             span.set_attribute(_ATTR_LATENCY_MS, latency_ms)
+    finally:
+        span.end()
 
 
 # ---------------------------------------------------------------------------
