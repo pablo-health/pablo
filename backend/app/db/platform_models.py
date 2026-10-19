@@ -665,6 +665,10 @@ class PracticeSiteRow(PlatformBase):
     #: ``hide_from_search``, which is what asks the reconciler for a run.
     served_version: Mapped[int | None] = mapped_column(Integer)
     served_hide_from_search: Mapped[bool | None] = mapped_column(Boolean)
+    #: The hosted website address (``<slug>.<hosted domain>``) the reconciler
+    #: routed at the served version, so a slug change or the hosted domain
+    #: going away can take that host rule down; ``None`` when none is routed.
+    served_hosted_host: Mapped[str | None] = mapped_column(String(253))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 

@@ -567,7 +567,8 @@ CREATE TABLE platform.practice_sites (
     draft_suggested_header jsonb,
     hide_from_search boolean DEFAULT false NOT NULL,
     served_version integer,
-    served_hide_from_search boolean
+    served_hide_from_search boolean,
+    served_hosted_host character varying(253)
 );
 
 CREATE TABLE platform.practices (
