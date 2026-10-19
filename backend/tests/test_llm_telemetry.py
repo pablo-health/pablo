@@ -17,9 +17,11 @@ emitted span attributes.
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import fields
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
+from unittest.mock import MagicMock
 
 import pytest
 from openinference.semconv.trace import (
@@ -32,6 +34,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
+from backend.app.db import _request_session
 from backend.app.services.chat_llm_gateway import GeminiChatLLMGateway, StreamEvent
 from backend.app.services.llm_telemetry import (
     LLMSpanRecorder,
@@ -268,6 +271,42 @@ class TestChatGatewayTracing:
         assert attrs["pablo.latency_ms"] >= 0.0
         _assert_no_content(attrs)
 
+    def test_streaming_releases_a_held_db_connection_before_the_model_call(self) -> None:
+        """The gateway is the one seam every chat call passes through, so it
+        releases a pooled connection the route forgot to release -- before the
+        model is called, not after -- and no transaction sits idle across the
+        stream."""
+        order: list[str] = []
+        session = MagicMock()
+        session.in_transaction.return_value = True
+        session.commit.side_effect = lambda: order.append("release")
+
+        class _ModelsRecordingCall(_FakeAioChatModels):
+            async def generate_content_stream(self, **kwargs: Any) -> Any:
+                order.append("model")
+                return await super().generate_content_stream(**kwargs)
+
+        gw = GeminiChatLLMGateway()
+        gw._client = _FakeChatClient()
+        gw._client.aio.models = _ModelsRecordingCall()
+
+        async def _drain() -> None:
+            token = _request_session.set(session)
+            try:
+                async for _ in gw.stream_completion(
+                    model="gemini-2.5-flash-lite",
+                    system_prompt=_SECRET_SYSTEM,
+                    prior_turns=[],
+                    new_user_text=_SECRET_USER,
+                    max_output_tokens=128,
+                ):
+                    pass
+            finally:
+                _request_session.reset(token)
+
+        asyncio.run(_drain())
+        assert order == ["release", "model"]
+
 
 class TestLLMSpanBuilder:
     def test_recorder_exposes_no_content_setter(self) -> None:
@@ -307,6 +346,59 @@ class TestLLMSpanBuilder:
         span_attrs = dict(span_exporter.get_finished_spans()[0].attributes or {})
         assert "pablo.error_class" not in span_attrs
         assert span_attrs["pablo.latency_ms"] >= 0.0
+
+    def test_cross_task_close_does_not_log_otel_detach_error(
+        self, span_exporter: InMemorySpanExporter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A streaming consumer that breaks out early leaves the gateway's
+        async generator suspended inside the span. Whatever closes it later
+        -- another task, or the event loop's generator finalizer -- runs in a
+        different Context from the one that opened the span. A span that
+        attached itself to the context on entry then logged "Failed to detach
+        context" at ERROR on every such close, for a request that had already
+        succeeded (PABLO-sbhz). The span must open and close without touching
+        the ambient context at all."""
+
+        async def _stream() -> Any:
+            with llm_span(LLMSpanRequest(operation="chat", model="m")):
+                yield "first-chunk"
+                yield "second-chunk"  # never reached
+
+        async def _scenario() -> None:
+            gen = _stream()
+            await gen.__anext__()  # span opened in this task's Context
+            await asyncio.create_task(gen.aclose())  # closed from another one
+
+        with caplog.at_level(logging.ERROR, logger="opentelemetry.context"):
+            asyncio.run(_scenario())
+
+        otel = [r.getMessage() for r in caplog.records if r.name.startswith("opentelemetry")]
+        assert otel == []
+        spans = span_exporter.get_finished_spans()
+        assert len(spans) == 1
+        assert "pablo.error_class" not in dict(spans[0].attributes or {})
+
+    def test_span_is_not_made_current(self, span_exporter: InMemorySpanExporter) -> None:
+        """Documents the choice above: the LLM span is a leaf and never the
+        current span, so nothing can parent a child under it by accident."""
+        with llm_span(LLMSpanRequest(operation="chat", model="m")):
+            assert trace.get_current_span() is trace.INVALID_SPAN
+        assert len(span_exporter.get_finished_spans()) == 1
+
+    def test_error_inside_block_records_no_exception_event(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        """Only the class name reaches the span. An exception *event* would
+        carry the message, which is content as far as this span is concerned."""
+        with (
+            pytest.raises(ValueError, match="secret-detail"),
+            llm_span(LLMSpanRequest(operation="chat", model="m")),
+        ):
+            raise ValueError("secret-detail")
+
+        span = span_exporter.get_finished_spans()[0]
+        assert span.events == ()
+        assert "secret-detail" not in repr(span.attributes)
 
     def test_span_builder_records_context_free_metadata(
         self, span_exporter: InMemorySpanExporter

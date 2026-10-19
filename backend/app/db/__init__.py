@@ -494,6 +494,44 @@ def assert_no_held_db_connection(context: str = "") -> None:
     raise RuntimeError(detail)
 
 
+def release_db_connection_before_external_call(context: str = "") -> int:
+    """Release any held pooled DB connection at the entry of a slow external call.
+
+    The seam-side twin of ``assert_no_held_db_connection``. Where the assert
+    reports a route that forgot ``release_db_connection()``, this one does the
+    release itself, so a model round-trip never holds a pooled connection --
+    and an idle transaction the database will eventually kill -- whatever the
+    route did first. The LLM gateways call it at entry, which every chat and
+    structured call passes through, so the fix lives in one place instead of
+    once per route (the route-level pattern was repeated three times and still
+    missed the streaming briefing turn).
+
+    A release here is the same commit of the request-scoped transaction that
+    ``release_db_connection()`` performs when a route calls it, so the tenant
+    re-arming described there applies unchanged. A route that still reads ORM
+    objects after the call sees them expired and re-queried, exactly as it
+    would after its own release.
+
+    Logged at WARNING, not ERROR: nothing is broken -- the connection is
+    released -- but the route was holding work it did not need to, and the log
+    line names the seam so the route can be tidied. Returns the number of
+    sessions that were holding an open transaction.
+    """
+    held = sum(1 for session in bound_db_sessions() if session.in_transaction())
+    if not held:
+        return 0
+
+    import logging
+
+    release_db_connection()
+    logging.getLogger(__name__).warning(
+        "released_db_connection_before_external_call context=%s released=%d",
+        context or "unspecified",
+        held,
+    )
+    return held
+
+
 def _validate_schema_name(name: str) -> None:
     """Validate a PostgreSQL schema name to prevent SQL injection.
 

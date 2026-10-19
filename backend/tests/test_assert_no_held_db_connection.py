@@ -25,6 +25,7 @@ from app.db import (
     bound_db_sessions,
     publish_request_session,
     release_db_connection,
+    release_db_connection_before_external_call,
     restore_request_session,
 )
 
@@ -168,6 +169,31 @@ def test_release_releases_every_bound_session() -> None:
     finally:
         _request_session.reset(token)
         _displaced_sessions.reset(displaced)
+
+
+def test_seam_release_commits_a_held_session_and_warns(caplog: pytest.LogCaptureFixture) -> None:
+    """The gateway-side twin of the guard: a held connection is released at the
+    seam itself, and the slip is named at WARNING -- nothing is broken."""
+    token, session = _bind_session(in_transaction=True)
+    try:
+        with caplog.at_level(logging.WARNING):
+            assert release_db_connection_before_external_call("chat-llm") == 1
+        session.commit.assert_called_once()
+        assert "released_db_connection_before_external_call" in caplog.text
+        assert "chat-llm" in caplog.text
+    finally:
+        _request_session.reset(token)
+
+
+def test_seam_release_is_a_noop_when_nothing_is_held(caplog: pytest.LogCaptureFixture) -> None:
+    token, session = _bind_session(in_transaction=False)
+    try:
+        with caplog.at_level(logging.WARNING):
+            assert release_db_connection_before_external_call("chat-llm") == 0
+        session.commit.assert_not_called()
+        assert "released_db_connection_before_external_call" not in caplog.text
+    finally:
+        _request_session.reset(token)
 
 
 def test_bound_sessions_is_empty_off_request() -> None:

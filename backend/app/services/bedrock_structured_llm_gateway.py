@@ -321,11 +321,11 @@ class BedrockStructuredLLMGateway(StructuredLLMGateway):
         timeout_seconds: float | None = None,
         retry_policy: RetryPolicy | None = None,
     ) -> StructuredCompletion:
-        # Never hold a pooled DB connection across the model round-trip — the
-        # caller must release_db_connection() first (raises in dev/test).
-        from ..db import assert_no_held_db_connection
+        # Never hold a pooled DB connection across the model round-trip:
+        # release it here, at the one seam every call passes through.
+        from ..db import release_db_connection_before_external_call
 
-        assert_no_held_db_connection("structured-llm")
+        release_db_connection_before_external_call("structured-llm")
 
         # ``thinking_budget`` is part of the shared contract but unused here:
         # the forced tool call is a single non-thinking completion.
