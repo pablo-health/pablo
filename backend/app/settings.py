@@ -929,6 +929,20 @@ class Settings(BaseSettings):
             "websites off."
         ),
     )
+    # Serving published websites from object storage (app.sites.mirror and
+    # app.jobs.practice_domain_reconcile). Unset, a website host is answered
+    # by the frontend, which fetches the files through the backend. Set, the
+    # reconciler copies each published version into this world-readable
+    # bucket and routes the website's hosts straight at it, so a visitor's
+    # request never reaches the deployment. Needs practice_domain_site_backend.
+    practice_site_live_bucket: str | None = Field(
+        default=None,
+        description=(
+            "World-readable bucket, on the same provider as practice_site_bucket, "
+            "that published websites are copied to and served from by the load "
+            "balancer. Leave unset to serve websites through the frontend."
+        ),
+    )
 
     # Patient document upload (THERAPY-ak6m.2). When unset, the
     # /api/patients/{id}/documents surface returns 503 with a clear
@@ -1295,6 +1309,18 @@ class Settings(BaseSettings):
         description=(
             "Path matcher in practice_domain_url_map that a practice host's host "
             "rule points at. Must already exist in the URL map."
+        ),
+    )
+    practice_domain_site_backend: str = Field(
+        default="",
+        description=(
+            "Backend bucket that fronts practice_site_live_bucket: a name, for one "
+            "in practice_domain_serving_project, or "
+            "projects/<project>/global/backendBuckets/<name> for one in the project "
+            "that owns the bucket (a backend bucket lives with its bucket). Set "
+            "with practice_site_live_bucket: the reconciler then routes each "
+            "published website's hosts to a path matcher of the practice's own, "
+            "serving the live version's folder from the bucket."
         ),
     )
     # Every practice's addresses under a domain of the deployment's

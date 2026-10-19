@@ -37,6 +37,13 @@ Configuration (``app.settings``):
   way, and the job says so and exits 0.
 * ``practice_domain_cname_target`` (or ``practice_domain_apex_ips``) — what a
   host must point at before it is served.
+* ``practice_site_live_bucket`` with ``practice_domain_site_backend`` — set
+  both and published websites are served from object storage: each
+  published version is copied into the bucket (``app.sites.mirror``) and the
+  website's hosts are routed at the backend bucket fronting it, so visitors
+  never reach the deployment. A publish, a roll back or a search-listing
+  change asks for a run the same way a host change does. Set neither and the
+  frontend answers for website hosts as before.
 
 The job's identity needs, on the serving project,
 ``roles/certificatemanager.editor`` (DNS authorisations, certificates, map
@@ -77,13 +84,17 @@ from ..services.practice_domain_email import email_identity_provisioner
 from ..services.practice_domain_reconcile_store import PostgresReconcileStore
 from ..services.practice_domain_reconciler import PracticeDomainReconciler
 from ..services.practice_domain_service import get_practice_domain_service
-from ..settings import get_settings
+from ..settings import (
+    Settings,
+    get_settings,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from ..services.practice_domain_cloud import DomainServing
     from ..services.practice_domain_reconciler import ReconcileStore, SweepReport
+    from ..sites.mirror import SiteMirror
 
 logger = logging.getLogger(__name__)
 
@@ -138,16 +149,41 @@ def _google_serving(config: ServingConfig) -> DomainServing:
     return GoogleDomainServing(config)
 
 
-def run(
+def _storage_mirror(settings: Settings, live_bucket: str) -> SiteMirror:
+    from ..sites.mirror import StorageSiteMirror  # noqa: PLC0415 — loads the storage client
+    from ..sites.storage import site_storage  # noqa: PLC0415
+
+    return StorageSiteMirror(site_storage(), settings.practice_site_bucket or "", live_bucket)
+
+
+def _static_sites_problem(settings: Settings, config: ServingConfig) -> str | None:
+    """Why websites cannot be served from object storage as configured, or
+    ``None`` when they can -- or when that is not configured at all."""
+    live_bucket = (settings.practice_site_live_bucket or "").strip()
+    if bool(live_bucket) != bool(config.site_backend):
+        return (
+            "practice_site_live_bucket and practice_domain_site_backend go together; "
+            "set both or neither"
+        )
+    if live_bucket and not (settings.practice_site_bucket or "").strip():
+        return (
+            "practice_site_live_bucket needs practice_site_bucket, the bucket websites "
+            "are published to"
+        )
+    return None
+
+
+def run(  # noqa: PLR0913 — one seam per thing a test replaces, all keyword-only
     argv: list[str] | None = None,
     *,
     serving_factory: Callable[[ServingConfig], DomainServing] = _google_serving,
+    mirror_factory: Callable[[Settings, str], SiteMirror] = _storage_mirror,
     store: ReconcileStore | None = None,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> int:
-    """One run. The keyword arguments replace the cloud, the database, the
-    clock and the wait (tests)."""
+    """One run. The keyword arguments replace the cloud, the storage, the
+    database, the clock and the wait (tests)."""
     configure_job_logging()
     args = _parse_argv(argv)
     settings = get_settings()
@@ -173,8 +209,14 @@ def run(
         )
         return 1
 
+    if (problem := _static_sites_problem(settings, config)) is not None:
+        logger.error("practice_domain_reconcile_misconfigured: %s", problem)
+        return 1
+    live_bucket = (settings.practice_site_live_bucket or "").strip()
     store = store or PostgresReconcileStore()
-    if not args.recheck and not store.any_in_progress():
+    mirror = mirror_factory(settings, live_bucket) if live_bucket else None
+    idle = not args.recheck and not store.any_in_progress()
+    if idle and (mirror is None or not store.any_site_behind()):
         logger.info("practice_domain_reconcile_idle: no host is in progress; nothing to do")
         return 0
 
@@ -184,6 +226,7 @@ def run(
         lookup=get_dns_lookup(),
         service_for=get_practice_domain_service,
         email=email_identity_provisioner(),
+        mirror=mirror,
     )
     result = keep_sweeping(reconciler.sweep, clock=clock, sleep=sleep)
     logger.info(

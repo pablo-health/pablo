@@ -141,3 +141,35 @@ To make the suggestion exact rather than guessed, mark the header:
 
 The markers change nothing about how the website looks. Only `index.html` is
 read, and only when it is 256 KB or smaller.
+
+
+## Where the files are served from
+
+A deployment answers for a website's hosts in one of two ways, chosen by
+configuration; the practice sees no difference.
+
+**Through the frontend** (the default). The frontend looks the host up, fetches
+the live version's files through the backend, and answers. Nothing to set up
+beyond `PRACTICE_SITE_BUCKET`.
+
+**From object storage.** Set `PRACTICE_SITE_LIVE_BUCKET` to a world-readable
+bucket on the same storage provider, and `PRACTICE_DOMAIN_SITE_BACKEND` to the
+load balancer's backend bucket that fronts it: a name when it is in the serving
+project, or `projects/<project>/global/backendBuckets/<name>` when the public
+bucket, and so its backend bucket, live in a project of their own. The domain reconciler then
+copies each published version into that bucket (at its own path, with a copy of
+every `index.html` at its folder's key, `Cache-Control` of a minute for pages
+and an hour for the rest, and a `robots.txt` disallowing everything when the
+practice asked not to be listed) and routes the website's custom hosts straight
+at it: the primary host to a path matcher of the practice's own, which rewrites
+every path into the live version's folder; the others to a redirect to the
+primary. A visitor's request never reaches the deployment. A publish, a roll
+back or a search-listing change asks the reconciler for a run, which copies the
+new version before it moves the hosts, and empties the cache in front of them
+after. A copy that fails leaves the hosts on what they served before.
+
+Headers the frontend adds on its path (the content-security policy, the
+`noindex` on a hidden website) are not added by a bucket; set the policy as a
+custom response header on the backend bucket, and rely on `robots.txt` for the
+listing. The hosted address a deployment may give every practice stays on the
+frontend either way.

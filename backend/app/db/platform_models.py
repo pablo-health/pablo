@@ -656,6 +656,15 @@ class PracticeSiteRow(PlatformBase):
     hide_from_search: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )
+    #: What the load balancer serves for the website's hosts, where the
+    #: deployment serves websites from object storage (``app.sites.mirror``):
+    #: the version copied to the public bucket and routed to, and the
+    #: ``hide_from_search`` its ``robots.txt`` reflects. Written by the domain
+    #: reconciler once both are in place; ``None`` until then. A publish, a
+    #: roll back or a search change leaves them behind ``live_version`` /
+    #: ``hide_from_search``, which is what asks the reconciler for a run.
+    served_version: Mapped[int | None] = mapped_column(Integer)
+    served_hide_from_search: Mapped[bool | None] = mapped_column(Boolean)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
