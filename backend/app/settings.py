@@ -1314,10 +1314,13 @@ class Settings(BaseSettings):
     practice_domain_site_backend: str = Field(
         default="",
         description=(
-            "Backend bucket in practice_domain_serving_project that fronts "
-            "practice_site_live_bucket. Set with it: the reconciler then routes "
-            "each published website's hosts to a path matcher of the practice's "
-            "own, serving the live version's folder from the bucket."
+            "Backend bucket that fronts practice_site_live_bucket: a name, for one "
+            "in practice_domain_serving_project, or "
+            "projects/<project>/global/backendBuckets/<name> for one in the project "
+            "that owns the bucket (a backend bucket lives with its bucket). Set "
+            "with practice_site_live_bucket: the reconciler then routes each "
+            "published website's hosts to a path matcher of the practice's own, "
+            "serving the live version's folder from the bucket."
         ),
     )
     # Every practice's addresses under a domain of the deployment's

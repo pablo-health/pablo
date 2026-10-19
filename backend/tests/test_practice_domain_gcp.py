@@ -644,3 +644,22 @@ def test_invalidating_a_host_empties_every_path_of_it(
 ) -> None:
     static.invalidate_host(SITE)
     assert url_maps.invalidated == [(SITE, "/*")]
+
+
+def test_a_backend_bucket_in_another_project_is_named_by_its_path(
+    certificates: StubCertificates, url_maps: StubUrlMaps
+) -> None:
+    """A backend bucket lives with its storage bucket; a deployment keeping
+    its public buckets in a project of their own names it by path."""
+    config = replace(CONFIG, site_backend="projects/sites-project/global/backendBuckets/live-bb")
+    serving = GoogleDomainServing(config, certificates=certificates, url_maps=url_maps)
+
+    serving.ensure_host_rule(SITE, HostRoute.site(PRACTICE, 3))
+
+    matcher = _matchers(url_maps.stored)["site-practice-7f3a"]
+    expected = (
+        "https://www.googleapis.com/compute/v1/projects/sites-project/global/backendBuckets/live-bb"
+    )
+    assert matcher.default_service == expected
+    (rule,) = matcher.route_rules
+    assert rule.service == expected

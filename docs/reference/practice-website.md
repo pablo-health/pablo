@@ -154,7 +154,9 @@ beyond `PRACTICE_SITE_BUCKET`.
 
 **From object storage.** Set `PRACTICE_SITE_LIVE_BUCKET` to a world-readable
 bucket on the same storage provider, and `PRACTICE_DOMAIN_SITE_BACKEND` to the
-load balancer's backend bucket that fronts it. The domain reconciler then
+load balancer's backend bucket that fronts it: a name when it is in the serving
+project, or `projects/<project>/global/backendBuckets/<name>` when the public
+bucket, and so its backend bucket, live in a project of their own. The domain reconciler then
 copies each published version into that bucket (at its own path, with a copy of
 every `index.html` at its folder's key, `Cache-Control` of a minute for pages
 and an hour for the rest, and a `robots.txt` disallowing everything when the

@@ -366,10 +366,17 @@ class GoogleDomainServing:
         if not backend:
             msg = "serving a website from object storage needs practice_domain_site_backend"
             raise DomainServingError(msg, transient=False)
-        bucket = (
-            f"https://www.googleapis.com/compute/v1/projects/{self._config.project}"
-            f"/global/backendBuckets/{backend}"
+        # A bare name is a backend bucket of the serving project. A backend
+        # bucket has to live in the project that owns its storage bucket, so a
+        # deployment keeping its public buckets in a project of their own names
+        # the backend bucket there, projects/<project>/global/backendBuckets/<name>,
+        # which a global external load balancer may reference across projects.
+        path = (
+            backend
+            if "/" in backend
+            else (f"projects/{self._config.project}/global/backendBuckets/{backend}")
         )
+        bucket = f"https://www.googleapis.com/compute/v1/{path.removeprefix('https://www.googleapis.com/compute/v1/')}"
         folder = "/" + version_prefix(route.practice_id, route.version)
         return compute_v1.PathMatcher(
             name=site_matcher_id(route.practice_id),
