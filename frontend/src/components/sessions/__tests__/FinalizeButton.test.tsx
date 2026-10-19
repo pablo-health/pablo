@@ -13,7 +13,7 @@ import type { SessionStatus } from "@/types/sessions"
 import * as useSessions from "@/hooks/useSessions"
 
 vi.mock("@/hooks/useNoteSigning", () => ({
-  useSignerDefaults: () => ({ name: "Sam Ortiz", credentials: "LMFT" }),
+  useSignerDefaults: () => ({ name: "Sam Ortiz", credentials: "LMFT", loaded: true }),
 }))
 vi.mock("@/hooks/usePreferences", () => ({
   useUserTimeZone: () => "America/New_York",
