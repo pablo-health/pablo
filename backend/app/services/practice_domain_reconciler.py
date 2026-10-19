@@ -416,7 +416,7 @@ class PracticeDomainReconciler:
     ) -> None:
         """After the hosts: the copied version is what every served website
         host now routes at, so empty the cache in front of them, record it,
-        and drop the versions the website no longer keeps."""
+        and drop every other version from the public bucket."""
         if not site.flip or site.serving.live_version is None:
             return
         served = [h.domain for h in live if h.purpose == "site" and h.status == "active"]
@@ -444,9 +444,13 @@ class PracticeDomainReconciler:
             practice_id,
             site.serving.live_version,
         )
+        # Only the live version stays public. A roll back copies the version it
+        # brings back from the private bucket, where every retained version is
+        # kept, so a page the practice published and withdrew is not left for
+        # anyone with its path.
         try:
             self._mirror.tidy(  # type: ignore[union-attr]  # a plan exists only with a mirror
-                practice_id, {*site.serving.retained, site.serving.live_version}
+                practice_id, {site.serving.live_version}
             )
         except SiteMirrorError as e:
             logger.warning(

@@ -26,7 +26,9 @@ The copy is the version's folder as published, at the same path
 Copying a version again writes the same objects again and drops any the
 version no longer has, so it is safe to repeat. The domain reconciler runs
 it, before it routes the website's hosts at the folder, and never routes at a
-folder it has not copied.
+folder it has not copied; once the hosts are on it, every other version is
+dropped from the public bucket, so only what is live can be fetched by path.
+A roll back copies the version it brings back from the private bucket again.
 
 No PHI: a practice's public website.
 """
