@@ -361,6 +361,7 @@ class AuditAction(StrEnum):
     PRACTICE_SITE_DRAFT_SAVED = "practice_site_draft_saved"
     PRACTICE_SITE_PUBLISHED = "practice_site_published"
     PRACTICE_SITE_ROLLED_BACK = "practice_site_rolled_back"
+    PRACTICE_SITE_SEARCH_VISIBILITY_CHANGED = "practice_site_search_visibility_changed"
 
     # A patient signed themselves out. The mirror image of
     # PATIENT_PORTAL_SESSION_REDEEMED and recorded for the same reason:

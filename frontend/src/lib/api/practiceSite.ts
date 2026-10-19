@@ -77,6 +77,8 @@ export interface PracticeSite {
   draft: SiteDraft | null
   /** Kept versions, newest first. */
   versions: SiteVersion[]
+  /** The practice asks search engines not to list its website. */
+  hide_from_search: boolean
 }
 
 export interface SitePreview {
@@ -114,6 +116,11 @@ export function previewPracticeSiteDraft(): Promise<SitePreview> {
 
 export function publishPracticeSite(): Promise<PracticeSite> {
   return post<PracticeSite>(`${WEBSITE}/publish`, {})
+}
+
+/** Ask search engines not to list the website, or stop asking. */
+export function setPracticeSiteHiddenFromSearch(hide: boolean): Promise<PracticeSite> {
+  return put<PracticeSite>(`${WEBSITE}/search`, { hide_from_search: hide })
 }
 
 /** Make a kept version live again. */

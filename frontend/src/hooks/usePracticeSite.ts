@@ -10,6 +10,7 @@ import {
   publishPracticeSite,
   rollBackPracticeSite,
   setPracticeSiteDraftHeader,
+  setPracticeSiteHiddenFromSearch,
   uploadPracticeSiteDraft,
   type PracticeSite,
   type SiteHeader,
@@ -64,6 +65,13 @@ export function usePublishPracticeSite() {
 export function useRollBackPracticeSite() {
   return useAuthMutation<PracticeSite, number>({
     mutationFn: (version) => rollBackPracticeSite(version),
+    onSuccess: keep,
+  })
+}
+
+export function useSetPracticeSiteHiddenFromSearch() {
+  return useAuthMutation<PracticeSite, boolean>({
+    mutationFn: (hide) => setPracticeSiteHiddenFromSearch(hide),
     onSuccess: keep,
   })
 }

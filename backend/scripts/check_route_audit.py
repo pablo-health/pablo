@@ -467,6 +467,7 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("post", "/api/practice/website/draft/preview"),  # mints a preview address
         ("post", "/api/practice/website/publish"),  # website files; audited in the service
         ("post", "/api/practice/website/versions/{version}/live"),  # audited in the service
+        ("put", "/api/practice/website/search"),  # a yes or no; audited in the service
         ("get", "/api/practice/website/preview/{token}/{path:path}"),  # draft website file
         ("get", "/api/sites/hosts/{host}"),  # host to host, no PHI
         ("get", "/api/sites/hosts/{host}/file"),  # a published website file
