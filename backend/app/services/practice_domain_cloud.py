@@ -5,10 +5,19 @@
 Serving a host takes four things, each kept per host: a DNS authorisation (the
 ``_acme-challenge`` CNAME the practice adds), a certificate issued against it,
 a certificate-map entry that hands the certificate out for the hostname, and a
-host rule on the load balancer's URL map that routes the hostname to the
-deployment. :class:`DomainServing` is that list as a seam, so the reconciler's
-decisions are tested against a fake and the Google Cloud calls live in
+host rule on the load balancer's URL map that routes the hostname somewhere.
+:class:`DomainServing` is that list as a seam, so the reconciler's decisions
+are tested against a fake and the Google Cloud calls live in
 ``practice_domain_gcp`` alone.
+
+Where a host rule routes is a :class:`HostRoute`. Every host starts on the
+deployment's own path matcher (the frontend answers for it). A deployment that
+serves published websites straight from object storage (see
+``app.sites.mirror``) routes a website host to a path matcher of the
+practice's own, which rewrites every path into the live version's folder in
+the public bucket, and routes the website's other hosts to a redirect to its
+primary. The reconciler decides the route; the serving makes the URL map say
+so.
 
 Every ``ensure_*`` is idempotent: it creates what is missing and reports what is
 there. Every ``remove_*`` is idempotent too, and touches only a resource that
@@ -68,6 +77,47 @@ class DomainServingError(Exception):
         self.transient = transient
 
 
+RouteKind = Literal["default", "site", "alias"]
+
+
+@dataclass(frozen=True)
+class HostRoute:
+    """Where a host's host rule points.
+
+    ``default``: the deployment's own path matcher (``ServingConfig.path_matcher``).
+    ``site``: the practice's static-site matcher, serving ``version`` of the
+    practice's website from the public bucket. ``alias``: a redirect to
+    ``target``, for a website host that is not the website's primary.
+    """
+
+    kind: RouteKind
+    practice_id: str = ""
+    version: int = 0
+    target: str = ""
+
+    @classmethod
+    def default(cls) -> HostRoute:
+        return cls("default")
+
+    @classmethod
+    def site(cls, practice_id: str, version: int) -> HostRoute:
+        return cls("site", practice_id=practice_id, version=version)
+
+    @classmethod
+    def alias(cls, target: str) -> HostRoute:
+        return cls("alias", target=target)
+
+
+def site_matcher_id(practice_id: str) -> str:
+    """The URL-map path matcher a practice's static website is served by."""
+    return resource_id("site-", practice_id)
+
+
+def alias_matcher_id(host: str) -> str:
+    """The URL-map path matcher that redirects *host* to its website's primary."""
+    return resource_id("alias-", host)
+
+
 class DomainServing(Protocol):
     def ensure_dns_authorization(self, host: str) -> str:
         """Create the host's DNS authorisation if missing.
@@ -94,11 +144,22 @@ class DomainServing(Protocol):
         """Hand the host's certificate out for its hostname."""
         ...
 
-    def ensure_host_rule(self, host: str) -> None:
-        """Route the hostname to the deployment."""
+    def ensure_host_rule(self, host: str, route: HostRoute | None = None) -> None:
+        """Route the hostname where *route* says (the deployment itself when
+        ``None``), making the path matcher the route needs if it is missing and
+        moving the host off the one it was on. One edit, so the map never
+        names a matcher nothing routes to."""
         ...
 
-    def remove_host_rule(self, host: str) -> None: ...
+    def invalidate_host(self, host: str) -> None:
+        """Drop whatever a cache in front of the load balancer holds for the
+        host, after what it serves changed."""
+        ...
+
+    def remove_host_rule(self, host: str) -> None:
+        """Stop routing the hostname, and drop a practice-site or alias path
+        matcher left with nothing routing to it."""
+        ...
 
     def remove_map_entry(self, host: str) -> None: ...
 
@@ -115,6 +176,10 @@ class ServingConfig:
     certificate_map: str
     url_map: str
     path_matcher: str
+    #: The URL map's backend bucket that published websites are served from,
+    #: when the deployment serves them from object storage; ``None`` leaves
+    #: every website host on ``path_matcher``.
+    site_backend: str | None = None
 
     @classmethod
     def from_settings(cls, settings: Settings) -> ServingConfig | None:
@@ -135,7 +200,14 @@ class ServingConfig:
         if missing:
             msg = f"Serving practice hosts needs these settings too: {', '.join(missing)}"
             raise ValueError(msg)
-        return cls(*values.values())
+        project, certificate_map, url_map, path_matcher = values.values()
+        return cls(
+            project,
+            certificate_map,
+            url_map,
+            path_matcher,
+            site_backend=settings.practice_domain_site_backend.strip() or None,
+        )
 
 
 def serving_configured(settings: Settings) -> bool:

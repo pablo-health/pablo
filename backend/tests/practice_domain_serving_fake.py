@@ -8,7 +8,11 @@ lets a test set a host's certificate state or make a call fail.
 
 from __future__ import annotations
 
-from app.services.practice_domain_cloud import CertificateStatus, DomainServingError
+from app.services.practice_domain_cloud import (
+    CertificateStatus,
+    DomainServingError,
+    HostRoute,
+)
 
 
 class FakeDomainServing:
@@ -18,6 +22,10 @@ class FakeDomainServing:
         self.certificates: set[str] = set()
         self.map_entries: set[str] = set()
         self.host_rules: set[str] = set()
+        #: Where each host rule points.
+        self.routes: dict[str, HostRoute] = {}
+        #: The hosts whose cache was emptied, in order.
+        self.invalidated: list[str] = []
         #: A host's certificate state; PROVISIONING when unset.
         self.certificate_state: dict[str, CertificateStatus] = {}
         #: The state a host's certificate is in once requested again;
@@ -65,15 +73,24 @@ class FakeDomainServing:
             self.calls.append(("create:map_entry", host))
             self.map_entries.add(host)
 
-    def ensure_host_rule(self, host: str) -> None:
+    def ensure_host_rule(self, host: str, route: HostRoute | None = None) -> None:
         self._call("ensure_host_rule", host)
+        route = route or HostRoute.default()
         if host not in self.host_rules:
             self.calls.append(("create:host_rule", host))
             self.host_rules.add(host)
+        elif self.routes.get(host) != route:
+            self.calls.append(("reroute:host_rule", host))
+        self.routes[host] = route
+
+    def invalidate_host(self, host: str) -> None:
+        self._call("invalidate_host", host)
+        self.invalidated.append(host)
 
     def remove_host_rule(self, host: str) -> None:
         self._call("remove_host_rule", host)
         self.host_rules.discard(host)
+        self.routes.pop(host, None)
 
     def remove_map_entry(self, host: str) -> None:
         self._call("remove_map_entry", host)

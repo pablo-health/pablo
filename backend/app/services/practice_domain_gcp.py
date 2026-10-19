@@ -11,7 +11,10 @@ answers for. Per host this keeps, in ``location global``:
 * ``cm-<host>`` — a Google-managed certificate using that authorisation.
 * ``<host>`` — an entry in the certificate map handing that certificate out.
 * a host rule on the URL map sending the hostname to the configured path
-  matcher.
+  matcher -- or, for a website served from object storage, to a path matcher
+  of the practice's own (``site-<practice>``: every path rewritten into the
+  live version's folder on the backend bucket) or to a redirect to the
+  website's primary host (``alias-<host>``).
 
 (``<host>`` with dots as hyphens; see ``practice_domain_cloud.resource_id``.)
 
@@ -21,8 +24,9 @@ first and put back after.
 
 The URL map is one shared resource, so every edit is read-modify-write against
 its fingerprint, retried when another edit got there first. An edit touches
-only host rules naming the host it is about and pointing at the configured
-path matcher — never the path matchers, the default, or a rule it did not make.
+only host rules naming the host it is about, and the ``site-`` / ``alias-``
+path matchers it makes itself — never the configured path matcher, the
+default, or a rule it did not make.
 
 Only the domain reconciler job imports this, and only when the deployment
 serves practice hosts, so nothing else loads the clients.
@@ -38,7 +42,15 @@ from typing import TYPE_CHECKING, Any
 from google.api_core import exceptions as api_exceptions
 from google.cloud import certificate_manager_v1, compute_v1
 
-from .practice_domain_cloud import CertificateStatus, DomainServingError, resource_id
+from ..sites.service import version_prefix
+from .practice_domain_cloud import (
+    CertificateStatus,
+    DomainServingError,
+    HostRoute,
+    alias_matcher_id,
+    resource_id,
+    site_matcher_id,
+)
 from .practice_domain_service import CERT_AUTH_SUFFIX
 
 if TYPE_CHECKING:
@@ -233,34 +245,54 @@ class GoogleDomainServing:
                 ).result(timeout=OPERATION_TIMEOUT_SECONDS)
         _belongs("Certificate map entry", name, [entry.hostname], host)
 
-    def ensure_host_rule(self, host: str) -> None:
-        matcher = self._config.path_matcher
+    def ensure_host_rule(self, host: str, route: HostRoute | None = None) -> None:
+        route = route or HostRoute.default()
+        matcher = self._matcher_name(route)
 
         def add(url_map: compute_v1.UrlMap) -> bool:
-            if matcher not in {m.name for m in url_map.path_matchers}:
-                msg = f"URL map {url_map.name} has no path matcher {matcher}"
-                raise DomainServingError(msg, transient=False)
+            changed = self._ensure_matcher(url_map, route)
             for rule in url_map.host_rules:
-                if host in rule.hosts:
-                    if rule.path_matcher == matcher:
-                        return False
+                if host not in rule.hosts:
+                    continue
+                if rule.path_matcher == matcher:
+                    return changed
+                if not self._ours(rule.path_matcher):
                     msg = f"{host} is routed by another host rule on {url_map.name}"
                     raise DomainServingError(msg, transient=False)
+                # Moving the host: off a rule of ours, onto the matcher it
+                # needs now. A rule naming other hosts too keeps them.
+                others = [h for h in rule.hosts if h != host]
+                if others:
+                    rule.hosts = others
+                else:
+                    url_map.host_rules.remove(rule)
+                break
             url_map.host_rules.append(compute_v1.HostRule(hosts=[host], path_matcher=matcher))
+            self._drop_orphaned_matchers(url_map)
             return True
 
-        self._edit_url_map(f"adding a host rule for {host}", add)
+        self._edit_url_map(f"routing {host} to {matcher}", add)
+
+    def invalidate_host(self, host: str) -> None:
+        project, name = self._config.project, self._config.url_map
+        with _calls(f"URL map (invalidating the cache for {host})"):
+            self._url_maps.invalidate_cache(
+                project=project,
+                url_map=name,
+                cache_invalidation_rule_resource=compute_v1.CacheInvalidationRule(
+                    host=host, path="/*"
+                ),
+            ).result(timeout=OPERATION_TIMEOUT_SECONDS)
+        logger.info("practice_domain_serving invalidated the cache for %s", host)
 
     # --- remove --------------------------------------------------------------
 
     def remove_host_rule(self, host: str) -> None:
-        matcher = self._config.path_matcher
-
         def drop(url_map: compute_v1.UrlMap) -> bool:
             kept: list[compute_v1.HostRule] = []
             changed = False
             for rule in url_map.host_rules:
-                if host not in rule.hosts or rule.path_matcher != matcher:
+                if host not in rule.hosts or not self._ours(rule.path_matcher):
                     kept.append(rule)
                     continue
                 changed = True
@@ -270,6 +302,7 @@ class GoogleDomainServing:
                     kept.append(rule)
             if changed:
                 url_map.host_rules = kept
+                self._drop_orphaned_matchers(url_map)
             return changed
 
         self._edit_url_map(f"removing the host rule for {host}", drop)
@@ -297,6 +330,84 @@ class GoogleDomainServing:
 
     # --- the URL map ---------------------------------------------------------
 
+    def _matcher_name(self, route: HostRoute) -> str:
+        if route.kind == "site":
+            return site_matcher_id(route.practice_id)
+        if route.kind == "alias":
+            return alias_matcher_id(route.target)
+        return self._config.path_matcher
+
+    def _ours(self, matcher: str) -> bool:
+        """Whether a host rule pointing at *matcher* is one this serving made:
+        the configured matcher, or a practice-site or alias matcher."""
+        return matcher == self._config.path_matcher or matcher.startswith(("site-", "alias-"))
+
+    def _ensure_matcher(self, url_map: compute_v1.UrlMap, route: HostRoute) -> bool:
+        """Make the path matcher *route* needs, or bring it up to date (a site
+        matcher's folder follows the live version). Returns whether the map
+        changed. The configured matcher must already be there."""
+        name = self._matcher_name(route)
+        current = next((m for m in url_map.path_matchers if m.name == name), None)
+        if route.kind == "default":
+            if current is None:
+                msg = f"URL map {url_map.name} has no path matcher {name}"
+                raise DomainServingError(msg, transient=False)
+            return False
+        wanted = self._site_matcher(route) if route.kind == "site" else self._alias_matcher(route)
+        if current is not None and _same_matcher(current, wanted):
+            return False
+        if current is not None:
+            url_map.path_matchers.remove(current)
+        url_map.path_matchers.append(wanted)
+        return True
+
+    def _site_matcher(self, route: HostRoute) -> compute_v1.PathMatcher:
+        backend = self._config.site_backend
+        if not backend:
+            msg = "serving a website from object storage needs practice_domain_site_backend"
+            raise DomainServingError(msg, transient=False)
+        bucket = (
+            f"https://www.googleapis.com/compute/v1/projects/{self._config.project}"
+            f"/global/backendBuckets/{backend}"
+        )
+        folder = "/" + version_prefix(route.practice_id, route.version)
+        return compute_v1.PathMatcher(
+            name=site_matcher_id(route.practice_id),
+            default_service=bucket,
+            route_rules=[
+                compute_v1.HttpRouteRule(
+                    priority=1,
+                    match_rules=[compute_v1.HttpRouteRuleMatch(prefix_match="/")],
+                    service=bucket,
+                    route_action=compute_v1.HttpRouteAction(
+                        url_rewrite=compute_v1.UrlRewrite(path_prefix_rewrite=folder)
+                    ),
+                )
+            ],
+        )
+
+    @staticmethod
+    def _alias_matcher(route: HostRoute) -> compute_v1.PathMatcher:
+        return compute_v1.PathMatcher(
+            name=alias_matcher_id(route.target),
+            default_url_redirect=compute_v1.HttpRedirectAction(
+                host_redirect=route.target,
+                https_redirect=True,
+                redirect_response_code="MOVED_PERMANENTLY_DEFAULT",
+                strip_query=False,
+            ),
+        )
+
+    @staticmethod
+    def _drop_orphaned_matchers(url_map: compute_v1.UrlMap) -> None:
+        """Drop the ``site-`` and ``alias-`` matchers no host rule points at."""
+        routed = {rule.path_matcher for rule in url_map.host_rules}
+        url_map.path_matchers = [
+            m
+            for m in url_map.path_matchers
+            if m.name in routed or not m.name.startswith(("site-", "alias-"))
+        ]
+
     def _edit_url_map(self, what: str, change: Callable[[compute_v1.UrlMap], bool]) -> None:
         """Read the map, let *change* edit it, and write it back against the
         fingerprint it was read with. *change* returns whether it changed
@@ -318,3 +429,13 @@ class GoogleDomainServing:
                 return
         msg = f"URL map ({what}): it kept changing under the edit"
         raise DomainServingError(msg, transient=True)
+
+
+def _same_matcher(current: compute_v1.PathMatcher, wanted: compute_v1.PathMatcher) -> bool:
+    """Whether *current* already says what *wanted* says. Compared through
+    the wire form, so defaults the API filled in on read do not count."""
+    as_json = compute_v1.PathMatcher.to_json
+    return bool(
+        as_json(current, including_default_value_fields=False)
+        == as_json(wanted, including_default_value_fields=False)
+    )

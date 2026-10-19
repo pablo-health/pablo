@@ -52,6 +52,7 @@ from ..portal.practice_hosts import get_portal_host_cache
 from ..portal.practice_routes import ensure_practice_slug
 from ..routes._deps import practice_id_or_404
 from ..routes.practice_domains import _manageable_practice_id
+from ..services.practice_domain_trigger import request_reconcile
 from .files import MAX_ARCHIVE_BYTES, SiteFilesError, SiteTooLargeError, read_zip
 from .hosts import get_site_host_cache
 from .service import (
@@ -289,6 +290,9 @@ def publish_practice_site(
         ensure_practice_slug(practice_id)
     background.add_task(_forget_host_answers)
     background.add_task(tidy_practice_site, practice_id)
+    # A deployment serving websites from object storage copies and routes
+    # the new version in the domain reconciler; this asks for a run.
+    background.add_task(request_reconcile)
     return _response(service, practice_id)
 
 
@@ -304,6 +308,7 @@ def roll_back_practice_site(
     practice_id = _manageable_practice_id(user)
     _translated(lambda: service.roll_back(practice_id, version, user, http_request))
     background.add_task(_forget_host_answers)
+    background.add_task(request_reconcile)
     return _response(service, practice_id)
 
 
@@ -320,4 +325,5 @@ def set_practice_site_search(
     practice_id = _manageable_practice_id(user)
     service.set_hide_from_search(practice_id, body.hide_from_search, user, http_request)
     background.add_task(get_site_host_cache().clear)
+    background.add_task(request_reconcile)
     return _response(service, practice_id)

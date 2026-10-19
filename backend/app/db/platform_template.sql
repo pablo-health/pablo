@@ -565,7 +565,9 @@ CREATE TABLE platform.practice_sites (
     updated_at timestamp with time zone NOT NULL,
     draft_theme jsonb,
     draft_suggested_header jsonb,
-    hide_from_search boolean DEFAULT false NOT NULL
+    hide_from_search boolean DEFAULT false NOT NULL,
+    served_version integer,
+    served_hide_from_search boolean
 );
 
 CREATE TABLE platform.practices (

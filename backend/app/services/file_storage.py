@@ -176,8 +176,14 @@ class FileStorageProvider(ABC):
         object_name: str,
         data: bytes,
         content_type: str,
+        cache_control: str | None = None,
     ) -> None:
-        """Server-side write for proxied uploads (no presigned round-trip)."""
+        """Server-side write for proxied uploads (no presigned round-trip).
+
+        ``cache_control`` is stored as the object's ``Cache-Control`` where the
+        provider serves objects to browsers (a public bucket behind a load
+        balancer); a provider that never serves objects ignores it.
+        """
 
     @abstractmethod
     def upload_stream(
@@ -328,8 +334,11 @@ class GcsFileStorage(FileStorageProvider):
         object_name: str,
         data: bytes,
         content_type: str,
+        cache_control: str | None = None,
     ) -> None:
         blob = self._client().bucket(bucket).blob(object_name)
+        if cache_control is not None:
+            blob.cache_control = cache_control
         blob.upload_from_string(data, content_type=content_type)
 
     def upload_stream(
@@ -475,12 +484,15 @@ class S3FileStorage(FileStorageProvider):
         object_name: str,
         data: bytes,
         content_type: str,
+        cache_control: str | None = None,
     ) -> None:
+        extra = {"CacheControl": cache_control} if cache_control is not None else {}
         self._client().put_object(
             Bucket=bucket,
             Key=object_name,
             Body=data,
             ContentType=content_type,
+            **extra,
         )
 
     def upload_stream(
@@ -593,8 +605,9 @@ class LocalFileStorage(FileStorageProvider):
         object_name: str,
         data: bytes,
         content_type: str,
+        cache_control: str | None = None,
     ) -> None:
-        _ = content_type  # no content-type metadata on a plain filesystem
+        _ = content_type, cache_control  # no object metadata on a plain filesystem
         dest = _local_object_path(bucket, object_name)
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(data)

@@ -88,6 +88,15 @@ class _EmptyStore:
     def practice(self, practice_id: str) -> AbstractContextManager[Any]:
         raise AssertionError("no practice is visited when there are no hosts")
 
+    def site(self, practice_id: str) -> Any:
+        return None
+
+    def record_served(self, practice_id: str, version: int, *, hide_from_search: bool) -> None:
+        raise AssertionError("nothing is served when there are no hosts")
+
+    def any_site_behind(self) -> bool:
+        return False
+
 
 def _no_sleep(_seconds: float) -> None:
     raise AssertionError("a run with nothing in progress never waits")
