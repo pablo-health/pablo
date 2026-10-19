@@ -51,6 +51,7 @@ from app.services.practice_domain_reconciler import (
     challenge_record,
 )
 from app.services.practice_domain_service import PracticeDomainService
+from app.settings import get_settings
 from app.sites.mirror import SiteMirrorError
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
@@ -118,7 +119,12 @@ def practice(engine: Engine) -> Iterator[Practice]:
         )
     yield made
     with engine.begin() as conn:
-        for table in ("practice_domains", "practice_domain_apexes", "practice_sites"):
+        for table in (
+            "practice_domains",
+            "practice_domain_apexes",
+            "practice_sites",
+            "companion_practice_slugs",
+        ):
             conn.execute(
                 text(f"DELETE FROM platform.{table} WHERE practice_id = :i"),  # noqa: S608 — fixed table names
                 {"i": made.id},
@@ -136,6 +142,9 @@ class _OnlyThesePractices(PostgresReconcileStore):
 
     def all_hosts(self) -> list[PracticeDomain]:
         return [h for h in super().all_hosts() if h.practice_id in self._ids]
+
+    def practices_with_sites(self) -> list[str]:
+        return [p for p in super().practices_with_sites() if p in self._ids]
 
 
 class _Provisioner:
@@ -226,6 +235,31 @@ class Harness:
                 {"p": self.practice.id},
             ).one()
             return row[0], row[1]
+
+    def served_hosted(self) -> str | None:
+        with tenant_db_session(self.practice.schema, self.practice.owner) as session:
+            return session.execute(
+                text(
+                    "SELECT served_hosted_host FROM platform.practice_sites WHERE practice_id = :p"
+                ),
+                {"p": self.practice.id},
+            ).scalar_one()
+
+    def set_slug(self, slug: str) -> None:
+        """Give the practice its hosted address's slug (or a new one)."""
+        with tenant_db_session(self.practice.schema, self.practice.owner) as session:
+            session.execute(
+                text("DELETE FROM platform.companion_practice_slugs WHERE practice_id = :p"),
+                {"p": self.practice.id},
+            )
+            session.execute(
+                text(
+                    "INSERT INTO platform.companion_practice_slugs"
+                    " (slug, practice_id, display_name, enabled, created_at)"
+                    " VALUES (:s, :p, 'Hosted Test', true, now())"
+                ),
+                {"s": slug, "p": self.practice.id},
+            )
 
     def add_challenge(self, host: str) -> None:
         """Publish the host's ``_acme-challenge`` CNAME as it was shown."""
@@ -1366,3 +1400,110 @@ def test_an_unpublished_website_never_copies_and_a_retired_practice_is_tidied(
     assert static.serving.host_rules == set()
     assert static.mirror is not None
     assert static.mirror.tidied[-1] == (static.practice.id, set())
+
+
+# --- the hosted website address --------------------------------------------------
+
+HOSTED_DOMAIN = "hosted.example"
+
+
+@pytest.fixture
+def hosted(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    monkeypatch.setenv("PRACTICE_HOSTED_DOMAIN", HOSTED_DOMAIN)
+    monkeypatch.setenv("PRACTICE_HOSTED_DOMAIN_READY", "true")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+def _slug() -> str:
+    return f"p{uuid.uuid4().hex[:8]}"
+
+
+def test_a_published_website_with_only_a_hosted_address_is_routed(
+    static: Harness, hosted: None
+) -> None:
+    slug = _slug()
+    host = f"{slug}.{HOSTED_DOMAIN}"
+    static.set_slug(slug)
+    static.publish(2)
+
+    static.sweep()
+
+    assert static.serving.routes[host] == HostRoute.site(static.practice.id, 2)
+    assert static.serving.map_entries == set()  # the hosted wildcard covers it
+    assert static.serving.invalidated == [host]
+    assert static.served() == (2, False)
+    assert static.served_hosted() == host
+
+    static.sweep()
+    assert static.serving.calls.count(("ensure_host_rule", host)) == 1  # nothing to redo
+
+
+def test_a_slug_change_moves_the_hosted_address_and_the_old_rule_goes(
+    static: Harness, hosted: None
+) -> None:
+    first, second = _slug(), _slug()
+    static.set_slug(first)
+    static.publish(1)
+    static.sweep()
+    assert static.served_hosted() == f"{first}.{HOSTED_DOMAIN}"
+
+    static.set_slug(second)
+    static.sweep()
+
+    assert f"{first}.{HOSTED_DOMAIN}" not in static.serving.host_rules
+    assert static.serving.routes[f"{second}.{HOSTED_DOMAIN}"] == HostRoute.site(
+        static.practice.id, 1
+    )
+    assert static.served_hosted() == f"{second}.{HOSTED_DOMAIN}"
+
+
+def test_the_hosted_address_and_a_custom_host_share_the_website_matcher(
+    static: Harness, hosted: None
+) -> None:
+    apex = _apex()
+    host = f"www.{apex}"
+    slug = _slug()
+    static.set_slug(slug)
+    static.publish(3)
+    _site_ready(static, host, apex)
+
+    static.sweep()
+
+    assert static.serving.routes[host] == HostRoute.site(static.practice.id, 3)
+    assert static.serving.routes[f"{slug}.{HOSTED_DOMAIN}"] == HostRoute.site(static.practice.id, 3)
+    assert static.served_hosted() == f"{slug}.{HOSTED_DOMAIN}"
+
+
+def test_the_hosted_address_goes_with_a_retired_practice(
+    static: Harness, hosted: None, engine: Engine
+) -> None:
+    slug = _slug()
+    host = f"{slug}.{HOSTED_DOMAIN}"
+    static.set_slug(slug)
+    static.publish(1)
+    static.sweep()
+    assert host in static.serving.host_rules
+
+    with engine.begin() as conn:
+        conn.execute(
+            text("UPDATE platform.practices SET is_active = false WHERE id = :i"),
+            {"i": static.practice.id},
+        )
+    static.sweep()
+
+    assert host not in static.serving.host_rules
+    assert static.served_hosted() is None
+    assert static.mirror is not None
+    assert static.mirror.tidied[-1] == (static.practice.id, set())
+
+
+def test_without_a_hosted_domain_nothing_is_routed_for_it(static: Harness) -> None:
+    static.set_slug(_slug())
+    static.publish(1)
+
+    static.sweep()
+
+    assert static.serving.host_rules == set()
+    assert static.served_hosted() is None

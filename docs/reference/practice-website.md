@@ -171,5 +171,10 @@ after. A copy that fails leaves the hosts on what they served before.
 Headers the frontend adds on its path (the content-security policy, the
 `noindex` on a hidden website) are not added by a bucket; set the policy as a
 custom response header on the backend bucket, and rely on `robots.txt` for the
-listing. The hosted address a deployment may give every practice stays on the
-frontend either way.
+listing. The hosted address a deployment may give every practice
+(`<slug>.<hosted domain>`) is served the same way: once the website is
+published, the reconciler gives that host its own rule to the website's folder,
+with no certificate work since the hosted wildcard covers it, follows a change
+of slug, and takes the rule down with the website. An exact host rule takes
+precedence over the hosted wildcard rule, which keeps answering, through the
+frontend, for practices that have not published.

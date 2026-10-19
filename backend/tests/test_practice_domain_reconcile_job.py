@@ -91,11 +91,19 @@ class _EmptyStore:
     def site(self, practice_id: str) -> Any:
         return None
 
-    def record_served(self, practice_id: str, version: int, *, hide_from_search: bool) -> None:
+    def record_served(
+        self, practice_id: str, version: int, *, hide_from_search: bool, hosted_host: str | None
+    ) -> None:
+        raise AssertionError("nothing is served when there are no hosts")
+
+    def clear_served_hosted_host(self, practice_id: str) -> None:
         raise AssertionError("nothing is served when there are no hosts")
 
     def any_site_behind(self) -> bool:
         return False
+
+    def practices_with_sites(self) -> list[str]:
+        return []
 
 
 def _no_sleep(_seconds: float) -> None:
