@@ -73,7 +73,9 @@ test("dictate more: an unsigned note is redrafted, a signed one gets an addendum
   const finalized = page.waitForResponse(
     (r) => r.url().endsWith(`/api/sessions/${session.id}/finalize`) && r.ok(),
   )
-  await signDialog.getByRole("button", { name: "Sign and lock" }).click()
+  // The note may propose chart updates; deciding them is chart-proposals.spec.ts's
+  // concern, and signing past them is one click with a different label.
+  await signDialog.getByRole("button", { name: /^Sign (and lock|without updating)$/ }).click()
   await finalized
   await page.reload()
   const signedBody = await body.innerText()

@@ -32,15 +32,28 @@ function fieldValue(note: Note, section: string, field: string): unknown {
   return read(note.content_edited) ?? read(note.content)
 }
 
-/** The diagnoses the note states, from its diagnoses fields, edits included. */
-function useStatedDiagnoses(note: Note | undefined): StatedDiagnosis[] {
-  const { data: definition } = useNoteType(note?.note_type ?? "", note?.note_type_version)
-  if (!note || !definition) return []
-  return definition.sections.flatMap((section) =>
+/**
+ * The diagnoses the note states, from its diagnoses fields, edits included;
+ * `loaded` once the note type that says which fields those are has answered.
+ */
+function useStatedDiagnoses(note: Note | undefined): {
+  stated: StatedDiagnosis[]
+  loaded: boolean
+} {
+  const { data: definition, isLoading } = useNoteType(
+    note?.note_type ?? "",
+    note?.note_type_version,
+  )
+  if (!note) return { stated: [], loaded: true }
+  // A note with no type asks for no definition; that query is never enabled,
+  // so it is "pending" for ever and `isLoading` is what settles.
+  if (!definition) return { stated: [], loaded: !isLoading }
+  const stated = definition.sections.flatMap((section) =>
     section.fields
       .filter((field) => field.kind === "diagnoses")
       .flatMap((field) => statedDiagnoses(fieldValue(note, section.key, field.key))),
   )
+  return { stated, loaded: true }
 }
 
 export interface ChartUpdates {
@@ -51,12 +64,20 @@ export interface ChartUpdates {
   undecided: number
   /** How the check for chart updates last ended. */
   run: ProposalRun | null
+  /**
+   * Whether everything above has been asked for and answered. Until then
+   * `undecided` is a guess that can change a moment later, and a dialog that
+   * acted on it would change under the clinician's hands.
+   */
+  loaded: boolean
 }
 
 export function useChartUpdates(note: Note | undefined): ChartUpdates {
-  const { data } = useChartProposals(note?.id)
-  const stated = useStatedDiagnoses(note)
-  const { data: problems } = usePatientProblems(stated.length ? note?.patient_id : undefined)
+  const { data, isLoading: proposalsLoading } = useChartProposals(note?.id)
+  const { stated, loaded: statedLoaded } = useStatedDiagnoses(note)
+  const { data: problems, isLoading: problemsLoading } = usePatientProblems(
+    stated.length ? note?.patient_id : undefined,
+  )
   const proposals = data?.data ?? []
   const diagnoses = stated.filter((dx) => !isListed(dx, problems?.data ?? []))
   return {
@@ -68,6 +89,10 @@ export function useChartUpdates(note: Note | undefined): ChartUpdates {
       proposals.filter((p) => p.decision === "pending" && !isSessionTask(p)).length +
       diagnoses.length,
     run: data?.run ?? null,
+    // `isLoading` (pending AND fetching), never `isPending`: a query that is
+    // not enabled -- no note type, no stated diagnoses -- stays pending for
+    // ever, and a dialog waiting on it would never show its form.
+    loaded: !note || (!proposalsLoading && statedLoaded && !problemsLoading),
   }
 }
 
@@ -135,7 +160,9 @@ function UpdateChartSection({
               <span className="font-semibold">Diagnosis: </span>
               {diagnosisText(dx)}
             </span>
-            {!readOnly && <AddDiagnosisButton patientId={note.patient_id} noteId={note.id} dx={dx} />}
+            {!readOnly && (
+              <AddDiagnosisButton patientId={note.patient_id} noteId={note.id} dx={dx} />
+            )}
           </li>
         ))}
       </ul>

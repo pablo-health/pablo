@@ -24,7 +24,7 @@ vi.mock("@/hooks/useNoteSigning", () => ({
   useSignNote: () => ({ mutateAsync: vi.fn() }),
   useUnlockNote: () => ({ mutateAsync: vi.fn() }),
   useAddNoteAddendum: () => ({ mutateAsync: vi.fn() }),
-  useSignerDefaults: () => ({ name: "Sam Ortiz", credentials: "LMFT" }),
+  useSignerDefaults: () => ({ name: "Sam Ortiz", credentials: "LMFT", loaded: true }),
 }))
 vi.mock("@/hooks/usePreferences", () => ({ useUserTimeZone: () => "America/New_York" }))
 vi.mock("@/lib/config", () => ({ useConfig: () => ({ showVerificationBadges: true }) }))

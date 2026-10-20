@@ -11,12 +11,7 @@ import type {
   SignNoteRequest,
   UnlockNoteRequest,
 } from "@/types/notes"
-import {
-  addNoteAddendum,
-  fetchNoteSigning,
-  signNote,
-  unlockNote,
-} from "@/lib/api/notes"
+import { addNoteAddendum, fetchNoteSigning, signNote, unlockNote } from "@/lib/api/notes"
 import { queryKeys } from "@/lib/api/queryKeys"
 import { getUserStatus } from "@/lib/api/users"
 import { withDashboard } from "./dashboardFreshness"
@@ -61,10 +56,7 @@ export function useUnlockNote(token?: string) {
 }
 
 export function useAddNoteAddendum(token?: string) {
-  return useAuthMutation<
-    NoteAddendum,
-    { noteId: string; data: CreateNoteAddendumRequest }
-  >({
+  return useAuthMutation<NoteAddendum, { noteId: string; data: CreateNoteAddendumRequest }>({
     mutationFn: ({ noteId, data }) => addNoteAddendum(noteId, data, token),
     invalidateKeys: ({ noteId, data }) => [
       queryKeys.notes.signing(noteId),
@@ -74,12 +66,28 @@ export function useAddNoteAddendum(token?: string) {
   })
 }
 
-/** The name and credentials a signature starts from: the signer's own profile. */
-export function useSignerDefaults(): { name: string; credentials: string } {
-  const { data } = useQuery({
+/**
+ * The name and credentials a signature starts from: the signer's own profile.
+ *
+ * `loaded` says the profile has been asked for and answered (or refused). A
+ * dialog that showed the fields before then showed them empty and filled them
+ * in a moment later, under the clinician's hands.
+ */
+export function useSignerDefaults(): {
+  name: string
+  credentials: string
+  loaded: boolean
+} {
+  const { data, isLoading } = useQuery({
     queryKey: ["user", "status"],
     queryFn: () => getUserStatus(),
     staleTime: 5 * 60 * 1000,
   })
-  return { name: data?.name ?? "", credentials: data?.credentials ?? "" }
+  // `isLoading`, not `isPending`: a query that is not enabled stays pending
+  // for ever and has nothing to wait for.
+  return {
+    name: data?.name ?? "",
+    credentials: data?.credentials ?? "",
+    loaded: !isLoading,
+  }
 }

@@ -27,9 +27,15 @@ vi.mock("@/hooks/useNoteSigning", () => ({
   useSignNote: () => ({ mutateAsync: mutations.sign }),
   useUnlockNote: () => ({ mutateAsync: mutations.unlock }),
   useAddNoteAddendum: () => ({ mutateAsync: mutations.addendum }),
-  useSignerDefaults: () => ({ name: "Sam Ortiz", credentials: "LMFT" }),
+  useSignerDefaults: () => ({
+    name: "Sam Ortiz",
+    credentials: "LMFT",
+    loaded: true,
+  }),
 }))
-vi.mock("@/hooks/usePreferences", () => ({ useUserTimeZone: () => "America/New_York" }))
+vi.mock("@/hooks/usePreferences", () => ({
+  useUserTimeZone: () => "America/New_York",
+}))
 vi.mock("@/components/sessions/NoteViewer", () => ({
   NoteViewer: ({ note }: { note: { content_edited: unknown } }) => (
     <pre data-testid="version-body">{JSON.stringify(note.content_edited)}</pre>
@@ -74,8 +80,7 @@ afterEach(() => {
   signing.record = undefined
 })
 
-const buttonNames = () =>
-  screen.queryAllByRole("button").map((b) => b.textContent?.trim() ?? "")
+const buttonNames = () => screen.queryAllByRole("button").map((b) => b.textContent?.trim() ?? "")
 
 describe("a signed note", () => {
   it("shows the block and offers only Add addendum and Unlock", () => {
@@ -122,7 +127,10 @@ describe("a signed note", () => {
     render(
       <NoteSignaturePanel
         note={createMockNote({ finalized_at: SIGNED_AT })}
-        draftAddendum={{ dictationId: "d-1", text: "Next session: two weeks from today." }}
+        draftAddendum={{
+          dictationId: "d-1",
+          text: "Next session: two weeks from today.",
+        }}
       />,
     )
 
@@ -167,7 +175,9 @@ describe("a signed note", () => {
     await user.click(screen.getByRole("button", { name: /Unlock/ }))
     const dialog = screen.getByRole("dialog")
     expect(dialog).toHaveTextContent("You are responsible for the changes you make")
-    const accept = within(dialog).getByRole("button", { name: "Accept & unlock" })
+    const accept = within(dialog).getByRole("button", {
+      name: "Accept & unlock",
+    })
     expect(accept).toBeDisabled()
 
     await user.type(within(dialog).getByLabelText("Reason for unlocking"), "  Wrong date  ")
@@ -245,7 +255,11 @@ describe("a note unlocked and signed again", () => {
 
   it("lists the signed versions with the reason, each viewable", async () => {
     const user = userEvent.setup()
-    given({ finalized_at: second.signed_at, signature: second, versions: [first, second] })
+    given({
+      finalized_at: second.signed_at,
+      signature: second,
+      versions: [first, second],
+    })
     render(<NoteSignaturePanel note={createMockNote({ finalized_at: second.signed_at })} />)
 
     expect(screen.getByTestId("signature-block")).toHaveTextContent(
@@ -268,7 +282,9 @@ describe("a note unlocked and signed again", () => {
     expect(screen.queryByTestId("signature-block")).not.toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: /Sign and lock/ }))
     await user.click(
-      within(screen.getByRole("dialog")).getByRole("button", { name: "Sign and lock" }),
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Sign and lock",
+      }),
     )
     expect(mutations.sign).toHaveBeenCalledWith({
       noteId: "note-1",

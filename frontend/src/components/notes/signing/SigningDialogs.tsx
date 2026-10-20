@@ -7,6 +7,11 @@
  * The name and credentials start from the clinician's profile and can be
  * changed for this one signature; the preview shows the block exactly as it
  * will read. What is stored is what was entered — see `NoteService.sign_note`.
+ *
+ * The sign dialog shows its form only once what the form shows is known: the
+ * profile the name starts from, and the chart updates that decide what the
+ * button says. Shown earlier, the name filled itself in a moment after the
+ * clinician began typing, and the button changed its label under the click.
  */
 
 "use client"
@@ -85,6 +90,7 @@ function useSignerState() {
   const defaults = useSignerDefaults()
   const [edited, setEdited] = useState<{ name?: string; credentials?: string }>({})
   return {
+    loaded: defaults.loaded,
     name: edited.name ?? defaults.name,
     credentials: edited.credentials ?? defaults.credentials,
     setName: (name: string) => setEdited((prev) => ({ ...prev, name })),
@@ -116,7 +122,7 @@ export function SignNoteDialog({ note, ...props }: SignNoteDialogProps) {
 function SignWithChartUpdates({ note, ...props }: SignNoteDialogProps & { note: Note }) {
   const updates = useChartUpdates(props.open ? note : undefined)
   return (
-    <SignDialog {...props} undecided={updates.undecided}>
+    <SignDialog {...props} undecided={updates.undecided} ready={updates.loaded}>
       <UpdateChart note={note} updates={updates} />
     </SignDialog>
   )
@@ -127,16 +133,20 @@ function SignDialog({
   onOpenChange,
   onSign,
   undecided = 0,
+  ready = true,
   children,
 }: DialogProps & {
   onSign: (signer: NoteSignerFields) => Promise<unknown>
   /** Chart updates not yet decided; signing leaves them on the note. */
   undecided?: number
+  /** Whether `undecided` and `children` are known yet; the form waits for them. */
+  ready?: boolean
   children?: React.ReactNode
 }) {
   const signer = useSignerState()
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const settled = ready && signer.loaded
 
   function handleOpenChange(next: boolean) {
     if (!next) {
@@ -167,34 +177,38 @@ function SignDialog({
           <DialogTitle>Sign and lock note</DialogTitle>
           <DialogDescription>Signing locks the note.</DialogDescription>
         </DialogHeader>
-        {children}
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <SignatureFields
-            idPrefix="sign-note"
-            name={signer.name}
-            credentials={signer.credentials}
-            onNameChange={signer.setName}
-            onCredentialsChange={signer.setCredentials}
-          />
-          {error && (
-            <p role="alert" className="text-sm text-red-600">
-              {error}
-            </p>
-          )}
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => handleOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={pending || !signer.name.trim()}>
-              {/* What is left stays on the signed note, to be decided later. */}
-              {pending
-                ? "Signing…"
-                : undecided > 0
-                  ? "Sign without updating"
-                  : "Sign and lock"}
-            </Button>
-          </DialogFooter>
-        </form>
+        {settled ? (
+          <>
+            {children}
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <SignatureFields
+                idPrefix="sign-note"
+                name={signer.name}
+                credentials={signer.credentials}
+                onNameChange={signer.setName}
+                onCredentialsChange={signer.setCredentials}
+              />
+              {error && (
+                <p role="alert" className="text-sm text-red-600">
+                  {error}
+                </p>
+              )}
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => handleOpenChange(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={pending || !signer.name.trim()}>
+                  {/* What is left stays on the signed note, to be decided later. */}
+                  {pending ? "Signing…" : undecided > 0 ? "Sign without updating" : "Sign and lock"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </>
+        ) : (
+          <p role="status" className="text-sm text-neutral-600">
+            Getting the note ready to sign…
+          </p>
+        )}
       </DialogContent>
     </Dialog>
   )
@@ -320,8 +334,8 @@ export function UnlockNoteDialog({
           <DialogTitle>Unlock note</DialogTitle>
           <DialogDescription>
             Unlock to correct an error. You are responsible for the changes you make. The unlock,
-            your reason and your changes are recorded and can be reviewed, and the signed version
-            is kept.
+            your reason and your changes are recorded and can be reviewed, and the signed version is
+            kept.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">

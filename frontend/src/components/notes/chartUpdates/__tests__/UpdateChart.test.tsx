@@ -34,7 +34,7 @@ vi.mock("@/lib/api/chartProposals", () => ({
 vi.mock("@/lib/api/noteTypes", () => ({ getNoteType: vi.fn(), listNoteTypes: vi.fn() }))
 vi.mock("@/lib/api/problems", () => ({ addProblem: vi.fn(), listProblems: vi.fn() }))
 vi.mock("@/hooks/useNoteSigning", () => ({
-  useSignerDefaults: () => ({ name: "Sam Ortiz", credentials: "MD" }),
+  useSignerDefaults: () => ({ name: "Sam Ortiz", credentials: "MD", loaded: true }),
 }))
 vi.mock("@/hooks/usePreferences", () => ({ useUserTimeZone: () => "America/New_York" }))
 const readOnly = vi.hoisted(() => ({ value: false }))

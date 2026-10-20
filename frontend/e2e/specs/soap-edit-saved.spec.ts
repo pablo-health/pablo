@@ -29,7 +29,9 @@ test.use({
   },
 })
 
-type SigningRecord = { versions: { content_edited: Record<string, unknown> | null }[] }
+type SigningRecord = {
+  versions: { content_edited: Record<string, unknown> | null }[]
+}
 
 test("an edit made on the session page survives a reload, a redraft and signing", async ({
   signedInPage: page,
@@ -57,8 +59,7 @@ test("an edit made on the session page survives a reload, a redraft and signing"
   await page.getByRole("button", { name: /^Edit$/ }).click()
   await page.getByLabel("Progress", { exact: true }).fill(mine)
   const saved = page.waitForResponse(
-    (r) =>
-      r.url().endsWith(`/api/notes/${note.id}`) && r.request().method() === "PATCH" && r.ok(),
+    (r) => r.url().endsWith(`/api/notes/${note.id}`) && r.request().method() === "PATCH" && r.ok(),
   )
   await page.getByRole("button", { name: "Save Changes" }).click()
   await saved
@@ -72,7 +73,9 @@ test("an edit made on the session page survives a reload, a redraft and signing"
   // the dictation lands in the rest of the note.
   const dictation = page.getByRole("region", { name: "Dictate more" })
   await dictation.getByRole("button", { name: "Dictate more" }).click()
-  await expect(dictation.getByText(/Recording 0:0[1-9]/)).toBeVisible({ timeout: 10_000 })
+  await expect(dictation.getByText(/Recording 0:0[1-9]/)).toBeVisible({
+    timeout: 10_000,
+  })
   await dictation.getByRole("button", { name: "Stop" }).click()
   await dictation.getByRole("button", { name: "Add to note" }).click()
   const choice = page.getByRole("dialog", { name: "You've edited this note" })
@@ -92,7 +95,9 @@ test("an edit made on the session page survives a reload, a redraft and signing"
   const finalized = page.waitForResponse(
     (r) => r.url().endsWith(`/api/sessions/${session.id}/finalize`) && r.ok(),
   )
-  await signDialog.getByRole("button", { name: "Sign and lock" }).click()
+  // The redraft may have proposed chart updates; deciding them is
+  // chart-proposals.spec.ts's concern, and signing past them is one click.
+  await signDialog.getByRole("button", { name: /^Sign (and lock|without updating)$/ }).click()
   await finalized
   await page.reload()
   await expect(page.getByTestId("signature-block")).toContainText(
