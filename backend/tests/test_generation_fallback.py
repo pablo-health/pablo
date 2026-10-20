@@ -302,9 +302,60 @@ class TestWiring:
             assert isinstance(gateway, HedgedStructuredLLMGateway)
             policy = gateway.policy_for("gemini-pro", None)
             assert [leg.model for leg in policy.legs] == ["gemini-pro", FALLBACK, "gemini-pro"]
-            assert policy.hedge_after is None, "a long call is never raced"
+            assert policy.hedge_after is None, "a long call is not raced unless named"
             assert policy.budget == GENERATION_BUDGET_SECONDS
             assert {leg.timeout for leg in policy.legs} == {180.0}
+
+    @pytest.mark.usefixtures("fallbacks")
+    def test_a_long_call_named_in_ai_hedge_delays_ms_is_raced_at_its_own_threshold(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Its own entry only: the interactive default (ai_hedge_after_seconds)
+        is sized for a parse and would start a second draft on most requests."""
+        monkeypatch.setenv("AI_HEDGE_AFTER_SECONDS", "3")
+        monkeypatch.setenv("AI_HEDGE_DELAYS_MS", json.dumps({"note_generation": 20000}))
+        get_settings.cache_clear()
+        drafting = RegistryNoteGenerationService()._llm_gateway
+        importing = NoteImportService()._llm_gateway
+        assert isinstance(drafting, HedgedStructuredLLMGateway)
+        assert isinstance(importing, HedgedStructuredLLMGateway)
+        assert drafting.policy_for("gemini-pro", None).hedge_after == 20.0
+        assert importing.policy_for("gemini-pro", None).hedge_after is None
+
+    @pytest.mark.usefixtures("fallbacks")
+    def test_a_named_long_call_gets_its_fallback_at_the_threshold(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A primary that is merely slow no longer costs its whole attempt:
+        the fallback starts beside it at the threshold and the first answer
+        wins."""
+        monkeypatch.setenv("AI_HEDGE_DELAYS_MS", json.dumps({"note_generation": 200}))
+        get_settings.cache_clear()
+        release = threading.Event()
+        started: dict[str, float] = {}
+
+        class Stalls(StructuredLLMGateway):
+            def complete_structured(self, *, model: str, **_: Any) -> StructuredCompletion:
+                started[model] = time.monotonic()
+                if model == PRIMARY:
+                    release.wait(5)
+                return StructuredCompletion(data={"ok": True})
+
+        gateway = generation_gateway(AIFeature.NOTE_GENERATION, Stalls())
+        began = time.monotonic()
+        try:
+            completion = gateway.complete_structured(
+                model=PRIMARY,
+                system_prompt="s",
+                user_prompt="u",
+                response_schema={"type": "object"},
+                max_output_tokens=64,
+                timeout_seconds=5.0,
+            )
+        finally:
+            release.set()
+        assert completion.data == {"ok": True}
+        assert 0.15 <= started[FALLBACK] - began < 1.0
 
     def test_the_fallback_starts_only_once_the_primary_has_run_out_of_time(self) -> None:
         """No stall threshold: the primary keeps its whole attempt to itself."""

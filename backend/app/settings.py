@@ -1680,9 +1680,10 @@ class Settings(BaseSettings):
             "- ``patient_chat``: chat with a client. Client-facing: name a "
             "fallback here only once that model has passed the same crisis "
             "evaluation as the primary.\n\n"
-            "Long calls (the note keys) run one model at a time, never side "
-            "by side; chat changes model only before the first word of an "
-            "answer is streamed, never part-way through one."
+            "Long calls (the note keys) run one model at a time unless "
+            "ai_hedge_delays_ms names them; chat changes model only before "
+            "the first word of an answer is streamed, never part-way through "
+            "one."
         ),
     )
     ai_hedge_after_seconds: float | None = Field(
@@ -1706,15 +1707,20 @@ class Settings(BaseSettings):
             "primary model that is slower than the default threshold but "
             "healthy is not given a second, discarded call on most requests: "
             "set it above that model's usual worst answer time (its p95). "
-            "Read only by interactive calls (availability_parse); long calls "
-            "never run models side by side. The value is not clamped: the "
-            "next leg starts only if the threshold falls inside the call's "
-            "25 s budget, and it gets its normal attempt timeout or what is "
-            "left of the budget, whichever is less. A threshold at or past "
-            "the primary's own attempt timeout (15 s for availability_parse) "
-            "means a stall is waited out to that timeout before the next leg "
-            "starts. Empty (default) leaves every feature on "
-            "ai_hedge_after_seconds."
+            "An interactive call (availability_parse) not named here uses "
+            "ai_hedge_after_seconds. A long call (the note keys) is raced "
+            "only when named here, since the interactive default would start "
+            "a second draft on nearly every request: set it above the "
+            "primary's usual worst healthy answer time, e.g. 20000 for a "
+            "draft that is normally done within 20 s. The value is not "
+            "clamped: the next leg starts only if the threshold falls inside "
+            "the call's budget (25 s interactive, 300 s long), and it gets "
+            "its normal attempt timeout or what is left of the budget, "
+            "whichever is less. A threshold at or past the primary's own "
+            "attempt timeout (15 s for availability_parse, 180 s for a long "
+            "call) means a stall is waited out to that timeout before the "
+            "next leg starts. Empty (default) leaves interactive calls on "
+            "ai_hedge_after_seconds and long calls unraced."
         ),
     )
 
@@ -1780,6 +1786,17 @@ class Settings(BaseSettings):
         if feature in self.ai_hedge_delays_ms:
             return self.ai_hedge_delays_ms[feature] / 1000
         return self.ai_hedge_after_seconds
+
+    def long_call_hedge_after_for(self, feature: str) -> float | None:
+        """``feature``'s stall threshold in seconds for a long call, if one
+        is configured.
+
+        Its ``ai_hedge_delays_ms`` entry alone; ``None`` otherwise, so that a
+        long call is never raced on the interactive default.
+        """
+        if feature in self.ai_hedge_delays_ms:
+            return self.ai_hedge_delays_ms[feature] / 1000
+        return None
 
     note_max_output_tokens: int = Field(
         default=16384,
