@@ -21,10 +21,9 @@ change to the policy.
 Every call ends within 25 s, the deadline of the ``LLM_REQUEST`` retry
 this replaces: a leg that starts late is given what is left of it.
 
-A long call (drafting, importing or deriving a note) uses the same legs
-with no stall threshold, built by :func:`generation_gateway` from the
-feature's entry in ``ai_fallbacks``. Attempts run one at a time, in this
-order:
+A long call (drafting, importing or deriving a note) uses the same legs,
+built by :func:`generation_gateway` from the feature's entry in
+``ai_fallbacks``. Attempts run one at a time, in this order:
 
 1. the requested model, for up to 180 s;
 2. each fallback once, in the configured order, each started only when the
@@ -36,6 +35,16 @@ The whole sequence ends within 300 s, so a primary that stalls to its
 timeout still leaves the fallback two minutes. A truncated answer ends the
 sequence at once and reaches the caller, whose own retry at a larger output
 budget runs the sequence again; nothing else retries inside it.
+
+A feature named in ``ai_hedge_delays_ms`` is the exception: a leg still
+running that long gets the next one beside it, as an interactive call's
+does, and the first usable answer wins. The threshold is the feature's own,
+never the interactive default, since a draft's healthy answer takes longer
+than a parse's. It exists because a provider's slow tail, not its refusals,
+is what a caller actually waits on: a refusal hands over at once, but a
+request the provider holds for a minute before answering it (or before
+refusing it) is otherwise waited out for the whole attempt while the
+fallback that would have answered in seconds never starts.
 
 Each call logs one line: the route that answered (primary, retry or
 fallback), the legs started, the latency and the class of each failure.
@@ -291,16 +300,18 @@ def generation_gateway(
     With no fallbacks named for ``feature``, each call goes to its model's
     own provider, unchanged: one model, its own retry (or to ``single``,
     when given). With fallbacks named, a hedged gateway that runs the
-    attempts listed in this module's docstring one at a time, never side by
-    side. ``single``, when given, answers every leg whatever its model, as
-    the end-to-end stand-in does.
+    attempts listed in this module's docstring one at a time, or, for a
+    feature with its own entry in ``ai_hedge_delays_ms``, starts the next
+    beside a leg that has run that long. ``single``, when given, answers
+    every leg whatever its model, as the end-to-end stand-in does.
     """
-    fallbacks = get_settings().fallbacks_for(feature)
+    settings = get_settings()
+    fallbacks = settings.fallbacks_for(feature)
     if not fallbacks:
         return single or ProviderStructuredLLMGateway()
     return HedgedStructuredLLMGateway(
         fallbacks=fallbacks,
-        stall_after=None,
+        stall_after=settings.long_call_hedge_after_for(feature),
         resolve=resolve_structured_llm_gateway if single is None else (lambda _model: single),
         budget=GENERATION_BUDGET_SECONDS,
     )
