@@ -34,6 +34,8 @@ AVERY, BLAKE, CASEY, DANA = "112230097", "112230081", "112230132", "112230150"
 ET = ZoneInfo("America/New_York")
 #: The preview is judged on the day before the fixture's 2026-10-20 visit.
 CLOCK = Clock(datetime(2026, 10, 19, 16, 0, tzinfo=UTC), ET)
+#: The fixture's past No Show and past Cancelled appointments.
+MISSED = ("3793480002", "3793480003")
 
 
 @pytest.fixture(scope="module")
@@ -73,14 +75,15 @@ def test_each_appointment_says_how_it_lands(calendar: SimplePracticeCalendar) ->
         "3793472377": "scheduled",  # 2026-10-20
         "3793478974": "completed",  # 2026-10-14, Show
         "3793480001": "scheduled",  # 2026-11-02
-        "3793480002": None,  # 2026-10-06, No Show
-        "3793480003": None,  # 2026-10-07, Cancelled
+        "3793480002": "no_show",  # 2026-10-06, No Show
+        "3793480003": "cancelled",  # 2026-10-07, Cancelled
     }
     for record in by_id.values():
         assert record["record_type"] == "appointment"
         assert record["kind"] == "appointment"
         assert record["label"] == "Session"
-        assert record["landable"] is (record["lands_as"] is not None)
+        # Nothing earlier landed, so only a booked or attended visit lands.
+        assert record["landable"] is (record["lands_as"] in {"scheduled", "completed"})
         assert record["candidates"] == [record["card_id"]]
     assert by_id["3793472377"]["when"] == "2026-10-20"
     assert by_id["3793472377"]["start_at"] == "2026-10-20T10:00:00-04:00"
@@ -163,6 +166,7 @@ def test_second_run_reads_as_a_delta(calendar: SimplePracticeCalendar) -> None:
             "r-1",
         )
         for a in calendar.appointments
+        if a.source_id not in MISSED
     }
     landed.update(
         {
@@ -196,6 +200,56 @@ def test_second_run_reads_as_a_delta(calendar: SimplePracticeCalendar) -> None:
     )
     states = {r["source_id"]: r["state"] for r in _preview(calendar, ledger=landed)["records"]}
     assert states["3793472377"] == "new"
+
+
+def test_a_cancellation_never_lands_as_a_new_appointment(tmp_path: Path) -> None:
+    """A future appointment the client cancelled is not added to the calendar;
+    once one landed, a cancellation reaching it is a change to land."""
+    source = json.loads((FIXTURE / "calendar" / "appointments-06.json").read_text())
+    appointment = source["data"][0]
+    appointment["attributes"]["attendanceStatus"] = "Cancelled"
+    folder = tmp_path / "calendar"
+    folder.mkdir()
+    (folder / "a.json").write_text(json.dumps(source))
+    feed = read_simplepractice_calendar(tmp_path)
+    (record,) = _preview(feed)["records"]
+    assert (record["lands_as"], record["landable"]) == ("cancelled", False)
+
+    landed = {
+        ("appointment", appointment["id"]): LedgerEntry(
+            "appointment", appointment["id"], "appointments", "a-1", "earlier", "landed", "r-1"
+        )
+    }
+    (record,) = _preview(feed, ledger=landed)["records"]
+    assert (record["lands_as"], record["landable"], record["state"]) == (
+        "cancelled",
+        True,
+        "changed",
+    )
+
+
+def test_a_calendar_landed_client_is_matched_under_its_own_record_type(
+    calendar: SimplePracticeCalendar,
+) -> None:
+    """The calendar ledgers its clients apart from an export's cards, and reads
+    either: its own landing by digest, an export's as the patient to use."""
+    blake = next(c for c in calendar.clients if c.source_id == BLAKE)
+    own = {
+        ("calendar_client", BLAKE): LedgerEntry(
+            "calendar_client", BLAKE, "patients", "p-cal", blake.digest, "landed", "r-1"
+        )
+    }
+    by_id = {c["card_id"]: c for c in _preview(calendar, ledger=own)["clients"]}
+    assert (by_id[BLAKE]["existing_patient_id"], by_id[BLAKE]["state"]) == ("p-cal", "unchanged")
+
+    export = {
+        ("contact", BLAKE): LedgerEntry(
+            "contact", BLAKE, "patients", "p-card", "card-digest", "landed", "r-0"
+        )
+    }
+    by_id = {c["card_id"]: c for c in _preview(calendar, ledger=export)["clients"]}
+    assert by_id[BLAKE]["existing_patient_id"] == "p-card"
+    assert (by_id[BLAKE]["match_evidence"], by_id[BLAKE]["state"]) == ("ledger", "unchanged")
 
 
 # --------------------------------------------------------------------------- layout

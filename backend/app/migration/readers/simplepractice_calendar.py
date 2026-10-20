@@ -54,6 +54,10 @@ CALENDAR_DIR = "calendar"
 
 #: The ``attendanceStatus`` of a visit that happened.
 ATTENDED = "Show"
+#: The ledger's record type for a client landed from a calendar feed. Kept
+#: apart from the export's ``contact`` so a later export import does not
+#: mistake a name-only patient for one whose card already landed.
+CALENDAR_CLIENT = "calendar_client"
 
 #: A display name of first and last name has this many words.
 _FIRST_AND_LAST = 2
@@ -314,18 +318,39 @@ def _read_file(path: Path, rel: str) -> _File:
             name = "group" if kind == "groupAppointments" else str(kind)
             out.unsupported[(name, str(entry["id"]))] = Unsupported(name, str(entry["id"]), rel)
             continue
-        client_id = _client_id_of(entry, included)
-        if client_id is None:
-            out.skipped["no_client"] += 1
+        try:
+            client_id = _client_id_of(entry, included)
+            if client_id is None:
+                out.skipped["no_client"] += 1
+                continue
+            client_entry = included.get(("clients", client_id))
+            if client_entry is None:
+                out.skipped["client_missing"] += 1
+                continue
+            title = (str((entry.get("attributes") or {}).get("title") or "")).strip() or None
+            client = _client(client_entry, title)
+            appointment = _appointment(entry, client_id, rel)
+        except (ValueError, TypeError, AttributeError, KeyError):
+            # One appointment the file recorded incompletely (no end time, a
+            # field of the wrong shape) is counted and left out; the rest of
+            # the file still reads.
+            out.skipped["malformed"] += 1
             continue
-        client_entry = included.get(("clients", client_id))
-        if client_entry is None:
-            out.skipped["client_missing"] += 1
-            continue
-        title = ((entry.get("attributes") or {}).get("title") or "").strip() or None
-        out.clients[client_id] = _client(client_entry, title)
-        out.appointments[str(entry["id"])] = _appointment(entry, client_id, rel)
+        out.clients[client_id] = _better_client(out.clients.get(client_id), client)
+        out.appointments[appointment.source_id] = appointment
     return out
+
+
+def _better_client(current: CalendarClient | None, new: CalendarClient) -> CalendarClient:
+    """The copy of a client to keep when two reads disagree.
+
+    The later copy wins, as everywhere in the feed, except that a name taken
+    from an appointment's title never replaces one the client entry itself
+    gave: a title is display text and may be shortened.
+    """
+    if current is not None and current.name_from == "client" and new.name_from == "title":
+        return current
+    return new
 
 
 # --------------------------------------------------------------------------- the folder
@@ -353,10 +378,13 @@ def read_simplepractice_calendar(root: Path) -> SimplePracticeCalendar:
         files.append(rel)
         try:
             read = _read_file(path, rel)
-        except (ValueError, OSError) as exc:
-            unreadable.append((rel, str(exc)))
+        except (ValueError, OSError, TypeError, AttributeError) as exc:
+            unreadable.append(
+                (rel, type(exc).__name__ if not isinstance(exc, ValueError) else str(exc))
+            )
             continue
-        clients.update(read.clients)
+        for client_id, client in read.clients.items():
+            clients[client_id] = _better_client(clients.get(client_id), client)
         appointments.update(read.appointments)
         unsupported.update(read.unsupported)
         skipped.update(read.skipped)
@@ -373,6 +401,7 @@ def read_simplepractice_calendar(root: Path) -> SimplePracticeCalendar:
 
 __all__ = [
     "ATTENDED",
+    "CALENDAR_CLIENT",
     "CALENDAR_DIR",
     "SOURCE_SYSTEM",
     "CalendarAppointment",

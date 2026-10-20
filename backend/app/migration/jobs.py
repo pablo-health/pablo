@@ -152,7 +152,7 @@ def run_apply(schema: str, user_id: str, run_id: str, practice_id: str | None) -
                 practice_id=practice_id,
                 archive_dir=path,
             )
-            calendar_layout = detect_layout(path) == "calendar"
+            calendar_layout = (run.preview or {}).get("layout") == "calendar"
             if calendar_layout:
                 report = applier.apply_calendar(
                     run_id=run.id,

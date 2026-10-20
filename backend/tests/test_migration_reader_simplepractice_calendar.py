@@ -166,6 +166,42 @@ def test_a_file_that_is_not_a_response_is_reported_and_the_rest_read(tmp_path: P
     assert [rel for rel, _ in calendar.unreadable] == ["calendar/b.json", "calendar/c.json"]
 
 
+def test_one_malformed_appointment_is_skipped_and_the_rest_of_its_file_read(
+    tmp_path: Path,
+) -> None:
+    source = json.loads((FIXTURE / "calendar" / "appointments-07.json").read_text())
+    assert len(source["data"]) == 2
+    source["data"][0]["attributes"]["endTime"] = None
+    folder = tmp_path / "calendar"
+    folder.mkdir()
+    (folder / "a.json").write_text(json.dumps(source))
+    calendar = read_simplepractice_calendar(tmp_path)
+    assert [a.source_id for a in calendar.appointments] == [source["data"][1]["id"]]
+    assert calendar.skipped == {"malformed": 1}
+    assert calendar.unreadable == ()
+
+    # A field of the wrong shape is the same: counted, not a failed read.
+    source["data"][0]["attributes"] = ["not", "an", "object"]
+    (folder / "a.json").write_text(json.dumps(source))
+    assert read_simplepractice_calendar(tmp_path).skipped == {"malformed": 1}
+
+
+def test_a_title_never_replaces_a_name_the_client_entry_gave(tmp_path: Path) -> None:
+    full = json.loads((FIXTURE / "calendar" / "appointments-07.json").read_text())
+    client = next(e for e in full["included"] if e["id"] == BLAKE)
+    client["attributes"].update({"firstName": "Blake", "lastName": "Client"})
+    lean = json.loads((FIXTURE / "calendar" / "appointments-07.json").read_text())
+    for entry in lean["data"]:
+        entry["attributes"]["title"] = "B. C."
+    folder = tmp_path / "calendar"
+    folder.mkdir()
+    (folder / "a.json").write_text(json.dumps(full))
+    (folder / "b.json").write_text(json.dumps(lean))  # later, but names from a title
+    calendar = read_simplepractice_calendar(tmp_path)
+    blake = next(c for c in calendar.clients if c.source_id == BLAKE)
+    assert (blake.first_name, blake.last_name, blake.name_from) == ("Blake", "Client", "client")
+
+
 def test_an_appointment_whose_client_is_not_included_is_skipped(tmp_path: Path) -> None:
     source = json.loads((FIXTURE / "calendar" / "appointments-07.json").read_text())
     source["included"] = [e for e in source["included"] if e["id"] != CASEY]

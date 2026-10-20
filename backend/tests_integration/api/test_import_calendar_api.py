@@ -50,6 +50,8 @@ CALENDAR = _FIXTURES / "simplepractice_calendar" / "calendar"
 ARCHIVE = _FIXTURES / "simplepractice_export"
 AVERY, BLAKE, CASEY, DANA = "112230097", "112230081", "112230132", "112230150"
 MOVED = "3793472377"
+#: Blake's 2026-10-13 visit, and the link in its file that names Blake.
+BLAKES_VISIT, BLAKES_VISIT_LINK = "3793470566", "1635772867"
 #: The day before the fixture's 2026-10-20 visit, so the journey does not
 #: depend on the day it runs: two visits are past and attended, two ahead.
 NOW = datetime(2026, 10, 19, 16, 0, tzinfo=UTC)
@@ -125,18 +127,29 @@ def client(schema: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iter
 # --------------------------------------------------------------------------- helpers
 
 
-def _feed_files(moved_minutes: int = 0) -> dict[str, bytes]:
+def _feed_files(
+    moved_minutes: int = 0, *, cancel: bool = False, reassign: bool = False
+) -> dict[str, bytes]:
     """The fixture's files as a practice would zip them, optionally with one
-    appointment moved later by ``moved_minutes`` in the file that owns it."""
+    appointment moved later by ``moved_minutes`` or cancelled in the file that
+    owns it, and with Blake's past visit moved over to Casey."""
     files: dict[str, bytes] = {}
     for path in sorted(CALENDAR.glob("*.json")):
         data = path.read_bytes()
-        if moved_minutes and path.name == "appointments-06.json":
+        if (moved_minutes or cancel) and path.name == "appointments-06.json":
             document = json.loads(data)
             attrs = document["data"][0]["attributes"]
             assert document["data"][0]["id"] == MOVED
-            attrs["startTime"] = f"2026-10-20T10:{moved_minutes:02d}:00-04:00"
-            attrs["endTime"] = f"2026-10-20T11:{moved_minutes - 10:02d}:00-04:00"
+            if moved_minutes:
+                attrs["startTime"] = f"2026-10-20T10:{moved_minutes:02d}:00-04:00"
+                attrs["endTime"] = f"2026-10-20T11:{moved_minutes - 10:02d}:00-04:00"
+            if cancel:
+                attrs["attendanceStatus"] = "Cancelled"
+            data = json.dumps(document).encode()
+        if reassign and path.name == "appointments-07.json":
+            document = json.loads(data)
+            (link,) = [e for e in document["included"] if e["id"] == BLAKES_VISIT_LINK]
+            link["relationships"]["client"]["data"]["id"] = CASEY
             data = json.dumps(document).encode()
         files[f"calendar/{path.name}"] = data
     return files
@@ -150,11 +163,11 @@ def _zip(files: dict[str, bytes]) -> bytes:
     return buf.getvalue()
 
 
-def _upload(client: TestClient, archive: bytes) -> dict[str, Any]:
+def _upload(client: TestClient, archive: bytes, scope: str = "patients") -> dict[str, Any]:
     resp = client.post(
         "/api/migration/runs",
         files={"file": ("calendar.zip", archive, "application/zip")},
-        data={"scope": "patients"},
+        data={"scope": scope},
     )
     assert resp.status_code == 202, resp.text
     run = client.get(f"/api/migration/runs/{resp.json()['id']}")
@@ -214,6 +227,29 @@ def _ledger(engine: Engine, schema: str) -> dict[str, tuple[str, str]]:
     return {str(r[0]): (str(r[1]), str(r[2])) for r in rows}
 
 
+def _appointment(engine: Engine, schema: str, appointment_id: str) -> tuple[str, str]:
+    """An appointment's status and the patient it is on."""
+    (row,) = _query(
+        engine,
+        schema,
+        "SELECT status, patient_id FROM appointments WHERE id = :id",
+        {"id": appointment_id},
+    )
+    return str(row[0]), str(row[1])
+
+
+def _patient_of(engine: Engine, schema: str, client_id: str) -> str:
+    """The patient a calendar import landed for a SimplePractice client id."""
+    (row,) = _query(
+        engine,
+        schema,
+        "SELECT target_id FROM import_records "
+        "WHERE record_type = 'calendar_client' AND source_id = :id AND state != 'undone'",
+        {"id": client_id},
+    )
+    return str(row[0])
+
+
 def _start_of(engine: Engine, schema: str, appointment_id: str) -> datetime:
     (row,) = _query(
         engine, schema, "SELECT start_at FROM appointments WHERE id = :id", {"id": appointment_id}
@@ -222,6 +258,40 @@ def _start_of(engine: Engine, schema: str, appointment_id: str) -> datetime:
 
 
 # --------------------------------------------------------------------------- journeys
+
+
+def _cancel_and_reassign(
+    client: TestClient,
+    engine: Engine,
+    schema: str,
+    ledger: dict[str, tuple[str, str]],
+    chart: dict[str, int],
+) -> None:
+    """A cancellation and a move to another client land on the appointments an
+    earlier run created, and undoing that run puts both back."""
+    # The client cancels the upcoming visit, and Blake's past visit is moved
+    # over to Casey: the cancellation reaches Pablo and the visit follows.
+    first_id, visit_id = ledger[MOVED][0], ledger[BLAKES_VISIT][0]
+    blake, casey = _patient_of(engine, schema, BLAKE), _patient_of(engine, schema, CASEY)
+    assert _appointment(engine, schema, visit_id) == ("completed", blake)
+    changed = _upload(client, _zip(_feed_files(cancel=True, reassign=True)))
+    assert changed["preview"]["counts"]["appointment"] == {
+        "unchanged": 2,
+        "changed": 2,
+        "skipped": 2,
+    }
+    fourth = _apply(client, changed["id"], {})
+    assert fourth["report"]["counts"]["appointment"] == {"unchanged": 2, "changed": 2}
+    assert _appointment(engine, schema, first_id)[0] == "cancelled"
+    assert _appointment(engine, schema, visit_id) == ("completed", casey)
+    assert _chart(engine, schema)["scheduled"] == 1
+
+    undone = client.post(f"/api/migration/runs/{changed['id']}/undo", json={})
+    assert undone.status_code == 200, undone.text
+    assert undone.json()["report"]["undo"]["restored"] == {"appointment": 2}
+    assert _appointment(engine, schema, first_id)[0] == "confirmed"
+    assert _appointment(engine, schema, visit_id) == ("completed", blake)
+    assert _chart(engine, schema) == chart
 
 
 def test_calendar_feed_end_to_end(client: TestClient, engine: Engine, schema: str) -> None:
@@ -281,22 +351,40 @@ def test_calendar_feed_end_to_end(client: TestClient, engine: Engine, schema: st
     assert ledger[MOVED] == (first_id, "updated")
     assert _start_of(engine, schema, first_id) == datetime(2026, 10, 20, 14, 30, tzinfo=UTC)
 
-    # Undo the move's run: it owns the one row it updated, and nothing else.
+    # Undo the move's run: the appointment goes back to where it was, and back
+    # to the run that created it. Nothing is deleted.
     undone = client.post(f"/api/migration/runs/{moved['id']}/undo", json={})
     assert undone.status_code == 200, undone.text
-    assert undone.json()["report"]["undo"] == {"removed": {"appointment": 1}, "kept": []}
-    assert _chart(engine, schema)["appointments"] == 3
+    assert undone.json()["report"]["undo"] == {
+        "removed": {},
+        "kept": [],
+        "restored": {"appointment": 1},
+    }
+    assert _chart(engine, schema) == chart
+    assert _ledger(engine, schema)[MOVED] == (first_id, "landed")
+    assert _start_of(engine, schema, first_id) == datetime(2026, 10, 20, 14, 0, tzinfo=UTC)
+
+    _cancel_and_reassign(client, engine, schema, ledger, chart)
 
     # Undo the first run: every client and appointment it created goes.
     undone = client.post(f"/api/migration/runs/{run['id']}/undo", json={})
     assert undone.status_code == 200, undone.text
     assert undone.json()["report"]["undo"] == {
-        "removed": {"appointment": 3, "contact": 4},
+        "removed": {"appointment": 4, "calendar_client": 4},
         "kept": [],
     }
     after = _chart(engine, schema)
     assert (after["patients"], after["appointments"]) == (0, 0)
     assert _ledger(engine, schema) == {}
+
+
+def test_the_practice_scope_lands_nothing_from_a_calendar(
+    client: TestClient, engine: Engine, schema: str
+) -> None:
+    run = _upload(client, _zip(_feed_files()), scope="practice")
+    _apply(client, run["id"], {})
+    chart = _chart(engine, schema)
+    assert (chart["patients"], chart["appointments"]) == (0, 0)
 
 
 def test_a_zip_holding_both_layouts_is_refused(client: TestClient, schema: str) -> None:
