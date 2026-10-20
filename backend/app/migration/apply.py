@@ -44,6 +44,7 @@ from sqlalchemy import delete, select
 
 from ..db.models import (
     AppointmentRow,
+    ImportRecordRow,
     NoteRow,
     OutcomeMeasureRow,
     PatientMessageRow,
@@ -81,10 +82,12 @@ from ..services.patient_documents_service import PatientDocumentError, PatientDo
 from ..utcnow import utc_now
 from .attribution import SYSTEM_SENDER
 from .ledger import Landed, record_landed, records_for_run
-from .preview import STORED_UPLOAD_TYPES
+from .preview import STORED_UPLOAD_TYPES, Clock, lands_as
 from .readers.simplepractice import SOURCE_SYSTEM
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from sqlalchemy.orm import Session
 
     from ..settings import Settings
@@ -96,9 +99,16 @@ if TYPE_CHECKING:
         SimplePracticeArchive,
         Upload,
     )
+    from .readers.simplepractice_calendar import (
+        CalendarAppointment,
+        CalendarClient,
+        SimplePracticeCalendar,
+    )
 
 #: ``patients.origin`` is 20 characters wide.
 PATIENT_ORIGIN = "simplepractice"
+#: What a calendar appointment is called here; never the client's name.
+APPOINTMENT_TITLE = "Session"
 _STATE_LEN = 2
 _POSTAL_LEN = 10
 _UPLOAD_MIME = STORED_UPLOAD_TYPES
@@ -153,7 +163,6 @@ class _Run:
     """What one apply call carries through every step."""
 
     run_id: str
-    archive: SimplePracticeArchive
     decisions: dict[str, Any]
     providers: dict[str, str]
     landable: dict[tuple[str, str], dict[str, Any]]
@@ -163,6 +172,10 @@ class _Run:
 
 def _key(record_type: str, source_id: str) -> str:
     return f"{record_type}:{source_id}"
+
+
+def _landable_records(preview: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
+    return {(r["record_type"], r["source_id"]): r for r in preview["records"] if r["landable"]}
 
 
 def _trim(value: str | None, width: int) -> str | None:
@@ -207,12 +220,9 @@ class ArchiveApplier:
     ) -> ApplyReport:
         run = _Run(
             run_id=run_id,
-            archive=archive,
             decisions=decisions,
             providers=self._provider_map(decisions),
-            landable={
-                (r["record_type"], r["source_id"]): r for r in preview["records"] if r["landable"]
-            },
+            landable=_landable_records(preview),
             report=ApplyReport(),
         )
         scope = preview.get("scope", "both")
@@ -220,12 +230,40 @@ class ArchiveApplier:
             cards = {c.source_id: c for c in archive.contacts}
             for client in preview["clients"]:
                 self._land_client(run, cards[client["card_id"]], client)
-            self._land_notes(run)
-            self._land_questionnaires(run)
-            self._land_threads(run)
-            self._land_uploads(run)
+            self._land_notes(run, archive)
+            self._land_questionnaires(run, archive)
+            self._land_threads(run, archive)
+            self._land_uploads(run, archive)
         if scope in {"practice", "both"}:
             self._land_practice(run, preview)
+        return run.report
+
+    def apply_calendar(
+        self,
+        *,
+        run_id: str,
+        calendar: SimplePracticeCalendar,
+        preview: dict[str, Any],
+        decisions: dict[str, Any],
+        clock: Clock,
+    ) -> ApplyReport:
+        """Land a previewed calendar feed: its clients, then its appointments.
+
+        Nothing here touches a note. ``clock`` decides, as it did in the
+        preview, whether an appointment is still ahead.
+        """
+        run = _Run(
+            run_id=run_id,
+            decisions=decisions,
+            providers={},
+            landable=_landable_records(preview),
+            report=ApplyReport(),
+        )
+        clients = {c.source_id: c for c in calendar.clients}
+        for client in preview["clients"]:
+            self._land_calendar_client(run, clients[client["card_id"]], client)
+        for appointment in calendar.appointments:
+            self._land_appointment(run, appointment, clock)
         return run.report
 
     def _provider_map(self, decisions: dict[str, Any]) -> dict[str, str]:
@@ -280,7 +318,54 @@ class ArchiveApplier:
     # ------------------------------------------------------------------ clients
 
     def _land_client(self, run: _Run, card: ContactCard, client: dict[str, Any]) -> None:
-        card_id = card.source_id
+        def build() -> Patient:
+            now = utc_now()
+            address = card.address
+            return Patient(
+                id=str(uuid.uuid4()),
+                first_name=card.given_name or card.formatted_name.split(" ")[0],
+                last_name=card.family_name or card.formatted_name.split(" ")[-1],
+                created_at=now,
+                updated_at=now,
+                email=card.email,
+                phone=card.phone,
+                date_of_birth=card.birthday.isoformat() if card.birthday else None,
+                origin=PATIENT_ORIGIN,
+                address_line1=address.street or None if address else None,
+                city=address.city or None if address else None,
+                state=_trim(address.state, _STATE_LEN) if address else None,
+                postal_code=_trim(address.postal_code, _POSTAL_LEN) if address else None,
+            )
+
+        self._adopt_or_create(run, card.source_id, card.digest, client, build)
+
+    def _land_calendar_client(
+        self, run: _Run, client: CalendarClient, proposal: dict[str, Any]
+    ) -> None:
+        def build() -> Patient:
+            now = utc_now()
+            return Patient(
+                id=str(uuid.uuid4()),
+                first_name=client.first_name,
+                last_name=client.last_name,
+                preferred_name=client.preferred_name,
+                created_at=now,
+                updated_at=now,
+                origin=PATIENT_ORIGIN,
+            )
+
+        self._adopt_or_create(run, client.source_id, client.digest, proposal, build)
+
+    def _adopt_or_create(
+        self,
+        run: _Run,
+        card_id: str,
+        digest: str,
+        client: dict[str, Any],
+        build: Callable[[], Patient],
+    ) -> None:
+        """The patient a client lands on: the one an earlier run made, the one
+        the preview or the practice matched, or a new one from ``build``."""
         key = _key("contact", card_id)
         existing = client.get("existing_patient_id")
         if client.get("match_evidence") == "ledger" and existing:
@@ -314,37 +399,74 @@ class ArchiveApplier:
                     card_id,
                     "patients",
                     patient.id,
-                    card.digest,
+                    digest,
                     previous_payload={"merged": True},
                 ),
             )
             return
-        now = utc_now()
-        address = card.address
-        patient = Patient(
-            id=str(uuid.uuid4()),
-            first_name=card.given_name or card.formatted_name.split(" ")[0],
-            last_name=card.family_name or card.formatted_name.split(" ")[-1],
-            created_at=now,
-            updated_at=now,
-            email=card.email,
-            phone=card.phone,
-            date_of_birth=card.birthday.isoformat() if card.birthday else None,
-            origin=PATIENT_ORIGIN,
-            address_line1=address.street or None if address else None,
-            city=address.city or None if address else None,
-            state=_trim(address.state, _STATE_LEN) if address else None,
-            postal_code=_trim(address.postal_code, _POSTAL_LEN) if address else None,
-        )
-        created = self._patients.create(patient, self._user_id)
+        created = self._patients.create(build(), self._user_id)
         run.report.patients[card_id] = created.id
         run.report.counts["contact"]["created"] += 1
-        self._ledger(run, Landed("contact", card_id, "patients", created.id, card.digest))
+        self._ledger(run, Landed("contact", card_id, "patients", created.id, digest))
+
+    # ------------------------------------------------------------------ appointments
+
+    def _land_appointment(self, run: _Run, appointment: CalendarAppointment, clock: Clock) -> None:
+        """One feed appointment onto the calendar: created, or moved when the
+        feed's copy changed since an earlier run landed it."""
+        record = self._landable(run, "appointment", appointment.source_id)
+        if record is None:
+            return
+        patient_id = self._target_for(run, record)
+        if patient_id is None:
+            return
+        how = lands_as(appointment, clock)
+        if how is None:
+            run.report.counts["appointment"]["skipped"] += 1
+            return
+        status = AppointmentStatus.CONFIRMED if how == "scheduled" else AppointmentStatus.COMPLETED
+        existing = self._landed_appointment(appointment.source_id)
+        if existing is not None:
+            existing.start_at = appointment.start_at
+            existing.end_at = appointment.end_at
+            existing.duration_minutes = appointment.duration_minutes
+            existing.status = status.value
+            existing.updated_at = utc_now()
+            landed = self._appointments.update(existing)
+        else:
+            landed = self._appointments.create(
+                Appointment(
+                    id=str(uuid.uuid4()),
+                    user_id=self._user_id,
+                    patient_id=patient_id,
+                    title=APPOINTMENT_TITLE,
+                    start_at=appointment.start_at,
+                    end_at=appointment.end_at,
+                    duration_minutes=appointment.duration_minutes,
+                    status=status.value,
+                    session_type="individual",
+                    created_at=utc_now(),
+                )
+            )
+        self._ledger(
+            run,
+            Landed(
+                "appointment", appointment.source_id, "appointments", landed.id, appointment.digest
+            ),
+        )
+        run.report.counts["appointment"][record["state"]] += 1
+
+    def _landed_appointment(self, source_id: str) -> Appointment | None:
+        """The appointment an earlier run landed for this feed id, if it stands."""
+        row = self._session.get(ImportRecordRow, (SOURCE_SYSTEM, "appointment", source_id))
+        if row is None or row.state == "undone" or row.target_table != "appointments":
+            return None
+        return self._appointments.get(row.target_id, self._user_id)
 
     # ------------------------------------------------------------------ notes
 
-    def _land_notes(self, run: _Run) -> None:
-        for note in run.archive.notes:
+    def _land_notes(self, run: _Run, archive: SimplePracticeArchive) -> None:
+        for note in archive.notes:
             record = self._landable(run, "note", note.source_id)
             if record is None:
                 continue
@@ -506,8 +628,8 @@ class ArchiveApplier:
 
     # ------------------------------------------------------------------ questionnaires
 
-    def _land_questionnaires(self, run: _Run) -> None:
-        for q in run.archive.questionnaires:
+    def _land_questionnaires(self, run: _Run, archive: SimplePracticeArchive) -> None:
+        for q in archive.questionnaires:
             record = self._landable(run, "questionnaire", q.source_id)
             if record is None:
                 continue
@@ -554,9 +676,9 @@ class ArchiveApplier:
 
     # ------------------------------------------------------------------ messages
 
-    def _land_threads(self, run: _Run) -> None:
-        cards = {c.source_id: c for c in run.archive.contacts}
-        for thread in run.archive.threads:
+    def _land_threads(self, run: _Run, archive: SimplePracticeArchive) -> None:
+        cards = {c.source_id: c for c in archive.contacts}
+        for thread in archive.threads:
             record = self._landable(run, "thread", thread.source_id)
             if record is None:
                 continue
@@ -623,8 +745,8 @@ class ArchiveApplier:
 
     # ------------------------------------------------------------------ uploads
 
-    def _land_uploads(self, run: _Run) -> None:
-        for upload in run.archive.uploads:
+    def _land_uploads(self, run: _Run, archive: SimplePracticeArchive) -> None:
+        for upload in archive.uploads:
             record = self._landable(run, "upload", upload.source_id)
             if record is None:
                 continue
@@ -822,6 +944,7 @@ def edited_since(session: Session, table: str, target_id: str, line: datetime) -
 
 
 __all__ = [
+    "APPOINTMENT_TITLE",
     "PATIENT_ORIGIN",
     "ApplyRefusedError",
     "ApplyReport",

@@ -1,0 +1,382 @@
+{
+  "data": [
+    {
+      "id": "3793480001",
+      "type": "appointments",
+      "links": {
+        "self": "https://secure.simplepractice.com/frontend/appointments/3793480001"
+      },
+      "attributes": {
+        "permissions": "{\"billing\":true,\"showDetails\":true,\"edit\":true,\"editScheduling\":true,\"editDetails\":true,\"editTime\":true,\"editStatus\":true,\"editTeamMember\":true,\"treatment\":true,\"destroy\":true,\"showOnCalendar\":true,\"showAllClients\":true,\"treatmentProgress\":true,\"createTreatmentProgress\":true,\"adminStaffDocsAccess\":false,\"showNotes\":true,\"noteTaker\":false,\"viewDraftAiNote\":false,\"postSessionSummary\":false}",
+        "hasNote": "false",
+        "hasNoteSignature": "false",
+        "clinicianId": 2156935,
+        "officeId": 57887567,
+        "officeName": "Video Office",
+        "fullDay": "false",
+        "duration": 50,
+        "attendanceStatus": "Show",
+        "thisType": "Appointment",
+        "title": "",
+        "startTime": "2026-11-02T10:00:00-05:00",
+        "endTime": "2026-11-02T10:50:00-05:00",
+        "isRecurring": "false",
+        "clientConfirmationStatus": null
+      },
+      "relationships": {
+        "practice": {
+          "data": {
+            "type": "practices",
+            "id": "1374130"
+          }
+        },
+        "clinician": {
+          "data": {
+            "type": "teamMembers",
+            "id": "2156935"
+          }
+        },
+        "office": {
+          "data": {
+            "type": "addresses",
+            "id": "57887567"
+          }
+        },
+        "recurringAppointment": {
+          "data": null
+        },
+        "pendingAppointmentConfirmation": {
+          "data": null
+        },
+        "globalMonarchChannel": {
+          "data": null
+        },
+        "userEventColor": {
+          "data": null
+        },
+        "appointmentClients": {
+          "data": [
+            {
+              "type": "appointmentClients",
+              "id": "1635780001"
+            }
+          ]
+        },
+        "globalMonarchSubchannel": {
+          "data": null
+        }
+      },
+      "meta": {
+        "hasMemo": false
+      }
+    },
+    {
+      "id": "3793480002",
+      "type": "appointments",
+      "links": {
+        "self": "https://secure.simplepractice.com/frontend/appointments/3793480002"
+      },
+      "attributes": {
+        "permissions": "{\"billing\":true,\"showDetails\":true,\"edit\":true,\"editScheduling\":true,\"editDetails\":false,\"editTime\":true,\"editStatus\":false,\"editTeamMember\":true,\"treatment\":true,\"destroy\":true,\"showOnCalendar\":true,\"showAllClients\":true,\"treatmentProgress\":true,\"createTreatmentProgress\":true,\"adminStaffDocsAccess\":false,\"showNotes\":true,\"noteTaker\":false,\"viewDraftAiNote\":false,\"postSessionSummary\":false}",
+        "hasNote": "false",
+        "hasNoteSignature": "false",
+        "clinicianId": 2156935,
+        "officeId": 57887567,
+        "officeName": "Video Office",
+        "fullDay": "false",
+        "duration": 50,
+        "attendanceStatus": "No Show",
+        "thisType": "Appointment",
+        "title": "Blake Client",
+        "startTime": "2026-10-06T10:00:00-04:00",
+        "endTime": "2026-10-06T10:50:00-04:00",
+        "isRecurring": "false",
+        "clientConfirmationStatus": null
+      },
+      "relationships": {
+        "practice": {
+          "data": {
+            "type": "practices",
+            "id": "1374130"
+          }
+        },
+        "clinician": {
+          "data": {
+            "type": "teamMembers",
+            "id": "2156935"
+          }
+        },
+        "office": {
+          "data": {
+            "type": "addresses",
+            "id": "57887567"
+          }
+        },
+        "recurringAppointment": {
+          "data": null
+        },
+        "pendingAppointmentConfirmation": {
+          "data": null
+        },
+        "globalMonarchChannel": {
+          "data": null
+        },
+        "userEventColor": {
+          "data": null
+        },
+        "appointmentClients": {
+          "data": [
+            {
+              "type": "appointmentClients",
+              "id": "1635780002"
+            }
+          ]
+        },
+        "globalMonarchSubchannel": {
+          "data": null
+        }
+      },
+      "meta": {
+        "hasMemo": false
+      }
+    },
+    {
+      "id": "3793480003",
+      "type": "appointments",
+      "links": {
+        "self": "https://secure.simplepractice.com/frontend/appointments/3793480003"
+      },
+      "attributes": {
+        "permissions": "{\"billing\":true,\"showDetails\":true,\"edit\":true,\"editScheduling\":true,\"editDetails\":false,\"editTime\":true,\"editStatus\":false,\"editTeamMember\":true,\"treatment\":true,\"destroy\":true,\"showOnCalendar\":true,\"showAllClients\":true,\"treatmentProgress\":true,\"createTreatmentProgress\":true,\"adminStaffDocsAccess\":false,\"showNotes\":true,\"noteTaker\":false,\"viewDraftAiNote\":false,\"postSessionSummary\":false}",
+        "hasNote": "false",
+        "hasNoteSignature": "false",
+        "clinicianId": 2156935,
+        "officeId": 57887567,
+        "officeName": "Video Office",
+        "fullDay": "false",
+        "duration": 50,
+        "attendanceStatus": "Cancelled",
+        "thisType": "Appointment",
+        "title": "Casey Client",
+        "startTime": "2026-10-07T10:00:00-04:00",
+        "endTime": "2026-10-07T10:50:00-04:00",
+        "isRecurring": "false",
+        "clientConfirmationStatus": null
+      },
+      "relationships": {
+        "practice": {
+          "data": {
+            "type": "practices",
+            "id": "1374130"
+          }
+        },
+        "clinician": {
+          "data": {
+            "type": "teamMembers",
+            "id": "2156935"
+          }
+        },
+        "office": {
+          "data": {
+            "type": "addresses",
+            "id": "57887567"
+          }
+        },
+        "recurringAppointment": {
+          "data": null
+        },
+        "pendingAppointmentConfirmation": {
+          "data": null
+        },
+        "globalMonarchChannel": {
+          "data": null
+        },
+        "userEventColor": {
+          "data": null
+        },
+        "appointmentClients": {
+          "data": [
+            {
+              "type": "appointmentClients",
+              "id": "1635780003"
+            }
+          ]
+        },
+        "globalMonarchSubchannel": {
+          "data": null
+        }
+      },
+      "meta": {
+        "hasMemo": false
+      }
+    },
+    {
+      "id": "9001",
+      "type": "groupAppointments",
+      "links": {
+        "self": "https://secure.simplepractice.com/frontend/group-appointments/9001"
+      },
+      "attributes": {
+        "permissions": "{\"billing\":true,\"showDetails\":true,\"edit\":true,\"editScheduling\":true,\"editTime\":true,\"editStatus\":true,\"destroy\":true,\"showOnCalendar\":true}",
+        "clientsCount": 4,
+        "clinicianId": 2156935,
+        "officeId": 57887567,
+        "officeName": "Video Office",
+        "fullDay": "false",
+        "duration": 90,
+        "attendanceStatus": null,
+        "thisType": "GroupAppointment",
+        "title": "Skills group",
+        "startTime": "2026-10-21T17:00:00-04:00",
+        "endTime": "2026-10-21T18:30:00-04:00",
+        "isRecurring": "true"
+      },
+      "relationships": {
+        "practice": {
+          "data": {
+            "type": "practices",
+            "id": "1374130"
+          }
+        },
+        "clinician": {
+          "data": {
+            "type": "teamMembers",
+            "id": "2156935"
+          }
+        },
+        "office": {
+          "data": {
+            "type": "addresses",
+            "id": "57887567"
+          }
+        }
+      }
+    },
+    {
+      "id": "7001",
+      "type": "externalAppointments",
+      "links": {
+        "self": "https://secure.simplepractice.com/frontend/external-appointments/7001"
+      },
+      "attributes": {
+        "title": "Staff meeting",
+        "eventType": "external",
+        "clinicianId": 2156935,
+        "fullDay": "false",
+        "occurrences": [
+          {
+            "startTime": "2026-10-21T12:00:00-04:00",
+            "endTime": "2026-10-21T13:00:00-04:00"
+          },
+          {
+            "startTime": "2026-10-28T12:00:00-04:00",
+            "endTime": "2026-10-28T13:00:00-04:00"
+          }
+        ]
+      },
+      "relationships": {
+        "clinician": {
+          "data": {
+            "type": "teamMembers",
+            "id": "2156935"
+          }
+        }
+      }
+    }
+  ],
+  "included": [
+    {
+      "id": "1635780001",
+      "type": "appointmentClients",
+      "links": {
+        "self": "https://secure.simplepractice.com/frontend/appointment-clients/1635780001"
+      },
+      "attributes": {
+        "permissions": "{\"billing\":true,\"edit\":true,\"editScheduling\":true,\"editTime\":true,\"editBilling\":true,\"treatment\":true,\"show\":true,\"editStatus\":true,\"destroy\":true,\"printSession\":true}"
+      },
+      "relationships": {
+        "client": {
+          "data": {
+            "type": "clients",
+            "id": "112230150"
+          }
+        }
+      }
+    },
+    {
+      "id": "1635780002",
+      "type": "appointmentClients",
+      "links": {
+        "self": "https://secure.simplepractice.com/frontend/appointment-clients/1635780002"
+      },
+      "attributes": {
+        "permissions": "{\"billing\":true,\"edit\":true,\"editScheduling\":true,\"editTime\":true,\"editBilling\":true,\"treatment\":true,\"show\":true,\"editStatus\":true,\"destroy\":true,\"printSession\":true}"
+      },
+      "relationships": {
+        "client": {
+          "data": {
+            "type": "clients",
+            "id": "112230081"
+          }
+        }
+      }
+    },
+    {
+      "id": "1635780003",
+      "type": "appointmentClients",
+      "links": {
+        "self": "https://secure.simplepractice.com/frontend/appointment-clients/1635780003"
+      },
+      "attributes": {
+        "permissions": "{\"billing\":true,\"edit\":true,\"editScheduling\":true,\"editTime\":true,\"editBilling\":true,\"treatment\":true,\"show\":true,\"editStatus\":true,\"destroy\":true,\"printSession\":true}"
+      },
+      "relationships": {
+        "client": {
+          "data": {
+            "type": "clients",
+            "id": "112230132"
+          }
+        }
+      }
+    },
+    {
+      "id": "112230150",
+      "type": "clients",
+      "links": {
+        "self": "https://secure.simplepractice.com/frontend/clients/112230150"
+      },
+      "attributes": {
+        "firstName": "Dana",
+        "lastName": "Client",
+        "middleName": null,
+        "preferredName": "Dee",
+        "nickname": null,
+        "initials": "DC",
+        "hashedId": "f3a9c1d2e4b5",
+        "enhancedDataProtection": "true",
+        "revokedAdminIds": "[2156935]",
+        "isMinor": "false"
+      }
+    },
+    {
+      "id": "112230081",
+      "type": "clients",
+      "links": {
+        "self": "https://secure.simplepractice.com/frontend/clients/112230081"
+      },
+      "attributes": {
+        "isMinor": "false"
+      }
+    },
+    {
+      "id": "112230132",
+      "type": "clients",
+      "links": {
+        "self": "https://secure.simplepractice.com/frontend/clients/112230132"
+      },
+      "attributes": {
+        "isMinor": "false"
+      }
+    }
+  ]
+}

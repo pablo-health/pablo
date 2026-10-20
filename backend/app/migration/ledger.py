@@ -33,6 +33,7 @@ from sqlalchemy import select
 
 from ..db.models import ImportRecordRow, ImportRunRow
 from ..utcnow import utc_now
+from .readers.simplepractice_calendar import CALENDAR_DIR
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -406,9 +407,13 @@ def extract_zip(source: Path | bytes, target: Path, password: str | None = None)
                 raise ArchiveError("The zip archive is too large.")
         # An export zipped from its folder usually has one top-level directory
         # ("Export - Complete - ..."); unwrap it so the reader sees the tree.
+        # A zip of the saved calendar folder alone is already the tree, so
+        # that one top-level directory is kept.
         tops = {Path(m.filename).parts[0] for m in members if "__MACOSX" not in m.filename}
         nested = all(len(Path(m.filename).parts) > 1 for m in members)
         strip = next(iter(tops)) if len(tops) == 1 and nested else None
+        if strip == CALENDAR_DIR:
+            strip = None
         for member in members:
             if "__MACOSX" in member.filename:
                 continue

@@ -1,0 +1,177 @@
+# Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+
+"""The calendar reader against the captured feed fixture.
+
+Every expectation here is a fact about ``tests/fixtures/simplepractice_calendar``
+as captured (plus the one authored edge file its README names), read through
+the same reader the importer uses. When the feed changes shape the fixture is
+re-captured and these numbers move with it; they are never edited to make a
+parser pass.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import timedelta
+from pathlib import Path
+
+import pytest
+
+from backend.app.migration.readers.simplepractice_calendar import (
+    SimplePracticeCalendar,
+    read_simplepractice_calendar,
+)
+
+FIXTURE = Path(__file__).parent / "fixtures" / "simplepractice_calendar"
+AVERY, BLAKE, CASEY, DANA = "112230097", "112230081", "112230132", "112230150"
+#: The appointment three captured files carry, each with its own copy.
+OVERLAPPING = "3793472377"
+
+
+@pytest.fixture(scope="module")
+def calendar() -> SimplePracticeCalendar:
+    return read_simplepractice_calendar(FIXTURE)
+
+
+def test_every_file_is_read_in_name_order(calendar: SimplePracticeCalendar) -> None:
+    assert calendar.files == (
+        "calendar/appointments-01.json",
+        "calendar/appointments-02.json",
+        "calendar/appointments-05.json",
+        "calendar/appointments-06.json",
+        "calendar/appointments-07.json",
+        "calendar/appointments-edge-group-external.json",
+    )
+    assert calendar.unreadable == ()
+
+
+def test_each_appointment_once_with_the_latest_copy_winning(
+    calendar: SimplePracticeCalendar,
+) -> None:
+    ids = [a.source_id for a in calendar.appointments]
+    assert ids == sorted(ids)
+    assert len(ids) == len(set(ids)) == 6
+    # Files 01 and 05 say recurring with no note; 06, captured last, says
+    # neither recurring nor note-less. The last word is the feed's.
+    latest = next(a for a in calendar.appointments if a.source_id == OVERLAPPING)
+    assert latest.path == "calendar/appointments-06.json"
+    assert latest.is_recurring is False
+    assert latest.has_note is True
+    assert latest.client_id == AVERY
+
+
+def test_appointment_clients_are_joined_through_included(
+    calendar: SimplePracticeCalendar,
+) -> None:
+    by_id = {a.source_id: a.client_id for a in calendar.appointments}
+    assert by_id == {
+        "3793470566": BLAKE,
+        OVERLAPPING: AVERY,
+        "3793478974": CASEY,
+        "3793480001": DANA,
+        "3793480002": BLAKE,
+        "3793480003": CASEY,
+    }
+
+
+def test_strings_become_bools(calendar: SimplePracticeCalendar) -> None:
+    for appointment in calendar.appointments:
+        assert isinstance(appointment.full_day, bool)
+        assert isinstance(appointment.is_recurring, bool)
+        assert isinstance(appointment.has_note, bool)
+    for client in calendar.clients:
+        assert isinstance(client.is_minor, bool)
+        assert isinstance(client.protected, bool)
+
+
+def test_times_keep_the_feeds_own_offsets_across_the_daylight_change(
+    calendar: SimplePracticeCalendar,
+) -> None:
+    october = next(a for a in calendar.appointments if a.source_id == OVERLAPPING)
+    november = next(a for a in calendar.appointments if a.source_id == "3793480001")
+    assert october.start_at.isoformat() == "2026-10-20T10:00:00-04:00"
+    assert october.start_at.utcoffset() == timedelta(hours=-4)
+    assert november.start_at.isoformat() == "2026-11-02T10:00:00-05:00"
+    assert november.start_at.utcoffset() == timedelta(hours=-5)
+    for appointment in calendar.appointments:
+        assert appointment.start_at.tzinfo is not None
+        assert appointment.end_at - appointment.start_at == timedelta(minutes=50)
+        assert appointment.duration_minutes == 50
+
+
+def test_attendance_is_read_as_the_feed_wrote_it(calendar: SimplePracticeCalendar) -> None:
+    status = {a.source_id: a.attendance_status for a in calendar.appointments}
+    assert status["3793480002"] == "No Show"
+    assert status["3793480003"] == "Cancelled"
+    assert status[OVERLAPPING] == "Show"
+    assert [a.attended for a in calendar.appointments].count(True) == 4
+
+
+def test_external_events_are_skipped_and_group_appointments_unsupported(
+    calendar: SimplePracticeCalendar,
+) -> None:
+    assert calendar.skipped == {"external": 1}
+    assert [(u.kind, u.source_id) for u in calendar.unsupported] == [("group", "9001")]
+
+
+def test_client_names_come_from_the_client_entry_or_the_title(
+    calendar: SimplePracticeCalendar,
+) -> None:
+    clients = {c.source_id: c for c in calendar.clients}
+    assert sorted(clients) == [BLAKE, AVERY, CASEY, DANA]
+    # The capture includes clients with ``isMinor`` alone and names the
+    # client in the appointment's title.
+    avery = clients[AVERY]
+    assert (avery.first_name, avery.last_name) == ("Avery", "Client")
+    assert avery.name_from == "title"
+    assert avery.preferred_name is None
+    assert avery.protected is False
+    # The fuller entry carries the name itself, and the protection flags.
+    dana = clients[DANA]
+    assert (dana.first_name, dana.last_name) == ("Dana", "Client")
+    assert dana.name_from == "client"
+    assert dana.preferred_name == "Dee"
+    assert dana.preferred_full_name == "Dee Client"
+    assert dana.hashed_id == "f3a9c1d2e4b5"
+    assert dana.protected is True
+
+
+def test_digest_follows_what_lands_not_the_permissions(tmp_path: Path) -> None:
+    """A permission string moving between captures is not a changed appointment;
+    a moved start time is."""
+    source = json.loads((FIXTURE / "calendar" / "appointments-01.json").read_text())
+    folder = tmp_path / "calendar"
+    folder.mkdir()
+    (folder / "a.json").write_text(json.dumps(source))
+    base = read_simplepractice_calendar(tmp_path).appointments[0].digest
+
+    source["data"][0]["attributes"]["permissions"] = "{}"
+    source["data"][0]["attributes"]["hasNote"] = "true"
+    (folder / "a.json").write_text(json.dumps(source))
+    assert read_simplepractice_calendar(tmp_path).appointments[0].digest == base
+
+    source["data"][0]["attributes"]["startTime"] = "2026-10-20T10:30:00-04:00"
+    (folder / "a.json").write_text(json.dumps(source))
+    assert read_simplepractice_calendar(tmp_path).appointments[0].digest != base
+
+
+def test_a_file_that_is_not_a_response_is_reported_and_the_rest_read(tmp_path: Path) -> None:
+    folder = tmp_path / "calendar"
+    folder.mkdir()
+    (folder / "a.json").write_bytes((FIXTURE / "calendar" / "appointments-07.json").read_bytes())
+    (folder / "b.json").write_text('{"not": "a response"}')
+    (folder / "c.json").write_text("{broken")
+    calendar = read_simplepractice_calendar(tmp_path)
+    assert len(calendar.appointments) == 2
+    assert [rel for rel, _ in calendar.unreadable] == ["calendar/b.json", "calendar/c.json"]
+
+
+def test_an_appointment_whose_client_is_not_included_is_skipped(tmp_path: Path) -> None:
+    source = json.loads((FIXTURE / "calendar" / "appointments-07.json").read_text())
+    source["included"] = [e for e in source["included"] if e["id"] != CASEY]
+    folder = tmp_path / "calendar"
+    folder.mkdir()
+    (folder / "a.json").write_text(json.dumps(source))
+    calendar = read_simplepractice_calendar(tmp_path)
+    assert [a.client_id for a in calendar.appointments] == [BLAKE]
+    assert calendar.skipped == {"client_missing": 1}

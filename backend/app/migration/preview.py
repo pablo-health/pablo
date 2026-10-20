@@ -22,14 +22,21 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from ..patients.matching import Candidate, MatchContext, PatientHint, match_patient
 from .attribution import ArchiveAttribution, attribute_archive
 
 if TYPE_CHECKING:
+    from datetime import date, datetime, tzinfo
+
     from .ledger import LedgerEntry
     from .readers.simplepractice import ContactCard, SimplePracticeArchive
+    from .readers.simplepractice_calendar import (
+        CalendarAppointment,
+        CalendarClient,
+        SimplePracticeCalendar,
+    )
 
 #: Record types this version lands. Everything else is reported.
 LANDABLE = {"contact", "note", "questionnaire", "thread", "upload"}
@@ -348,12 +355,211 @@ def decisions_complete(preview: dict[str, Any], decisions: dict[str, Any]) -> li
     return missing
 
 
+# --------------------------------------------------------------------------- calendar
+#
+# A saved web-calendar feed previews in the same shape as an archive, so the
+# import screen renders it with nothing new: clients (the feed's included
+# clients), records (one per appointment, kind "appointment"), counts, what
+# cannot land, and the questions. There are no notes, no providers and no
+# same-name folders here, so those sections are empty.
+
+CALENDAR_CANNOT_LAND_REASONS = {
+    "group_appointment": "Group appointments land in a later version.",
+    "external_event": "Events from your outside calendars stay where they are.",
+    "not_attended": "Past no-shows and cancellations are not added to the calendar.",
+    "no_client": "Appointments that name no client, or whose client the file left out.",
+    "unrecognized": "Entries that are not part of a calendar response this version knows.",
+}
+
+#: How a feed appointment lands: ``scheduled`` for today and later, ``completed``
+#: for a past visit the practice marked as attended. ``None`` means it does not.
+LandsAs = Literal["scheduled", "completed"]
+
+
+@dataclass(frozen=True)
+class Clock:
+    """When "now" is and whose day it is: the instant, and the practice's zone."""
+
+    now: datetime
+    zone: tzinfo
+
+    @property
+    def today(self) -> date:
+        return self.now.astimezone(self.zone).date()
+
+
+#: What the calendar's ``practice`` section says it cannot propose.
+_NOT_IN_CALENDAR = [
+    "provider_name",
+    "visit_kind",
+    "visit_minutes",
+    "rate_cents",
+    "npi",
+    "tax_id",
+    "practice_address",
+    "practice_phone",
+]
+
+
+def lands_as(appointment: CalendarAppointment, clock: Clock) -> LandsAs | None:
+    """How ``appointment`` lands, judged by calendar day in the practice's zone.
+
+    Today's appointments are still the day's work and land as scheduled,
+    whatever the clock says; an earlier day's lands as a completed visit
+    only when the feed says the client was seen. A past no-show or
+    cancellation is reported and left out.
+    """
+    if appointment.start_at.astimezone(clock.zone).date() >= clock.today:
+        return "scheduled"
+    return "completed" if appointment.attended else None
+
+
+def _same_name_patients(client: CalendarClient, ctx: MatchContext) -> list[str]:
+    """Existing patients whose whole name is this client's legal or preferred
+    name. A name alone never merges; these become a question for the practice."""
+    found: list[str] = []
+    for name in (client.display_name, client.preferred_full_name):
+        if not name:
+            continue
+        result = match_patient(PatientHint(full_name=name), ctx, name_alone_is_enough=False)
+        for pid in [result.patient_id, *result.possible_ids]:
+            if pid and pid not in found:
+                found.append(pid)
+    return found
+
+
+def _calendar_cannot_land(
+    calendar: SimplePracticeCalendar, records: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    groups = sum(1 for u in calendar.unsupported if u.kind == "group")
+    unknown = len(calendar.unsupported) - groups
+    not_attended = sum(1 for r in records if not r["landable"])
+    no_client = calendar.skipped.get("no_client", 0) + calendar.skipped.get("client_missing", 0)
+    for what, count in (
+        ("group_appointment", groups),
+        ("external_event", calendar.skipped.get("external", 0)),
+        ("not_attended", not_attended),
+        ("no_client", no_client),
+        ("unrecognized", unknown),
+    ):
+        if count:
+            out.append({"what": what, "count": count, "reason": CALENDAR_CANNOT_LAND_REASONS[what]})
+    out.extend(
+        {"what": "unreadable", "count": 1, "reason": f"{rel}: {why}"}
+        for rel, why in calendar.unreadable
+    )
+    return out
+
+
+def build_calendar_preview(
+    calendar: SimplePracticeCalendar, inputs: PreviewInputs | None = None, *, clock: Clock
+) -> dict[str, Any]:
+    """What a saved calendar feed would become, in the archive preview's shape.
+
+    ``clock`` decides which appointments are still ahead. A client
+    is matched to an existing patient only through the ledger (a patient an
+    earlier run created from the same client id); a same-named patient is a
+    question, never a merge.
+    """
+    inputs = inputs or PreviewInputs()
+    counts: dict[str, Counter[str]] = defaultdict(Counter)
+    existing = MatchContext.over(inputs.existing_patients)
+    clients: list[dict[str, Any]] = []
+    duplicates: list[dict[str, Any]] = []
+    for client in calendar.clients:
+        entry = inputs.ledger.get(("contact", client.source_id))
+        state = _delta_state(entry, client.digest, inputs.edited_targets)
+        matched_id: str | None = None
+        evidence: str | None = None
+        possible: list[str] = []
+        if entry is not None and entry.state != "undone":
+            matched_id, evidence = entry.target_id, "ledger"
+        else:
+            possible = _same_name_patients(client, existing)
+        clients.append(
+            {
+                "card_id": client.source_id,
+                "display_name": client.display_name,
+                "folder_name": client.display_name,
+                "preferred_name": client.preferred_name,
+                "birthday": None,
+                "email": None,
+                "phone": None,
+                "address": None,
+                "protected": client.protected,
+                "state": state,
+                "existing_patient_id": matched_id,
+                "match_evidence": evidence,
+                "possible_duplicates": possible,
+            }
+        )
+        counts["contact"][state] += 1
+        if matched_id is None and possible:
+            duplicates.append({"card_id": client.source_id, "possible_duplicates": possible})
+            counts["contact"]["unresolved"] += 1
+
+    records: list[dict[str, Any]] = []
+    for appointment in calendar.appointments:
+        entry = inputs.ledger.get(("appointment", appointment.source_id))
+        state = _delta_state(entry, appointment.digest, inputs.edited_targets)
+        how = lands_as(appointment, clock)
+        records.append(
+            {
+                "record_type": "appointment",
+                "source_id": appointment.source_id,
+                "path": appointment.path,
+                "kind": "appointment",
+                "label": "Session",
+                "when": appointment.start_at.date().isoformat(),
+                "start_at": appointment.start_at.isoformat(),
+                "end_at": appointment.end_at.isoformat(),
+                "lands_as": how,
+                "card_id": appointment.client_id,
+                "evidence": "client",
+                "name_disagrees": False,
+                "candidates": [appointment.client_id],
+                "state": state,
+                "landable": how is not None,
+                "reason": None if how else CALENDAR_CANNOT_LAND_REASONS["not_attended"],
+            }
+        )
+        counts["appointment"][state if how else "skipped"] += 1
+
+    return {
+        "source_system": "simplepractice",
+        "layout": "calendar",
+        "scope": inputs.scope,
+        "clients": clients,
+        "non_client_contacts": [],
+        "providers": [],
+        "records": records,
+        "counts": {k: dict(v) for k, v in counts.items()},
+        "cannot_land": _calendar_cannot_land(calendar, records),
+        "questions": {"same_name": [], "duplicates": duplicates, "providers": []},
+        "practice": {
+            "proposals": {
+                "provider_name": None,
+                "visit_kind": None,
+                "visit_minutes": None,
+                "rate_cents": None,
+            },
+            "not_in_export": list(_NOT_IN_CALENDAR),
+        },
+    }
+
+
 __all__ = [
+    "CALENDAR_CANNOT_LAND_REASONS",
     "CANNOT_LAND_REASONS",
     "LANDABLE",
     "STORED_UPLOAD_TYPES",
+    "Clock",
     "ExistingPatient",
+    "LandsAs",
     "PreviewInputs",
+    "build_calendar_preview",
     "build_preview",
     "decisions_complete",
+    "lands_as",
 ]

@@ -45,6 +45,7 @@ from ..migration.ledger import (
     sweep_expired_archives,
 )
 from ..migration.preview import decisions_complete
+from ..migration.readers import MIXED_LAYOUT_REASON, detect_layout
 from ..migration.readers.simplepractice import SOURCE_SYSTEM
 from ..models import User
 from ..models.audit import ResourceType
@@ -343,7 +344,11 @@ async def start_import(
     scope: Annotated[Scope, Form()] = "both",
     password: Annotated[str | None, Form()] = None,
 ) -> ImportRunDetail:
-    """Upload an export archive (a .zip of the export folder) and start its preview.
+    """Upload an export archive and start its preview.
+
+    The zip is either the export folder or a ``calendar/`` folder of saved
+    web-calendar responses; the preview reads whichever it holds, and a zip
+    holding both is refused here.
 
     ``password`` opens a protected export (SimplePractice protects every one).
     It is used to unpack the archive and kept nowhere: not on the run, not in
@@ -359,6 +364,10 @@ async def start_import(
             ref = store.put(_schema(ctx), upload, password or None)
         except ArchiveError as exc:
             raise BadRequestError(str(exc), code=exc.code) from exc
+    unpacked = store.path(_schema(ctx), ref)
+    if unpacked is not None and detect_layout(unpacked) == "mixed":
+        store.delete(_schema(ctx), ref)
+        raise BadRequestError(MIXED_LAYOUT_REASON, code="INVALID_ARCHIVE")
     run = new_run(
         session, source_system=SOURCE_SYSTEM, scope=scope, started_by=user.id, archive_ref=ref
     )
