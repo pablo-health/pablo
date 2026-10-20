@@ -75,6 +75,7 @@ from ..reliability.hedge import (
 from ..reliability.hedge_sync import run_hedged_sync
 from ..settings import get_settings
 from .ai_features import AIFeature
+from .llm_telemetry import llm_feature
 from .structured_llm_gateway import (
     _STRUCTURED_LLM_TIMEOUT_SECONDS,
     StructuredCompletion,
@@ -164,12 +165,16 @@ class HedgedStructuredLLMGateway(StructuredLLMGateway):
         resolve: Callable[[str], StructuredLLMGateway] = resolve_structured_llm_gateway,
         executor: Executor | None = None,
         budget: float = _BUDGET_SECONDS,
+        feature: str | None = None,
     ) -> None:
         self._fallbacks = tuple(fallbacks)
         self._stall_after = stall_after
         self._resolve = resolve
         self._executor = executor
         self._budget = budget
+        # Labels every leg's span and usage record; the legs run in the
+        # caller's context, so the label set here reaches them.
+        self._feature = feature
 
     @classmethod
     def from_settings(
@@ -184,6 +189,7 @@ class HedgedStructuredLLMGateway(StructuredLLMGateway):
             fallbacks=settings.fallbacks_for(feature),
             stall_after=settings.hedge_after_for(feature) or INTERACTIVE_STALL_AFTER,
             resolve=resolve,
+            feature=feature,
         )
 
     def policy_for(self, model: str, timeout_seconds: float | None) -> HedgePolicy:
@@ -228,12 +234,13 @@ class HedgedStructuredLLMGateway(StructuredLLMGateway):
         run: HedgeRun[StructuredCompletion] = HedgeRun(self.policy_for(model, timeout_seconds))
         started = time.monotonic()
         try:
-            completion = run_hedged_sync(
-                run,
-                call,
-                classify=classify_structured_failure,
-                executor=self._executor or _leg_executor(),
-            )
+            with llm_feature(self._feature):
+                completion = run_hedged_sync(
+                    run,
+                    call,
+                    classify=classify_structured_failure,
+                    executor=self._executor or _leg_executor(),
+                )
         except Exception as exc:
             logger.warning(
                 "Structured call failed: attempts=%d latency_ms=%d failures=%s error=%s",
@@ -266,6 +273,9 @@ class ProviderStructuredLLMGateway(StructuredLLMGateway):
     before features were keyed; a prefixed one to its own provider.
     """
 
+    def __init__(self, feature: str | None = None) -> None:
+        self._feature = feature
+
     def complete_structured(
         self,
         *,
@@ -279,17 +289,18 @@ class ProviderStructuredLLMGateway(StructuredLLMGateway):
         timeout_seconds: float | None = None,
         retry_policy: RetryPolicy | None = None,
     ) -> StructuredCompletion:
-        return resolve_structured_llm_gateway(model).complete_structured(
-            model=model,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            response_schema=response_schema,
-            max_output_tokens=max_output_tokens,
-            temperature=temperature,
-            thinking_budget=thinking_budget,
-            timeout_seconds=timeout_seconds,
-            retry_policy=retry_policy,
-        )
+        with llm_feature(self._feature):
+            return resolve_structured_llm_gateway(model).complete_structured(
+                model=model,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_schema=response_schema,
+                max_output_tokens=max_output_tokens,
+                temperature=temperature,
+                thinking_budget=thinking_budget,
+                timeout_seconds=timeout_seconds,
+                retry_policy=retry_policy,
+            )
 
 
 def generation_gateway(
@@ -308,12 +319,13 @@ def generation_gateway(
     settings = get_settings()
     fallbacks = settings.fallbacks_for(feature)
     if not fallbacks:
-        return single or ProviderStructuredLLMGateway()
+        return single or ProviderStructuredLLMGateway(feature=feature)
     return HedgedStructuredLLMGateway(
         fallbacks=fallbacks,
         stall_after=settings.long_call_hedge_after_for(feature),
         resolve=resolve_structured_llm_gateway if single is None else (lambda _model: single),
         budget=GENERATION_BUDGET_SECONDS,
+        feature=feature,
     )
 
 

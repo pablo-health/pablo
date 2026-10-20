@@ -25,8 +25,10 @@ from app.services import structured_llm_gateway
 from app.services.availability_parse_service import AvailabilityRuleParseService
 from app.services.hedged_structured_llm_gateway import (
     HedgedStructuredLLMGateway,
+    ProviderStructuredLLMGateway,
     classify_structured_failure,
 )
+from app.services.llm_telemetry import llm_feature_var
 from app.services.structured_llm_gateway import (
     FakeStructuredLLMGateway,
     StructuredCompletion,
@@ -577,3 +579,56 @@ _NO_FRIDAYS = StructuredCompletion(
         ]
     }
 )
+
+
+class _LabelledGateway(FakeStructuredLLMGateway):
+    """A fake that notes which feature each call ran under."""
+
+    def __init__(self, seen: list[str | None], **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._seen = seen
+
+    def complete_structured(self, **kwargs: Any) -> StructuredCompletion:
+        self._seen.append(llm_feature_var.get())
+        return super().complete_structured(**kwargs)
+
+
+class TestFeatureLabel:
+    """The feature a gateway was built for reaches every leg's span and
+    usage record, and is gone again once the call returns."""
+
+    def test_each_leg_runs_under_the_gateways_feature(self, executor: ThreadPoolExecutor) -> None:
+        seen: list[str | None] = []
+        gateways = {
+            "flash": _LabelledGateway(seen, responses=[ValueError("not JSON")]),
+            "anthropic:haiku": _LabelledGateway(seen, default_response=_OK),
+        }
+        hedged = HedgedStructuredLLMGateway(
+            fallbacks=["anthropic:haiku"],
+            resolve=gateways.__getitem__,
+            executor=executor,
+            feature="note_generation",
+        )
+        assert _complete(hedged) == _OK
+        assert seen
+        assert set(seen) == {"note_generation"}
+        assert llm_feature_var.get() is None
+
+    def test_a_single_provider_call_is_labelled_too(self) -> None:
+        seen: list[str | None] = []
+        fake = _LabelledGateway(seen, default_response=_OK)
+        register_structured_llm_provider("other", lambda: fake)
+        try:
+            gateway = ProviderStructuredLLMGateway(feature="note_import")
+            completion = gateway.complete_structured(
+                model="other:model",
+                system_prompt="s",
+                user_prompt="u",
+                response_schema={"type": "object"},
+                max_output_tokens=64,
+            )
+        finally:
+            structured_llm_gateway._registered_providers.pop("other")
+        assert completion == _OK
+        assert seen == ["note_import"]
+        assert llm_feature_var.get() is None
