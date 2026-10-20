@@ -128,7 +128,9 @@ test("a dictated clip stays while the note is open and is gone once it is signed
   const signed = page.waitForResponse(
     (r) => r.url().endsWith(`/api/sessions/${session.id}/finalize`) && r.ok(),
   )
-  await signDialog.getByRole("button", { name: "Sign and lock" }).click()
+  // The note may propose chart updates; deciding them is chart-proposals.spec.ts's
+  // concern, and signing past them is one click with a different label.
+  await signDialog.getByRole("button", { name: /^Sign (and lock|without updating)$/ }).click()
   await signed
 
   // Signed: the clip is gone, and the note is signed.

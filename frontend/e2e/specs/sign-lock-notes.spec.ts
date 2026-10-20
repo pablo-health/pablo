@@ -43,7 +43,9 @@ async function signInDialog(page: Page, credentials: string) {
   await expect(dialog.getByTestId("signature-preview")).toContainText(
     `Electronically signed by ${SIGNER}, ${credentials}`,
   )
-  await dialog.getByRole("button", { name: "Sign and lock" }).click()
+  // The note may propose chart updates; deciding them is chart-proposals.spec.ts's
+  // concern, and signing past them is one click with a different label.
+  await dialog.getByRole("button", { name: /^Sign (and lock|without updating)$/ }).click()
   await expect(dialog).toBeHidden()
 }
 
