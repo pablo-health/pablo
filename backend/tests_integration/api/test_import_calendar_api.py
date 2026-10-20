@@ -190,10 +190,10 @@ def _query(
 ) -> list[Any]:
     with engine.connect() as conn:
         conn.execute(
-            text("SELECT set_config('search_path', :p, false)"),
+            text("SELECT set_config('search_path', :p, true)"),
             {"p": f"{schema}, platform, public"},
         )
-        conn.execute(text("SELECT set_config('app.current_user_id', :u, false)"), {"u": _USER})
+        conn.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _USER})
         rows = conn.execute(text(sql), params or {}).all()
         conn.rollback()
     return rows
