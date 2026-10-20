@@ -42,6 +42,10 @@ _ARCHIVE_TOPS = {
 MIXED_LAYOUT_REASON = (
     "This zip holds both an export and a calendar folder. Upload them one at a time."
 )
+NO_LAYOUT_REASON = (
+    "This zip holds no SimplePractice export or calendar folder. For a saved "
+    "calendar, put its .json files in a folder named calendar and zip that folder."
+)
 
 
 def detect_layout(root: Path) -> Layout | None:
@@ -65,6 +69,7 @@ def detect_layout(root: Path) -> Layout | None:
 
 __all__ = [
     "MIXED_LAYOUT_REASON",
+    "NO_LAYOUT_REASON",
     "Layout",
     "SimplePracticeArchive",
     "SimplePracticeCalendar",

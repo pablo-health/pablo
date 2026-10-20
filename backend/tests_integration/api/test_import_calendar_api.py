@@ -399,3 +399,19 @@ def test_a_zip_holding_both_layouts_is_refused(client: TestClient, schema: str) 
     assert resp.status_code == 400, resp.text
     assert resp.json()["error"]["code"] == "INVALID_ARCHIVE"
     assert client.get("/api/migration/runs").json()["runs"] == []
+
+
+def test_a_zip_of_loose_calendar_files_is_refused_with_what_to_do(
+    client: TestClient, schema: str
+) -> None:
+    loose = {name.removeprefix("calendar/"): data for name, data in _feed_files().items()}
+    resp = client.post(
+        "/api/migration/runs",
+        files={"file": ("loose.zip", _zip(loose), "application/zip")},
+        data={"scope": "patients"},
+    )
+    assert resp.status_code == 400, resp.text
+    error = resp.json()["error"]
+    assert error["code"] == "INVALID_ARCHIVE"
+    assert "folder named calendar" in error["message"]
+    assert client.get("/api/migration/runs").json()["runs"] == []

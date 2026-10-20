@@ -45,7 +45,7 @@ from ..migration.ledger import (
     sweep_expired_archives,
 )
 from ..migration.preview import decisions_complete
-from ..migration.readers import MIXED_LAYOUT_REASON, detect_layout
+from ..migration.readers import MIXED_LAYOUT_REASON, NO_LAYOUT_REASON, detect_layout
 from ..migration.readers.simplepractice import SOURCE_SYSTEM
 from ..models import User
 from ..models.audit import ResourceType
@@ -192,6 +192,16 @@ def _run_or_404(run_id: str) -> Any:
     if run is None:
         raise NotFoundError("That import was not found.")
     return run
+
+
+def _one_layout(unpacked: Path) -> None:
+    """Refuse an upload no reader takes, before the store copies it anywhere:
+    one holding both layouts, or one holding neither."""
+    layout = detect_layout(unpacked)
+    if layout == "mixed":
+        raise ArchiveError(MIXED_LAYOUT_REASON, code="INVALID_ARCHIVE")
+    if layout is None:
+        raise ArchiveError(NO_LAYOUT_REASON, code="INVALID_ARCHIVE")
 
 
 async def _spool_upload(file: UploadFile, into: Path) -> int:
@@ -361,13 +371,9 @@ async def start_import(
         upload = Path(spool) / "export.zip"
         size = await _spool_upload(file, upload)
         try:
-            ref = store.put(_schema(ctx), upload, password or None)
+            ref = store.put(_schema(ctx), upload, password or None, check=_one_layout)
         except ArchiveError as exc:
             raise BadRequestError(str(exc), code=exc.code) from exc
-    unpacked = store.path(_schema(ctx), ref)
-    if unpacked is not None and detect_layout(unpacked) == "mixed":
-        store.delete(_schema(ctx), ref)
-        raise BadRequestError(MIXED_LAYOUT_REASON, code="INVALID_ARCHIVE")
     run = new_run(
         session, source_system=SOURCE_SYSTEM, scope=scope, started_by=user.id, archive_ref=ref
     )
