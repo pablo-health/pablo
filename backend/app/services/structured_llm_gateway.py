@@ -84,6 +84,17 @@ def _attempt_timeout(timeout_seconds: float, started: float, policy: RetryPolicy
     return max(min(timeout_seconds, remaining), _MIN_ATTEMPT_TIMEOUT_SECONDS)
 
 
+# Gemini models that accept ThinkingLevel.MINIMAL. Measured against Vertex
+# AI on 2026-10-21 by sending one request per model and level:
+#   gemini-3.5-flash         MINIMAL, LOW, MEDIUM, HIGH
+#   gemini-3.1-pro-preview   LOW, MEDIUM, HIGH (MINIMAL rejected)
+#   gemini-3.8-flash         LOW, MEDIUM, HIGH (MINIMAL rejected)
+#   gemini-4-argon           LOW, MEDIUM, HIGH (MINIMAL rejected)
+# A model not listed gets LOW for a zero budget, which every model above
+# accepts. Add a model here only after checking it takes MINIMAL.
+_GEMINI_MINIMAL_THINKING_MODELS: frozenset[str] = frozenset({"gemini-3.5-flash"})
+
+
 def _gemini_thinking_config(types: Any, model: str, budget: int | None) -> Any:
     """Build native thinking config for Gemini 3.x/4.x and legacy models."""
     if budget is None:
@@ -95,8 +106,15 @@ def _gemini_thinking_config(types: Any, model: str, budget: int | None) -> Any:
         # Argon's latency/quality evals were run with LOW for explicit calls.
         level = types.ThinkingLevel.LOW
     elif budget == 0:
-        # Gemini 3.x has no budget=0 switch; MINIMAL is its lowest level.
-        level = types.ThinkingLevel.MINIMAL
+        # Gemini 3.x has no budget=0 switch; the lowest level a model accepts
+        # stands in for it. Only some models accept MINIMAL, and the rest
+        # answer 400 "Thinking level is unsupported", so it is sent only to a
+        # model known to take it and every other model gets LOW.
+        level = (
+            types.ThinkingLevel.MINIMAL
+            if normalized in _GEMINI_MINIMAL_THINKING_MODELS
+            else types.ThinkingLevel.LOW
+        )
     elif budget <= _GEMINI_THINKING_LOW_MAX_BUDGET:
         level = types.ThinkingLevel.LOW
     elif budget <= _GEMINI_THINKING_MEDIUM_MAX_BUDGET:
