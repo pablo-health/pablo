@@ -976,6 +976,17 @@ def _resolve_user(
             },
         )
 
+    # The sign-in's audit row, written by its first request whatever the
+    # identity provider's hooks do (``sign_in_audit``). Only for a disabled-
+    # and allowlist-cleared user, hence here. Before the arm below, so the
+    # request session's commit inside ``tenant_db_session`` happens first and
+    # the GUC is set on the transaction the rest of the request runs in.
+    # Token-exchange and CLI callers pass no request and are not a sign-in.
+    if request is not None:
+        from .sign_in_audit import record_sign_in
+
+        record_sign_in(str(pablo_user_id), decoded_token, request)
+
     bind_log_user_id(str(pablo_user_id))
     # Arm the RLS ``app.current_user_id`` GUC for the resolved user, right
     # beside the logging var above. Both name "who this request is"; they
