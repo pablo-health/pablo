@@ -37,11 +37,14 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from backend.app.db import _request_session
 from backend.app.services.chat_llm_gateway import GeminiChatLLMGateway, StreamEvent
 from backend.app.services.llm_telemetry import (
+    USAGE_LOG_MESSAGE,
     LLMSpanRecorder,
     LLMSpanRequest,
     RetrievalSpanRecorder,
     RetrievedDocumentRef,
     _build_resource,
+    llm_feature,
+    llm_feature_var,
     llm_span,
     retrieval_span,
 )
@@ -494,3 +497,78 @@ class TestResourceProject:
         settings = SimpleNamespace(llm_trace_service_name="pablo-backend", llm_trace_project="")
         attrs = dict(_build_resource(settings).attributes)  # type: ignore[arg-type]
         assert "openinference.project.name" not in attrs
+
+
+class TestUsageLog:
+    """One ``llm_call`` record per span: the feature, the model, the token
+    counts, and nothing from the prompt or the completion."""
+
+    @staticmethod
+    def _records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+        return [r for r in caplog.records if r.getMessage() == USAGE_LOG_MESSAGE]
+
+    def test_each_span_writes_one_record_under_its_feature(
+        self, span_exporter: InMemorySpanExporter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        with (
+            llm_feature("note_generation"),
+            llm_span(LLMSpanRequest(operation="structured", model="m")) as rec,
+        ):
+            rec.set_token_usage(prompt_tokens=31, completion_tokens=12, total_tokens=43)
+
+        (record,) = self._records(caplog)
+        assert record.llm_feature == "note_generation"
+        assert record.llm_operation == "structured"
+        assert record.llm_model == "m"
+        assert record.llm_provider == "google"
+        assert (record.llm_prompt_tokens, record.llm_completion_tokens) == (31, 12)
+        assert record.llm_total_tokens == 43
+        assert record.llm_latency_ms >= 0.0
+        assert not hasattr(record, "llm_error_class")
+
+        attrs = dict(span_exporter.get_finished_spans()[0].attributes or {})
+        assert attrs["pablo.llm_feature"] == "note_generation"
+
+    def test_a_gateway_call_logs_its_tokens_and_no_content(
+        self, span_exporter: InMemorySpanExporter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        gw = GeminiStructuredLLMGateway()
+        gw._client = _FakeStructuredClient()
+        gw.complete_structured(
+            model="gemini-2.5-pro",
+            system_prompt=_SECRET_SYSTEM,
+            user_prompt=_SECRET_USER,
+            response_schema={"type": "object", "properties": {"note": {"type": "string"}}},
+            max_output_tokens=256,
+        )
+
+        (record,) = self._records(caplog)
+        assert record.llm_model == "gemini-2.5-pro"
+        assert (record.llm_prompt_tokens, record.llm_completion_tokens) == (31, 12)
+        assert "llm_feature" not in record.__dict__
+        haystack = " ".join(f"{k}={v}" for k, v in record.__dict__.items())
+        for secret in (_SECRET_SYSTEM, _SECRET_USER, _SECRET_RESPONSE):
+            assert secret not in haystack, f"content marker {secret!r} leaked into the usage log"
+
+    def test_a_failed_call_records_its_error_class(
+        self, span_exporter: InMemorySpanExporter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        with (
+            pytest.raises(ValueError, match="boom"),
+            llm_span(LLMSpanRequest(operation="chat", model="m")),
+        ):
+            raise ValueError("boom")
+
+        (record,) = self._records(caplog)
+        assert record.llm_error_class == "ValueError"
+        assert "boom" not in " ".join(str(v) for v in record.__dict__.values())
+
+    def test_an_unlabelled_gateway_keeps_the_callers_feature(self) -> None:
+        with llm_feature("outer"):
+            with llm_feature(None):
+                assert llm_feature_var.get() == "outer"
+            assert llm_feature_var.get() == "outer"
+        assert llm_feature_var.get() is None

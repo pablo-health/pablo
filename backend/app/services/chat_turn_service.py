@@ -45,7 +45,7 @@ from .chat_context_bundler import (
 )
 from .chat_failover import failover_chat_gateway
 from .chat_llm_gateway import PATIENT_CONTEXT_DELIMITER, StreamEvent, UserAssistantTurn
-from .llm_telemetry import RetrievedDocumentRef, retrieval_span
+from .llm_telemetry import RetrievedDocumentRef, llm_feature, retrieval_span
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -291,8 +291,11 @@ class ChatTurnService:
         if lock.locked():
             raise TurnConcurrencyError(context.conversation_id)
         async with lock:
-            async for event in self._run_turn_locked(context):
-                yield event
+            # The turn's model calls carry the caller's feature key, so
+            # the usage record says which feature spent the tokens.
+            with llm_feature(context.caller_feature_key):
+                async for event in self._run_turn_locked(context):
+                    yield event
 
     # ------------------------------------------------------------------
     # Core flow
