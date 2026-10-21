@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import distinct, func, literal, select, tuple_
+from sqlalchemy import distinct, func, literal, select, text, tuple_
 
 from ...db.models import AuditLogRow
 from ...models.audit import ACTOR_TYPE_PATIENT
@@ -93,6 +93,31 @@ class PostgresAuditRepository(AuditRepository):
         query = query.order_by(AuditLogRow.timestamp.desc(), AuditLogRow.id.desc()).limit(limit)
 
         return [_row_to_entry(row) for row in self._session.execute(query).scalars().all()]
+
+    def lock_and_check_sign_in(self, user_id: str, sign_in: str, since: datetime) -> bool:
+        """Whether a ``signed_in`` row for this sign-in exists, holding a lock on it.
+
+        ``sign_in`` is the opaque per-sign-in id stored in the row's ``changes``.
+        The transaction-scoped advisory lock serializes two first requests of
+        the same sign-in racing on different workers: the second waits until
+        the first commits, then finds its row. ``since`` (the sign-in time,
+        less a margin) only narrows the scan.
+        """
+        self._session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"signed_in:{sign_in}"},
+        )
+        found = self._session.execute(
+            select(AuditLogRow.id)
+            .where(
+                AuditLogRow.user_id == user_id,
+                AuditLogRow.action == "signed_in",
+                AuditLogRow.timestamp >= since,
+                AuditLogRow.changes["sign_in"].astext == sign_in,
+            )
+            .limit(1)
+        ).first()
+        return found is not None
 
     def append(self, entry: AuditLogEntry) -> None:
         self._session.add(_entry_to_row(entry))

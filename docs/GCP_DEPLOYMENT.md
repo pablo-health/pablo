@@ -60,6 +60,8 @@ The script is idempotent — rerunning it skips anything that already exists. In
 9. Deploys both services to Cloud Run, wired to the database and Identity Platform.
 10. Prints the frontend URL and next steps.
 
+If the Identity Platform blocking functions in `functions/` are deployed, the script also registers them as `beforeCreate` / `beforeSignIn` triggers. They are optional defense in depth: the backend refuses non-allowlisted and disabled accounts on every request, and records each sign-in in the practice audit log itself. See [`functions/README.md`](../functions/README.md) for what they add and how to unregister them.
+
 **Expected runtime:** 10–15 minutes, most of it waiting on Cloud SQL instance creation.
 
 **Pin a specific release** by setting `PABLO_VERSION` before invoking the script:

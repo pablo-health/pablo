@@ -1359,7 +1359,12 @@ gcloud run services update pablo-backend \
 
 echo -e "${GREEN}CORS + OIDC verification configured${NC}"
 
-# STEP 9b: Wire blocking functions into Identity Platform.
+# STEP 9b: Wire blocking functions into Identity Platform (optional).
+#
+# Defense in depth, not a dependency: the backend refuses non-allowlisted
+# and disabled accounts on every request and records each sign-in in the
+# audit log itself, so sign-in works and is audited whether or not these
+# are registered (see functions/README.md, which also covers removing them).
 #
 # Defense against PABLO-002 (open Firebase signups). Without this,
 # anyone can hit identitytoolkit /accounts:signUp directly and mint
@@ -1412,7 +1417,8 @@ if [ -n "$BLOCKING_FN_BEFORE_CREATE_URI" ] || [ -n "$BLOCKING_FN_BEFORE_SIGNIN_U
     fi
 else
     echo -e "${YELLOW}No deployed blocking functions found in ${REPO_LOCATION}.${NC}"
-    echo -e "${YELLOW}Deploy them first (PABLO-002 / open-signup hardening):${NC}"
+    echo "  They are optional: sign-in works and is audited without them."
+    echo -e "${YELLOW}To add them (PABLO-002 / open-signup hardening):${NC}"
     echo "  cd functions && npm install && npm run build"
     echo "  firebase deploy --only functions:beforeCreate,functions:beforeSignIn"
     echo "  ./setup-solo.sh   # rerun — it will detect them and wire them up"
