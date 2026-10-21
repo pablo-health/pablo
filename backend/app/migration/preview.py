@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from ..patients.matching import Candidate, MatchContext, PatientHint, match_patient
 from .attribution import ArchiveAttribution, attribute_archive
-from .readers.simplepractice_calendar import CALENDAR_CLIENT
+from .readers.simplepractice_calendar import ATTENDED, CALENDAR_APPOINTMENT, CALENDAR_CLIENT
 
 if TYPE_CHECKING:
     from datetime import date, datetime, tzinfo
@@ -367,7 +367,8 @@ def decisions_complete(preview: dict[str, Any], decisions: dict[str, Any]) -> li
 CALENDAR_CANNOT_LAND_REASONS = {
     "group_appointment": "Group appointments land in a later version.",
     "external_event": "Events from your outside calendars stay where they are.",
-    "not_attended": "Past no-shows and cancellations are not added to the calendar.",
+    "cancelled": "Cancelled appointments and no-shows.",
+    "no_attendance": "Past appointments with no attendance recorded.",
     "no_client": "Appointments that name no client, or whose client the file left out.",
     "unrecognized": "Entries that are not part of a calendar response this version knows.",
     "malformed": "Appointments the file recorded incompletely, such as without an end time.",
@@ -417,16 +418,19 @@ def lands_as(appointment: CalendarAppointment, clock: Clock) -> LandsAs | None:
     """How ``appointment`` lands, judged by calendar day in the practice's zone.
 
     A cancellation or a no-show is that, whatever the day: an appointment the
-    client cancelled next week must never land as booked. Otherwise today's
+    client cancelled next week must never land as booked, and a recorded status
+    this version does not know is read as a cancellation. Otherwise today's
     appointments are still the day's work and land as scheduled, whatever the
     clock says, and an earlier day's lands as a completed visit only when the
     feed says the client was seen.
     """
     status = appointment.attendance_status
-    if status in _CANCELLED_STATUSES:
-        return "cancelled"
     if status == _NO_SHOW_STATUS:
         return "no_show"
+    if status in _CANCELLED_STATUSES or (status is not None and status != ATTENDED):
+        # Any other recorded status ("Clinician Canceled", a wording this
+        # version has not seen) means the visit is not going ahead as booked.
+        return "cancelled"
     if appointment.start_at.astimezone(clock.zone).date() >= clock.today:
         return "scheduled"
     return "completed" if appointment.attended else None
@@ -461,12 +465,15 @@ def _calendar_cannot_land(
     out: list[dict[str, Any]] = []
     groups = sum(1 for u in calendar.unsupported if u.kind == "group")
     unknown = len(calendar.unsupported) - groups
-    not_attended = sum(1 for r in records if not r["landable"])
+    missed = [r for r in records if not r["landable"]]
+    cancelled = sum(1 for r in missed if r["lands_as"] is not None)
+    no_attendance = len(missed) - cancelled
     no_client = calendar.skipped.get("no_client", 0) + calendar.skipped.get("client_missing", 0)
     for what, count in (
         ("group_appointment", groups),
         ("external_event", calendar.skipped.get("external", 0)),
-        ("not_attended", not_attended),
+        ("cancelled", cancelled),
+        ("no_attendance", no_attendance),
         ("no_client", no_client),
         ("unrecognized", unknown),
         ("malformed", calendar.skipped.get("malformed", 0)),
@@ -478,6 +485,48 @@ def _calendar_cannot_land(
         for rel, why in calendar.unreadable
     )
     return out
+
+
+def _why_not(how: LandsAs | None) -> str:
+    """The cannot-land reason for an appointment that does not land."""
+    return "no_attendance" if how is None else "cancelled"
+
+
+def _calendar_records(
+    calendar: SimplePracticeCalendar,
+    inputs: PreviewInputs,
+    clock: Clock,
+    counts: dict[str, Counter[str]],
+) -> list[dict[str, Any]]:
+    """One preview record per feed appointment, saying whether and how it lands."""
+    records: list[dict[str, Any]] = []
+    for appointment in calendar.appointments:
+        entry = inputs.ledger.get((CALENDAR_APPOINTMENT, appointment.source_id))
+        state = _delta_state(entry, appointment.digest, inputs.edited_targets)
+        how = lands_as(appointment, clock)
+        landable = _calendar_landable(how, entry)
+        records.append(
+            {
+                "record_type": "appointment",
+                "source_id": appointment.source_id,
+                "path": appointment.path,
+                "kind": "appointment",
+                "label": "Session",
+                "when": appointment.start_at.date().isoformat(),
+                "start_at": appointment.start_at.isoformat(),
+                "end_at": appointment.end_at.isoformat(),
+                "lands_as": how,
+                "card_id": appointment.client_id,
+                "evidence": "client",
+                "name_disagrees": False,
+                "candidates": [appointment.client_id],
+                "state": state,
+                "landable": landable,
+                "reason": None if landable else CALENDAR_CANNOT_LAND_REASONS[_why_not(how)],
+            }
+        )
+        counts["appointment"][state if landable else "skipped"] += 1
+    return records
 
 
 def build_calendar_preview(
@@ -493,9 +542,15 @@ def build_calendar_preview(
     inputs = inputs or PreviewInputs()
     counts: dict[str, Counter[str]] = defaultdict(Counter)
     existing = MatchContext.over(inputs.existing_patients)
+    records = _calendar_records(calendar, inputs, clock, counts)
+    # A client is proposed only for an appointment that lands: a client whose
+    # every appointment is cancelled or unrecorded gets no chart.
+    landing_clients = {r["card_id"] for r in records if r["landable"]}
     clients: list[dict[str, Any]] = []
     duplicates: list[dict[str, Any]] = []
     for client in calendar.clients:
+        if client.source_id not in landing_clients:
+            continue
         # A calendar import ledgers its clients under their own record type,
         # so a later export import does not adopt a name-only patient as if
         # its card had landed. A patient an export import made from the same
@@ -535,37 +590,11 @@ def build_calendar_preview(
             duplicates.append({"card_id": client.source_id, "possible_duplicates": possible})
             counts["contact"]["unresolved"] += 1
 
-    records: list[dict[str, Any]] = []
-    for appointment in calendar.appointments:
-        entry = inputs.ledger.get(("appointment", appointment.source_id))
-        state = _delta_state(entry, appointment.digest, inputs.edited_targets)
-        how = lands_as(appointment, clock)
-        landable = _calendar_landable(how, entry)
-        records.append(
-            {
-                "record_type": "appointment",
-                "source_id": appointment.source_id,
-                "path": appointment.path,
-                "kind": "appointment",
-                "label": "Session",
-                "when": appointment.start_at.date().isoformat(),
-                "start_at": appointment.start_at.isoformat(),
-                "end_at": appointment.end_at.isoformat(),
-                "lands_as": how,
-                "card_id": appointment.client_id,
-                "evidence": "client",
-                "name_disagrees": False,
-                "candidates": [appointment.client_id],
-                "state": state,
-                "landable": landable,
-                "reason": None if landable else CALENDAR_CANNOT_LAND_REASONS["not_attended"],
-            }
-        )
-        counts["appointment"][state if landable else "skipped"] += 1
-
     return {
         "source_system": "simplepractice",
         "layout": "calendar",
+        # The day "ahead" was judged from; apply lands what this preview said.
+        "judged_on": clock.today.isoformat(),
         "scope": inputs.scope,
         "clients": clients,
         "non_client_contacts": [],

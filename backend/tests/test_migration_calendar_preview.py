@@ -108,7 +108,7 @@ def test_group_and_external_entries_are_reported_not_landed(
     calendar: SimplePracticeCalendar,
 ) -> None:
     what = {c["what"]: c["count"] for c in _preview(calendar)["cannot_land"]}
-    assert what == {"group_appointment": 1, "external_event": 1, "not_attended": 2}
+    assert what == {"group_appointment": 1, "external_event": 1, "cancelled": 2}
 
 
 def test_preview_carries_no_feed_content(calendar: SimplePracticeCalendar) -> None:
@@ -156,8 +156,8 @@ def test_a_preferred_name_matching_a_patient_is_also_a_question(
 
 def test_second_run_reads_as_a_delta(calendar: SimplePracticeCalendar) -> None:
     landed = {
-        ("appointment", a.source_id): LedgerEntry(
-            "appointment",
+        ("calendar_appointment", a.source_id): LedgerEntry(
+            "calendar_appointment",
             a.source_id,
             "appointments",
             f"a-{a.source_id}",
@@ -185,9 +185,15 @@ def test_second_run_reads_as_a_delta(calendar: SimplePracticeCalendar) -> None:
     }
 
     # One appointment moved in the feed since: its digest no longer matches.
-    moved = ("appointment", "3793472377")
+    moved = ("calendar_appointment", "3793472377")
     landed[moved] = LedgerEntry(
-        "appointment", "3793472377", "appointments", "a-3793472377", "stale", "landed", "r-1"
+        "calendar_appointment",
+        "3793472377",
+        "appointments",
+        "a-3793472377",
+        "stale",
+        "landed",
+        "r-1",
     )
     p = _preview(calendar, ledger=landed)
     states = {r["source_id"]: r["state"] for r in p["records"]}
@@ -196,7 +202,13 @@ def test_second_run_reads_as_a_delta(calendar: SimplePracticeCalendar) -> None:
 
     # Undone, an earlier landing counts for nothing.
     landed[moved] = LedgerEntry(
-        "appointment", "3793472377", "appointments", "a-3793472377", "stale", "undone", "r-1"
+        "calendar_appointment",
+        "3793472377",
+        "appointments",
+        "a-3793472377",
+        "stale",
+        "undone",
+        "r-1",
     )
     states = {r["source_id"]: r["state"] for r in _preview(calendar, ledger=landed)["records"]}
     assert states["3793472377"] == "new"
@@ -216,8 +228,14 @@ def test_a_cancellation_never_lands_as_a_new_appointment(tmp_path: Path) -> None
     assert (record["lands_as"], record["landable"]) == ("cancelled", False)
 
     landed = {
-        ("appointment", appointment["id"]): LedgerEntry(
-            "appointment", appointment["id"], "appointments", "a-1", "earlier", "landed", "r-1"
+        ("calendar_appointment", appointment["id"]): LedgerEntry(
+            "calendar_appointment",
+            appointment["id"],
+            "appointments",
+            "a-1",
+            "earlier",
+            "landed",
+            "r-1",
         )
     }
     (record,) = _preview(feed, ledger=landed)["records"]
@@ -285,3 +303,22 @@ def test_a_zip_of_the_calendar_folder_alone_keeps_its_folder(tmp_path: Path) -> 
         _zipped({"My saved feed/calendar/appointments-07.json": data}), tmp_path / "wrapped"
     )
     assert detect_layout(tmp_path / "wrapped") == "calendar"
+
+
+def test_a_status_this_version_does_not_know_never_books(tmp_path: Path) -> None:
+    source = json.loads((FIXTURE / "calendar" / "appointments-06.json").read_text())
+    source["data"][0]["attributes"]["attendanceStatus"] = "Clinician Canceled"
+    folder = tmp_path / "calendar"
+    folder.mkdir()
+    (folder / "a.json").write_text(json.dumps(source))
+    p = _preview(read_simplepractice_calendar(tmp_path))
+    (record,) = p["records"]
+    assert (record["lands_as"], record["landable"]) == ("cancelled", False)
+    # Its client has nothing that lands, so no chart is proposed for them.
+    assert p["clients"] == []
+    assert p["counts"].get("contact") is None
+    assert [c["what"] for c in p["cannot_land"]] == ["cancelled"]
+
+
+def test_the_preview_records_the_day_it_was_judged_on(calendar: SimplePracticeCalendar) -> None:
+    assert _preview(calendar)["judged_on"] == "2026-10-19"

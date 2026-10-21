@@ -527,7 +527,11 @@ def undo_import(
         request,
         resource_type=ResourceType.IMPORT_RUN,
         resource_id=run.id,
-        changes={"removed": result["removed"], "kept": len(result["kept"])},
+        changes={
+            "removed": result["removed"],
+            "restored": result.get("restored", {}),
+            "kept": len(result["kept"]),
+        },
     )
     return _detail(run)
 

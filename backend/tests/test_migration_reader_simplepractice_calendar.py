@@ -17,8 +17,10 @@ from pathlib import Path
 
 import pytest
 
+from backend.app.migration.readers import detect_layout
 from backend.app.migration.readers.simplepractice_calendar import (
     SimplePracticeCalendar,
+    calendar_files,
     read_simplepractice_calendar,
 )
 
@@ -211,3 +213,27 @@ def test_an_appointment_whose_client_is_not_included_is_skipped(tmp_path: Path) 
     calendar = read_simplepractice_calendar(tmp_path)
     assert [a.client_id for a in calendar.appointments] == [BLAKE]
     assert calendar.skipped == {"client_missing": 1}
+
+
+def test_files_are_read_in_the_order_a_browser_saved_them(tmp_path: Path) -> None:
+    folder = tmp_path / "calendar"
+    folder.mkdir()
+    names = ["appointments (10).json", "appointments.json", "appointments (2).json"]
+    names += ["feed-10.json", "feed-2.json", "notes.txt"]
+    for name in names:
+        (folder / name).write_text("{}")
+    assert [p.name for p in calendar_files(tmp_path)] == [
+        "appointments.json",
+        "appointments (2).json",
+        "appointments (10).json",
+        "feed-2.json",
+        "feed-10.json",
+    ]
+
+
+def test_a_capitalised_calendar_folder_is_read(tmp_path: Path) -> None:
+    folder = tmp_path / "Calendar"
+    folder.mkdir()
+    (folder / "a.json").write_bytes((FIXTURE / "calendar" / "appointments-07.json").read_bytes())
+    assert detect_layout(tmp_path) == "calendar"
+    assert len(read_simplepractice_calendar(tmp_path).appointments) == 2

@@ -159,7 +159,6 @@ def run_apply(schema: str, user_id: str, run_id: str, practice_id: str | None) -
                     calendar=read_simplepractice_calendar(path),
                     preview=run.preview,
                     decisions=run.decisions or {},
-                    clock=_clock(user_id),
                 )
             else:
                 report = applier.apply(

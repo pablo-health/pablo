@@ -222,7 +222,7 @@ def _ledger(engine: Engine, schema: str) -> dict[str, tuple[str, str]]:
         engine,
         schema,
         "SELECT source_id, target_id, state FROM import_records "
-        "WHERE record_type = 'appointment' AND state != 'undone'",
+        "WHERE record_type = 'calendar_appointment' AND state != 'undone'",
     )
     return {str(r[0]): (str(r[1]), str(r[2])) for r in rows}
 
@@ -288,7 +288,7 @@ def _cancel_and_reassign(
 
     undone = client.post(f"/api/migration/runs/{changed['id']}/undo", json={})
     assert undone.status_code == 200, undone.text
-    assert undone.json()["report"]["undo"]["restored"] == {"appointment": 2}
+    assert undone.json()["report"]["undo"]["restored"] == {"calendar_appointment": 2}
     assert _appointment(engine, schema, first_id)[0] == "confirmed"
     assert _appointment(engine, schema, visit_id) == ("completed", blake)
     assert _chart(engine, schema) == chart
@@ -304,12 +304,13 @@ def test_calendar_feed_end_to_end(client: TestClient, engine: Engine, schema: st
     assert {c["what"] for c in preview["cannot_land"]} == {
         "group_appointment",
         "external_event",
-        "not_attended",
+        "cancelled",
     }
 
     done = _apply(client, run["id"], {})
     report = done["report"]
-    assert report["counts"]["contact"] == {"created": 4}
+    # The run screen names the clients the import brought in.
+    assert (report["counts"]["contact"], len(done["clients"])) == ({"created": 4}, 4)
     assert report["counts"]["appointment"] == {"new": 4}
     assert "chart_updates" not in report  # no notes, nothing to propose from
     assert done["has_archive"] is False
@@ -358,7 +359,7 @@ def test_calendar_feed_end_to_end(client: TestClient, engine: Engine, schema: st
     assert undone.json()["report"]["undo"] == {
         "removed": {},
         "kept": [],
-        "restored": {"appointment": 1},
+        "restored": {"calendar_appointment": 1},
     }
     assert _chart(engine, schema) == chart
     assert _ledger(engine, schema)[MOVED] == (first_id, "landed")
@@ -370,9 +371,37 @@ def test_calendar_feed_end_to_end(client: TestClient, engine: Engine, schema: st
     undone = client.post(f"/api/migration/runs/{run['id']}/undo", json={})
     assert undone.status_code == 200, undone.text
     assert undone.json()["report"]["undo"] == {
-        "removed": {"appointment": 4, "calendar_client": 4},
+        "removed": {"calendar_appointment": 4, "calendar_client": 4},
         "kept": [],
     }
+    after = _chart(engine, schema)
+    assert (after["patients"], after["appointments"]) == (0, 0)
+    assert _ledger(engine, schema) == {}
+
+
+def test_undoing_the_first_run_first_takes_its_moved_appointment_too(
+    client: TestClient, engine: Engine, schema: str
+) -> None:
+    """A later run moved one of the first run's appointments. Undoing the first
+    run removes that appointment with the rest, and undoing the later run
+    afterwards brings nothing back."""
+    first = _upload(client, _zip(_feed_files()))
+    _apply(client, first["id"], {})
+    moved = _upload(client, _zip(_feed_files(moved_minutes=30)))
+    _apply(client, moved["id"], {})
+
+    undone = client.post(f"/api/migration/runs/{first['id']}/undo", json={})
+    assert undone.status_code == 200, undone.text
+    assert undone.json()["report"]["undo"]["removed"] == {
+        "calendar_appointment": 4,
+        "calendar_client": 4,
+    }
+    after = _chart(engine, schema)
+    assert (after["patients"], after["appointments"]) == (0, 0)
+
+    undone = client.post(f"/api/migration/runs/{moved['id']}/undo", json={})
+    assert undone.status_code == 200, undone.text
+    assert undone.json()["report"]["undo"] == {"removed": {}, "kept": []}
     after = _chart(engine, schema)
     assert (after["patients"], after["appointments"]) == (0, 0)
     assert _ledger(engine, schema) == {}

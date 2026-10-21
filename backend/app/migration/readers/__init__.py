@@ -21,8 +21,8 @@ from typing import Literal
 
 from .simplepractice import SimplePracticeArchive, read_simplepractice_archive
 from .simplepractice_calendar import (
-    CALENDAR_DIR,
     SimplePracticeCalendar,
+    calendar_files,
     read_simplepractice_calendar,
 )
 
@@ -56,7 +56,7 @@ def detect_layout(root: Path) -> Layout | None:
     ``mixed`` is both, which no reader takes.
     """
     root = Path(root)
-    calendar = any((root / CALENDAR_DIR).glob("*.json"))
+    calendar = bool(calendar_files(root))
     archive = any((root / top).is_dir() for top in _ARCHIVE_TOPS)
     if calendar and archive:
         return "mixed"

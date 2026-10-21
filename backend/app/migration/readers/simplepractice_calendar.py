@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -58,6 +59,12 @@ ATTENDED = "Show"
 #: apart from the export's ``contact`` so a later export import does not
 #: mistake a name-only patient for one whose card already landed.
 CALENDAR_CLIENT = "calendar_client"
+#: The ledger's record type for an appointment landed from a calendar feed,
+#: apart from the visits an export's notes create under ``appointment``.
+CALENDAR_APPOINTMENT = "calendar_appointment"
+
+#: A browser's name for a second save of the same file: ``name (2).json``.
+_SAVED_COPY = re.compile(r"^(?P<stem>.*?)(?:\s*\((?P<n>\d+)\))?$")
 
 #: A display name of first and last name has this many words.
 _FIRST_AND_LAST = 2
@@ -356,10 +363,49 @@ def _better_client(current: CalendarClient | None, new: CalendarClient) -> Calen
 # --------------------------------------------------------------------------- the folder
 
 
+def calendar_dir(root: Path) -> Path | None:
+    """The top-level calendar folder under ``root``, whatever its case."""
+    root = Path(root)
+    if not root.is_dir():
+        return None
+    for child in sorted(root.iterdir()):
+        if child.is_dir() and child.name.lower() == CALENDAR_DIR:
+            return child
+    return None
+
+
+def _natural(text: str) -> tuple[tuple[int, int | str], ...]:
+    return tuple(
+        (0, int(part)) if part.isdigit() else (1, part.lower())
+        for part in re.split(r"(\d+)", text)
+        if part
+    )
+
+
+def capture_order(path: Path) -> tuple[object, ...]:
+    """The order files were saved in, from their names.
+
+    Numbers sort as numbers (``-2`` before ``-10``), and a browser's
+    ``name (n).json`` comes after the ``name.json`` it copies, in ``n`` order.
+    """
+    match = _SAVED_COPY.match(path.stem)
+    stem, copy = (match["stem"], int(match["n"] or 0)) if match else (path.stem, 0)
+    return (_natural(stem), copy, path.name)
+
+
+def calendar_files(root: Path) -> list[Path]:
+    """The calendar folder's JSON files, in the order they were saved."""
+    folder = calendar_dir(root)
+    if folder is None:
+        return []
+    found = [p for p in folder.iterdir() if p.is_file() and p.suffix.lower() == ".json"]
+    return sorted(found, key=capture_order)
+
+
 def read_simplepractice_calendar(root: Path) -> SimplePracticeCalendar:
     """Read every ``calendar/*.json`` under ``root`` and merge them.
 
-    Files are read in name order, which is capture order, and a later file's
+    Files are read in the order they were saved (``capture_order``), and a later file's
     copy of an appointment or a client replaces an earlier one. A file that is
     not a calendar response is listed under ``unreadable`` with the reason and
     does not stop the read.
@@ -371,9 +417,7 @@ def read_simplepractice_calendar(root: Path) -> SimplePracticeCalendar:
     skipped: Counter[str] = Counter()
     files: list[str] = []
     unreadable: list[tuple[str, str]] = []
-    for path in sorted((root / CALENDAR_DIR).glob("*.json")):
-        if not path.is_file():
-            continue
+    for path in calendar_files(root):
         rel = path.relative_to(root).as_posix()
         files.append(rel)
         try:
@@ -401,6 +445,7 @@ def read_simplepractice_calendar(root: Path) -> SimplePracticeCalendar:
 
 __all__ = [
     "ATTENDED",
+    "CALENDAR_APPOINTMENT",
     "CALENDAR_CLIENT",
     "CALENDAR_DIR",
     "SOURCE_SYSTEM",
@@ -408,5 +453,8 @@ __all__ = [
     "CalendarClient",
     "SimplePracticeCalendar",
     "Unsupported",
+    "calendar_dir",
+    "calendar_files",
+    "capture_order",
     "read_simplepractice_calendar",
 ]

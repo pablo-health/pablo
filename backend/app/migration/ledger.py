@@ -33,7 +33,7 @@ from sqlalchemy import select
 
 from ..db.models import ImportRecordRow, ImportRunRow
 from ..utcnow import utc_now
-from .readers.simplepractice_calendar import CALENDAR_DIR
+from .readers.simplepractice_calendar import CALENDAR_CLIENT, CALENDAR_DIR
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -171,7 +171,7 @@ def client_records_for_run(session: Session, run_id: str) -> list[ImportRecordRo
     """
     stmt = select(ImportRecordRow).where(
         ImportRecordRow.run_id == run_id,
-        ImportRecordRow.record_type == "contact",
+        ImportRecordRow.record_type.in_(("contact", CALENDAR_CLIENT)),
         ImportRecordRow.target_table == "patients",
         ImportRecordRow.state != "undone",
     )
@@ -412,7 +412,7 @@ def extract_zip(source: Path | bytes, target: Path, password: str | None = None)
         tops = {Path(m.filename).parts[0] for m in members if "__MACOSX" not in m.filename}
         nested = all(len(Path(m.filename).parts) > 1 for m in members)
         strip = next(iter(tops)) if len(tops) == 1 and nested else None
-        if strip == CALENDAR_DIR:
+        if strip is not None and strip.lower() == CALENDAR_DIR:
             strip = None
         for member in members:
             if "__MACOSX" in member.filename:
