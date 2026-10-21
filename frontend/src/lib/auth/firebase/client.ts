@@ -136,6 +136,14 @@ export async function clearStaleSession(auth: Auth): Promise<void> {
   await clearFirebaseAuthStorage()
 }
 
+/** Headers for the ``/api/login`` cookie sync: the ID token, plus the
+ * refresh token when the SDK has one. */
+export function sessionSyncHeaders(idToken: string, refreshToken: string | undefined): Record<string, string> {
+  const headers: Record<string, string> = { Authorization: `Bearer ${idToken}` }
+  if (refreshToken) headers["X-Refresh-Token"] = refreshToken
+  return headers
+}
+
 /**
  * Reconcile a single ``onIdTokenChanged`` tick into the provider-neutral
  * user and the SSR session cookie. Extracted from the hook so the
@@ -179,7 +187,13 @@ export async function syncAuthTick(
     await withTimeout(
       fetch("/api/login", {
         method: "POST",
-        headers: { Authorization: `Bearer ${idToken}` },
+        // The refresh token as well, as the login screen and passkey step-up
+        // send it: on a host without the GCP metadata server the server
+        // seeds the session from it instead of minting a service-account
+        // custom token (NFAE_ALLOW_CLIENT_REFRESH_TOKEN). Ignored otherwise.
+        // Without it this sync, which fires first, fails there and the user
+        // is sent to /dashboard before any session cookie exists.
+        headers: sessionSyncHeaders(idToken, firebaseUser.refreshToken),
       }),
       AUTH_SYNC_TIMEOUT_MS,
       "/api/login",
