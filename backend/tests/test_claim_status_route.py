@@ -12,6 +12,7 @@ router mounted beside them and the clearinghouse answered by the fake.
 from __future__ import annotations
 
 from datetime import timedelta
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -38,9 +39,13 @@ __all__ = ["harness"]
 
 
 @pytest.fixture
-def tracker(harness: dict[str, Any]) -> Iterator[dict[str, Any]]:
+def tracker(harness: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     app = harness["app"]
     app.include_router(claim_status.router)
+    # The route's pipeline reads the clock the fixtures were dated by. On the
+    # wall clock, the feed's 45-day window passed the fixtures' NOW and the
+    # acknowledgement fell outside it.
+    monkeypatch.setattr(claim_status, "ClaimPipeline", partial(ClaimPipeline, now=lambda: NOW))
     client = FakeClearinghouse()
     receipts = app.dependency_overrides[get_claim_receipt_repository]()
     app.dependency_overrides[get_clearinghouse_client] = lambda: client
