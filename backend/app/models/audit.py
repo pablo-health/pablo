@@ -102,6 +102,11 @@ class AuditAction(StrEnum):
     APPOINTMENT_SERIES_CREATED = "appointment_series_created"
     APPOINTMENT_SERIES_UPDATED = "appointment_series_updated"
     APPOINTMENT_SERIES_CANCELLED = "appointment_series_cancelled"
+    # A client's own cancellation freed a slot and the open-slot event was
+    # raised for it (scheduling_engine/services/open_slots.py). Written by the
+    # system into the clinician's trail; the payload is the type id and the
+    # derived modality, never anything about the client.
+    APPOINTMENT_SLOT_OPENED = "appointment_slot_opened"
 
     # Admin operations
     EXPORT_QUEUE_VIEWED = "export_queue_viewed"

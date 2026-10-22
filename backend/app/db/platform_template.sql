@@ -46,7 +46,10 @@ CREATE TABLE platform.booking_links (
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     require_email_confirmation boolean DEFAULT true NOT NULL,
-    deleted_at timestamp with time zone
+    deleted_at timestamp with time zone,
+    slot_start_at timestamp with time zone,
+    slot_end_at timestamp with time zone,
+    slot_claimed_at timestamp with time zone
 );
 
 CREATE TABLE platform.claim_reviews (

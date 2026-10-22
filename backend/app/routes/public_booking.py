@@ -20,7 +20,7 @@ import logging
 import secrets
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -58,6 +58,7 @@ from ..models.booking_link import (
     PublicBookingConfirmation,
     PublicBookingLinkResponse,
     PublicManagedBooking,
+    PublicSlotOffer,
 )
 from ..models.enums import PracticeEdition
 from ..models.scheduling import FreeSlotsResponse, TimeSlotResponse
@@ -93,6 +94,7 @@ from ..services.google_calendar_service import (
     GoogleCalendarService,
     google_consent_surface,
 )
+from ..services.slot_link_booking import SlotTakenError, book_slot_link, is_slot_gone, slot_window
 from ..settings import get_settings
 from ..utcnow import utc_now
 from .scheduling import _push_cancellation_to_google, _sync_appointment_to_google
@@ -362,6 +364,8 @@ _SLOT_TAKEN = "That time was taken while you were confirming. Please pick anothe
 _SLOT_NO_LONGER_AVAILABLE = "That time is no longer available. Please pick another slot."
 _CAPTCHA_FAILED = "Verification failed. Please refresh and try again."
 _MANAGE_LINK_INVALID = "This link is not valid or has expired."
+_SLOT_LINK_TAKEN = "This time has been taken."
+_SLOT_LINK_OTHER_TIME = "This link books one time only."
 
 
 def require_captcha(
@@ -457,6 +461,25 @@ def get_public_booking_link(
         description=ctx.link.description,
         duration_minutes=ctx.appointment_type.duration_minutes,
         captcha_site_key=verifier.site_key,
+        slot=_slot_offer(ctx.link) if ctx.link.is_single_slot else None,
+    )
+
+
+def _iso_z(value: datetime) -> str:
+    """An instant rendered the way the availability engine renders slots."""
+    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _slot_offer(link: BookingLink) -> PublicSlotOffer:
+    """The one time a single-slot link books, as a visitor may see it.
+
+    ``taken`` reads the link alone — used, or past. A time the clinician has
+    since filled some other way still reads as open here; the booking POST
+    runs the collision check and is the answer that counts.
+    """
+    start, end = slot_window(link)
+    return PublicSlotOffer(
+        start=_iso_z(start), end=_iso_z(end), taken=is_slot_gone(link, utc_now())
     )
 
 
@@ -476,6 +499,18 @@ def get_public_free_slots(
     convention (the ``Z`` suffix is cosmetic — see the design doc).
     """
     parsed = _parse_booking_date(date_param)
+    if ctx.link.is_single_slot:
+        # A single-slot link never shows the diary: its one time, on its own
+        # day, while it is still there, and nothing else.
+        offer = _slot_offer(ctx.link)
+        own = [] if offer.taken or offer.start[:10] != parsed.isoformat() else [offer]
+        return FreeSlotsResponse(
+            date=parsed.isoformat(),
+            duration_minutes=ctx.appointment_type.duration_minutes,
+            slots=[TimeSlotResponse(start=s.start, end=s.end) for s in own],
+            total=len(own),
+            configured=True,
+        )
     result = engine.get_free_slots(
         ctx.link.user_id,
         parsed.isoformat(),
@@ -717,6 +752,97 @@ def _place_hold(
     )
 
 
+def _note_lines(request: CreatePublicBookingRequest, ctx: PublicBookingContext) -> list[str]:
+    lines = [f"Booked via booking link /{ctx.link.slug}."]
+    if request.note:
+        lines.append(f"Note from client: {request.note.strip()}")
+    return lines
+
+
+@dataclass
+class SingleSlotDeps:
+    """What a single-slot booking writes through, carried as one."""
+
+    link_repo: BookingLinkRepository
+    scheduling: SchedulingService
+    patient_repo: PatientRepository
+    coverage: CoverageRepos
+    gcal_service: GoogleCalendarService
+    load_policy: Callable[[], dict[str, object]]
+
+
+def _book_single_slot(
+    request: CreatePublicBookingRequest,
+    ctx: PublicBookingContext,
+    deps: SingleSlotDeps,
+    http_request: Request,
+    audit: AuditService,
+) -> PublicBookingConfirmation:
+    """Book a single-slot link's one time, once (see ``services/slot_link_booking``).
+
+    The requested start must be the link's own; anything else is refused
+    rather than quietly booked at the link's time. A second visitor, a time
+    that has passed, and a time the diary filled some other way all get the
+    same "taken" answer.
+
+    Nothing is sent from here — no confirmation email, no hold. The patient
+    record follows the instant path's chart rule: a fresh email gets a new
+    record, and an email matching an existing chart gets a quarantined
+    placeholder, never the chart itself. Under the practice's ``request`` mode
+    the clinician confirms the booking in-app, as with any self-booking.
+    """
+    start, end = slot_window(ctx.link)
+    try:
+        requested = datetime.fromisoformat(request.start_at.replace("Z", "+00:00"))
+    except ValueError as e:
+        raise BadRequestError(_SLOT_LINK_OTHER_TIME) from e
+    if requested.tzinfo is None or requested != start:
+        raise BadRequestError(_SLOT_LINK_OTHER_TIME)
+
+    def patient_for_booking() -> str:
+        return _patient_for_instant_booking(
+            request, ctx, deps.patient_repo, deps.coverage, http_request, audit
+        ).id
+
+    try:
+        appt = book_slot_link(
+            ctx.link,
+            link_repo=deps.link_repo,
+            scheduling=deps.scheduling,
+            appointment_type=ctx.appointment_type,
+            policy=deps.load_policy(),
+            patient_for_booking=patient_for_booking,
+            notes="\n".join(_note_lines(request, ctx)),
+            now=utc_now(),
+        )
+    except SlotTakenError as e:
+        raise ConflictError(_SLOT_LINK_TAKEN, code="SLOT_TAKEN") from e
+    except InvalidAppointmentError as e:
+        raise BadRequestError(str(e)) from e
+
+    audit.log_appointment_action(
+        AuditAction.APPOINTMENT_CREATED,
+        ctx.owner,
+        http_request,
+        appt.id,
+        patient_id=appt.patient_id,
+        changes={**_booking_provenance(ctx), "status": appt.status, "single_slot": True},
+        actor_type=ACTOR_TYPE_ANONYMOUS,
+    )
+    confirmed = appt.status == AppointmentStatus.CONFIRMED
+    if confirmed:
+        _sync_appointment_to_google(deps.scheduling, deps.gcal_service, ctx.owner, appt)
+
+    return PublicBookingConfirmation(
+        host_name=ctx.link.host_name,
+        title=ctx.link.title,
+        start_at=_iso_z(start),
+        end_at=_iso_z(end),
+        duration_minutes=appt.duration_minutes,
+        status="confirmed" if confirmed else "requested",
+    )
+
+
 @router.post(
     "/api/public/booking-links/{slug}/bookings",
     response_model=PublicBookingConfirmation,
@@ -738,6 +864,8 @@ def create_public_booking(
     gcal_service: GoogleCalendarService = Depends(get_public_gcal_service),
     sender: EmailSender = Depends(get_email_sender),
     audit: AuditService = Depends(get_audit_service),
+    link_repo: BookingLinkRepository = Depends(get_booking_link_repository),
+    load_policy: Callable[[], dict[str, object]] = Depends(get_public_policy_loader),
 ) -> PublicBookingConfirmation:
     """Book a free slot.
 
@@ -745,8 +873,26 @@ def create_public_booking(
     appointment and a confirmation email instead of an instant booking —
     see ``_place_hold``. The requested start must exactly match a
     currently-free slot — the client is never trusted about availability.
+    A single-slot link books its own slot and nothing else — see
+    ``_book_single_slot``.
     """
     _require_owner_may_accept_bookings(ctx.owner)
+
+    if ctx.link.is_single_slot:
+        return _book_single_slot(
+            request,
+            ctx,
+            SingleSlotDeps(
+                link_repo=link_repo,
+                scheduling=scheduling,
+                patient_repo=patient_repo,
+                coverage=repos,
+                gcal_service=gcal_service,
+                load_policy=load_policy,
+            ),
+            http_request,
+            audit,
+        )
 
     if ctx.link.require_email_confirmation and not sender.can_deliver:
         logger.warning("booking refused, cannot deliver confirmation: slug=%s", ctx.link.slug)
@@ -765,9 +911,7 @@ def create_public_booking(
     if slot is None:
         raise ConflictError(_SLOT_NO_LONGER_AVAILABLE)
 
-    note_lines = [f"Booked via booking link /{ctx.link.slug}."]
-    if request.note:
-        note_lines.append(f"Note from client: {request.note.strip()}")
+    note_lines = _note_lines(request, ctx)
 
     if ctx.link.require_email_confirmation:
         return _place_hold(

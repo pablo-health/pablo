@@ -1360,6 +1360,14 @@ class BookingLinkRow(PlatformBase):
     # deleted -- its slug stays claimed via the UNIQUE(slug) constraint
     # above, forever, for every caller including the original owner.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # A single-slot link books exactly this window and nothing else, once.
+    # NULL on an ordinary link, which offers whatever the diary has free.
+    slot_start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    slot_end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When a single-slot link was used. Set by a conditional UPDATE in the
+    # booking's own transaction, so a second visitor waits on the row lock and
+    # then finds it set — the link books once however close the two arrive.
+    slot_claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = {"schema": PLATFORM_SCHEMA}
 

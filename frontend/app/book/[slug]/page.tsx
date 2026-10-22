@@ -17,6 +17,7 @@ import {
   intakeInsurancePayload,
   type IntakeInsuranceForm,
 } from "@/components/booking/IntakeInsuranceFields"
+import { RequestSentPanel, SlotTakenPanel } from "@/components/booking/SingleSlotPanels"
 import { longDateLabel, slotTimeLabel } from "@/lib/booking/time"
 
 const TURNSTILE_SCRIPT_SRC = "https://challenges.cloudflare.com/turnstile/v0/api.js"
@@ -44,6 +45,16 @@ declare global {
  * `Z` suffix in slot strings is cosmetic, matching the engine).
  */
 
+interface Slot {
+  start: string
+  end: string
+}
+
+/** A single-slot link's one time; `taken` once it is booked or past. */
+interface SlotOffer extends Slot {
+  taken: boolean
+}
+
 interface BookingLinkCard {
   slug: string
   host_name: string
@@ -51,11 +62,7 @@ interface BookingLinkCard {
   description: string | null
   duration_minutes: number
   captcha_site_key: string | null
-}
-
-interface Slot {
-  start: string
-  end: string
+  slot: SlotOffer | null
 }
 
 interface SlotsResponse {
@@ -118,6 +125,8 @@ export default function PublicBookingPage({
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null)
+  // A single-slot link whose time went while this visitor was filling the form.
+  const [slotTakenHere, setSlotTakenHere] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -139,7 +148,8 @@ export default function PublicBookingPage({
   const slotsQuery = useQuery<SlotsResponse>({
     queryKey: ["public-booking-slots", slug, selectedDate],
     queryFn: () => fetchJson(`/api/public/booking-links/${slug}/slots?date=${selectedDate}`),
-    enabled: slug !== null && linkQuery.isSuccess && confirmation === null,
+    // A single-slot link has its one time on the card and no diary to browse.
+    enabled: slug !== null && linkQuery.isSuccess && !linkQuery.data?.slot && confirmation === null,
     // No retries: the public surface is rate-limited per IP, and the default
     // three retries turn a single 429 into four requests against the window
     // that just refused us.
@@ -152,7 +162,9 @@ export default function PublicBookingPage({
   const captchaWidgetIdRef = useRef<string | null>(null)
   // The widget's container only exists once the booking form renders
   // (selectedSlot truthy), so re-run the mount effect when that flips.
-  const captchaContainerMayExist = selectedSlot !== null
+  const singleSlot = linkQuery.data?.slot ?? null
+  const slotToBook: Slot | null = singleSlot ?? selectedSlot
+  const captchaContainerMayExist = slotToBook !== null
 
   useEffect(() => {
     if (!captchaSiteKey) return
@@ -181,7 +193,7 @@ export default function PublicBookingPage({
 
   async function submitBooking(e: React.FormEvent) {
     e.preventDefault()
-    if (!selectedSlot || !slug) return
+    if (!slotToBook || !slug) return
     setSubmitting(true)
     setSubmitError(null)
     try {
@@ -192,7 +204,7 @@ export default function PublicBookingPage({
           ...(captchaToken ? { "X-Captcha-Token": captchaToken } : {}),
         },
         body: JSON.stringify({
-          start_at: selectedSlot.start,
+          start_at: slotToBook.start,
           first_name: firstName,
           last_name: lastName,
           email,
@@ -200,6 +212,10 @@ export default function PublicBookingPage({
           insurance: useInsurance ? intakeInsurancePayload(insurance) : null,
         }),
       })
+      if (resp.status === 409 && singleSlot) {
+        setSlotTakenHere(true)
+        return
+      }
       if (resp.status === 409) {
         setSubmitError("That time was just taken. Please pick another slot.")
         setSelectedSlot(null)
@@ -262,6 +278,14 @@ export default function PublicBookingPage({
 
   const link = linkQuery.data!
 
+  if (confirmation?.status === "requested") {
+    return <RequestSentPanel confirmation={confirmation} />
+  }
+
+  if (!confirmation && singleSlot && (singleSlot.taken || slotTakenHere)) {
+    return <SlotTakenPanel hostName={link.host_name} />
+  }
+
   if (confirmation) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center bg-background px-6 py-12">
@@ -312,98 +336,107 @@ export default function PublicBookingPage({
           {link.description && <p className="mt-3 text-neutral-700">{link.description}</p>}
         </div>
 
-        <div className="card mb-6">
-          {slotsQuery.isSuccess && !slotsQuery.data.configured ? (
+        {singleSlot ? (
+          <div className="card mb-6" data-testid="single-slot-time">
+            <h2 className="mb-1 text-lg font-display font-semibold text-neutral-900">Your time</h2>
             <p className="text-neutral-700">
-              This host hasn&apos;t published their availability yet. Please contact them
-              directly to schedule.
+              {longDateLabel(singleSlot.start.slice(0, 10))} at {slotTimeLabel(singleSlot.start)}
             </p>
-          ) : (
-            <>
-              <h2 className="mb-3 text-lg font-display font-semibold text-neutral-900">
-                Pick a day
-              </h2>
-              <div className="flex gap-2 overflow-x-auto pb-2">
-                {dates.map((d) => {
-                  const label = dateLabel(d)
-                  const selected = d === selectedDate
-                  return (
-                    <button
-                      key={d}
-                      type="button"
-                      onClick={() => {
-                        setSelectedDate(d)
-                        setSelectedSlot(null)
-                      }}
-                      className={`flex min-w-16 flex-col items-center rounded-lg border px-3 py-2 transition-colors ${
-                        selected
-                          ? "border-primary-500 bg-primary-50 text-primary-800"
-                          : "border-border bg-card text-neutral-700 hover:border-primary-300"
-                      }`}
-                    >
-                      <span className="text-xs">{label.weekday}</span>
-                      <span className="text-lg font-semibold">{label.day}</span>
-                      <span className="text-xs">{label.month}</span>
-                    </button>
-                  )
-                })}
-              </div>
-
-              <h2 className="mb-3 mt-5 text-lg font-display font-semibold text-neutral-900">
-                Pick a time
-              </h2>
-              {slotsQuery.isLoading && (
-                <p className="text-muted-foreground">Checking availability…</p>
-              )}
-              {slotsQuery.isError && (
-                <div className="flex flex-col items-start gap-2">
-                  <p className="text-muted-foreground">
-                    {(slotsQuery.error as (Error & { status?: number }) | null)?.status === 429
-                      ? "Too many requests. Please wait a moment and try again."
-                      : "Something went wrong loading availability. Please try again."}
-                  </p>
-                  <Button type="button" variant="outline" onClick={() => slotsQuery.refetch()}>
-                    Try again
-                  </Button>
-                </div>
-              )}
-              {slotsQuery.isSuccess && slotsQuery.data.slots.length === 0 && (
-                <p className="text-muted-foreground">
-                  No openings on this day — try another date.
-                </p>
-              )}
-              {slotsQuery.isSuccess && slotsQuery.data.slots.length > 0 && (
-                <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-                  {slotsQuery.data.slots.map((slot) => {
-                    const selected = selectedSlot?.start === slot.start
+          </div>
+        ) : (
+          <div className="card mb-6">
+            {slotsQuery.isSuccess && !slotsQuery.data.configured ? (
+              <p className="text-neutral-700">
+                This host hasn&apos;t published their availability yet. Please contact them
+                directly to schedule.
+              </p>
+            ) : (
+              <>
+                <h2 className="mb-3 text-lg font-display font-semibold text-neutral-900">
+                  Pick a day
+                </h2>
+                <div className="flex gap-2 overflow-x-auto pb-2">
+                  {dates.map((d) => {
+                    const label = dateLabel(d)
+                    const selected = d === selectedDate
                     return (
                       <button
-                        key={slot.start}
+                        key={d}
                         type="button"
-                        onClick={() => setSelectedSlot(slot)}
-                        className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+                        onClick={() => {
+                          setSelectedDate(d)
+                          setSelectedSlot(null)
+                        }}
+                        className={`flex min-w-16 flex-col items-center rounded-lg border px-3 py-2 transition-colors ${
                           selected
-                            ? "border-primary-600 bg-primary-600 text-on-honey"
+                            ? "border-primary-500 bg-primary-50 text-primary-800"
                             : "border-border bg-card text-neutral-700 hover:border-primary-300"
                         }`}
                       >
-                        {slotTimeLabel(slot.start)}
+                        <span className="text-xs">{label.weekday}</span>
+                        <span className="text-lg font-semibold">{label.day}</span>
+                        <span className="text-xs">{label.month}</span>
                       </button>
                     )
                   })}
                 </div>
-              )}
-            </>
-          )}
-        </div>
 
-        {selectedSlot && (
+                <h2 className="mb-3 mt-5 text-lg font-display font-semibold text-neutral-900">
+                  Pick a time
+                </h2>
+                {slotsQuery.isLoading && (
+                  <p className="text-muted-foreground">Checking availability…</p>
+                )}
+                {slotsQuery.isError && (
+                  <div className="flex flex-col items-start gap-2">
+                    <p className="text-muted-foreground">
+                      {(slotsQuery.error as (Error & { status?: number }) | null)?.status === 429
+                        ? "Too many requests. Please wait a moment and try again."
+                        : "Something went wrong loading availability. Please try again."}
+                    </p>
+                    <Button type="button" variant="outline" onClick={() => slotsQuery.refetch()}>
+                      Try again
+                    </Button>
+                  </div>
+                )}
+                {slotsQuery.isSuccess && slotsQuery.data.slots.length === 0 && (
+                  <p className="text-muted-foreground">
+                    No openings on this day — try another date.
+                  </p>
+                )}
+                {slotsQuery.isSuccess && slotsQuery.data.slots.length > 0 && (
+                  <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                    {slotsQuery.data.slots.map((slot) => {
+                      const selected = selectedSlot?.start === slot.start
+                      return (
+                        <button
+                          key={slot.start}
+                          type="button"
+                          onClick={() => setSelectedSlot(slot)}
+                          className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+                            selected
+                              ? "border-primary-600 bg-primary-600 text-on-honey"
+                              : "border-border bg-card text-neutral-700 hover:border-primary-300"
+                          }`}
+                        >
+                          {slotTimeLabel(slot.start)}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {slotToBook && (
           <form className="card" onSubmit={submitBooking}>
             <h2 className="mb-1 text-lg font-display font-semibold text-neutral-900">
               Your details
             </h2>
             <p className="mb-4 text-sm text-muted-foreground">
-              {longDateLabel(selectedDate)} at {slotTimeLabel(selectedSlot.start)}
+              {longDateLabel(slotToBook.start.slice(0, 10))} at {slotTimeLabel(slotToBook.start)}
             </p>
             <div className="mb-4 grid gap-4 sm:grid-cols-2">
               <div>
