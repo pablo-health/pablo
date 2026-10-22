@@ -1654,6 +1654,7 @@ CREATE TABLE __TENANT_SCHEMA__.therapy_sessions (
 );
 
 
+
 CREATE TABLE __TENANT_SCHEMA__.waitlist_entries (
     id uuid NOT NULL,
     user_id uuid NOT NULL,
@@ -2087,11 +2088,6 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.therapy_sessions
 
 
 
-ALTER TABLE ONLY __TENANT_SCHEMA__.waitlist_entries
-    ADD CONSTRAINT waitlist_entries_pkey PRIMARY KEY (id);
-
-
-
 ALTER TABLE ONLY __TENANT_SCHEMA__.appointment_types
     ADD CONSTRAINT uq_appointment_types_user_name UNIQUE (user_id, name);
 
@@ -2199,6 +2195,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.claims
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.remittance_holds
     ADD CONSTRAINT ux_remittance_holds_posting_key UNIQUE (posting_key);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.waitlist_entries
+    ADD CONSTRAINT waitlist_entries_pkey PRIMARY KEY (id);
 
 
 
