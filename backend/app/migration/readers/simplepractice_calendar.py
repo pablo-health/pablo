@@ -45,18 +45,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .calendar_folder import CALENDAR_DIR, calendar_dir, calendar_files, capture_order
+from .calendar_folder import calendar_files
 from .calendar_values import digest as _digest
 from .calendar_values import flag as _flag
 from .calendar_values import revoked_admin_ids as _revoked_admin_ids
 from .calendar_values import split_name as _split_name
 from .calendar_values import when as _when
-from .simplepractice import SOURCE_SYSTEM
 
 if TYPE_CHECKING:
     from datetime import datetime
-
-#: The folder the saved responses live in, at the top of the uploaded zip.
 
 #: The ``attendanceStatus`` of a visit that happened.
 ATTENDED = "Show"
@@ -67,9 +64,6 @@ CALENDAR_CLIENT = "calendar_client"
 #: The ledger's record type for an appointment landed from a calendar feed,
 #: apart from the visits an export's notes create under ``appointment``.
 CALENDAR_APPOINTMENT = "calendar_appointment"
-
-
-#: A display name of first and last name has this many words.
 
 
 # --------------------------------------------------------------------------- records
@@ -167,6 +161,9 @@ class _File:
     appointments: dict[str, CalendarAppointment] = field(default_factory=dict)
     unsupported: dict[tuple[str, str], Unsupported] = field(default_factory=dict)
     skipped: Counter[str] = field(default_factory=Counter)
+    #: Appointment ids this file has but cannot land: an earlier file's copy
+    #: of one of these is stale and must not land either.
+    dropped: set[str] = field(default_factory=set)
 
 
 def _client(entry: dict[str, Any], title: str | None) -> CalendarClient:
@@ -260,6 +257,12 @@ def _appointment(entry: dict[str, Any], client_id: str, path: str) -> CalendarAp
     )
 
 
+def _drop(out: _File, entry: dict[str, Any], reason: str) -> None:
+    """Count an appointment this file cannot land, and remember its id."""
+    out.skipped[reason] += 1
+    out.dropped.add(str(entry["id"]))
+
+
 def _read_file(path: Path, rel: str) -> _File:
     document = json.loads(path.read_bytes())
     if not isinstance(document, dict) or not isinstance(document.get("data"), list):
@@ -284,27 +287,32 @@ def _read_file(path: Path, rel: str) -> _File:
         try:
             client_id = _client_id_of(entry, included)
             if client_id is None:
-                out.skipped["no_client"] += 1
+                _drop(out, entry, "no_client")
                 continue
             client_entry = included.get(("clients", client_id))
             if client_entry is None:
-                out.skipped["client_missing"] += 1
+                _drop(out, entry, "client_missing")
                 continue
             title = (str((entry.get("attributes") or {}).get("title") or "")).strip() or None
             client = _client(client_entry, title)
             if not client.first_name or not client.last_name:
                 # Nothing in the file gives this client a whole name: no chart
                 # is made for a name Pablo would have to guess at.
-                out.skipped["no_name"] += 1
+                _drop(out, entry, "no_name")
                 continue
             appointment = _appointment(entry, client_id, rel)
         except (ValueError, TypeError, AttributeError, KeyError):
             # One appointment the file recorded incompletely (no end time, a
             # field of the wrong shape) is counted and left out; the rest of
             # the file still reads.
-            out.skipped["malformed"] += 1
+            _drop(out, entry, "malformed")
             continue
         out.clients[client_id] = _better_client(out.clients.get(client_id), client)
+        if appointment.full_day:
+            # An all-day event is not a session; it is left out like an
+            # outside calendar's event.
+            _drop(out, entry, "full_day")
+            continue
         out.appointments[appointment.source_id] = appointment
     return out
 
@@ -351,6 +359,9 @@ def read_simplepractice_calendar(root: Path) -> SimplePracticeCalendar:
             continue
         for client_id, client in read.clients.items():
             clients[client_id] = _better_client(clients.get(client_id), client)
+        for appointment_id in read.dropped:
+            # The newest copy cannot land, so the older copy is stale.
+            appointments.pop(appointment_id, None)
         appointments.update(read.appointments)
         unsupported.update(read.unsupported)
         skipped.update(read.skipped)
@@ -369,14 +380,9 @@ __all__ = [
     "ATTENDED",
     "CALENDAR_APPOINTMENT",
     "CALENDAR_CLIENT",
-    "CALENDAR_DIR",
-    "SOURCE_SYSTEM",
     "CalendarAppointment",
     "CalendarClient",
     "SimplePracticeCalendar",
     "Unsupported",
-    "calendar_dir",
-    "calendar_files",
-    "capture_order",
     "read_simplepractice_calendar",
 ]

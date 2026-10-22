@@ -29,7 +29,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 
 from ..db.models import ImportRecordRow, ImportRunRow
 from ..utcnow import utc_now
@@ -237,6 +237,28 @@ def new_run(
     session.add(run)
     session.flush()
     return run
+
+
+def later_run_stands(session: Session, run: ImportRunRow) -> bool:
+    """Whether the same clinician applied another import after ``run`` that
+    is still in place. Ordered by when runs were applied, not uploaded: a run
+    applied later reads what this one landed."""
+    if run.finished_at is None:
+        return False
+    stmt = select(ImportRunRow.id).where(
+        ImportRunRow.id != run.id,
+        ImportRunRow.started_by == run.started_by,
+        ImportRunRow.state == "applied",
+        or_(
+            ImportRunRow.finished_at > run.finished_at,
+            # Applied in the same instant: the later upload is the later run.
+            and_(
+                ImportRunRow.finished_at == run.finished_at,
+                ImportRunRow.started_at > run.started_at,
+            ),
+        ),
+    )
+    return session.execute(stmt.limit(1)).first() is not None
 
 
 def get_run(session: Session, run_id: str) -> ImportRunRow | None:

@@ -189,6 +189,15 @@ class _ClientSource(NamedTuple):
     digest: str
 
 
+#: The record type a ledger row is reported under: the preview's own, so one
+#: appointment or client has one key on every screen and report.
+_REPORT_TYPES = {CALENDAR_APPOINTMENT: "appointment", CALENDAR_CLIENT: "contact"}
+
+
+def _report_type(ledger_type: str) -> str:
+    return _REPORT_TYPES.get(ledger_type, ledger_type)
+
+
 def _key(record_type: str, source_id: str) -> str:
     return f"{record_type}:{source_id}"
 
@@ -199,6 +208,16 @@ def _landable_records(preview: dict[str, Any]) -> dict[tuple[str, str], dict[str
 
 def _trim(value: str | None, width: int) -> str | None:
     return value[:width] if value else None
+
+
+def _hand_back(row: ImportRecordRow) -> None:
+    """Return a ledger row to the run that held it before this run updated it."""
+    payload = row.previous_payload or {}
+    row.run_id = payload["previous_run_id"]
+    row.source_digest = payload["previous_digest"]
+    row.state = payload["previous_state"]
+    row.previous_payload = payload.get("previous_payload")
+    row.updated_at = utc_now()
 
 
 class ArchiveApplier:
@@ -359,9 +378,9 @@ class ArchiveApplier:
                 postal_code=_trim(address.postal_code, _POSTAL_LEN) if address else None,
             )
 
-        def fill(patient: Patient) -> bool:
+        def fill(patient: Patient) -> dict[str, Any]:
             built = build()
-            changed = False
+            filled: dict[str, Any] = {}
             for name in (
                 "email",
                 "phone",
@@ -373,8 +392,8 @@ class ArchiveApplier:
             ):
                 if getattr(patient, name, None) in (None, "") and getattr(built, name, None):
                     setattr(patient, name, getattr(built, name))
-                    changed = True
-            return changed
+                    filled[name] = getattr(built, name)
+            return filled
 
         self._adopt_or_create(
             run, _ClientSource("contact", card.source_id, card.digest), client, build, fill
@@ -405,7 +424,7 @@ class ArchiveApplier:
         source: _ClientSource,
         client: dict[str, Any],
         build: Callable[[], Patient],
-        fill: Callable[[Patient], bool] | None = None,
+        fill: Callable[[Patient], dict[str, Any]] | None = None,
     ) -> None:
         """The patient a client lands on: the one an earlier run made, the one
         the preview or the practice matched, or a new one from ``build``.
@@ -439,9 +458,11 @@ class ArchiveApplier:
             if patient is None:
                 run.report.miss("contact", key, "matched patient not found")
                 return
-            if fill is not None and client.get("match_evidence") == "calendar" and fill(patient):
-                patient.updated_at = utc_now()
-                self._patients.update(patient)
+            filled: dict[str, Any] = {}
+            if fill is not None and client.get("match_evidence") == "calendar":
+                filled = fill(patient)
+                if filled:
+                    self._patients.update(patient)
             run.report.patients[card_id] = patient.id
             run.report.counts["contact"]["merged"] += 1
             # Marked merged: the patient was here before this run, so undo
@@ -454,7 +475,8 @@ class ArchiveApplier:
                     "patients",
                     patient.id,
                     digest,
-                    previous_payload={"merged": True},
+                    # What this run filled in, so undo takes exactly that back.
+                    previous_payload={"merged": True, **({"filled": filled} if filled else {})},
                 ),
             )
             return
@@ -475,7 +497,7 @@ class ArchiveApplier:
         if patient_id is None:
             return
         how = record.get("lands_as")
-        key = _key(CALENDAR_APPOINTMENT, appointment.source_id)
+        key = _key("appointment", appointment.source_id)
         landed_row, existing = self._landed_appointment(appointment.source_id)
         if landed_row is not None and existing is None:
             # Landed once and removed in Pablo since: that was the clinician's
@@ -573,6 +595,23 @@ class ArchiveApplier:
             return None, None
         return row, self._appointments.get(row.target_id, self._user_id)
 
+    def _unfill(self, row: ImportRecordRow) -> None:
+        """Take back the details a run filled in on a matched patient, each
+        one only while it still holds what the run wrote."""
+        filled = (row.previous_payload or {}).get("filled") or {}
+        if not filled or row.target_table != "patients":
+            return
+        patient = self._patients.get(row.target_id, self._user_id)
+        if patient is None:
+            return
+        changed = False
+        for name, value in filled.items():
+            if getattr(patient, name, None) == value:
+                setattr(patient, name, None)
+                changed = True
+        if changed:
+            self._patients.update(patient)
+
     def _slot_taken(self, start_at: datetime, exclude_id: str | None) -> tuple[str, str] | None:
         """The clinician's active appointment at ``start_at`` (id, patient), if any.
 
@@ -607,11 +646,7 @@ class ArchiveApplier:
         appointment.patient_id = before["patient_id"]
         appointment.updated_at = utc_now()
         self._appointments.update(appointment)
-        row.run_id = payload["previous_run_id"]
-        row.source_digest = payload["previous_digest"]
-        row.state = payload["previous_state"]
-        row.previous_payload = payload.get("previous_payload")
-        row.updated_at = utc_now()
+        _hand_back(row)
         return True
 
     # ------------------------------------------------------------------ notes
@@ -1015,10 +1050,13 @@ class ArchiveApplier:
                 ):
                     kept.append(
                         {
-                            "key": _key(row.record_type, row.source_id),
+                            "key": _key(_report_type(row.record_type), row.source_id),
                             "reason": "edited since import",
                         }
                     )
+                    # Kept as edited, but no longer this run's: the run that
+                    # landed it owns it again, so its own undo can reach it.
+                    _hand_back(row)
                     continue
                 if self._restore_appointment(row):
                     restored[row.record_type] += 1
@@ -1026,6 +1064,7 @@ class ArchiveApplier:
             if (row.previous_payload or {}).get("merged"):
                 # Merged into a patient who was already here: keep the
                 # patient; the notes and records the run added go on their own.
+                self._unfill(row)
                 row.state = "undone"
                 row.updated_at = utc_now()
                 continue
@@ -1034,7 +1073,10 @@ class ArchiveApplier:
                 self._session, row.target_table, row.target_id, line
             ):
                 kept.append(
-                    {"key": _key(row.record_type, row.source_id), "reason": "edited since import"}
+                    {
+                        "key": _key(_report_type(row.record_type), row.source_id),
+                        "reason": "edited since import",
+                    }
                 )
                 continue
             if self._remove(row.target_table, row.target_id):

@@ -18,9 +18,9 @@ from pathlib import Path
 import pytest
 
 from backend.app.migration.readers import detect_layout
+from backend.app.migration.readers.calendar_folder import calendar_files
 from backend.app.migration.readers.simplepractice_calendar import (
     SimplePracticeCalendar,
-    calendar_files,
     read_simplepractice_calendar,
 )
 
@@ -268,3 +268,29 @@ def test_a_client_named_by_no_whole_name_is_skipped(tmp_path: Path) -> None:
     assert calendar.appointments == ()
     assert calendar.clients == ()
     assert calendar.skipped == {"no_name": 2}
+
+
+def test_a_newer_copy_that_cannot_land_drops_the_older_one(tmp_path: Path) -> None:
+    """The latest file wins even when it says the appointment can no longer
+    land: the older copy is stale and is not landed in its place."""
+    older = json.loads((FIXTURE / "calendar" / "appointments-07.json").read_text())
+    newer = json.loads((FIXTURE / "calendar" / "appointments-07.json").read_text())
+    newer["data"][0]["relationships"]["appointmentClients"]["data"] = []
+    folder = tmp_path / "calendar"
+    folder.mkdir()
+    (folder / "a.json").write_text(json.dumps(older))
+    (folder / "b.json").write_text(json.dumps(newer))
+    calendar = read_simplepractice_calendar(tmp_path)
+    assert [a.source_id for a in calendar.appointments] == [newer["data"][1]["id"]]
+    assert calendar.skipped == {"no_client": 1}
+
+
+def test_an_all_day_event_is_left_out(tmp_path: Path) -> None:
+    source = json.loads((FIXTURE / "calendar" / "appointments-07.json").read_text())
+    source["data"][0]["attributes"]["fullDay"] = "true"
+    folder = tmp_path / "calendar"
+    folder.mkdir()
+    (folder / "a.json").write_text(json.dumps(source))
+    calendar = read_simplepractice_calendar(tmp_path)
+    assert [a.source_id for a in calendar.appointments] == [source["data"][1]["id"]]
+    assert calendar.skipped == {"full_day": 1}

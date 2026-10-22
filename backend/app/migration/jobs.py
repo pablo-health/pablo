@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import select
 
@@ -87,9 +87,19 @@ def _edited_targets(session: Session) -> set[tuple[str, str]]:
     }
 
 
+#: The zone a clinician's "today" falls back to, as their preferences default to.
+DEFAULT_ZONE = "America/New_York"
+
+
 def _clock(user_id: str) -> Clock:
     """Now, in the zone a calendar feed's "today" is judged in: the clinician's own."""
-    return Clock(utc_now(), ZoneInfo(get_user_repository().get_preferences(user_id).timezone))
+    name = get_user_repository().get_preferences(user_id).timezone
+    try:
+        zone = ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        # A zone the server cannot read must not stop every calendar import.
+        zone = ZoneInfo(DEFAULT_ZONE)
+    return Clock(utc_now(), zone)
 
 
 def _fail(run: Any, reason: str) -> None:

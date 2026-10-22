@@ -21,7 +21,6 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Request, UploadFile, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
 
 from ..api_errors import BadRequestError, ConflictError, NotFoundError, UnprocessableEntityError
 from ..auth.service import (
@@ -31,7 +30,6 @@ from ..auth.service import (
     require_cloud_tasks_invoker,
 )
 from ..db import arm_current_user_id, get_db_session, release_db_connection, set_tenant_schema
-from ..db.models import ImportRunRow
 from ..jobs.task_queue import enqueue
 from ..migration.apply import ArchiveApplier
 from ..migration.jobs import archive_base, archive_store, run_apply, run_preview
@@ -41,6 +39,7 @@ from ..migration.ledger import (
     archive_file,
     client_records_for_run,
     get_run,
+    later_run_stands,
     list_runs,
     new_run,
     record_state,
@@ -495,18 +494,6 @@ def apply_import(
     return detail
 
 
-def _later_import_stands(run: Any) -> bool:
-    """Whether an import started after ``run`` is applied and not undone."""
-    later = get_db_session().execute(
-        select(ImportRunRow.id).where(
-            ImportRunRow.id != run.id,
-            ImportRunRow.state == "applied",
-            ImportRunRow.started_at > run.started_at,
-        )
-    )
-    return later.first() is not None
-
-
 @router.post("/runs/{run_id}/undo", response_model=ImportRunDetail)
 def undo_import(
     run_id: str,
@@ -520,11 +507,11 @@ def undo_import(
     run = _run_or_404(run_id)
     if run.state != "applied":
         raise ConflictError("Only an applied import can be undone.", code="IMPORT_NOT_APPLIED")
-    if _later_import_stands(run):
+    if later_run_stands(get_db_session(), run):
         # A later import builds on this one; it is undone first, so undo
         # never has to untangle one run's landings from another's.
         raise ConflictError(
-            "An import after this one is still in place. Undo the newest import first.",
+            "You applied another import after this one. Undo that one first.",
             code="IMPORT_NOT_LATEST",
         )
     applier = ArchiveApplier(

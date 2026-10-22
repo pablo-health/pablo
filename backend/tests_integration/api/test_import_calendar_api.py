@@ -418,8 +418,49 @@ def test_a_taken_time_is_reported_and_the_rest_lands(
     assert done["state"] == "applied"
     assert done["report"]["counts"]["appointment"]["new"] == 3
     missing = {m["key"]: m["reason"] for m in done["report"]["not_landed"]}
-    assert missing == {f"calendar_appointment:{second['id']}": "that time is already booked"}
+    assert missing == {f"appointment:{second['id']}": "that time is already booked"}
     assert _chart(engine, schema)["appointments"] == 3
+
+
+def test_an_edited_appointment_kept_by_undo_stays_with_the_run_that_made_it(
+    client: TestClient, engine: Engine, schema: str
+) -> None:
+    run = _upload(client, _zip(_feed_files()))
+    _apply(client, run["id"], {})
+    moved = _upload(client, _zip(_feed_files(moved_minutes=30)))
+    _apply(client, moved["id"], {})
+    edited = _ledger(engine, schema)[MOVED][0]
+    _execute(
+        engine,
+        schema,
+        "UPDATE appointments SET updated_at = now() + interval '1 hour' WHERE id = :id",
+        {"id": edited},
+    )
+    undone = client.post(f"/api/migration/runs/{moved['id']}/undo", json={})
+    assert undone.json()["report"]["undo"]["kept"] == [
+        {"key": f"appointment:{MOVED}", "reason": "edited since import"}
+    ]
+    undone = client.post(f"/api/migration/runs/{run['id']}/undo", json={"include_edited": True})
+    assert undone.status_code == 200, undone.text
+    assert undone.json()["report"]["undo"]["removed"]["calendar_appointment"] == 4
+    assert _chart(engine, schema)["appointments"] == 0
+
+
+def test_another_clinicians_later_import_does_not_block_undo(
+    client: TestClient, engine: Engine, schema: str
+) -> None:
+    run = _upload(client, _zip(_feed_files()))
+    _apply(client, run["id"], {})
+    later = _upload(client, _zip(_feed_files()))
+    _apply(client, later["id"], {})
+    _execute(
+        engine,
+        schema,
+        "UPDATE import_runs SET started_by = :other WHERE id = :id",
+        {"other": str(uuid.uuid4()), "id": later["id"]},
+    )
+    undone = client.post(f"/api/migration/runs/{run['id']}/undo", json={})
+    assert undone.status_code == 200, undone.text
 
 
 def test_an_appointment_removed_in_pablo_is_not_brought_back(
@@ -433,7 +474,7 @@ def test_an_appointment_removed_in_pablo_is_not_brought_back(
     moved = _upload(client, _zip(_feed_files(moved_minutes=30)))
     done = _apply(client, moved["id"], {})
     missing = {m["key"]: m["reason"] for m in done["report"]["not_landed"]}
-    assert missing == {f"calendar_appointment:{MOVED}": "removed in Pablo since it was imported"}
+    assert missing == {f"appointment:{MOVED}": "removed in Pablo since it was imported"}
     assert _chart(engine, schema)["appointments"] == 3
 
 

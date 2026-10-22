@@ -57,7 +57,4 @@ def split_name(display_name: str) -> tuple[str, str]:
     return " ".join(parts[:-1]), parts[-1]
 
 
-# --------------------------------------------------------------------------- one file
-
-
 __all__ = ["digest", "flag", "revoked_admin_ids", "split_name", "when"]
