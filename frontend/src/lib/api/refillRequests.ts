@@ -32,6 +32,13 @@ export interface ClinicianRefillRequest {
   prescriber_note: string | null
   /** The practice's own target for answering; null on requests from before it had one. */
   due_at: string | null
+  /** When the client runs out (ISO date): their own answer, or an estimate from a prescription. */
+  run_out_date: string | null
+  run_out_source: "client" | "prescription" | null
+  /** Schedule II-V. */
+  controlled: boolean
+  /** Harmful to interrupt: the clinician's own call, or the default list. */
+  interruption_risk: boolean
 }
 
 export interface RefillQueueResponse {

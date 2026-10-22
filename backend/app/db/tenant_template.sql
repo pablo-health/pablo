@@ -1096,6 +1096,8 @@ CREATE TABLE __TENANT_SCHEMA__.patient_medications (
     frequency text,
     category character varying(16),
     source_note_id uuid,
+    controlled boolean,
+    interruption_risk boolean,
     CONSTRAINT ck_patient_medications_category CHECK (((category)::text = ANY ((ARRAY['psychiatric'::character varying, 'other'::character varying])::text[]))),
     CONSTRAINT ck_patient_medications_status CHECK (((status)::text = ANY ((ARRAY['active'::character varying, 'discontinued'::character varying, 'on_hold'::character varying])::text[])))
 );
@@ -1450,6 +1452,7 @@ CREATE TABLE __TENANT_SCHEMA__.refill_requests (
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     due_at timestamp with time zone,
+    run_out_date date,
     CONSTRAINT ck_refill_requests_status CHECK (((status)::text = ANY ((ARRAY['requested'::character varying, 'approved'::character varying, 'needs_visit'::character varying, 'declined'::character varying])::text[])))
 );
 

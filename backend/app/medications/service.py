@@ -58,6 +58,8 @@ class MedicationService:
             stopped_at=row.get("stopped_at"),  # type: ignore[arg-type]
             stop_reason=str(row["stop_reason"]) if row.get("stop_reason") is not None else None,
             notes=str(row["notes"]) if row.get("notes") is not None else None,
+            controlled=row.get("controlled"),  # type: ignore[arg-type]
+            interruption_risk=row.get("interruption_risk"),  # type: ignore[arg-type]
             created_by=str(row["created_by"]),
             created_at=row["created_at"],  # type: ignore[arg-type]
             updated_at=row["updated_at"],  # type: ignore[arg-type]
@@ -96,6 +98,8 @@ class MedicationService:
             "stopped_at": None,
             "stop_reason": req.stop_reason,
             "notes": req.notes,
+            "controlled": req.controlled,
+            "interruption_risk": req.interruption_risk,
             "source_note_id": source_note_id,
             "created_by": user_id,
             "created_at": now,
@@ -138,6 +142,9 @@ class MedicationService:
             existing["frequency"] = req.frequency or None
         if "category" in req.model_fields_set:
             existing["category"] = req.category
+        for flag in ("controlled", "interruption_risk"):
+            if flag in req.model_fields_set:
+                existing[flag] = getattr(req, flag)
         if req.status is not None:
             old_status = existing.get("status")
             existing["status"] = req.status

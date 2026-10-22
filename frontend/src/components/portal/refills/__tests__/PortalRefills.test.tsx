@@ -123,6 +123,7 @@ describe("PortalRefills", () => {
     expect(api.createRefillRequest).toHaveBeenCalledWith(TOKEN, {
       medication_id: null,
       medication_text: "Lamotrigine",
+      days_left: null,
       pharmacy_text: null,
       patient_note: null,
     })

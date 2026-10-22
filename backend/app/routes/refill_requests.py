@@ -69,6 +69,7 @@ from ..models.refill_request_api import (
     RefillRequestList,
     RefillRequestResponse,
 )
+from ..models.refill_risk import run_out_from_days_left
 from ..portal.factory import get_notice_delivery
 from ..portal.notices import send_portal_notice
 from ..rate_limit import get_refill_request_limiter
@@ -85,7 +86,12 @@ from ..services.refill_request_hooks import (
     RefillRequestEventKind,
     dispatch_refill_request_event,
 )
-from ..services.refill_turnaround import RefillDueClock, get_refill_due_clock
+from ..services.refill_turnaround import (
+    PracticeToday,
+    RefillDueClock,
+    get_practice_today,
+    get_refill_due_clock,
+)
 from ..utcnow import utc_now
 from .patient_intake_assignments import get_clinician_patient_repository
 
@@ -189,6 +195,7 @@ def create_refill_request(
     repo: RefillRequestRepository = Depends(get_refill_request_repository),
     audit: AuditService = Depends(get_audit_service),
     due_clock: RefillDueClock = Depends(get_refill_due_clock),
+    practice_today: PracticeToday = Depends(get_practice_today),
     _: None = Depends(subscription_exempt),
 ) -> PatientRefillRequestResponse:
     """Ask for a refill of one medication.
@@ -200,6 +207,9 @@ def create_refill_request(
 
     The request is stamped with the practice's own due time as it is
     stored. The response is the patient's view, which does not carry it.
+
+    A ``days_left`` answer is stored as the date the client runs out,
+    counted from today on the practice's calendar.
     """
     get_refill_request_limiter().check(patient.patient_id)
 
@@ -213,6 +223,11 @@ def create_refill_request(
         medication_text = (body.medication_text or "").strip()
 
     now = utc_now()
+    run_out_date = (
+        None
+        if body.days_left is None
+        else run_out_from_days_left(practice_today(patient.practice_schema, now), body.days_left)
+    )
     stored = repo.add(
         RefillRequest(
             id=str(uuid.uuid4()),
@@ -225,6 +240,7 @@ def create_refill_request(
             created_at=now,
             updated_at=now,
             due_at=due_clock(patient.practice_schema, now),
+            run_out_date=run_out_date,
         )
     )
     audit.log_patient_principal_action(
@@ -236,6 +252,7 @@ def create_refill_request(
         changes={
             "from_medication_list": body.medication_id is not None,
             "has_note": body.patient_note is not None,
+            "has_days_left": body.days_left is not None,
         },
     )
     _schedule_hooks(
