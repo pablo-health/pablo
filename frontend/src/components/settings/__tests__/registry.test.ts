@@ -42,6 +42,7 @@ describe("settings registry merge", () => {
     expect(practice?.items.map((item) => item.id)).toEqual([
       "availability",
       "scheduling",
+      "waitlist",
       "calendars",
       "sessions",
       "note-types",

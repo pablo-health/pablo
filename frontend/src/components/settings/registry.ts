@@ -13,6 +13,7 @@ import {
   Globe,
   Inbox,
   LayoutTemplate,
+  ListOrdered,
   Mic,
   Palette,
   ListChecks,
@@ -46,6 +47,7 @@ import { SecurityPage } from "./pages/SecurityPage"
 import { SessionsPage } from "./pages/SessionsPage"
 import { SuperbillsPage } from "./pages/SuperbillsPage"
 import { TasksPage } from "./pages/TasksPage"
+import { WaitlistPage } from "./pages/WaitlistPage"
 import { WebsitePage } from "./pages/WebsitePage"
 import {
   BILLING_CONTACT_SETTINGS_ID,
@@ -55,6 +57,7 @@ import {
   DOMAINS_SETTINGS_ID,
   INSURANCE_PAYERS_SETTINGS_ID,
   PATIENT_PORTAL_SETTINGS_ID,
+  WAITLIST_SETTINGS_ID,
 } from "./paths"
 import { settingsExtensions } from "./registry.extensions"
 
@@ -168,6 +171,13 @@ const baseGroups: SettingsGroup[] = [
         icon: CalendarClock,
         page: SchedulingPage,
         desc: "Which appointments exist, how new {people} start, and what Pablo may offer versus what {people} may book.",
+      },
+      {
+        id: WAITLIST_SETTINGS_ID,
+        label: "Waitlist",
+        icon: ListOrdered,
+        page: WaitlistPage,
+        desc: "{People} waiting for a better or more regular time.",
       },
       {
         id: "calendars",
