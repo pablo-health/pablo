@@ -13,6 +13,7 @@ import asyncio
 import dataclasses
 import json
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -44,6 +45,12 @@ SAID = "Jane Roe asked about the lighthouse"
 
 _DOWN = StreamEvent(finish_reason="error", error_code="service_unavailable", transient=True)
 _REFUSED = StreamEvent(finish_reason="error", error_code="auth_denied", transient=False)
+_BLOCKED = StreamEvent(finish_reason="safety")
+_DECLINES = json.loads(
+    (Path(__file__).parent / "fixtures" / "bedrock_converse_stream_declines.json").read_text(
+        encoding="utf-8"
+    )
+)
 _ANSWER = [
     StreamEvent(delta="From the "),
     StreamEvent(delta="fallback."),
@@ -115,10 +122,65 @@ class TestFailover:
         assert len(fake.calls) == 1
 
     def test_a_safety_block_is_the_answer(self) -> None:
-        blocked = StreamEvent(finish_reason="safety")
-        fake = FakeChatLLMGateway(scripts=[[blocked], list(_ANSWER)])
+        fake = FakeChatLLMGateway(scripts=[[_BLOCKED], list(_ANSWER)])
 
-        assert _stream(FailoverChatLLMGateway(fake, [FALLBACK])) == [blocked]
+        assert _stream(FailoverChatLLMGateway(fake, [FALLBACK])) == [_BLOCKED]
+        assert len(fake.calls) == 1
+
+    def test_a_refusal_before_any_word_moves_on_when_the_feature_retries_refusals(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        fake = FakeChatLLMGateway(scripts=[[_BLOCKED], list(_ANSWER)])
+        with caplog.at_level(logging.DEBUG):
+            events = _stream(FailoverChatLLMGateway(fake, [FALLBACK], retry_refusals=True))
+
+        assert events == _ANSWER, "the refused attempt shows nothing"
+        assert [c["model"] for c in fake.calls] == ["primary", FALLBACK]
+        assert "legs=primary:safety,test:fallback:stop final=answered_by_fallback" in caplog.text
+        assert "lighthouse" not in caplog.text
+        assert "fallback." not in caplog.text
+
+    def test_a_refusal_after_the_first_word_never_retries(self) -> None:
+        cut = [StreamEvent(delta="Half an "), _BLOCKED]
+        fake = FakeChatLLMGateway(scripts=[list(cut), list(_ANSWER)])
+
+        assert _stream(FailoverChatLLMGateway(fake, [FALLBACK], retry_refusals=True)) == cut
+        assert len(fake.calls) == 1
+
+    def test_when_every_model_refuses_the_answer_is_the_refusal(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        fake = FakeChatLLMGateway(scripts=[[_BLOCKED], [_BLOCKED]])
+        with caplog.at_level(logging.INFO):
+            events = _stream(FailoverChatLLMGateway(fake, [FALLBACK], retry_refusals=True))
+
+        assert events == [_BLOCKED]
+        assert "legs=primary:safety,test:fallback:safety final=safety" in caplog.text
+
+    def test_a_refusal_after_a_model_was_unreachable_reports_the_failure(self) -> None:
+        """The model that could not be reached might have answered."""
+        fake = FakeChatLLMGateway(scripts=[[_DOWN], [_BLOCKED]])
+
+        events = _stream(FailoverChatLLMGateway(fake, [FALLBACK], retry_refusals=True))
+
+        assert events == [_DOWN]
+
+    def test_a_refusal_then_an_unreachable_last_model_reports_the_failure(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        fake = FakeChatLLMGateway(scripts=[[_BLOCKED], [_DOWN]])
+        with caplog.at_level(logging.INFO):
+            events = _stream(FailoverChatLLMGateway(fake, [FALLBACK], retry_refusals=True))
+
+        assert events == [_DOWN]
+        assert "legs=primary:safety,test:fallback:error final=error" in caplog.text
+
+    @pytest.mark.usefixtures("mapped")
+    def test_retrying_refusals_is_chosen_per_call(self) -> None:
+        fake = FakeChatLLMGateway(scripts=[[_BLOCKED], list(_ANSWER)])
+        gateway = failover_chat_gateway(AIFeature.CHAT, fake, retry_refusals=True)
+
+        assert _stream(gateway) == _ANSWER
 
     def test_when_every_model_fails_the_last_failure_is_reported(self) -> None:
         last = StreamEvent(finish_reason="error", error_code="timeout", transient=True)
@@ -274,6 +336,48 @@ class TestBedrockChat:
             {"cachePoint": {"type": "default"}},
             {"text": PATIENT_CONTEXT_DELIMITER + "Jane Roe, 44, ..."},
         ]
+
+    @pytest.mark.parametrize("capture", ["decline_privacy", "decline_forge", "crisis_self"])
+    def test_a_decline_claude_writes_as_text_is_an_answer(
+        self, monkeypatch: pytest.MonkeyPatch, capture: str
+    ) -> None:
+        """Captured: Converse ends Claude's own decline ``end_turn``, the decline as text."""
+        _no_db_guard(monkeypatch)
+        gateway, _ = _bedrock(list(_DECLINES[capture]))
+
+        events = _stream(gateway, "bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0")
+
+        assert all(e.delta == "<scrubbed> " for e in events[:-1])
+        assert len(events) > 1
+        assert events[-1].finish_reason == "stop"
+
+    def test_a_refusal_stop_reason_is_a_safety_finish(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _no_db_guard(monkeypatch)
+        captured = _DECLINES["decline_forge"]
+        refused = [
+            {"messageStop": {"stopReason": "refusal"}} if "messageStop" in e else e
+            for e in captured
+            if "contentBlockDelta" not in e
+        ]
+        gateway, _ = _bedrock(refused)
+
+        (event,) = _stream(gateway, "bedrock:m")
+
+        assert event.finish_reason == "safety"
+
+    def test_an_answer_that_ends_without_a_word_is_a_safety_finish(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Never an empty ``stop``: the reader would see nothing and no failure."""
+        _no_db_guard(monkeypatch)
+        silent = [e for e in _DECLINES["crisis_self"] if "contentBlockDelta" not in e]
+        gateway, _ = _bedrock(silent)
+
+        (event,) = _stream(gateway, "bedrock:m")
+
+        assert event.finish_reason == "safety"
 
     def test_a_throttled_request_is_a_transient_error(
         self, monkeypatch: pytest.MonkeyPatch
