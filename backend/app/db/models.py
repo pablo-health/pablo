@@ -2615,6 +2615,66 @@ class AvailabilityRuleRow(Base):
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class WaitlistEntryRow(Base):
+    """A client waiting for a better or more regular time with a clinician.
+
+    One open entry per client per clinician (``filled_at IS NULL``). The
+    clinician's list is ordered by ``position``, dense from 1 among open
+    entries, and the order is the clinician's: nothing re-sorts it.
+
+    ``days`` are weekday codes (``mon`` .. ``sun``) and ``times`` parts of the
+    day (``morning`` / ``afternoon`` / ``evening``); an entry wants any of its
+    days at any of its times. ``paused`` keeps a client on the list without
+    being offered anything; ``no_auto_offer`` means a person decides each
+    offer. ``filled_at`` marks an entry whose wait is over.
+
+    It carries ``patient_id``, so ``enable_rls_on_schema`` gives it the
+    ``has_patient_access`` policy.
+    """
+
+    __tablename__ = "waitlist_entries"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    #: The clinician whose waitlist this is.
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    days: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    times: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    modality: Mapped[str] = mapped_column(String(16), nullable=False)
+    session_type: Mapped[str | None] = mapped_column(String(30))
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    paused: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    no_auto_offer: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    filled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "modality IN ('in_person','telehealth','either')",
+            name="ck_waitlist_entries_modality",
+        ),
+        Index("ix_waitlist_entries_user_position", "user_id", "position"),
+        Index(
+            "uq_waitlist_entries_open",
+            "user_id",
+            "patient_id",
+            unique=True,
+            postgresql_where=text("filled_at IS NULL"),
+        ),
+    )
+
+
 class AppointmentTypeRow(Base):
     """A kind of appointment: how long it runs, who it is for, when it may be offered.
 

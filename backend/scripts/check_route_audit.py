@@ -103,6 +103,8 @@ PHI_PATH_MARKERS: tuple[str, ...] = (
     # The client's own homework: what their clinician asked them to work on,
     # and the note they leave when they finish it.
     "/patient/homework",
+    # Who is waiting for a time with the clinician, and what they want.
+    "/waitlist",
 )
 
 FORBIDDEN_UNDERSCORE_PARAMS: frozenset[str] = frozenset({"_audit", "_http_request"})
