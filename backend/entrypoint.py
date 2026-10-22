@@ -1,8 +1,14 @@
 """Production entrypoint for the backend server.
 
 Reads PORT from environment (required by Cloud Run) and starts uvicorn
-in single-worker mode. Used instead of shell-based CMD since distroless
-images have no shell.
+with WEB_CONCURRENCY worker processes (default 1). Used instead of
+shell-based CMD since distroless images have no shell.
+
+With more than one worker, uvicorn starts each worker as a fresh Python
+process that re-executes this module before importing the app. That is
+what loads observability and the runtime extension in every worker, so
+those stay at module level; only ``uvicorn.run`` is guarded by
+``__main__``, or each worker would try to start a server of its own.
 
 Optional observability (env-var-gated, no-op if unconfigured):
   NEW_RELIC_LICENSE_KEY → Python APM agent
@@ -97,20 +103,21 @@ _load_runtime_extension()
 
 import uvicorn  # noqa: E402 — must follow observability init
 
-uvicorn.run(
-    "backend.app.main:app",
-    host="0.0.0.0",  # noqa: S104 — bind all interfaces (required for Cloud Run)
-    port=int(os.environ.get("PORT", "8000")),
-    workers=1,
-    log_level="info",
-    access_log=False,
-    # Keep the JSON logging that app.main installs at import time. Without
-    # this, uvicorn's default dictConfig reinstalls its own plaintext
-    # handlers on the uvicorn.error logger, so unhandled-exception
-    # tracebacks print as multi-line plaintext — and the Cloud Run logging
-    # agent splits each line into a separate entry, fragmenting one stack
-    # across a dozen log records. log_config=None leaves the root JSON
-    # formatter in place; uvicorn's loggers propagate to it and each
-    # traceback lands as a single structured entry (full stack in exc_info).
-    log_config=None,
-)
+if __name__ == "__main__":
+    uvicorn.run(
+        "backend.app.main:app",
+        host="0.0.0.0",  # noqa: S104 — bind all interfaces (required for Cloud Run)
+        port=int(os.environ.get("PORT", "8000")),
+        workers=int(os.environ.get("WEB_CONCURRENCY", "1")),
+        log_level="info",
+        access_log=False,
+        # Keep the JSON logging that app.main installs at import time. Without
+        # this, uvicorn's default dictConfig reinstalls its own plaintext
+        # handlers on the uvicorn.error logger, so unhandled-exception
+        # tracebacks print as multi-line plaintext — and the Cloud Run logging
+        # agent splits each line into a separate entry, fragmenting one stack
+        # across a dozen log records. log_config=None leaves the root JSON
+        # formatter in place; uvicorn's loggers propagate to it and each
+        # traceback lands as a single structured entry (full stack in exc_info).
+        log_config=None,
+    )

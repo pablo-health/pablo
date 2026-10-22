@@ -53,6 +53,19 @@ class Settings(BaseSettings):
         default="production",
         description="Deployment environment",
     )
+    # entrypoint.py reads WEB_CONCURRENCY itself, before anything imports
+    # Settings; this field exists so the app can see the worker count too.
+    web_concurrency: int = Field(
+        default=1,
+        ge=1,
+        description=(
+            "Number of uvicorn worker processes. Leave at 1 on platforms that "
+            "add instances under load; raise it on a fixed-size host so one "
+            "slow request does not hold up the rest. Above 1, the in-process "
+            "background loops (calendar auto-sync, claims pipeline) must be "
+            "off, since each worker would run its own copy."
+        ),
+    )
 
     # Security Settings - HIPAA TLS Requirements
     # HTTPS is automatically enforced in production/staging, disabled in development

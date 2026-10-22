@@ -134,7 +134,7 @@ from .routes import (
     waitlist,
 )
 from .routes import tasks as task_routes
-from .settings import get_settings, log_startup_posture
+from .settings import Settings, get_settings, log_startup_posture
 from .sites import public_routes as site_public_routes
 from .sites import routes as site_routes
 from .version_check import get_min_versions, get_server_version
@@ -168,6 +168,33 @@ else:
 log_startup_posture(settings, logger)
 
 
+def _refuse_loops_in_multiple_workers(settings: Settings) -> None:
+    """Fail startup when more than one worker would each run the background loops.
+
+    The loops started in ``lifespan`` take no cross-process lock, so with
+    WEB_CONCURRENCY=2 the claims pipeline would submit from two processes at
+    once. Refusing to start is the safe answer; the loops also run as
+    scheduled jobs, which is what a multi-worker deployment should use.
+    """
+    if settings.web_concurrency <= 1 or settings.is_saas:
+        return
+    enabled = [
+        name
+        for name, on in (
+            ("CALENDAR_AUTO_SYNC_ENABLED", settings.calendar_auto_sync_enabled),
+            ("CLAIMS_PIPELINE_ENABLED", settings.claims_pipeline_enabled),
+        )
+        if on
+    ]
+    if enabled:
+        raise RuntimeError(
+            f"WEB_CONCURRENCY={settings.web_concurrency} with in-process background "
+            f"loops on ({', '.join(enabled)}): each worker would run its own copy. "
+            "Set those to false and run the loops as scheduled jobs, or set "
+            "WEB_CONCURRENCY=1."
+        )
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Manage background tasks across the application lifecycle."""
@@ -191,6 +218,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             "(e.g. https://app.pablo.health).",
             settings.app_url,
         )
+
+    _refuse_loops_in_multiple_workers(settings)
 
     tasks: list[asyncio.Task[None]] = []
     if settings.calendar_auto_sync_enabled and not settings.is_saas:
