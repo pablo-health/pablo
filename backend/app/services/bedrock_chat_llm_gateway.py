@@ -65,13 +65,32 @@ _STREAM_ERROR_STATUS = {
     "validationException": 400,
 }
 
+#: How a ConverseStream ``stopReason`` ends the answer. When Claude declines a
+#: turn itself, Converse captures show ``end_turn`` with the decline written as
+#: ordinary text: that is an answer, and nothing here reads its text. Only an
+#: explicit refusal (``refusal``, Anthropic's own stop reason, or a filter's)
+#: ends ``safety``, as does an answer that stopped without a word (see
+#: ``_finish``).
 _STOP_REASONS: dict[str, FinishReason] = {
     "end_turn": "stop",
     "stop_sequence": "stop",
     "max_tokens": "length",
     "guardrail_intervened": "safety",
     "content_filtered": "safety",
+    "refusal": "safety",
 }
+
+
+def _finish(stop_reason: str, *, said_anything: bool) -> FinishReason:
+    """The finish for ``stop_reason``: an answer that ended with no text is a refusal.
+
+    A model that stops without a word has declined to answer; reading that as
+    an empty ``stop`` would show the reader nothing and say nothing went wrong.
+    """
+    reason = _STOP_REASONS.get(stop_reason, "stop")
+    if reason == "stop" and not said_anything:
+        return "safety"
+    return reason
 
 
 def to_converse_messages(
@@ -153,7 +172,8 @@ class BedrockChatLLMGateway(ChatLLMGateway):
         ) as span:
             stream: Any = None
             output_tokens: int | None = None
-            final_reason: FinishReason = "stop"
+            stop_reason = "end_turn"
+            said_anything = False
             try:
                 client = self._clients.client(_READ_TIMEOUT_SECONDS)
                 try:
@@ -178,10 +198,10 @@ class BedrockChatLLMGateway(ChatLLMGateway):
                         )
                     delta = (event.get("contentBlockDelta") or {}).get("delta") or {}
                     if delta.get("text"):
+                        said_anything = True
                         yield StreamEvent(delta=delta["text"])
                     if "messageStop" in event:
-                        reason = event["messageStop"].get("stopReason", "end_turn")
-                        final_reason = _STOP_REASONS.get(reason, "stop")
+                        stop_reason = event["messageStop"].get("stopReason", "end_turn")
                     usage = (event.get("metadata") or {}).get("usage") or {}
                     if usage.get("outputTokens"):
                         output_tokens = usage["outputTokens"]
@@ -209,7 +229,10 @@ class BedrockChatLLMGateway(ChatLLMGateway):
 
             if output_tokens:
                 span.set_token_usage(completion_tokens=output_tokens)
-            yield StreamEvent(finish_reason=final_reason, output_tokens=output_tokens)
+            yield StreamEvent(
+                finish_reason=_finish(stop_reason, said_anything=said_anything),
+                output_tokens=output_tokens,
+            )
 
 
 _bedrock_chat_holder: list[BedrockChatLLMGateway] = []

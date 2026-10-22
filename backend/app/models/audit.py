@@ -621,6 +621,16 @@ class AuditAction(StrEnum):
     HOMEWORK_EDITED = "homework_edited"
     HOMEWORK_MARKED = "homework_marked"
 
+    # The waitlist. VIEWED is a clinician reading their list (one row per
+    # client on it) or one client's place on it; the others are changes to
+    # one entry, or to the order. Payloads carry ids, the operation and the
+    # names of the fields that changed, never the days or times wanted.
+    WAITLIST_VIEWED = "waitlist_viewed"
+    WAITLIST_ENTRY_ADDED = "waitlist_entry_added"
+    WAITLIST_ENTRY_UPDATED = "waitlist_entry_updated"
+    WAITLIST_ENTRY_REMOVED = "waitlist_entry_removed"
+    WAITLIST_REORDERED = "waitlist_reordered"
+
     # The Inbox. VIEWED is the list, one row per patient on it — what it
     # discloses is per patient: that something of theirs waits, and what.
     # COUNTED is the nav badge's one number, about the clinician rather than
@@ -814,6 +824,7 @@ class ResourceType(StrEnum):
     PATIENT_MESSAGE_THREAD = "patient_message_thread"
     REFILL_REQUEST = "refill_request"
     HOMEWORK_ASSIGNMENT = "homework_assignment"
+    WAITLIST_ENTRY = "waitlist_entry"
     INBOX_ITEM = "inbox_item"
     INVITATION = "invitation"
     PRACTICE_PORTAL = "practice_portal"

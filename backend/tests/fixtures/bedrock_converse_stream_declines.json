@@ -1,0 +1,538 @@
+{
+ "_provenance": "Captured 2026-10-22 from Bedrock ConverseStream, model us.anthropic.claude-haiku-4-5-20251001-v1:0, synthetic turns that Claude declined. Scrubbed: every text delta is replaced with a placeholder; event order, key names, content block indexes, stop reasons, usage and metrics are as captured.",
+ "decline_privacy": [
+  {
+   "messageStart": {
+    "role": "assistant"
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockStop": {
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "messageStop": {
+    "stopReason": "end_turn"
+   }
+  },
+  {
+   "metadata": {
+    "usage": {
+     "inputTokens": 58,
+     "outputTokens": 50,
+     "totalTokens": 108
+    },
+    "metrics": {
+     "latencyMs": 1000
+    }
+   }
+  }
+ ],
+ "decline_forge": [
+  {
+   "messageStart": {
+    "role": "assistant"
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockStop": {
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "messageStop": {
+    "stopReason": "end_turn"
+   }
+  },
+  {
+   "metadata": {
+    "usage": {
+     "inputTokens": 57,
+     "outputTokens": 50,
+     "totalTokens": 107
+    },
+    "metrics": {
+     "latencyMs": 936
+    }
+   }
+  }
+ ],
+ "crisis_self": [
+  {
+   "messageStart": {
+    "role": "assistant"
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockDelta": {
+    "delta": {
+     "text": "<scrubbed> "
+    },
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "contentBlockStop": {
+    "contentBlockIndex": 0
+   }
+  },
+  {
+   "messageStop": {
+    "stopReason": "end_turn"
+   }
+  },
+  {
+   "metadata": {
+    "usage": {
+     "inputTokens": 45,
+     "outputTokens": 51,
+     "totalTokens": 96
+    },
+    "metrics": {
+     "latencyMs": 974
+    }
+   }
+  }
+ ]
+}
