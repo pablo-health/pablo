@@ -383,6 +383,7 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("post", "/api/webhooks/telehealth/room"),  # waiting-room callback, no disclosure
         # booking_links.py — owner's own link metadata (slug/copy/duration), no patient data
         ("post", "/api/booking-links"),  # creates a booking link
+        ("post", "/api/booking-links/slot"),  # creates a single-slot link: type + one window
         ("get", "/api/booking-links"),  # lists caller's own booking links
         ("patch", "/api/booking-links/{link_id}"),  # updates link copy/duration/active
         ("delete", "/api/booking-links/{link_id}"),  # deletes a booking link

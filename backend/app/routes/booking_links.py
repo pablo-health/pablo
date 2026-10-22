@@ -4,7 +4,8 @@
 
 CRUD over ``platform.booking_links`` (docs/design/public-booking.md).
 Booking links carry no PHI — slug, display copy, the appointment type they
-book — so these routes are classified non-PHI in the audit guardrail. The
+book, and for a single-slot link the one window it books — so these routes
+are classified non-PHI in the audit guardrail. The
 public, unauthenticated surface lives in ``public_booking.py``.
 
 Every response says whether the link can actually take a booking and, when
@@ -15,7 +16,9 @@ from a client who gave up.
 
 from __future__ import annotations
 
+import secrets
 import uuid
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, status
@@ -31,6 +34,7 @@ from ..models.booking_link import (
     BookingLinkListResponse,
     BookingLinkResponse,
     CreateBookingLinkRequest,
+    CreateSlotBookingLinkRequest,
     UpdateBookingLinkRequest,
     is_valid_slug,
 )
@@ -141,6 +145,55 @@ def create_booking_link(
             "This slug is taken. Slugs stay reserved after a link is deleted, so pick another."
         ) from e
     return _response(link, appointment_type, policy)
+
+
+#: How many random bytes name a single-slot link. Eight bytes is 64 bits,
+#: rendered as 16 hex characters — not guessable, and inside the slug pattern.
+_SLOT_SLUG_BYTES = 8
+
+
+@router.post(
+    "/api/booking-links/slot",
+    response_model=BookingLinkResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_slot_booking_link(
+    request: CreateSlotBookingLinkRequest,
+    ctx: TenantContext = Depends(get_tenant_context),
+    repo: BookingLinkRepository = Depends(get_link_repository),
+    type_repo: AppointmentTypeRepository = Depends(get_link_type_repository),
+    policy: dict[str, object] = Depends(get_link_scheduling_policy),
+) -> BookingLinkResponse:
+    """Create a link that books one slot, once.
+
+    The window is ``start_at`` plus the type's length. The slug is minted
+    here, unguessable, because the link is meant for one person. Whether the
+    time is still free is not checked now: the booking runs the collision
+    check, and a time that has filled by then is reported as taken.
+    """
+    appointment_type = _require_own_type(request.appointment_type_id, ctx, type_repo)
+    start = request.start_at
+    if start.tzinfo is None:
+        raise BadRequestError("Give the time with its UTC offset.")
+    now = utc_now()
+    if start <= now:
+        raise BadRequestError("Pick a time that hasn't passed.")
+    link = BookingLink(
+        id=str(uuid.uuid4()),
+        slug=f"slot-{secrets.token_hex(_SLOT_SLUG_BYTES)}",
+        user_id=ctx.user_id,
+        practice_id=ctx.practice_id,
+        host_name=request.host_name.strip(),
+        title=request.title.strip(),
+        description=request.description,
+        appointment_type_id=appointment_type.id,
+        is_active=True,
+        created_at=now,
+        updated_at=now,
+        slot_start_at=start,
+        slot_end_at=start + timedelta(minutes=appointment_type.duration_minutes),
+    )
+    return _response(repo.create(link), appointment_type, policy)
 
 
 @router.get("/api/booking-links", response_model=BookingLinkListResponse)

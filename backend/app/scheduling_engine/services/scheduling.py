@@ -175,6 +175,15 @@ class SchedulingService:
                 f"Conflicts with an existing appointment at {conflicting.start_at.isoformat()}"
             )
 
+    def reject_if_taken(self, user_id: str, start_at: datetime, end_at: datetime) -> None:
+        """Raise :class:`AppointmentConflictError` if anything booked overlaps.
+
+        The same collision check every create runs, exposed for a caller that
+        wants the answer before it writes anything else the booking would
+        need. It is not a reservation: the create still runs it again.
+        """
+        self._reject_if_overlapping(user_id, _as_datetime(start_at), _as_datetime(end_at))
+
     def _reject_if_really_booked(
         self,
         user_id: str,

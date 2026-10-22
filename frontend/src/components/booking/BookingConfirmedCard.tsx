@@ -12,7 +12,7 @@ export interface Confirmation {
   start_at: string
   end_at: string
   duration_minutes: number
-  status: "confirmed" | "pending_confirmation"
+  status: "confirmed" | "pending_confirmation" | "requested"
 }
 
 /** Floating local time ICS (no TZID): matches the engine's wall-clock model. */

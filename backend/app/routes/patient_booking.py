@@ -63,6 +63,7 @@ from ..models.scheduling import (
 )
 from ..repositories.postgres.appointment import PostgresAppointmentRepository
 from ..repositories.postgres.appointment_type import PostgresAppointmentTypeRepository
+from ..repositories.postgres.audit import PostgresAuditRepository
 from ..repositories.postgres.availability_rule import PostgresAvailabilityRuleRepository
 from ..repositories.postgres.external_calendar_event import (
     PostgresExternalCalendarEventRepository,
@@ -81,6 +82,8 @@ from ..scheduling_engine.models.appointment import (
     ChangeRecord,
 )
 from ..scheduling_engine.services.availability import AvailabilityEngine
+from ..scheduling_engine.services.open_slots import open_slot_for
+from ..scheduling_engine.services.open_slots import publish as publish_open_slot
 from ..scheduling_engine.services.scheduling import SchedulingService
 from ..scheduling_engine.services.scheduling_policy import (
     DEFAULTS as POLICY_DEFAULTS,
@@ -99,6 +102,7 @@ if TYPE_CHECKING:
 
     from ..scheduling_engine.models.appointment import Appointment
     from ..scheduling_engine.models.appointment_type import AppointmentType
+    from ..scheduling_engine.services.open_slots import OpenSlot
 
 logger = logging.getLogger(__name__)
 
@@ -897,6 +901,9 @@ def cancel_appointment(
                 acknowledged=payload.acknowledge_late_change if late else None,
             ),
         )
+        opened = open_slot_for(cancelled)
+        if opened is not None:
+            _record_open_slot(session, opened)
         session.commit()
 
     audit.log_patient_principal_action(
@@ -906,4 +913,25 @@ def cancel_appointment(
         resource_type=ResourceType.APPOINTMENT,
         resource_id=cancelled.id,
     )
+    if opened is not None:
+        publish_open_slot(opened)
     return _to_patient_view(cancelled)
+
+
+def _record_open_slot(session: Session, slot: OpenSlot) -> None:
+    """Note in the clinician's trail that this cancellation opened a slot.
+
+    Written on the owner-armed session, inside the cancellation's own
+    transaction, so the row exists exactly when the cancellation does. It is
+    scoped to the clinician — the slot is in their diary — and written as the
+    system, because nobody chose to raise the event. Ids only: the type and
+    the derived modality, nothing about the client who gave the time back.
+    """
+    AuditService(PostgresAuditRepository(session)).log_system_action(
+        AuditAction.APPOINTMENT_SLOT_OPENED,
+        scope_user_id=slot.clinician_id,
+        resource_type=ResourceType.APPOINTMENT,
+        resource_id=slot.appointment_id,
+        actor_component="open_slots",
+        changes={"appointment_type_id": slot.appointment_type_id, "modality": slot.modality},
+    )

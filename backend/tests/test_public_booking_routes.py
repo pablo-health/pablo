@@ -429,6 +429,7 @@ def test_public_link_card_returns_display_fields(
         "description": "A get-to-know-you call.",
         "duration_minutes": 30,
         "captcha_site_key": None,
+        "slot": None,
     }
 
 

@@ -85,6 +85,8 @@ const CARD_FIELDS = new Set([
   "description",
   "duration_minutes",
   "captcha_site_key",
+  // Null on an ordinary link; a single-slot link's one time and whether it is taken.
+  "slot",
 ])
 const SLOTS_FIELDS = new Set(["date", "duration_minutes", "slots", "total", "configured"])
 const SLOT_FIELDS = new Set(["start", "end"])

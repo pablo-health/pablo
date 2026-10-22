@@ -96,6 +96,15 @@ class BookingLink:
     # Set when the link is tombstoned. A tombstoned link never reaches a
     # response; its slug stays claimed via the UNIQUE(slug) constraint.
     deleted_at: datetime | None = None
+    # A single-slot link books this one window, once; both None on an
+    # ordinary link. ``slot_claimed_at`` is when it was used.
+    slot_start_at: datetime | None = None
+    slot_end_at: datetime | None = None
+    slot_claimed_at: datetime | None = None
+
+    @property
+    def is_single_slot(self) -> bool:
+        return self.slot_start_at is not None and self.slot_end_at is not None
 
 
 class CreateBookingLinkRequest(BaseModel):
@@ -106,6 +115,21 @@ class CreateBookingLinkRequest(BaseModel):
     #: Required. A link with no type would be a link nothing can gate, so
     #: there is no untyped shape to fall back to.
     appointment_type_id: str = Field(..., min_length=1, max_length=64)
+
+
+class CreateSlotBookingLinkRequest(BaseModel):
+    """A link that books one slot, once.
+
+    No slug: the server mints an unguessable one, because this link is meant
+    for one person and should not be found by anyone else. The window is the
+    start plus the type's length.
+    """
+
+    appointment_type_id: str = Field(..., min_length=1, max_length=64)
+    start_at: datetime
+    host_name: str = Field(..., min_length=1, max_length=255)
+    title: str = Field(..., min_length=1, max_length=255)
+    description: str | None = Field(None, max_length=2000)
 
 
 class UpdateBookingLinkRequest(BaseModel):
@@ -139,6 +163,10 @@ class BookingLinkResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    #: Set only on a single-slot link: the window it books, and when it was used.
+    slot_start_at: datetime | None = None
+    slot_end_at: datetime | None = None
+    slot_claimed_at: datetime | None = None
 
     @classmethod
     def from_link(
@@ -162,12 +190,27 @@ class BookingLinkResponse(BaseModel):
             is_active=link.is_active,
             created_at=link.created_at,
             updated_at=link.updated_at,
+            slot_start_at=link.slot_start_at,
+            slot_end_at=link.slot_end_at,
+            slot_claimed_at=link.slot_claimed_at,
         )
 
 
 class BookingLinkListResponse(BaseModel):
     data: list[BookingLinkResponse]
     total: int
+
+
+class PublicSlotOffer(BaseModel):
+    """The one time a single-slot link books, and whether it is still there.
+
+    ``taken`` folds every reason the time is gone — the link was used, or the
+    time has passed — into one answer, because a visitor can act on neither.
+    """
+
+    start: str
+    end: str
+    taken: bool
 
 
 class PublicBookingLinkResponse(BaseModel):
@@ -182,6 +225,9 @@ class PublicBookingLinkResponse(BaseModel):
     # configured. A site key is public by definition — it is rendered into
     # the page — so exposing it on the card is not a disclosure.
     captcha_site_key: str | None = None
+    # Present only on a single-slot link: the page shows this one time instead
+    # of a day picker.
+    slot: PublicSlotOffer | None = None
 
 
 class CreatePublicBookingRequest(BaseModel):
@@ -211,7 +257,9 @@ class PublicBookingConfirmation(BaseModel):
     start_at: str
     end_at: str
     duration_minutes: int
-    status: Literal["confirmed", "pending_confirmation"]
+    # ``requested``: a single-slot link under a practice that reviews
+    # self-bookings; the time is held while the clinician decides.
+    status: Literal["confirmed", "pending_confirmation", "requested"]
     # A capability link the booker can use to view or cancel this booking
     # later — not an id, just the same confirmation token folded into a
     # URL. ``None`` for an instant booking, which never gets a token.
