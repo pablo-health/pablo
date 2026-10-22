@@ -1654,6 +1654,25 @@ CREATE TABLE __TENANT_SCHEMA__.therapy_sessions (
 );
 
 
+CREATE TABLE __TENANT_SCHEMA__.waitlist_entries (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    days jsonb NOT NULL,
+    times jsonb NOT NULL,
+    modality character varying(16) NOT NULL,
+    session_type character varying(30),
+    "position" integer NOT NULL,
+    paused boolean DEFAULT false NOT NULL,
+    no_auto_offer boolean DEFAULT false NOT NULL,
+    filled_at timestamp with time zone,
+    created_by uuid,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_waitlist_entries_modality CHECK (((modality)::text = ANY ((ARRAY['in_person'::character varying, 'telehealth'::character varying, 'either'::character varying])::text[])))
+);
+
+
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.practice_billing_profile ALTER COLUMN id SET DEFAULT nextval('__TENANT_SCHEMA__.practice_billing_profile_id_seq'::regclass);
 
@@ -2065,6 +2084,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.telehealth_connections
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.therapy_sessions
     ADD CONSTRAINT therapy_sessions_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.waitlist_entries
+    ADD CONSTRAINT waitlist_entries_pkey PRIMARY KEY (id);
 
 
 
@@ -2694,6 +2718,14 @@ CREATE INDEX ix_therapy_sessions_user_id ON __TENANT_SCHEMA__.therapy_sessions U
 
 
 
+CREATE INDEX ix_waitlist_entries_patient_id ON __TENANT_SCHEMA__.waitlist_entries USING btree (patient_id);
+
+
+
+CREATE INDEX ix_waitlist_entries_user_position ON __TENANT_SCHEMA__.waitlist_entries USING btree (user_id, "position");
+
+
+
 CREATE UNIQUE INDEX uq_appointments_outside_event_per_calendar ON __TENANT_SCHEMA__.appointments USING btree (outside_source, outside_calendar_id, outside_event_id) WHERE (((status)::text <> 'cancelled'::text) AND (outside_calendar_id IS NOT NULL));
 
 
@@ -2747,6 +2779,10 @@ CREATE UNIQUE INDEX uq_patient_intake_signatures_live ON __TENANT_SCHEMA__.patie
 
 
 CREATE UNIQUE INDEX uq_patient_source_mappings_scoped ON __TENANT_SCHEMA__.patient_source_mappings USING btree (scope, source, source_identifier) WHERE (scope IS NOT NULL);
+
+
+
+CREATE UNIQUE INDEX uq_waitlist_entries_open ON __TENANT_SCHEMA__.waitlist_entries USING btree (user_id, patient_id) WHERE (filled_at IS NULL);
 
 
 
@@ -3260,6 +3296,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.therapy_sessions
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.waitlist_entries
+    ADD CONSTRAINT waitlist_entries_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
 CREATE POLICY rls_audit_actor_access ON __TENANT_SCHEMA__.audit_logs USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((((actor_type)::text IS DISTINCT FROM 'patient'::text) AND ((user_id)::text = current_setting('app.current_user_id'::text, true))) OR (((actor_type)::text = 'patient'::text) AND ((user_id)::text = current_setting('app.current_patient_id'::text, true)))));
 
 
@@ -3402,6 +3443,8 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.telehealth_connections FORCE ROW LEVEL SECURI
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.therapy_sessions FORCE ROW LEVEL SECURITY;
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.waitlist_entries FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE __TENANT_SCHEMA__.appointment_types ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE __TENANT_SCHEMA__.appointments ENABLE ROW LEVEL SECURITY;
@@ -3521,6 +3564,8 @@ ALTER TABLE __TENANT_SCHEMA__.tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE __TENANT_SCHEMA__.telehealth_connections ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE __TENANT_SCHEMA__.therapy_sessions ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.waitlist_entries ENABLE ROW LEVEL SECURITY;
 
 COMMENT ON POLICY rls_audit_actor_access ON __TENANT_SCHEMA__.audit_logs IS 'rls-fingerprint-v1-548d25bf9279aef1b84f5529be74c01025c059a1d21c10eae1f4e41419d743fe';
 
@@ -4017,3 +4062,7 @@ COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.telehealth_connections
 CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.therapy_sessions USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
 
 COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.therapy_sessions IS 'rls-fingerprint-v1-1efc9f3ee61fa6ae965f066810e694377f93a586d8ea17ad9a97cbaf67e9e5b6';
+
+CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.waitlist_entries USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.waitlist_entries IS 'rls-fingerprint-v1-6c650e863fa6178eec9df9bb53691b1168f969f224a9f1cf1d455c71d6370e50';

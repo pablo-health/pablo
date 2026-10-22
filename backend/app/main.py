@@ -131,6 +131,7 @@ from .routes import (
     telehealth_webhooks,
     users,
     visit_times,
+    waitlist,
 )
 from .routes import tasks as task_routes
 from .settings import get_settings, log_startup_posture
@@ -444,6 +445,9 @@ app.include_router(refill_requests.refill_requests_router)
 # it proposes. Unconditional, like the chart it sits on; the client's half
 # went up with the portal modules above.
 app.include_router(homework.router)
+# The clinician's waitlist: the list itself, and one client's place on it.
+app.include_router(waitlist.router)
+app.include_router(waitlist.patient_waitlist_router)
 # One list of everything that needs the clinician. Its sources are
 # registered here like a deployment's own would be; one a deployment already
 # registered for the same kind is kept.

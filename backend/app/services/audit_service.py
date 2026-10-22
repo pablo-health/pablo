@@ -733,6 +733,36 @@ class AuditService:
         self._persist(entry)
         return entry
 
+    def log_waitlist_action(
+        self,
+        action: AuditAction | str,
+        user: User,
+        request: Request | None,
+        entry_id: str,
+        patient_id: str,
+        changes: dict[str, Any] | None = None,
+    ) -> AuditLogEntry:
+        """Record a CLINICIAN reading or changing a waitlist entry.
+
+        Recorded against the entry's client. ``changes`` names the operation
+        and the fields or place that moved — never the days, times or
+        anything else the entry says.
+        """
+        ip_address, user_agent = extract_request_context(request)
+        entry = AuditLogEntry(
+            user_id=user.id,
+            actor_type=ACTOR_TYPE_CLINICIAN,
+            action=_action_value(action),
+            resource_type=ResourceType.WAITLIST_ENTRY.value,
+            resource_id=entry_id,
+            patient_id=patient_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            changes=changes,
+        )
+        self._persist(entry)
+        return entry
+
     def log_appointment_action(
         self,
         action: AuditAction | str,
