@@ -107,11 +107,14 @@ test("a client added from their page is on the waitlist and can be moved", async
     expect(order.indexOf(next.id)).toBe(order.indexOf(entry.id) - 1)
 
     // And it holds after a reload.
+    // (Retrying assertions: the list renders after the page's first paint.)
     await page.reload()
-    const ids = await page
-      .getByTestId("waitlist-entry")
-      .evaluateAll((els) => els.map((el) => el.getAttribute("data-entry-id")))
-    expect(ids.indexOf(next.id)).toBe(ids.indexOf(entry.id) - 1)
+    await expect(secondRow.getByTestId("waitlist-entry-position")).toHaveText(
+      String(entry.position),
+    )
+    await expect(firstRow.getByTestId("waitlist-entry-position")).toHaveText(
+      String(next.position),
+    )
   } finally {
     for (const id of added) {
       await api.delete(`/api/waitlist/${id}`).catch(() => undefined)
