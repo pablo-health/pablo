@@ -16,7 +16,7 @@ patient router stays unmounted unless configured is asserted at the end.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
@@ -50,7 +50,7 @@ from app.services.refill_request_hooks import (
     RefillRequestEvent,
     get_refill_request_hook_registry,
 )
-from app.services.refill_turnaround import get_refill_due_clock
+from app.services.refill_turnaround import get_practice_today, get_refill_due_clock
 from app.services.working_days import WorkingCalendar, due_at
 from app.utcnow import utc_now
 from fastapi import FastAPI
@@ -142,6 +142,24 @@ def due_clock() -> _RecordingDueClock:
     return _RecordingDueClock()
 
 
+#: "Today" on the practice's calendar, fixed so a days-left answer has one right date.
+_PRACTICE_TODAY = date(2026, 10, 20)
+
+
+class _RecordingToday:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, datetime]] = []
+
+    def __call__(self, practice_schema: str, moment: datetime) -> date:
+        self.calls.append((practice_schema, moment))
+        return _PRACTICE_TODAY
+
+
+@pytest.fixture
+def practice_today() -> _RecordingToday:
+    return _RecordingToday()
+
+
 @pytest.fixture(autouse=True)
 def hooks() -> RefillRequestHookRegistry:
     registry = get_refill_request_hook_registry()
@@ -157,6 +175,7 @@ def refill_client(
     patients: InMemoryPatientRepository,
     notices: CapturingNoticeDelivery,
     due_clock: _RecordingDueClock,
+    practice_today: _RecordingToday,
     monkeypatch: pytest.MonkeyPatch,
 ) -> TestClient:
     """Both refill routers on one app, sharing the shared app's overrides.
@@ -174,6 +193,7 @@ def refill_client(
     app.dependency_overrides[get_clinician_patient_repository] = lambda: patients
     app.dependency_overrides[get_notice_delivery] = lambda: notices
     app.dependency_overrides[get_refill_due_clock] = lambda: due_clock
+    app.dependency_overrides[get_practice_today] = lambda: practice_today
     monkeypatch.setattr(patient_context_module, "get_db_session", object)
     monkeypatch.setattr(patient_context_module, "set_tenant_schema", lambda _s, _schema: None)
     monkeypatch.setattr(patient_context_module, "arm_current_patient_id", lambda _s, _p: None)
@@ -296,6 +316,52 @@ class TestPatientAsks:
         mine = refill_client.get(PATIENT_BASE, headers=_auth(_TOKEN_A)).json()
         assert "due_at" not in mine["data"][0]
 
+    def test_days_left_is_stored_as_the_run_out_date_on_the_practices_calendar(
+        self,
+        refill_client: TestClient,
+        refill_repo: InMemoryRefillRequestRepository,
+        practice_today: _RecordingToday,
+    ) -> None:
+        # Catches the answer counted from the server's UTC day, or dropped.
+        body = _ask(refill_client, medication_id=_MED_A, days_left=3)
+
+        (stored,) = refill_repo.list_for_patient(_PATIENT_A)
+        assert stored.run_out_date == date(2026, 10, 23)
+        assert practice_today.calls == [("practice_test", stored.created_at)]
+        # The practice's read: the patient's view does not carry it.
+        assert "run_out_date" not in body
+
+    def test_zero_days_left_runs_out_today(
+        self, refill_client: TestClient, refill_repo: InMemoryRefillRequestRepository
+    ) -> None:
+        _ask(refill_client, medication_id=_MED_A, days_left=0)
+
+        (stored,) = refill_repo.list_for_patient(_PATIENT_A)
+        assert stored.run_out_date == _PRACTICE_TODAY
+
+    def test_no_days_left_answer_stores_no_run_out_date(
+        self,
+        refill_client: TestClient,
+        refill_repo: InMemoryRefillRequestRepository,
+        practice_today: _RecordingToday,
+    ) -> None:
+        _ask(refill_client, medication_id=_MED_A)
+
+        (stored,) = refill_repo.list_for_patient(_PATIENT_A)
+        assert stored.run_out_date is None
+        assert practice_today.calls == []
+
+    @pytest.mark.parametrize("days_left", [-1, 366, "soon"])
+    def test_a_days_left_out_of_range_is_refused(
+        self, refill_client: TestClient, days_left: object
+    ) -> None:
+        response = refill_client.post(
+            PATIENT_BASE,
+            json={"medication_id": _MED_A, "days_left": days_left},
+            headers=_auth(_TOKEN_A),
+        )
+        assert response.status_code == 422, response.text
+
     def test_they_see_their_own_requests_newest_first_and_nobody_elses(
         self, refill_client: TestClient
     ) -> None:
@@ -318,7 +384,11 @@ class TestPatientAsks:
         assert entry.actor_type == ACTOR_TYPE_PATIENT
         assert entry.patient_id == _PATIENT_A
         assert entry.resource_id == body["id"]
-        assert entry.changes == {"from_medication_list": True, "has_note": True}
+        assert entry.changes == {
+            "from_medication_list": True,
+            "has_note": True,
+            "has_days_left": False,
+        }
         assert "Sertraline" not in str(entry.changes)
         assert "ran out" not in str(entry.changes)
 
@@ -388,14 +458,17 @@ def _seed(
     minutes_ago: int,
     status: str = "requested",
     due_in_hours: int | None = None,
+    medication_id: str | None = None,
+    medication_text: str = "Sertraline 50 mg",
+    run_out_date: date | None = None,
 ) -> None:
     created = utc_now() - timedelta(minutes=minutes_ago)
     repo.add(
         RefillRequest(
             id=request_id,
             patient_id=patient_id,
-            medication_id=None,
-            medication_text="Sertraline 50 mg",
+            medication_id=medication_id,
+            medication_text=medication_text,
             pharmacy_text=None,
             patient_note=None,
             status=status,
@@ -403,6 +476,7 @@ def _seed(
             updated_at=created,
             decided_at=None if status == "requested" else created,
             due_at=None if due_in_hours is None else utc_now() + timedelta(hours=due_in_hours),
+            run_out_date=run_out_date,
         )
     )
 
@@ -485,6 +559,141 @@ class TestClinicianQueue:
             _PATIENT_A: {"view": "pending", "request_count": 2},
             _PATIENT_B: {"view": "pending", "request_count": 1},
         }
+
+
+class TestClinicianSeesRisk:
+    """The queue carries when the client runs out and two flags (``app.models.refill_risk``)."""
+
+    def _one(self, client: TestClient) -> dict:
+        data: list[dict] = client.get(CLINICIAN_BASE).json()["data"]
+        (only,) = data
+        return only
+
+    def test_the_clients_own_run_out_date(
+        self,
+        refill_client: TestClient,
+        refill_repo: InMemoryRefillRequestRepository,
+        mock_user_id: str,
+    ) -> None:
+        _seed(refill_repo, "r1", _PATIENT_A, minutes_ago=5, run_out_date=date(2026, 10, 22))
+        refill_repo.grant_access(_PATIENT_A, mock_user_id)
+
+        body = self._one(refill_client)
+
+        assert (body["run_out_date"], body["run_out_source"]) == ("2026-10-22", "client")
+
+    def test_estimated_from_the_last_fill_and_days_supply(
+        self,
+        refill_client: TestClient,
+        refill_repo: InMemoryRefillRequestRepository,
+        mock_user_id: str,
+    ) -> None:
+        # Written Sep 1 for 30 days with one refill: the supply lasts to Oct 31.
+        refill_repo.add_prescription(
+            _PATIENT_A, "Sertraline", written_on=date(2026, 9, 1), days_supply=30, refills=1
+        )
+        _seed(refill_repo, "r1", _PATIENT_A, minutes_ago=5, medication_id=_MED_A)
+        refill_repo.grant_access(_PATIENT_A, mock_user_id)
+
+        body = self._one(refill_client)
+
+        assert (body["run_out_date"], body["run_out_source"]) == ("2026-10-31", "prescription")
+
+    def test_the_clients_answer_wins_over_the_estimate(
+        self,
+        refill_client: TestClient,
+        refill_repo: InMemoryRefillRequestRepository,
+        mock_user_id: str,
+    ) -> None:
+        refill_repo.add_prescription(
+            _PATIENT_A, "Sertraline", written_on=date(2026, 9, 1), days_supply=30
+        )
+        _seed(
+            refill_repo,
+            "r1",
+            _PATIENT_A,
+            minutes_ago=5,
+            medication_id=_MED_A,
+            run_out_date=date(2026, 10, 25),
+        )
+        refill_repo.grant_access(_PATIENT_A, mock_user_id)
+
+        body = self._one(refill_client)
+
+        assert (body["run_out_date"], body["run_out_source"]) == ("2026-10-25", "client")
+
+    def test_a_schedule_ii_prescription_is_controlled_and_not_interruption_risk(
+        self,
+        refill_client: TestClient,
+        refill_repo: InMemoryRefillRequestRepository,
+        mock_user_id: str,
+    ) -> None:
+        # A schedule measures misuse potential, not the harm of a missed dose.
+        refill_repo.add_prescription(
+            _PATIENT_A,
+            "Methylphenidate",
+            written_on=date(2026, 10, 1),
+            schedule="II",
+            days_supply=30,
+        )
+        _seed(refill_repo, "r1", _PATIENT_A, minutes_ago=5, medication_text="Methylphenidate 10 mg")
+        refill_repo.grant_access(_PATIENT_A, mock_user_id)
+
+        body = self._one(refill_client)
+
+        assert (body["controlled"], body["interruption_risk"]) == (True, False)
+
+    def test_a_default_list_medication_is_interruption_risk(
+        self,
+        refill_client: TestClient,
+        refill_repo: InMemoryRefillRequestRepository,
+        mock_user_id: str,
+    ) -> None:
+        _seed(refill_repo, "r1", _PATIENT_B, minutes_ago=5, medication_id=_MED_B)
+        refill_repo.grant_access(_PATIENT_B, mock_user_id)
+
+        body = self._one(refill_client)
+
+        assert (body["interruption_risk"], body["controlled"]) == (True, False)
+        assert body["run_out_date"] is None
+
+    def test_the_clinicians_own_flags_win(
+        self,
+        refill_client: TestClient,
+        refill_repo: InMemoryRefillRequestRepository,
+        mock_user_id: str,
+    ) -> None:
+        refill_repo.add_medication(
+            "med-a-flagged",
+            _PATIENT_A,
+            "Lithium",
+            "300 mg",
+            controlled=True,
+            interruption_risk=False,
+        )
+        _seed(refill_repo, "r1", _PATIENT_A, minutes_ago=5, medication_id="med-a-flagged")
+        refill_repo.grant_access(_PATIENT_A, mock_user_id)
+
+        body = self._one(refill_client)
+
+        assert (body["controlled"], body["interruption_risk"]) == (True, False)
+
+    def test_an_ordinary_refill_carries_neither_flag(
+        self,
+        refill_client: TestClient,
+        refill_repo: InMemoryRefillRequestRepository,
+        mock_user_id: str,
+    ) -> None:
+        _seed(refill_repo, "r1", _PATIENT_A, minutes_ago=5, medication_id=_MED_A)
+        refill_repo.grant_access(_PATIENT_A, mock_user_id)
+
+        body = self._one(refill_client)
+
+        assert (body["controlled"], body["interruption_risk"], body["run_out_date"]) == (
+            False,
+            False,
+            None,
+        )
 
 
 class TestClinicianReadsOne:

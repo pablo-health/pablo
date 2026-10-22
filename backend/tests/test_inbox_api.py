@@ -272,6 +272,8 @@ class TestHandledAtItsSource:
         assert item["patient_name"] == "Ada Lovelace"
         assert item["href"] == "/dashboard/refills"
         assert item["severity"] == "normal"
+        # No run-out date known, and sertraline is on neither list.
+        assert item["context"] == {"controlled": "false", "interruption_risk": "false"}
 
         decided = client.post(
             f"/api/refill-requests/{refill_id}/decision", json={"status": "approved"}

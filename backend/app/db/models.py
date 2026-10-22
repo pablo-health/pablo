@@ -1842,6 +1842,12 @@ class PatientMedicationRow(Base):
     source_note_id: Mapped[str | None] = mapped_column(
         Uuid(as_uuid=False), ForeignKey("notes.id", ondelete="SET NULL")
     )
+    # Two clinical calls the clinician may make on the row; NULL means "use
+    # the default" (``app.models.refill_risk``). ``controlled`` is read only
+    # when no prescription is on file, whose schedule says it otherwise.
+    # ``interruption_risk`` overrides the engine's cited default list either way.
+    controlled: Mapped[bool | None] = mapped_column(Boolean)
+    interruption_risk: Mapped[bool | None] = mapped_column(Boolean)
     created_by: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -2145,6 +2151,11 @@ class RefillRequestRow(Base):
     #: The practice's own target, never on the patient surface. ``None`` on
     #: requests from before the target existed; those sort by ``created_at``.
     due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: The day the client expects to run out, from their own answer to "how
+    #: many days do you have left?" when they asked. ``None`` when they left
+    #: it blank; the practice's read may then estimate it from a prescription
+    #: on file (``app.models.refill_risk``), which is never stored here.
+    run_out_date: Mapped[date | None] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 

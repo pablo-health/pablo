@@ -42,6 +42,8 @@ def _row_to_dict(row: PatientMedicationRow) -> dict[str, object]:
         "stopped_at": row.stopped_at,
         "stop_reason": row.stop_reason,
         "notes": row.notes,
+        "controlled": row.controlled,
+        "interruption_risk": row.interruption_risk,
         "source_note_id": row.source_note_id,
         "created_by": row.created_by,
         "created_at": row.created_at,
@@ -120,6 +122,8 @@ class PostgresMedicationRepository(MedicationRepository):
             stopped_at=row.get("stopped_at"),  # type: ignore[arg-type]
             stop_reason=row.get("stop_reason"),  # type: ignore[arg-type]
             notes=row.get("notes"),  # type: ignore[arg-type]
+            controlled=row.get("controlled"),  # type: ignore[arg-type]
+            interruption_risk=row.get("interruption_risk"),  # type: ignore[arg-type]
             source_note_id=row.get("source_note_id"),  # type: ignore[arg-type]
             created_by=str(row["created_by"]),
             created_at=row["created_at"],  # type: ignore[arg-type]
@@ -146,6 +150,8 @@ class PostgresMedicationRepository(MedicationRepository):
         orm_row.stopped_at = row.get("stopped_at")  # type: ignore[assignment]
         orm_row.stop_reason = row.get("stop_reason")  # type: ignore[assignment]
         orm_row.notes = row.get("notes")  # type: ignore[assignment]
+        orm_row.controlled = row.get("controlled")  # type: ignore[assignment]
+        orm_row.interruption_risk = row.get("interruption_risk")  # type: ignore[assignment]
         orm_row.source_note_id = row.get("source_note_id")  # type: ignore[assignment]
         orm_row.updated_at = row["updated_at"]  # type: ignore[assignment]
         orm_row.deleted_at = row.get("deleted_at")  # type: ignore[assignment]

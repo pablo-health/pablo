@@ -55,6 +55,10 @@ function request(overrides: Partial<ClinicianRefillRequest> = {}): ClinicianRefi
     decided_by_user_id: null,
     prescriber_note: null,
     due_at: null,
+    run_out_date: null,
+    run_out_source: null,
+    controlled: false,
+    interruption_risk: false,
     ...overrides,
   }
 }
