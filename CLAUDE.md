@@ -177,8 +177,18 @@ Four that are easy to get wrong:
    `enable_rls_on_schema`. A newly-added table MUST have a policy
    branch in that function or be explicitly listed as not-row-scoped
    via `register_overlay_not_row_scoped()`, otherwise it silently
-   ships as deny-all. That isolation contract is verified at
-   **three layers**:
+   ships as deny-all.
+
+   The tenant template carries that function's output: its last section
+   (after the row-level security marker) is captured by running the real
+   `enable_rls_on_schema` over a scratch practice during regen, and
+   provisioning applies it to every new practice. `enable_rls_on_schema`
+   still runs afterwards as a verify — it rebuilds only tables whose flags,
+   policies or policy fingerprints differ, so it stays the repair pass for
+   existing practices. **So a change to a policy in that function is a
+   template change too: regenerate the template in the same commit**, or
+   the `Tenant template matches alembic head` job fails. That isolation
+   contract is verified at **three layers**:
 
    - **L2 real-time hook** — `.claude/settings.json` PostToolUse hook runs
      `poetry run python .claude/skills/rls-coverage-check/check.py`

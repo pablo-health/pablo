@@ -304,9 +304,10 @@ def _reconcile_one(
         return TenantResult(schema, TenantStatus.FAILED, f"RLS reconcile failed: {exc}")
 
     logger.info(
-        "tenant=%s rls_reconciled tables=%d skipped=%d",
+        "tenant=%s rls_reconciled tables=%d altered=%d skipped=%d",
         schema,
         counts.applied,
+        counts.altered,
         counts.skipped,
     )
     return result
