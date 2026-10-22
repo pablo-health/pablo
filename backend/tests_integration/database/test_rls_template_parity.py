@@ -158,15 +158,18 @@ def test_the_template_carries_what_a_full_rebuild_produces(
     engine: Engine, provisioned: str, rebuilt: tuple[str, Any]
 ) -> None:
     rebuilt_schema, counts = rebuilt
-    # Built without the template's row-level security, so the pass had to
-    # set every table it applies to.
-    assert counts.altered == counts.applied > 0
-
     template_flags, template_policies = _state(engine, provisioned)
     rebuilt_flags, rebuilt_policies = _state(engine, rebuilt_schema)
     assert template_flags == rebuilt_flags
     assert template_policies == rebuilt_policies
-    assert any(forced for _, _, forced in template_flags)
+
+    # Built without the template's row-level security, so the pass had to
+    # set every row-scoped table; the not-row-scoped ones already had RLS
+    # off, which is all they need, and were left alone.
+    forced = sum(1 for _, _, is_forced in rebuilt_flags if is_forced)
+    assert forced > 0
+    assert counts.altered == forced
+    assert counts.applied > counts.altered
 
 
 def test_the_template_schema_itself_stays_unforced(engine: Engine) -> None:
