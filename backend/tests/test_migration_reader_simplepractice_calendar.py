@@ -128,14 +128,14 @@ def test_client_names_come_from_the_client_entry_or_the_title(
     assert avery.name_from == "title"
     assert avery.preferred_name is None
     assert avery.protected is False
-    # The fuller entry carries the name itself, and the protection flags.
+    # The fuller entry carries the name itself.
     dana = clients[DANA]
     assert (dana.first_name, dana.last_name) == ("Dana", "Client")
     assert dana.name_from == "client"
     assert dana.preferred_name == "Dee"
     assert dana.preferred_full_name == "Dee Client"
     assert dana.hashed_id == "f3a9c1d2e4b5"
-    assert dana.protected is True
+    assert dana.protected is False
 
 
 def test_digest_follows_what_lands_not_the_permissions(tmp_path: Path) -> None:
@@ -237,3 +237,34 @@ def test_a_capitalised_calendar_folder_is_read(tmp_path: Path) -> None:
     (folder / "a.json").write_bytes((FIXTURE / "calendar" / "appointments-07.json").read_bytes())
     assert detect_layout(tmp_path) == "calendar"
     assert len(read_simplepractice_calendar(tmp_path).appointments) == 2
+
+
+def test_either_restriction_marks_a_client_protected(tmp_path: Path) -> None:
+    source = json.loads(
+        (FIXTURE / "calendar" / "appointments-edge-group-external.json").read_text()
+    )
+    dana = next(e for e in source["included"] if e["id"] == DANA)
+    folder = tmp_path / "calendar"
+    folder.mkdir()
+    for flags, expected in (
+        ({"enhancedDataProtection": "true", "revokedAdminIds": "[]"}, True),
+        ({"enhancedDataProtection": "false", "revokedAdminIds": "[2156935]"}, True),
+        ({"enhancedDataProtection": "false", "revokedAdminIds": "[]"}, False),
+    ):
+        dana["attributes"].update(flags)
+        (folder / "a.json").write_text(json.dumps(source))
+        clients = {c.source_id: c for c in read_simplepractice_calendar(tmp_path).clients}
+        assert clients[DANA].protected is expected
+
+
+def test_a_client_named_by_no_whole_name_is_skipped(tmp_path: Path) -> None:
+    source = json.loads((FIXTURE / "calendar" / "appointments-07.json").read_text())
+    source["data"][0]["attributes"]["title"] = "Blake"
+    source["data"][1]["attributes"]["title"] = ""
+    folder = tmp_path / "calendar"
+    folder.mkdir()
+    (folder / "a.json").write_text(json.dumps(source))
+    calendar = read_simplepractice_calendar(tmp_path)
+    assert calendar.appointments == ()
+    assert calendar.clients == ()
+    assert calendar.skipped == {"no_name": 2}

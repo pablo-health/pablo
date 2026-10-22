@@ -20,9 +20,11 @@ from backend.app.migration.preview import (
     ExistingPatient,
     PreviewInputs,
     build_calendar_preview,
+    build_preview,
     decisions_complete,
 )
 from backend.app.migration.readers import detect_layout
+from backend.app.migration.readers.simplepractice import read_simplepractice_archive
 from backend.app.migration.readers.simplepractice_calendar import (
     SimplePracticeCalendar,
     read_simplepractice_calendar,
@@ -124,7 +126,7 @@ def test_preview_carries_no_feed_content(calendar: SimplePracticeCalendar) -> No
 
 def test_protected_clients_are_flagged_for_the_screen(calendar: SimplePracticeCalendar) -> None:
     flags = {c["card_id"]: c["protected"] for c in _preview(calendar)["clients"]}
-    assert flags == {BLAKE: False, AVERY: False, CASEY: False, DANA: True}
+    assert flags == {BLAKE: False, AVERY: False, CASEY: False, DANA: False}
     dana = next(c for c in _preview(calendar)["clients"] if c["card_id"] == DANA)
     assert dana["display_name"] == "Dana Client"
     assert dana["preferred_name"] == "Dee"
@@ -322,3 +324,36 @@ def test_a_status_this_version_does_not_know_never_books(tmp_path: Path) -> None
 
 def test_the_preview_records_the_day_it_was_judged_on(calendar: SimplePracticeCalendar) -> None:
     assert _preview(calendar)["judged_on"] == "2026-10-19"
+
+
+def test_a_restricted_client_is_left_out_with_the_reason(tmp_path: Path) -> None:
+    source = json.loads(
+        (FIXTURE / "calendar" / "appointments-edge-group-external.json").read_text()
+    )
+    dana = next(e for e in source["included"] if e["id"] == DANA)
+    dana["attributes"]["enhancedDataProtection"] = "true"
+    folder = tmp_path / "calendar"
+    folder.mkdir()
+    (folder / "a.json").write_text(json.dumps(source))
+    p = _preview(read_simplepractice_calendar(tmp_path))
+    assert DANA not in {c["card_id"] for c in p["clients"]}
+    dana_records = [r for r in p["records"] if r["card_id"] == DANA]
+    assert dana_records
+    assert all(r["why"] == "protected" and not r["landable"] for r in dana_records)
+    assert {c["what"]: c["count"] for c in p["cannot_land"]}["protected"] == len(dana_records)
+
+
+def test_an_export_lands_on_the_patient_a_calendar_import_made() -> None:
+    """The same SimplePractice client, brought in by a calendar import with a
+    name only: the export's card lands on that patient instead of a new one."""
+    archive = read_simplepractice_archive(ARCHIVE_FIXTURE)
+    card_id = build_preview(archive, PreviewInputs())["clients"][0]["card_id"]
+    ledger = {
+        ("calendar_client", card_id): LedgerEntry(
+            "calendar_client", card_id, "patients", "p-cal", "d", "landed", "r-1"
+        )
+    }
+    p = build_preview(archive, PreviewInputs(ledger=ledger))
+    client = next(c for c in p["clients"] if c["card_id"] == card_id)
+    assert (client["existing_patient_id"], client["match_evidence"]) == ("p-cal", "calendar")
+    assert client["possible_duplicates"] == []

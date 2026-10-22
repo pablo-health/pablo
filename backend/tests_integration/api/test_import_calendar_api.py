@@ -260,6 +260,21 @@ def _start_of(engine: Engine, schema: str, appointment_id: str) -> datetime:
 # --------------------------------------------------------------------------- journeys
 
 
+def _same_zip_again(
+    client: TestClient, engine: Engine, schema: str, chart: dict[str, int]
+) -> dict[str, Any]:
+    """The same zip again lands nothing new; the run is returned."""
+    again = _upload(client, _zip(_feed_files()))
+    assert again["preview"]["counts"]["appointment"] == {"unchanged": 4, "skipped": 2}
+    assert {c["match_evidence"] for c in again["preview"]["clients"]} == {"ledger"}
+    second = _apply(client, again["id"], {})
+    assert second["report"]["counts"]["appointment"] == {"unchanged": 4}
+    assert second["report"]["counts"]["contact"] == {"unchanged": 4}
+    assert _chart(engine, schema) == chart
+
+    return again
+
+
 def _cancel_and_reassign(
     client: TestClient,
     engine: Engine,
@@ -331,14 +346,7 @@ def test_calendar_feed_end_to_end(client: TestClient, engine: Engine, schema: st
     first_id = ledger[MOVED][0]
     assert _start_of(engine, schema, first_id) == datetime(2026, 10, 20, 14, 0, tzinfo=UTC)
 
-    # The same zip again lands nothing new.
-    again = _upload(client, _zip(_feed_files()))
-    assert again["preview"]["counts"]["appointment"] == {"unchanged": 4, "skipped": 2}
-    assert {c["match_evidence"] for c in again["preview"]["clients"]} == {"ledger"}
-    second = _apply(client, again["id"], {})
-    assert second["report"]["counts"]["appointment"] == {"unchanged": 4}
-    assert second["report"]["counts"]["contact"] == {"unchanged": 4}
-    assert _chart(engine, schema) == chart
+    again = _same_zip_again(client, engine, schema, chart)
 
     # One appointment moved 30 minutes: that row moves, nothing else does.
     moved = _upload(client, _zip(_feed_files(moved_minutes=30)))
@@ -367,6 +375,13 @@ def test_calendar_feed_end_to_end(client: TestClient, engine: Engine, schema: st
 
     _cancel_and_reassign(client, engine, schema, ledger, chart)
 
+    # The second run (the same zip again) still stands, so the first cannot
+    # be undone until it is.
+    refused = client.post(f"/api/migration/runs/{run['id']}/undo", json={})
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["error"]["code"] == "IMPORT_NOT_LATEST"
+    assert client.post(f"/api/migration/runs/{again['id']}/undo", json={}).status_code == 200
+
     # Undo the first run: every client and appointment it created goes.
     undone = client.post(f"/api/migration/runs/{run['id']}/undo", json={})
     assert undone.status_code == 200, undone.text
@@ -379,32 +394,47 @@ def test_calendar_feed_end_to_end(client: TestClient, engine: Engine, schema: st
     assert _ledger(engine, schema) == {}
 
 
-def test_undoing_the_first_run_first_takes_its_moved_appointment_too(
+def _execute(engine: Engine, schema: str, sql: str, params: dict[str, str]) -> None:
+    with engine.connect() as conn:
+        conn.execute(text("SELECT set_config('search_path', :p, true)"), {"p": schema})
+        conn.execute(text(sql), params)
+        conn.commit()
+
+
+def test_a_taken_time_is_reported_and_the_rest_lands(
     client: TestClient, engine: Engine, schema: str
 ) -> None:
-    """A later run moved one of the first run's appointments. Undoing the first
-    run removes that appointment with the rest, and undoing the later run
-    afterwards brings nothing back."""
-    first = _upload(client, _zip(_feed_files()))
-    _apply(client, first["id"], {})
+    """Two clients booked at the same start: the second is reported, not landed,
+    and the import does not fail."""
+    files = _feed_files()
+    document = json.loads(files["calendar/appointments-07.json"])
+    first, second = document["data"]
+    second["attributes"]["startTime"] = first["attributes"]["startTime"]
+    second["attributes"]["endTime"] = first["attributes"]["endTime"]
+    files["calendar/appointments-07.json"] = json.dumps(document).encode()
+
+    run = _upload(client, _zip(files))
+    done = _apply(client, run["id"], {})
+    assert done["state"] == "applied"
+    assert done["report"]["counts"]["appointment"]["new"] == 3
+    missing = {m["key"]: m["reason"] for m in done["report"]["not_landed"]}
+    assert missing == {f"calendar_appointment:{second['id']}": "that time is already booked"}
+    assert _chart(engine, schema)["appointments"] == 3
+
+
+def test_an_appointment_removed_in_pablo_is_not_brought_back(
+    client: TestClient, engine: Engine, schema: str
+) -> None:
+    run = _upload(client, _zip(_feed_files()))
+    _apply(client, run["id"], {})
+    removed = _ledger(engine, schema)[MOVED][0]
+    _execute(engine, schema, "DELETE FROM appointments WHERE id = :id", {"id": removed})
+
     moved = _upload(client, _zip(_feed_files(moved_minutes=30)))
-    _apply(client, moved["id"], {})
-
-    undone = client.post(f"/api/migration/runs/{first['id']}/undo", json={})
-    assert undone.status_code == 200, undone.text
-    assert undone.json()["report"]["undo"]["removed"] == {
-        "calendar_appointment": 4,
-        "calendar_client": 4,
-    }
-    after = _chart(engine, schema)
-    assert (after["patients"], after["appointments"]) == (0, 0)
-
-    undone = client.post(f"/api/migration/runs/{moved['id']}/undo", json={})
-    assert undone.status_code == 200, undone.text
-    assert undone.json()["report"]["undo"] == {"removed": {}, "kept": []}
-    after = _chart(engine, schema)
-    assert (after["patients"], after["appointments"]) == (0, 0)
-    assert _ledger(engine, schema) == {}
+    done = _apply(client, moved["id"], {})
+    missing = {m["key"]: m["reason"] for m in done["report"]["not_landed"]}
+    assert missing == {f"calendar_appointment:{MOVED}": "removed in Pablo since it was imported"}
+    assert _chart(engine, schema)["appointments"] == 3
 
 
 def test_the_practice_scope_lands_nothing_from_a_calendar(

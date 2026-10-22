@@ -21,7 +21,7 @@ the client's display name arrives as the appointment's `title`.
 written by hand in the same envelope shape, because the capture held no
 `groupAppointments` or `externalAppointments` entries and no client with the
 fuller attribute set. It adds: a client entry with `firstName`, `lastName`,
-`preferredName`, `hashedId`, `enhancedDataProtection: "true"` and a non-empty
+`preferredName`, `hashedId`, `enhancedDataProtection: "false"` and an empty
 `revokedAdminIds`; an appointment after the 2026-11-01 end of daylight time,
 so its offset is `-05:00` while the captured ones are `-04:00`; a past
 `No Show` and a past `Cancelled` appointment; one `groupAppointments` entry

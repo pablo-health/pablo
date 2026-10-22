@@ -359,8 +359,25 @@ class ArchiveApplier:
                 postal_code=_trim(address.postal_code, _POSTAL_LEN) if address else None,
             )
 
+        def fill(patient: Patient) -> bool:
+            built = build()
+            changed = False
+            for name in (
+                "email",
+                "phone",
+                "date_of_birth",
+                "address_line1",
+                "city",
+                "state",
+                "postal_code",
+            ):
+                if getattr(patient, name, None) in (None, "") and getattr(built, name, None):
+                    setattr(patient, name, getattr(built, name))
+                    changed = True
+            return changed
+
         self._adopt_or_create(
-            run, _ClientSource("contact", card.source_id, card.digest), client, build
+            run, _ClientSource("contact", card.source_id, card.digest), client, build, fill
         )
 
     def _land_calendar_client(
@@ -388,9 +405,14 @@ class ArchiveApplier:
         source: _ClientSource,
         client: dict[str, Any],
         build: Callable[[], Patient],
+        fill: Callable[[Patient], bool] | None = None,
     ) -> None:
         """The patient a client lands on: the one an earlier run made, the one
         the preview or the practice matched, or a new one from ``build``.
+
+        ``fill`` completes a matched patient's empty details from the source
+        (never overwriting one), when the match is a calendar import's
+        name-only patient.
 
         ``record_type`` is what the ledger files the landing under; counts
         stay under ``contact`` either way, which is what the screen reads."""
@@ -417,6 +439,9 @@ class ArchiveApplier:
             if patient is None:
                 run.report.miss("contact", key, "matched patient not found")
                 return
+            if fill is not None and client.get("match_evidence") == "calendar" and fill(patient):
+                patient.updated_at = utc_now()
+                self._patients.update(patient)
             run.report.patients[card_id] = patient.id
             run.report.counts["contact"]["merged"] += 1
             # Marked merged: the patient was here before this run, so undo
@@ -450,13 +475,40 @@ class ArchiveApplier:
         if patient_id is None:
             return
         how = record.get("lands_as")
+        key = _key(CALENDAR_APPOINTMENT, appointment.source_id)
         landed_row, existing = self._landed_appointment(appointment.source_id)
+        if landed_row is not None and existing is None:
+            # Landed once and removed in Pablo since: that was the clinician's
+            # call, and a newer copy of the feed does not undo it.
+            run.report.miss("appointment", key, "removed in Pablo since it was imported")
+            return
         # Only a visit that is booked or happened creates an appointment; a
         # cancellation or a no-show only changes one an earlier run landed.
         if how is None or (existing is None and how not in CREATES):
             run.report.counts["appointment"]["skipped"] += 1
             return
         status = _APPOINTMENT_STATUS[how]
+        if status != AppointmentStatus.CANCELLED:
+            taken = self._slot_taken(appointment.start_at, existing.id if existing else None)
+            if taken is not None and existing is None and taken[1] == patient_id:
+                # This client's visit is already here at that time (an export
+                # made it, or it was booked in Pablo): this is that visit.
+                self._ledger(
+                    run,
+                    Landed(
+                        CALENDAR_APPOINTMENT,
+                        appointment.source_id,
+                        "appointments",
+                        taken[0],
+                        appointment.digest,
+                        previous_payload={"merged": True},
+                    ),
+                )
+                run.report.counts["appointment"]["matched"] += 1
+                return
+            if taken is not None:
+                run.report.miss("appointment", key, "that time is already booked")
+                return
         previous_payload: dict[str, Any] | None = None
         if existing is not None and landed_row is not None:
             # What undo puts back: the appointment as it stood, and the run
@@ -470,10 +522,6 @@ class ArchiveApplier:
                     "patient_id": existing.patient_id,
                 },
                 "previous_run_id": landed_row.run_id,
-                # The run that created it, carried through every update, so
-                # undoing that run removes it whichever run touched it last.
-                "created_run_id": (landed_row.previous_payload or {}).get("created_run_id")
-                or landed_row.run_id,
                 "previous_digest": landed_row.source_digest,
                 "previous_state": landed_row.state,
                 "previous_payload": landed_row.previous_payload,
@@ -525,6 +573,21 @@ class ArchiveApplier:
             return None, None
         return row, self._appointments.get(row.target_id, self._user_id)
 
+    def _slot_taken(self, start_at: datetime, exclude_id: str | None) -> tuple[str, str] | None:
+        """The clinician's active appointment at ``start_at`` (id, patient), if any.
+
+        One active appointment per clinician per start time is the calendar's
+        own rule; an import checks it rather than failing on it."""
+        stmt = select(AppointmentRow.id, AppointmentRow.patient_id).where(
+            AppointmentRow.user_id == self._user_id,
+            AppointmentRow.start_at == start_at,
+            AppointmentRow.status != AppointmentStatus.CANCELLED.value,
+        )
+        if exclude_id is not None:
+            stmt = stmt.where(AppointmentRow.id != exclude_id)
+        found = self._session.execute(stmt.limit(1)).first()
+        return (str(found[0]), str(found[1])) if found else None
+
     def _restore_appointment(self, row: ImportRecordRow) -> bool:
         """Undo an update: put the appointment back as it stood and hand the
         ledger row back to the run that landed it."""
@@ -537,20 +600,19 @@ class ArchiveApplier:
             row.state = "undone"
             row.updated_at = utc_now()
             return False
-        if appointment is not None:
-            appointment.start_at = datetime.fromisoformat(before["start_at"])
-            appointment.end_at = datetime.fromisoformat(before["end_at"])
-            appointment.duration_minutes = before["duration_minutes"]
-            appointment.status = before["status"]
-            appointment.patient_id = before["patient_id"]
-            appointment.updated_at = utc_now()
-            self._appointments.update(appointment)
+        appointment.start_at = datetime.fromisoformat(before["start_at"])
+        appointment.end_at = datetime.fromisoformat(before["end_at"])
+        appointment.duration_minutes = before["duration_minutes"]
+        appointment.status = before["status"]
+        appointment.patient_id = before["patient_id"]
+        appointment.updated_at = utc_now()
+        self._appointments.update(appointment)
         row.run_id = payload["previous_run_id"]
         row.source_digest = payload["previous_digest"]
         row.state = payload["previous_state"]
         row.previous_payload = payload.get("previous_payload")
         row.updated_at = utc_now()
-        return appointment is not None
+        return True
 
     # ------------------------------------------------------------------ notes
 
@@ -940,21 +1002,6 @@ class ArchiveApplier:
         removed: Counter[str] = Counter()
         restored: Counter[str] = Counter()
         kept: list[dict[str, str]] = []
-        # Appointments this run created that a later run has since moved or
-        # cancelled: the later run holds their ledger rows, but they go with
-        # the run that created them, as its clients do.
-        for row in self._created_by_but_updated_since(run_id):
-            if not include_edited and edited_since(
-                self._session, row.target_table, row.target_id, row.updated_at
-            ):
-                kept.append(
-                    {"key": _key(row.record_type, row.source_id), "reason": "edited since import"}
-                )
-                continue
-            if self._remove(row.target_table, row.target_id):
-                removed[row.record_type] += 1
-            row.state = "undone"
-            row.updated_at = utc_now()
         rows = records_for_run(self._session, run_id)
         for row in sorted(rows, key=lambda r: _UNDO_ORDER.get(r.record_type, len(_UNDO_ORDER))):
             if row.state == "undone":
@@ -998,19 +1045,6 @@ class ArchiveApplier:
         if restored:
             result["restored"] = dict(restored)
         return result
-
-    def _created_by_but_updated_since(self, run_id: str) -> list[ImportRecordRow]:
-        stmt = select(ImportRecordRow).where(
-            ImportRecordRow.source_system == SOURCE_SYSTEM,
-            ImportRecordRow.record_type == CALENDAR_APPOINTMENT,
-            ImportRecordRow.run_id != run_id,
-            ImportRecordRow.state != "undone",
-        )
-        return [
-            row
-            for row in self._session.execute(stmt).scalars()
-            if (row.previous_payload or {}).get("created_run_id") == run_id
-        ]
 
     def _remove(self, table: str, target_id: str) -> bool:
         removers = {

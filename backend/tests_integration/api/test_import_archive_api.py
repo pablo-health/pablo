@@ -282,6 +282,9 @@ def test_main_export_end_to_end(client: TestClient, engine: Engine, schema: str)
     assert second["report"]["counts"]["contact"] == {"unchanged": 3}
     assert _chart(engine, schema) == chart
 
+    # Newest first: the second run is undone before the one it built on.
+    later = client.post(f"/api/migration/runs/{again['id']}/undo", json={})
+    assert later.status_code == 200, later.text
     _undo_everything(client, engine, schema, run["id"])
 
 
@@ -297,7 +300,7 @@ def _undo_everything(client: TestClient, engine: Engine, schema: str, run_id: st
     after = _chart(engine, schema)
     assert (after["patients"], after["notes"], after["measures"], after["threads"]) == (0, 0, 0, 0)
     history = client.get("/api/migration/runs").json()["runs"]
-    assert [r["state"] for r in history] == ["applied", "undone"]
+    assert [r["state"] for r in history] == ["undone", "undone"]
 
 
 def test_existing_client_without_birthday_is_merged_on_request(

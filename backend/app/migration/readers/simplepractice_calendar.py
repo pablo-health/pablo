@@ -39,19 +39,24 @@ touched.
 
 from __future__ import annotations
 
-import hashlib
 import json
-import re
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from .calendar_folder import CALENDAR_DIR, calendar_dir, calendar_files, capture_order
+from .calendar_values import digest as _digest
+from .calendar_values import flag as _flag
+from .calendar_values import revoked_admin_ids as _revoked_admin_ids
+from .calendar_values import split_name as _split_name
+from .calendar_values import when as _when
 from .simplepractice import SOURCE_SYSTEM
 
+if TYPE_CHECKING:
+    from datetime import datetime
+
 #: The folder the saved responses live in, at the top of the uploaded zip.
-CALENDAR_DIR = "calendar"
 
 #: The ``attendanceStatus`` of a visit that happened.
 ATTENDED = "Show"
@@ -63,11 +68,8 @@ CALENDAR_CLIENT = "calendar_client"
 #: apart from the visits an export's notes create under ``appointment``.
 CALENDAR_APPOINTMENT = "calendar_appointment"
 
-#: A browser's name for a second save of the same file: ``name (2).json``.
-_SAVED_COPY = re.compile(r"^(?P<stem>.*?)(?:\s*\((?P<n>\d+)\))?$")
 
 #: A display name of first and last name has this many words.
-_FIRST_AND_LAST = 2
 
 
 # --------------------------------------------------------------------------- records
@@ -154,52 +156,6 @@ class SimplePracticeCalendar:
 
 
 # --------------------------------------------------------------------------- helpers
-
-
-def _flag(value: Any) -> bool:
-    """The feed's ``"true"`` / ``"false"`` strings (and a real bool) as bool."""
-    if isinstance(value, bool):
-        return value
-    return isinstance(value, str) and value.strip().lower() == "true"
-
-
-def _when(value: Any) -> datetime:
-    """An ISO-8601 stamp with its offset, kept as the feed wrote it."""
-    if not isinstance(value, str):
-        raise ValueError("a time is missing")
-    parsed = datetime.fromisoformat(value)
-    if parsed.tzinfo is None:
-        raise ValueError("a time carries no offset")
-    return parsed
-
-
-def _digest(payload: dict[str, Any]) -> str:
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-
-def _revoked_admin_ids(value: Any) -> tuple[str, ...]:
-    """``revokedAdminIds`` arrives as a JSON list serialised into a string."""
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except ValueError:
-            return ()
-    if not isinstance(value, list):
-        return ()
-    return tuple(str(v) for v in value)
-
-
-def _split_name(display_name: str) -> tuple[str, str]:
-    """A display name as first and last name: everything before the last
-    word, and the last word."""
-    parts = display_name.split()
-    if len(parts) < _FIRST_AND_LAST:
-        return display_name.strip(), ""
-    return " ".join(parts[:-1]), parts[-1]
-
-
-# --------------------------------------------------------------------------- one file
 
 
 @dataclass
@@ -336,6 +292,11 @@ def _read_file(path: Path, rel: str) -> _File:
                 continue
             title = (str((entry.get("attributes") or {}).get("title") or "")).strip() or None
             client = _client(client_entry, title)
+            if not client.first_name or not client.last_name:
+                # Nothing in the file gives this client a whole name: no chart
+                # is made for a name Pablo would have to guess at.
+                out.skipped["no_name"] += 1
+                continue
             appointment = _appointment(entry, client_id, rel)
         except (ValueError, TypeError, AttributeError, KeyError):
             # One appointment the file recorded incompletely (no end time, a
@@ -361,45 +322,6 @@ def _better_client(current: CalendarClient | None, new: CalendarClient) -> Calen
 
 
 # --------------------------------------------------------------------------- the folder
-
-
-def calendar_dir(root: Path) -> Path | None:
-    """The top-level calendar folder under ``root``, whatever its case."""
-    root = Path(root)
-    if not root.is_dir():
-        return None
-    for child in sorted(root.iterdir()):
-        if child.is_dir() and child.name.lower() == CALENDAR_DIR:
-            return child
-    return None
-
-
-def _natural(text: str) -> tuple[tuple[int, int | str], ...]:
-    return tuple(
-        (0, int(part)) if part.isdigit() else (1, part.lower())
-        for part in re.split(r"(\d+)", text)
-        if part
-    )
-
-
-def capture_order(path: Path) -> tuple[object, ...]:
-    """The order files were saved in, from their names.
-
-    Numbers sort as numbers (``-2`` before ``-10``), and a browser's
-    ``name (n).json`` comes after the ``name.json`` it copies, in ``n`` order.
-    """
-    match = _SAVED_COPY.match(path.stem)
-    stem, copy = (match["stem"], int(match["n"] or 0)) if match else (path.stem, 0)
-    return (_natural(stem), copy, path.name)
-
-
-def calendar_files(root: Path) -> list[Path]:
-    """The calendar folder's JSON files, in the order they were saved."""
-    folder = calendar_dir(root)
-    if folder is None:
-        return []
-    found = [p for p in folder.iterdir() if p.is_file() and p.suffix.lower() == ".json"]
-    return sorted(found, key=capture_order)
 
 
 def read_simplepractice_calendar(root: Path) -> SimplePracticeCalendar:

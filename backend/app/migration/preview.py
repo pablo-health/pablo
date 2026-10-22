@@ -199,6 +199,12 @@ class _Builder:
             matched_id, evidence, possible = _match_existing(card, existing)
             if entry is not None and entry.state != "undone":
                 matched_id, evidence, possible = entry.target_id, "ledger", []
+            else:
+                # The same SimplePractice client, brought in by a calendar
+                # import with a name only: the card lands on that patient.
+                calendar_entry = self.inputs.ledger.get((CALENDAR_CLIENT, card.source_id))
+                if calendar_entry is not None and calendar_entry.state != "undone":
+                    matched_id, evidence, possible = calendar_entry.target_id, "calendar", []
             address = card.address
             clients.append(
                 {
@@ -368,6 +374,8 @@ CALENDAR_CANNOT_LAND_REASONS = {
     "group_appointment": "Group appointments land in a later version.",
     "external_event": "Events from your outside calendars stay where they are.",
     "cancelled": "Cancelled appointments and no-shows.",
+    "protected": "Restricted in SimplePractice to part of your practice. Add them here by hand.",
+    "no_name": "Clients the file names without a first and last name.",
     "no_attendance": "Past appointments with no attendance recorded.",
     "no_client": "Appointments that name no client, or whose client the file left out.",
     "unrecognized": "Entries that are not part of a calendar response this version knows.",
@@ -465,15 +473,15 @@ def _calendar_cannot_land(
     out: list[dict[str, Any]] = []
     groups = sum(1 for u in calendar.unsupported if u.kind == "group")
     unknown = len(calendar.unsupported) - groups
-    missed = [r for r in records if not r["landable"]]
-    cancelled = sum(1 for r in missed if r["lands_as"] is not None)
-    no_attendance = len(missed) - cancelled
+    why = Counter(r["why"] for r in records if not r["landable"])
     no_client = calendar.skipped.get("no_client", 0) + calendar.skipped.get("client_missing", 0)
     for what, count in (
         ("group_appointment", groups),
         ("external_event", calendar.skipped.get("external", 0)),
-        ("cancelled", cancelled),
-        ("no_attendance", no_attendance),
+        ("cancelled", why["cancelled"]),
+        ("no_attendance", why["no_attendance"]),
+        ("protected", why["protected"]),
+        ("no_name", calendar.skipped.get("no_name", 0)),
         ("no_client", no_client),
         ("unrecognized", unknown),
         ("malformed", calendar.skipped.get("malformed", 0)),
@@ -487,8 +495,10 @@ def _calendar_cannot_land(
     return out
 
 
-def _why_not(how: LandsAs | None) -> str:
+def _why_not(how: LandsAs | None, protected: bool) -> str:
     """The cannot-land reason for an appointment that does not land."""
+    if protected:
+        return "protected"
     return "no_attendance" if how is None else "cancelled"
 
 
@@ -498,13 +508,21 @@ def _calendar_records(
     clock: Clock,
     counts: dict[str, Counter[str]],
 ) -> list[dict[str, Any]]:
-    """One preview record per feed appointment, saying whether and how it lands."""
+    """One preview record per feed appointment, saying whether and how it lands.
+
+    A client SimplePractice keeps restricted to some of the practice is left
+    out, so an import never widens who can see them; the practice adds them by
+    hand with Pablo's own access settings.
+    """
+    protected = {c.source_id for c in calendar.clients if c.protected}
     records: list[dict[str, Any]] = []
     for appointment in calendar.appointments:
         entry = inputs.ledger.get((CALENDAR_APPOINTMENT, appointment.source_id))
         state = _delta_state(entry, appointment.digest, inputs.edited_targets)
         how = lands_as(appointment, clock)
-        landable = _calendar_landable(how, entry)
+        shielded = appointment.client_id in protected
+        landable = not shielded and _calendar_landable(how, entry)
+        why = None if landable else _why_not(how, shielded)
         records.append(
             {
                 "record_type": "appointment",
@@ -522,7 +540,8 @@ def _calendar_records(
                 "candidates": [appointment.client_id],
                 "state": state,
                 "landable": landable,
-                "reason": None if landable else CALENDAR_CANNOT_LAND_REASONS[_why_not(how)],
+                "why": why,
+                "reason": CALENDAR_CANNOT_LAND_REASONS[why] if why else None,
             }
         )
         counts["appointment"][state if landable else "skipped"] += 1

@@ -33,7 +33,8 @@ from sqlalchemy import select
 
 from ..db.models import ImportRecordRow, ImportRunRow
 from ..utcnow import utc_now
-from .readers.simplepractice_calendar import CALENDAR_CLIENT, CALENDAR_DIR
+from .readers.calendar_folder import CALENDAR_DIR
+from .readers.simplepractice_calendar import CALENDAR_CLIENT
 
 if TYPE_CHECKING:
     from datetime import datetime
