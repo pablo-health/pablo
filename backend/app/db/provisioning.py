@@ -39,6 +39,8 @@ from .platform_models import PracticeRow
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
 
+    from . import RlsReconcileCounts
+
 logger = logging.getLogger(__name__)
 
 type PostProvisionHook = Callable[["Engine", str], None]
@@ -339,6 +341,11 @@ def _stamp_alembic_at_head(engine: Engine, schema_name: str) -> None:
 # alembic revision that touches DDL.
 _TENANT_TEMPLATE_SQL_PATH = Path(__file__).resolve().parent / "tenant_template.sql"
 _TENANT_SCHEMA_PLACEHOLDER = "__TENANT_SCHEMA__"
+#: Separates the template's schema from the row-level security it carries
+#: for a practice. Written by ``backend/scripts/regen_tenant_template.py``,
+#: which spells the same line; ``test_tenant_template_sections`` holds the
+#: two together.
+TEMPLATE_ROW_SECURITY_MARKER = "-- @@ row-level security: applied to practice schemas only @@\n"
 
 
 def create_practice_schema(engine: Engine, schema_name: str) -> None:
@@ -363,12 +370,26 @@ def create_practice_schema(engine: Engine, schema_name: str) -> None:
        re-provisioned from the template or reconciled by hand, never
        silently rebuilt from the ORM.
 
-    RLS policies still live outside the template (column introspection
-    in Python). Skipped for the default template — single-tenancy OSS
-    deployments use ``practice`` as their runtime schema without the
-    multi-tenant middleware that sets ``app.current_user_id``, and
-    RLS-without-user-id fails closed (zero rows). Per-tenant schemas
-    always get RLS.
+    Row-level security comes from the template too. Its last section
+    (after :data:`TEMPLATE_ROW_SECURITY_MARKER`) is the state
+    ``enable_rls_on_schema`` gives a fresh practice — every table enabled,
+    forced and policied — so a new practice is isolated by the time its
+    template is applied, without the per-table rebuild. That section is
+    applied after the seed rows and the post-provision hooks, the same
+    point the rebuild used to run at, so neither writes under row policies
+    it never had to satisfy.
+
+    ``enable_rls_on_schema`` then still runs over every practice schema,
+    fresh or not, as the verify. On a schema the template just built it
+    reads the catalog, finds every table already right and changes
+    nothing; it is also what applies the parts a capture cannot carry —
+    the practice directory's function owner, grants and search path — and
+    what covers tables the template does not know: those a deployment
+    registered, and those a post-provision hook created.
+
+    The default template schema gets neither: it is the shape practices
+    are cloned from and holds no rows, and ``enable_rls_on_schema`` skips
+    it by name.
     """
     _validate_schema_name(schema_name)
 
@@ -451,17 +472,31 @@ def _create_practice_schema_locked(engine: Engine, schema_name: str) -> None:
         # schema is at HEAD on both chains before any caller starts
         # using it.
         _run_post_provision_hooks(engine, schema_name)
+        if not is_default_template:
+            _apply_template_row_security(engine, schema_name)
 
     if not is_default_template:
-        from sqlalchemy.orm import Session as OrmSession
-
-        from . import enable_rls_on_schema
-
-        with OrmSession(engine) as session:
-            session.execute(text(f"SET search_path = {schema_name}, {PLATFORM_SCHEMA}, public"))
-            enable_rls_on_schema(session, schema_name)
+        reconcile_practice_rls(engine, schema_name)
 
     logger.info("Practice schema '%s' ready", schema_name)
+
+
+def reconcile_practice_rls(
+    engine: Engine, schema_name: str, *, strict: bool = True
+) -> RlsReconcileCounts:
+    """Run ``enable_rls_on_schema`` over one practice schema on its own session.
+
+    The tenant schema goes first on the search path so policy bodies that
+    call ``has_patient_access`` unqualified resolve to its own copy.
+    ``schema_name`` must already be validated.
+    """
+    from sqlalchemy.orm import Session as OrmSession
+
+    from . import enable_rls_on_schema
+
+    with OrmSession(engine) as session:
+        session.execute(text(f"SET search_path = {schema_name}, {PLATFORM_SCHEMA}, public"))
+        return enable_rls_on_schema(session, schema_name, strict=strict)
 
 
 def _has_alembic_version(engine: Engine, schema_name: str) -> bool:
@@ -484,8 +519,16 @@ def _has_alembic_version(engine: Engine, schema_name: str) -> bool:
     return bool(count and count > 0)
 
 
+def _read_template() -> tuple[str, str]:
+    """The template split into its schema part and its row-level security part."""
+    body, _, row_security = _TENANT_TEMPLATE_SQL_PATH.read_text().partition(
+        TEMPLATE_ROW_SECURITY_MARKER
+    )
+    return body, row_security
+
+
 def _apply_tenant_template(engine: Engine, schema_name: str) -> None:
-    """Apply :file:`tenant_template.sql` to a fresh tenant schema.
+    """Apply the schema part of :file:`tenant_template.sql` to a fresh tenant schema.
 
     The template is the canonical DDL for a tenant at alembic-HEAD —
     every table, function, index, and FK that the migration chain
@@ -494,7 +537,25 @@ def _apply_tenant_template(engine: Engine, schema_name: str) -> None:
     references inside function bodies and policies resolve via the
     tenant's own search_path at query time.
     """
-    sql = _TENANT_TEMPLATE_SQL_PATH.read_text().replace(_TENANT_SCHEMA_PLACEHOLDER, schema_name)
+    body, _ = _read_template()
+    apply_template_sql(engine, schema_name, body)
+
+
+def _apply_template_row_security(engine: Engine, schema_name: str) -> None:
+    """Apply the row-level security part of the template to a fresh practice schema."""
+    _, row_security = _read_template()
+    if row_security.strip():
+        apply_template_sql(engine, schema_name, row_security)
+
+
+def apply_template_sql(engine: Engine, schema_name: str, template_sql: str) -> None:
+    """Apply template SQL carrying the ``__TENANT_SCHEMA__`` placeholder to ``schema_name``.
+
+    Creates the schema if it is missing. Also how the template capture
+    builds its scratch practice, so the capture applies SQL exactly the way
+    provisioning does. ``schema_name`` must already be validated.
+    """
+    sql = template_sql.replace(_TENANT_SCHEMA_PLACEHOLDER, schema_name)
     with engine.begin() as conn:
         conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema_name}"))
         # Set search_path before the template runs so any unqualified
@@ -512,11 +573,12 @@ def _apply_tenant_template(engine: Engine, schema_name: str) -> None:
         # ``text()`` is out because SQLAlchemy would parse bind params and trip
         # on the dollar-quoted function bodies. ``exec_driver_sql`` is out too,
         # and less obviously: it always hands the driver a parameter collection,
-        # which makes psycopg2 treat ``%`` as a placeholder. This file contains
-        # no ``%`` today, which is the only reason that worked — the first
-        # tenant-side CHECK written with LIKE would break provisioning with
-        # ``TypeError: immutabledict is not a sequence``, an error that names
-        # neither the percent sign nor this line. The platform template hit
+        # which makes psycopg2 treat ``%`` as a placeholder, and the template's
+        # row-level security section does contain one (the practice-answers
+        # policy's ``LIKE 'calendar:%'``). Through a parameter collection it
+        # would break provisioning with ``TypeError: immutabledict is not a
+        # sequence``, an error that names neither the percent sign nor this
+        # line. The platform template hit
         # exactly that (its pentest CHECK renders as
         # ``like_escape('practice\\_pentest\\_%', '\\')``), which is how the trap
         # was found. psycopg2 only interpolates when parameters are passed.
