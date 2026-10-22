@@ -1654,25 +1654,6 @@ CREATE TABLE __TENANT_SCHEMA__.therapy_sessions (
 );
 
 
-CREATE TABLE __TENANT_SCHEMA__.waitlist_entries (
-    id uuid NOT NULL,
-    user_id uuid NOT NULL,
-    patient_id uuid NOT NULL,
-    days jsonb NOT NULL,
-    times jsonb NOT NULL,
-    modality character varying(16) NOT NULL,
-    session_type character varying(30),
-    "position" integer NOT NULL,
-    paused boolean DEFAULT false NOT NULL,
-    no_auto_offer boolean DEFAULT false NOT NULL,
-    filled_at timestamp with time zone,
-    created_by uuid,
-    created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL,
-    CONSTRAINT ck_waitlist_entries_modality CHECK (((modality)::text = ANY ((ARRAY['in_person'::character varying, 'telehealth'::character varying, 'either'::character varying])::text[])))
-);
-
-
 
 CREATE TABLE __TENANT_SCHEMA__.waitlist_entries (
     id uuid NOT NULL,
@@ -2104,11 +2085,6 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.telehealth_connections
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.therapy_sessions
     ADD CONSTRAINT therapy_sessions_pkey PRIMARY KEY (id);
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.waitlist_entries
-    ADD CONSTRAINT waitlist_entries_pkey PRIMARY KEY (id);
 
 
 
