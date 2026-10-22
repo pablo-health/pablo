@@ -459,6 +459,14 @@ const baseQueryKeys = {
       [...baseQueryKeys.homework.all, "byPatient", patientId] as const,
   },
 
+  // The clinician's waitlist, and one client's place on it
+  waitlist: {
+    all: ["waitlist"] as const,
+    list: () => [...baseQueryKeys.waitlist.all, "list"] as const,
+    byPatient: (patientId: string) =>
+      [...baseQueryKeys.waitlist.all, "byPatient", patientId] as const,
+  },
+
   // Refill requests (the prescriber's queue) query keys
   refills: {
     all: ["refills"] as const,

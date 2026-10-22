@@ -14,6 +14,7 @@ import { PatientChatDialog } from "@/components/patients/PatientChatDialog"
 import { PatientChartExtras } from "@/components/patients/PatientChartExtras"
 import { RecordActivity } from "@/components/patients/RecordActivity"
 import { NewNoteButton } from "@/components/notes/NewNoteButton"
+import { ClientWaitlistAction } from "@/components/waitlist/ClientWaitlistAction"
 import { usePatient } from "@/hooks/usePatients"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 
@@ -89,6 +90,11 @@ export default function PatientDetailPage({ params, searchParams }: PatientDetai
           <RecordActivity patientId={patient.id} />
           <EditPatientButton patient={patient} />
           <PatientChatDialog patientId={patient.id} />
+          <ClientWaitlistAction
+            patientId={patient.id}
+            patientName={`${patient.first_name} ${patient.last_name}`}
+            patientStatus={patient.status}
+          />
           <NewNoteButton patientId={patient.id} />
           <PatientExport
             patientId={patient.id}

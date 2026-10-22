@@ -42,6 +42,10 @@ export const CREDENTIALING_LEGACY_SETTINGS_PATH = `/dashboard/settings/${CREDENT
 export const PATIENT_PORTAL_SETTINGS_ID = "portal"
 export const PATIENT_PORTAL_SETTINGS_PATH = `/dashboard/settings/${PATIENT_PORTAL_SETTINGS_ID}`
 
+/** The clinician's waitlist; a client page on it links here. */
+export const WAITLIST_SETTINGS_ID = "waitlist"
+export const WAITLIST_SETTINGS_PATH = `/dashboard/settings/${WAITLIST_SETTINGS_ID}`
+
 /** The practice's own domains; Settings > Website links here until a website domain works. */
 export const DOMAINS_SETTINGS_ID = "domains"
 export const DOMAINS_SETTINGS_PATH = `/dashboard/settings/${DOMAINS_SETTINGS_ID}`
