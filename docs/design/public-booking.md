@@ -320,7 +320,7 @@ provider, otherwise in person. The cancellation writes an
 `appointment_slot_opened` audit row (system actor, scoped to the clinician,
 ids only) in its own transaction, and subscribers registered with
 `open_slots.subscribe(handler)` are called after it commits. A deployment
-acts on the event by subscribing; a subscriber that raises is logged by id
+acts on the event by subscribing; a subscriber that raises is logged by name
 and skipped.
 
 **The link.** `POST /api/booking-links/slot` takes an appointment type, a

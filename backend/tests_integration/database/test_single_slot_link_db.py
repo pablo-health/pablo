@@ -26,6 +26,7 @@ from app.db import PLATFORM_SCHEMA, _current_tenant_schema, arm_current_user_id,
 from app.db.platform_models import BookingLinkRow, PlatformUserRow
 from app.models import Patient
 from app.repositories.postgres.appointment import PostgresAppointmentRepository
+from app.repositories.postgres.appointment_type import PostgresAppointmentTypeRepository
 from app.repositories.postgres.booking_link import PostgresBookingLinkRepository
 from app.repositories.postgres.patient import PostgresPatientRepository
 from app.scheduling_engine.models.appointment_type import AppointmentType
@@ -99,6 +100,12 @@ def tenant(engine: Engine) -> Iterator[None]:
                 session_notes_quality_review_opt_in=False,
             )
         )
+        s.commit()
+    # The type has to exist in the practice: appointments.appointment_type_id
+    # is a foreign key into it, so a booking of a type that is not there is a
+    # constraint violation, not a taken time.
+    with _owner_session(engine) as s:
+        PostgresAppointmentTypeRepository(s).create(_TYPE)
         s.commit()
     yield
     with engine.connect() as conn:

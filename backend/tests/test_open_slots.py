@@ -191,4 +191,6 @@ class TestSubscribing:
                 unsubscribe()
 
         assert received == [self._slot()]
-        assert "appointment_id=appt-1" in caplog.text
+        assert "handler=" in caplog.text and "broken" in caplog.text
+        # Nothing from the slot itself reaches the log.
+        assert "appt-1" not in caplog.text

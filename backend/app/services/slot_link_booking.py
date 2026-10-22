@@ -105,5 +105,21 @@ def book_slot_link(
 
     try:
         return scheduling.create_appointment(link.user_id, data=data)
-    except (AppointmentConflictError, IntegrityError) as e:
+    except AppointmentConflictError as e:
         raise SlotTakenError from e
+    except IntegrityError as e:
+        # Only the active-slot index means "somebody else got here first".
+        # Any other constraint — a type or patient that does not exist — is a
+        # real fault, and reporting it as a taken time would hide it.
+        if _constraint_name(e) != _ACTIVE_SLOT_INDEX:
+            raise
+        raise SlotTakenError from e
+
+
+#: The unique index on ``(user_id, start_at)`` over non-cancelled appointments.
+_ACTIVE_SLOT_INDEX = "uq_appointments_user_start_active"
+
+
+def _constraint_name(exc: IntegrityError) -> str | None:
+    diag = getattr(exc.orig, "diag", None)
+    return getattr(diag, "constraint_name", None)

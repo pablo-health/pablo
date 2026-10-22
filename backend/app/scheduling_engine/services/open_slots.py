@@ -18,7 +18,7 @@ necessarily free.
 
 **Subscribers hear about it after the cancellation has committed.** The caller
 publishes once its transaction is done, so a subscriber never acts on a
-cancellation that was rolled back. A subscriber that raises is logged by id and
+cancellation that was rolled back. A subscriber that raises is logged by name and
 skipped; it cannot undo the cancellation or stop the next subscriber.
 
 **Nothing here carries a person.** The event names the appointment, the
@@ -122,7 +122,8 @@ def publish(slot: OpenSlot) -> None:
     """Hand ``slot`` to every subscriber, in the order they subscribed.
 
     Call this after the cancellation has committed. A subscriber that raises is
-    logged with the appointment id alone and the rest still run.
+    logged by the subscriber's name alone — nothing from the slot reaches the
+    log — and the rest still run.
     """
     with _lock:
         handlers = list(_handlers)
@@ -131,7 +132,6 @@ def publish(slot: OpenSlot) -> None:
             handler(slot)
         except Exception:
             logger.exception(
-                "open-slot subscriber failed: appointment_id=%s handler=%s",
-                slot.appointment_id,
+                "open-slot subscriber failed: handler=%s",
                 getattr(handler, "__qualname__", type(handler).__name__),
             )
