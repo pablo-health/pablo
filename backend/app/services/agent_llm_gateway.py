@@ -71,6 +71,18 @@ class AgentResult:
     hit_step_limit: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class _FinalEmit:
+    """The parsed object from the final structured emit and that call's token counts."""
+
+    data: dict[str, Any]
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    cached_tokens: int
+    thoughts_tokens: int
+
+
 class AgentLLMGateway(ABC):
     """Abstract tool-using-loop gateway that ends in one structured object."""
 
@@ -208,7 +220,7 @@ class GeminiAgentLLMGateway(AgentLLMGateway):
                 if step == max_steps - 1:
                     hit_step_limit = True
 
-            data, emit_p, emit_o, emit_t, emit_c, emit_th = self._emit_structured(
+            emit = self._emit_structured(
                 client,
                 normalized,
                 contents,
@@ -218,11 +230,11 @@ class GeminiAgentLLMGateway(AgentLLMGateway):
                 temperature=temperature,
             )
             span.set_token_usage(
-                prompt_tokens=prompt_total + emit_p,
-                completion_tokens=output_total + emit_o,
-                total_tokens=grand_total + emit_t,
-                cached_tokens=cached_total + emit_c,
-                thoughts_tokens=thoughts_total + emit_th,
+                prompt_tokens=prompt_total + emit.prompt_tokens,
+                completion_tokens=output_total + emit.completion_tokens,
+                total_tokens=grand_total + emit.total_tokens,
+                cached_tokens=cached_total + emit.cached_tokens,
+                thoughts_tokens=thoughts_total + emit.thoughts_tokens,
             )
 
         logger.info(
@@ -231,7 +243,7 @@ class GeminiAgentLLMGateway(AgentLLMGateway):
             hit_step_limit,
             ",".join(sorted({c.name for c in invocations})) or "-",
         )
-        return AgentResult(data=data, tool_calls=invocations, hit_step_limit=hit_step_limit)
+        return AgentResult(data=emit.data, tool_calls=invocations, hit_step_limit=hit_step_limit)
 
     def _emit_structured(
         self,
@@ -243,11 +255,8 @@ class GeminiAgentLLMGateway(AgentLLMGateway):
         response_schema: dict[str, Any],
         max_output_tokens: int,
         temperature: float,
-    ) -> tuple[dict[str, Any], int, int, int, int, int]:
-        """Final tool-free call constrained to the schema.
-
-        Returns (data, prompt, output, total, cached, thoughts) token counts.
-        """
+    ) -> _FinalEmit:
+        """Final tool-free call constrained to the schema."""
         from google.genai import types
 
         emit_contents = [
@@ -279,7 +288,14 @@ class GeminiAgentLLMGateway(AgentLLMGateway):
             # Never log the model text. The caller degrades on an empty object.
             logger.warning("agent final emit had no JSON object; returning empty object")
             data = {}
-        return data, p or 0, o or 0, t or 0, c or 0, th or 0
+        return _FinalEmit(
+            data=data,
+            prompt_tokens=p or 0,
+            completion_tokens=o or 0,
+            total_tokens=t or 0,
+            cached_tokens=c or 0,
+            thoughts_tokens=th or 0,
+        )
 
     @staticmethod
     def _generate(client: Any, model: str, contents: list[Any], config: Any) -> Any:
