@@ -41,6 +41,11 @@ jobs:
       - name: Check PHI not passed to logger.* calls (THERAPY-za2y)
         run: python3 scripts/check_phi_in_logs.py
 
+      - name: Check model calls go through the LLM gateways
+        run: |
+          python3 scripts/check_llm_single_path_selftest.py
+          python3 scripts/check_llm_single_path.py
+
   migration-lint:
     name: Models ship with migrations
     if: github.event_name == 'pull_request'

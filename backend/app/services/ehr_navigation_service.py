@@ -20,8 +20,8 @@ from urllib.parse import urlparse
 from starlette.concurrency import run_in_threadpool
 
 from ..models.ehr_route import GoalNavigationRequest, GoalNavigationResponse
-from ..reliability import LLM_REQUEST, Idempotency, call_with_retry
-from .llm_telemetry import LLMSpanRequest, llm_span, usage_detail_tokens, usage_tokens
+from ..reliability import LLM_REQUEST
+from .text_llm_gateway import generate_text
 from .vertex_client import vertex_genai_client
 
 if TYPE_CHECKING:
@@ -216,36 +216,22 @@ class GeminiEhrNavigationService(EhrNavigationService):
             )
 
             client = self._get_client()
-            with llm_span(LLMSpanRequest(operation="ehr_navigation", model=self.model)) as span:
-                # A blocking client and a blocking retry: run on the event loop
-                # they would stall every other request until the model answered.
-                response = await run_in_threadpool(
-                    call_with_retry,
-                    lambda: client.models.generate_content(
-                        model=self.model,
-                        contents=user_prompt,
-                        config=types.GenerateContentConfig(
-                            system_instruction=system_prompt,
-                            response_mime_type="application/json",
-                            response_schema=response_schema,
-                            temperature=0.1,
-                            max_output_tokens=2048,
-                        ),
-                    ),
-                    policy=LLM_REQUEST,
-                    idempotency=Idempotency.SAFE,
-                )
-                usage_metadata = getattr(response, "usage_metadata", None)
-                prompt_tokens, completion_tokens, total_tokens = usage_tokens(usage_metadata)
-                cached_tokens, thoughts_tokens = usage_detail_tokens(usage_metadata)
-                span.set_token_usage(
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    total_tokens=total_tokens,
-                    cached_tokens=cached_tokens,
-                    thoughts_tokens=thoughts_tokens,
-                )
-            return self._parse_response(response.text, request.goal)
+            # A blocking client and a blocking retry: run on the event loop
+            # they would stall every other request until the model answered.
+            text = await run_in_threadpool(
+                generate_text,
+                model=self.model,
+                system_prompt=system_prompt,
+                user_content=user_prompt,
+                response_mime_type="application/json",
+                response_schema=response_schema,
+                temperature=0.1,
+                max_output_tokens=2048,
+                policy=LLM_REQUEST,
+                feature="ehr_navigation",
+                client=client,
+            )
+            return self._parse_response(text, request.goal)
         except LookupError:
             raise
         except json.JSONDecodeError as err:
