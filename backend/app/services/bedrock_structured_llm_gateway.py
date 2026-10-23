@@ -385,10 +385,18 @@ class BedrockStructuredLLMGateway(StructuredLLMGateway):
                 ) from exc
             usage = response.get("usage") or {}
             output_tokens = usage.get("outputTokens")
+            # Converse reports cache reads apart from ``inputTokens``; fold them
+            # into the prompt count so it means the same as on the Gemini path
+            # (the whole prompt, of which ``cached_tokens`` was served from cache).
+            cached_tokens = usage.get("cacheReadInputTokens")
+            prompt_tokens = usage.get("inputTokens")
+            if prompt_tokens is not None and cached_tokens:
+                prompt_tokens += cached_tokens
             span.set_token_usage(
-                prompt_tokens=usage.get("inputTokens"),
+                prompt_tokens=prompt_tokens,
                 completion_tokens=output_tokens,
                 total_tokens=usage.get("totalTokens"),
+                cached_tokens=cached_tokens,
             )
 
         # A token-capped answer is a partial tool call (or none at all); say
