@@ -47,6 +47,7 @@ from backend.app.services.llm_telemetry import (
     llm_feature_var,
     llm_span,
     retrieval_span,
+    usage_detail_tokens,
 )
 from backend.app.services.structured_llm_gateway import GeminiStructuredLLMGateway
 
@@ -529,6 +530,41 @@ class TestUsageLog:
 
         attrs = dict(span_exporter.get_finished_spans()[0].attributes or {})
         assert attrs["pablo.llm_feature"] == "note_generation"
+
+    def test_cached_and_thoughts_tokens_ride_on_the_record(
+        self, span_exporter: InMemorySpanExporter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        usage = SimpleNamespace(
+            prompt_token_count=2100,
+            cached_content_token_count=1900,
+            thoughts_token_count=150,
+        )
+        cached, thoughts = usage_detail_tokens(usage)
+        with llm_span(LLMSpanRequest(operation="structured", model="m")) as rec:
+            rec.set_token_usage(
+                prompt_tokens=usage.prompt_token_count,
+                cached_tokens=cached,
+                thoughts_tokens=thoughts,
+            )
+
+        (record,) = self._records(caplog)
+        assert (record.llm_cached_tokens, record.llm_thoughts_tokens) == (1900, 150)
+        attrs = dict(span_exporter.get_finished_spans()[0].attributes or {})
+        assert attrs["pablo.llm_cached_tokens"] == 1900
+
+    def test_usage_detail_tokens_tolerates_missing_fields(self) -> None:
+        assert usage_detail_tokens(None) == (None, None)
+        assert usage_detail_tokens(SimpleNamespace(prompt_token_count=5)) == (None, None)
+
+    def test_a_record_without_cache_info_omits_the_field(
+        self, span_exporter: InMemorySpanExporter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        with llm_span(LLMSpanRequest(operation="structured", model="m")) as rec:
+            rec.set_token_usage(prompt_tokens=3)
+        (record,) = self._records(caplog)
+        assert not hasattr(record, "llm_cached_tokens")
 
     def test_a_gateway_call_logs_its_tokens_and_no_content(
         self, span_exporter: InMemorySpanExporter, caplog: pytest.LogCaptureFixture

@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 
 from ..reliability import LLM_JOB, LLM_REQUEST, Idempotency, call_with_retry
 from .llm_provider import LLMProvider, strip_provider_prefix
-from .llm_telemetry import LLMSpanRequest, llm_span, usage_tokens
+from .llm_telemetry import LLMSpanRequest, llm_span, usage_detail_tokens, usage_tokens
 from .vertex_client import (
     anthropic_vertex_client,
     seconds_to_genai_timeout_ms,
@@ -362,13 +362,15 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
             except Exception as exc:
                 logger.exception("Gemini structured completion failed")
                 raise RuntimeError(f"Structured LLM call failed: {exc}") from exc
-            prompt_tokens, output_tokens, total_tokens = usage_tokens(
-                getattr(response, "usage_metadata", None)
-            )
+            usage_metadata = getattr(response, "usage_metadata", None)
+            prompt_tokens, output_tokens, total_tokens = usage_tokens(usage_metadata)
+            cached_tokens, thoughts_tokens = usage_detail_tokens(usage_metadata)
             span.set_token_usage(
                 prompt_tokens=prompt_tokens,
                 completion_tokens=output_tokens,
                 total_tokens=total_tokens,
+                cached_tokens=cached_tokens,
+                thoughts_tokens=thoughts_tokens,
             )
 
         # Classify the finish reason *before* parsing: a length-truncated

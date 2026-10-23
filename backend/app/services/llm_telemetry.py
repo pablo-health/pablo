@@ -92,6 +92,8 @@ _ATTR_RETRIEVAL_OPERATION = "pablo.retrieval_operation"
 _ATTR_RETRIEVAL_DOC_COUNT = "pablo.retrieval.document_count"
 _ATTR_CONTEXT_TOKENS_EST = "pablo.retrieval.context_tokens_est"
 _ATTR_FEATURE = "pablo.llm_feature"
+_ATTR_CACHED_TOKENS = "pablo.llm_cached_tokens"
+_ATTR_THOUGHTS_TOKENS = "pablo.llm_thoughts_tokens"
 
 # The message of the per-call usage record. A log filter keys on it, so it
 # is a fixed token rather than prose.
@@ -152,7 +154,15 @@ class LLMSpanRecorder:
     the call site.
     """
 
-    __slots__ = ("_completion_tokens", "_error_class", "_prompt_tokens", "_span", "_total_tokens")
+    __slots__ = (
+        "_cached_tokens",
+        "_completion_tokens",
+        "_error_class",
+        "_prompt_tokens",
+        "_span",
+        "_thoughts_tokens",
+        "_total_tokens",
+    )
 
     def __init__(self, span: Span) -> None:
         self._span = span
@@ -163,6 +173,8 @@ class LLMSpanRecorder:
         self._prompt_tokens: int | None = None
         self._completion_tokens: int | None = None
         self._total_tokens: int | None = None
+        self._cached_tokens: int | None = None
+        self._thoughts_tokens: int | None = None
         self._error_class: str | None = None
 
     def set_token_usage(
@@ -171,8 +183,15 @@ class LLMSpanRecorder:
         prompt_tokens: int | None = None,
         completion_tokens: int | None = None,
         total_tokens: int | None = None,
+        cached_tokens: int | None = None,
+        thoughts_tokens: int | None = None,
     ) -> None:
-        """Record token counts on the span. Each is skipped when ``None``."""
+        """Record token counts on the span. Each is skipped when ``None``.
+
+        ``cached_tokens`` is the part of the prompt the provider served from
+        its cache (billed at a lower rate); ``thoughts_tokens`` is reasoning
+        the model spent before answering.
+        """
         if prompt_tokens is not None:
             self._prompt_tokens = prompt_tokens
             self._span.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_PROMPT, prompt_tokens)
@@ -182,6 +201,12 @@ class LLMSpanRecorder:
         if total_tokens is not None:
             self._total_tokens = total_tokens
             self._span.set_attribute(SpanAttributes.LLM_TOKEN_COUNT_TOTAL, total_tokens)
+        if cached_tokens is not None:
+            self._cached_tokens = cached_tokens
+            self._span.set_attribute(_ATTR_CACHED_TOKENS, cached_tokens)
+        if thoughts_tokens is not None:
+            self._thoughts_tokens = thoughts_tokens
+            self._span.set_attribute(_ATTR_THOUGHTS_TOKENS, thoughts_tokens)
 
     def set_error_class(self, error_class: str) -> None:
         """Record a non-PHI error classifier (an exception/type name)."""
@@ -200,6 +225,20 @@ def usage_tokens(usage: object) -> tuple[int | None, int | None, int | None]:
     completion = getattr(usage, "candidates_token_count", None)
     total = getattr(usage, "total_token_count", None)
     return (prompt, completion, total)
+
+
+def usage_detail_tokens(usage: object) -> tuple[int | None, int | None]:
+    """Pull ``(cached, thoughts)`` token counts off a google-genai
+    ``usage_metadata`` object; ``None`` where the SDK didn't populate one.
+
+    Counts only. Pass the result to ``set_token_usage`` as ``cached_tokens``
+    and ``thoughts_tokens``.
+    """
+    if usage is None:
+        return (None, None)
+    cached = getattr(usage, "cached_content_token_count", None)
+    thoughts = getattr(usage, "thoughts_token_count", None)
+    return (cached, thoughts)
 
 
 def _span_kind(operation: str) -> str:
@@ -246,6 +285,10 @@ def _log_usage(request: LLMSpanRequest, recorder: LLMSpanRecorder, latency_ms: f
         extra["llm_completion_tokens"] = recorder._completion_tokens
     if recorder._total_tokens is not None:
         extra["llm_total_tokens"] = recorder._total_tokens
+    if recorder._cached_tokens is not None:
+        extra["llm_cached_tokens"] = recorder._cached_tokens
+    if recorder._thoughts_tokens is not None:
+        extra["llm_thoughts_tokens"] = recorder._thoughts_tokens
     if recorder._error_class is not None:
         extra["llm_error_class"] = recorder._error_class
     logger.info(USAGE_LOG_MESSAGE, extra=extra)
