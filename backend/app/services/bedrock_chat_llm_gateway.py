@@ -42,7 +42,7 @@ from .chat_llm_gateway import (
     is_transient_failure,
 )
 from .llm_provider import LLMProvider, strip_provider_prefix
-from .llm_telemetry import LLMSpanRequest, llm_span
+from .llm_telemetry import LLMSpanRecorder, LLMSpanRequest, llm_span
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
@@ -172,6 +172,7 @@ class BedrockChatLLMGateway(ChatLLMGateway):
         ) as span:
             stream: Any = None
             output_tokens: int | None = None
+            usage_seen: dict[str, int] = {}
             stop_reason = "end_turn"
             said_anything = False
             try:
@@ -203,8 +204,7 @@ class BedrockChatLLMGateway(ChatLLMGateway):
                     if "messageStop" in event:
                         stop_reason = event["messageStop"].get("stopReason", "end_turn")
                     usage = (event.get("metadata") or {}).get("usage") or {}
-                    if usage.get("outputTokens"):
-                        output_tokens = usage["outputTokens"]
+                    usage_seen.update({k: v for k, v in usage.items() if isinstance(v, int)})
             except Exception as exc:
                 code = _error_code(exc)
                 described = (
@@ -227,12 +227,29 @@ class BedrockChatLLMGateway(ChatLLMGateway):
                 if stream is not None and hasattr(stream, "close"):
                     stream.close()
 
-            if output_tokens:
-                span.set_token_usage(completion_tokens=output_tokens)
+            output_tokens = usage_seen.get("outputTokens") or None
+            _record_usage(span, output_tokens, usage_seen)
             yield StreamEvent(
                 finish_reason=_finish(stop_reason, said_anything=said_anything),
                 output_tokens=output_tokens,
             )
+
+
+def _record_usage(span: LLMSpanRecorder, output_tokens: int | None, seen: dict[str, int]) -> None:
+    """Put a Converse stream's token counts on the span.
+
+    Converse reports cache reads apart from ``inputTokens``; they are folded
+    into the prompt so it means the whole prompt on every provider.
+    """
+    input_tokens = seen.get("inputTokens")
+    cached_tokens = seen.get("cacheReadInputTokens")
+    if not output_tokens and input_tokens is None:
+        return
+    span.set_token_usage(
+        prompt_tokens=None if input_tokens is None else input_tokens + (cached_tokens or 0),
+        completion_tokens=output_tokens or None,
+        cached_tokens=cached_tokens,
+    )
 
 
 _bedrock_chat_holder: list[BedrockChatLLMGateway] = []

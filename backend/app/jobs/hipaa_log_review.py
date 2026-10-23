@@ -357,7 +357,7 @@ def _review_tenant(
         report = _deterministic_clean_report(summary, review_mode)
         severity = "NONE"
     else:
-        report = _ask_model(payload, review_mode=review_mode, tenant_schema=practice_schema)
+        report = _ask_model(payload, review_mode=review_mode)
         severity = _parse_severity(report)
 
     report_path = _write_report(
@@ -531,7 +531,6 @@ def _authorized_user_ids(session: Any, practice_schema: str) -> set[str] | None:
 def _ask_model(
     payload: dict[str, Any],
     review_mode: str = "daily",
-    tenant_schema: str | None = None,
 ) -> str:
     """Send payload to Gemini on Vertex AI and return the markdown report.
 
@@ -548,55 +547,26 @@ def _ask_model(
             "in hour-of-day distribution, sustained elevated export rates. Point-in-time "
             "flags still matter but lean heavier on trends."
         )
-    try:
-        from google import genai  # noqa: PLC0415
-        from google.genai import types  # noqa: PLC0415
-    except ImportError:
-        logger.exception("google-genai is required for the HIPAA log review.")
-        raise
-
-    from ..reliability import LLM_JOB, Idempotency, call_with_retry  # noqa: PLC0415
-    from ..services.vertex_client import (  # noqa: PLC0415
-        DEFAULT_VERTEX_TIMEOUT_SECONDS,
-        seconds_to_genai_timeout_ms,
-    )
+    from ..services.text_llm_gateway import generate_text  # noqa: PLC0415
     from ..settings import get_settings  # noqa: PLC0415
 
-    project = os.environ.get("GCP_PROJECT_ID") or os.environ["GOOGLE_CLOUD_PROJECT"]
-    # Gemini 3.x is served from the ``global`` Vertex location, not a single
-    # region; the cron env may not carry the backend service's
-    # GOOGLE_CLOUD_LOCATION, so default it here.
-    location = os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
     model = os.environ.get("HIPAA_REVIEW_MODEL") or get_settings().ai_model
     # Thinking models spend part of the output budget on reasoning before
     # emitting the report; size generously so the narrative isn't truncated.
     max_output_tokens = int(os.environ.get("HIPAA_REVIEW_MAX_OUTPUT_TOKENS", "8192"))
-
-    http_options = types.HttpOptions(
-        timeout=seconds_to_genai_timeout_ms(DEFAULT_VERTEX_TIMEOUT_SECONDS)
-    )
-    client = genai.Client(
-        vertexai=True, project=project, location=location, http_options=http_options
-    )
     user_content = (
         f"Review the following audit log entries:\n\n```json\n{json.dumps(payload, indent=2)}\n```"
     )
-    config = types.GenerateContentConfig(
-        system_instruction=system_prompt,
+    # The gateway writes the per-call usage record (tokens, latency, tenant
+    # from the request context); ``tenant_schema`` only names the report.
+    report = generate_text(
+        model=model,
+        system_prompt=system_prompt,
+        user_content=user_content,
         temperature=0.3,
         max_output_tokens=max_output_tokens,
+        feature="hipaa_log_review",
     )
-    resp = call_with_retry(
-        lambda: client.models.generate_content(
-            model=model,
-            contents=user_content,
-            config=config,
-        ),
-        policy=LLM_JOB,
-        idempotency=Idempotency.SAFE,
-    )
-    _log_token_usage(resp, review_mode=review_mode, tenant_schema=tenant_schema)
-    report = (resp.text or "").strip()
     if not report:
         # An empty response must fail the tenant's review loudly (exit 1,
         # exception in the log) — falling back to a placeholder would
@@ -605,26 +575,6 @@ def _ask_model(
         msg = "Model returned an empty report — failing this review rather than recording NONE"
         raise RuntimeError(msg)
     return report
-
-
-def _log_token_usage(resp: Any, *, review_mode: str, tenant_schema: str | None) -> None:
-    """Emit the model's token counts at INFO so each run's cost is visible
-    in the job logs. Counts only — no prompt or response content — so this
-    stays PHI-free. The SDK leaves ``usage_metadata`` (or any individual
-    field) unset on some responses, so every read is guarded.
-    """
-    usage = getattr(resp, "usage_metadata", None)
-    if usage is None:
-        return
-    logger.info(
-        "token_usage schema=%s mode=%s prompt=%s candidates=%s thoughts=%s total=%s",
-        tenant_schema or "-",
-        review_mode,
-        getattr(usage, "prompt_token_count", None),
-        getattr(usage, "candidates_token_count", None),
-        getattr(usage, "thoughts_token_count", None),
-        getattr(usage, "total_token_count", None),
-    )
 
 
 # The structured line the SYSTEM_PROMPT asks the model to end with.

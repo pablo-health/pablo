@@ -490,6 +490,22 @@ class TestTelemetry:
         assert "SYSTEM-marker" not in haystack
         assert "USER-marker" not in haystack
 
+    def test_cache_reads_count_toward_the_prompt_and_are_reported_apart(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        response = _response({"proposals": []})
+        response["usage"] = {
+            "inputTokens": 20,
+            "cacheReadInputTokens": 100,
+            "outputTokens": 9,
+            "totalTokens": 129,
+        }
+        gw, _ = _gateway(response)
+        _call(gw)
+        attrs = dict(span_exporter.get_finished_spans()[0].attributes or {})
+        assert attrs[SpanAttributes.LLM_TOKEN_COUNT_PROMPT] == 120
+        assert attrs["pablo.llm_cached_tokens"] == 100
+
 
 class TestResolution:
     def test_bedrock_prefix_routes_to_bedrock(self) -> None:

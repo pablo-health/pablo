@@ -8,49 +8,10 @@ assert the orchestration logic around it.
 
 import json
 import logging
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 from app.jobs import hipaa_log_review
-
-
-class TestLogTokenUsage:
-    def test_logs_all_token_counts_keyed_by_mode_and_schema(self, caplog) -> None:  # type: ignore[no-untyped-def]
-        usage = SimpleNamespace(
-            prompt_token_count=1200,
-            candidates_token_count=340,
-            thoughts_token_count=512,
-            total_token_count=2052,
-        )
-        resp = SimpleNamespace(usage_metadata=usage)
-        with caplog.at_level(logging.INFO, logger="hipaa_log_review"):
-            hipaa_log_review._log_token_usage(
-                resp, review_mode="daily", tenant_schema="practice_abc"
-            )
-        line = caplog.text
-        assert "token_usage" in line
-        assert "schema=practice_abc" in line
-        assert "mode=daily" in line
-        assert "prompt=1200" in line
-        assert "candidates=340" in line
-        assert "thoughts=512" in line
-        assert "total=2052" in line
-
-    def test_no_usage_metadata_is_silent(self, caplog) -> None:  # type: ignore[no-untyped-def]
-        resp = SimpleNamespace(usage_metadata=None)
-        with caplog.at_level(logging.INFO, logger="hipaa_log_review"):
-            hipaa_log_review._log_token_usage(resp, review_mode="daily", tenant_schema=None)
-        assert "token_usage" not in caplog.text
-
-    def test_missing_fields_log_as_none(self, caplog) -> None:  # type: ignore[no-untyped-def]
-        # The SDK omits thoughts_token_count on non-thinking responses.
-        usage = SimpleNamespace(prompt_token_count=10, total_token_count=10)
-        resp = SimpleNamespace(usage_metadata=usage)
-        with caplog.at_level(logging.INFO, logger="hipaa_log_review"):
-            hipaa_log_review._log_token_usage(resp, review_mode="monthly", tenant_schema=None)
-        assert "thoughts=None" in caplog.text
-        assert "candidates=None" in caplog.text
 
 
 class TestParseSeverity:
