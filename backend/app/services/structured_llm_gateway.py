@@ -503,10 +503,17 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
                 if prompt_tokens is not None or output_tokens is not None
                 else None
             )
+            # Anthropic reports cache reads apart from input_tokens; fold them
+            # into the prompt so it means the whole prompt on every provider.
+            cached_tokens = getattr(usage, "cache_read_input_tokens", None)
+            if prompt_tokens is not None and cached_tokens:
+                prompt_tokens += cached_tokens
+                total = (total or 0) + cached_tokens
             span.set_token_usage(
                 prompt_tokens=prompt_tokens,
                 completion_tokens=output_tokens,
                 total_tokens=total,
+                cached_tokens=cached_tokens,
             )
 
         # Distinguish a token-capped completion (partial / no tool call) from a
@@ -663,10 +670,12 @@ class MistralStructuredLLMGateway(StructuredLLMGateway):
             usage = data.get("usage") or {}
             prompt_tokens = usage.get("prompt_tokens")
             output_tokens = usage.get("completion_tokens")
+            mistral_cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
             span.set_token_usage(
                 prompt_tokens=prompt_tokens,
                 completion_tokens=output_tokens,
                 total_tokens=usage.get("total_tokens"),
+                cached_tokens=mistral_cached,
             )
 
         choices = data.get("choices") or []

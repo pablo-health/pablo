@@ -21,7 +21,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ..models.ehr_route import GoalNavigationRequest, GoalNavigationResponse
 from ..reliability import LLM_REQUEST, Idempotency, call_with_retry
-from .llm_telemetry import LLMSpanRequest, llm_span, usage_tokens
+from .llm_telemetry import LLMSpanRequest, llm_span, usage_detail_tokens, usage_tokens
 from .vertex_client import vertex_genai_client
 
 if TYPE_CHECKING:
@@ -235,13 +235,15 @@ class GeminiEhrNavigationService(EhrNavigationService):
                     policy=LLM_REQUEST,
                     idempotency=Idempotency.SAFE,
                 )
-                prompt_tokens, completion_tokens, total_tokens = usage_tokens(
-                    getattr(response, "usage_metadata", None)
-                )
+                usage_metadata = getattr(response, "usage_metadata", None)
+                prompt_tokens, completion_tokens, total_tokens = usage_tokens(usage_metadata)
+                cached_tokens, thoughts_tokens = usage_detail_tokens(usage_metadata)
                 span.set_token_usage(
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     total_tokens=total_tokens,
+                    cached_tokens=cached_tokens,
+                    thoughts_tokens=thoughts_tokens,
                 )
             return self._parse_response(response.text, request.goal)
         except LookupError:

@@ -24,7 +24,7 @@ from typing import Any
 from ..reliability import LLM_REQUEST, Idempotency, call_with_retry
 from .llm_json import extract_json_object
 from .llm_provider import strip_provider_prefix
-from .llm_telemetry import LLMSpanRequest, llm_span, usage_tokens
+from .llm_telemetry import LLMSpanRequest, llm_span, usage_detail_tokens, usage_tokens
 from .structured_llm_gateway import _to_gemini_schema
 from .vertex_client import vertex_genai_client
 
@@ -172,12 +172,17 @@ class GeminiAgentLLMGateway(AgentLLMGateway):
         hit_step_limit = False
         with llm_span(LLMSpanRequest(operation="agent", model=normalized)) as span:
             prompt_total = output_total = grand_total = 0
+            cached_total = thoughts_total = 0
             for step in range(max_steps):
                 response = self._generate(client, normalized, contents, gather_config)
-                p, o, t = usage_tokens(getattr(response, "usage_metadata", None))
+                step_usage = getattr(response, "usage_metadata", None)
+                p, o, t = usage_tokens(step_usage)
+                c, th = usage_detail_tokens(step_usage)
                 prompt_total += p or 0
                 output_total += o or 0
                 grand_total += t or 0
+                cached_total += c or 0
+                thoughts_total += th or 0
                 calls = _function_calls(response)
                 if not calls:
                     break
@@ -203,7 +208,7 @@ class GeminiAgentLLMGateway(AgentLLMGateway):
                 if step == max_steps - 1:
                     hit_step_limit = True
 
-            data, emit_p, emit_o, emit_t = self._emit_structured(
+            data, emit_p, emit_o, emit_t, emit_c, emit_th = self._emit_structured(
                 client,
                 normalized,
                 contents,
@@ -216,6 +221,8 @@ class GeminiAgentLLMGateway(AgentLLMGateway):
                 prompt_tokens=prompt_total + emit_p,
                 completion_tokens=output_total + emit_o,
                 total_tokens=grand_total + emit_t,
+                cached_tokens=cached_total + emit_c,
+                thoughts_tokens=thoughts_total + emit_th,
             )
 
         logger.info(
@@ -236,8 +243,11 @@ class GeminiAgentLLMGateway(AgentLLMGateway):
         response_schema: dict[str, Any],
         max_output_tokens: int,
         temperature: float,
-    ) -> tuple[dict[str, Any], int, int, int]:
-        """Final tool-free call constrained to the schema; returns (data, p, o, t)."""
+    ) -> tuple[dict[str, Any], int, int, int, int, int]:
+        """Final tool-free call constrained to the schema.
+
+        Returns (data, prompt, output, total, cached, thoughts) token counts.
+        """
         from google.genai import types
 
         emit_contents = [
@@ -260,14 +270,16 @@ class GeminiAgentLLMGateway(AgentLLMGateway):
             response_schema=_to_gemini_schema(types, response_schema),
         )
         response = self._generate(client, model, emit_contents, config)
-        p, o, t = usage_tokens(getattr(response, "usage_metadata", None))
+        emit_usage = getattr(response, "usage_metadata", None)
+        p, o, t = usage_tokens(emit_usage)
+        c, th = usage_detail_tokens(emit_usage)
         text = getattr(response, "text", "") or ""
         data = extract_json_object(text)
         if data is None:
             # Never log the model text. The caller degrades on an empty object.
             logger.warning("agent final emit had no JSON object; returning empty object")
             data = {}
-        return data, p or 0, o or 0, t or 0
+        return data, p or 0, o or 0, t or 0, c or 0, th or 0
 
     @staticmethod
     def _generate(client: Any, model: str, contents: list[Any], config: Any) -> Any:
