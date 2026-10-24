@@ -12,7 +12,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import proxy from "../proxy"
 import { authProviderMiddleware } from "@/lib/auth/middleware"
-import { lookupPracticeHost } from "@/lib/portal-host/practice-host-lookup"
+import { lookupPortalSlug, lookupPracticeHost } from "@/lib/portal-host/practice-host-lookup"
+import { UNKNOWN_PRACTICE_HEADER, UNKNOWN_PRACTICE_PATH } from "@/lib/portal-host/unknown-practice"
 import { fetchSiteFile, lookupSiteHost } from "@/lib/portal-host/practice-site-lookup"
 
 // Stubbing the provider chain keeps the edge auth stack (and its env
@@ -26,6 +27,7 @@ vi.mock("@/lib/auth/middleware", () => ({
 // only matters what the proxy does with each answer.
 vi.mock("@/lib/portal-host/practice-host-lookup", () => ({
   lookupPracticeHost: vi.fn(async () => null),
+  lookupPortalSlug: vi.fn(async () => true),
 }))
 
 // Likewise the website lookup and file fetch (practice-site-lookup.test.ts).
@@ -167,6 +169,69 @@ describe("frontend/proxy.ts portal host", () => {
       expect(authProviderMiddleware).not.toHaveBeenCalled()
     },
   )
+
+  describe("a slug no practice holds", () => {
+    beforeEach(() => {
+      // Both real providers forward the request's headers on a public path
+      // (requestHeadersWithNonce copies them), which is how the mark reaches
+      // the page; the default stub drops them.
+      vi.mocked(authProviderMiddleware).mockImplementation((req: NextRequest) =>
+        NextResponse.next({ request: { headers: req.headers } }),
+      )
+    })
+
+    afterEach(() => {
+      vi.mocked(authProviderMiddleware).mockImplementation(() => NextResponse.next())
+      vi.mocked(lookupPortalSlug).mockReset()
+      vi.mocked(lookupPortalSlug).mockResolvedValue(true)
+    })
+
+    // Serving a path no route matches is what makes the status a 404; the
+    // mark is what makes app/not-found.tsx show the portal's card there.
+    it.each([
+      ["the portal host", PORTAL, "/no-such-practice"],
+      ["the portal host's /portal route", PORTAL, "/portal/no-such-practice/forms"],
+    ])("on %s, is served as the unknown-practice 404, marked", async (_where, host, path) => {
+      vi.stubEnv("PORTAL_HOSTS", PORTAL)
+      vi.mocked(lookupPortalSlug).mockResolvedValue(null)
+      const response = await proxy(at(`https://${host}${path}`, host))
+
+      expect(lookupPortalSlug).toHaveBeenCalledWith("no-such-practice")
+      expect(response.headers.get("x-middleware-rewrite")).toBe(`https://${host}${UNKNOWN_PRACTICE_PATH}`)
+      expect(response.headers.get(`x-middleware-request-${UNKNOWN_PRACTICE_HEADER}`)).toBe("1")
+      expect(response.headers.get("location")).toBeNull()
+      // The provider saw the public portal route, so it neither redirected
+      // to sign-in nor withheld the security headers.
+      expect(vi.mocked(authProviderMiddleware).mock.calls[0][0].nextUrl.pathname).toMatch(/^\/portal\/no-such-practice/)
+    })
+
+    it("is served the same way with no portal host, at /portal/{slug}", async () => {
+      vi.stubEnv("PORTAL_HOSTS", "")
+      vi.mocked(lookupPortalSlug).mockResolvedValue(null)
+      const response = await proxy(at("https://app.example.org/portal/no-such-practice", "app.example.org"))
+
+      expect(response.headers.get("x-middleware-rewrite")).toBe(`https://app.example.org${UNKNOWN_PRACTICE_PATH}`)
+    })
+
+    it("serves the portal as before when the lookup could not be made", async () => {
+      vi.stubEnv("PORTAL_HOSTS", PORTAL)
+      vi.mocked(lookupPortalSlug).mockResolvedValue("unavailable")
+      const response = await proxy(at(`https://${PORTAL}/acme`, PORTAL))
+
+      expect(response.headers.get("x-middleware-rewrite")).toBe(`https://${PORTAL}/portal/acme`)
+      expect(response.headers.get(`x-middleware-request-${UNKNOWN_PRACTICE_HEADER}`)).toBeNull()
+    })
+
+    it("drops a mark the visitor sent for a practice that exists", async () => {
+      vi.stubEnv("PORTAL_HOSTS", PORTAL)
+      const response = await proxy(
+        new NextRequest(`https://${PORTAL}/acme`, { headers: { host: PORTAL, [UNKNOWN_PRACTICE_HEADER]: "1" } }),
+      )
+
+      expect(response.headers.get("x-middleware-rewrite")).toBe(`https://${PORTAL}/portal/acme`)
+      expect(response.headers.get(`x-middleware-request-${UNKNOWN_PRACTICE_HEADER}`)).toBeNull()
+    })
+  })
 
   it.each(["/actuator/env", "/acme/phpinfo", "/portal/acme/actuator"])(
     "answers %s, which no portal page serves, with a 404 before the page is ever reached",

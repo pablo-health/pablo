@@ -17,10 +17,8 @@
 
 import type { Metadata } from "next"
 import { headers } from "next/headers"
-import { notFound } from "next/navigation"
 import { PracticeThemeScope } from "@/components/portal-shell/PracticeThemeScope"
 import { PortalHostProvider } from "@/components/portal-shell/portal-host-context"
-import { lookupPortalSlug } from "@/lib/portal-host/practice-host-lookup"
 import { portalPracticeHost } from "@/lib/portal-host/practice-host-request"
 
 export const metadata: Metadata = {
@@ -35,10 +33,6 @@ interface LayoutProps {
 
 export default async function PortalLayout({ children, params }: LayoutProps) {
   const { practice } = await params
-  // A slug no practice holds is a 404 with the shell's own card
-  // (`../not-found.tsx`). When the backend could not be asked, the page is
-  // served and the shell finds out for itself, as it always has.
-  if ((await lookupPortalSlug(practice)) === null) notFound()
   const found = await portalPracticeHost((await headers()).get("host"), practice)
   return (
     <PortalHostProvider
