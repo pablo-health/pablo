@@ -32,15 +32,10 @@ export type PortalHostDecision =
   | { kind: "default" }
   /** On a portal host: let it through untouched (build assets, files, the portal's frontend API routes). */
   | { kind: "pass" }
-  /**
-   * On a portal host: serve the portal route at `pathname` in place of the
-   * requested one. With `slug`, only if a practice holds that slug: the
-   * proxy asks the backend (`./practice-host-lookup`) and answers 404 when
-   * none does.
-   */
-  | { kind: "rewrite"; pathname: string; slug?: string }
-  /** On a portal host: the request is already a portal route; serve it as it is, with `slug` as above. */
-  | { kind: "portal"; slug?: string }
+  /** On a portal host: serve the portal route at `pathname` in place of the requested one. */
+  | { kind: "rewrite"; pathname: string }
+  /** On a portal host: the request is already a portal route; serve it as it is. */
+  | { kind: "portal" }
   /** On a portal host: nothing to serve here. */
   | { kind: "not-found" }
   /** Off a portal host: the portal moved; send the visitor there. */
@@ -221,8 +216,7 @@ function routeOnPortalHost(pathname: string): PortalHostDecision {
   if (isUnder(pathname, PORTAL_PREFIX)) {
     // Bare `/portal` is no page; the app answers it with its own 404.
     const [, , slug = "", ...rest] = pathname.split("/")
-    if (!slug) return { kind: "portal" }
-    return isPortalPage(rest.join("/")) ? { kind: "portal", slug } : { kind: "not-found" }
+    return !slug || isPortalPage(rest.join("/")) ? { kind: "portal" } : { kind: "not-found" }
   }
 
   // A practice's own host (one host, one practice, no slug in the path) never
@@ -230,7 +224,7 @@ function routeOnPortalHost(pathname: string): PortalHostDecision {
   const [, segment = "", ...rest] = pathname.split("/")
   if (!isSlugSegment(segment)) return { kind: "not-found" }
   if (!isPortalPage(rest.join("/"))) return { kind: "not-found" }
-  return { kind: "rewrite", pathname: `${PORTAL_PREFIX}${pathname}`, slug: segment }
+  return { kind: "rewrite", pathname: `${PORTAL_PREFIX}${pathname}` }
 }
 
 /**

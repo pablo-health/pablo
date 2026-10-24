@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { authProviderMiddleware } from "@/lib/auth/middleware"
 import { appHostsFromEnv, classifyHost, routePracticeHost } from "@/lib/portal-host/practice-host"
 import { browserScheme } from "@/lib/portal-host/practice-host-api"
-import { lookupPortalSlug, lookupPracticeHost } from "@/lib/portal-host/practice-host-lookup"
+import { lookupPracticeHost } from "@/lib/portal-host/practice-host-lookup"
 import {
   HIDDEN_FROM_SEARCH_HEADERS,
   SITE_METHODS,
@@ -73,12 +73,6 @@ export default async function proxy(request: NextRequest) {
     decision = { kind: "not-found" }
   } else {
     decision = routePortalHost({ host, pathname, search, protocol }, portalHosts)
-    // A slug no practice holds is a 404 rather than the portal's page saying
-    // so. A lookup that could not be made serves the page, which finds out
-    // for itself.
-    if ((decision.kind === "rewrite" || decision.kind === "portal") && decision.slug) {
-      if ((await lookupPortalSlug(decision.slug)) === null) decision = { kind: "not-found" }
-    }
   }
   const slashless = withoutTrailingSlash(request)
   if (slashless && decision.kind !== "not-found") return slashless

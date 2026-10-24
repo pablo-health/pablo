@@ -99,11 +99,11 @@ describe("routePortalHost on a portal host", () => {
   const on = (path: string) => routePortalHost(req(PORTAL, path), HOSTS)
 
   it("rewrites /{slug} to the portal route", () => {
-    expect(on("/acme-therapy")).toEqual({ kind: "rewrite", pathname: "/portal/acme-therapy", slug: "acme-therapy" })
+    expect(on("/acme-therapy")).toEqual({ kind: "rewrite", pathname: "/portal/acme-therapy" })
   })
 
   it.each([...PORTAL_PAGES])("rewrites /{slug}/%s to the portal route", (page) => {
-    expect(on(`/acme/${page}`)).toEqual({ kind: "rewrite", pathname: `/portal/acme/${page}`, slug: "acme" })
+    expect(on(`/acme/${page}`)).toEqual({ kind: "rewrite", pathname: `/portal/acme/${page}` })
   })
 
   it.each(["/actuator/env", "/actuator/heapdump", "/acme/debug", "/acme/forms/extra", "/acme/a/b/"])(
@@ -116,12 +116,12 @@ describe("routePortalHost on a portal host", () => {
   it("leaves the query to the caller, which keeps the one it has", () => {
     // The decision carries only the path; the proxy appends the request's own
     // search string, so the query survives untouched.
-    expect(on("/acme?utm=x")).toEqual({ kind: "rewrite", pathname: "/portal/acme", slug: "acme" })
+    expect(on("/acme?utm=x")).toEqual({ kind: "rewrite", pathname: "/portal/acme" })
   })
 
   it("serves /portal/... as it is", () => {
-    expect(on("/portal/acme")).toEqual({ kind: "portal", slug: "acme" })
-    expect(on("/portal/acme/recover")).toEqual({ kind: "portal", slug: "acme" })
+    expect(on("/portal/acme")).toEqual({ kind: "portal" })
+    expect(on("/portal/acme/recover")).toEqual({ kind: "portal" })
     expect(on("/portal")).toEqual({ kind: "portal" })
   })
 
@@ -188,7 +188,6 @@ describe("routePortalHost on a portal host", () => {
     expect(routePortalHost(req("Portal.Example.Org", "/acme"), HOSTS)).toEqual({
       kind: "rewrite",
       pathname: "/portal/acme",
-      slug: "acme",
     })
   })
 })

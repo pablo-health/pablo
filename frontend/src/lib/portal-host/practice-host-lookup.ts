@@ -149,12 +149,13 @@ export function serverApiUrl(): string {
 export const lookupPracticeHost: PracticeHostLookup = createPracticeHostLookup({ apiUrl: serverApiUrl })
 
 /**
- * Whether a practice holds `slug`, for a portal host: `true`, `null` (the
- * backend's 404), or `"unavailable"`.
+ * Whether a practice holds `slug`: `true`, `null` (the backend's 404), or
+ * `"unavailable"`.
  *
- * `GET {API_URL}/api/portal/practices/{slug}` is the call the portal page
- * makes first; asked here too, an unknown slug answers 404 rather than a page
- * that says so.
+ * `GET {API_URL}/api/portal/practices/{slug}` is the call the portal shell
+ * makes first in the browser. The practice layout asks it on the server as
+ * well, so that an address naming no practice is served with a 404 status
+ * (the same card, `app/portal/not-found.tsx`) instead of a 200.
  *
  * A practice that has a portal is kept for a day. Being wrong about one is
  * cheap: a portal turned off or a slug given up within the day still gets the
@@ -164,7 +165,7 @@ export const lookupPracticeHost: PracticeHostLookup = createPracticeHostLookup({
  *
  * The route is rate-limited by address and every call from here shares this
  * server's, so under a flood of made-up slugs the answer turns
- * `"unavailable"` and the proxy serves the page as it did before.
+ * `"unavailable"` and the layout serves the page as it did before.
  */
 export function createPortalSlugLookup(options: PracticeHostLookupOptions): HostLookup<true> {
   return createHostLookup({ foundTtlMs: SLUG_FOUND_TTL_MS, ...options }, {
@@ -173,5 +174,5 @@ export function createPortalSlugLookup(options: PracticeHostLookupOptions): Host
   })
 }
 
-/** The process-wide slug lookup the proxy uses. */
+/** The process-wide slug lookup the practice layout uses. */
 export const lookupPortalSlug: HostLookup<true> = createPortalSlugLookup({ apiUrl: serverApiUrl })
