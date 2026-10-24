@@ -96,6 +96,9 @@ class PatientRefillRequestResponse(BaseModel):
     status: str
     created_at: datetime
     decided_at: datetime | None = None
+    #: Set only on the response to asking, while the client's clinician is
+    #: away: who will review it by when, and the safety lines.
+    away_acknowledgment: str | None = None
 
     @staticmethod
     def from_request(request: RefillRequest) -> PatientRefillRequestResponse:

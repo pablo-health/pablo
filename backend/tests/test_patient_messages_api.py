@@ -33,6 +33,7 @@ from app.auth.patient_context import (
     get_patient_resolver_registry,
 )
 from app.auth.service import require_baa_acceptance
+from app.away.service import get_away_acknowledger
 from app.main import app
 from app.models import Patient, PatientMessage
 from app.models.audit import ACTOR_TYPE_CLINICIAN, ACTOR_TYPE_PATIENT, AuditAction
@@ -264,6 +265,81 @@ class TestPatientSends:
             patient_client.post(PATIENT_BASE, json={"body": _BODY}, headers=_auth(_TOKEN_A))
 
         limiter.return_value.check.assert_called_once_with(_PATIENT_A)
+
+
+class _AwayOncePerThread:
+    """Acknowledges the first message on each thread, as the real one does per period."""
+
+    def __init__(self) -> None:
+        self.acknowledged: set[str] = set()
+
+    def acknowledge_message(
+        self, *, practice_schema: str | None, thread_id: str, patient_id: str, now: datetime
+    ) -> PatientMessage | None:
+        if thread_id in self.acknowledged:
+            return None
+        self.acknowledged.add(thread_id)
+        return PatientMessage(
+            id=f"ack-{thread_id}",
+            thread_id=thread_id,
+            patient_id=patient_id,
+            sender="practice",
+            body=f"Away until Monday. ({practice_schema})",
+            created_at=now,
+        )
+
+    def refill_acknowledgment(self, **_kwargs: object) -> None:
+        return None
+
+
+class TestAwayAcknowledgment:
+    @pytest.fixture
+    def away(self) -> _AwayOncePerThread:
+        acknowledger = _AwayOncePerThread()
+        app.dependency_overrides[get_away_acknowledger] = lambda: acknowledger
+        return acknowledger
+
+    def test_starting_a_thread_returns_the_acknowledgment_after_the_message(
+        self, patient_client: TestClient, away: _AwayOncePerThread
+    ) -> None:
+        body = _start(patient_client, _TOKEN_A)
+
+        assert [m["sender"] for m in body["messages"]] == ["patient", "practice"]
+        assert body["messages"][1]["body"] == "Away until Monday. (practice_test)"
+        assert away.acknowledged == {body["id"]}
+
+    def test_sending_into_the_thread_asks_again_and_returns_only_the_message(
+        self, patient_client: TestClient, away: _AwayOncePerThread
+    ) -> None:
+        thread_id = _start(patient_client, _TOKEN_A)["id"]
+        away.acknowledged.clear()
+
+        sent = patient_client.post(
+            f"{PATIENT_BASE}/{thread_id}/messages", json={"body": "and"}, headers=_auth(_TOKEN_A)
+        )
+
+        assert sent.status_code == 201, sent.text
+        assert sent.json()["sender"] == "patient"
+        assert away.acknowledged == {thread_id}
+
+    def test_the_acknowledgment_is_audited_as_the_practice_with_ids_only(
+        self, patient_client: TestClient, away: _AwayOncePerThread, mock_audit_service: AuditService
+    ) -> None:
+        body = _start(patient_client, _TOKEN_A)
+
+        practice = [
+            e for e in _entries(mock_audit_service) if (e.changes or {}).get("sender") == "practice"
+        ]
+        assert len(practice) == 1
+        assert practice[0].action == AuditAction.PATIENT_MESSAGE_SENT
+        assert practice[0].changes == {
+            "message_id": f"ack-{body['id']}",
+            "sender": "practice",
+            "away_acknowledgment": True,
+        }
+
+    def test_nobody_away_means_no_acknowledgment(self, patient_client: TestClient) -> None:
+        assert [m["sender"] for m in _start(patient_client, _TOKEN_A)["messages"]] == ["patient"]
 
 
 class TestPatientReads:

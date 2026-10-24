@@ -30,6 +30,7 @@ describe("settings registry merge", () => {
       "profile",
       "appearance",
       "inbox",
+      "away",
       "security",
       "activity",
     ])
@@ -115,6 +116,7 @@ describe("settings registry merge", () => {
       "profile",
       "appearance",
       "inbox",
+      "away",
       "security",
       "activity",
       "notifications",

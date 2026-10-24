@@ -459,6 +459,11 @@ const baseQueryKeys = {
       [...baseQueryKeys.homework.all, "byPatient", patientId] as const,
   },
 
+  // The clinician's away dates
+  away: {
+    all: ["away"] as const,
+  },
+
   // The clinician's waitlist, and one client's place on it
   waitlist: {
     all: ["waitlist"] as const,

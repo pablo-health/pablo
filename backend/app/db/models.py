@@ -1556,7 +1556,13 @@ class PatientMessageRow(Base):
 
     ``sender`` names who wrote the message, not which credential posted it:
     ``'practice'`` is for a message the practice itself sends without a
-    clinician composing it. Nothing in the engine writes that value today.
+    clinician composing it — today, the out-of-office acknowledgment.
+
+    ``away_period_id`` is set only on that acknowledgment and names the
+    :class:`ClinicianAwayPeriodRow` it was sent for. The partial unique index
+    on ``(thread_id, away_period_id)`` is what makes "one acknowledgment per
+    thread per period" a fact of the database rather than of the route: two
+    client messages arriving at once both try, and one insert does nothing.
 
     ``read_at`` is set when the *patient* reads a message somebody else sent
     them. It stays NULL on the patient's own messages.
@@ -1571,11 +1577,22 @@ class PatientMessageRow(Base):
     body: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    away_period_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("clinician_away_periods.id", ondelete="SET NULL"),
+    )
 
     __table_args__ = (
         CheckConstraint(
             "sender IN ('patient','clinician','practice')",
             name="ck_patient_messages_sender",
+        ),
+        Index(
+            "uq_patient_messages_away_ack",
+            "thread_id",
+            "away_period_id",
+            unique=True,
+            postgresql_where=text("away_period_id IS NOT NULL"),
         ),
         ForeignKeyConstraint(
             ["thread_id", "patient_id"],
@@ -2672,6 +2689,55 @@ class WaitlistEntryRow(Base):
             unique=True,
             postgresql_where=text("filled_at IS NULL"),
         ),
+    )
+
+
+class ClinicianAwayPeriodRow(Base):
+    """Dates a clinician is away, and what their clients are told meanwhile.
+
+    ``start_date`` and ``end_date`` are the first and last days away, both
+    inclusive, on the clinician's own calendar. ``return_date`` is the day
+    they are back; it is stored rather than derived because the day after
+    the last day away is often a weekend.
+
+    ``covering_user_id`` is an optional colleague in the same practice. It is
+    named in the acknowledgment and nothing more: it grants no access.
+
+    ``acknowledgment_text`` is the text the clinician reviewed, and the only
+    words an acknowledgment carries besides the fixed safety lines appended
+    after it (see :mod:`app.away.text`). ``acknowledgment_enabled`` turns the
+    acknowledgment off for this period without losing the dates.
+
+    ``ended_at`` is set when the clinician ends the period early; an ended
+    period is never active again. Periods are not deleted.
+
+    Practice data rather than a client's: it names no patient, and colleagues
+    and clients of the practice need to know who is away, so its isolation
+    boundary is the tenant schema (see ``_CORE_NOT_ROW_SCOPED``). Only the
+    clinician it belongs to changes it; the routes enforce that.
+    """
+
+    __tablename__ = "clinician_away_periods"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    #: The clinician who is away.
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    return_date: Mapped[date] = mapped_column(Date, nullable=False)
+    covering_user_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    acknowledgment_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true"), default=True
+    )
+    acknowledgment_text: Mapped[str] = mapped_column(Text, nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("end_date >= start_date", name="ck_clinician_away_periods_dates"),
+        CheckConstraint("return_date > end_date", name="ck_clinician_away_periods_return"),
+        Index("ix_clinician_away_periods_user_dates", "user_id", "start_date", "end_date"),
     )
 
 
