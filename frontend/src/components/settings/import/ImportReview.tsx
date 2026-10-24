@@ -32,6 +32,7 @@ const LABELS: Record<string, [string, string]> = {
   questionnaire: ["questionnaire", "questionnaires"],
   thread: ["message thread", "message threads"],
   upload: ["document", "documents"],
+  appointment: ["appointment", "appointments"],
 }
 
 /** The same check the server runs before it will apply. */

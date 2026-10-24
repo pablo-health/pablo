@@ -144,3 +144,22 @@ def test_a_reference_that_is_not_a_name_is_refused(
     first, _, _ = stores
     assert first.path(PRACTICE, ref) is None
     assert first.delete(PRACTICE, ref) is False
+
+
+def test_an_upload_the_check_refuses_is_never_copied_anywhere(
+    stores: tuple[ArchiveStore, ArchiveStore, Path], tmp_path: Path
+) -> None:
+    first, _, root = stores
+    seen: list[Path] = []
+
+    def refuse(unpacked: Path) -> None:
+        seen.append(unpacked)
+        raise ArchiveError("no reader takes this")
+
+    with pytest.raises(ArchiveError):
+        first.put(PRACTICE, _export_zip(), check=refuse)
+
+    assert len(seen) == 1
+    assert (seen[0] / "Contacts").is_dir() is False  # the unpacked tree is gone again
+    assert list(root.rglob("*")) == []
+    assert [p for p in (tmp_path / "cache-a").rglob("*") if p.is_file()] == []

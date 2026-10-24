@@ -38,12 +38,13 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from sqlalchemy import delete, select
 
 from ..db.models import (
     AppointmentRow,
+    ImportRecordRow,
     NoteRow,
     OutcomeMeasureRow,
     PatientMessageRow,
@@ -81,10 +82,13 @@ from ..services.patient_documents_service import PatientDocumentError, PatientDo
 from ..utcnow import utc_now
 from .attribution import SYSTEM_SENDER
 from .ledger import Landed, record_landed, records_for_run
-from .preview import STORED_UPLOAD_TYPES
+from .preview import CREATES, STORED_UPLOAD_TYPES
 from .readers.simplepractice import SOURCE_SYSTEM
+from .readers.simplepractice_calendar import CALENDAR_APPOINTMENT, CALENDAR_CLIENT
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from sqlalchemy.orm import Session
 
     from ..settings import Settings
@@ -96,9 +100,16 @@ if TYPE_CHECKING:
         SimplePracticeArchive,
         Upload,
     )
+    from .readers.simplepractice_calendar import (
+        CalendarAppointment,
+        CalendarClient,
+        SimplePracticeCalendar,
+    )
 
 #: ``patients.origin`` is 20 characters wide.
 PATIENT_ORIGIN = "simplepractice"
+#: What a calendar appointment is called here; never the client's name.
+APPOINTMENT_TITLE = "Session"
 _STATE_LEN = 2
 _POSTAL_LEN = 10
 _UPLOAD_MIME = STORED_UPLOAD_TYPES
@@ -110,8 +121,17 @@ _UNDO_ORDER = {
     "questionnaire": 2,
     "note": 3,
     "appointment": 4,
+    CALENDAR_APPOINTMENT: 4,
     "appointment_type": 5,
     "contact": 6,
+    CALENDAR_CLIENT: 6,
+}
+#: How each calendar outcome lands as an appointment status.
+_APPOINTMENT_STATUS = {
+    "scheduled": AppointmentStatus.CONFIRMED,
+    "completed": AppointmentStatus.COMPLETED,
+    "cancelled": AppointmentStatus.CANCELLED,
+    "no_show": AppointmentStatus.NO_SHOW,
 }
 _EDITABLE_TABLES: dict[str, Any] = {
     "notes": NoteRow,
@@ -153,7 +173,6 @@ class _Run:
     """What one apply call carries through every step."""
 
     run_id: str
-    archive: SimplePracticeArchive
     decisions: dict[str, Any]
     providers: dict[str, str]
     landable: dict[tuple[str, str], dict[str, Any]]
@@ -161,12 +180,44 @@ class _Run:
     visits: dict[tuple[str, str], str] = field(default_factory=dict)
 
 
+class _ClientSource(NamedTuple):
+    """A client as the ledger files it: under which record type, which source
+    id, and the digest of what landed."""
+
+    record_type: str
+    source_id: str
+    digest: str
+
+
+#: The record type a ledger row is reported under: the preview's own, so one
+#: appointment or client has one key on every screen and report.
+_REPORT_TYPES = {CALENDAR_APPOINTMENT: "appointment", CALENDAR_CLIENT: "contact"}
+
+
+def _report_type(ledger_type: str) -> str:
+    return _REPORT_TYPES.get(ledger_type, ledger_type)
+
+
 def _key(record_type: str, source_id: str) -> str:
     return f"{record_type}:{source_id}"
 
 
+def _landable_records(preview: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
+    return {(r["record_type"], r["source_id"]): r for r in preview["records"] if r["landable"]}
+
+
 def _trim(value: str | None, width: int) -> str | None:
     return value[:width] if value else None
+
+
+def _hand_back(row: ImportRecordRow) -> None:
+    """Return a ledger row to the run that held it before this run updated it."""
+    payload = row.previous_payload or {}
+    row.run_id = payload["previous_run_id"]
+    row.source_digest = payload["previous_digest"]
+    row.state = payload["previous_state"]
+    row.previous_payload = payload.get("previous_payload")
+    row.updated_at = utc_now()
 
 
 class ArchiveApplier:
@@ -207,12 +258,9 @@ class ArchiveApplier:
     ) -> ApplyReport:
         run = _Run(
             run_id=run_id,
-            archive=archive,
             decisions=decisions,
             providers=self._provider_map(decisions),
-            landable={
-                (r["record_type"], r["source_id"]): r for r in preview["records"] if r["landable"]
-            },
+            landable=_landable_records(preview),
             report=ApplyReport(),
         )
         scope = preview.get("scope", "both")
@@ -220,12 +268,43 @@ class ArchiveApplier:
             cards = {c.source_id: c for c in archive.contacts}
             for client in preview["clients"]:
                 self._land_client(run, cards[client["card_id"]], client)
-            self._land_notes(run)
-            self._land_questionnaires(run)
-            self._land_threads(run)
-            self._land_uploads(run)
+            self._land_notes(run, archive)
+            self._land_questionnaires(run, archive)
+            self._land_threads(run, archive)
+            self._land_uploads(run, archive)
         if scope in {"practice", "both"}:
             self._land_practice(run, preview)
+        return run.report
+
+    def apply_calendar(
+        self,
+        *,
+        run_id: str,
+        calendar: SimplePracticeCalendar,
+        preview: dict[str, Any],
+        decisions: dict[str, Any],
+    ) -> ApplyReport:
+        """Land a previewed calendar feed: its clients, then its appointments.
+
+        Nothing here touches a note. Each appointment lands as the preview the
+        practice confirmed said it would, not as a new reading of the clock.
+        """
+        run = _Run(
+            run_id=run_id,
+            decisions=decisions,
+            providers={},
+            landable=_landable_records(preview),
+            report=ApplyReport(),
+        )
+        # A calendar feed holds clients and their appointments only, so the
+        # practice-settings scope has nothing to land from it.
+        if preview.get("scope", "both") not in {"patients", "both"}:
+            return run.report
+        clients = {c.source_id: c for c in calendar.clients}
+        for client in preview["clients"]:
+            self._land_calendar_client(run, clients[client["card_id"]], client)
+        for appointment in calendar.appointments:
+            self._land_appointment(run, appointment)
         return run.report
 
     def _provider_map(self, decisions: dict[str, Any]) -> dict[str, str]:
@@ -280,8 +359,84 @@ class ArchiveApplier:
     # ------------------------------------------------------------------ clients
 
     def _land_client(self, run: _Run, card: ContactCard, client: dict[str, Any]) -> None:
-        card_id = card.source_id
-        key = _key("contact", card_id)
+        def build() -> Patient:
+            now = utc_now()
+            address = card.address
+            return Patient(
+                id=str(uuid.uuid4()),
+                first_name=card.given_name or card.formatted_name.split(" ")[0],
+                last_name=card.family_name or card.formatted_name.split(" ")[-1],
+                created_at=now,
+                updated_at=now,
+                email=card.email,
+                phone=card.phone,
+                date_of_birth=card.birthday.isoformat() if card.birthday else None,
+                origin=PATIENT_ORIGIN,
+                address_line1=address.street or None if address else None,
+                city=address.city or None if address else None,
+                state=_trim(address.state, _STATE_LEN) if address else None,
+                postal_code=_trim(address.postal_code, _POSTAL_LEN) if address else None,
+            )
+
+        def fill(patient: Patient) -> dict[str, Any]:
+            built = build()
+            filled: dict[str, Any] = {}
+            for name in (
+                "email",
+                "phone",
+                "date_of_birth",
+                "address_line1",
+                "city",
+                "state",
+                "postal_code",
+            ):
+                if getattr(patient, name, None) in (None, "") and getattr(built, name, None):
+                    setattr(patient, name, getattr(built, name))
+                    filled[name] = getattr(built, name)
+            return filled
+
+        self._adopt_or_create(
+            run, _ClientSource("contact", card.source_id, card.digest), client, build, fill
+        )
+
+    def _land_calendar_client(
+        self, run: _Run, client: CalendarClient, proposal: dict[str, Any]
+    ) -> None:
+        def build() -> Patient:
+            now = utc_now()
+            return Patient(
+                id=str(uuid.uuid4()),
+                first_name=client.first_name,
+                last_name=client.last_name,
+                preferred_name=client.preferred_name,
+                created_at=now,
+                updated_at=now,
+                origin=PATIENT_ORIGIN,
+            )
+
+        self._adopt_or_create(
+            run, _ClientSource(CALENDAR_CLIENT, client.source_id, client.digest), proposal, build
+        )
+
+    def _adopt_or_create(
+        self,
+        run: _Run,
+        source: _ClientSource,
+        client: dict[str, Any],
+        build: Callable[[], Patient],
+        fill: Callable[[Patient], dict[str, Any]] | None = None,
+    ) -> None:
+        """The patient a client lands on: the one an earlier run made, the one
+        the preview or the practice matched, or a new one from ``build``.
+
+        ``fill`` completes a matched patient's empty details from the source
+        (never overwriting one), when the match is a calendar import's
+        name-only patient.
+
+        ``record_type`` is what the ledger files the landing under; counts
+        stay under ``contact`` either way, which is what the screen reads."""
+        record_type, card_id, digest = source
+        key = _key(record_type, card_id)
         existing = client.get("existing_patient_id")
         if client.get("match_evidence") == "ledger" and existing:
             # Landed by an earlier run: that run still owns it (undo takes it
@@ -303,6 +458,11 @@ class ArchiveApplier:
             if patient is None:
                 run.report.miss("contact", key, "matched patient not found")
                 return
+            filled: dict[str, Any] = {}
+            if fill is not None and client.get("match_evidence") == "calendar":
+                filled = fill(patient)
+                if filled:
+                    self._patients.update(patient)
             run.report.patients[card_id] = patient.id
             run.report.counts["contact"]["merged"] += 1
             # Marked merged: the patient was here before this run, so undo
@@ -310,41 +470,189 @@ class ArchiveApplier:
             self._ledger(
                 run,
                 Landed(
-                    "contact",
+                    record_type,
                     card_id,
                     "patients",
                     patient.id,
-                    card.digest,
-                    previous_payload={"merged": True},
+                    digest,
+                    # What this run filled in, so undo takes exactly that back.
+                    previous_payload={"merged": True, **({"filled": filled} if filled else {})},
                 ),
             )
             return
-        now = utc_now()
-        address = card.address
-        patient = Patient(
-            id=str(uuid.uuid4()),
-            first_name=card.given_name or card.formatted_name.split(" ")[0],
-            last_name=card.family_name or card.formatted_name.split(" ")[-1],
-            created_at=now,
-            updated_at=now,
-            email=card.email,
-            phone=card.phone,
-            date_of_birth=card.birthday.isoformat() if card.birthday else None,
-            origin=PATIENT_ORIGIN,
-            address_line1=address.street or None if address else None,
-            city=address.city or None if address else None,
-            state=_trim(address.state, _STATE_LEN) if address else None,
-            postal_code=_trim(address.postal_code, _POSTAL_LEN) if address else None,
-        )
-        created = self._patients.create(patient, self._user_id)
+        created = self._patients.create(build(), self._user_id)
         run.report.patients[card_id] = created.id
         run.report.counts["contact"]["created"] += 1
-        self._ledger(run, Landed("contact", card_id, "patients", created.id, card.digest))
+        self._ledger(run, Landed(record_type, card_id, "patients", created.id, digest))
+
+    # ------------------------------------------------------------------ appointments
+
+    def _land_appointment(self, run: _Run, appointment: CalendarAppointment) -> None:
+        """One feed appointment onto the calendar: created, or moved when the
+        feed's copy changed since an earlier run landed it."""
+        record = self._landable(run, "appointment", appointment.source_id)
+        if record is None:
+            return
+        patient_id = self._target_for(run, record)
+        if patient_id is None:
+            return
+        how = record.get("lands_as")
+        key = _key("appointment", appointment.source_id)
+        landed_row, existing = self._landed_appointment(appointment.source_id)
+        if landed_row is not None and existing is None:
+            # Landed once and removed in Pablo since: that was the clinician's
+            # call, and a newer copy of the feed does not undo it.
+            run.report.miss("appointment", key, "removed in Pablo since it was imported")
+            return
+        # Only a visit that is booked or happened creates an appointment; a
+        # cancellation or a no-show only changes one an earlier run landed.
+        if how is None or (existing is None and how not in CREATES):
+            run.report.counts["appointment"]["skipped"] += 1
+            return
+        status = _APPOINTMENT_STATUS[how]
+        if status != AppointmentStatus.CANCELLED:
+            taken = self._slot_taken(appointment.start_at, existing.id if existing else None)
+            if taken is not None and existing is None and taken[1] == patient_id:
+                # This client's visit is already here at that time (an export
+                # made it, or it was booked in Pablo): this is that visit.
+                self._ledger(
+                    run,
+                    Landed(
+                        CALENDAR_APPOINTMENT,
+                        appointment.source_id,
+                        "appointments",
+                        taken[0],
+                        appointment.digest,
+                        previous_payload={"merged": True},
+                    ),
+                )
+                run.report.counts["appointment"]["matched"] += 1
+                return
+            if taken is not None:
+                run.report.miss("appointment", key, "that time is already booked")
+                return
+        previous_payload: dict[str, Any] | None = None
+        if existing is not None and landed_row is not None:
+            # What undo puts back: the appointment as it stood, and the run
+            # that owned it, so undoing this run restores rather than deletes.
+            previous_payload = {
+                "restore": {
+                    "start_at": existing.start_at.isoformat(),
+                    "end_at": existing.end_at.isoformat(),
+                    "duration_minutes": existing.duration_minutes,
+                    "status": existing.status,
+                    "patient_id": existing.patient_id,
+                },
+                "previous_run_id": landed_row.run_id,
+                "previous_digest": landed_row.source_digest,
+                "previous_state": landed_row.state,
+                "previous_payload": landed_row.previous_payload,
+            }
+            existing.start_at = appointment.start_at
+            existing.end_at = appointment.end_at
+            existing.duration_minutes = appointment.duration_minutes
+            existing.status = status.value
+            # The feed can move an appointment to another client; the chart
+            # must follow it, never keep the session on the first client.
+            existing.patient_id = patient_id
+            existing.updated_at = utc_now()
+            landed = self._appointments.update(existing)
+        else:
+            landed = self._appointments.create(
+                Appointment(
+                    id=str(uuid.uuid4()),
+                    user_id=self._user_id,
+                    patient_id=patient_id,
+                    title=APPOINTMENT_TITLE,
+                    start_at=appointment.start_at,
+                    end_at=appointment.end_at,
+                    duration_minutes=appointment.duration_minutes,
+                    status=status.value,
+                    session_type="individual",
+                    created_at=utc_now(),
+                )
+            )
+        self._ledger(
+            run,
+            Landed(
+                CALENDAR_APPOINTMENT,
+                appointment.source_id,
+                "appointments",
+                landed.id,
+                appointment.digest,
+                previous_payload=previous_payload,
+            ),
+        )
+        run.report.counts["appointment"][record["state"]] += 1
+
+    def _landed_appointment(
+        self, source_id: str
+    ) -> tuple[ImportRecordRow | None, Appointment | None]:
+        """The ledger row and appointment an earlier run landed for this feed
+        id, if it stands."""
+        row = self._session.get(ImportRecordRow, (SOURCE_SYSTEM, CALENDAR_APPOINTMENT, source_id))
+        if row is None or row.state == "undone" or row.target_table != "appointments":
+            return None, None
+        return row, self._appointments.get(row.target_id, self._user_id)
+
+    def _unfill(self, row: ImportRecordRow) -> None:
+        """Take back the details a run filled in on a matched patient, each
+        one only while it still holds what the run wrote."""
+        filled = (row.previous_payload or {}).get("filled") or {}
+        if not filled or row.target_table != "patients":
+            return
+        patient = self._patients.get(row.target_id, self._user_id)
+        if patient is None:
+            return
+        changed = False
+        for name, value in filled.items():
+            if getattr(patient, name, None) == value:
+                setattr(patient, name, None)
+                changed = True
+        if changed:
+            self._patients.update(patient)
+
+    def _slot_taken(self, start_at: datetime, exclude_id: str | None) -> tuple[str, str] | None:
+        """The clinician's active appointment at ``start_at`` (id, patient), if any.
+
+        One active appointment per clinician per start time is the calendar's
+        own rule; an import checks it rather than failing on it."""
+        stmt = select(AppointmentRow.id, AppointmentRow.patient_id).where(
+            AppointmentRow.user_id == self._user_id,
+            AppointmentRow.start_at == start_at,
+            AppointmentRow.status != AppointmentStatus.CANCELLED.value,
+        )
+        if exclude_id is not None:
+            stmt = stmt.where(AppointmentRow.id != exclude_id)
+        found = self._session.execute(stmt.limit(1)).first()
+        return (str(found[0]), str(found[1])) if found else None
+
+    def _restore_appointment(self, row: ImportRecordRow) -> bool:
+        """Undo an update: put the appointment back as it stood and hand the
+        ledger row back to the run that landed it."""
+        payload = row.previous_payload or {}
+        before = payload["restore"]
+        appointment = self._appointments.get(row.target_id, self._user_id)
+        if appointment is None:
+            # Removed since (by the clinician): nothing to put back, and the
+            # ledger must not claim a landing that no longer exists.
+            row.state = "undone"
+            row.updated_at = utc_now()
+            return False
+        appointment.start_at = datetime.fromisoformat(before["start_at"])
+        appointment.end_at = datetime.fromisoformat(before["end_at"])
+        appointment.duration_minutes = before["duration_minutes"]
+        appointment.status = before["status"]
+        appointment.patient_id = before["patient_id"]
+        appointment.updated_at = utc_now()
+        self._appointments.update(appointment)
+        _hand_back(row)
+        return True
 
     # ------------------------------------------------------------------ notes
 
-    def _land_notes(self, run: _Run) -> None:
-        for note in run.archive.notes:
+    def _land_notes(self, run: _Run, archive: SimplePracticeArchive) -> None:
+        for note in archive.notes:
             record = self._landable(run, "note", note.source_id)
             if record is None:
                 continue
@@ -506,8 +814,8 @@ class ArchiveApplier:
 
     # ------------------------------------------------------------------ questionnaires
 
-    def _land_questionnaires(self, run: _Run) -> None:
-        for q in run.archive.questionnaires:
+    def _land_questionnaires(self, run: _Run, archive: SimplePracticeArchive) -> None:
+        for q in archive.questionnaires:
             record = self._landable(run, "questionnaire", q.source_id)
             if record is None:
                 continue
@@ -554,9 +862,9 @@ class ArchiveApplier:
 
     # ------------------------------------------------------------------ messages
 
-    def _land_threads(self, run: _Run) -> None:
-        cards = {c.source_id: c for c in run.archive.contacts}
-        for thread in run.archive.threads:
+    def _land_threads(self, run: _Run, archive: SimplePracticeArchive) -> None:
+        cards = {c.source_id: c for c in archive.contacts}
+        for thread in archive.threads:
             record = self._landable(run, "thread", thread.source_id)
             if record is None:
                 continue
@@ -623,8 +931,8 @@ class ArchiveApplier:
 
     # ------------------------------------------------------------------ uploads
 
-    def _land_uploads(self, run: _Run) -> None:
-        for upload in run.archive.uploads:
+    def _land_uploads(self, run: _Run, archive: SimplePracticeArchive) -> None:
+        for upload in archive.uploads:
             record = self._landable(run, "upload", upload.source_id)
             if record is None:
                 continue
@@ -727,14 +1035,36 @@ class ArchiveApplier:
         patient row is touched again by every session the same run lands.
         """
         removed: Counter[str] = Counter()
+        restored: Counter[str] = Counter()
         kept: list[dict[str, str]] = []
         rows = records_for_run(self._session, run_id)
         for row in sorted(rows, key=lambda r: _UNDO_ORDER.get(r.record_type, len(_UNDO_ORDER))):
             if row.state == "undone":
                 continue
+            if "restore" in (row.previous_payload or {}) and row.target_table == "appointments":
+                # This run moved or cancelled an appointment an earlier run
+                # landed: put it back, and leave it to that run.
+                line = max(row.updated_at, landed_until) if landed_until else row.updated_at
+                if not include_edited and edited_since(
+                    self._session, row.target_table, row.target_id, line
+                ):
+                    kept.append(
+                        {
+                            "key": _key(_report_type(row.record_type), row.source_id),
+                            "reason": "edited since import",
+                        }
+                    )
+                    # Kept as edited, but no longer this run's: the run that
+                    # landed it owns it again, so its own undo can reach it.
+                    _hand_back(row)
+                    continue
+                if self._restore_appointment(row):
+                    restored[row.record_type] += 1
+                continue
             if (row.previous_payload or {}).get("merged"):
                 # Merged into a patient who was already here: keep the
                 # patient; the notes and records the run added go on their own.
+                self._unfill(row)
                 row.state = "undone"
                 row.updated_at = utc_now()
                 continue
@@ -743,14 +1073,20 @@ class ArchiveApplier:
                 self._session, row.target_table, row.target_id, line
             ):
                 kept.append(
-                    {"key": _key(row.record_type, row.source_id), "reason": "edited since import"}
+                    {
+                        "key": _key(_report_type(row.record_type), row.source_id),
+                        "reason": "edited since import",
+                    }
                 )
                 continue
             if self._remove(row.target_table, row.target_id):
                 removed[row.record_type] += 1
             row.state = "undone"
             row.updated_at = utc_now()
-        return {"removed": dict(removed), "kept": kept}
+        result: dict[str, Any] = {"removed": dict(removed), "kept": kept}
+        if restored:
+            result["restored"] = dict(restored)
+        return result
 
     def _remove(self, table: str, target_id: str) -> bool:
         removers = {
@@ -822,6 +1158,7 @@ def edited_since(session: Session, table: str, target_id: str, line: datetime) -
 
 
 __all__ = [
+    "APPOINTMENT_TITLE",
     "PATIENT_ORIGIN",
     "ApplyRefusedError",
     "ApplyReport",
