@@ -20,7 +20,7 @@ patient's: a client cannot read them, and the estimate is the practice's.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import String, Uuid, bindparam, select, text, update
 
@@ -85,7 +85,7 @@ def _request(row: RefillRequestRow) -> RefillRequest:
     )
 
 
-def _entry_query(user_id: str) -> Select[tuple[RefillRequestRow, str, str, str | None]]:
+def _entry_query(user_id: str) -> Select[Any]:
     """Requests joined to their patient's name, through a live grant for *user_id*."""
     return (
         select(
@@ -193,19 +193,17 @@ class PostgresRefillRequestRepository(RefillRequestRepository):
         entries = self._entries(found)
         return entries[0] if entries else None
 
-    def _entries(
-        self, found: Sequence[Row[tuple[RefillRequestRow, str, str, str | None]]]
-    ) -> list[RefillQueueEntry]:
-        risks = self._risks([row for row, *_ in found])
+    def _entries(self, found: Sequence[Row[Any]]) -> list[RefillQueueEntry]:
+        risks = self._risks([r.RefillRequestRow for r in found])
         return [
             RefillQueueEntry(
-                request=_request(row),
-                patient_first_name=first,
-                patient_last_name=last,
-                patient_preferred_name=preferred,
-                risk=risks[row.id],
+                request=_request(r.RefillRequestRow),
+                patient_first_name=r.first_name,
+                patient_last_name=r.last_name,
+                patient_preferred_name=r.preferred_name,
+                risk=risks[r.RefillRequestRow.id],
             )
-            for row, first, last, preferred in found
+            for r in found
         ]
 
     def _risks(self, rows: list[RefillRequestRow]) -> dict[str, RefillRisk]:

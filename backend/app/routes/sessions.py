@@ -1048,9 +1048,7 @@ def update_session_rating(
     Allows therapist to update rating after finalization.
     """
     try:
-        session, patient, note, old_rating = session_service.update_rating(
-            session_id, user.id, request
-        )
+        updated = session_service.update_rating(session_id, user.id, request)
     except SessionNotFoundError as e:
         raise NotFoundError("Session not found", {"session_id": session_id}) from e
     except InvalidSessionStatusError as e:
@@ -1060,18 +1058,18 @@ def update_session_rating(
             code="INVALID_STATUS",
         ) from e
 
-    patient_name = patient.display_name if patient else "Unknown"
+    patient_name = updated.patient.display_name if updated.patient else "Unknown"
 
     audit.log_session_action(
         AuditAction.SESSION_RATING_UPDATED,
         user,
         http_request,
-        session,
-        patient,
-        changes={"quality_rating": {"old": old_rating, "new": request.quality_rating}},
+        updated.session,
+        updated.patient,
+        changes={"quality_rating": {"old": updated.old_rating, "new": request.quality_rating}},
     )
 
-    return SessionResponse.from_session(session, patient_name, _embed_note(note))
+    return SessionResponse.from_session(updated.session, patient_name, _embed_note(updated.note))
 
 
 # --- Companion scheduling endpoints ---

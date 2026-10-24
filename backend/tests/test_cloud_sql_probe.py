@@ -59,10 +59,10 @@ class _CapturingRun:
         timeout: int,
         env: dict[str, str] | None = None,
         cwd: str | None = None,
-    ) -> tuple[int, str, str, int]:
+    ) -> collectors.CommandResult:
         self._call_count += 1
         if cmd[0] == "gcloud":
-            return (0, "dbpw-secret", "", 1)
+            return collectors.CommandResult(0, "dbpw-secret", "", 1)
         # psql — every call should carry PGOPTIONS
         assert cmd[0] == "psql"
         self.psql_calls.append(dict(env or {}))
@@ -70,8 +70,8 @@ class _CapturingRun:
         # to prove the summary picks audit_logs up.
         query = cmd[-1]
         if query == r"\dt":
-            return (0, self.tables_stdout, "", 1)
-        return (0, "1\n", "", 1)
+            return collectors.CommandResult(0, self.tables_stdout, "", 1)
+        return collectors.CommandResult(0, "1\n", "", 1)
 
 
 @pytest.fixture
@@ -209,8 +209,8 @@ class TestAuditMutability:
         #   upd_priv|del_priv|trunc_priv|upd_blocked|del_blocked|trunc_blocked
         # second _run = audit_fk_cascade (none here).
         side_effects = [
-            (0, mutability_row, "", 0.0),
-            (0, "", "", 0.0),
+            collectors.CommandResult(0, mutability_row, "", 0.0),
+            collectors.CommandResult(0, "", "", 0.0),
         ]
         with patch.object(collectors, "_run", side_effect=side_effects):
             return collectors._audit_integrity_checks(

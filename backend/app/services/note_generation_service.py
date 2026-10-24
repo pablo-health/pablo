@@ -130,6 +130,18 @@ class _TherapyLane:
     block: dict[str, dict[str, Any]] | None
 
 
+@dataclass(frozen=True, slots=True)
+class _RegistryDraft:
+    """The drafted content, the psychotherapy time the clinician stated, the turn
+    labels when they were made beside the draft, and what the extraction call found
+    the visit said about the fields printed from the chart."""
+
+    content: dict[str, Any]
+    time_reply: dict[str, Any] | None
+    labelled: Labelled | None
+    statements: Statements | None
+
+
 class TransientNoteGenerationError(Exception):
     """LLM note generation failed for a transient, retryable reason.
 
@@ -366,7 +378,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
             s.key == PSYCHOTHERAPY_SECTION_KEY for s in definition.sections
         )
         turns = client_present_turns(segments, client_present_end_seconds)
-        content, time_reply, labelled, statements = self._generate_via_registry(
+        draft = self._generate_via_registry(
             definition,
             transcript,
             patient,
@@ -380,6 +392,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
             chart=chart,
             current_note=current_note,
         )
+        content = draft.content
         # Judged on what the calls wrote, before code below rewrites a field
         # (a time read back as not stated) and after it may fill one (the
         # dictated time): a note is refused only if both leave it empty.
@@ -395,13 +408,13 @@ class RegistryNoteGenerationService(NoteGenerationService):
             )
         proposal = None
         if asks_start:
-            said = stated_time(time_reply)
+            said = stated_time(draft.time_reply)
             # The field states the dictated time as rendered from its parts,
             # so what the clinician said is compared by parts, never re-read.
             content[PSYCHOTHERAPY_SECTION_KEY][PSYCHOTHERAPY_TIME_FIELD] = dictated_time_text(said)
             # Labelled beside the draft when the psychotherapy call ran (they
             # decided whether it did); after it, with the draft, otherwise.
-            labels, cue = labelled or label_turns(content, turns, self._complete_labels)
+            labels, cue = draft.labelled or label_turns(content, turns, self._complete_labels)
             proposal = propose(said, labels, cue)
         content = without_unparsed_codes(content, numbers)
         _refuse_empty(definition, content, expect_content=drafted_nothing)
@@ -410,7 +423,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
             content=content,
             note_type_version=definition.version,
             psychotherapy_proposal=proposal,
-            chart_statements=statements,
+            chart_statements=draft.statements,
         )
 
     def _generate_via_registry(
@@ -428,10 +441,8 @@ class RegistryNoteGenerationService(NoteGenerationService):
         turns: Sequence[TimedSegment] = (),
         chart: ChartContext | None = None,
         current_note: Mapping[str, Any] | None = None,
-    ) -> tuple[dict[str, Any], dict[str, Any] | None, Labelled | None, Statements | None]:
-        """The drafted content, the psychotherapy time the clinician stated, the turn
-        labels when they were made beside the draft, and what the extraction call found
-        the visit said about the fields printed from the chart.
+    ) -> _RegistryDraft:
+        """The note drafted against ``definition`` (:class:`_RegistryDraft`).
 
         Fields printed from the chart are written in code (:mod:`app.notes.chart_fields`)
         and left out of the model's request; what the visit said about them comes
@@ -542,7 +553,12 @@ class RegistryNoteGenerationService(NoteGenerationService):
         )
         # The calls beside the draft, waited for in turn; the psychotherapy block last.
         content, labelled = _with_psychotherapy(_with_drafted(content, drafted), therapy, stated)
-        return content, stated, labelled, statements.result() if statements else None
+        return _RegistryDraft(
+            content=content,
+            time_reply=stated,
+            labelled=labelled,
+            statements=statements.result() if statements else None,
+        )
 
     def _complete_populated_draft(
         self,

@@ -138,6 +138,21 @@ class AcademicPeriod:
     end_date: date | None
 
 
+@dataclass(frozen=True, slots=True)
+class _Span:
+    """One employment or academic row on the coverage timeline :func:`_breaks` walks.
+
+    ``explanation`` is the row's ``preceding_gap_explanation``, and is only ever
+    set on an employment row.
+    """
+
+    start: date
+    end: date | None
+    row_id: str
+    is_employment: bool
+    explanation: str | None
+
+
 def gaps(
     session: Session,
     user_id: str,
@@ -254,44 +269,56 @@ def _breaks(
     period itself is what accounts for what follows, and the hole before it is
     still hers to explain.
     """
-    # (start, end, id, is_employment, explanation)
-    spans: list[tuple[date, date | None, str, bool, str | None]] = [
-        (p.start_date, p.end_date, p.id, True, p.preceding_gap_explanation) for p in positions
+    spans = [
+        _Span(
+            start=p.start_date,
+            end=p.end_date,
+            row_id=p.id,
+            is_employment=True,
+            explanation=p.preceding_gap_explanation,
+        )
+        for p in positions
     ]
     spans.extend(
-        (a.start_date, a.end_date, a.id, False, None)
+        _Span(
+            start=a.start_date,
+            end=a.end_date,
+            row_id=a.id,
+            is_employment=False,
+            explanation=None,
+        )
         for a in academic
         # Both dates are present; narrowed by the caller, restated for the type
         # checker rather than asserted.
         if a.start_date is not None and a.end_date is not None
     )
-    spans.sort(key=lambda s: (s[0], s[2]))
+    spans.sort(key=lambda s: (s.start, s.row_id))
 
     found: list[EmploymentGap] = []
     covered_to: date | None = None
     covered_by: str | None = None
 
-    for start, end, row_id, is_employment, explanation in spans:
+    for span in spans:
         if covered_to is not None and covered_by is not None:
-            delta = (start - covered_to).days
+            delta = (span.start - covered_to).days
             if delta > threshold_days:
                 found.append(
                     EmploymentGap(
                         source=GapSource.BREAK,
                         start=covered_to,
-                        end=start,
+                        end=span.start,
                         days=delta,
-                        explanation=explanation if is_employment else None,
+                        explanation=span.explanation if span.is_employment else None,
                         after_id=covered_by,
-                        before_id=row_id if is_employment else None,
+                        before_id=span.row_id if span.is_employment else None,
                     )
                 )
-        if end is None:
+        if span.end is None:
             # Open-ended: the timeline runs to today, and everything sorted
             # after this starts later, so nothing beyond it can be a break.
             return found
-        if covered_to is None or end > covered_to:
-            covered_to, covered_by = end, row_id
+        if covered_to is None or span.end > covered_to:
+            covered_to, covered_by = span.end, span.row_id
 
     return found
 

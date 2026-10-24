@@ -412,10 +412,10 @@ class TestUpdateRating:
             quality_rating=3,
             quality_rating_reason="Reassessed quality",
         )
-        _, _, note, old_rating = service.update_rating(session.id, user_id, request)
+        updated = service.update_rating(session.id, user_id, request)
 
-        assert note.quality_rating == 3
-        assert old_rating == 5
+        assert updated.note.quality_rating == 3
+        assert updated.old_rating == 5
 
     def test_session_not_found(
         self,
@@ -456,10 +456,10 @@ class TestUpdateRating:
             quality_rating=1,
             quality_rating_reason="Reconsidered quality",
         )
-        _, _, note, old_rating = service.update_rating(session.id, user_id, request)
+        updated = service.update_rating(session.id, user_id, request)
 
-        assert note.quality_rating == 1
-        assert old_rating == 5
+        assert updated.note.quality_rating == 1
+        assert updated.old_rating == 5
 
 
 _IMPORTED_CONTENT = {
