@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 import { describe, expect, it, vi } from "vitest"
-import { createPracticeHostLookup } from "../practice-host-lookup"
+import { createPortalSlugLookup, createPracticeHostLookup } from "../practice-host-lookup"
 
 const API = "http://backend.internal:8000"
 
@@ -160,5 +160,43 @@ describe("createPracticeHostLookup", () => {
     expect(fetch).not.toHaveBeenCalled()
     await lookup("a.example.com")
     expect(fetch).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("createPortalSlugLookup", () => {
+  function slugSetup(answer: (url: string) => Response) {
+    const fetch = vi.fn(async (input: RequestInfo | URL) => answer(String(input)))
+    const lookup = createPortalSlugLookup({ apiUrl: () => API, fetch: fetch as unknown as typeof globalThis.fetch })
+    return { lookup, fetch }
+  }
+
+  it("asks the portal's own resolve route and answers true for a practice", async () => {
+    const { lookup, fetch } = slugSetup(() => json(200, { slug: "acme", display_name: "Acme", captcha_site_key: null }))
+
+    expect(await lookup("acme")).toBe(true)
+    expect(fetch).toHaveBeenCalledWith(`${API}/api/portal/practices/acme`, expect.anything())
+  })
+
+  it("answers null for a slug no practice holds, and keeps it", async () => {
+    const { lookup, fetch } = slugSetup(() => json(404, { detail: "Not found." }))
+
+    expect(await lookup("actuator")).toBeNull()
+    expect(await lookup("actuator")).toBeNull()
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it("is unavailable, not null, when the route is rate-limited", async () => {
+    // The proxy serves the page on "unavailable"; a 429 must never read as
+    // "no such practice" and lock a real client out.
+    const { lookup } = slugSetup(() => json(429, { detail: "Too many requests." }))
+
+    expect(await lookup("acme")).toBe("unavailable")
+  })
+
+  it("encodes the slug into the path", async () => {
+    const { lookup, fetch } = slugSetup(() => json(404, {}))
+
+    await lookup("../patients")
+    expect(fetch).toHaveBeenCalledWith(`${API}/api/portal/practices/..%2Fpatients`, expect.anything())
   })
 })

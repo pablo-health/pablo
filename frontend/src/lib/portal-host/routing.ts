@@ -32,10 +32,15 @@ export type PortalHostDecision =
   | { kind: "default" }
   /** On a portal host: let it through untouched (build assets, files, the portal's frontend API routes). */
   | { kind: "pass" }
-  /** On a portal host: serve the portal route at `pathname` in place of the requested one. */
-  | { kind: "rewrite"; pathname: string }
-  /** On a portal host: the request is already a portal route; serve it as it is. */
-  | { kind: "portal" }
+  /**
+   * On a portal host: serve the portal route at `pathname` in place of the
+   * requested one. With `slug`, only if a practice holds that slug: the
+   * proxy asks the backend (`./practice-host-lookup`) and answers 404 when
+   * none does.
+   */
+  | { kind: "rewrite"; pathname: string; slug?: string }
+  /** On a portal host: the request is already a portal route; serve it as it is, with `slug` as above. */
+  | { kind: "portal"; slug?: string }
   /** On a portal host: nothing to serve here. */
   | { kind: "not-found" }
   /** Off a portal host: the portal moved; send the visitor there. */
@@ -100,6 +105,32 @@ export const CLINICIAN_ROUTE_SEGMENTS: ReadonlySet<string> = new Set([
  * backend `/api` paths to the backend before this proxy ever sees them.
  */
 export const PORTAL_FRONTEND_API_ROUTES: ReadonlySet<string> = new Set(["/api/config"])
+
+/**
+ * The pages the portal route serves beneath a practice's slug, besides its
+ * home: each section the shell registers (`registerPortalSlot` in
+ * `@/components/portal-shell/modules`) and `recover`. A unit test keeps the
+ * list in step with the registry.
+ *
+ * Anything else beneath a slug answers 404. The portal route would otherwise
+ * serve its page for it with a 200 and let the browser send the visitor
+ * home, so `/phpinfo` or `/actuator/env` on a portal host looked, to anything
+ * reading status codes, like a file that was there.
+ */
+export const PORTAL_PAGES: ReadonlySet<string> = new Set([
+  "forms",
+  "messaging",
+  "appointments",
+  "homework",
+  "refills",
+  "recover",
+])
+
+/** Whether `rest`, the path after a practice's slug, is one the portal serves. */
+export function isPortalPage(rest: string): boolean {
+  const segments = rest.split("/").filter(Boolean)
+  return segments.length === 0 || (segments.length === 1 && PORTAL_PAGES.has(segments[0]))
+}
 
 export const LOOPBACK_HOSTNAMES: ReadonlySet<string> = new Set(["localhost", "127.0.0.1", "[::1]"])
 
@@ -187,13 +218,19 @@ function routeOnPortalHost(pathname: string): PortalHostDecision {
   }
   if (isUnder(pathname, "/_next")) return { kind: "pass" }
   if (pathname === "/favicon.ico" || hasFileExtension(pathname)) return { kind: "pass" }
-  if (isUnder(pathname, PORTAL_PREFIX)) return { kind: "portal" }
+  if (isUnder(pathname, PORTAL_PREFIX)) {
+    // Bare `/portal` is no page; the app answers it with its own 404.
+    const [, , slug = "", ...rest] = pathname.split("/")
+    if (!slug) return { kind: "portal" }
+    return isPortalPage(rest.join("/")) ? { kind: "portal", slug } : { kind: "not-found" }
+  }
 
   // A practice's own host (one host, one practice, no slug in the path) never
   // reaches here: the proxy looks it up first, see `./practice-host`.
-  const segment = pathname.split("/")[1] ?? ""
+  const [, segment = "", ...rest] = pathname.split("/")
   if (!isSlugSegment(segment)) return { kind: "not-found" }
-  return { kind: "rewrite", pathname: `${PORTAL_PREFIX}${pathname}` }
+  if (!isPortalPage(rest.join("/"))) return { kind: "not-found" }
+  return { kind: "rewrite", pathname: `${PORTAL_PREFIX}${pathname}`, slug: segment }
 }
 
 /**

@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import proxy from "../proxy"
 import { authProviderMiddleware } from "@/lib/auth/middleware"
-import { lookupPracticeHost } from "@/lib/portal-host/practice-host-lookup"
+import { lookupPortalSlug, lookupPracticeHost } from "@/lib/portal-host/practice-host-lookup"
 import { fetchSiteFile, lookupSiteHost } from "@/lib/portal-host/practice-site-lookup"
 
 // Stubbing the provider chain keeps the edge auth stack (and its env
@@ -26,6 +26,7 @@ vi.mock("@/lib/auth/middleware", () => ({
 // only matters what the proxy does with each answer.
 vi.mock("@/lib/portal-host/practice-host-lookup", () => ({
   lookupPracticeHost: vi.fn(async () => null),
+  lookupPortalSlug: vi.fn(async () => true),
 }))
 
 // Likewise the website lookup and file fetch (practice-site-lookup.test.ts).
@@ -167,6 +168,50 @@ describe("frontend/proxy.ts portal host", () => {
       expect(authProviderMiddleware).not.toHaveBeenCalled()
     },
   )
+
+  describe("a slug no practice holds", () => {
+    afterEach(() => {
+      vi.mocked(lookupPortalSlug).mockReset()
+      vi.mocked(lookupPortalSlug).mockResolvedValue(true)
+    })
+
+    it.each(["/actuator", "/phpinfo", "/portal/actuator", "/phpinfo/messaging"])(
+      "answers %s with a 404, not the portal's page",
+      async (path) => {
+        vi.stubEnv("PORTAL_HOSTS", PORTAL)
+        vi.mocked(lookupPortalSlug).mockResolvedValue(null)
+        const response = await proxy(at(`https://${PORTAL}${path}`, PORTAL))
+
+        expect(response.status).toBe(404)
+        expect(response.headers.get("x-middleware-rewrite")).toBeNull()
+        expect(authProviderMiddleware).not.toHaveBeenCalled()
+      },
+    )
+
+    it("asks about the slug, not the rest of the path", async () => {
+      vi.stubEnv("PORTAL_HOSTS", PORTAL)
+      await proxy(at(`https://${PORTAL}/acme/forms`, PORTAL))
+
+      expect(lookupPortalSlug).toHaveBeenCalledWith("acme")
+    })
+
+    it("serves the page when the lookup could not be made, so a backend hiccup locks no client out", async () => {
+      vi.stubEnv("PORTAL_HOSTS", PORTAL)
+      vi.mocked(lookupPortalSlug).mockResolvedValue("unavailable")
+      const response = await proxy(at(`https://${PORTAL}/acme`, PORTAL))
+
+      expect(response.status).toBe(200)
+      expect(response.headers.get("x-middleware-rewrite")).toBe(`https://${PORTAL}/portal/acme`)
+    })
+
+    it("never asks for a path the routing already refused", async () => {
+      vi.stubEnv("PORTAL_HOSTS", PORTAL)
+      const response = await proxy(at(`https://${PORTAL}/actuator/env`, PORTAL))
+
+      expect(response.status).toBe(404)
+      expect(lookupPortalSlug).not.toHaveBeenCalled()
+    })
+  })
 
   it("passes the frontend's own /api through on the portal host", async () => {
     vi.stubEnv("PORTAL_HOSTS", PORTAL)

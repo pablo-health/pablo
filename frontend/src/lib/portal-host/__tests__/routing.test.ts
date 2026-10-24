@@ -7,8 +7,10 @@ import { describe, expect, it } from "vitest"
 import {
   CLINICIAN_ROUTE_SEGMENTS,
   isPortalHost,
+  isPortalPage,
   parsePortalHosts,
   PORTAL_FRONTEND_API_ROUTES,
+  PORTAL_PAGES,
   portalHostsFromEnv,
   routePortalHost,
   type PortalHostRequest,
@@ -97,24 +99,35 @@ describe("routePortalHost on a portal host", () => {
   const on = (path: string) => routePortalHost(req(PORTAL, path), HOSTS)
 
   it("rewrites /{slug} to the portal route", () => {
-    expect(on("/acme-therapy")).toEqual({ kind: "rewrite", pathname: "/portal/acme-therapy" })
+    expect(on("/acme-therapy")).toEqual({ kind: "rewrite", pathname: "/portal/acme-therapy", slug: "acme-therapy" })
   })
 
-  it("rewrites /{slug}/{rest} to the portal route", () => {
-    expect(on("/acme/recover")).toEqual({ kind: "rewrite", pathname: "/portal/acme/recover" })
-    expect(on("/acme/a/b/")).toEqual({ kind: "rewrite", pathname: "/portal/acme/a/b/" })
+  it.each([...PORTAL_PAGES])("rewrites /{slug}/%s to the portal route", (page) => {
+    expect(on(`/acme/${page}`)).toEqual({ kind: "rewrite", pathname: `/portal/acme/${page}`, slug: "acme" })
   })
+
+  it.each(["/actuator/env", "/actuator/heapdump", "/acme/debug", "/acme/forms/extra", "/acme/a/b/"])(
+    "answers 404 for %s, which no portal page serves",
+    (path) => {
+      expect(on(path)).toEqual({ kind: "not-found" })
+    },
+  )
 
   it("leaves the query to the caller, which keeps the one it has", () => {
     // The decision carries only the path; the proxy appends the request's own
     // search string, so the query survives untouched.
-    expect(on("/acme?utm=x")).toEqual({ kind: "rewrite", pathname: "/portal/acme" })
+    expect(on("/acme?utm=x")).toEqual({ kind: "rewrite", pathname: "/portal/acme", slug: "acme" })
   })
 
   it("serves /portal/... as it is", () => {
-    expect(on("/portal/acme")).toEqual({ kind: "portal" })
-    expect(on("/portal/acme/recover")).toEqual({ kind: "portal" })
+    expect(on("/portal/acme")).toEqual({ kind: "portal", slug: "acme" })
+    expect(on("/portal/acme/recover")).toEqual({ kind: "portal", slug: "acme" })
     expect(on("/portal")).toEqual({ kind: "portal" })
+  })
+
+  it("answers 404 for a path under /portal/{slug} that no portal page serves", () => {
+    expect(on("/portal/acme/actuator")).toEqual({ kind: "not-found" })
+    expect(on("/portal/acme/forms/extra")).toEqual({ kind: "not-found" })
   })
 
   it.each([
@@ -175,6 +188,7 @@ describe("routePortalHost on a portal host", () => {
     expect(routePortalHost(req("Portal.Example.Org", "/acme"), HOSTS)).toEqual({
       kind: "rewrite",
       pathname: "/portal/acme",
+      slug: "acme",
     })
   })
 })
@@ -298,4 +312,36 @@ describe("PORTAL_FRONTEND_API_ROUTES", () => {
     // so it should show up as a change to this line.
     expect([...PORTAL_FRONTEND_API_ROUTES]).toEqual(["/api/config"])
   })
+})
+
+describe("PORTAL_PAGES", () => {
+  // A section registered without being listed here would answer 404 on a
+  // portal host while its link sat in the shell's navigation.
+  it("is every section the portal registers, and recover", async () => {
+    await import("@/components/portal-shell/modules")
+    const { getPortalSlots } = await import("@/components/portal-shell/slots")
+    const sections = getPortalSlots().map((slot) => slot.id)
+    expect([...PORTAL_PAGES].sort()).toEqual([...sections, "recover"].sort())
+  })
+
+  it("names every page the portal route serves beside the shell's sections", () => {
+    const practiceDir = join(__dirname, "..", "..", "..", "..", "app", "portal", "[practice]")
+    const pages = readdirSync(practiceDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith("(") && !entry.name.startsWith("["))
+      .map((entry) => entry.name)
+    expect(pages).toEqual(["recover"])
+  })
+})
+
+describe("isPortalPage", () => {
+  it.each(["", "/", "/forms", "/recover", "/messaging/"])("is true for %j", (rest) => {
+    expect(isPortalPage(rest)).toBe(true)
+  })
+
+  it.each(["/phpinfo", "/actuator/env", "/forms/extra", "/server-status", "/.env", "/dashboard"])(
+    "is false for %j",
+    (rest) => {
+      expect(isPortalPage(rest)).toBe(false)
+    },
+  )
 })

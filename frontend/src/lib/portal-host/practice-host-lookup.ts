@@ -143,3 +143,25 @@ export function serverApiUrl(): string {
 
 /** The process-wide lookup the proxy uses, against the server-side `API_URL`. */
 export const lookupPracticeHost: PracticeHostLookup = createPracticeHostLookup({ apiUrl: serverApiUrl })
+
+/**
+ * Whether a practice holds `slug`, for a portal host: `true`, `null` (the
+ * backend's 404), or `"unavailable"`.
+ *
+ * `GET {API_URL}/api/portal/practices/{slug}` is the call the portal page
+ * makes first; asked here too, an unknown slug answers 404 rather than a page
+ * that says so. Answers are kept like a host's, so made-up slugs cost one
+ * backend call per slug a minute. The route is rate-limited by address and
+ * every call from here shares this server's, so under a flood of made-up
+ * slugs the answer turns `"unavailable"` and the proxy serves the page as it
+ * did before, which finds the practice missing on its own.
+ */
+export function createPortalSlugLookup(options: PracticeHostLookupOptions): HostLookup<true> {
+  return createHostLookup(options, {
+    path: (slug) => `/api/portal/practices/${encodeURIComponent(slug)}`,
+    parse: () => true,
+  })
+}
+
+/** The process-wide slug lookup the proxy uses. */
+export const lookupPortalSlug: HostLookup<true> = createPortalSlugLookup({ apiUrl: serverApiUrl })
