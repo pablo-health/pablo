@@ -165,10 +165,39 @@ describe("createPracticeHostLookup", () => {
 
 describe("createPortalSlugLookup", () => {
   function slugSetup(answer: (url: string) => Response) {
+    let now = 1_000_000
     const fetch = vi.fn(async (input: RequestInfo | URL) => answer(String(input)))
-    const lookup = createPortalSlugLookup({ apiUrl: () => API, fetch: fetch as unknown as typeof globalThis.fetch })
-    return { lookup, fetch }
+    const lookup = createPortalSlugLookup({
+      apiUrl: () => API,
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      now: () => now,
+    })
+    return { lookup, fetch, advance: (ms: number) => (now += ms) }
   }
+
+  it("keeps a practice that has a portal for a day", async () => {
+    const { lookup, fetch, advance } = slugSetup(() => json(200, { slug: "acme" }))
+
+    await lookup("acme")
+    advance(23 * 60 * 60_000)
+    await lookup("acme")
+    expect(fetch).toHaveBeenCalledTimes(1)
+
+    advance(60 * 60_000 + 1)
+    await lookup("acme")
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it("keeps a slug no practice holds only a minute, so a new portal is not refused for long", async () => {
+    let status = 404
+    const { lookup, fetch, advance } = slugSetup(() => json(status, { slug: "acme" }))
+
+    expect(await lookup("acme")).toBeNull()
+    status = 200
+    advance(60_001)
+    expect(await lookup("acme")).toBe(true)
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
 
   it("asks the portal's own resolve route and answers true for a practice", async () => {
     const { lookup, fetch } = slugSetup(() => json(200, { slug: "acme", display_name: "Acme", captcha_site_key: null }))
