@@ -4,7 +4,7 @@
 
 **Pablo** = **P**aperwork **A**utomation for **B**ehavioral **L**ogging & **O**utcomes
 
-AI-powered therapy documentation — SOAP note generation from session transcripts, with dual-method verification (LLM + classical NLP).
+AI-powered practice software for therapists — session notes drafted from transcripts, plus scheduling, billing and the inbox.
 
 ### Tech Stack
 | Layer | Technology |
