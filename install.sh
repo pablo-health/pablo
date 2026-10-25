@@ -34,6 +34,9 @@
 #   --skip-google-signin  Email and password sign-in only (the default)
 #   --no-transcription  Leave transcription off; no AssemblyAI key needed
 #   --yes               Skip the final confirmation
+#   --target local      Run on this machine (Docker Desktop and Tailscale
+#                       Funnel) instead of a VM. For development and demos,
+#                       never for real records.
 #
 # Before running: accept the Google Cloud BAA for the account that owns this
 # project. Nothing here can do that for you, and no patient data belongs on
@@ -54,6 +57,10 @@ source "${DEPLOY_DIR}/lib/identity.sh"
 source "${DEPLOY_DIR}/lib/secrets.sh"
 # shellcheck source=deploy/vm/lib/vm.sh
 source "${DEPLOY_DIR}/lib/vm.sh"
+# shellcheck source=deploy/vm/lib/env.sh
+source "${DEPLOY_DIR}/lib/env.sh"
+# shellcheck source=deploy/vm/lib/local.sh
+source "${DEPLOY_DIR}/lib/local.sh"
 
 BOLD='\033[1m'
 GREEN='\033[0;32m'
@@ -78,6 +85,7 @@ BAA_ACCEPTED=false
 GOOGLE_SIGNIN=""
 NO_TRANSCRIPTION=false
 ASSUME_YES=false
+TARGET=vm
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -94,6 +102,7 @@ while [ $# -gt 0 ]; do
         --google-signin) GOOGLE_SIGNIN=true; shift ;;
         --skip-google-signin) GOOGLE_SIGNIN=false; shift ;;
         --yes) ASSUME_YES=true; shift ;;
+        --target) TARGET="$2"; shift 2 ;;
         --no-transcription) NO_TRANSCRIPTION=true; shift ;;
         -h | --help) usage ;;
         *) echo "Unknown option: $1" >&2; usage 2 ;;
@@ -137,7 +146,13 @@ if gcloud projects describe "$PROJECT_ID" >/dev/null 2>&1 \
     [[ "$answer" =~ ^[Yy] ]] || { echo "Run this again and press Enter for a new project." >&2; exit 1; }
 fi
 
-if [ -z "$CUSTOM_HOSTNAME" ] && [ "$ASSUME_YES" != true ]; then
+[[ "$TARGET" == vm || "$TARGET" == local ]] || { echo "--target is vm or local" >&2; exit 2; }
+if [ "$TARGET" = local ]; then
+    command -v docker >/dev/null || { echo "Needs Docker Desktop." >&2; exit 1; }
+    local_address
+fi
+
+if [ -z "$CUSTOM_HOSTNAME" ] && [ "$ASSUME_YES" != true ] && [ "$TARGET" = vm ]; then
     read -rp "Your own domain for Pablo, if you have one [Enter for an automatic address]: " CUSTOM_HOSTNAME
 fi
 
@@ -165,11 +180,21 @@ fi
 echo
 echo -e "${BOLD}Ready to install${NC}"
 echo "  Project   ${PROJECT_ID}"
-echo "  Address   ${CUSTOM_HOSTNAME:-an automatic *.sslip.io address}"
+if [ "$TARGET" = local ]; then
+    echo "  Address   ${PUBLIC_ORIGIN} (Tailscale Funnel)"
+else
+    echo "  Address   ${CUSTOM_HOSTNAME:-an automatic *.sslip.io address}"
+fi
 echo "  Sign-in   ${ADMIN_EMAIL}, email and password$([ "$GOOGLE_SIGNIN" = true ] && echo ", and Google")"
-echo "  Server    ${MACHINE_TYPE} in ${ZONE}, ${DATA_DISK_GB} GB for records, backed up daily"
+if [ "$TARGET" = local ]; then
+    echo "  Server    this machine, in Docker. For development and demos, not real records."
+else
+    echo "  Server    ${MACHINE_TYPE} in ${ZONE}, ${DATA_DISK_GB} GB for records, backed up daily"
+fi
 echo "  Release   ${PABLO_VERSION}${DEPLOY_REF:+ (deploy files at ${DEPLOY_REF})}"
-echo "  Cost      about \$20 a month to Google, plus AI and transcription by use"
+if [ "$TARGET" = vm ]; then
+    echo "  Cost      about \$20 a month to Google, plus AI and transcription by use"
+fi
 if [ "$ASSUME_YES" != true ]; then
     read -rp "Continue? [Y/n] " answer
     [[ -z "$answer" || "$answer" =~ ^[Yy] ]] || exit 1
@@ -181,7 +206,9 @@ config_file=""
 on_exit() {
     local status=$?
     [ -z "$config_file" ] || rm -f "$config_file"
-    [ "$status" -eq 0 ] || warn "\nStopped. To pick up where this left off:  ./install.sh --project ${PROJECT_ID}" >&2
+    local resume="./install.sh --project ${PROJECT_ID}"
+    [ "$TARGET" = vm ] || resume="${resume} --target ${TARGET}"
+    [ "$status" -eq 0 ] || warn "\nStopped. To pick up where this left off:  ${resume}" >&2
 }
 trap on_exit EXIT
 
@@ -194,6 +221,9 @@ done_ "Project ready"
 
 # --- 2. Address and hostname ---------------------------------------------------
 step "2/7  Address and hostname"
+if [ "$TARGET" = local ]; then
+    done_ "${PUBLIC_ORIGIN}"
+else
 ensure_static_ip
 if [ -n "$CUSTOM_HOSTNAME" ]; then
     PABLO_HOST="$CUSTOM_HOSTNAME"
@@ -203,6 +233,7 @@ else
     PABLO_HOST="${VM_IP//./-}.sslip.io"
 fi
 done_ "https://${PABLO_HOST} → ${VM_IP}"
+fi
 
 # --- 3. Identity and storage ---------------------------------------------------
 step "3/7  Service account and buckets"
@@ -236,7 +267,33 @@ GCP_PROJECT_ID="$PROJECT_ID" GCP_REGION="$REGION" BACKEND_SA="$VM_SA" \
     "${REPO_ROOT}/scripts/setup-transcription-queue.sh"
 done_ "Audit sink and queues ready"
 
-# --- 7. The VM -----------------------------------------------------------------
+# --- 7. The machine -------------------------------------------------------------
+if [ "$TARGET" = local ]; then
+    step "7/7  This machine"
+    PABLO_LOCAL_DIR="${HOME}/.pablo/${PROJECT_ID}"
+    mkdir -p "$PABLO_LOCAL_DIR"
+    chmod 700 "$PABLO_LOCAL_DIR"
+    check_disk_encryption
+    ensure_local_credentials
+    start_local
+    deadline=$(($(date +%s) + 600))
+    until curl -fsS -o /dev/null "${PUBLIC_ORIGIN}/api/health" 2>/dev/null; do
+        if [ "$(date +%s)" -ge "$deadline" ]; then
+            warn "Not answering at ${PUBLIC_ORIGIN} after 10 minutes. Check: docker compose -f deploy/workstation/compose.yaml ps"
+            exit 1
+        fi
+        sleep 10
+    done
+    install_local_backups
+    echo
+    done_ "Pablo is running on this machine: ${PUBLIC_ORIGIN}"
+    echo "Sign in with ${ADMIN_EMAIL}. Notes and transcription finish only while this machine is awake."
+    echo "Backups:  nightly to gs://${BACKUP_BUCKET}/workstation/, kept 30 days"
+    echo "          check a restore with ${PABLO_LOCAL_DIR}/bin/pablo-local restore-drill"
+    echo "Stop it:  PABLO_LOCAL_DIR=${PABLO_LOCAL_DIR} PABLO_VERSION=${PABLO_VERSION} docker compose -f deploy/workstation/compose.yaml down"
+    exit 0
+fi
+
 step "7/7  The VM"
 ensure_firewall
 ensure_data_disk

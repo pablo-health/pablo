@@ -70,11 +70,11 @@ lets you make in the console:
   4. Open https://console.cloud.google.com/apis/credentials?project=${PROJECT_ID}
      Create credentials → OAuth client ID → Web application, named "Pablo".
   5. Authorized JavaScript origins:
-       https://${PABLO_HOST}
+       ${PUBLIC_ORIGIN:-https://${PABLO_HOST}}
      Authorized redirect URIs:
-       https://${PABLO_HOST}/__/auth/handler
+       ${PUBLIC_ORIGIN:-https://${PABLO_HOST}}/__/auth/handler
        https://${PROJECT_ID}.firebaseapp.com/__/auth/handler
-       https://${PABLO_HOST}/dashboard/settings/calendar
+       ${PUBLIC_ORIGIN:-https://${PABLO_HOST}}/dashboard/settings/calendar
   6. Create, then paste the two values here (or press Enter twice to use
      email and password only, without Google sign-in or calendar sync).
 

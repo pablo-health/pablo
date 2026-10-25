@@ -105,6 +105,7 @@ services:
       ACME_EMAIL: ${ACME_EMAIL:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./routes.caddy:/etc/caddy/routes.caddy:ro
       - /var/lib/pablo/caddy:/data
     networks:
       pablo:
