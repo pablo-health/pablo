@@ -36,6 +36,7 @@ seven days.
 | Database | Postgres 16 on its own disk (`pablo-data`), kept if the VM is deleted |
 | Backups | pgBackRest to `gs://<project>-pablo-backups`: weekly full, daily differential, WAL continuously; daily disk snapshots too |
 | Restore check | monthly: the latest backup is restored into a scratch copy and queried |
+| Short-lived state | Redis, in memory only: calendar-connect handshakes, passkey challenges, rate limits, the idle-session clock |
 | Scheduled jobs | `/etc/cron.d/pablo`: HIPAA log reviews, pipeline heartbeat, quarterly attestation |
 | Logs | containers and jobs to Cloud Logging; audit events kept six years by the audit sink |
 | Sign-in | Identity Platform: email and Google, 15-character passwords, authenticator-app MFA |

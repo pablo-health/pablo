@@ -24,6 +24,9 @@ services:
   backend:
     <<: *backend
     restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -71,6 +74,21 @@ services:
       interval: 10s
       timeout: 5s
       start_period: 30s
+      retries: 6
+    networks:
+      - pablo
+
+  # Short-lived state only: calendar-connect handshakes, passkey challenges,
+  # rate limits and the idle-session clock. Nothing to back up, so no disk;
+  # a restart signs people out at worst.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb", "--maxmemory-policy", "volatile-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
       retries: 6
     networks:
       - pablo

@@ -2,10 +2,11 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 #
 # Setup Cloud Tasks queues and the shared service account for the backend's
-# off-request jobs. Two queues share one invoker identity:
+# off-request jobs. Three queues share one invoker identity:
 #   - pablo-transcription:   polls AssemblyAI after an audio upload.
 #   - pablo-soap-generation: runs SOAP note generation off the upload request
 #                            thread (the upload returns 202 and enqueues here).
+#   - pablo-calendar-sync:   fans calendar sync out per connected calendar.
 #
 # Creates / ensures:
 #   - Service account: cloud-tasks-invoker (shared across all Cloud Tasks)
@@ -28,7 +29,7 @@ REGION="${GCP_REGION:-us-central1}"
 SA_NAME="cloud-tasks-invoker"
 SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 # All queues the backend enqueues to. Same SA + backend-service + IAM pattern.
-QUEUE_NAMES=("pablo-transcription" "pablo-soap-generation")
+QUEUE_NAMES=("pablo-transcription" "pablo-soap-generation" "pablo-calendar-sync")
 
 echo "=== Pablo Cloud Tasks Queue Setup ==="
 echo "Project:  ${PROJECT_ID}"
