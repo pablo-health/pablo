@@ -33,14 +33,17 @@ secret() { gcloud secrets versions access latest --secret="$1" --project="$PROJE
 optional_secret() { secret "$1" 2>/dev/null || true; }
 
 # --- Deploy files ------------------------------------------------------------
-if [ ! -d "$RELEASE_DIR" ]; then
+if [ ! -d "${RELEASE_DIR}/.git" ]; then
     log "fetching deploy files at ${REF}"
+    rm -rf "$RELEASE_DIR"
     git clone -q --depth 1 --branch "$REF" --filter=blob:none --sparse "$REPO_URL" "$RELEASE_DIR"
-    git -C "$RELEASE_DIR" sparse-checkout set deploy/vm backend/bin/allow_email.py
 elif [[ "$REF" != v* ]]; then
     git -C "$RELEASE_DIR" fetch -q --depth 1 origin "$REF"
     git -C "$RELEASE_DIR" reset -q --hard FETCH_HEAD
 fi
+# Directories only (sparse-checkout's cone mode); backend/bin is for
+# allow_email.py. Set every run, so an interrupted first fetch heals.
+git -C "$RELEASE_DIR" sparse-checkout set deploy/vm backend/bin
 ln -sfn "${RELEASE_DIR}/deploy/vm" /opt/pablo/current
 install -m 0644 /opt/pablo/current/crontab /etc/cron.d/pablo
 # New deploy files can bring a new version of this script; run that one.

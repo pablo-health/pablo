@@ -165,15 +165,15 @@ chown postgres:postgres /etc/pgbackrest.conf
 sudo -u postgres pgbackrest --stanza=pablo stanza-create
 
 # --- 6-7. Deploy files, commands, the stack ---------------------------------
-# Only the first time: from then on pablo-update fetches the deploy files of
-# whatever release it is asked for, and installs that release's commands.
-if [ ! -x /usr/local/bin/pablo-update ]; then
-    first="$(mktemp -d)"
-    git clone -q --depth 1 --branch "${DEPLOY_REF:-$PABLO_VERSION}" --filter=blob:none --sparse "$REPO_URL" "$first"
-    git -C "$first" sparse-checkout set deploy/vm
-    install -m 0755 "$first"/deploy/vm/bin/pablo-* /usr/local/bin/
-    rm -rf "$first"
-fi
+# The commands come fresh from the deploy ref on every boot, so a boot that
+# stopped halfway never leaves a broken pablo-update behind. pablo-update
+# then fetches the full deploy files and installs that release's commands.
+ref="$(cat /etc/pablo/ref 2>/dev/null || echo "${DEPLOY_REF:-$PABLO_VERSION}")"
+commands="$(mktemp -d)"
+git clone -q --depth 1 --branch "$ref" --filter=blob:none --sparse "$REPO_URL" "$commands"
+git -C "$commands" sparse-checkout set deploy/vm/bin
+install -m 0755 "$commands"/deploy/vm/bin/pablo-* /usr/local/bin/
+rm -rf "$commands"
 /usr/local/bin/pablo-update
 PABLO_VERSION="$(cat /etc/pablo/version)"
 
