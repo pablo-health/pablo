@@ -51,6 +51,29 @@ const CATEGORY_LABELS: Record<CategoryChoice, string> = {
   [NO_CATEGORY]: "Not set",
 }
 
+// Whether a gap in the medication is itself harmful. "default" sends null, so
+// the engine's cited list decides (app.models.refill_risk); the clinician's
+// yes or no overrides it either way. The list lives on the server, so a new
+// medication shows "Default" until it is saved and the answer comes back.
+type InterruptionChoice = "default" | "yes" | "no"
+
+function interruptionChoice(value: boolean | null | undefined): InterruptionChoice {
+  if (value === true) return "yes"
+  if (value === false) return "no"
+  return "default"
+}
+
+function interruptionValue(choice: InterruptionChoice): boolean | null {
+  if (choice === "yes") return true
+  if (choice === "no") return false
+  return null
+}
+
+function defaultLabel(listed: boolean | undefined): string {
+  if (listed === undefined) return "Default"
+  return listed ? "Default (Yes)" : "Default (No)"
+}
+
 export function MedicationModal({
   patientId,
   open,
@@ -73,6 +96,9 @@ export function MedicationModal({
   )
   const [stopReason, setStopReason] = useState(initialData?.stop_reason ?? "")
   const [notes, setNotes] = useState(initialData?.notes ?? "")
+  const [interruption, setInterruption] = useState<InterruptionChoice>(
+    interruptionChoice(initialData?.interruption_risk),
+  )
   const [error, setError] = useState<string | null>(null)
 
   const createMedication = useCreateMedication()
@@ -89,6 +115,7 @@ export function MedicationModal({
     setStartedAt(initialData?.started_at?.slice(0, 10) ?? "")
     setStopReason(initialData?.stop_reason ?? "")
     setNotes(initialData?.notes ?? "")
+    setInterruption(interruptionChoice(initialData?.interruption_risk))
     setError(null)
   }
 
@@ -125,6 +152,7 @@ export function MedicationModal({
             stop_reason:
               status === "discontinued" ? stopReason.trim() || null : null,
             notes: notes.trim() || null,
+            interruption_risk: interruptionValue(interruption),
           },
         })
       } else {
@@ -140,6 +168,7 @@ export function MedicationModal({
             stop_reason:
               status === "discontinued" ? stopReason.trim() || null : null,
             notes: notes.trim() || null,
+            interruption_risk: interruptionValue(interruption),
           },
         })
       }
@@ -239,6 +268,32 @@ export function MedicationModal({
               />
             </div>
           )}
+
+          <div className="space-y-1.5">
+            <Label htmlFor="med-interruption">Harmful to interrupt</Label>
+            <Select
+              value={interruption}
+              onValueChange={(v) => setInterruption(v as InterruptionChoice)}
+            >
+              <SelectTrigger
+                id="med-interruption"
+                className="w-full"
+                aria-describedby="med-interruption-hint"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="default">
+                  {defaultLabel(initialData?.interruption_risk_default)}
+                </SelectItem>
+                <SelectItem value="yes">Yes</SelectItem>
+                <SelectItem value="no">No</SelectItem>
+              </SelectContent>
+            </Select>
+            <p id="med-interruption-hint" className="text-xs text-muted-foreground">
+              A missed dose risks withdrawal, a difficult restart or relapse.
+            </p>
+          </div>
 
           <div className="space-y-1.5">
             <Label htmlFor="med-started-at">Start date</Label>

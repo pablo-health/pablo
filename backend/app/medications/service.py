@@ -12,6 +12,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from ..models.refill_risk import interruption_risk_by_default
 from ..utcnow import utc_now
 from .repository import PatientMedicationAccessDeniedError
 from .schemas import MedicationResponse
@@ -60,6 +61,7 @@ class MedicationService:
             notes=str(row["notes"]) if row.get("notes") is not None else None,
             controlled=row.get("controlled"),  # type: ignore[arg-type]
             interruption_risk=row.get("interruption_risk"),  # type: ignore[arg-type]
+            interruption_risk_default=interruption_risk_by_default(str(row["drug_name"])),
             created_by=str(row["created_by"]),
             created_at=row["created_at"],  # type: ignore[arg-type]
             updated_at=row["updated_at"],  # type: ignore[arg-type]
