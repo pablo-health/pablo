@@ -518,7 +518,9 @@ class PatientClinicianRow(Base):
     clinician(s) can read/write this patient's chart". v1 ships with
     one row per patient (``role = 'primary'``, backfilled from
     ``patients.user_id``); co-treating, supervision, and coverage
-    rows are inserted as the corresponding workflows land.
+    rows are inserted as the corresponding workflows land. ``covering``
+    rows are written by :mod:`app.away.coverage` when a colleague accepts
+    to cover an away period.
 
     The CHECK on ``role`` mirrors :class:`ClinicianRole` — the
     module-level assertion below fails the import if they drift.
@@ -544,7 +546,18 @@ class PatientClinicianRow(Base):
         server_default=text("now()"),
     )
     granted_by: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    #: When the grant takes effect; ``NULL`` means it already has. A grant
+    #: gives access only from ``starts_at`` until ``expires_at`` (see
+    #: ``has_patient_access``), so coverage booked ahead grants nothing early.
+    starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: For a ``covering`` grant, the away period it covers (see
+    #: :mod:`app.away.coverage`). ``NULL`` for every other grant.
+    away_period_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("clinician_away_periods.id", ondelete="SET NULL"),
+        index=True,
+    )
 
     __table_args__ = (
         CheckConstraint(
@@ -2700,8 +2713,12 @@ class ClinicianAwayPeriodRow(Base):
     they are back; it is stored rather than derived because the day after
     the last day away is often a weekend.
 
-    ``covering_user_id`` is an optional colleague in the same practice. It is
-    named in the acknowledgment and nothing more: it grants no access.
+    ``covering_user_id`` is an optional colleague in the same practice, asked
+    to cover. ``coverage_status`` is where that request stands: ``requested``
+    until the colleague answers, then ``accepted`` or ``declined``; ``NULL``
+    exactly when nobody is named. Naming a colleague grants nothing. Only
+    their acceptance does, as ``covering`` grants on the away clinician's
+    clients for the away dates (see :mod:`app.away.coverage`).
 
     ``acknowledgment_text`` is the text the clinician reviewed, and the only
     words an acknowledgment carries besides the fixed safety lines appended
@@ -2726,6 +2743,8 @@ class ClinicianAwayPeriodRow(Base):
     end_date: Mapped[date] = mapped_column(Date, nullable=False)
     return_date: Mapped[date] = mapped_column(Date, nullable=False)
     covering_user_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    coverage_status: Mapped[str | None] = mapped_column(String(10))
+    coverage_responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     acknowledgment_enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("true"), default=True
     )
@@ -2737,7 +2756,16 @@ class ClinicianAwayPeriodRow(Base):
     __table_args__ = (
         CheckConstraint("end_date >= start_date", name="ck_clinician_away_periods_dates"),
         CheckConstraint("return_date > end_date", name="ck_clinician_away_periods_return"),
+        CheckConstraint(
+            "coverage_status IN ('requested', 'accepted', 'declined')",
+            name="ck_clinician_away_periods_coverage_status",
+        ),
+        CheckConstraint(
+            "(covering_user_id IS NULL) = (coverage_status IS NULL)",
+            name="ck_clinician_away_periods_coverage_named",
+        ),
         Index("ix_clinician_away_periods_user_dates", "user_id", "start_date", "end_date"),
+        Index("ix_clinician_away_periods_covering_user", "covering_user_id"),
     )
 
 

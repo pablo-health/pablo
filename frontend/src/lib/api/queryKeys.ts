@@ -462,6 +462,13 @@ const baseQueryKeys = {
   // The clinician's away dates
   away: {
     all: ["away"] as const,
+    coverageActivity: (periodId: string) =>
+      [...baseQueryKeys.away.all, "coverageActivity", periodId] as const,
+  },
+
+  // Away dates a colleague asked the clinician to cover
+  covering: {
+    all: ["covering"] as const,
   },
 
   // The clinician's waitlist, and one client's place on it

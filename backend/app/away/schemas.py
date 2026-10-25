@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -15,6 +15,8 @@ if TYPE_CHECKING:
     from .repository import AwayPeriod
 
 MAX_ACKNOWLEDGMENT_TEXT = 2000
+
+CoverageStatus = Literal["requested", "accepted", "declined"]
 
 
 def default_return_date(end_date: date) -> date:
@@ -97,6 +99,8 @@ class AwayPeriodResponse(BaseModel):
     return_date: date
     covering_user_id: str | None
     covering_name: str | None
+    #: ``requested``, ``accepted`` or ``declined``; ``None`` when nobody is named.
+    coverage_status: CoverageStatus | None
     acknowledgment_enabled: bool
     acknowledgment_text: str
     safety_lines: str = SAFETY_LINES
@@ -115,6 +119,7 @@ class AwayPeriodResponse(BaseModel):
             return_date=period.return_date,
             covering_user_id=period.covering_user_id,
             covering_name=covering_name,
+            coverage_status=period.coverage_status,  # type: ignore[arg-type]  # CHECK-constrained
             acknowledgment_enabled=period.acknowledgment_enabled,
             acknowledgment_text=period.acknowledgment_text,
             active=period.is_active_on(today),
@@ -125,5 +130,59 @@ class AwayPeriodResponse(BaseModel):
 class AwayPeriodListResponse(BaseModel):
     #: Current and upcoming periods, earliest first.
     periods: list[AwayPeriodResponse]
+    #: Covered periods that are over, ending in the last 30 days, latest
+    #: first: where the clinician finds what their colleague did.
+    recently_covered: list[AwayPeriodResponse] = Field(default_factory=list)
     #: Colleagues in the practice who may be named as covering.
     covering_options: list[CoveringOption]
+
+
+class CoverageActivityItem(BaseModel):
+    at: datetime
+    #: An audit action, e.g. ``patient_viewed`` or ``note_updated``.
+    action: str
+    resource_type: str
+    resource_id: str
+    patient_id: str
+    client_name: str | None
+
+
+class CoverageActivityResponse(BaseModel):
+    """What the covering colleague did on the clinician's clients, newest first."""
+
+    covering_name: str | None
+    items: list[CoverageActivityItem]
+
+
+class CoverageRequestResponse(BaseModel):
+    """An away period, as seen by the colleague asked to cover it."""
+
+    period_id: str
+    clinician_id: str
+    clinician_name: str | None
+    start_date: date
+    end_date: date
+    return_date: date
+    status: CoverageStatus
+    #: The clinician is away today, on their own calendar.
+    active: bool
+
+    @classmethod
+    def from_period(
+        cls, period: AwayPeriod, *, today: date, clinician_name: str | None
+    ) -> CoverageRequestResponse:
+        return cls(
+            period_id=period.id,
+            clinician_id=period.user_id,
+            clinician_name=clinician_name,
+            start_date=period.start_date,
+            end_date=period.end_date,
+            return_date=period.return_date,
+            status=period.coverage_status,  # type: ignore[arg-type]  # CHECK-constrained
+            active=period.is_active_on(today),
+        )
+
+
+class CoverageRequestListResponse(BaseModel):
+    #: Periods the caller is asked to cover, not ended and not past, earliest first.
+    requests: list[CoverageRequestResponse]

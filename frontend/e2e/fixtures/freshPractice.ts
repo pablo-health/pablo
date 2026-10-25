@@ -38,6 +38,7 @@ export type FreshPracticeName =
   | "retention"
   | "admins"
   | "away"
+  | "coverage"
 
 const PASSWORD = "E2e-fresh-practice-password-long-enough"
 
@@ -62,8 +63,20 @@ export async function signInToFreshPractice(
   name: FreshPracticeName,
   options: Pick<BrowserContextOptions, "timezoneId" | "userAgent"> = {},
 ): Promise<FreshPractice> {
-  const email = addressOf(name)
-  await ensureEmulatorUser(email, PASSWORD)
+  return signInAs(browser, addressOf(name), PASSWORD, options)
+}
+
+/**
+ * Sign in as any seeded address — a practice's colleague, say — in a
+ * browser context of its own. The same rules as {@link signInToFreshPractice}.
+ */
+export async function signInAs(
+  browser: Browser,
+  email: string,
+  password: string,
+  options: Pick<BrowserContextOptions, "timezoneId" | "userAgent"> = {},
+): Promise<FreshPractice> {
+  await ensureEmulatorUser(email, password)
 
   // An explicitly empty storage state. The test runner applies the project's
   // defaults to every context it makes, including the shared worker's saved
@@ -77,9 +90,9 @@ export async function signInToFreshPractice(
   const page = await context.newPage()
   await page.goto("/login")
   await page.getByLabel("Email").fill(email)
-  await page.getByLabel("Password", { exact: true }).fill(PASSWORD)
+  await page.getByLabel("Password", { exact: true }).fill(password)
   await page.getByRole("button", { name: "Sign In", exact: true }).click()
   await page.waitForURL(/\/dashboard/)
 
-  return { page, context, api: await ApiClient.forUser(email, PASSWORD) }
+  return { page, context, api: await ApiClient.forUser(email, password) }
 }

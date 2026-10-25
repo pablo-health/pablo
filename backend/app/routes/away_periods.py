@@ -4,15 +4,22 @@
 
   ``/api/away-periods``
 
-    GET    ""                   -> current and upcoming periods, and who may cover
-    POST   /preview             -> the suggested acknowledgment for these dates
-    POST   ""                   -> set away dates
-    PATCH  /{period_id}         -> change them
-    POST   /{period_id}/end     -> end a period early
+    GET    ""                              -> current and upcoming periods, recently
+                                              covered ones, and who may cover
+    POST   /preview                        -> the suggested acknowledgment for these dates
+    POST   ""                              -> set away dates
+    PATCH  /{period_id}                    -> change them
+    POST   /{period_id}/end                -> end a period early
+    GET    /{period_id}/coverage-activity  -> what the covering colleague did
 
 **Each clinician's dates are their own.** Every write names the caller, so a
 period that is somebody else's is "not found". A covering colleague must be a
-clinician of the same practice; naming one grants them nothing.
+clinician of the same practice. Naming one asks them to cover; it grants
+nothing until they accept (``/api/covering``, :mod:`app.away.coverage`).
+
+**Coverage follows the dates.** Changing the dates or the colleague ends any
+access already granted and asks again, because the colleague accepted those
+dates and no others. Ending the period early ends the access at once.
 
 **The text is reviewed before it is used.** Setting dates takes the
 acknowledgment text with them; changing the dates or the covering colleague
@@ -20,7 +27,9 @@ takes it again, so a client is never told a date the clinician did not see in
 the text. The safety lines are added on send and are not part of what is
 stored.
 
-Not audited: away dates name no client and carry nothing clinical.
+Audited where a client is involved: access a change cuts short, and the read
+of what the colleague did. The dates themselves name no client and carry
+nothing clinical.
 """
 
 from __future__ import annotations
@@ -28,18 +37,21 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from pydantic import ValidationError
 
 from ..api_errors import ConflictError, NotFoundError, UnprocessableEntityError
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
-from ..away.repository import AwayPeriod, AwayPeriodRepository
+from ..away.coverage import coverage_activity, end_coverage
+from ..away.repository import COVERAGE_REQUESTED, AwayPeriod, AwayPeriodRepository
 from ..away.schemas import (
     AcknowledgmentPreviewRequest,
     AcknowledgmentPreviewResponse,
     AwayDates,
     AwayPeriodListResponse,
     AwayPeriodResponse,
+    CoverageActivityItem,
+    CoverageActivityResponse,
     CoveringOption,
     CreateAwayPeriodRequest,
     UpdateAwayPeriodRequest,
@@ -47,12 +59,13 @@ from ..away.schemas import (
 from ..away.service import clinician_today
 from ..away.text import default_body
 from ..db import get_db_session
-from ..models import User  # noqa: TC001 — FastAPI resolves dependency annotations at runtime
+from ..models import AuditAction, User
 from ..portal.clinicians import clinician_name, practice_clinicians
+from ..services import AuditService, get_audit_service
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
-    from datetime import date
+    from datetime import date, datetime
 
     from sqlalchemy.orm import Session
 
@@ -63,8 +76,11 @@ OVERLAP_MESSAGE = "You already have away dates that overlap these."
 COVERING_MESSAGE = "Choose a colleague in your practice to cover."
 REVIEW_TEXT_MESSAGE = "Review the reply for the new dates before saving."
 
-#: Changing any of these changes what the stored text says is true.
+#: Changing any of these changes what the stored text says is true, and what
+#: the covering colleague accepted.
 _TEXT_BEARING = ("start_date", "end_date", "return_date", "covering_user_id")
+#: How far back a covered period stays listed for the clinician.
+RECENTLY_COVERED_DAYS = 30
 
 
 class _Context:
@@ -118,10 +134,14 @@ def get_away_context(
 
 @router.get("", response_model=AwayPeriodListResponse)
 def list_away_periods(away: _Context = Depends(get_away_context)) -> AwayPeriodListResponse:
-    """The caller's current and upcoming periods, and the colleagues who may cover."""
-    periods = away.repo.list_current_and_upcoming(away.user.id, away.today)
+    """The caller's current and upcoming periods, recently covered ones, and who may cover."""
+    today = away.today
+    periods = away.repo.list_current_and_upcoming(away.user.id, today)
+    recent = away.repo.recently_covered(away.user.id, today, RECENTLY_COVERED_DAYS)
     return AwayPeriodListResponse(
-        periods=[away.respond(p) for p in periods], covering_options=away.colleagues()
+        periods=[away.respond(p) for p in periods],
+        recently_covered=[away.respond(p) for p in recent],
+        covering_options=away.colleagues(),
     )
 
 
@@ -158,6 +178,7 @@ def create_away_period(
             end_date=body.end_date,
             return_date=body.resolved_return_date,
             covering_user_id=body.covering_user_id,
+            coverage_status=None if body.covering_user_id is None else COVERAGE_REQUESTED,
             acknowledgment_enabled=body.acknowledgment_enabled,
             acknowledgment_text=body.acknowledgment_text.strip(),
             ended_at=None,
@@ -172,7 +193,9 @@ def create_away_period(
 def update_away_period(
     period_id: uuid.UUID,
     body: UpdateAwayPeriodRequest,
+    request: Request,
     away: _Context = Depends(get_away_context),
+    audit: AuditService = Depends(get_audit_service),
 ) -> AwayPeriodResponse:
     """Change the caller's own period. New dates come with the text reviewed for them."""
     current = away.repo.get(str(period_id), away.user.id)
@@ -196,7 +219,21 @@ def update_away_period(
     if "acknowledgment_text" in changes:
         changes["acknowledgment_text"] = changes["acknowledgment_text"].strip()
 
-    updated = away.repo.update(current.id, away.user.id, changes, utc_now())
+    now = utc_now()
+    if any(field in changes for field in _TEXT_BEARING):
+        audit.log_coverage_action(
+            AuditAction.COVERAGE_ACCESS_ENDED,
+            actor_id=away.user.id,
+            request=request,
+            away_period_id=current.id,
+            patient_ids=end_coverage(away.session, current, now),
+            changes=_ended_changes(now),
+            only_with_patients=True,
+        )
+        changes["coverage_status"] = None if dates.covering_user_id is None else COVERAGE_REQUESTED
+        changes["coverage_responded_at"] = None
+
+    updated = away.repo.update(current.id, away.user.id, changes, now)
     if updated is None:
         raise NotFoundError(NOT_FOUND_MESSAGE)
     return away.respond(updated)
@@ -204,13 +241,73 @@ def update_away_period(
 
 @router.post("/{period_id}/end", response_model=AwayPeriodResponse)
 def end_away_period(
-    period_id: uuid.UUID, away: _Context = Depends(get_away_context)
+    period_id: uuid.UUID,
+    request: Request,
+    away: _Context = Depends(get_away_context),
+    audit: AuditService = Depends(get_audit_service),
 ) -> AwayPeriodResponse:
-    """End the caller's own period now. Nothing is acknowledged for it afterwards."""
-    ended = away.repo.end(str(period_id), away.user.id, utc_now())
+    """End the caller's own period now. Nothing is acknowledged for it afterwards,
+    and a covering colleague's access ends with it."""
+    now = utc_now()
+    ended = away.repo.end(str(period_id), away.user.id, now)
     if ended is None:
         raise NotFoundError(NOT_FOUND_MESSAGE)
+    audit.log_coverage_action(
+        AuditAction.COVERAGE_ACCESS_ENDED,
+        actor_id=away.user.id,
+        request=request,
+        away_period_id=ended.id,
+        patient_ids=end_coverage(away.session, ended, now),
+        changes=_ended_changes(now),
+        only_with_patients=True,
+    )
     return away.respond(ended)
+
+
+@router.get("/{period_id}/coverage-activity", response_model=CoverageActivityResponse)
+def get_coverage_activity(
+    period_id: uuid.UUID,
+    request: Request,
+    away: _Context = Depends(get_away_context),
+    audit: AuditService = Depends(get_audit_service),
+) -> CoverageActivityResponse:
+    """What the covering colleague did on the caller's clients under this period's coverage."""
+    period = away.repo.get(str(period_id), away.user.id)
+    if period is None:
+        raise NotFoundError(NOT_FOUND_MESSAGE)
+    activity = coverage_activity(away.session, period)
+    audit.log_coverage_action(
+        AuditAction.COVERAGE_ACTIVITY_VIEWED,
+        actor_id=away.user.id,
+        request=request,
+        away_period_id=period.id,
+        changes={
+            "item_count": len(activity),
+            "client_count": len({item.patient_id for item in activity}),
+        },
+    )
+    return CoverageActivityResponse(
+        covering_name=away.covering_name(period.covering_user_id),
+        items=[
+            CoverageActivityItem(
+                at=item.at,
+                action=item.action,
+                resource_type=item.resource_type,
+                resource_id=item.resource_id,
+                patient_id=item.patient_id,
+                client_name=" ".join(
+                    part for part in (item.client_first_name, item.client_last_name) if part
+                )
+                or None,
+            )
+            for item in activity
+        ],
+    )
+
+
+def _ended_changes(now: datetime) -> dict[str, str]:
+    """An early end's audit payload: when, and that the away clinician ended it."""
+    return {"ended_at": now.isoformat(), "ended_by": "away_clinician"}
 
 
 def _merged_dates(current: AwayPeriod, sent: dict[str, Any]) -> AwayDates:

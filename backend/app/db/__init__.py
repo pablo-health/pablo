@@ -1717,8 +1717,11 @@ def engine_known_tenant_tables() -> set[str]:
     )
 
 
-def _plan_row_scoped_table(  # noqa: PLR0915 — one policy arm per tenant-table shape
-    schema_name: str, table_name: str, columns: set[str]
+def _plan_row_scoped_table(  # noqa: PLR0912, PLR0915 — one policy arm per tenant-table shape
+    schema_name: str,
+    table_name: str,
+    columns: set[str],
+    schema_tables: frozenset[str] = frozenset(),
 ) -> TablePlan:
     """Every statement that sets one row-scoped table's RLS, in order, without running any.
 
@@ -1726,6 +1729,10 @@ def _plan_row_scoped_table(  # noqa: PLR0915 — one policy arm per tenant-table
     this function has ever created, then create the ones the table's shape
     calls for. ``enable_rls_on_schema`` runs it only when the table does not
     already hold its result. Raises for a table that matches no policy shape.
+
+    ``schema_tables`` is every table in the schema, for a policy that reads
+    another table the schema may not have yet: older revisions run this
+    mid-chain.
     """
     qualified = f"{schema_name}.{table_name}"
     statements: list[str] = []
@@ -1984,6 +1991,26 @@ def _plan_row_scoped_table(  # noqa: PLR0915 — one policy arm per tenant-table
             "WHERE p.owner_user_id::text = current_setting('app.current_user_id', true) "
             f"AND to_regclass(p.schema_name || '.audit_logs') = '{qualified}'::regclass)"
         )
+        # The second widening: a clinician back from an away period reads
+        # what the colleague who covered it did on their clients, and
+        # nothing else of that colleague's. A row qualifies only if it was
+        # written under a covering grant (``app.away.coverage`` tags it with
+        # the period), the period is the reader's own, the row's actor is
+        # that period's covering colleague, and the reader still has
+        # access to the client. SELECT-only, like the owner's. Same text as
+        # migration ``e7b3d9a2c4f1``; ``test_audit_policy_parity`` holds the
+        # two together. Created only once the schema has the away-periods
+        # table: older revisions run this function mid-chain, before it.
+        coverage_read = (
+            "patient_id IS NOT NULL "  # noqa: S608
+            "AND (changes ->> 'coverage_period_id') IS NOT NULL "
+            f"AND EXISTS (SELECT 1 FROM {schema_name}.clinician_away_periods ap "
+            "WHERE ap.id::text = (audit_logs.changes ->> 'coverage_period_id') "
+            "AND ap.user_id::text = current_setting('app.current_user_id', true) "
+            "AND ap.covering_user_id::text = audit_logs.user_id) "
+            f"AND {schema_name}.has_patient_access("
+            "patient_id, current_setting('app.current_user_id', true))"
+        )
         # One ALL policy, the same shape the generic branch uses, so
         # UPDATE and DELETE keep a predicate. Splitting this into
         # SELECT-only and INSERT-only policies would leave those two
@@ -2022,6 +2049,7 @@ def _plan_row_scoped_table(  # noqa: PLR0915 — one policy arm per tenant-table
         statements.append(f"DROP POLICY IF EXISTS rls_audit_purge_delete ON {qualified}")
         statements.append(f"DROP POLICY IF EXISTS rls_audit_purge_select ON {qualified}")
         statements.append(f"DROP POLICY IF EXISTS rls_audit_owner_client_read ON {qualified}")
+        statements.append(f"DROP POLICY IF EXISTS rls_audit_coverage_read ON {qualified}")
         statements.append(
             f"CREATE POLICY rls_audit_actor_access ON {qualified} "
             f"USING ({select_using}) WITH CHECK ({insert_check})"
@@ -2030,6 +2058,11 @@ def _plan_row_scoped_table(  # noqa: PLR0915 — one policy arm per tenant-table
             f"CREATE POLICY rls_audit_owner_client_read ON {qualified} "
             f"FOR SELECT USING ({owner_client_read})"
         )
+        if "clinician_away_periods" in schema_tables:
+            statements.append(
+                f"CREATE POLICY rls_audit_coverage_read ON {qualified} "
+                f"FOR SELECT USING ({coverage_read})"
+            )
         statements.append(
             f"CREATE POLICY rls_audit_purge_delete ON {qualified} FOR DELETE USING ({purge_armed})"
         )
@@ -2350,7 +2383,9 @@ def enable_rls_on_schema(  # noqa: PLR0915 — planning, verify and the registra
             logger.warning("rls reconcile: skipped %s", message)
             skipped.add(table_name)
             continue
-        plans[table_name] = _plan_row_scoped_table(schema_name, table_name, columns)
+        plans[table_name] = _plan_row_scoped_table(
+            schema_name, table_name, columns, frozenset(all_columns)
+        )
         patient_scoped_applied.add(table_name)
 
     # Every patient-scoped registration that names a table in THIS schema

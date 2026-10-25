@@ -205,6 +205,17 @@ FRESH_ADMINS = SeededPractice(
     emptied=("practice_admins",),
     colleagues=("e2e-fresh-admins-colleague@example.com",),
 )
+# A practice with two clinicians, for the spec about coverage: one sets away
+# dates and asks the other to cover, the other accepts and opens a client's
+# record. Its own, because away dates in the shared practice would acknowledge
+# every other portal spec's messages.
+FRESH_COVERAGE = SeededPractice(
+    id="e2e-fresh-coverage",
+    schema="practice_e2e_fresh_coverage",
+    email="e2e-fresh-coverage@example.com",
+    name="Fresh Practice Coverage",
+    colleagues=("e2e-fresh-coverage-colleague@example.com",),
+)
 SEEDED = (
     SECOND_PRACTICE,
     FRESH_YES,
@@ -218,6 +229,7 @@ SEEDED = (
     FRESH_CONSENT,
     FRESH_RETENTION,
     FRESH_ADMINS,
+    FRESH_COVERAGE,
 )
 
 # Kept for anything that still reads the second practice by its old names.

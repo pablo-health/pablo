@@ -181,6 +181,7 @@ def _period(  # noqa: PLR0913 — one row, every column a test may vary
     end: date,
     returns: date | None = None,
     covering: str | None = None,
+    coverage: str = "accepted",
     enabled: bool = True,
     ended: bool = False,
     user_id: str = _CLINICIAN,
@@ -191,10 +192,10 @@ def _period(  # noqa: PLR0913 — one row, every column a test may vary
         conn.execute(
             text(
                 "INSERT INTO clinician_away_periods (id, user_id, start_date, end_date, "
-                "return_date, covering_user_id, acknowledgment_enabled, acknowledgment_text, "
-                "ended_at, created_at, updated_at) VALUES (CAST(:id AS uuid), CAST(:u AS uuid), "
-                ":start, :end, :returns, CAST(:cover AS uuid), :enabled, :body, :ended, "
-                "now(), now())"
+                "return_date, covering_user_id, coverage_status, acknowledgment_enabled, "
+                "acknowledgment_text, ended_at, created_at, updated_at) VALUES "
+                "(CAST(:id AS uuid), CAST(:u AS uuid), :start, :end, :returns, "
+                "CAST(:cover AS uuid), :coverage, :enabled, :body, :ended, now(), now())"
             ),
             {
                 "id": period_id,
@@ -203,6 +204,7 @@ def _period(  # noqa: PLR0913 — one row, every column a test may vary
                 "end": end,
                 "returns": returns or end + timedelta(days=1),
                 "cover": covering,
+                "coverage": None if covering is None else coverage,
                 "enabled": enabled,
                 "body": _REVIEWED,
                 "ended": datetime.now(UTC) if ended else None,
@@ -418,6 +420,26 @@ class TestRefillAcknowledgment:
         assert line.startswith(
             f"Your request is in. It will be reviewed by Monday, March 16 or by {_COLLEAGUE_NAME}."
         )
+
+    @pytest.mark.parametrize("coverage", ["requested", "declined"])
+    def test_a_colleague_who_has_not_accepted_is_not_named(
+        self, engine: Engine, tenant_schema: str, seed: _Seed, coverage: str
+    ) -> None:
+        _period(
+            engine,
+            tenant_schema,
+            start=_DAY,
+            end=_DAY + timedelta(days=3),
+            returns=date(2026, 3, 16),
+            covering=_COLLEAGUE,
+            coverage=coverage,
+        )
+
+        line = _refill(tenant_schema, seed.mine[0])
+
+        assert line is not None
+        assert line.startswith("Your request is in. It will be reviewed by Monday, March 16.\n\n")
+        assert _COLLEAGUE_NAME not in line
 
     def test_nothing_when_off_or_not_away(
         self, engine: Engine, tenant_schema: str, seed: _Seed

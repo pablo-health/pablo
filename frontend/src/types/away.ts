@@ -27,6 +27,9 @@ export interface AcknowledgmentPreview {
   return_date: string
 }
 
+/** Where a request to cover stands. Access starts only once `accepted`. */
+export type CoverageStatus = "requested" | "accepted" | "declined"
+
 export interface AwayPeriod {
   id: string
   start_date: string
@@ -34,6 +37,8 @@ export interface AwayPeriod {
   return_date: string
   covering_user_id: string | null
   covering_name: string | null
+  /** `null` when nobody is asked to cover. */
+  coverage_status: CoverageStatus | null
   acknowledgment_enabled: boolean
   acknowledgment_text: string
   safety_lines: string
@@ -49,5 +54,41 @@ export interface CoveringOption {
 
 export interface AwayPeriodList {
   periods: AwayPeriod[]
+  /** Covered periods that are over, ending in the last 30 days, latest first. */
+  recently_covered: AwayPeriod[]
   covering_options: CoveringOption[]
+}
+
+/** One thing the covering colleague did on a client's record. */
+export interface CoverageActivityItem {
+  at: string
+  /** An audit action, e.g. `patient_viewed`. */
+  action: string
+  resource_type: string
+  resource_id: string
+  patient_id: string
+  client_name: string | null
+}
+
+export interface CoverageActivity {
+  covering_name: string | null
+  /** Newest first. */
+  items: CoverageActivityItem[]
+}
+
+/** An away period, as seen by the colleague asked to cover it. */
+export interface CoverageRequest {
+  period_id: string
+  clinician_id: string
+  clinician_name: string | null
+  start_date: string
+  end_date: string
+  return_date: string
+  status: CoverageStatus
+  /** The colleague is away today. */
+  active: boolean
+}
+
+export interface CoverageRequestList {
+  requests: CoverageRequest[]
 }

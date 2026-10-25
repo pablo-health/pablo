@@ -172,7 +172,7 @@ export function AwayPeriodForm({ period, coveringOptions, onDone }: AwayPeriodFo
       </div>
       {coveringOptions.length > 0 && (
         <div className="grid max-w-sm gap-2">
-          <Label htmlFor="away-covering">Covering (optional)</Label>
+          <Label htmlFor="away-covering">Ask a colleague to cover (optional)</Label>
           <select
             id="away-covering"
             data-testid="away-covering"
@@ -187,6 +187,11 @@ export function AwayPeriodForm({ period, coveringOptions, onDone }: AwayPeriodFo
               </option>
             ))}
           </select>
+          {/* Access starts only on acceptance and only for these dates; changing
+              the dates asks again (app.away.coverage). */}
+          <p className="text-[12.5px] text-muted-foreground">
+            Once they accept, they can open your clients&apos; records on these dates.
+          </p>
         </div>
       )}
       {problem && (
