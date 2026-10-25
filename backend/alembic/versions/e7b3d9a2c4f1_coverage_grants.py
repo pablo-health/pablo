@@ -14,6 +14,10 @@ as ``requested``: naming somebody never granted anything, and still does not.
 before the away dates begin. Its body keeps the SQL-standard ``RETURN`` form
 of ``a7e3c5d19b42``, bound to its own schema's table.
 
+The practice directory's role is granted ``starts_at``: it reads
+``patient_clinicians`` column by column, and the ``patients`` policy its read
+meets calls ``has_patient_access``.
+
 ``audit_logs`` gains a SELECT-only policy, ``rls_audit_coverage_read``: a
 clinician reads the rows their covering colleague wrote on their clients
 under the coverage of one of their own away periods. Policies are OR'd, so it
@@ -127,6 +131,16 @@ def upgrade() -> None:
         f"CREATE POLICY {POLICY_NAME} ON {schema}.audit_logs "
         f"FOR SELECT USING ({coverage_read_using(schema)})"
     )
+    # The practice directory's role reads ``patient_clinicians`` column by
+    # column, and the ``patients`` policy its read meets now calls a
+    # ``has_patient_access`` that reads ``starts_at``: grant it the column.
+    # Imported here, not at module level: revision walkers import every
+    # migration without env.py's sys.path setup (see e2b7c4f19d38).
+    from app.db import DEFAULT_PRACTICE_SCHEMA  # noqa: PLC0415
+    from app.db.practice_directory import apply_practice_directory_access  # noqa: PLC0415
+
+    if schema != DEFAULT_PRACTICE_SCHEMA:
+        apply_practice_directory_access(op.get_bind(), schema)
 
 
 def downgrade() -> None:
