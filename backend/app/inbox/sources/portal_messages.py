@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ...db import current_practice_schema, get_db_session
 from ...models.inbox import KIND_PORTAL_MESSAGE, InboxItem
 from ...repositories import get_patient_message_repository
 from ...services.message_reply_target import practice_reply_due
@@ -35,10 +34,6 @@ if TYPE_CHECKING:
 #: The most messages one read lists. Handled ones are left out in SQL, so
 #: this bounds what is still waiting, which a practice keeps small.
 AWAITING_LIMIT = 200
-
-
-def _request_schema() -> str:
-    return current_practice_schema(get_db_session())
 
 
 def message_item(row: InboxMessage, due: Callable[[datetime], datetime] | None = None) -> InboxItem:
@@ -63,25 +58,29 @@ class PortalMessageSource:
         self,
         repo: Callable[[], PatientMessageRepository] = get_patient_message_repository,
         reply_due: ReplyDueClock = practice_reply_due,
-        schema: Callable[[], str] = _request_schema,
+        schema: Callable[[], str | None] | None = None,
     ) -> None:
         self._repo = repo
         self._reply_due = reply_due
         self._schema = schema
 
-    def _due(self) -> Callable[[datetime], datetime]:
-        return self._reply_due(self._schema())
+    def _due(self, repo: PatientMessageRepository) -> Callable[[datetime], datetime] | None:
+        """The practice's reply-by clock, for the practice the rows were read from."""
+        schema = self._schema() if self._schema is not None else repo.practice_schema()
+        return self._reply_due(schema) if schema is not None else None
 
     def list_open(self, ctx: InboxContext) -> list[InboxItem]:
-        rows = self._repo().list_awaiting_messages(ctx.user_id, now=ctx.now, limit=AWAITING_LIMIT)
+        repo = self._repo()
+        rows = repo.list_awaiting_messages(ctx.user_id, now=ctx.now, limit=AWAITING_LIMIT)
         if not rows:
             return []
-        due = self._due()
+        due = self._due(repo)
         return [message_item(row, due) for row in rows]
 
     def get_items(self, ctx: InboxContext, source_ids: Iterable[str]) -> list[InboxItem]:
-        rows = self._repo().get_inbox_messages(ctx.user_id, uuids(source_ids))
+        repo = self._repo()
+        rows = repo.get_inbox_messages(ctx.user_id, uuids(source_ids))
         if not rows:
             return []
-        due = self._due()
+        due = self._due(repo)
         return [message_item(row, due) for row in rows]
