@@ -13,31 +13,40 @@ Pablo generates SOAP notes from session transcripts with dual-method verificatio
 
 ## Quick Start
 
-### Prerequisites
+Pablo runs on one small server in your own Google Cloud account, for about
+$20 a month billed by Google. Your records stay in your account.
 
-- A Google Cloud Platform account with billing enabled
-- `gcloud` CLI installed ([install guide](https://cloud.google.com/sdk/docs/install))
+### Before you start
 
-### One-Click Deploy
+- A Google Cloud billing account ([add one](https://console.cloud.google.com/billing/create))
+- Google's Business Associate Agreement, accepted by an administrator of your
+  account ([how](https://cloud.google.com/security/compliance/hipaa))
 
-[![Open in Cloud Shell](https://gstatic.com/cloudssh/images/open-btn.svg)](https://shell.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/pablo-health/pablo.git&cloudshell_open_in_editor=setup-solo.sh&cloudshell_tutorial=setup-solo.sh)
+### Install
 
-Then run:
+[![Open in Cloud Shell](https://gstatic.com/cloudssh/images/open-btn.svg)](https://shell.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/pablo-health/pablo.git&cloudshell_tutorial=deploy/vm/TUTORIAL.md)
+
+Cloud Shell opens with a short guide beside the terminal. Run:
+
 ```bash
-./setup-solo.sh
+./install.sh
 ```
 
-The setup script walks you through everything: GCP project creation, Cloud SQL (PostgreSQL), Identity Platform auth with mandatory MFA, and Cloud Run deployment from pre-built container images.
+It asks a few questions (your email, and whether you want Google sign-in or
+transcription now), shows what it will set up, and installs in about 15
+minutes: the app, a Postgres database on its own disk with daily backups to
+Cloud Storage, HTTPS, and sign-in with mandatory MFA. No console steps are
+needed for email and password sign-in.
 
-Pablo publishes signed container images to GitHub Container Registry on every release, so installs typically complete in under 10 minutes — no container builds on your machine or in your GCP project.
-
-### Manual Deploy
+Prefer your own terminal? With the [gcloud CLI](https://cloud.google.com/sdk/docs/install):
 
 ```bash
 git clone https://github.com/pablo-health/pablo.git
 cd pablo
-./setup-solo.sh
+./install.sh
 ```
+
+Updates, backups, costs and options: [deploy/vm/README.md](deploy/vm/README.md).
 
 ### Local Development
 
@@ -71,8 +80,8 @@ Self-hosting Pablo means **you** are responsible for HIPAA compliance. See our [
 
 Two things worth flagging up front for self-hosters:
 
-1. **Sign the Google Cloud BAA** before you deploy. It's free, takes a few minutes, and covers Cloud Run / Cloud SQL / Cloud Storage / Cloud Batch / Secret Manager / Identity Platform / Vertex AI. Console → Settings → Compliance → Business Associate Agreement.
-2. **Pick your transcription provider and its BAA.** `assemblyai` is the only transcription backend wired for deployment today — it's lower ops, but requires a direct BAA with AssemblyAI before any PHI is sent. A self-hosted `whisper` path (Cloud Batch + spot GPUs, covered by the Google Cloud BAA and needing no third-party BAA) is planned but not yet operational. Step 9 of `setup-solo.sh` prompts you to choose and refuses to deploy on the AssemblyAI path without an explicit BAA acknowledgement + API key. Details in the [Self-Hosting HIPAA Guide](docs/SELF_HOSTING_HIPAA_GUIDE.md#1-business-associate-agreement-baa).
+1. **Sign the Google Cloud BAA** before you deploy. It's free, takes a few minutes, and covers Compute Engine / Cloud Storage / Secret Manager / Identity Platform / Vertex AI. Console → Settings → Compliance → Business Associate Agreement.
+2. **Pick your transcription provider and its BAA.** `assemblyai` is the only transcription backend wired for deployment today — it's lower ops, but requires a direct BAA with AssemblyAI before any PHI is sent. A self-hosted `whisper` path (Cloud Batch + spot GPUs, covered by the Google Cloud BAA and needing no third-party BAA) is planned but not yet operational. `install.sh` asks whether to turn on transcription; saying yes is your statement that the AssemblyAI BAA is signed. Otherwise transcription stays off. Details in the [Self-Hosting HIPAA Guide](docs/SELF_HOSTING_HIPAA_GUIDE.md#1-business-associate-agreement-baa).
 
 ## Want Managed Hosting?
 
