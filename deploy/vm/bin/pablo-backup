@@ -15,6 +15,8 @@ set -euo pipefail
 
 readonly DRILL_DIR=/mnt/disks/pablo/restore-drill
 readonly DRILL_PORT=5499
+# Written by postgres, which cannot write to the disk's root.
+readonly DRILL_LOG=/var/lib/postgresql/restore-drill.log
 
 as_postgres() { sudo -u postgres "$@"; }
 
@@ -38,8 +40,12 @@ case "${1:-}" in
         # archive_command it cannot archive into the live stanza.
         as_postgres touch "${DRILL_DIR}/postgresql.conf"
         echo "local all postgres peer" | as_postgres tee "${DRILL_DIR}/pg_hba.conf" >/dev/null
-        as_postgres /usr/lib/postgresql/16/bin/pg_ctl -D "$DRILL_DIR" -w -l "${DRILL_DIR}.log" \
-            -o "-p ${DRILL_PORT} -c listen_addresses='' -c unix_socket_directories=/tmp -c archive_mode=off" start
+        if ! as_postgres /usr/lib/postgresql/16/bin/pg_ctl -D "$DRILL_DIR" -w -l "$DRILL_LOG" \
+            -o "-p ${DRILL_PORT} -c listen_addresses='' -c unix_socket_directories=/tmp -c archive_mode=off" start; then
+            tail -20 "$DRILL_LOG" >&2
+            echo '{"event":"restore_drill","status":"failed"}' | logger -t pablo-backup
+            exit 1
+        fi
 
         users=$(as_postgres psql -h /tmp -p "$DRILL_PORT" -d pablo -tAc "SELECT count(*) FROM platform.users")
         echo "{\"event\":\"restore_drill\",\"status\":\"ok\",\"platform_users\":${users}}" | logger -t pablo-backup
