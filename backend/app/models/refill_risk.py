@@ -181,6 +181,11 @@ INTERRUPTION_RISK_DEFAULTS: tuple[InterruptionRiskEntry, ...] = (
     # cessation of clonidine treatment has, in some cases, resulted in ... a
     # rapid rise in blood pressure".
     InterruptionRiskEntry("rebound", ("clonidine", "catapres", "kapvay")),
+    # INTUNIV labeling (NDA 022037, revised 06/2025), 5.4 "Rebound Hypertension":
+    # "abrupt discontinuation of INTUNIV has resulted in clinically significant
+    # and persistent rebound hypertension"; 2.5: taper "in decrements of no more
+    # than 1 mg every 3 to 7 days to minimize the risk of rebound hypertension".
+    InterruptionRiskEntry("rebound", ("guanfacine", "intuniv", "tenex")),
     # SUBOXONE labeling (NDA 022410, SPL effective 2025-12-22), 5.7 "Risk of
     # Opioid Withdrawal with Abrupt Discontinuation", and 2.2: patients
     # "have the potential for relapse, putting them at risk for opioid overdose".
