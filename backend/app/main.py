@@ -71,6 +71,7 @@ from .routes import (
     client_ai_consent,
     compliance,
     coverage,
+    covering,
     credentialing,
     dashboard,
     domain_connect,
@@ -481,6 +482,8 @@ app.include_router(waitlist.patient_waitlist_router)
 # The clinician's away dates; the acknowledgment they drive is sent from the
 # portal's own message and refill routes.
 app.include_router(away_periods.router)
+# A colleague answering a request to cover those dates.
+app.include_router(covering.router)
 # One list of everything that needs the clinician. Its sources are
 # registered here like a deployment's own would be; one a deployment already
 # registered for the same kind is kept.

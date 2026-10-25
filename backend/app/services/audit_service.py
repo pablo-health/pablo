@@ -24,7 +24,7 @@ from ..repositories.audit import AuditRepository, InMemoryAuditRepository
 from ..request_context import extract_request_context
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterable, Iterator
     from datetime import datetime
 
     from fastapi import Request
@@ -911,6 +911,51 @@ class AuditService:
         )
         self._persist(entry)
         return entry
+
+    def log_coverage_action(
+        self,
+        action: AuditAction | str,
+        *,
+        actor_id: str,
+        request: Request | None,
+        away_period_id: str,
+        patient_ids: Iterable[str] = (),
+        changes: dict[str, Any] | None = None,
+        only_with_patients: bool = False,
+    ) -> None:
+        """Record a step in the coverage of an away period (``app.away.coverage``).
+
+        With *patient_ids*, one row per client, about that client — a grant
+        made or cut short is a change to who may read their chart. Without,
+        one row on the period itself, unless *only_with_patients*, when
+        nothing happened to anybody's access and nothing is written. Every
+        row names the period. ``actor_id`` is whoever acted, which is also
+        who the session is armed as.
+        """
+        ids = list(patient_ids)
+        if only_with_patients and not ids:
+            return
+        ip_address, user_agent = extract_request_context(request)
+        payload = {**(changes or {}), "away_period_id": away_period_id}
+        targets: list[tuple[ResourceType, str, str | None]] = (
+            [(ResourceType.PATIENT, pid, pid) for pid in ids]
+            if ids
+            else [(ResourceType.AWAY_PERIOD, away_period_id, None)]
+        )
+        with self.batched():
+            for resource_type, resource_id, patient_id in targets:
+                self._persist(
+                    AuditLogEntry(
+                        user_id=actor_id,
+                        action=_action_value(action),
+                        resource_type=resource_type.value,
+                        resource_id=resource_id,
+                        patient_id=patient_id,
+                        ip_address=ip_address,
+                        user_agent=user_agent,
+                        changes=dict(payload),
+                    )
+                )
 
     def log_admin_action(
         self,

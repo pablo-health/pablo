@@ -59,6 +59,8 @@ CREATE TABLE __TENANT_SCHEMA__.patient_clinicians (
     granted_at timestamp with time zone DEFAULT now() NOT NULL,
     granted_by uuid NOT NULL,
     expires_at timestamp with time zone,
+    starts_at timestamp with time zone,
+    away_period_id uuid,
     CONSTRAINT patient_clinicians_role_check CHECK (((role)::text = ANY ((ARRAY['primary'::character varying, 'co_treating'::character varying, 'supervisor'::character varying, 'covering'::character varying])::text[])))
 );
 
@@ -66,7 +68,7 @@ CREATE TABLE __TENANT_SCHEMA__.patient_clinicians (
 
 CREATE FUNCTION __TENANT_SCHEMA__.has_patient_access(p_patient_id uuid, p_user_id character varying) RETURNS boolean
     LANGUAGE sql STABLE
-    RETURN (EXISTS (SELECT 1 FROM __TENANT_SCHEMA__.patient_clinicians pc WHERE ((pc.patient_id = has_patient_access.p_patient_id) AND ((pc.user_id)::text = (has_patient_access.p_user_id)::text) AND ((pc.expires_at IS NULL) OR (pc.expires_at > now())))));
+    RETURN (EXISTS (SELECT 1 FROM __TENANT_SCHEMA__.patient_clinicians pc WHERE ((pc.patient_id = has_patient_access.p_patient_id) AND ((pc.user_id)::text = (has_patient_access.p_user_id)::text) AND ((pc.starts_at IS NULL) OR (pc.starts_at <= now())) AND ((pc.expires_at IS NULL) OR (pc.expires_at > now())))));
 
 
 
@@ -409,6 +411,10 @@ CREATE TABLE __TENANT_SCHEMA__.clinician_away_periods (
     ended_at timestamp with time zone,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
+    coverage_status character varying(10),
+    coverage_responded_at timestamp with time zone,
+    CONSTRAINT ck_clinician_away_periods_coverage_named CHECK (((covering_user_id IS NULL) = (coverage_status IS NULL))),
+    CONSTRAINT ck_clinician_away_periods_coverage_status CHECK (((coverage_status)::text = ANY ((ARRAY['requested'::character varying, 'accepted'::character varying, 'declined'::character varying])::text[]))),
     CONSTRAINT ck_clinician_away_periods_dates CHECK ((end_date >= start_date)),
     CONSTRAINT ck_clinician_away_periods_return CHECK ((return_date > end_date))
 );
@@ -2371,6 +2377,10 @@ CREATE INDEX ix_client_ai_consent_events_patient_recorded ON __TENANT_SCHEMA__.c
 
 
 
+CREATE INDEX ix_clinician_away_periods_covering_user ON __TENANT_SCHEMA__.clinician_away_periods USING btree (covering_user_id);
+
+
+
 CREATE INDEX ix_clinician_away_periods_user_dates ON __TENANT_SCHEMA__.clinician_away_periods USING btree (user_id, start_date, end_date);
 
 
@@ -2516,6 +2526,10 @@ CREATE INDEX ix_patient_charges_patient_created ON __TENANT_SCHEMA__.patient_cha
 
 
 CREATE INDEX ix_patient_chart_history_revisions_patient_field ON __TENANT_SCHEMA__.patient_chart_history_revisions USING btree (patient_id, field_key);
+
+
+
+CREATE INDEX ix_patient_clinicians_away_period_id ON __TENANT_SCHEMA__.patient_clinicians USING btree (away_period_id);
 
 
 
@@ -3185,6 +3199,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_chart_history
 
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_clinicians
+    ADD CONSTRAINT patient_clinicians_away_period_id_fkey FOREIGN KEY (away_period_id) REFERENCES __TENANT_SCHEMA__.clinician_away_periods(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_clinicians
     ADD CONSTRAINT patient_clinicians_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
 
 
@@ -3340,6 +3359,12 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.waitlist_entries
 
 
 CREATE POLICY rls_audit_actor_access ON __TENANT_SCHEMA__.audit_logs USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((((actor_type)::text IS DISTINCT FROM 'patient'::text) AND ((user_id)::text = current_setting('app.current_user_id'::text, true))) OR (((actor_type)::text = 'patient'::text) AND ((user_id)::text = current_setting('app.current_patient_id'::text, true)))));
+
+
+
+CREATE POLICY rls_audit_coverage_read ON __TENANT_SCHEMA__.audit_logs FOR SELECT USING (((patient_id IS NOT NULL) AND ((changes ->> 'coverage_period_id'::text) IS NOT NULL) AND (EXISTS ( SELECT 1
+   FROM __TENANT_SCHEMA__.clinician_away_periods ap
+  WHERE (((ap.id)::text = (audit_logs.changes ->> 'coverage_period_id'::text)) AND ((ap.user_id)::text = current_setting('app.current_user_id'::text, true)) AND ((ap.covering_user_id)::text = (audit_logs.user_id)::text)))) AND __TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying)));
 
 
 
@@ -3605,13 +3630,15 @@ ALTER TABLE __TENANT_SCHEMA__.therapy_sessions ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE __TENANT_SCHEMA__.waitlist_entries ENABLE ROW LEVEL SECURITY;
 
-COMMENT ON POLICY rls_audit_actor_access ON __TENANT_SCHEMA__.audit_logs IS 'rls-fingerprint-v1-548d25bf9279aef1b84f5529be74c01025c059a1d21c10eae1f4e41419d743fe';
+COMMENT ON POLICY rls_audit_actor_access ON __TENANT_SCHEMA__.audit_logs IS 'rls-fingerprint-v1-07f5a6e076ff6d264d58594ceca1ac0fd70961c38067f412d4326ed0aad73672';
 
-COMMENT ON POLICY rls_audit_owner_client_read ON __TENANT_SCHEMA__.audit_logs IS 'rls-fingerprint-v1-548d25bf9279aef1b84f5529be74c01025c059a1d21c10eae1f4e41419d743fe';
+COMMENT ON POLICY rls_audit_coverage_read ON __TENANT_SCHEMA__.audit_logs IS 'rls-fingerprint-v1-07f5a6e076ff6d264d58594ceca1ac0fd70961c38067f412d4326ed0aad73672';
 
-COMMENT ON POLICY rls_audit_purge_delete ON __TENANT_SCHEMA__.audit_logs IS 'rls-fingerprint-v1-548d25bf9279aef1b84f5529be74c01025c059a1d21c10eae1f4e41419d743fe';
+COMMENT ON POLICY rls_audit_owner_client_read ON __TENANT_SCHEMA__.audit_logs IS 'rls-fingerprint-v1-07f5a6e076ff6d264d58594ceca1ac0fd70961c38067f412d4326ed0aad73672';
 
-COMMENT ON POLICY rls_audit_purge_select ON __TENANT_SCHEMA__.audit_logs IS 'rls-fingerprint-v1-548d25bf9279aef1b84f5529be74c01025c059a1d21c10eae1f4e41419d743fe';
+COMMENT ON POLICY rls_audit_purge_delete ON __TENANT_SCHEMA__.audit_logs IS 'rls-fingerprint-v1-07f5a6e076ff6d264d58594ceca1ac0fd70961c38067f412d4326ed0aad73672';
+
+COMMENT ON POLICY rls_audit_purge_select ON __TENANT_SCHEMA__.audit_logs IS 'rls-fingerprint-v1-07f5a6e076ff6d264d58594ceca1ac0fd70961c38067f412d4326ed0aad73672';
 
 CREATE POLICY rls_chat_message_access ON __TENANT_SCHEMA__.chat_messages USING ((EXISTS ( SELECT 1
    FROM __TENANT_SCHEMA__.chat_conversations c

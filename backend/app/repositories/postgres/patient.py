@@ -28,7 +28,7 @@ from ...models.enums import ClinicianRole
 from ...models.patient_facing import PATIENT_SELF_WRITABLE_COLUMNS, PatientFacingPatient
 from ...utcnow import utc_now
 from ..patient import PatientRepository, PracticeClient
-from ._grants import grant_not_expired, live_grant
+from ._grants import grant_in_force, live_grant
 from .patient_problem import seed_problem_from_free_text
 
 if TYPE_CHECKING:
@@ -247,7 +247,7 @@ class PostgresPatientRepository(PatientRepository):
                 tuple_(PatientClinicianRow.user_id, PatientClinicianRow.patient_id).in_(
                     [(uid, pid) for (uid, pid) in pairs]
                 ),
-                grant_not_expired(),
+                grant_in_force(),
             )
         ).all()
         return {(row.user_id, row.patient_id) for row in rows}
@@ -363,6 +363,12 @@ class PostgresPatientRepository(PatientRepository):
         )
         self._session.add(grant)
         self._session.flush([grant])
+
+        # A client added while a colleague's coverage of this clinician is
+        # booked or under way is covered like the rest.
+        from ...away.coverage import extend_coverage_to_new_client  # noqa: PLC0415 — cycle
+
+        extend_coverage_to_new_client(self._session, user_id, patient.id, utc_now())
 
         # A diagnosis that arrives with a new chart starts its problem list;
         # the diagnosis line is then whatever the list derives.

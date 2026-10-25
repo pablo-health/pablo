@@ -5,15 +5,17 @@
 The table is not row-scoped (see :class:`app.db.models.ClinicianAwayPeriodRow`),
 so every query here names the clinician it is about. The write methods name
 the caller as well, which is what keeps one clinician from changing another's
-dates.
+dates — or, for :meth:`AwayPeriodRepository.set_coverage`, the colleague
+answering, which is what keeps anybody else from answering for them.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from ..db.models import ClinicianAwayPeriodRow
 
@@ -21,6 +23,10 @@ if TYPE_CHECKING:
     from datetime import date, datetime
 
     from sqlalchemy.orm import Session
+
+COVERAGE_REQUESTED = "requested"
+COVERAGE_ACCEPTED = "accepted"
+COVERAGE_DECLINED = "declined"
 
 
 @dataclass(frozen=True)
@@ -36,10 +42,17 @@ class AwayPeriod:
     ended_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    #: ``requested``, ``accepted`` or ``declined``; ``None`` when nobody is named.
+    coverage_status: str | None = None
+    coverage_responded_at: datetime | None = None
 
     def is_active_on(self, day: date) -> bool:
         """Away on *day*: inside the dates, and not ended early."""
         return self.ended_at is None and self.start_date <= day <= self.end_date
+
+    @property
+    def coverage_accepted(self) -> bool:
+        return self.covering_user_id is not None and self.coverage_status == COVERAGE_ACCEPTED
 
 
 def _period(row: ClinicianAwayPeriodRow) -> AwayPeriod:
@@ -55,6 +68,8 @@ def _period(row: ClinicianAwayPeriodRow) -> AwayPeriod:
         ended_at=row.ended_at,
         created_at=row.created_at,
         updated_at=row.updated_at,
+        coverage_status=row.coverage_status,
+        coverage_responded_at=row.coverage_responded_at,
     )
 
 
@@ -75,6 +90,29 @@ class AwayPeriodRepository:
         ).scalars()
         return [_period(row) for row in rows]
 
+    def recently_covered(self, user_id: str, today: date, days: int) -> list[AwayPeriod]:
+        """The clinician's covered periods that are over, ending in the last *days*, latest first.
+
+        Over means past its last day, or ended early. Covered means a
+        colleague accepted.
+        """
+        since = today - timedelta(days=days)
+        rows = self._session.execute(
+            select(ClinicianAwayPeriodRow)
+            .where(
+                ClinicianAwayPeriodRow.user_id == user_id,
+                ClinicianAwayPeriodRow.coverage_status == COVERAGE_ACCEPTED,
+                ClinicianAwayPeriodRow.start_date <= today,
+                ClinicianAwayPeriodRow.end_date >= since,
+                or_(
+                    ClinicianAwayPeriodRow.ended_at.is_not(None),
+                    ClinicianAwayPeriodRow.end_date < today,
+                ),
+            )
+            .order_by(ClinicianAwayPeriodRow.end_date.desc())
+        ).scalars()
+        return [_period(row) for row in rows]
+
     def active_or_next(self, user_id: str, today: date) -> AwayPeriod | None:
         """The period the clinician is in on *today*, else the next one."""
         upcoming = self.list_current_and_upcoming(user_id, today)
@@ -83,6 +121,41 @@ class AwayPeriodRepository:
     def get(self, period_id: str, user_id: str) -> AwayPeriod | None:
         row = self._row(period_id, user_id)
         return None if row is None else _period(row)
+
+    def asked_of(self, covering_user_id: str, today: date) -> list[AwayPeriod]:
+        """Periods that name *covering_user_id* to cover, not ended and not past, earliest first."""
+        rows = self._session.execute(
+            select(ClinicianAwayPeriodRow)
+            .where(
+                ClinicianAwayPeriodRow.covering_user_id == covering_user_id,
+                ClinicianAwayPeriodRow.ended_at.is_(None),
+                ClinicianAwayPeriodRow.end_date >= today,
+            )
+            .order_by(ClinicianAwayPeriodRow.start_date)
+        ).scalars()
+        return [_period(row) for row in rows]
+
+    def get_asked_of(self, period_id: str, covering_user_id: str) -> AwayPeriod | None:
+        """A period that names *covering_user_id* to cover; ``None`` for anybody else's."""
+        row = self._session.execute(
+            select(ClinicianAwayPeriodRow).where(
+                ClinicianAwayPeriodRow.id == period_id,
+                ClinicianAwayPeriodRow.covering_user_id == covering_user_id,
+            )
+        ).scalar_one_or_none()
+        return None if row is None else _period(row)
+
+    def accepted_ahead(self, user_id: str, today: date) -> list[AwayPeriod]:
+        """The clinician's accepted coverage not ended and not yet returned from."""
+        rows = self._session.execute(
+            select(ClinicianAwayPeriodRow).where(
+                ClinicianAwayPeriodRow.user_id == user_id,
+                ClinicianAwayPeriodRow.coverage_status == COVERAGE_ACCEPTED,
+                ClinicianAwayPeriodRow.ended_at.is_(None),
+                ClinicianAwayPeriodRow.return_date > today,
+            )
+        ).scalars()
+        return [_period(row) for row in rows]
 
     def overlapping(
         self, user_id: str, start: date, end: date, *, excluding: str | None = None
@@ -106,6 +179,8 @@ class AwayPeriodRepository:
             end_date=period.end_date,
             return_date=period.return_date,
             covering_user_id=period.covering_user_id,
+            coverage_status=period.coverage_status,
+            coverage_responded_at=period.coverage_responded_at,
             acknowledgment_enabled=period.acknowledgment_enabled,
             acknowledgment_text=period.acknowledgment_text,
             created_at=period.created_at,
@@ -124,6 +199,24 @@ class AwayPeriodRepository:
             return None
         for column, value in changes.items():
             setattr(row, column, value)
+        row.updated_at = now
+        self._session.flush()
+        return _period(row)
+
+    def set_coverage(
+        self, period_id: str, covering_user_id: str, status: str, now: datetime
+    ) -> AwayPeriod | None:
+        """Record the named colleague's answer. Nobody else's answer is recorded."""
+        row = self._session.execute(
+            select(ClinicianAwayPeriodRow).where(
+                ClinicianAwayPeriodRow.id == period_id,
+                ClinicianAwayPeriodRow.covering_user_id == covering_user_id,
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            return None
+        row.coverage_status = status
+        row.coverage_responded_at = now
         row.updated_at = now
         self._session.flush()
         return _period(row)

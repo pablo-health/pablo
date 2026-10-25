@@ -3,9 +3,12 @@
 "use client"
 
 import {
+  answerCoverageRequest,
   createAwayPeriod,
   endAwayPeriod,
   getAwayPeriods,
+  getCoverageActivity,
+  getCoverageRequests,
   previewAcknowledgment,
   updateAwayPeriod,
 } from "@/lib/api/away"
@@ -15,6 +18,9 @@ import type {
   AwayDates,
   AwayPeriod,
   AwayPeriodList,
+  CoverageActivity,
+  CoverageRequest,
+  CoverageRequestList,
   CreateAwayPeriodRequest,
   UpdateAwayPeriodRequest,
 } from "@/types/away"
@@ -55,5 +61,29 @@ export function useEndAwayPeriod() {
   return useAuthMutation<AwayPeriod, string>({
     mutationFn: (periodId) => endAwayPeriod(periodId),
     invalidateKeys: afterWrite,
+  })
+}
+
+/** What the covering colleague did during one period. Fetched only when shown. */
+export function useCoverageActivity(periodId: string, enabled: boolean) {
+  return useAuthQuery<CoverageActivity>({
+    queryKey: queryKeys.away.coverageActivity(periodId),
+    queryFn: () => getCoverageActivity(periodId),
+    enabled,
+  })
+}
+
+/** Away dates colleagues asked the caller to cover. */
+export function useCoverageRequests() {
+  return useAuthQuery<CoverageRequestList>({
+    queryKey: queryKeys.covering.all,
+    queryFn: () => getCoverageRequests(),
+  })
+}
+
+export function useAnswerCoverageRequest() {
+  return useAuthMutation<CoverageRequest, { periodId: string; answer: "accept" | "decline" }>({
+    mutationFn: ({ periodId, answer }) => answerCoverageRequest(periodId, answer),
+    invalidateKeys: [queryKeys.covering.all],
   })
 }

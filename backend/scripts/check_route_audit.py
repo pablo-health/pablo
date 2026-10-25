@@ -532,9 +532,10 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # names no client and carries nothing clinical
         ("get", "/api/away-periods"),  # caller's away dates + colleagues who may cover
         ("post", "/api/away-periods/preview"),  # suggested text for dates, nothing stored
-        ("post", "/api/away-periods"),  # sets caller's away dates
-        ("patch", "/api/away-periods/{period_id}"),  # changes caller's away dates
-        ("post", "/api/away-periods/{period_id}/end"),  # ends caller's away period early
+        ("post", "/api/away-periods"),  # sets caller's away dates; grants nothing
+        # covering.py — the away dates the caller is asked to cover: colleagues
+        # and dates, no client
+        ("get", "/api/covering"),  # requests naming the caller, no client
         ("get", "/api/users/me/preferences"),  # caller's own UI preferences
         ("get", "/api/users/me/security-guide-status"),  # caller's own security-guide status
         ("get", "/api/users/me/status"),  # caller's own account/onboarding status

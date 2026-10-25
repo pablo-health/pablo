@@ -42,18 +42,22 @@ from . import text
 from .repository import AwayPeriod, AwayPeriodRepository
 
 if TYPE_CHECKING:
-    from datetime import date, datetime
+    from datetime import date, datetime, tzinfo
 
     from sqlalchemy.orm import Session
 
 
+def clinician_zone(session: Session, user_id: str) -> tzinfo:
+    """The clinician's own time zone; UTC when it is unknown."""
+    try:
+        return ZoneInfo(PostgresUserRepository(session).get_preferences(user_id).timezone)
+    except (ZoneInfoNotFoundError, ValueError, AttributeError):
+        return UTC
+
+
 def clinician_today(session: Session, user_id: str, now: datetime) -> date:
     """*now* as a date on the clinician's own calendar; UTC when their zone is unknown."""
-    try:
-        zone = ZoneInfo(PostgresUserRepository(session).get_preferences(user_id).timezone)
-    except (ZoneInfoNotFoundError, ValueError, AttributeError):
-        return now.astimezone(UTC).date()
-    return now.astimezone(zone).date()
+    return now.astimezone(clinician_zone(session, user_id)).date()
 
 
 def active_or_next_away_period(session: Session, user_id: str, now: datetime) -> AwayPeriod | None:
@@ -125,10 +129,12 @@ class PortalAwayAcknowledger:
         period = self._governing_period(practice_schema, patient_id, now)
         if period is None:
             return None
+        # Only a colleague who accepted is named: one still asked, or who
+        # declined, is not covering anything.
         covering = (
-            None
-            if period.covering_user_id is None
-            else clinician_name(self._session, period.covering_user_id)
+            clinician_name(self._session, period.covering_user_id)
+            if period.covering_user_id is not None and period.coverage_accepted
+            else None
         )
         return text.compose(text.refill_line(period.return_date, covering))
 

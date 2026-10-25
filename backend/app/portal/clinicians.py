@@ -26,7 +26,7 @@ from ..auth.service import TenantContext, get_tenant_context
 from ..db import get_db_session, read_once_as
 from ..db.models import PatientClinicianRow
 from ..db.platform_models import EmailTenantMappingRow, PlatformUserRow, PracticeRow
-from ..repositories.postgres._grants import grant_not_expired
+from ..repositories.postgres._grants import grant_in_force
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -91,7 +91,7 @@ def primary_clinician_id(session: Session, schema: str, patient_id: str) -> str 
                 PatientClinicianRow.patient_id == patient_id,
                 PatientClinicianRow.user_id == clinician_id,
                 PatientClinicianRow.role == "primary",
-                grant_not_expired(),
+                grant_in_force(),
             ),
         )
         if rows:

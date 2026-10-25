@@ -7,7 +7,11 @@
  * `POST   /api/away-periods/preview`      — the suggested reply for these dates,
  * `POST   /api/away-periods`              — set away dates (409: they overlap others),
  * `PATCH  /api/away-periods/{id}`         — change them (422: new dates without the reply text),
- * `POST   /api/away-periods/{id}/end`     — end them now.
+ * `POST   /api/away-periods/{id}/end`     — end them now,
+ * `GET    /api/away-periods/{id}/coverage-activity` — what the covering colleague did,
+ * `GET    /api/covering`                  — away dates the caller is asked to cover,
+ * `POST   /api/covering/{id}/accept`      — cover them (409: already covering that colleague),
+ * `POST   /api/covering/{id}/decline`     — don't, or stop.
  */
 
 import type {
@@ -15,6 +19,9 @@ import type {
   AwayDates,
   AwayPeriod,
   AwayPeriodList,
+  CoverageActivity,
+  CoverageRequest,
+  CoverageRequestList,
   CreateAwayPeriodRequest,
   UpdateAwayPeriodRequest,
 } from "@/types/away"
@@ -50,4 +57,22 @@ export function updateAwayPeriod(
 
 export function endAwayPeriod(periodId: string, token?: string): Promise<AwayPeriod> {
   return post<AwayPeriod>(`${BASE}/${periodId}/end`, {}, token)
+}
+
+export function getCoverageActivity(periodId: string, token?: string): Promise<CoverageActivity> {
+  return get<CoverageActivity>(`${BASE}/${periodId}/coverage-activity`, token)
+}
+
+const COVERING = "/api/covering"
+
+export function getCoverageRequests(token?: string): Promise<CoverageRequestList> {
+  return get<CoverageRequestList>(COVERING, token)
+}
+
+export function answerCoverageRequest(
+  periodId: string,
+  answer: "accept" | "decline",
+  token?: string,
+): Promise<CoverageRequest> {
+  return post<CoverageRequest>(`${COVERING}/${periodId}/${answer}`, {}, token)
 }

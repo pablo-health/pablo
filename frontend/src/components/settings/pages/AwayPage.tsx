@@ -8,16 +8,22 @@ import { useAwayPeriods, useEndAwayPeriod } from "@/hooks/useAwayPeriods"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import type { AwayPeriod } from "@/types/away"
 import { AwayPeriodForm } from "../away/AwayPeriodForm"
+import { CoveredPeriod } from "../away/CoveredPeriod"
+import { CoverageRequests } from "../away/CoverageRequests"
+import { day } from "../away/day"
 import { SettingsBadge, SettingsCard } from "../ui"
 
-/** `2026-10-27` as `Tue, Oct 27`, read as a calendar day rather than a UTC instant. */
-function day(iso: string): string {
-  const [year, month, date] = iso.split("-").map(Number)
-  return new Date(year, month - 1, date).toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  })
+/** Where the request to cover stands, from the data: nobody covers until they accept. */
+function coverageLine(period: AwayPeriod): string {
+  if (!period.covering_name) return ""
+  switch (period.coverage_status) {
+    case "accepted":
+      return ` · ${period.covering_name} covering`
+    case "declined":
+      return ` · ${period.covering_name} can't cover`
+    default:
+      return ` · Waiting for ${period.covering_name} to accept`
+  }
 }
 
 function PeriodRow({
@@ -41,9 +47,9 @@ function PeriodRow({
             <SettingsBadge className="ml-2">Away now</SettingsBadge>
           )}
         </p>
-        <p className="text-[12.5px] text-muted-foreground">
+        <p className="text-[12.5px] text-muted-foreground" data-testid={`away-coverage-${period.id}`}>
           Back {day(period.return_date)}
-          {period.covering_name ? ` · ${period.covering_name} covering` : ""}
+          {coverageLine(period)}
           {" · "}
           {period.acknowledgment_enabled
             ? `Replying to ${people.many}`
@@ -68,8 +74,9 @@ function PeriodRow({
 }
 
 /**
- * You > Away. The dates a clinician is away, and the reply their clients get
- * when they write through the portal meanwhile.
+ * You > Away. The dates a clinician is away, the reply their clients get
+ * when they write through the portal meanwhile, what a covering colleague
+ * did once it is over, and colleagues' requests to be covered.
  */
 export function AwayPage() {
   const { data } = useAwayPeriods()
@@ -78,31 +85,44 @@ export function AwayPage() {
   if (!data) return null
 
   return (
-    <SettingsCard
-      title="Away"
-      description={`${people.Many} who message you while you're away get a reply with the day you're back.`}
-    >
-      {editing ? (
-        <AwayPeriodForm
-          key={editing === "new" ? "new" : editing.id}
-          period={editing === "new" ? undefined : editing}
-          coveringOptions={data.covering_options}
-          onDone={() => setEditing(null)}
-        />
-      ) : (
-        <div className="space-y-3">
-          {data.periods.length > 0 && (
-            <ul data-testid="away-periods">
-              {data.periods.map((period) => (
-                <PeriodRow key={period.id} period={period} onEdit={() => setEditing(period)} />
-              ))}
-            </ul>
-          )}
-          <Button size="sm" data-testid="away-add" onClick={() => setEditing("new")}>
-            Add away dates
-          </Button>
-        </div>
-      )}
-    </SettingsCard>
+    <>
+      <SettingsCard
+        title="Away"
+        description={`${people.Many} who message you while you're away get a reply with the day you're back.`}
+      >
+        {editing ? (
+          <AwayPeriodForm
+            key={editing === "new" ? "new" : editing.id}
+            period={editing === "new" ? undefined : editing}
+            coveringOptions={data.covering_options}
+            onDone={() => setEditing(null)}
+          />
+        ) : (
+          <div className="space-y-3">
+            {data.periods.length > 0 && (
+              <ul data-testid="away-periods">
+                {data.periods.map((period) => (
+                  <PeriodRow key={period.id} period={period} onEdit={() => setEditing(period)} />
+                ))}
+              </ul>
+            )}
+            <Button size="sm" data-testid="away-add" onClick={() => setEditing("new")}>
+              Add away dates
+            </Button>
+            {data.recently_covered.length > 0 && (
+              <div className="space-y-1 pt-2">
+                <p className="text-sm font-medium text-foreground">While you were away</p>
+                <ul data-testid="away-recently-covered">
+                  {data.recently_covered.map((period) => (
+                    <CoveredPeriod key={period.id} period={period} />
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </SettingsCard>
+      <CoverageRequests />
+    </>
   )
 }
