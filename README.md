@@ -85,9 +85,19 @@ Two things worth flagging up front for self-hosters:
 
 ## Want Managed Hosting?
 
-**Pablo Solo** ($19-24/mo) handles infrastructure, HIPAA compliance, BAA coverage, backups, and updates — so you can focus on your clients.
+**Pablo One** is the same engine, run for you: $59 per clinician a month at
+the founding rate ($79 list). On top of what you get by self-hosting:
 
-Learn more at [pablo.health](https://pablo.health)
+- We run it: updates, backups and monitoring, with the BAA signed at signup
+- Insurance credentialing done for you: two payers included for founding
+  practices, then at cost
+- Insurance claims at cost, and eligibility checks that run automatically
+- A practice website, built for you
+- A HIPAA-eligible mailbox
+
+Self-hosting costs about $20 a month and keeps everything in your own Google
+Cloud account; Pablo One is for when you would rather not run a server.
+Learn more at [pablo.health](https://pablo.health).
 
 ## Contributing
 
