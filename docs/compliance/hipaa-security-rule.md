@@ -83,7 +83,7 @@ the gate ran.
 | §164.308(a)(5)(ii)(D) | Password management (**NPRM**: MFA required) | Met | Firebase Auth TOTP MFA is required for all clinician accounts; JWT carries `firebase.sign_in_second_factor=totp`. Pentest §4 verifies this claim is present on issued tokens. |
 | §164.308(a)(6)(i)-(ii) | Security incident response & reporting | Partial / Operator-responsibility | `docs/HIPAA_AUDIT_LOGS.md` documents the audit trail; incident response runbook is operator-owned. Pablo's audit logs provide the forensic record. |
 | §164.308(a)(7)(i) | Contingency plan | Partial / Operator-responsibility | Cloud SQL automated backups + point-in-time recovery (operator-configured). |
-| §164.308(a)(7)(ii)(A) | Data backup plan — tested | Met | Cloud SQL daily automated backups with 7-day retention by default; PITR enabled. `docs/GCP_DEPLOYMENT.md` documents the operator-tunable retention. |
+| §164.308(a)(7)(ii)(A) | Data backup plan — tested | Met | Cloud SQL daily automated backups with 7-day retention by default; PITR enabled. Self-hosted installs back up continuously with pgBackRest and run a monthly restore drill (`deploy/vm/README.md`). |
 | §164.308(a)(7)(ii)(B) | Disaster recovery plan — restore ≤72h (**NPRM**) | Met | Cloud SQL PITR + container image retention in GHCR (see `release.yml` — images SHA-tagged for rollback). Cloud Run rollback is sub-5min. |
 | §164.308(a)(7)(ii)(C) | Emergency mode operation | Partial / Operator-responsibility | — |
 | §164.308(a)(7)(ii)(D) | Contingency plan testing ≥12mo | Operator-responsibility | Covered Entity owns disaster recovery tests. Pablo's rollback is exercised implicitly by every release. |

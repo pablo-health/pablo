@@ -34,14 +34,11 @@ Session audio is PHI. Pablo supports two transcription backends, chosen via the 
 
 Today, **AssemblyAI is the only transcription backend wired for deployment**, and it requires a signed BAA. If you deploy with `TRANSCRIPTION_PROVIDER=assemblyai` and no signed BAA, session audio leaving Pablo for AssemblyAI is a §164.504(e) impermissible disclosure and a §164.402 Breach — the BAA is non-negotiable. The `whisper` backend is designed to keep every byte inside your own GCP project (no third-party processor), but it is **not yet operational**.
 
-**How `setup-solo.sh` handles this:**
+**How `install.sh` handles this:**
 
-During Step 9 (Cloud Run deploy), the script prompts you to choose a transcription provider:
+Before it creates anything, the installer asks whether to turn on transcription, naming the AssemblyAI BAA: answering yes is your statement that it is signed. It then asks for the API key (input hidden) and stores it in Secret Manager as `pablo-assemblyai-api-key`. Answer no, or pass `--no-transcription`, and transcription stays off until you run the installer again.
 
-- If you pick **AssemblyAI**, the script requires you to type `I have a signed AssemblyAI BAA` verbatim before continuing, then prompts for the API key (input hidden), stores it in Secret Manager as `pablo-assemblyai-api-key`, and wires the secret into the backend deploy. There is no way to deploy onto the AssemblyAI path without the explicit BAA acknowledgement.
-- If you pick **Whisper**, the script currently aborts with instructions, because the whisper backend is not yet wired for deployment (see "Enabling whisper" below).
-
-On a re-run, if `pablo-assemblyai-api-key` already exists in Secret Manager, the script reuses it without re-prompting.
+On a re-run, if `pablo-assemblyai-api-key` already exists in Secret Manager, the installer keeps it without asking.
 
 **Enabling whisper.** The whisper backend isn't operational out of the box. Making it run in your own project takes, roughly:
 
@@ -50,7 +47,7 @@ On a re-run, if `pablo-assemblyai-api-key` already exists in Secret Manager, the
 3. **A transcription-worker container image** packaging whisper and the worker entrypoint.
 4. **A dedicated transcription-worker service account**, least-privilege and scoped to the audio/transcript bucket and Cloud Batch — separate from the app service account.
 
-Until that provisioning ships in `setup-solo.sh`, AssemblyAI (with a signed BAA) is the supported path. Once it lands, `whisper` becomes the default, since it keeps audio in your project and needs no third-party BAA.
+Until that provisioning ships in `install.sh`, AssemblyAI (with a signed BAA) is the supported path. Once it lands, `whisper` becomes the default, since it keeps audio in your project and needs no third-party BAA.
 
 **Your email provider needs a BAA too.** When you turn on patient portal invitations (`PORTAL_INVITE_DELIVERY=smtp`), Pablo sends them through the mail server in your `SMTP_*` settings. The default invitation names the client's clinician and your practice, for example "Jane Smith has invited you to the patient portal for Riverside Counseling." A message like that says someone is your client, which makes it PHI, and anything you write in the invitation editor is too.
 
@@ -160,7 +157,7 @@ Cloud Run provides a good security baseline. If you self-host, consider these ha
 **What you need to do:**
 1. Watch the [pablo-health/pablo](https://github.com/pablo-health/pablo) repo for releases
 2. When a new release is published, review the changelog
-3. Pull the update and run `./redeploy.sh` to apply it
+3. Apply it on your VM: `sudo pablo-update vX.Y.Z` (see [deploy/vm/README.md](../deploy/vm/README.md))
 4. Test that everything works after the update
 
 ## 8. Register Your Deployment

@@ -304,7 +304,7 @@ jobs:
               --image="${{ env.REGISTRY }}/pentest:${{ github.sha }}" \
               --project="${{ env.PROJECT }}" --region="${{ env.REGION }}" --quiet
           else
-            echo "pentest job not found in ${{ env.PROJECT }} — skipping (run setup-solo.sh Step 11 to create it)"
+            echo "pentest job not found in ${{ env.PROJECT }} — skipping (create the pentest Cloud Run job to enable it)"
           fi
 
   smoke:

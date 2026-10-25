@@ -307,7 +307,7 @@ record; session tokens are bound to the UUID, not the email.
   Platform policy).
 - Password policy is NIST SP 800-63B compliant (minimum 15
   characters, no composition rules, breach-list checks) — configured
-  by `setup-solo.sh` step 6e.
+  by `install.sh` (`deploy/vm/lib/identity.sh`).
 
 *Verify in GCP Console → Identity Platform → Settings → Sign-in methods.*
 

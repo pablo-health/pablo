@@ -41,7 +41,5 @@
 /backend/alembic/                           @kurtn718
 
 # ---- Deploy + secrets surface ---------------------------------------------
-/setup-solo.sh                              @kurtn718
-/redeploy.sh                                @kurtn718
 /run.sh                                     @kurtn718
 /SECURITY.md                                @kurtn718

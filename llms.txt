@@ -20,7 +20,7 @@ load-bearing and CI-enforced.
 ## Architecture
 
 - [docs/TECHNICAL_ARCHITECTURE.md](docs/TECHNICAL_ARCHITECTURE.md): backend/frontend/AI layout.
-- [docs/GCP_DEPLOYMENT.md](docs/GCP_DEPLOYMENT.md): how Pablo runs in production.
+- [deploy/vm/README.md](deploy/vm/README.md): self-hosting on one Google Cloud VM with install.sh.
 - [docs/url-scheme.md](docs/url-scheme.md): URL conventions.
 
 ## HIPAA + compliance (read before touching PHI surfaces)
