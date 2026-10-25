@@ -419,6 +419,12 @@ class PracticePortalSettingsRow(PlatformBase):
     refill_turnaround_days: Mapped[int] = mapped_column(
         SmallInteger, nullable=False, default=2, server_default=text("2")
     )
+    #: The practice's own target for answering a client's message, in working
+    #: days. Sets each waiting message's reply-by time in the Inbox; never
+    #: shown to clients.
+    message_reply_target_days: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=2, server_default=text("2")
+    )
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     #: The clinician who last changed it. ``None`` for the rows the migration
     #: wrote.

@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import String, Uuid, bindparam, func, or_, select, text
 
+from ...db import current_practice_schema
 from ...db.models import (
     PatientDocumentRow,
     PatientMessageAttachmentRow,
@@ -109,6 +110,13 @@ def _message(row: PatientMessageRow) -> PatientMessage:
 class PostgresPatientMessageRepository(PatientMessageRepository):
     def __init__(self, session: Session) -> None:
         self._session = session
+
+    def practice_schema(self) -> str | None:
+        """The practice schema this repository's session is pointed at; ``None`` without one."""
+        try:
+            return current_practice_schema(self._session)
+        except RuntimeError:
+            return None
 
     # --- internal helpers ---
 
