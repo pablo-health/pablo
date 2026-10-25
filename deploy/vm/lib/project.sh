@@ -38,15 +38,18 @@ ensure_project() {
         echo "Creating project ${PROJECT_ID}"
         gcloud projects create "$PROJECT_ID" --name="Pablo"
     fi
-    gcloud config set project "$PROJECT_ID" >/dev/null
+    # For this run only; the caller's gcloud configuration is left alone.
+    export CLOUDSDK_CORE_PROJECT="$PROJECT_ID"
 }
 
 ensure_billing() {
     if [ "$(gcloud billing projects describe "$PROJECT_ID" --format='value(billingEnabled)')" = "True" ]; then
         return
     fi
-    local accounts
-    mapfile -t accounts < <(gcloud billing accounts list --filter=open=true --format='value(name)')
+    local accounts=() account
+    while read -r account; do
+        [ -n "$account" ] && accounts+=("$account")
+    done < <(gcloud billing accounts list --filter=open=true --format='value(name)')
     case ${#accounts[@]} in
         0)
             echo "No billing account found. Add one, then run this again:" >&2
