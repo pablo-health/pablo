@@ -13,8 +13,19 @@ project. If you transcribe with AssemblyAI, you need a signed BAA with
 AssemblyAI too; the script asks.
 
 The script asks for two things it cannot create on its own: an OAuth client
-for Google sign-in (it prints the console steps and the exact URLs), and the
-AssemblyAI API key.
+for Google sign-in and Google Calendar (it prints the console steps and the
+exact URLs), and the AssemblyAI API key. Both are optional; press Enter to
+skip Google, and pass `--no-transcription` to leave transcription off.
+
+## Google sign-in and calendar
+
+One OAuth client, in your own project, covers both. Your calendar data goes
+from Google to your VM and nowhere else. Because it is your own app rather
+than one Google has reviewed, connecting your calendar shows Google's
+"unverified app" screen once. Choose Internal on the consent screen if you
+use Google Workspace and that screen does not appear. With External, publish
+the app ("In production"): a Testing app's calendar connection expires every
+seven days.
 
 ## What you get
 

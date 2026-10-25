@@ -38,6 +38,12 @@ ensure_generated_secrets() {
 # Sets GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, asking only the first time.
 # The OAuth client has no API, so it is made by hand in the console. Both
 # stay empty when sign-in is email and password only (SKIP_GOOGLE_SIGNIN).
+#
+# The same client serves Google Calendar. It is the clinician's own, in their
+# own project, so calendar data never passes through anything Pablo runs.
+# Its calendar scopes are "sensitive", so an External app left unverified
+# shows Google's one-time warning; "In production" matters, because a
+# Testing app's refresh tokens expire after seven days.
 ensure_oauth_client() {
     GOOGLE_CLIENT_ID=""
     GOOGLE_CLIENT_SECRET=""
@@ -49,23 +55,37 @@ ensure_oauth_client() {
     [ "${SKIP_GOOGLE_SIGNIN:-false}" = true ] && return
     cat <<EOF
 
-Google sign-in needs an OAuth client, which Google only lets you make in the console:
+Google sign-in and Google Calendar need an OAuth client, which Google only
+lets you make in the console:
 
   1. Open https://console.cloud.google.com/auth/overview?project=${PROJECT_ID}
-     and set up the consent screen (app name "Pablo", your email, Internal or External).
-  2. Open https://console.cloud.google.com/apis/credentials?project=${PROJECT_ID}
+     Set up the consent screen: app name "Pablo", your email. Choose Internal
+     if you use Google Workspace, otherwise External.
+  2. Under Data access, add these scopes:
+       .../auth/calendar.events  .../auth/calendar.readonly
+       .../auth/calendar.freebusy  .../auth/calendar.app.created
+  3. If you chose External: under Audience, select Publish app, so it is
+     "In production". Google shows you a one-time "unverified app" screen
+     when you connect your calendar; that is expected for your own app.
+  4. Open https://console.cloud.google.com/apis/credentials?project=${PROJECT_ID}
      Create credentials → OAuth client ID → Web application, named "Pablo".
-  3. Authorized JavaScript origins:
+  5. Authorized JavaScript origins:
        https://${PABLO_HOST}
      Authorized redirect URIs:
        https://${PABLO_HOST}/__/auth/handler
        https://${PROJECT_ID}.firebaseapp.com/__/auth/handler
-  4. Create, then paste the two values here.
+       https://${PABLO_HOST}/dashboard/settings/calendar
+  6. Create, then paste the two values here (or press Enter twice to use
+     email and password only, without Google sign-in or calendar sync).
 
 EOF
     read -rp "Client ID: " GOOGLE_CLIENT_ID
     read -rsp "Client secret (hidden): " GOOGLE_CLIENT_SECRET
     echo
+    if [ -z "$GOOGLE_CLIENT_ID" ] && [ -z "$GOOGLE_CLIENT_SECRET" ]; then
+        echo "Email and password sign-in only. Run this again later to add Google."
+        return
+    fi
     [ -n "$GOOGLE_CLIENT_ID" ] && [ -n "$GOOGLE_CLIENT_SECRET" ] || { echo "Both values are needed." >&2; exit 1; }
     printf '%s' "$GOOGLE_CLIENT_ID" | put_secret GOOGLE_CLIENT_ID
     printf '%s' "$GOOGLE_CLIENT_SECRET" | put_secret GOOGLE_CLIENT_SECRET
