@@ -25,6 +25,10 @@ const updatePreferences = vi.hoisted(() =>
   vi.fn((next: unknown) => Promise.resolve(next)),
 )
 
+// The deployment offers credentialing unless a test says otherwise.
+const useFeature = vi.hoisted(() => vi.fn((_name: string | undefined) => true))
+vi.mock("@/lib/featureGates", () => ({ useFeature: (name: string | undefined) => useFeature(name) }))
+
 vi.mock("@/hooks/usePreferences", () => ({
   usePreferences: (...args: unknown[]) => usePreferences(...args),
   useUpdatePreferences: () => ({ mutateAsync: updatePreferences, isPending: false }),
@@ -66,6 +70,7 @@ const SELF_PAY = /Clients pay me directly/
 
 beforeEach(() => {
   vi.clearAllMocks()
+  useFeature.mockImplementation(() => true)
   usePreferences.mockReturnValue({ data: prefs() })
 })
 
@@ -189,6 +194,36 @@ describe("the plan screen", () => {
     render(<GetPaidWizard />)
 
     expect(screen.getByText("credentialing record step")).toBeInTheDocument()
+  })
+})
+
+describe("a deployment that does not offer credentialing", () => {
+  // A self-hosted install has nobody to prepare applications, so the wizard
+  // neither asks nor promises.
+  beforeEach(() => {
+    useFeature.mockImplementation((name) => name !== "credentialing")
+  })
+
+  it("does not ask on the plan screen", () => {
+    usePreferences.mockReturnValue({
+      data: prefs({ billing_setup_state: ["platform"], billing_setup_step: "plan" }),
+    })
+    render(<GetPaidWizard />)
+
+    expect(screen.queryByTestId("wants-credentialing")).not.toBeInTheDocument()
+  })
+
+  it("adds no application screens for a choice saved while it was offered", () => {
+    usePreferences.mockReturnValue({
+      data: prefs({
+        billing_setup_state: ["platform"],
+        billing_setup_wants_credentialing: true,
+        billing_setup_step: "record",
+      }),
+    })
+    render(<GetPaidWizard />)
+
+    expect(screen.queryByText("credentialing record step")).not.toBeInTheDocument()
   })
 })
 

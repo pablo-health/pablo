@@ -7,6 +7,8 @@ import { SetupNav, StepSaveProvider, SetupWizardShell, useStepSave } from "@/com
 import { Skeleton } from "@/components/ui/skeleton"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { usePreferences, useUpdatePreferences } from "@/hooks/usePreferences"
+import { CREDENTIALING_FEATURE } from "@/components/settings/paths"
+import { useFeature } from "@/lib/featureGates"
 import { type CurrentStateId, stepsForState } from "./routes"
 import { STEP_BODIES } from "./stepBodies"
 import { useBillingSetupDraft } from "./useBillingSetupDraft"
@@ -73,12 +75,13 @@ function GetPaidWizardBody({ onSettled }: GetPaidWizardProps) {
     updatePreferences.mutateAsync,
   )
 
-  const steps = stepsForState(
-    people,
-    answers.state,
-    answers.wantsCredentialing,
-    answers.wantsCardPayments,
-  )
+  // A choice saved while credentialing was offered counts only while it still
+  // is: without the feature there are no screens for it to add, and the done
+  // step must not promise applications nobody will prepare.
+  const credentialingOffered = useFeature(CREDENTIALING_FEATURE)
+  const wantsCredentialing = credentialingOffered && answers.wantsCredentialing
+
+  const steps = stepsForState(people, answers.state, wantsCredentialing, answers.wantsCardPayments)
 
   // An unknown id — a step renamed, or one she no longer walks because she
   // unticked what added it — falls back to the start rather than a blank
@@ -232,7 +235,7 @@ function GetPaidWizardBody({ onSettled }: GetPaidWizardProps) {
     >
       <Body
         selected={answers.state ?? []}
-        wantsCredentialing={answers.wantsCredentialing}
+        wantsCredentialing={wantsCredentialing}
         wantsCardPayments={answers.wantsCardPayments}
         onToggle={toggle}
         onToggleCredentialing={toggleCredentialing}
