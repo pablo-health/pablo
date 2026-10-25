@@ -5,7 +5,7 @@ project, for a solo practice. One command in Cloud Shell:
 
 ```bash
 git clone https://github.com/pablo-health/pablo.git && cd pablo
-./install.sh --admin-email you@example.com
+./install.sh
 ```
 
 Before running it, accept the Google Cloud BAA for the account that owns the
@@ -71,8 +71,8 @@ VM's settings and restarts it. It never touches the data disk.
 
 ## Cost
 
-About $12 a month for an e2-small, plus a few dollars for disks, the static
-address and storage. Vertex AI and AssemblyAI are billed by use. The measured
+About $20 a month: the e2-small is about $12, the two 20 GB disks about $4,
+the static address about $3.65, plus a little for storage and snapshots. Vertex AI and AssemblyAI are billed by use. The measured
 figures for memory, CPU and first boot belong here once they are taken
 (`PABLO-0z5a.2`).
 

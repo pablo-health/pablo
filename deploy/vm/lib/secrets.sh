@@ -37,7 +37,7 @@ ensure_generated_secrets() {
 
 # Sets GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, asking only the first time.
 # The OAuth client has no API, so it is made by hand in the console. Both
-# stay empty when sign-in is email and password only (SKIP_GOOGLE_SIGNIN).
+# stay empty when sign-in is email and password only (GOOGLE_SIGNIN not true).
 #
 # The same client serves Google Calendar. It is the clinician's own, in their
 # own project, so calendar data never passes through anything Pablo runs.
@@ -52,7 +52,7 @@ ensure_oauth_client() {
         GOOGLE_CLIENT_SECRET=$(read_secret GOOGLE_CLIENT_SECRET)
         return
     fi
-    [ "${SKIP_GOOGLE_SIGNIN:-false}" = true ] && return
+    [ "${GOOGLE_SIGNIN:-false}" = true ] || return 0
     cat <<EOF
 
 Google sign-in and Google Calendar need an OAuth client, which Google only
@@ -91,32 +91,37 @@ EOF
     printf '%s' "$GOOGLE_CLIENT_SECRET" | put_secret GOOGLE_CLIENT_SECRET
 }
 
-# Sets TRANSCRIPTION_PROVIDER and TRANSCRIPTION_ENABLED. Session audio is
-# PHI: AssemblyAI is used only with the clinician's own BAA with AssemblyAI,
-# stated explicitly. NO_TRANSCRIPTION=true leaves transcription off.
-ensure_transcription() {
-    TRANSCRIPTION_PROVIDER=assemblyai
-    TRANSCRIPTION_ENABLED=true
-    secret_exists pablo-assemblyai-api-key && return
-    if [ "${NO_TRANSCRIPTION:-false}" = true ]; then
-        TRANSCRIPTION_ENABLED=false
+# Asked before anything is created; sets ASSEMBLYAI_KEY (empty: off).
+# Session audio is PHI, so the question names the AssemblyAI BAA; a yes is
+# the clinician's statement that it is signed. A key already stored in the
+# project (a re-run) is kept without asking.
+ask_transcription() {
+    ASSEMBLYAI_KEY=""
+    [ "${NO_TRANSCRIPTION:-false}" = true ] && return
+    if gcloud secrets describe pablo-assemblyai-api-key --project="$PROJECT_ID" >/dev/null 2>&1; then
         return
     fi
-    cat <<EOF
-
-Transcription runs on AssemblyAI, which needs its own signed BAA with you
-before any session audio is sent. The free tier does not include one:
-  https://www.assemblyai.com/legal/business-associate-agreement
-
-EOF
-    local ack key
-    read -rp "Type 'I have a signed AssemblyAI BAA' to continue: " ack
-    if [ "$ack" != "I have a signed AssemblyAI BAA" ]; then
-        echo "Stopping here. Run this again once the AssemblyAI BAA is signed." >&2
-        exit 1
-    fi
-    read -rsp "AssemblyAI API key (hidden): " key
     echo
-    [ -n "$key" ] || { echo "The key is needed." >&2; exit 1; }
-    printf '%s' "$key" | put_secret pablo-assemblyai-api-key
+    echo "Pablo can transcribe sessions with AssemblyAI, under your own signed BAA"
+    echo "with AssemblyAI: https://www.assemblyai.com/legal/business-associate-agreement"
+    local answer
+    read -rp "Turn on transcription? You can add it later. [y/N] " answer
+    [[ "$answer" =~ ^[Yy] ]] || return 0
+    read -rsp "AssemblyAI API key (hidden): " ASSEMBLYAI_KEY
+    echo
+}
+
+# Sets TRANSCRIPTION_PROVIDER and TRANSCRIPTION_ENABLED; stores a key given
+# to ask_transcription.
+ensure_transcription() {
+    TRANSCRIPTION_PROVIDER=assemblyai
+    if [ -n "${ASSEMBLYAI_KEY:-}" ]; then
+        printf '%s' "$ASSEMBLYAI_KEY" | put_secret pablo-assemblyai-api-key
+        unset ASSEMBLYAI_KEY
+    fi
+    if secret_exists pablo-assemblyai-api-key && [ "${NO_TRANSCRIPTION:-false}" != true ]; then
+        TRANSCRIPTION_ENABLED=true
+    else
+        TRANSCRIPTION_ENABLED=false
+    fi
 }

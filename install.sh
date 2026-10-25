@@ -3,7 +3,12 @@
 #
 # Pablo on one Google Cloud VM, for a solo practice. Run in Cloud Shell:
 #
-#   ./install.sh --admin-email you@example.com [--hostname notes.example.com]
+#   ./install.sh
+#
+# It asks a few questions first (your email, the project, your own domain if
+# you have one, Google sign-in, transcription), shows what it will create and
+# what it costs, and runs to the end once you say yes. Every question has a
+# flag, for a run with no questions at all.
 #
 # Sets up the project — billing, APIs, a service account for the VM, buckets,
 # sign-in, secrets, the task queues and the HIPAA audit log sink — then
@@ -13,8 +18,8 @@
 # updated and restarted rather than replaced. Its data disk is never deleted.
 #
 # Options:
-#   --project ID        Google Cloud project (default: gcloud's current one)
-#   --admin-email EMAIL The clinician who signs in first (required)
+#   --project ID        Google Cloud project, new or existing (default: a new one)
+#   --admin-email EMAIL The clinician who signs in first
 #   --hostname NAME     Your own domain, pointed at the VM's address with an A
 #                       record. Default: an sslip.io name for that address.
 #   --region REGION     Default us-central1
@@ -25,8 +30,10 @@
 #   --deploy-ref REF    Git ref for the VM's deploy files, when testing a
 #                       branch before it is released (default: --version)
 #   --baa-accepted      Skip the BAA question (unattended runs)
-#   --skip-google-signin  Email and password sign-in only; no OAuth client
+#   --google-signin     Turn on Google sign-in and calendar (one console step)
+#   --skip-google-signin  Email and password sign-in only (the default)
 #   --no-transcription  Leave transcription off; no AssemblyAI key needed
+#   --yes               Skip the final confirmation
 #
 # Before running: accept the Google Cloud BAA for the account that owns this
 # project. Nothing here can do that for you, and no patient data belongs on
@@ -58,7 +65,7 @@ warn() { echo -e "${YELLOW}$*${NC}"; }
 
 usage() { sed -n '3,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
-PROJECT_ID="$(gcloud config get-value project 2>/dev/null || true)"
+PROJECT_ID=""
 ADMIN_EMAIL=""
 CUSTOM_HOSTNAME=""
 REGION=us-central1
@@ -68,8 +75,9 @@ DATA_DISK_GB=20
 PABLO_VERSION=""
 DEPLOY_REF=""
 BAA_ACCEPTED=false
-SKIP_GOOGLE_SIGNIN=false
+GOOGLE_SIGNIN=""
 NO_TRANSCRIPTION=false
+ASSUME_YES=false
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -83,7 +91,9 @@ while [ $# -gt 0 ]; do
         --version) PABLO_VERSION="$2"; shift 2 ;;
         --deploy-ref) DEPLOY_REF="$2"; shift 2 ;;
         --baa-accepted) BAA_ACCEPTED=true; shift ;;
-        --skip-google-signin) SKIP_GOOGLE_SIGNIN=true; shift ;;
+        --google-signin) GOOGLE_SIGNIN=true; shift ;;
+        --skip-google-signin) GOOGLE_SIGNIN=false; shift ;;
+        --yes) ASSUME_YES=true; shift ;;
         --no-transcription) NO_TRANSCRIPTION=true; shift ;;
         -h | --help) usage ;;
         *) echo "Unknown option: $1" >&2; usage 2 ;;
@@ -97,42 +107,78 @@ for tool in gcloud curl python3 openssl git; do
 done
 gcloud auth print-access-token >/dev/null 2>&1 || { echo "Sign in first: gcloud auth login" >&2; exit 1; }
 
-if [ -z "$ADMIN_EMAIL" ]; then
-    read -rp "Email you will sign in with: " ADMIN_EMAIL
-fi
-ADMIN_EMAIL="$(tr '[:upper:]' '[:lower:]' <<<"$ADMIN_EMAIL")"
-[[ "$ADMIN_EMAIL" =~ ^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$ ]] || { echo "Not an email address: ${ADMIN_EMAIL}" >&2; exit 1; }
-
-if [ -z "$PROJECT_ID" ]; then
-    read -rp "Google Cloud project ID (new or existing): " PROJECT_ID
-fi
-
 if [ -z "$PABLO_VERSION" ]; then
     PABLO_VERSION=$(git ls-remote --tags --refs --sort=-v:refname "$REPO_URL" 'v*' | head -1 | sed 's|.*refs/tags/||')
 fi
 [ -n "$PABLO_VERSION" ] || { echo "Could not find a release; pass --version." >&2; exit 1; }
 
-echo -e "${BOLD}Pablo — single-VM install${NC}"
-echo "  Project  ${PROJECT_ID}"
-echo "  Release  ${PABLO_VERSION}${DEPLOY_REF:+ (deploy files at ${DEPLOY_REF})}"
-echo "  VM       ${MACHINE_TYPE} in ${ZONE}, ${DATA_DISK_GB} GB database disk"
+# --- Questions, all before anything is created -------------------------------
+echo -e "${BOLD}Pablo — install on your own Google Cloud${NC}"
+echo
+
+if [ -z "$ADMIN_EMAIL" ]; then
+    read -rp "Your email (you sign in with it): " ADMIN_EMAIL
+fi
+ADMIN_EMAIL="$(tr '[:upper:]' '[:lower:]' <<<"$ADMIN_EMAIL")"
+[[ "$ADMIN_EMAIL" =~ ^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$ ]] || { echo "Not an email address: ${ADMIN_EMAIL}" >&2; exit 1; }
+
+# Never gcloud's current project by default: on an admin's machine that can
+# be anything, production included. Enter makes a new one.
+if [ -z "$PROJECT_ID" ]; then
+    suggested="pablo-$(openssl rand -hex 3)"
+    read -rp "Google Cloud project [new: ${suggested}]: " PROJECT_ID
+    PROJECT_ID="${PROJECT_ID:-$suggested}"
+fi
+if gcloud projects describe "$PROJECT_ID" >/dev/null 2>&1 \
+    && ! gcloud iam service-accounts describe "pablo-vm@${PROJECT_ID}.iam.gserviceaccount.com" --project="$PROJECT_ID" >/dev/null 2>&1 \
+    && [ "$ASSUME_YES" != true ]; then
+    warn "${PROJECT_ID} already exists and has no Pablo install in it."
+    read -rp "Install Pablo into it anyway? [y/N] " answer
+    [[ "$answer" =~ ^[Yy] ]] || { echo "Run this again and press Enter for a new project." >&2; exit 1; }
+fi
+
+if [ -z "$CUSTOM_HOSTNAME" ] && [ "$ASSUME_YES" != true ]; then
+    read -rp "Your own domain for Pablo, if you have one [Enter for an automatic address]: " CUSTOM_HOSTNAME
+fi
+
+if [ -z "$GOOGLE_SIGNIN" ]; then
+    GOOGLE_SIGNIN=false
+    if [ "$ASSUME_YES" != true ]; then
+        read -rp "Also sign in with Google and sync Google Calendar? Needs one step in the console. [y/N] " answer
+        [[ "$answer" =~ ^[Yy] ]] && GOOGLE_SIGNIN=true
+    fi
+fi
+
+ask_transcription
+
+if [ "$BAA_ACCEPTED" != true ]; then
+    cat <<EOF
+
+Your records are covered by Google's Business Associate Agreement once an
+administrator of your Google Cloud account accepts it, one time:
+  https://cloud.google.com/security/compliance/hipaa
+EOF
+    read -rp "Is it accepted? [y/N] " baa
+    [[ "$baa" =~ ^[Yy] ]] || { echo "Run this again once it is accepted." >&2; exit 1; }
+fi
+
+echo
+echo -e "${BOLD}Ready to install${NC}"
+echo "  Project   ${PROJECT_ID}"
+echo "  Address   ${CUSTOM_HOSTNAME:-an automatic *.sslip.io address}"
+echo "  Sign-in   ${ADMIN_EMAIL}, email and password$([ "$GOOGLE_SIGNIN" = true ] && echo ", and Google")"
+echo "  Server    ${MACHINE_TYPE} in ${ZONE}, ${DATA_DISK_GB} GB for records, backed up daily"
+echo "  Release   ${PABLO_VERSION}${DEPLOY_REF:+ (deploy files at ${DEPLOY_REF})}"
+echo "  Cost      about \$20 a month to Google, plus AI and transcription by use"
+if [ "$ASSUME_YES" != true ]; then
+    read -rp "Continue? [Y/n] " answer
+    [[ -z "$answer" || "$answer" =~ ^[Yy] ]] || exit 1
+fi
 
 # --- 1. Project ----------------------------------------------------------------
 step "1/7  Project and billing"
 ensure_project
 ensure_billing
-if [ "$BAA_ACCEPTED" != true ]; then
-    cat <<EOF
-
-Pablo stores clinical records, so this project must be covered by the Google
-Cloud Business Associate Agreement. An administrator of the account accepts
-it once in the console:
-  https://cloud.google.com/security/compliance/hipaa
-
-EOF
-    read -rp "Is the Google Cloud BAA accepted for this account? [y/N] " baa
-    [[ "$baa" =~ ^[Yy] ]] || { echo "Run this again once the BAA is accepted." >&2; exit 1; }
-fi
 enable_apis
 done_ "Project ready"
 
