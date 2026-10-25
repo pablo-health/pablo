@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .text import SAFETY_LINES
+from .text import SAFETY_LINES, without_cover
 
 if TYPE_CHECKING:
     from .repository import AwayPeriod
@@ -121,7 +121,9 @@ class AwayPeriodResponse(BaseModel):
             covering_name=covering_name,
             coverage_status=period.coverage_status,  # type: ignore[arg-type]  # CHECK-constrained
             acknowledgment_enabled=period.acknowledgment_enabled,
-            acknowledgment_text=period.acknowledgment_text,
+            # What the clinician reviews and saves never carries the cover
+            # sentence; it is added on send, once the colleague accepted.
+            acknowledgment_text=without_cover(period.acknowledgment_text, covering_name),
             active=period.is_active_on(today),
             ended_at=period.ended_at,
         )

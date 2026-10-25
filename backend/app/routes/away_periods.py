@@ -153,9 +153,7 @@ def preview_acknowledgment(
     away.require_colleague(body.covering_user_id)
     return AcknowledgmentPreviewResponse(
         acknowledgment_text=default_body(
-            body.resolved_return_date,
-            clinician_name(away.session, away.user.id),
-            away.covering_name(body.covering_user_id),
+            body.resolved_return_date, clinician_name(away.session, away.user.id)
         ),
         return_date=body.resolved_return_date,
     )
