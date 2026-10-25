@@ -19,6 +19,12 @@ export interface RuntimeConfig {
   showVerificationBadges: boolean
   introVideoUrl: string
   passkeysEnabled: boolean
+  /**
+   * False when the deployment has no Google OAuth client: no Google button.
+   * Optional, and absent counts as on, so a config built before this field
+   * existed keeps the button it always had.
+   */
+  googleSignInEnabled?: boolean
   resubscribeUrl: string
   publicBookingEnabled: boolean
   googleCalendarEnabled: boolean
