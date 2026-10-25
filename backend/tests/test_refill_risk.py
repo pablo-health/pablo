@@ -110,6 +110,8 @@ class TestInterruptionRisk:
             "Divalproex sodium DR",
             "Carbamazepine",
             "Clonidine 0.1 mg",
+            "Guanfacine ER 2 mg",
+            "Intuniv",
             "Buprenorphine/naloxone",
             "Methadone",
             "Quetiapine 50 mg",
