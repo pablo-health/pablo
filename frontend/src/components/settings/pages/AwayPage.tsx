@@ -5,6 +5,7 @@
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { useAwayPeriods, useEndAwayPeriod } from "@/hooks/useAwayPeriods"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import type { AwayPeriod } from "@/types/away"
 import { AwayPeriodForm } from "../away/AwayPeriodForm"
 import { SettingsBadge, SettingsCard } from "../ui"
@@ -27,6 +28,7 @@ function PeriodRow({
   onEdit: () => void
 }) {
   const end = useEndAwayPeriod()
+  const people = usePeopleTerm()
   return (
     <li
       data-testid={`away-period-${period.id}`}
@@ -43,7 +45,9 @@ function PeriodRow({
           Back {day(period.return_date)}
           {period.covering_name ? ` · ${period.covering_name} covering` : ""}
           {" · "}
-          {period.acknowledgment_enabled ? "Replying to clients" : "Not replying to clients"}
+          {period.acknowledgment_enabled
+            ? `Replying to ${people.many}`
+            : `Not replying to ${people.many}`}
         </p>
       </div>
       <div className="flex gap-2">
@@ -69,13 +73,14 @@ function PeriodRow({
  */
 export function AwayPage() {
   const { data } = useAwayPeriods()
+  const people = usePeopleTerm()
   const [editing, setEditing] = useState<AwayPeriod | "new" | null>(null)
   if (!data) return null
 
   return (
     <SettingsCard
       title="Away"
-      description="Clients who message you while you're away get a reply with the day you're back."
+      description={`${people.Many} who message you while you're away get a reply with the day you're back.`}
     >
       {editing ? (
         <AwayPeriodForm

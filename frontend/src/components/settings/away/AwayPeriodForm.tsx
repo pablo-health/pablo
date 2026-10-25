@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { ApiError } from "@/lib/api/client"
 import {
   useCreateAwayPeriod,
@@ -50,6 +51,8 @@ export function AwayPeriodForm({ period, coveringOptions, onDone }: AwayPeriodFo
   const [replyOn, setReplyOn] = useState(period?.acknowledgment_enabled ?? true)
   const [safetyLines, setSafetyLines] = useState(period?.safety_lines ?? "")
   const [problem, setProblem] = useState<string | null>(null)
+  const people = usePeopleTerm()
+  const replyLabel = `Reply to ${people.many} while you're away`
 
   const preview = usePreviewAcknowledgment()
   const create = useCreateAwayPeriod()
@@ -92,7 +95,7 @@ export function AwayPeriodForm({ period, coveringOptions, onDone }: AwayPeriodFo
   const save = () => {
     setProblem(null)
     if (!reply.trim()) {
-      setProblem("Write the reply clients will get.")
+      setProblem(`Write the reply ${people.many} will get.`)
       return
     }
     const body = { ...sent, acknowledgment_enabled: replyOn, acknowledgment_text: reply }
@@ -107,11 +110,11 @@ export function AwayPeriodForm({ period, coveringOptions, onDone }: AwayPeriodFo
     return (
       <div className="space-y-4" data-testid="away-review">
         <div className="flex items-center justify-between gap-4">
-          <p className="text-sm font-medium text-foreground">Reply to clients while you&apos;re away</p>
+          <p className="text-sm font-medium text-foreground">{replyLabel}</p>
           <Toggle
             checked={replyOn}
             onChange={setReplyOn}
-            label="Reply to clients while you're away"
+            label={replyLabel}
           />
         </div>
         <div className="grid gap-2">
@@ -130,7 +133,7 @@ export function AwayPeriodForm({ period, coveringOptions, onDone }: AwayPeriodFo
             {safetyLines}
           </div>
           <p className="text-[12.5px] text-muted-foreground">
-            Each client gets this once per conversation while you&apos;re away.
+            Each {people.one} gets this once per conversation while you&apos;re away.
           </p>
         </div>
         {problem && (
