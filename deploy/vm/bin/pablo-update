@@ -142,6 +142,9 @@ compose run --rm tool backend/bin/migrate_tenants.py
 
 log "starting"
 compose up -d --remove-orphans --wait --wait-timeout 300
+# The Caddyfile is mounted as a file, and new deploy files replace it rather
+# than edit it, so a running Caddy would keep the old one.
+compose up -d --no-deps --force-recreate caddy
 
 echo "$VERSION" > /etc/pablo/version
 echo "$REF" > /etc/pablo/ref
