@@ -264,7 +264,7 @@ credentials, and Cloud Logging for logs and the audit sink.
 
 For step-by-step deployment and compliance configuration, see:
 
-- **[docs/GCP_DEPLOYMENT.md](./GCP_DEPLOYMENT.md)** - deploying to Google Cloud.
+- **[deploy/vm/README.md](../deploy/vm/README.md)** - self-hosting on Google Cloud.
 - **[docs/SELF_HOSTING_HIPAA_GUIDE.md](./SELF_HOSTING_HIPAA_GUIDE.md)** -
   self-hosting with the HIPAA controls in place.
 
@@ -304,5 +304,5 @@ Open a pull request against `main`. Ensure `make check` passes locally
 ### Related Documentation
 
 - [HIPAA Audit Logs](./HIPAA_AUDIT_LOGS.md)
-- [GCP Deployment](./GCP_DEPLOYMENT.md)
+- [Self-hosting on Google Cloud](../deploy/vm/README.md)
 - [Self-Hosting HIPAA Guide](./SELF_HOSTING_HIPAA_GUIDE.md)

@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 #
 # Installed to /etc/cron.d/pablo by bootstrap.sh and pablo-update. Times are
-# UTC. The same schedules setup-solo.sh gives Cloud Scheduler.
+# UTC.
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 

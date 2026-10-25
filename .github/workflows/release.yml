@@ -1,7 +1,7 @@
 name: Release
 
 # Publishes OSS container images to GitHub Container Registry (ghcr.io).
-# Self-hosters pull these pre-built images via setup-solo.sh — no Cloud Build required.
+# Self-hosters pull these pre-built images onto their VM (install.sh, pablo-update) — no Cloud Build required.
 #
 # Triggers:
 #   - push of a tag matching v* (e.g. v0.1.0) publishes :vX.Y.Z + :latest
