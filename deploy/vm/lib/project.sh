@@ -67,6 +67,14 @@ ensure_billing() {
 
 enable_apis() {
     gcloud services enable "${APIS[@]}" --project="$PROJECT_ID"
+    # On a new project "enabled" comes back before Compute Engine serves
+    # requests; the next step would fail with SERVICE_DISABLED.
+    local tries=36
+    until gcloud compute regions describe "$REGION" --project="$PROJECT_ID" >/dev/null 2>&1; do
+        tries=$((tries - 1))
+        [ "$tries" -gt 0 ] || { echo "Compute Engine did not come up; run this again in a few minutes." >&2; exit 1; }
+        sleep 5
+    done
 }
 
 # Sets VM_SA.
