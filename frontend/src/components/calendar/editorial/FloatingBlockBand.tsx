@@ -224,6 +224,8 @@ function SkippedMarker({
   actions: FloatingBlockActions
   style: React.CSSProperties
 }) {
+  // Above event cards (z-10) on a solid ground: the window often opens on a
+  // session, and a marker underneath one could not be reached.
   return (
     <button
       type="button"
@@ -232,8 +234,8 @@ function SkippedMarker({
         event.stopPropagation()
         if (!actions.pending) actions.onPutBack(block)
       }}
-      className="ed-floating-block absolute z-[5] flex items-center rounded-full px-2 text-[10.5px] font-semibold opacity-80"
-      style={style}
+      className="ed-floating-block absolute z-[15] flex items-center rounded-full px-2 text-[10.5px] font-semibold shadow-sm"
+      style={{ ...style, backgroundColor: "var(--ed-canvas-elev)" }}
       aria-label={`Put back ${block.label}`}
     >
       Put back {block.label}
