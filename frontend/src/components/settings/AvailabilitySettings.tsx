@@ -786,8 +786,7 @@ function RuleParamsFields({
       return (
         <div className="grid gap-4">
           <p className="text-sm text-neutral-600">
-            The time moves to wherever the day leaves room inside the window. Booking links and
-            client self-booking never take it.
+            The time moves to wherever the day leaves room inside the window.
           </p>
           <div className="flex flex-wrap items-end gap-4">
             <div className="grid gap-2">
