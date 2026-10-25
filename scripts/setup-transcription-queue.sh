@@ -16,6 +16,7 @@
 #
 # Usage:
 #   GCP_PROJECT_ID=pablohealth-dev  ./scripts/setup-transcription-queue.sh
+#   BACKEND_SA=<sa email> GCP_PROJECT_ID=... ./scripts/setup-transcription-queue.sh  (backend off Cloud Run)
 #   GCP_PROJECT_ID=pablohealth-prod ./scripts/setup-transcription-queue.sh
 
 set -euo pipefail
@@ -55,23 +56,28 @@ fi
 echo ""
 
 # --- 3. Grant Cloud Run invoker role ---
-echo "--- Granting Cloud Run invoker role ---"
-gcloud run services add-iam-policy-binding pablo-backend \
-    --region="${REGION}" \
-    --member="serviceAccount:${SA_EMAIL}" \
-    --role="roles/run.invoker" \
-    --project="${PROJECT_ID}" --quiet 2>/dev/null || true
-echo "Granted roles/run.invoker on pablo-backend"
-echo ""
+# A backend that is not on Cloud Run (the single-VM install passes its
+# BACKEND_SA) checks the task's OIDC token itself; there is no service to
+# grant invoke on.
+if [ -z "${BACKEND_SA:-}" ]; then
+    echo "--- Granting Cloud Run invoker role ---"
+    gcloud run services add-iam-policy-binding pablo-backend \
+        --region="${REGION}" \
+        --member="serviceAccount:${SA_EMAIL}" \
+        --role="roles/run.invoker" \
+        --project="${PROJECT_ID}" --quiet 2>/dev/null || true
+    echo "Granted roles/run.invoker on pablo-backend"
+    echo ""
+fi
 
 # Backend's Cloud Run SA needs enqueuer (initial enqueue from the route
 # handlers). IMPORTANT: this auto-detects the *current* Cloud Run SA. If the
 # backend ever migrates to a different SA (e.g. from compute-default to a
 # dedicated one) this script must be re-run, otherwise enqueues will start
 # failing with PERMISSION_DENIED in production. See bd issue THERAPY-ooow.
-BACKEND_SA="$(gcloud run services describe pablo-backend \
+BACKEND_SA="${BACKEND_SA:-$(gcloud run services describe pablo-backend \
     --region="${REGION}" --project="${PROJECT_ID}" \
-    --format='value(spec.template.spec.serviceAccountName)' 2>/dev/null || echo "")"
+    --format='value(spec.template.spec.serviceAccountName)' 2>/dev/null || echo "")}"
 
 # The enqueued Cloud Task carries an OIDC token signed by cloud-tasks-invoker.
 # To set that identity, the backend SA must be allowed to impersonate (actAs)
