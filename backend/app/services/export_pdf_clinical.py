@@ -11,6 +11,9 @@ escaped, because ``Paragraph`` parses its text as markup.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+
+# escape() quotes text going into Paragraph markup; nothing here parses XML.
+# nosemgrep
 from xml.sax.saxutils import escape
 
 from reportlab.lib.units import inch

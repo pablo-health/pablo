@@ -158,6 +158,9 @@ def _note_expired_token_subject(token: str) -> None:
     signing in again be read as that person's session.
     """
     with contextlib.suppress(Exception):
+        # Unverified on purpose, per the docstring: the caller is the
+        # ExpiredIdTokenError branch, and the request still gets its 401.
+        # nosemgrep
         claims = jwt.decode(token, options={"verify_signature": False, "verify_exp": False})
         _bind_auth_session(claims, claimed=True)
         subject = claims.get("sub")

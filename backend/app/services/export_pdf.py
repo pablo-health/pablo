@@ -12,6 +12,9 @@ from __future__ import annotations
 
 from io import BytesIO
 from typing import TYPE_CHECKING, Any
+
+# escape() quotes text going into Paragraph markup; nothing here parses XML.
+# nosemgrep
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
