@@ -175,6 +175,16 @@ if [ "$ASSUME_YES" != true ]; then
     [[ -z "$answer" || "$answer" =~ ^[Yy] ]] || exit 1
 fi
 
+# From here on a failure is resumable; say how, so a second run does not make
+# a second project.
+config_file=""
+on_exit() {
+    local status=$?
+    [ -z "$config_file" ] || rm -f "$config_file"
+    [ "$status" -eq 0 ] || warn "\nStopped. To pick up where this left off:  ./install.sh --project ${PROJECT_ID}" >&2
+}
+trap on_exit EXIT
+
 # --- 1. Project ----------------------------------------------------------------
 step "1/7  Project and billing"
 ensure_project
@@ -232,7 +242,6 @@ ensure_firewall
 ensure_data_disk
 
 config_file="$(mktemp)"
-trap 'rm -f "$config_file"' EXIT
 # Non-secret settings only; the VM reads secrets from Secret Manager itself.
 cat > "$config_file" <<EOF
 PROJECT_ID=${PROJECT_ID}
