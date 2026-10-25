@@ -1,0 +1,45 @@
+# Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+#
+# One hostname for the whole app. Caddy gets and renews its certificate from
+# Let's Encrypt on its own (ports 80 and 443 must be open to the internet).
+# The frontend owns four paths under /api (its config, the Firebase session
+# cookie's login and logout, and the setup-token exchange); every other /api
+# path is the backend's, /api/auth/session included. Firebase sign-in only:
+# the OIDC provider's /api/auth/* catch-all is not routed here.
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$PABLO_HOST} {
+	encode zstd gzip
+
+	request_body {
+		max_size 64MB
+	}
+
+	@frontend_api path /api/config /api/login /api/logout /api/auth/exchange-setup-token
+	handle @frontend_api {
+		reverse_proxy frontend:3000
+	}
+
+	handle /api/* {
+		reverse_proxy backend:8000 {
+			# Streamed responses (note generation) go out as they are written.
+			flush_interval -1
+			transport http {
+				read_timeout 300s
+				write_timeout 300s
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

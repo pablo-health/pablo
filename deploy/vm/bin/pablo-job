@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+#
+# Run one scheduled job from the crontab: `pablo-job <job-module> [KEY=VALUE…]`
+# runs `python -m app.jobs.<job-module>` in the backend image with the
+# backend's env plus the given variables. One run per job at a time; a run
+# that outlives its hour is stopped. Ends with one JSON line (job, status,
+# seconds), which reaches Cloud Logging for alerts on a failed or missing run.
+
+set -uo pipefail
+
+JOB="$1"
+shift
+ENV_ARGS=()
+for pair in "$@"; do ENV_ARGS+=(-e "$pair"); done
+
+# shellcheck source=/dev/null
+source /etc/pablo/config.env
+VERSION="$(cat /etc/pablo/version)"
+
+started=$(date +%s)
+flock -n "/run/lock/pablo-job-${JOB}.lock" \
+    timeout 3600 \
+    env PABLO_VERSION="$VERSION" PABLO_HOST="$PABLO_HOST" \
+    docker compose -f /opt/pablo/current/compose.yaml run --rm "${ENV_ARGS[@]}" \
+    tool -m "app.jobs.${JOB}"
+code=$?
+
+status=ok
+[ "$code" -eq 0 ] || status=failed
+printf '{"event":"job_completed","job":"%s","status":"%s","exit_code":%d,"seconds":%d}\n' \
+    "$JOB" "$status" "$code" "$(($(date +%s) - started))" | logger -t pablo-job
+exit "$code"

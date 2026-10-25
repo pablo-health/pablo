@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+#
+# Bring this VM to a release: `sudo pablo-update [vX.Y.Z [deploy-ref]]`
+# (default: the one it runs now). Fetches that release's deploy files, renders
+# the env files from config.env and Secret Manager, pulls the images,
+# migrates, then restarts the stack in place.
+#
+# The version is the image tag; the deploy ref is the git ref the deploy files
+# come from, the same tag unless given. A branch ref (testing a change before
+# it is released) is re-fetched on every run, since a branch moves.
+#
+# In place, not blue-green: two copies of the backend side by side do not fit
+# in 2 GB next to Postgres, so an update costs about a minute of downtime.
+# Migrations run before the restart, against the old code still serving, the
+# same order every deployment of this engine uses.
+
+set -euo pipefail
+
+# shellcheck source=/dev/null
+source /etc/pablo/config.env
+if [ $# -gt 0 ]; then
+    VERSION="$1"
+    REF="${2:-$1}"
+else
+    VERSION="$(cat /etc/pablo/version 2>/dev/null || echo "$PABLO_VERSION")"
+    REF="$(cat /etc/pablo/ref 2>/dev/null || echo "${DEPLOY_REF:-$VERSION}")"
+fi
+RELEASE_DIR="/opt/pablo/deploy/${REF//\//_}"
+
+log() { echo "[pablo-update] $*"; }
+secret() { gcloud secrets versions access latest --secret="$1" --project="$PROJECT_ID"; }
+optional_secret() { secret "$1" 2>/dev/null || true; }
+
+# --- Deploy files ------------------------------------------------------------
+if [ ! -d "${RELEASE_DIR}/.git" ]; then
+    log "fetching deploy files at ${REF}"
+    rm -rf "$RELEASE_DIR"
+    git clone -q --depth 1 --branch "$REF" --filter=blob:none --sparse "$REPO_URL" "$RELEASE_DIR"
+elif [[ "$REF" != v* ]]; then
+    git -C "$RELEASE_DIR" fetch -q --depth 1 origin "$REF"
+    git -C "$RELEASE_DIR" reset -q --hard FETCH_HEAD
+fi
+# Directories only (sparse-checkout's cone mode); backend/bin is for
+# allow_email.py. Set every run, so an interrupted first fetch heals.
+git -C "$RELEASE_DIR" sparse-checkout set deploy/vm backend/bin
+ln -sfn "${RELEASE_DIR}/deploy/vm" /opt/pablo/current
+install -m 0644 /opt/pablo/current/crontab /etc/cron.d/pablo
+# New deploy files can bring a new version of this script; run that one.
+if ! cmp -s /opt/pablo/current/bin/pablo-update "$0"; then
+    install -m 0755 /opt/pablo/current/bin/pablo-* /usr/local/bin/
+    exec /usr/local/bin/pablo-update "$VERSION" "$REF"
+fi
+install -m 0755 /opt/pablo/current/bin/pablo-* /usr/local/bin/
+
+# --- Env files (0600, root) -------------------------------------------------
+# Read up front: a failed lookup inside the heredocs below would not stop
+# the script, and would write an empty secret.
+ORIGIN="https://${PABLO_HOST}"
+# The clinician's one OAuth client serves Google sign-in and Google Calendar.
+GOOGLE_CALENDAR_ENABLED=false
+[ -n "$GOOGLE_CLIENT_ID" ] && GOOGLE_CALENDAR_ENABLED=true
+DB_PASSWORD="$(secret pablo-db-password)"
+JWT_SECRET_KEY="$(secret JWT_SECRET_KEY)"
+CALENDAR_KEY="$(secret GOOGLE_CALENDAR_ENCRYPTION_KEY)"
+ASSEMBLYAI_API_KEY="$(optional_secret pablo-assemblyai-api-key)"
+AUTH_SECRET="$(secret AUTH_SECRET)"
+COOKIE_KEY="$(secret AUTH_COOKIE_SIGNATURE_KEY)"
+# Empty when the install chose email and password only.
+GOOGLE_CLIENT_SECRET="$(optional_secret GOOGLE_CLIENT_SECRET)"
+umask 077
+cat > /etc/pablo/backend.env <<ENV
+ENVIRONMENT=production
+PORT=8000
+ENFORCE_HTTPS=true
+TRUSTED_PROXY_IPS=172.30.0.10
+GCP_PROJECT_ID=${PROJECT_ID}
+GOOGLE_CLOUD_PROJECT=${PROJECT_ID}
+FIREBASE_PROJECT_ID=${PROJECT_ID}
+GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+DATABASE_BACKEND=postgres
+DATABASE_URL=postgresql://pablo:${DB_PASSWORD}@host.docker.internal:5432/pablo
+USE_REDIS=true
+REDIS_HOST=redis
+RESTRICT_SIGNUPS=true
+APP_URL=${ORIGIN}
+BACKEND_BASE_URL=${ORIGIN}
+CORS_ORIGINS=${ORIGIN}
+WEBAUTHN_ORIGINS=${ORIGIN}
+AI_MODEL=google:gemini-3.1-pro-preview
+GOOGLE_GENAI_USE_VERTEXAI=true
+GOOGLE_REGION=global
+VERTEX_REGION=global
+TRANSCRIPTION_ENABLED=${TRANSCRIPTION_ENABLED:-true}
+TRANSCRIPTION_PROVIDER=${TRANSCRIPTION_PROVIDER}
+TRANSCRIPTION_AUDIO_BUCKET=${AUDIO_BUCKET}
+TRANSCRIPTION_QUEUE_LOCATION=${REGION}
+CALENDAR_SYNC_TASK_LOCATION=${REGION}
+TRANSCRIPTION_BACKEND_CALLBACK_URL=${ORIGIN}
+FILE_STORAGE_PROVIDER=gcs
+PATIENT_DOCUMENTS_GCS_BUCKET=${DOCUMENTS_BUCKET}
+COMPLIANCE_REPORT_BUCKET=${COMPLIANCE_BUCKET}
+PABLO_VERSION=${VERSION}
+JWT_SECRET_KEY=${JWT_SECRET_KEY}
+GOOGLE_CALENDAR_ENCRYPTION_KEY=${CALENDAR_KEY}
+GOOGLE_CALENDAR_CLIENT_ID=${GOOGLE_CLIENT_ID}
+GOOGLE_CALENDAR_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+ASSEMBLYAI_API_KEY=${ASSEMBLYAI_API_KEY}
+ENV
+
+cat > /etc/pablo/frontend.env <<ENV
+PORT=3000
+HOSTNAME=0.0.0.0
+API_URL=${ORIGIN}
+PUBLIC_API_URL=${ORIGIN}
+AUTH_URL=${ORIGIN}
+APP_HOSTS=${PABLO_HOST}
+DEV_MODE=false
+DATA_MODE=api
+ENABLE_LOCAL_AUTH=false
+FIREBASE_PROJECT_ID=${PROJECT_ID}
+GOOGLE_CLOUD_PROJECT=${PROJECT_ID}
+GCLOUD_PROJECT=${PROJECT_ID}
+NFAE_ALLOW_CLIENT_REFRESH_TOKEN=true
+GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+GOOGLE_CALENDAR_ENABLED=${GOOGLE_CALENDAR_ENABLED}
+NEXT_PUBLIC_FIREBASE_API_KEY=${FIREBASE_API_KEY}
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=${FIREBASE_AUTH_DOMAIN}
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=${PROJECT_ID}
+NEXT_PUBLIC_FIREBASE_APP_ID=${FIREBASE_APP_ID}
+AUTH_SECRET=${AUTH_SECRET}
+AUTH_COOKIE_SIGNATURE_KEY=${COOKIE_KEY}
+GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+ENV
+umask 022
+unset DB_PASSWORD JWT_SECRET_KEY CALENDAR_KEY ASSEMBLYAI_API_KEY AUTH_SECRET COOKIE_KEY GOOGLE_CLIENT_SECRET
+
+# --- Images, schema, restart -----------------------------------------------
+compose() {
+    PABLO_VERSION="$VERSION" PABLO_HOST="$PABLO_HOST" ACME_EMAIL="$ADMIN_EMAIL" \
+        docker compose -f /opt/pablo/current/compose.yaml "$@"
+}
+
+log "pulling ${VERSION}"
+compose --profile tools pull --quiet
+
+log "migrating"
+compose run --rm tool backend/bin/migrate.py
+compose run --rm tool backend/bin/migrate_tenants.py
+
+log "starting"
+compose up -d --remove-orphans --wait --wait-timeout 300
+# The Caddyfile is mounted as a file, and new deploy files replace it rather
+# than edit it, so a running Caddy would keep the old one.
+compose up -d --no-deps --force-recreate caddy
+
+echo "$VERSION" > /etc/pablo/version
+echo "$REF" > /etc/pablo/ref
+docker image prune -af --filter "until=168h" >/dev/null
+log "serving ${VERSION} (deploy files at ${REF}) at ${ORIGIN}"

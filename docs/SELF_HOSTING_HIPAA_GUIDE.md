@@ -6,7 +6,7 @@ Self-hosting Pablo means **you** are the HIPAA covered entity (or business assoc
 
 You need a BAA with every vendor that handles PHI on your behalf.
 
-| | Self-Hosted | Pablo Solo |
+| | Self-Hosted | Pablo One |
 |---|---|---|
 | Cloud provider BAA | You sign directly with Google Cloud | We cover it |
 | AI model provider BAA | You sign with Google (Gemini) or Anthropic (Claude) | We cover it |
@@ -60,7 +60,7 @@ Before you send invitations to real clients, use an email provider that will sig
 
 HIPAA requires that only authorized individuals can access PHI.
 
-| | Self-Hosted | Pablo Solo |
+| | Self-Hosted | Pablo One |
 |---|---|---|
 | Authentication | You configure Identity Platform | Pre-configured |
 | MFA | You enable TOTP or use IAP | Mandatory TOTP |
@@ -88,7 +88,7 @@ Migrations grant the role only to the user running them. If you run migrations a
 
 ## 3. Encryption
 
-| | Self-Hosted | Pablo Solo |
+| | Self-Hosted | Pablo One |
 |---|---|---|
 | In transit | Cloud Run provides automatic TLS | Same |
 | At rest | Cloud SQL encrypts by default (AES-256) | Same |
@@ -103,7 +103,7 @@ Migrations grant the role only to the user running them. If you run migrations a
 
 HIPAA requires audit trails for PHI access.
 
-| | Self-Hosted | Pablo Solo |
+| | Self-Hosted | Pablo One |
 |---|---|---|
 | Application logs | Cloud Run logs to Cloud Logging | Same |
 | Data access logs | You enable Cloud Audit Logs | Pre-configured |
@@ -118,7 +118,7 @@ HIPAA requires audit trails for PHI access.
 
 ## 5. Backup and Disaster Recovery
 
-| | Self-Hosted | Pablo Solo |
+| | Self-Hosted | Pablo One |
 |---|---|---|
 | Database backups | You enable Cloud SQL automated backups | Automated daily |
 | Backup testing | You verify restores work | We verify |
@@ -131,7 +131,7 @@ HIPAA requires audit trails for PHI access.
 
 ## 6. Network Security
 
-| | Self-Hosted | Pablo Solo |
+| | Self-Hosted | Pablo One |
 |---|---|---|
 | TLS certificates | Google-managed (Cloud Run) | Same |
 | DDoS protection | Cloud Run built-in | Same + Cloud Armor |
@@ -150,7 +150,7 @@ Cloud Run provides a good security baseline. If you self-host, consider these ha
 
 **You are responsible for pulling updates when we release them.** Security patches, bug fixes, and new features will not apply automatically to your deployment.
 
-| | Self-Hosted | Pablo Solo |
+| | Self-Hosted | Pablo One |
 |---|---|---|
 | Security patches | You pull and redeploy | Automatic |
 | Feature updates | You pull and redeploy | Automatic |
@@ -197,6 +197,6 @@ We will never spam you or share your information. This is solely for your protec
 
 We built Pablo because we believe therapists shouldn't drown in paperwork. If managing infrastructure isn't your thing, we're here to help.
 
-**Pablo Solo** ($19-24/mo) handles all of the above — BAA coverage, automatic updates, backups, audit logging, and HIPAA compliance — so you can focus on your clients.
+**Pablo One** ($59 per clinician a month, founding rate) handles all of the above — BAA coverage, automatic updates, backups, audit logging, and HIPAA compliance — so you can focus on your clients.
 
 Learn more at [pablo.health](https://pablo.health)
