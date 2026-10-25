@@ -18,8 +18,10 @@ What each test would catch: a second acknowledgment on one thread in one
 period; none for a new period on the same thread; anything sent before the
 period starts, after it ends or is ended, or with the acknowledgment off; a
 client acknowledged on somebody else's dates; a body that is not the
-reviewed text plus the safety lines, or that lacks 911 or 988; a refill line
-that names anything but the return date or the covering colleague; and the
+reviewed text plus the safety lines, or that lacks 911 or 988; a colleague
+named before they accepted or after they declined, or a cover sentence left in
+a body saved with it; a refill line that names anything but the accepted
+colleague or, without one, the return date; and the
 away routes letting dates change without the text being reviewed again,
 overlapping, or naming somebody outside the practice to cover.
 
@@ -71,6 +73,7 @@ _TOKEN_B = "away-ack-client-b"  # noqa: S105 - test credential
 _DAY = date(2026, 3, 10)
 _NOON = datetime(2026, 3, 10, 12, 0, tzinfo=UTC)
 _REVIEWED = "Thanks for writing. I'm away and back on Monday, March 16."
+_COVER_SENTENCE = f"{_COLLEAGUE_NAME} is covering in the meantime."
 
 
 class _Seed:
@@ -185,6 +188,7 @@ def _period(  # noqa: PLR0913 — one row, every column a test may vary
     enabled: bool = True,
     ended: bool = False,
     user_id: str = _CLINICIAN,
+    body: str = _REVIEWED,
 ) -> str:
     period_id = str(uuid.uuid4())
     with engine.begin() as conn:
@@ -206,7 +210,7 @@ def _period(  # noqa: PLR0913 — one row, every column a test may vary
                 "cover": covering,
                 "coverage": None if covering is None else coverage,
                 "enabled": enabled,
-                "body": _REVIEWED,
+                "body": body,
                 "ended": datetime.now(UTC) if ended else None,
             },
         )
@@ -336,6 +340,75 @@ class TestPortalAcknowledgment:
         assert "988" in body
 
     @pytest.mark.parametrize(
+        ("coverage", "named"),
+        [
+            pytest.param("requested", False, id="asked-not-answered"),
+            pytest.param("accepted", True, id="accepted"),
+            pytest.param("declined", False, id="declined"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "stored",
+        [
+            pytest.param(_REVIEWED, id="saved-without-the-sentence"),
+            pytest.param(f"{_REVIEWED} {_COVER_SENTENCE}", id="saved-with-the-sentence"),
+        ],
+    )
+    def test_the_colleague_is_named_only_while_they_have_accepted(  # noqa: PLR0913
+        self,
+        engine: Engine,
+        tenant_schema: str,
+        seed: _Seed,
+        coverage: str,
+        named: bool,
+        stored: str,
+    ) -> None:
+        from app.away.text import SAFETY_LINES  # noqa: PLC0415
+
+        _period(
+            engine,
+            tenant_schema,
+            start=_DAY,
+            end=_DAY + timedelta(days=5),
+            covering=_COLLEAGUE,
+            coverage=coverage,
+            body=stored,
+        )
+        body = _acknowledge(
+            tenant_schema, seed.mine[0], _thread(engine, tenant_schema, seed.mine[0])
+        )
+
+        expected = f"{_REVIEWED} {_COVER_SENTENCE}" if named else _REVIEWED
+        assert body == f"{expected}\n\n{SAFETY_LINES}"
+
+    def test_a_decline_after_the_dates_are_set_stops_the_naming_with_no_edit(
+        self, engine: Engine, tenant_schema: str, seed: _Seed
+    ) -> None:
+        period = _period(
+            engine, tenant_schema, start=_DAY, end=_DAY + timedelta(days=5), covering=_COLLEAGUE
+        )
+        first = _acknowledge(
+            tenant_schema, seed.mine[0], _thread(engine, tenant_schema, seed.mine[0])
+        )
+        assert first is not None
+        assert _COVER_SENTENCE in first
+
+        with engine.begin() as conn:
+            conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
+            conn.execute(
+                text(
+                    "UPDATE clinician_away_periods SET coverage_status = 'declined' "
+                    "WHERE id = CAST(:id AS uuid)"
+                ),
+                {"id": period},
+            )
+        later = _acknowledge(
+            tenant_schema, seed.mine[1], _thread(engine, tenant_schema, seed.mine[1])
+        )
+        assert later is not None
+        assert _COLLEAGUE_NAME not in later
+
+    @pytest.mark.parametrize(
         ("start_offset", "end_offset", "enabled", "ended"),
         [
             pytest.param(1, 5, True, False, id="not-started-yet"),
@@ -402,7 +475,7 @@ class TestRefillAcknowledgment:
         assert "988" in line
         assert not re.search(r"\d{1,2}:\d{2}|\b(am|pm)\b", line, re.IGNORECASE)
 
-    def test_names_the_covering_colleague_when_there_is_one(
+    def test_names_only_the_colleague_once_they_accepted(
         self, engine: Engine, tenant_schema: str, seed: _Seed
     ) -> None:
         _period(
@@ -417,9 +490,8 @@ class TestRefillAcknowledgment:
         line = _refill(tenant_schema, seed.mine[0])
 
         assert line is not None
-        assert line.startswith(
-            f"Your request is in. It will be reviewed by Monday, March 16 or by {_COLLEAGUE_NAME}."
-        )
+        assert line.startswith(f"Your request is in. {_COLLEAGUE_NAME} will review it.\n\n")
+        assert "March 16" not in line
 
     @pytest.mark.parametrize("coverage", ["requested", "declined"])
     def test_a_colleague_who_has_not_accepted_is_not_named(
@@ -585,7 +657,7 @@ class TestAwayRoutes:
         assert [p["id"] for p in listed["periods"]] == [period["id"]]
         assert listed["covering_options"] == [{"user_id": _COLLEAGUE, "name": _COLLEAGUE_NAME}]
 
-    def test_the_preview_shows_the_return_date_and_the_covering_colleague(
+    def test_the_preview_shows_the_return_date_and_not_the_colleague_yet_to_answer(
         self, client: TestClient
     ) -> None:
         preview = client.post(
@@ -600,9 +672,26 @@ class TestAwayRoutes:
 
         assert preview.status_code == 200, preview.text
         assert preview.json()["acknowledgment_text"] == (
-            f"Thanks for your message. {_CLINICIAN_NAME} is away and back on Monday, March 16. "
-            f"{_COLLEAGUE_NAME} is covering in the meantime."
+            f"Thanks for your message. {_CLINICIAN_NAME} is away and back on Monday, March 16."
         )
+
+    def test_a_body_saved_with_the_cover_sentence_comes_back_without_it(
+        self, client: TestClient, engine: Engine, tenant_schema: str
+    ) -> None:
+        """Saved before the sentence moved to send time: the clinician never sees it again."""
+        _period(
+            engine,
+            tenant_schema,
+            start=_today() - timedelta(days=1),
+            end=_today() + timedelta(days=5),
+            covering=_COLLEAGUE,
+            body=f"{_REVIEWED} {_COVER_SENTENCE}",
+        )
+
+        [listed] = client.get("/api/away-periods").json()["periods"]
+
+        assert listed["acknowledgment_text"] == _REVIEWED
+        assert listed["covering_name"] == _COLLEAGUE_NAME
 
     def test_new_dates_need_the_text_reviewed_again(self, client: TestClient) -> None:
         period = _set_away(client)

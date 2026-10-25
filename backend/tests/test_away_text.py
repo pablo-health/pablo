@@ -2,10 +2,13 @@
 
 """The words an away acknowledgment is made of.
 
-What these would catch: a suggested body that drops the return date or the
-covering colleague, an acknowledgment that adds anything to the reviewed text
-besides the safety lines, a refill line that names a reviewer other than the
-return date or the colleague, and a time of day appearing anywhere.
+What these would catch: a suggested body that drops the return date or writes
+the covering colleague in before they answered, a cover sentence sent for a
+colleague who has not accepted or missing for one who has, a cover sentence
+left over in a body saved before it moved to send time, an acknowledgment that
+adds anything else to the reviewed text besides the safety lines, a refill
+line that names anyone but the accepted colleague (or, without one, anything
+but the return date), and a time of day appearing anywhere.
 """
 
 from __future__ import annotations
@@ -23,6 +26,8 @@ from app.away.text import (
     default_body,
     format_day,
     refill_line,
+    with_cover,
+    without_cover,
 )
 from pydantic import ValidationError
 
@@ -40,9 +45,49 @@ def test_the_suggested_body_names_the_return_date() -> None:
     )
 
 
-def test_the_suggested_body_names_the_covering_colleague() -> None:
+def test_the_suggested_body_never_names_the_covering_colleague() -> None:
+    """They have only been asked; the sentence is added on send once they accept."""
     body = default_body(_MONDAY, "Robin Avery", "Sam Okafor")
-    assert body.endswith("Sam Okafor is covering in the meantime.")
+    assert body == default_body(_MONDAY, "Robin Avery")
+    assert "Sam Okafor" not in body
+
+
+_SAVED = "Thanks for your message. Robin Avery is away and back on Monday, November 2."
+_COVER = "Sam Okafor is covering in the meantime."
+
+
+@pytest.mark.parametrize(
+    ("covering", "accepted", "expected"),
+    [
+        pytest.param("Sam Okafor", True, f"{_SAVED} {_COVER}", id="accepted"),
+        pytest.param("Sam Okafor", False, _SAVED, id="asked-or-declined"),
+        pytest.param(None, False, _SAVED, id="nobody-named"),
+    ],
+)
+def test_the_cover_sentence_follows_the_colleagues_answer(
+    covering: str | None, accepted: bool, expected: str
+) -> None:
+    assert with_cover(_SAVED, covering, accepted=accepted) == expected
+
+
+@pytest.mark.parametrize("accepted", [True, False])
+def test_a_body_saved_with_the_cover_sentence_is_sent_with_at_most_one(accepted: bool) -> None:
+    """Bodies saved before the sentence moved to send time still carry it."""
+    sent = with_cover(f"{_SAVED} {_COVER}", "Sam Okafor", accepted=accepted)
+    assert sent == (f"{_SAVED} {_COVER}" if accepted else _SAVED)
+
+
+def test_taking_the_cover_sentence_out_leaves_the_clinicians_own_words() -> None:
+    edited = f"Back on the 2nd.\n{_COVER} Write to the front desk for scheduling."
+    assert without_cover(edited, "Sam Okafor") == (
+        "Back on the 2nd.\nWrite to the front desk for scheduling."
+    )
+    assert without_cover(edited, None) == edited
+    assert without_cover(f"One.\n\n{_COVER}\n\nTwo.", "Sam Okafor") == "One.\n\nTwo."
+    assert without_cover("One.\n\nTwo.", "Sam Okafor") == "One.\n\nTwo."
+    assert without_cover(f"{_SAVED} Lee Park is covering in the meantime.", "Sam Okafor") == (
+        f"{_SAVED} Lee Park is covering in the meantime."
+    )
 
 
 def test_a_clinician_with_no_name_on_file_is_your_clinician() -> None:
@@ -65,13 +110,10 @@ def test_composing_adds_the_safety_lines_and_nothing_else() -> None:
     ("covering", "expected"),
     [
         (None, "Your request is in. It will be reviewed by Monday, November 2."),
-        (
-            "Sam Okafor",
-            "Your request is in. It will be reviewed by Monday, November 2 or by Sam Okafor.",
-        ),
+        ("Sam Okafor", "Your request is in. Sam Okafor will review it."),
     ],
 )
-def test_the_refill_line_names_the_return_date_or_the_colleague(
+def test_the_refill_line_names_the_accepted_colleague_or_else_the_return_date(
     covering: str | None, expected: str
 ) -> None:
     line = refill_line(_MONDAY, covering)

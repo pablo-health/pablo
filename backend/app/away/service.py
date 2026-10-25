@@ -60,6 +60,32 @@ def clinician_today(session: Session, user_id: str, now: datetime) -> date:
     return now.astimezone(clinician_zone(session, user_id)).date()
 
 
+def accepted_cover_name(session: Session, period: AwayPeriod) -> str | None:
+    """The covering colleague's name, only once they accepted.
+
+    A colleague still asked, or who declined, is not covering anything, so
+    no acknowledgment names them.
+    """
+    if period.covering_user_id is None or not period.coverage_accepted:
+        return None
+    return clinician_name(session, period.covering_user_id)
+
+
+def acknowledgment_body(session: Session, period: AwayPeriod) -> str:
+    """The reviewed body as sent today, before the safety lines.
+
+    The cover sentence follows the colleague's current answer: present while
+    they have accepted, absent while they are still asked or have declined,
+    with no edit by the away clinician either way.
+    """
+    covering = (
+        None
+        if period.covering_user_id is None
+        else clinician_name(session, period.covering_user_id)
+    )
+    return text.with_cover(period.acknowledgment_text, covering, accepted=period.coverage_accepted)
+
+
 def active_or_next_away_period(session: Session, user_id: str, now: datetime) -> AwayPeriod | None:
     """The clinician's period in effect at *now*, else their next one, else ``None``.
 
@@ -92,7 +118,7 @@ class PortalAwayAcknowledger:
             thread_id=thread_id,
             patient_id=patient_id,
             sender=SENDER_PRACTICE,
-            body=text.compose(period.acknowledgment_text),
+            body=text.compose(acknowledgment_body(self._session, period)),
             created_at=now,
         )
         inserted = self._session.execute(
@@ -129,13 +155,7 @@ class PortalAwayAcknowledger:
         period = self._governing_period(practice_schema, patient_id, now)
         if period is None:
             return None
-        # Only a colleague who accepted is named: one still asked, or who
-        # declined, is not covering anything.
-        covering = (
-            clinician_name(self._session, period.covering_user_id)
-            if period.covering_user_id is not None and period.coverage_accepted
-            else None
-        )
+        covering = accepted_cover_name(self._session, period)
         return text.compose(text.refill_line(period.return_date, covering))
 
     def _governing_period(
