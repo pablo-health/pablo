@@ -397,6 +397,24 @@ CREATE TABLE __TENANT_SCHEMA__.client_ai_consent_events (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.clinician_away_periods (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    start_date date NOT NULL,
+    end_date date NOT NULL,
+    return_date date NOT NULL,
+    covering_user_id uuid,
+    acknowledgment_enabled boolean DEFAULT true NOT NULL,
+    acknowledgment_text text NOT NULL,
+    ended_at timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_clinician_away_periods_dates CHECK ((end_date >= start_date)),
+    CONSTRAINT ck_clinician_away_periods_return CHECK ((return_date > end_date))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.clinician_profiles (
     user_id uuid NOT NULL,
     practice_id character varying(128) NOT NULL,
@@ -1138,6 +1156,7 @@ CREATE TABLE __TENANT_SCHEMA__.patient_messages (
     body text NOT NULL,
     created_at timestamp with time zone NOT NULL,
     read_at timestamp with time zone,
+    away_period_id uuid,
     CONSTRAINT ck_patient_messages_sender CHECK (((sender)::text = ANY ((ARRAY['patient'::character varying, 'clinician'::character varying, 'practice'::character varying])::text[])))
 );
 
@@ -1748,6 +1767,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.client_ai_consent_events
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.clinician_away_periods
+    ADD CONSTRAINT clinician_away_periods_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.clinician_profiles
     ADD CONSTRAINT clinician_profiles_pkey PRIMARY KEY (user_id);
 
@@ -2347,6 +2371,10 @@ CREATE INDEX ix_client_ai_consent_events_patient_recorded ON __TENANT_SCHEMA__.c
 
 
 
+CREATE INDEX ix_clinician_away_periods_user_dates ON __TENANT_SCHEMA__.clinician_away_periods USING btree (user_id, start_date, end_date);
+
+
+
 CREATE INDEX ix_companion_auth_challenges_patient ON __TENANT_SCHEMA__.companion_auth_challenges USING btree (patient_id);
 
 
@@ -2779,6 +2807,10 @@ CREATE UNIQUE INDEX uq_patient_intake_signatures_live ON __TENANT_SCHEMA__.patie
 
 
 
+CREATE UNIQUE INDEX uq_patient_messages_away_ack ON __TENANT_SCHEMA__.patient_messages USING btree (thread_id, away_period_id) WHERE (away_period_id IS NOT NULL);
+
+
+
 CREATE UNIQUE INDEX uq_patient_source_mappings_scoped ON __TENANT_SCHEMA__.patient_source_mappings USING btree (scope, source, source_identifier) WHERE (scope IS NOT NULL);
 
 
@@ -3174,6 +3206,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_medications
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_threads
     ADD CONSTRAINT patient_message_threads_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_messages
+    ADD CONSTRAINT patient_messages_away_period_id_fkey FOREIGN KEY (away_period_id) REFERENCES __TENANT_SCHEMA__.clinician_away_periods(id) ON DELETE SET NULL;
 
 
 

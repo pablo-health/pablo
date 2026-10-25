@@ -30,6 +30,7 @@ from app.auth.patient_context import (
     PatientResolverRegistry,
     get_patient_resolver_registry,
 )
+from app.away.service import get_away_acknowledger
 from app.main import app, portal_module_routers
 from app.models import Patient
 from app.models.audit import ACTOR_TYPE_CLINICIAN, ACTOR_TYPE_PATIENT, AuditAction
@@ -409,6 +410,38 @@ class TestPatientAsks:
         assert over.status_code == 429
         # Another patient's budget is their own.
         _ask(refill_client, _TOKEN_B, medication_id=_MED_B)
+
+
+class _AwayUntilMonday:
+    """An acknowledger whose clinician is away for patient A only."""
+
+    def acknowledge_message(self, **_kwargs: object) -> None:
+        return None
+
+    def refill_acknowledgment(
+        self, *, practice_schema: str | None, patient_id: str, now: datetime
+    ) -> str | None:
+        assert practice_schema == "practice_test"
+        assert now.tzinfo is not None
+        return "Your request is in." if patient_id == _PATIENT_A else None
+
+
+class TestAwayAcknowledgment:
+    def test_asking_while_the_clinician_is_away_says_so(self, refill_client: TestClient) -> None:
+        app.dependency_overrides[get_away_acknowledger] = _AwayUntilMonday
+
+        assert _ask(refill_client)["away_acknowledgment"] == "Your request is in."
+        assert _ask(refill_client, _TOKEN_B, medication_id=_MED_B)["away_acknowledgment"] is None
+
+    def test_nothing_is_said_when_nobody_is_away(self, refill_client: TestClient) -> None:
+        assert _ask(refill_client)["away_acknowledgment"] is None
+
+    def test_the_list_never_carries_it(self, refill_client: TestClient) -> None:
+        app.dependency_overrides[get_away_acknowledger] = _AwayUntilMonday
+        _ask(refill_client)
+
+        listed = refill_client.get(PATIENT_BASE, headers=_auth(_TOKEN_A)).json()["data"]
+        assert [row["away_acknowledgment"] for row in listed] == [None]
 
 
 class TestSubmittedHook:

@@ -50,6 +50,11 @@ export interface RefillRequest {
   status: RefillRequestStatus
   created_at: string
   decided_at: string | null
+  /**
+   * Only on the response to asking, while the client's clinician is away:
+   * who will review it by when, and the crisis lines. Never on a list read.
+   */
+  away_acknowledgment?: string | null
 }
 
 export interface RefillRequestList {

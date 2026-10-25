@@ -84,6 +84,13 @@ is not a way to ask which ids exist.
 **After a message is stored, registered post-message callbacks run.** A
 deployment may configure them; the default is none. See
 :mod:`app.services.patient_message_hooks` for what a callback may assume.
+
+**While the client's clinician is away, the practice acknowledges.** The
+first client message on a thread during an away period gets one
+``practice`` message back, carrying the text the clinician reviewed and the
+fixed safety lines; see :mod:`app.away.service`. It is sent in the same
+request, so the thread a client reads back already has it. It answers
+nothing: the client's message stays waiting in the practice's inbox.
 """
 
 from __future__ import annotations
@@ -98,6 +105,7 @@ from ..api_errors import ConflictError, NotFoundError, UnprocessableEntityError
 from ..auth.patient_context import PatientContext, get_patient_context
 from ..auth.route_access import subscription_exempt
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
+from ..away.service import AwayAcknowledger, get_away_acknowledger
 from ..inbox.registry import InboxContext
 from ..inbox.replies import replied_to, settle_reply
 from ..inbox.service import UnknownInboxItemError
@@ -123,6 +131,7 @@ from ..models.audit import ResourceType
 from ..models.patient_message import (
     SENDER_CLINICIAN,
     SENDER_PATIENT,
+    SENDER_PRACTICE,
     THREAD_STATUS_CLOSED,
     THREAD_STATUS_OPEN,
     ThreadAssignmentFilter,
@@ -418,6 +427,42 @@ def _schedule_hooks(
     )
 
 
+def _acknowledge_if_away(
+    away: AwayAcknowledger,
+    audit: AuditService,
+    request: Request,
+    *,
+    patient: PatientContext,
+    thread: PatientMessageThread,
+) -> PatientMessage | None:
+    """Send the away acknowledgment into *thread* if one is due, and record it.
+
+    Recorded as the practice sending, against the patient whose request
+    caused it; the payload is ids only, like every other send.
+    """
+    acknowledgment = away.acknowledge_message(
+        practice_schema=patient.practice_schema,
+        thread_id=thread.id,
+        patient_id=patient.patient_id,
+        now=utc_now(),
+    )
+    if acknowledgment is None:
+        return None
+    audit.log_patient_principal_action(
+        action=AuditAction.PATIENT_MESSAGE_SENT,
+        request=request,
+        patient_id=patient.patient_id,
+        resource_type=ResourceType.PATIENT_MESSAGE_THREAD,
+        resource_id=thread.id,
+        changes={
+            "message_id": acknowledgment.id,
+            "sender": SENDER_PRACTICE,
+            "away_acknowledgment": True,
+        },
+    )
+    return acknowledgment
+
+
 # ---------------------------------------------------------------------------
 # Patient surface
 # ---------------------------------------------------------------------------
@@ -436,6 +481,7 @@ def start_thread(
     repo: PatientMessageRepository = Depends(get_patient_message_repository),
     documents: PatientDocumentRepository = Depends(get_patient_document_repository),
     audit: AuditService = Depends(get_audit_service),
+    away: AwayAcknowledger = Depends(get_away_acknowledger),
     _: None = Depends(subscription_exempt),
 ) -> PatientMessageThreadDetailResponse:
     """Start a thread and send its first message.
@@ -501,7 +547,9 @@ def start_thread(
         thread=thread,
         message=message,
     )
-    return PatientMessageThreadDetailResponse.from_thread_with_messages(thread, [message])
+    acknowledgment = _acknowledge_if_away(away, audit, request, patient=patient, thread=thread)
+    messages = [message] if acknowledgment is None else [message, acknowledgment]
+    return PatientMessageThreadDetailResponse.from_thread_with_messages(thread, messages)
 
 
 @patient_messages_router.post(
@@ -518,6 +566,7 @@ def send_patient_message(
     repo: PatientMessageRepository = Depends(get_patient_message_repository),
     documents: PatientDocumentRepository = Depends(get_patient_document_repository),
     audit: AuditService = Depends(get_audit_service),
+    away: AwayAcknowledger = Depends(get_away_acknowledger),
     _: None = Depends(subscription_exempt),
 ) -> PatientMessageResponse:
     """Append a message to one of the patient's own threads.
@@ -572,6 +621,7 @@ def send_patient_message(
         thread=thread,
         message=message,
     )
+    _acknowledge_if_away(away, audit, request, patient=patient, thread=thread)
     return PatientMessageResponse.from_message(message)
 
 

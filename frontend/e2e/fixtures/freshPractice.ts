@@ -37,6 +37,7 @@ export type FreshPracticeName =
   | "consent"
   | "retention"
   | "admins"
+  | "away"
 
 const PASSWORD = "E2e-fresh-practice-password-long-enough"
 

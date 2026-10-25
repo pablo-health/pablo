@@ -64,6 +64,7 @@ def test_exact_column_sets() -> None:
         "body",
         "created_at",
         "read_at",
+        "away_period_id",
     } == _MESSAGE_COLUMNS
 
 

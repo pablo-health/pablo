@@ -1139,6 +1139,13 @@ _CORE_NOT_ROW_SCOPED: frozenset[str] = frozenset(
         # clinician's request asks whether they are one. The schema is the
         # boundary; the grant and revoke routes are the owner's alone.
         "practice_admins",
+        # ``clinician_away_periods`` — when a clinician is away and what their
+        # clients are told. Its ``user_id`` would earn it the "your own rows"
+        # policy, but a client writing in reads their clinician's period to
+        # be acknowledged, and colleagues read it to know who is out. It names
+        # no patient; the schema is the boundary, and the routes let only the
+        # clinician it belongs to change it.
+        "clinician_away_periods",
     }
 )
 
