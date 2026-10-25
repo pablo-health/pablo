@@ -36,6 +36,7 @@ import { AutoBookedNotice } from "./AutoBookedNotice"
 import { GoogleChangesBanner } from "./GoogleChangesBanner"
 import { needsGoogleDecision } from "./GoogleChangeNotice"
 import { useOutsideReview } from "./useOutsideReview"
+import { useFloatingBlockBands } from "./useFloatingBlockBands"
 import { matchWholeDayBlockRule } from "./unavailability"
 import { openingAnchor } from "./schedule"
 import {
@@ -165,6 +166,13 @@ export function EditorialCalendar({
   const availabilityRules = useMemo(
     () => availabilityRulesData?.data ?? [],
     [availabilityRulesData],
+  )
+  // Time kept free inside a window, e.g. lunch. Asked for only once a
+  // practice has such a rule, since each visible day is its own request.
+  const floating = useFloatingBlockBands(
+    view,
+    anchor,
+    availabilityRules.some((rule) => rule.rule_type === "floating_block"),
   )
   // Only day view needs this at the EditorialCalendar level — week view
   // attributes each of its own 7 columns internally.
@@ -399,6 +407,8 @@ export function EditorialCalendar({
             rowHeightPx={preset.rowPx}
             outsideSessions={outsideSessions}
             onOpenOutside={outsideReview.openSingle}
+            floatingBlocks={floating.blocks}
+            floatingActions={floating.actions}
           />
         )}
         {view === "day" && (
@@ -419,6 +429,8 @@ export function EditorialCalendar({
             rowHeightPx={preset.rowPx}
             outsideSessions={outsideSessions}
             onOpenOutside={outsideReview.openSingle}
+            floatingBlocks={floating.blocks}
+            floatingActions={floating.actions}
           />
         )}
         {view === "month" && (

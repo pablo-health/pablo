@@ -162,6 +162,36 @@ export interface TimeSlot {
   end: string
 }
 
+/**
+ * Where one floating block sits on a date, as the engine resolves it
+ * (GET /api/availability/floating-blocks). Floating: settled into the
+ * earliest free stretch of its window. Pinned: set to a start for this date.
+ * Skipped: nothing kept free this date. Unplaced: no free stretch of its
+ * length is left. `start`/`end` are UTC instants, null when skipped or
+ * unplaced; `window_start`/`window_end` are the practice's "HH:MM".
+ */
+export type FloatingBlockState = "floating" | "pinned" | "skipped" | "unplaced"
+
+export interface FloatingBlock {
+  rule_id: string
+  label: string
+  date: string
+  state: FloatingBlockState
+  duration_minutes: number
+  window_start: string
+  window_end: string
+  start: string | null
+  end: string | null
+}
+
+export interface FloatingBlocksResponse {
+  date: string
+  blocks: FloatingBlock[]
+}
+
+/** Pin a floating block to a start ("HH:MM", practice-local) or skip it. */
+export type FloatingBlockException = { start: string } | { skip: true }
+
 export interface FreeSlotsResponse {
   date: string
   duration_minutes: number

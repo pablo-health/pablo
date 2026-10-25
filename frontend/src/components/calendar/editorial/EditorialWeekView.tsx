@@ -16,6 +16,8 @@ import { EditorialEventWrapper } from "./EditorialEventWrapper"
 import { OutsideSessionLayer } from "./OutsideSessionBlock"
 import type { OutsideSession } from "@/lib/api/outsideSessions"
 import { ScheduleLayer } from "./ScheduleLayer"
+import { FloatingBlockLayer, type FloatingBlockActions } from "./FloatingBlockBand"
+import type { FloatingBlock } from "@/types/availability"
 import { assignLanes } from "./laneLayout"
 import { matchWholeDayBlockRule, rulesInForceForDate } from "./unavailability"
 import { pastUntilMinute, workingRangesForDay, type MinuteRange } from "./schedule"
@@ -30,6 +32,7 @@ import {
 
 const NO_OUTSIDE_SESSIONS: OutsideSession[] = []
 function ignoreOutside() {}
+const NO_FLOATING_BLOCKS: FloatingBlock[] = []
 
 interface EditorialWeekViewProps {
   anchor: Date
@@ -60,6 +63,10 @@ interface EditorialWeekViewProps {
   /** Events from the clinician's own calendar nobody has answered yet. */
   outsideSessions?: OutsideSession[]
   onOpenOutside?: (session: OutsideSession) => void
+  /** Time kept free inside a window (e.g. lunch) on the visible days. */
+  floatingBlocks?: FloatingBlock[]
+  /** What a floating block's band can do; no bands are drawn without it. */
+  floatingActions?: FloatingBlockActions
 }
 
 export function EditorialWeekView({
@@ -79,6 +86,8 @@ export function EditorialWeekView({
   rowHeightPx = HOUR_ROW_PX,
   outsideSessions = NO_OUTSIDE_SESSIONS,
   onOpenOutside = ignoreOutside,
+  floatingBlocks = NO_FLOATING_BLOCKS,
+  floatingActions,
 }: EditorialWeekViewProps) {
   const days = useMemo(() => weekDays(anchor), [anchor])
   const hours = useMemo(() => gridHours(dayStart, dayEnd), [dayStart, dayEnd])
@@ -147,6 +156,9 @@ export function EditorialWeekView({
                 rowHeightPx={rowHeightPx}
                 outsideSessions={outsideSessions}
                 onOpenOutside={onOpenOutside}
+                floatingBlocks={floatingBlocks}
+                floatingActions={floatingActions}
+                timeZone={timeZone}
               />
             ))}
             <NowLine days={days} dayStart={dayStart} dayEnd={dayEnd} rowHeightPx={rowHeightPx} />
@@ -262,6 +274,9 @@ function DayColumn({
   rowHeightPx,
   outsideSessions,
   onOpenOutside,
+  floatingBlocks,
+  floatingActions,
+  timeZone,
 }: {
   day: Date
   /** 0-based index of this column within the visible 7-day week (used for
@@ -286,6 +301,9 @@ function DayColumn({
   rowHeightPx: number
   outsideSessions: OutsideSession[]
   onOpenOutside: (session: OutsideSession) => void
+  floatingBlocks: FloatingBlock[]
+  floatingActions?: FloatingBlockActions
+  timeZone?: string
 }) {
   const today = isToday(day)
   const totalHeight = rowHeightPx * (dayEnd - dayStart)
@@ -323,6 +341,16 @@ function DayColumn({
         dayEndHour={dayEnd}
         rowHeightPx={rowHeightPx}
       />
+      {floatingActions && (
+        <FloatingBlockLayer
+          day={day}
+          blocks={floatingBlocks}
+          dayStart={dayStart}
+          rowHeightPx={rowHeightPx}
+          timeZone={timeZone}
+          actions={floatingActions}
+        />
+      )}
       {lanes.map(({ appointment, lane, laneCount }) => {
         const startMin = minutesSinceMidnight(appointment.start_at)
         const endMin = minutesSinceMidnight(appointment.end_at)
