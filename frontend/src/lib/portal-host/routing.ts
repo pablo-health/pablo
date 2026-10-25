@@ -101,6 +101,32 @@ export const CLINICIAN_ROUTE_SEGMENTS: ReadonlySet<string> = new Set([
  */
 export const PORTAL_FRONTEND_API_ROUTES: ReadonlySet<string> = new Set(["/api/config"])
 
+/**
+ * The pages the portal route serves beneath a practice's slug, besides its
+ * home: each section the shell registers (`registerPortalSlot` in
+ * `@/components/portal-shell/modules`) and `recover`. A unit test keeps the
+ * list in step with the registry.
+ *
+ * Anything else beneath a slug answers 404. The portal route would otherwise
+ * serve its page for it with a 200 and let the browser send the visitor
+ * home, so `/phpinfo` or `/actuator/env` on a portal host looked, to anything
+ * reading status codes, like a file that was there.
+ */
+export const PORTAL_PAGES: ReadonlySet<string> = new Set([
+  "forms",
+  "messaging",
+  "appointments",
+  "homework",
+  "refills",
+  "recover",
+])
+
+/** Whether `rest`, the path after a practice's slug, is one the portal serves. */
+export function isPortalPage(rest: string): boolean {
+  const segments = rest.split("/").filter(Boolean)
+  return segments.length === 0 || (segments.length === 1 && PORTAL_PAGES.has(segments[0]))
+}
+
 export const LOOPBACK_HOSTNAMES: ReadonlySet<string> = new Set(["localhost", "127.0.0.1", "[::1]"])
 
 /**
@@ -187,12 +213,17 @@ function routeOnPortalHost(pathname: string): PortalHostDecision {
   }
   if (isUnder(pathname, "/_next")) return { kind: "pass" }
   if (pathname === "/favicon.ico" || hasFileExtension(pathname)) return { kind: "pass" }
-  if (isUnder(pathname, PORTAL_PREFIX)) return { kind: "portal" }
+  if (isUnder(pathname, PORTAL_PREFIX)) {
+    // Bare `/portal` is no page; the app answers it with its own 404.
+    const [, , slug = "", ...rest] = pathname.split("/")
+    return !slug || isPortalPage(rest.join("/")) ? { kind: "portal" } : { kind: "not-found" }
+  }
 
   // A practice's own host (one host, one practice, no slug in the path) never
   // reaches here: the proxy looks it up first, see `./practice-host`.
-  const segment = pathname.split("/")[1] ?? ""
+  const [, segment = "", ...rest] = pathname.split("/")
   if (!isSlugSegment(segment)) return { kind: "not-found" }
+  if (!isPortalPage(rest.join("/"))) return { kind: "not-found" }
   return { kind: "rewrite", pathname: `${PORTAL_PREFIX}${pathname}` }
 }
 

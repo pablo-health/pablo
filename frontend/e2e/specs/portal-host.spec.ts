@@ -101,6 +101,33 @@ test("the clinician app is not served on the portal host @portal", async ({ requ
   }
 })
 
+test("the portal host answers 404 where no practice or portal page is @portal", async ({ api, page, request }) => {
+  const { slug } = await api.post<{ slug: string }>("/api/portal/practice-slug")
+  const get = (path: string) => request.get(`${PORTAL_URL}${path}`, { maxRedirects: 0, failOnStatusCode: false })
+
+  // A person who mistypes an address still gets the portal's own card, and
+  // the status says what a scanner needs to know.
+  const mistyped = await page.goto(`${PORTAL_URL}/no-such-practice-${Date.now()}`)
+  expect(mistyped?.status()).toBe(404)
+  await expect(page.getByTestId("portal-shell-unknown")).toBeVisible()
+  await expect(page.getByTestId("portal-footer")).toHaveText("Powered by Pablo")
+
+  // What a scanner asks for: read as a slug, it names no practice.
+  for (const path of ["/phpinfo", "/actuator", "/actuator/env", `/no-such-practice-${Date.now()}`]) {
+    const response = await get(path)
+    expect(response.status(), `${path} on the portal host`).toBe(404)
+  }
+  // Under a real practice, only the portal's own pages are anything.
+  for (const path of [`/${slug}/phpinfo`, `/${slug}/forms/extra`, `/portal/${slug}/actuator`]) {
+    const response = await get(path)
+    expect(response.status(), `${path} on the portal host`).toBe(404)
+  }
+  for (const path of [`/${slug}`, `/${slug}/forms`, `/${slug}/recover`, `/portal/${slug}/messaging`]) {
+    const response = await get(path)
+    expect(response.status(), `${path} on the portal host`).toBe(200)
+  }
+})
+
 test("a /portal link on the clinician host moves to the portal host @portal", async ({ api, request }) => {
   const { slug } = await api.post<{ slug: string }>("/api/portal/practice-slug")
 

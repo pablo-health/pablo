@@ -37,12 +37,12 @@
 import type { PracticeHeader } from "./practice-header"
 import type { PracticeTheme } from "./practice-theme"
 import {
-  CLINICIAN_ROUTE_SEGMENTS,
   PORTAL_FRONTEND_API_ROUTES,
   type PortalHostDecision,
   hasFileExtension,
   hostnameOf,
   isPortalHost,
+  isPortalPage,
   isUnder,
   parsePortalHosts,
 } from "./routing"
@@ -195,14 +195,10 @@ export function routePracticeHost(request: PracticeHostRequest, found: PracticeH
 
   const stripped = withoutOwnSlug(pathname, found.slug)
   if (stripped === null) return { kind: "not-found" }
-  if (stripped === undefined) {
-    // Not a slug: a clinician page, or a private or dot segment, is nothing
-    // here — the portal route would only answer it with its own not-found.
-    const segment = pathname.split("/")[1] ?? ""
-    if (segment.startsWith("_") || segment.startsWith(".") || CLINICIAN_ROUTE_SEGMENTS.has(segment)) {
-      return { kind: "not-found" }
-    }
-  }
+  // Only the portal's own pages are anything here. A clinician page, a
+  // private or dot segment, or a path no portal page has is a 404 — before
+  // any redirect, so an alias does not send it on to the primary first.
+  if (!isPortalPage(stripped ?? pathname)) return { kind: "not-found" }
 
   const elsewhere = found.primaryHost !== null && found.primaryHost !== request.hostname
   if (stripped !== undefined || elsewhere) {

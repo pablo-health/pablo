@@ -14,7 +14,7 @@
  *      the visitor is looking at.
  *   3. A slug that resolves to nothing renders the shell's own generic dead
  *      end — the same one an unknown and an unserved practice get, so the
- *      page is no oracle for which practices exist.
+ *      page is no oracle for which practices exist — with a 404 status.
  *
  * Out of scope: the code-entry round trip, which the component suite pins
  * against the same contract in far less time, and slot content, which intake
@@ -36,9 +36,12 @@ test("a practice's own address renders its portal @portal", async ({ api, page }
   await expect(page.getByTestId("portal-shell-no-session")).toBeVisible()
 })
 
-test("an unresolvable slug shows the generic state @portal", async ({ page }) => {
-  await page.goto(`/portal/${UNKNOWN_SLUG}`)
+test("an unresolvable slug shows the generic state, with a 404 @portal", async ({ page }) => {
+  const response = await page.goto(`/portal/${UNKNOWN_SLUG}`)
 
+  // The person sees the shell's card; the status is the one a crawler or a
+  // scanner reads, and a 200 here would say a page was there.
+  expect(response?.status()).toBe(404)
   await expect(page.getByTestId("portal-shell-unknown")).toBeVisible()
 })
 
