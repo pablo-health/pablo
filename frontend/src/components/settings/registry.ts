@@ -146,7 +146,7 @@ const baseGroups: SettingsGroup[] = [
       { id: "profile", label: "Profile", icon: User, page: ProfilePage, desc: "Your name, timezone and clinician type." },
       { id: "appearance", label: "Appearance", icon: Palette, page: AppearancePage, desc: "How your workspace looks." },
       { id: "inbox", label: "Inbox", icon: Inbox, page: InboxPage, desc: "What happens to earlier messages when you reply." },
-      { id: "away", label: "Away", icon: Plane, page: AwayPage, desc: "Dates you're away and the reply clients get meanwhile." },
+      { id: "away", label: "Away", icon: Plane, page: AwayPage, desc: "Dates you're away and the reply {people} get meanwhile." },
       { id: "security", label: "Sign-in & security", icon: ShieldCheck, page: SecurityPage, desc: "Passkeys and second factors." },
       {
         id: "activity",

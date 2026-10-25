@@ -6,6 +6,7 @@ import Link from "next/link"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { useCoverageActivity } from "@/hooks/useAwayPeriods"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import type { AwayPeriod } from "@/types/away"
 import { day } from "./day"
 
@@ -41,11 +42,12 @@ function when(iso: string): string {
 
 function Activity({ periodId }: { periodId: string }) {
   const { data, isLoading } = useCoverageActivity(periodId, true)
+  const people = usePeopleTerm()
   if (isLoading || !data) return <p className="text-[12.5px] text-muted-foreground">Loading...</p>
   if (data.items.length === 0) {
     return (
       <p className="text-[12.5px] text-muted-foreground" data-testid={`coverage-activity-${periodId}`}>
-        No activity on your clients&apos; records.
+        No activity on your {people.many}&apos; records.
       </p>
     )
   }
@@ -56,7 +58,7 @@ function Activity({ periodId }: { periodId: string }) {
           <span className="text-muted-foreground">{when(item.at)}</span>
           {" · "}
           <Link href={`/dashboard/patients/${item.patient_id}`} className="underline">
-            {item.client_name ?? "Client"}
+            {item.client_name ?? people.One}
           </Link>
           {" · "}
           {activityLabel(item.action)}

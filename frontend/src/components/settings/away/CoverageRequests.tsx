@@ -4,6 +4,7 @@
 
 import { Button } from "@/components/ui/button"
 import { useAnswerCoverageRequest, useCoverageRequests } from "@/hooks/useAwayPeriods"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import type { CoverageRequest } from "@/types/away"
 import { SettingsBadge, SettingsCard } from "../ui"
 import { day } from "./day"
@@ -68,11 +69,12 @@ function RequestRow({ request }: { request: CoverageRequest }) {
  */
 export function CoverageRequests() {
   const { data } = useCoverageRequests()
+  const people = usePeopleTerm()
   if (!data || data.requests.length === 0) return null
   return (
     <SettingsCard
       title="Covering for colleagues"
-      description="When you accept, you can open their clients' records on the dates they're away."
+      description={`When you accept, you can open their ${people.many}' records on the dates they're away.`}
     >
       <ul data-testid="coverage-requests">
         {data.requests.map((request) => (
