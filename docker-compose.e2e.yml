@@ -497,7 +497,7 @@ services:
       # REPLACES the list in .env.e2e rather than adding to it, so it has to
       # carry everything that file turns on too: keep the two in step.
       # Superbills are on so the chart's Superbill action can be driven.
-      - FEATURES_ENABLED=patient_portal,refill_requests
+      - FEATURES_ENABLED=patient_portal,refill_requests,credentialing
       # The backend answers Google Calendar here (through the stand-in), so
       # the settings link and the setup page are shown.
       - GOOGLE_CALENDAR_ENABLED=true

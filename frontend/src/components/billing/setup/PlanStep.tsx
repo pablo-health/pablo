@@ -3,8 +3,10 @@
 "use client"
 
 import { SetupStepHead } from "@/components/setup"
+import { CREDENTIALING_FEATURE } from "@/components/settings/paths"
 import { Button } from "@/components/ui/button"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
+import { useFeature } from "@/lib/featureGates"
 import type { PeopleWords } from "@/lib/peopleTerm"
 import type { CurrentStateId } from "./routes"
 import { HAS_PAYMENTS_SETUP } from "./setupSlots.extensions"
@@ -56,6 +58,7 @@ export function PlanStep({
 }) {
   const people = usePeopleTerm()
   const planLine = planLines(people)
+  const credentialingOffered = useFeature(CREDENTIALING_FEATURE)
   const onPlatform = selected.includes("platform")
 
   return (
@@ -117,27 +120,29 @@ export function PlanStep({
         </label>
       )}
 
-      <label className="flex cursor-pointer gap-3 rounded-xl border border-border bg-card p-4">
-        <input
-          type="checkbox"
-          checked={wantsCredentialing}
-          onChange={(e) => onToggleCredentialing(e.target.checked)}
-          className="mt-0.5 h-4 w-4 shrink-0 rounded-[3px] border-neutral-400 accent-neutral-900"
-          data-testid="wants-credentialing"
-        />
-        <span>
-          <span className="block text-sm font-medium text-neutral-900">
-            I want to apply for my own insurance contracts
+      {credentialingOffered && (
+        <label className="flex cursor-pointer gap-3 rounded-xl border border-border bg-card p-4">
+          <input
+            type="checkbox"
+            checked={wantsCredentialing}
+            onChange={(e) => onToggleCredentialing(e.target.checked)}
+            className="mt-0.5 h-4 w-4 shrink-0 rounded-[3px] border-neutral-400 accent-neutral-900"
+            data-testid="wants-credentialing"
+          />
+          <span>
+            <span className="block text-sm font-medium text-neutral-900">
+              I want to apply for my own insurance contracts
+            </span>
+            {/* "Nothing starts until you're ready" was reassuring in tone and
+                unclear about what "starts" — so it said nothing and sounded like
+                it said something. What matters is that the service keeps
+                working, which this says outright. */}
+            <span className="mt-1 block text-sm text-muted-foreground">
+              Pablo can help prepare and track your applications while you keep using the service.
+            </span>
           </span>
-          {/* "Nothing starts until you're ready" was reassuring in tone and
-              unclear about what "starts" — so it said nothing and sounded like
-              it said something. What matters is that the service keeps
-              working, which this says outright. */}
-          <span className="mt-1 block text-sm text-muted-foreground">
-            Pablo can help prepare and track your applications while you keep using the service.
-          </span>
-        </span>
-      </label>
+        </label>
+      )}
 
       <div className="flex items-center gap-3 border-t border-border pt-4">
         {/* Not "Set up billing". Some people reach this screen only to prepare

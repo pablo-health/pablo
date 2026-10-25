@@ -54,6 +54,8 @@ import { WebsitePage } from "./pages/WebsitePage"
 import {
   BILLING_CONTACT_SETTINGS_ID,
   BILLING_PROFILE_SETTINGS_ID,
+  CREDENTIALING_FEATURE,
+  CREDENTIALING_LEGACY_FEATURE,
   CREDENTIALING_LEGACY_SETTINGS_ID,
   CREDENTIALING_SETTINGS_ID,
   DOMAINS_SETTINGS_ID,
@@ -286,17 +288,18 @@ const baseGroups: SettingsGroup[] = [
         icon: ClipboardCheck,
         page: CredentialingStartPage,
         desc: "Start with your NPI. We look up what the registry already knows, so an application asks you for less.",
+        feature: CREDENTIALING_FEATURE,
       },
       {
-        // Kept reachable on purpose: the tiered checklist is still the only
-        // surface that reaches Tier 1 and Tier 2, and removing it would take
-        // working screens away before their replacements exist. It goes when
-        // the new flow covers what it covers.
+        // Hidden behind a feature no deployment turns on (see
+        // CREDENTIALING_LEGACY_FEATURE): still the only surface that reaches
+        // Tier 1 and Tier 2, so the code stays until the new flow covers them.
         id: CREDENTIALING_LEGACY_SETTINGS_ID,
         label: "Credentialing (deprecated)",
         icon: ClipboardCheck,
         page: CredentialingPage,
         desc: "The older full checklist. Being replaced by the screens above; still here because nothing else reaches the later tiers yet.",
+        feature: CREDENTIALING_LEGACY_FEATURE,
       },
     ],
   },
