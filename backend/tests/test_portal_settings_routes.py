@@ -107,6 +107,7 @@ def test_a_practice_that_was_never_asked_does_not_offer_the_portal(client: TestC
         "decided": False,
         "modules": ALL_ON,
         "refill_turnaround_days": 2,
+        "message_reply_target_days": 2,
     }
 
 
@@ -121,6 +122,7 @@ def test_turning_it_on_mints_the_address_and_records_the_decision(
         "decided": True,
         "modules": ALL_ON,
         "refill_turnaround_days": 2,
+        "message_reply_target_days": 2,
     }
     assert minted == [PRACTICE_ID]
     assert store.get(PRACTICE_ID).enabled is True
@@ -288,6 +290,35 @@ def test_a_module_change_is_audited_with_the_lists_only(
             "new": ["intake", "messaging", "refills"],
         }
     }
+
+
+# ── the reply-time target for client messages ──────────────────────────
+
+
+def test_the_reply_target_starts_at_two_working_days(client: TestClient) -> None:
+    assert client.get(URL).json()["message_reply_target_days"] == 2
+
+
+def test_the_reply_target_is_saved_and_audited_old_and_new(
+    client: TestClient, store: InMemoryPortalSettingsStore, audit: _RecordingAudit
+) -> None:
+    response = client.put(URL, json={"message_reply_target_days": 1})
+
+    assert response.status_code == 200
+    assert response.json()["message_reply_target_days"] == 1
+    assert store.get(PRACTICE_ID).message_reply_target_days == 1
+    assert audit.entries[-1]["changes"] == {"message_reply_target_days": {"old": 2, "new": 1}}
+
+
+@pytest.mark.parametrize("days", [0, 6, -1])
+def test_a_reply_target_outside_the_range_is_refused(
+    client: TestClient, store: InMemoryPortalSettingsStore, days: int
+) -> None:
+    # Catches a zero-day target, which would make every message overdue on arrival.
+    response = client.put(URL, json={"message_reply_target_days": days})
+
+    assert response.status_code == 422
+    assert store.get(PRACTICE_ID).message_reply_target_days == 2
 
 
 # ── the refill turnaround target ────────────────────────────────────────

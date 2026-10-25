@@ -67,7 +67,12 @@ def _owner_and_zone(session: Session, practice_schema: str) -> tuple[str | None,
         return owner, UTC
 
 
-def _owner_calendar(practice_schema: str) -> tuple[WorkingCalendar, tzinfo]:
+def practice_calendar(practice_schema: str) -> tuple[WorkingCalendar, tzinfo]:
+    """The practice owner's working calendar and zone; Monday to Friday in UTC without one.
+
+    Shared by every target the practice counts in working days (a refill's
+    turnaround, a message's reply time), so they all fall on the same days.
+    """
     session = create_standalone_session()
     try:
         owner, tz = _owner_and_zone(session, practice_schema)
@@ -84,7 +89,7 @@ def _owner_calendar(practice_schema: str) -> tuple[WorkingCalendar, tzinfo]:
 def practice_refill_due_at(practice_schema: str, submitted_at: datetime) -> datetime:
     """The due time for a request arriving now, on the practice's own calendar."""
     days = portal_settings_for_schema(practice_schema).refill_turnaround_days
-    calendar, tz = _owner_calendar(practice_schema)
+    calendar, tz = practice_calendar(practice_schema)
     return due_at(submitted_at, days, calendar, tz)
 
 

@@ -148,7 +148,11 @@ def world(
     world.refills.add_patient(_ADA, "Ada", "Lovelace")
 
     for source in (
-        PortalMessageSource(lambda: world.messages),
+        PortalMessageSource(
+            lambda: world.messages,
+            reply_due=lambda _schema: _two_days_after,
+            schema=lambda: "practice_test",
+        ),
         RefillSource(lambda: world.refills),
         IntakeReviewSource(lambda: world.intake),
         NoteToSignSource(lambda: world.sessions, lambda: world.patients),
@@ -172,6 +176,11 @@ def world(
 
 
 # ── helpers ──────────────────────────────────────────────────────────────
+
+
+def _two_days_after(arrived: datetime) -> datetime:
+    """The test practice's reply clock: two days, so ordering reads plainly."""
+    return arrived + timedelta(days=2)
 
 
 def _client_message(
@@ -682,7 +691,7 @@ class TestListAndCount:
         }
         assert "one" not in str([e.changes for e in viewed])
 
-    def test_urgent_first_then_newest(self, world: World, client: TestClient) -> None:
+    def test_urgent_first_then_soonest_reply_by(self, world: World, client: TestClient) -> None:
         old = _client_message(world, _id(), at=utc_now() - timedelta(days=2), body="old")
         new = _client_message(world, _id(), at=utc_now(), body="new")
         urgent = _client_message(world, _id(), at=utc_now() - timedelta(days=5), body="help")
@@ -698,13 +707,16 @@ class TestListAndCount:
 
         world.registry.register_enricher(Flag())
 
-        assert _ids(_open(client)) == [urgent, new, old]
+        # Urgent leads whatever its age; the rest wait on their reply-by, so the
+        # message that has waited longest comes next.
+        assert _ids(_open(client)) == [urgent, old, new]
 
     def test_items_with_a_due_time_come_before_the_rest_soonest_due_first(
         self, world: World, client: TestClient
     ) -> None:
         # Catches the Inbox listing a refill by when it arrived, so the one
-        # nearest the practice's target sinks under newer messages.
+        # nearest the practice's target sinks under newer messages. A message
+        # has a due time too now: its reply-by, about two days out here.
         message = _client_message(world, _id(), at=utc_now() - timedelta(hours=1), body="new")
         later = _refill(world, due_at=utc_now() + timedelta(days=3))
         sooner = _refill(world, due_at=utc_now() + timedelta(days=1))
@@ -712,9 +724,21 @@ class TestListAndCount:
 
         items = _open(client)
 
-        # The undated refill arrived after the message, so newest first holds there.
-        assert _ids(items) == [sooner, later, undated, message]
+        assert _ids(items) == [sooner, message, later, undated]
         assert items[0]["due_at"] is not None
+
+    def test_a_message_past_its_reply_by_comes_before_newer_ones(
+        self, world: World, client: TestClient
+    ) -> None:
+        # Catches a message waiting three days sinking under one that just
+        # arrived, because the Inbox sorted messages by arrival alone.
+        overdue = _client_message(world, _id(), at=utc_now() - timedelta(days=3), body="old")
+        fresh = _client_message(world, _id(), at=utc_now() - timedelta(minutes=5), body="new")
+
+        items = _open(client)
+
+        assert _ids(items) == [overdue, fresh]
+        assert items[0]["due_at"] < utc_now().isoformat()
 
 
 # ── the seams ────────────────────────────────────────────────────────────

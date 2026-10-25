@@ -15,17 +15,24 @@ export interface PortalSettings {
   modules: Record<string, boolean>
   /** The practice's own target for answering a refill request, in working days. */
   refill_turnaround_days: number
+  /** The practice's own target for answering a client's message, in working days. */
+  message_reply_target_days: number
 }
 
 /** The range the backend accepts for `refill_turnaround_days`. */
 export const REFILL_TURNAROUND_MIN_DAYS = 1
 export const REFILL_TURNAROUND_MAX_DAYS = 10
 
+/** The range the backend accepts for `message_reply_target_days`. */
+export const MESSAGE_REPLY_TARGET_MIN_DAYS = 1
+export const MESSAGE_REPLY_TARGET_MAX_DAYS = 5
+
 export interface PortalSettingsChange {
   enabled?: boolean
   /** Parts to turn on or off; ones left out keep their setting. */
   modules?: Record<string, boolean>
   refill_turnaround_days?: number
+  message_reply_target_days?: number
   /** Apply only if the practice has never answered (the first-client prompt). */
   only_if_undecided?: boolean
 }

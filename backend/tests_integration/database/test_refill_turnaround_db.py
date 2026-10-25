@@ -59,7 +59,9 @@ def _provision(engine: Engine) -> str:
     return schema
 
 
-def _register_practice(engine: Engine, schema: str, owner: str, *, days: int | None) -> None:
+def _register_practice(
+    engine: Engine, schema: str, owner: str, *, days: int | None, reply_days: int = 2
+) -> None:
     from app.db.platform_models import PracticePortalSettingsRow, PracticeRow  # noqa: PLC0415
 
     practice_id = f"practice-turnaround-{uuid.uuid4().hex[:8]}"
@@ -82,6 +84,7 @@ def _register_practice(engine: Engine, schema: str, owner: str, *, days: int | N
                     practice_id=practice_id,
                     enabled=True,
                     refill_turnaround_days=days,
+                    message_reply_target_days=reply_days,
                     updated_at=now,
                 )
             )
@@ -146,6 +149,42 @@ class TestDueTimeFromThePractice:
         _register_practice(engine, schema, owner, days=None)  # default target of 2
 
         due = practice_refill_due_at(schema, _SUBMITTED)
+
+        assert due.astimezone(_NEW_YORK).date() == date(2026, 10, 14)  # Wednesday
+
+
+class TestReplyByFromThePractice:
+    """A client message's reply-by: the same calendar and zone, the practice's own target."""
+
+    def test_counts_the_owners_working_days_and_the_reply_target(
+        self, engine: Engine, schemas: list[str]
+    ) -> None:
+        from app.services.message_reply_target import practice_reply_due  # noqa: PLC0415
+
+        owner = str(uuid.uuid4())
+        schema = _provision(engine)
+        schemas.append(schema)
+        _register_practice(engine, schema, owner, days=3, reply_days=1)
+        _working_hours(engine, schema, owner, (0, 3))  # Mondays and Thursdays
+
+        due = practice_reply_due(schema)(_SUBMITTED)
+
+        # One working day after Monday the 12th is Thursday the 15th.
+        local = due.astimezone(_NEW_YORK)
+        assert local.date() == date(2026, 10, 15)
+        assert (local.hour, local.minute) == (23, 59)
+
+    def test_a_practice_that_never_set_it_gets_two_working_days(
+        self, engine: Engine, schemas: list[str]
+    ) -> None:
+        from app.services.message_reply_target import practice_reply_due  # noqa: PLC0415
+
+        owner = str(uuid.uuid4())
+        schema = _provision(engine)
+        schemas.append(schema)
+        _register_practice(engine, schema, owner, days=None)  # no settings row at all
+
+        due = practice_reply_due(schema)(_SUBMITTED)
 
         assert due.astimezone(_NEW_YORK).date() == date(2026, 10, 14)  # Wednesday
 
