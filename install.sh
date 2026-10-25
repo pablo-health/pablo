@@ -242,8 +242,10 @@ ensure_firewall
 ensure_data_disk
 
 config_file="$(mktemp)"
+RUN_ID="$(date +%s)-$(openssl rand -hex 3)"
 # Non-secret settings only; the VM reads secrets from Secret Manager itself.
 cat > "$config_file" <<EOF
+RUN_ID=${RUN_ID}
 PROJECT_ID=${PROJECT_ID}
 REGION=${REGION}
 PABLO_HOST=${PABLO_HOST}
@@ -270,10 +272,22 @@ echo "The VM is installing Pablo. The first boot takes about ten minutes."
 echo "Follow along with:"
 echo "  gcloud compute instances get-serial-port-output ${VM_NAME} --zone=${ZONE} | grep pablo-"
 echo
+# Ready means the VM says so for this run: the site, the first clinician
+# admitted and the first backup taken, not just a health check answering.
 deadline=$(($(date +%s) + 1800))
-until curl -fsS -o /dev/null "https://${PABLO_HOST}/api/health" 2>/dev/null; do
+while :; do
+    state=$(gcloud compute instances get-guest-attributes "$VM_NAME" --zone="$ZONE" \
+        --query-path=pablo/state --format='value(value)' 2>/dev/null || true)
+    case "$state" in
+        "ready ${RUN_ID}") break ;;
+        "failed at: "*" ${RUN_ID}")
+            warn "The VM stopped while ${state% "${RUN_ID}"}."
+            warn "Its log: gcloud compute instances get-serial-port-output ${VM_NAME} --zone=${ZONE} | grep pablo-"
+            exit 1
+            ;;
+    esac
     if [ "$(date +%s)" -ge "$deadline" ]; then
-        warn "Not answering after 30 minutes. Check the log above, then run this again."
+        warn "Not ready after 30 minutes. Check the log above, then run this again."
         exit 1
     fi
     sleep 20

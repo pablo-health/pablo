@@ -28,6 +28,16 @@ readonly PG_CONF_DIR="/etc/postgresql/${PG_VERSION}/main"
 
 log() { echo "[pablo-bootstrap] $*"; }
 
+# install.sh waits on this, not on /api/health: the site answers before the
+# first clinician is admitted and the first backup exists. Tagged with the
+# run's id so a previous boot's answer never counts for this one.
+report() {
+    curl -fsS -X PUT -H "Metadata-Flavor: Google" --data "$1 ${RUN_ID:-}" \
+        "http://metadata.google.internal/computeMetadata/v1/instance/guest-attributes/pablo/state" >/dev/null || true
+}
+STEP="starting"
+trap 'report "failed at: ${STEP}"' ERR
+
 # --- 1. Config -------------------------------------------------------------
 mkdir -p /etc/pablo /var/lib/pablo/caddy /opt/pablo
 curl -fsS -H "Metadata-Flavor: Google" "${METADATA}/pablo-config" > /etc/pablo/config.env
@@ -37,6 +47,8 @@ source /etc/pablo/config.env
 secret() { gcloud secrets versions access latest --secret="$1" --project="$PROJECT_ID"; }
 
 # --- 2. Packages -----------------------------------------------------------
+STEP="installing packages"
+report installing
 install_packages() {
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -q
@@ -80,6 +92,7 @@ JSON
 fi
 
 # --- 3. Data disk ----------------------------------------------------------
+STEP="preparing the data disk"
 if ! blkid "$DATA_DEVICE" >/dev/null 2>&1; then
     log "formatting the new data disk"
     mkfs.ext4 -q -m 0 -E lazy_itable_init=0,lazy_journal_init=0,discard "$DATA_DEVICE"
@@ -91,6 +104,7 @@ fi
 mountpoint -q "$DATA_MOUNT" || mount "$DATA_MOUNT"
 
 # --- 4. Postgres -----------------------------------------------------------
+STEP="setting up the database"
 # A fresh boot disk with an existing data disk (VM recreated) adopts the data
 # directory: pg_createcluster integrates a non-empty one rather than init it.
 if [ ! -d "$PG_CONF_DIR" ]; then
@@ -146,6 +160,7 @@ fi
 unset DB_PASSWORD
 
 # --- 5. Backups ------------------------------------------------------------
+STEP="setting up backups"
 cat > /etc/pgbackrest.conf <<CONF
 [global]
 repo1-type=gcs
@@ -165,6 +180,7 @@ chown postgres:postgres /etc/pgbackrest.conf
 sudo -u postgres pgbackrest --stanza=pablo stanza-create
 
 # --- 6-7. Deploy files, commands, the stack ---------------------------------
+STEP="starting Pablo"
 # The commands come fresh from the deploy ref on every boot, so a boot that
 # stopped halfway never leaves a broken pablo-update behind. pablo-update
 # then fetches the full deploy files and installs that release's commands.
@@ -178,6 +194,7 @@ rm -rf "$commands"
 PABLO_VERSION="$(cat /etc/pablo/version)"
 
 # --- 8. First clinician ----------------------------------------------------
+STEP="admitting the first clinician and taking the first backup"
 if [ ! -f /var/lib/pablo/admin-allowed ]; then
     # From the deploy files rather than the image, so it works with any
     # release image, including ones built before the script existed.
@@ -196,3 +213,4 @@ if ! sudo -u postgres pgbackrest --stanza=pablo info --output=json | grep -q '"l
 fi
 
 log "ready: https://${PABLO_HOST}"
+report ready

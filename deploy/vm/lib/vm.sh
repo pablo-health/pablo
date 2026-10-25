@@ -59,7 +59,8 @@ ensure_vm() {
     local config="$1"
     local metadata="startup-script=${DEPLOY_DIR}/bootstrap.sh,pablo-config=${config}"
     if gcloud compute instances describe "$VM_NAME" --zone="$ZONE" >/dev/null 2>&1; then
-        gcloud compute instances add-metadata "$VM_NAME" --zone="$ZONE" --metadata-from-file="$metadata" >/dev/null
+        gcloud compute instances add-metadata "$VM_NAME" --zone="$ZONE" --metadata-from-file="$metadata" \
+            --metadata=enable-guest-attributes=TRUE >/dev/null
         echo "Restarting the VM to apply the new configuration"
         gcloud compute instances reset "$VM_NAME" --zone="$ZONE" >/dev/null
         return
@@ -72,6 +73,6 @@ ensure_vm() {
         --address="$VM_IP" --tags="$VM_TAG" \
         --service-account="$VM_SA" --scopes=cloud-platform \
         --shielded-secure-boot --shielded-vtpm --shielded-integrity-monitoring \
-        --metadata=enable-oslogin=TRUE,block-project-ssh-keys=TRUE \
+        --metadata=enable-oslogin=TRUE,block-project-ssh-keys=TRUE,enable-guest-attributes=TRUE \
         --metadata-from-file="$metadata" >/dev/null
 }
