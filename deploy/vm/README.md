@@ -82,6 +82,8 @@ figures for memory, CPU and first boot belong here once they are taken
 - `../../install.sh`: the Cloud Shell half, with `lib/` (project, sign-in,
   secrets, VM)
 - `bootstrap.sh`: the VM's startup script, run on every boot
-- `compose.yaml`, `Caddyfile`: the stack
+- `compose.yaml`, `Caddyfile`: the stack; `routes.caddy`: how the address splits
+  between frontend and backend, shared with `deploy/workstation`
+- `lib/env.sh`: the backend and frontend env files, shared with the local target
 - `bin/`: `pablo-update`, `pablo-backup`, `pablo-job`
 - `crontab`: backups and scheduled jobs

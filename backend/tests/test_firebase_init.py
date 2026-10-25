@@ -108,6 +108,39 @@ class TestInitializeFirebaseApp:
         cred_arg, _options = mock_init.call_args[0]
         assert cred_arg == "adc-cred-sentinel"
 
+    def test_named_service_account_signs_custom_tokens_through_iam(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("FIREBASE_AUTH_EMULATOR_HOST", raising=False)
+        settings = _settings(
+            firebase_service_account_id="pablo-vm@my-project.iam.gserviceaccount.com"
+        )
+
+        with (
+            patch("app.auth.firebase_init.get_settings", return_value=settings),
+            patch("app.auth.firebase_init.credentials.ApplicationDefault"),
+            patch("app.auth.firebase_init.firebase_admin.initialize_app") as mock_init,
+        ):
+            mock_init.return_value = MagicMock()
+            initialize_firebase_app()
+
+        _cred, options = mock_init.call_args[0]
+        assert options["serviceAccountId"] == "pablo-vm@my-project.iam.gserviceaccount.com"
+
+    def test_default_env_names_no_service_account(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("FIREBASE_AUTH_EMULATOR_HOST", raising=False)
+
+        with (
+            patch("app.auth.firebase_init.get_settings", return_value=_settings()),
+            patch("app.auth.firebase_init.credentials.ApplicationDefault"),
+            patch("app.auth.firebase_init.firebase_admin.initialize_app") as mock_init,
+        ):
+            mock_init.return_value = MagicMock()
+            initialize_firebase_app()
+
+        _cred, options = mock_init.call_args[0]
+        assert "serviceAccountId" not in options
+
     def test_result_is_cached_across_calls(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("FIREBASE_AUTH_EMULATOR_HOST", raising=False)
         settings = _settings(firebase_workload_identity=False)

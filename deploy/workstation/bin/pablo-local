@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+#
+# Backups for Pablo on your own machine, to the project's backup bucket.
+#
+#   pablo-local backup         dump the database to Cloud Storage
+#   pablo-local restore-drill  restore the latest dump into a scratch
+#                              database, check it answers, then delete it
+#   pablo-local list           the dumps in the bucket
+#
+# Installed by install.sh --target local into ~/.pablo/<project>/bin, with its
+# settings beside it in local.env, and run daily by launchd (macOS) or cron.
+# A nightly dump, not continuous archiving like the VM: a restore can lose up
+# to a day of changes.
+
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
+source "${HERE}/local.env"
+readonly PREFIX="gs://${BACKUP_BUCKET}/workstation"
+
+compose() {
+    PABLO_LOCAL_DIR="$HERE" PABLO_VERSION="$PABLO_VERSION" \
+        docker compose -f "$COMPOSE_FILE" "$@"
+}
+
+log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [pablo-local] $*"; }
+
+case "${1:-}" in
+    backup)
+        stamp="${PREFIX}/pablo-$(date -u +%Y%m%dT%H%M%SZ)"
+        # The roles first: the row-level security policies name the roles the
+        # migrations create, and pg_dump leaves roles out. Both are streamed,
+        # so no copy lands on this machine's disk beside the database.
+        compose exec -T postgres pg_dumpall -U pablo --roles-only \
+            | gcloud storage cp - "${stamp}.roles.sql" --project="$PROJECT_ID" --quiet
+        compose exec -T postgres pg_dump -U pablo -Fc pablo \
+            | gcloud storage cp - "${stamp}.dump" --project="$PROJECT_ID" --quiet
+        log "backed up to ${stamp}.dump"
+        ;;
+    list)
+        gcloud storage ls -l "${PREFIX}/" --project="$PROJECT_ID"
+        ;;
+    restore-drill)
+        latest="$(gcloud storage ls "${PREFIX}/*.dump" --project="$PROJECT_ID" | sort | tail -1)"
+        [ -n "$latest" ] || { log "no backups yet"; exit 1; }
+        scratch="pablo-restore-drill-$$"
+        docker run -d --rm --name "$scratch" -e POSTGRES_USER=pablo -e POSTGRES_DB=pablo \
+            -e POSTGRES_HOST_AUTH_METHOD=trust postgres:16-alpine >/dev/null
+        trap 'docker rm -f "$scratch" >/dev/null 2>&1 || true' EXIT
+        # The image starts Postgres twice (once to initialise); wait for the second.
+        until [ "$(docker logs "$scratch" 2>&1 | grep -c "ready to accept connections")" -ge 2 ]; do sleep 1; done
+        # Roles that already exist (pablo itself) just report so; the rest
+        # are created before the data that refers to them.
+        gcloud storage cat "${latest%.dump}.roles.sql" --project="$PROJECT_ID" \
+            | docker exec -i "$scratch" psql -q -U pablo -d postgres >/dev/null 2>&1 || true
+        gcloud storage cat "$latest" --project="$PROJECT_ID" \
+            | docker exec -i "$scratch" pg_restore -U pablo -d pablo --exit-on-error
+        users="$(docker exec "$scratch" psql -U pablo -d pablo -tAc "SELECT count(*) FROM platform.users")"
+        log "restore drill passed: ${latest##*/} restores and answers (${users} users)"
+        ;;
+    *)
+        echo "usage: pablo-local backup|list|restore-drill" >&2
+        exit 2
+        ;;
+esac

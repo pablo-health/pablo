@@ -48,6 +48,14 @@ cd pablo
 
 Updates, backups, costs and options: [deploy/vm/README.md](deploy/vm/README.md).
 
+### Try it on your own machine
+
+`./install.sh --target local` runs Pablo in Docker on a Mac, or on Windows
+with WSL or Linux, with a public address from Tailscale Funnel and nightly
+backups to your Google Cloud account. Good for trying Pablo out; running a
+practice on it is possible if you take on what that means. Requirements and
+risks: [deploy/workstation/README.md](deploy/workstation/README.md).
+
 ### Local Development
 
 ```bash

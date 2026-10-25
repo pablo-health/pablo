@@ -766,6 +766,19 @@ class Settings(BaseSettings):
         default=False,
         description="Use Workload Identity Federation for Firebase Admin creds (non-GCP hosts)",
     )
+    # Application default credentials that impersonate a service account (a
+    # developer's own sign-in, off Google Cloud) can sign bytes through IAM but
+    # are not a key firebase-admin can sign a custom token with directly. Naming
+    # the account routes custom-token signing (passkeys) through IAM signBlob,
+    # the same way the workload-identity path does. On Google Cloud the metadata
+    # server's credentials already sign that way; leave it empty there.
+    firebase_service_account_id: str = Field(
+        default="",
+        description=(
+            "Service account email firebase-admin signs custom tokens as, through "
+            "IAM signBlob, when application default credentials impersonate it."
+        ),
+    )
     firebase_wif_audience: str = Field(
         default="",
         description="WIF provider audience (//iam.googleapis.com/projects/.../providers/...)",

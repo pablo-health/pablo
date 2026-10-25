@@ -60,5 +60,8 @@ def initialize_firebase_app() -> firebase_admin.App:
         options["serviceAccountId"] = wif_cred.service_account_email
         return firebase_admin.initialize_app(wif_cred, options)
 
+    if settings.firebase_service_account_id:
+        options["serviceAccountId"] = settings.firebase_service_account_id
+
     cred = credentials.ApplicationDefault()
     return firebase_admin.initialize_app(cred, options)
