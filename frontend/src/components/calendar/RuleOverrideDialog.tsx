@@ -37,6 +37,7 @@ const HARD_REASONS: Record<RuleType, string> = {
   buffer_before: "it doesn't leave the gap you keep before an appointment",
   buffer_after: "it doesn't leave the gap you keep after an appointment",
   session_defaults: "it doesn't match your session defaults",
+  floating_block: "it leaves no room for time you keep free",
 }
 
 const SOFT_REASONS: Record<RuleType, string> = {
@@ -50,6 +51,7 @@ const SOFT_REASONS: Record<RuleType, string> = {
   buffer_before: "it leaves less than your usual gap before it",
   buffer_after: "it leaves less than your usual gap after it",
   session_defaults: "it doesn't match your session defaults",
+  floating_block: "it leaves no room for time you usually keep free",
 }
 
 // Busy time is no rule of the therapist's, so it is said plainly rather
@@ -64,6 +66,7 @@ const SPECIFICITY: ConflictKind[] = [
   "block_date_range",
   "block_day_of_week",
   "block_time_range",
+  "floating_block",
   "working_hours",
   "max_per_day",
   "buffer_before",

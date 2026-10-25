@@ -5,10 +5,12 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import logging
 import uuid
 from collections.abc import Collection, Sequence
 from datetime import UTC, datetime, tzinfo
+from datetime import date as date_cls
 from typing import TYPE_CHECKING, Any, TypedDict
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -71,6 +73,9 @@ from ..models.scheduling import (
     CreateAvailabilityRuleRequest,
     CreateRecurringAppointmentRequest,
     EditSeriesRequest,
+    FloatingBlockExceptionRequest,
+    FloatingBlockResponse,
+    FloatingBlocksResponse,
     FreeSlotsResponse,
     GoogleCalendarAuthResponse,
     GoogleCalendarConsentOption,
@@ -140,6 +145,7 @@ from ..scheduling_engine.exceptions import (
 )
 from ..scheduling_engine.models.appointment_type import AppointmentType, Audience, HorizonUnit
 from ..scheduling_engine.models.availability import AvailabilityRule, EnforcementLevel, RuleType
+from ..scheduling_engine.services import floating_block
 from ..scheduling_engine.services.availability import AvailabilityEngine
 from ..scheduling_engine.services.scheduling import SchedulingService
 from ..scheduling_engine.services.scheduling_policy import load_policy, update_policy
@@ -1369,6 +1375,95 @@ def get_free_slots(
         total=len(result.slots),
         configured=result.configured,
     )
+
+
+@router.get("/api/availability/floating-blocks", response_model=FloatingBlocksResponse)
+def get_floating_blocks(
+    date: str = Query(..., description="Date (YYYY-MM-DD)", pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    ctx: TenantContext = Depends(get_tenant_context),
+    engine: AvailabilityEngine = Depends(get_availability_engine),
+    tz: tzinfo = Depends(get_owner_timezone),
+) -> FloatingBlocksResponse:
+    """Where each floating block sits on a date, for the calendar.
+
+    Derived from the day as it stands, never stored: the block settles into
+    the earliest free stretch of its window and moves as the day fills.
+    """
+    try:
+        day = date_cls.fromisoformat(date)
+    except ValueError as e:
+        raise UnprocessableEntityError("date must be a real calendar date") from e
+    blocks = engine.floating_blocks(ctx.user_id, date, tz=tz)
+    return FloatingBlocksResponse(
+        date=day,
+        blocks=[FloatingBlockResponse(**dataclasses.asdict(block)) for block in blocks],
+    )
+
+
+def _floating_rule(
+    rule_repo: AvailabilityRuleRepository, rule_id: str, user_id: str
+) -> AvailabilityRule:
+    rule = rule_repo.get(rule_id, user_id)
+    if rule is None or rule.rule_type != RuleType.FLOATING_BLOCK:
+        raise NotFoundError(f"Floating block not found: {rule_id}")
+    return rule
+
+
+def _write_exception(
+    rule_repo: AvailabilityRuleRepository,
+    rule: AvailabilityRule,
+    day: str,
+    exception: dict[str, Any] | None,
+    tz: tzinfo,
+) -> AvailabilityRule:
+    try:
+        on = date_cls.fromisoformat(day)
+    except ValueError as e:
+        raise UnprocessableEntityError("date must be a real calendar date") from e
+    today = datetime.now(tz).date()
+    if on < today:
+        raise UnprocessableEntityError("A past date can't be changed")
+    params = floating_block.with_exception(rule.params, on, exception, today=today)
+    try:
+        rule.params = validate_rule_params(RuleType.FLOATING_BLOCK, params)
+    except AvailabilityRuleParamsError as e:
+        raise UnprocessableEntityError(f"Invalid params for {RuleType.FLOATING_BLOCK}: {e}") from e
+    rule.updated_at = utc_now()
+    return rule_repo.update(rule)
+
+
+@router.put(
+    "/api/availability/rules/{rule_id}/exceptions/{day}",
+    response_model=AvailabilityRuleResponse,
+)
+def set_floating_block_exception(
+    rule_id: str,
+    day: str,
+    request: FloatingBlockExceptionRequest,
+    ctx: TenantContext = Depends(get_tenant_context),
+    rule_repo: AvailabilityRuleRepository = Depends(get_availability_rule_repository),
+    tz: tzinfo = Depends(get_owner_timezone),
+) -> AvailabilityRuleResponse:
+    """Pin a floating block to a start for one date, or skip it that date."""
+    rule = _floating_rule(rule_repo, rule_id, ctx.user_id)
+    exception = request.model_dump(exclude_none=True)
+    return _rule_to_response(_write_exception(rule_repo, rule, day, exception, tz))
+
+
+@router.delete(
+    "/api/availability/rules/{rule_id}/exceptions/{day}",
+    response_model=AvailabilityRuleResponse,
+)
+def clear_floating_block_exception(
+    rule_id: str,
+    day: str,
+    ctx: TenantContext = Depends(get_tenant_context),
+    rule_repo: AvailabilityRuleRepository = Depends(get_availability_rule_repository),
+    tz: tzinfo = Depends(get_owner_timezone),
+) -> AvailabilityRuleResponse:
+    """Put a floating block back to floating on one date."""
+    rule = _floating_rule(rule_repo, rule_id, ctx.user_id)
+    return _rule_to_response(_write_exception(rule_repo, rule, day, None, tz))
 
 
 @router.post("/api/availability/check", response_model=CheckConflictsResponse)

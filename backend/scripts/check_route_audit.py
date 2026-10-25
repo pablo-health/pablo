@@ -443,6 +443,9 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("post", "/api/availability/rules/parse"),  # NL rule proposals, no client attached
         ("get", "/api/availability/slots"),  # open free-slot times, no client
         ("post", "/api/availability/check"),  # conflict check, rule messages only
+        ("get", "/api/availability/floating-blocks"),  # protected-time positions, no client
+        ("put", "/api/availability/rules/{rule_id}/exceptions/{day}"),  # pin/skip one date
+        ("delete", "/api/availability/rules/{rule_id}/exceptions/{day}"),  # clear pin/skip
         ("get", "/api/scheduling/policy"),  # practice booking policy; no patient data
         ("patch", "/api/scheduling/policy"),  # practice booking policy; no patient data
         # practice_billing.py — the practice's own billing identity (legal
