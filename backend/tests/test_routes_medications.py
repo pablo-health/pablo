@@ -332,6 +332,23 @@ class TestUpdateMedication:
         cleared = client_with_repo.patch(url, json={"interruption_risk": None}).json()
         assert (cleared["controlled"], cleared["interruption_risk"]) == (True, None)
 
+    def test_each_medication_says_what_the_default_list_holds_for_it(
+        self, client_with_repo: TestClient
+    ) -> None:
+        """The chart shows "Default (Yes)" or "Default (No)"; the list lives here, not there."""
+        lithium = _create_med(client_with_repo, drug_name="Lithium carbonate ER")
+        sertraline = _create_med(client_with_repo, drug_name="Sertraline")
+        assert lithium["interruption_risk_default"] is True
+        assert sertraline["interruption_risk_default"] is False
+
+        # The clinician's own call is kept beside it, never folded into it.
+        url = f"/api/patients/{_PATIENT_ID}/medications/{lithium['id']}"
+        overridden = client_with_repo.patch(url, json={"interruption_risk": False}).json()
+        assert (overridden["interruption_risk"], overridden["interruption_risk_default"]) == (
+            False,
+            True,
+        )
+
     def test_update_unknown_id_returns_404(self, client_with_repo: TestClient) -> None:
         resp = client_with_repo.patch(
             f"/api/patients/{_PATIENT_ID}/medications/{uuid.uuid4()}",

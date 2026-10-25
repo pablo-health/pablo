@@ -144,4 +144,40 @@ test.describe("the medication list", () => {
       await api.request("DELETE", `/api/note-types/custom/${slug}`)
     }
   })
+
+  test("the clinician can say a medication is not harmful to interrupt, and go back to the default", async ({
+    api,
+    signedInPage: page,
+  }) => {
+    const patient = await givePatient(api)
+    const medications = `/api/patients/${patient.id}/medications`
+    await api.post(medications, { drug_name: "Lithium carbonate", dose: "300 mg" })
+    await openMedications(page, patient.id)
+
+    await page.getByRole("button", { name: "Edit Lithium carbonate" }).click()
+    const edit = page.getByRole("dialog", { name: "Edit medication" })
+    const picker = edit.getByRole("combobox", { name: "Harmful to interrupt" })
+    await expect(picker).toHaveText("Default (Yes)")
+    await picker.click()
+    await page.getByRole("option", { name: "No" }).click()
+    await edit.getByRole("button", { name: "Save changes" }).click()
+    await expect(edit).toBeHidden()
+
+    type Flags = { interruption_risk: boolean | null; interruption_risk_default: boolean }
+    const overridden = await api.get<{ data: Flags[] }>(medications)
+    expect(overridden.data).toEqual([
+      expect.objectContaining({ interruption_risk: false, interruption_risk_default: true }),
+    ])
+
+    await page.reload()
+    await page.getByRole("button", { name: "Edit Lithium carbonate" }).click()
+    await expect(picker).toHaveText("No")
+    await picker.click()
+    await page.getByRole("option", { name: "Default (Yes)" }).click()
+    await edit.getByRole("button", { name: "Save changes" }).click()
+    await expect(edit).toBeHidden()
+
+    const restored = await api.get<{ data: Flags[] }>(medications)
+    expect(restored.data).toEqual([expect.objectContaining({ interruption_risk: null })])
+  })
 })

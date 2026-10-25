@@ -25,6 +25,11 @@ export interface Medication {
   stopped_at: string | null
   stop_reason: string | null
   notes: string | null
+  /** The clinician's own call; null uses the default list. */
+  controlled?: boolean | null
+  interruption_risk?: boolean | null
+  /** What the default list says for this drug name. */
+  interruption_risk_default?: boolean
   created_by: string
   created_at: string
   updated_at: string
@@ -44,6 +49,7 @@ export interface CreateMedicationRequest {
   started_at?: string | null
   stop_reason?: string | null
   notes?: string | null
+  interruption_risk?: boolean | null
 }
 
 export interface UpdateMedicationRequest {
@@ -56,4 +62,6 @@ export interface UpdateMedicationRequest {
   stopped_at?: string | null
   stop_reason?: string | null
   notes?: string | null
+  /** Sent as null, goes back to the default list. */
+  interruption_risk?: boolean | null
 }

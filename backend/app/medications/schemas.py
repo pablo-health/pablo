@@ -72,6 +72,9 @@ class MedicationResponse(BaseModel):
     notes: str | None
     controlled: bool | None = None
     interruption_risk: bool | None = None
+    # What the default list says for this drug name, so the chart can show
+    # what a ``None`` above means (``app.models.refill_risk``).
+    interruption_risk_default: bool = False
     created_by: str
     created_at: datetime
     updated_at: datetime
