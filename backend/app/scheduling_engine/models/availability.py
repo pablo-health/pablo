@@ -21,6 +21,7 @@ class RuleType(StrEnum):
     BLOCK_DATE_RANGE = "block_date_range"
     BLOCK_SPECIFIC_DATES = "block_specific_dates"
     SESSION_DEFAULTS = "session_defaults"
+    FLOATING_BLOCK = "floating_block"
 
 
 class EnforcementLevel(StrEnum):

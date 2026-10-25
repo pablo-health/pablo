@@ -162,6 +162,11 @@ const baseQueryKeys = {
     rules: () => [...baseQueryKeys.availability.all, "rules"] as const,
     slots: (date: string, duration?: number) =>
       [...baseQueryKeys.availability.all, "slots", date, duration ?? null] as const,
+    // Under `availability.all`, so a rule edit moves the bands too. Appointment
+    // writes invalidate the prefix as well: a booking can push a block along.
+    floatingBlocksAll: () => [...baseQueryKeys.availability.all, "floating-blocks"] as const,
+    floatingBlocks: (date: string) =>
+      [...baseQueryKeys.availability.all, "floating-blocks", date] as const,
   },
 
   // User query keys

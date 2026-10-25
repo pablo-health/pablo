@@ -12,12 +12,14 @@ import type {
   CheckConflictsRequest,
   CheckConflictsResponse,
   CreateAvailabilityRuleRequest,
+  FloatingBlockException,
+  FloatingBlocksResponse,
   FreeSlotsResponse,
   ParseAvailabilityRulesRequest,
   ParseAvailabilityRulesResponse,
   UpdateAvailabilityRuleRequest,
 } from "@/types/availability"
-import { del, get, patch, post } from "./client"
+import { del, get, patch, post, put } from "./client"
 
 export async function listAvailabilityRules(
   token?: string
@@ -74,4 +76,36 @@ export async function checkConflicts(
   token?: string
 ): Promise<CheckConflictsResponse> {
   return post<CheckConflictsResponse>("/api/availability/check", data, token)
+}
+
+/** Where each floating block sits on one date ("YYYY-MM-DD", practice-local). */
+export async function getFloatingBlocks(
+  date: string,
+  token?: string
+): Promise<FloatingBlocksResponse> {
+  const params = new URLSearchParams({ date })
+  return get<FloatingBlocksResponse>(`/api/availability/floating-blocks?${params}`, token)
+}
+
+/** Pin a floating block to a start on one date, or skip it that date. */
+export async function setFloatingBlockException(
+  ruleId: string,
+  date: string,
+  exception: FloatingBlockException,
+  token?: string
+): Promise<AvailabilityRule> {
+  return put<AvailabilityRule>(
+    `/api/availability/rules/${ruleId}/exceptions/${date}`,
+    exception,
+    token
+  )
+}
+
+/** Let a floating block float again on one date. */
+export async function clearFloatingBlockException(
+  ruleId: string,
+  date: string,
+  token?: string
+): Promise<AvailabilityRule> {
+  return del<AvailabilityRule>(`/api/availability/rules/${ruleId}/exceptions/${date}`, token)
 }

@@ -55,6 +55,7 @@ export const RULE_TYPE_LABELS: Record<RuleType, string> = {
   block_date_range: "Block a date range",
   block_specific_dates: "Block specific dates",
   session_defaults: "Scheduling defaults",
+  floating_block: "Keep time free inside a window",
 }
 
 // The rule-type picker in RuleForm offers every type except session_defaults,
@@ -67,9 +68,25 @@ const BLOCKED_RULE_TYPES: RuleType[] = [
   "block_time_range",
   "block_date_range",
   "block_specific_dates",
+  "floating_block",
 ]
 
 export type ParamFields = Record<string, string>
+
+const WEEKDAYS = "0,1,2,3,4"
+
+/** "0,2,4" → [0, 2, 4]: how the form keeps a set of days in one field. */
+function dayList(value: string | undefined): number[] {
+  return (value ?? "")
+    .split(",")
+    .filter((d) => d !== "")
+    .map(Number)
+}
+
+function minutesOf(hhmm: string): number {
+  const [h, m] = hhmm.split(":").map(Number)
+  return h * 60 + m
+}
 
 export function defaultFields(ruleType: RuleType): ParamFields {
   switch (ruleType) {
@@ -92,6 +109,14 @@ export function defaultFields(ruleType: RuleType): ParamFields {
       return {}
     case "session_defaults":
       return {}
+    case "floating_block":
+      return {
+        label: "Lunch",
+        duration_minutes: "60",
+        window_start: "11:30",
+        window_end: "14:00",
+        days_of_week: WEEKDAYS,
+      }
   }
 }
 
@@ -137,6 +162,22 @@ function paramsToFields(
       }
     case "session_defaults":
       return { fields: {}, dates: [] }
+    case "floating_block":
+      return {
+        fields: {
+          label: String(params.label ?? ""),
+          duration_minutes: String(params.duration_minutes ?? 60),
+          window_start: String(params.window_start ?? ""),
+          window_end: String(params.window_end ?? ""),
+          days_of_week: Array.isArray(params.days_of_week)
+            ? params.days_of_week.join(",")
+            : WEEKDAYS,
+          // Single-date pins and skips are set from the calendar, not here;
+          // carried through so editing the block keeps them.
+          ...(params.exceptions ? { exceptions: JSON.stringify(params.exceptions) } : {}),
+        },
+        dates: [],
+      }
   }
 }
 
@@ -168,6 +209,15 @@ export function buildParams(
       return { dates }
     case "session_defaults":
       return {}
+    case "floating_block":
+      return {
+        label: fields.label.trim(),
+        duration_minutes: Number(fields.duration_minutes),
+        window_start: fields.window_start,
+        window_end: fields.window_end,
+        days_of_week: dayList(fields.days_of_week),
+        ...(fields.exceptions ? { exceptions: JSON.parse(fields.exceptions) } : {}),
+      }
   }
 }
 
@@ -207,6 +257,18 @@ export function validate(ruleType: RuleType, fields: ParamFields, dates: string[
       return null
     case "session_defaults":
       return null
+    case "floating_block": {
+      if (!fields.label?.trim()) return "Give it a name, like Lunch."
+      const duration = Number(fields.duration_minutes)
+      if (!Number.isInteger(duration) || duration < 5) return "Keep at least 5 minutes free."
+      if (!fields.window_start || !fields.window_end) return "Earliest and latest times are required."
+      if (fields.window_end <= fields.window_start) return "The latest time must be after the earliest."
+      if (minutesOf(fields.window_end) - minutesOf(fields.window_start) < duration) {
+        return "The window must be at least as long as the time kept free."
+      }
+      if (dayList(fields.days_of_week).length === 0) return "Pick at least one day."
+      return null
+    }
   }
 }
 
@@ -246,6 +308,16 @@ export function summarize(rule: AvailabilityRule): string {
       if (p.alignment === "hour") parts.push("on the hour")
       if (p.alignment === "half_hour") parts.push("on the half hour")
       return parts.length > 0 ? parts.join(", ") : "No scheduling defaults set"
+    }
+    case "floating_block": {
+      const days = Array.isArray(p.days_of_week) ? p.days_of_week.map(Number) : []
+      const when =
+        days.join(",") === WEEKDAYS
+          ? "weekdays"
+          : days.length === 7
+            ? "every day"
+            : days.map((d) => dayLabel(d)).join(", ")
+      return `${p.label}: ${p.duration_minutes} min free between ${timeRange(p.window_start, p.window_end)}, ${when}`
     }
     default:
       return ""
@@ -705,6 +777,80 @@ function RuleParamsFields({
       // Owned by LimitsAndBuffersCard above — never reachable here since
       // PICKER_RULE_TYPES excludes it.
       return null
+    case "floating_block": {
+      const chosen = dayList(fields.days_of_week)
+      const toggleDay = (day: number) => {
+        const next = chosen.includes(day) ? chosen.filter((d) => d !== day) : [...chosen, day]
+        onFieldChange("days_of_week", next.sort((a, b) => a - b).join(","))
+      }
+      return (
+        <div className="grid gap-4">
+          <p className="text-sm text-neutral-600">
+            The time moves to wherever the day leaves room inside the window.
+          </p>
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="grid gap-2">
+              <Label htmlFor="param-label">Name</Label>
+              <Input
+                id="param-label"
+                value={fields.label ?? ""}
+                maxLength={60}
+                onChange={(e) => onFieldChange("label", e.target.value)}
+                disabled={disabled}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="param-duration">Minutes to keep free</Label>
+              <Input
+                id="param-duration"
+                type="number"
+                min={5}
+                className="w-28"
+                value={fields.duration_minutes ?? ""}
+                onChange={(e) => onFieldChange("duration_minutes", e.target.value)}
+                disabled={disabled}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="param-window-start">Earliest</Label>
+              <Input
+                id="param-window-start"
+                type="time"
+                value={fields.window_start ?? ""}
+                onChange={(e) => onFieldChange("window_start", e.target.value)}
+                disabled={disabled}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="param-window-end">Latest</Label>
+              <Input
+                id="param-window-end"
+                type="time"
+                value={fields.window_end ?? ""}
+                onChange={(e) => onFieldChange("window_end", e.target.value)}
+                disabled={disabled}
+              />
+            </div>
+          </div>
+          <fieldset className="grid gap-2">
+            <legend className="text-sm font-medium">Days</legend>
+            <div className="flex flex-wrap gap-3">
+              {DAY_OPTIONS.map((d) => (
+                <label key={d.value} className="flex items-center gap-1 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={chosen.includes(d.value)}
+                    onChange={() => toggleDay(d.value)}
+                    disabled={disabled}
+                  />
+                  {d.label}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        </div>
+      )
+    }
   }
 }
 
