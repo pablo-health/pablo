@@ -5,10 +5,10 @@
  * practice has such a rule, and the band's menu writes through the hooks.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest"
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { fireEvent, render, screen } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { addDays, format, startOfDay, startOfWeek } from "date-fns"
+import { addDays, format, startOfWeek } from "date-fns"
 import { EditorialCalendar } from "../EditorialCalendar"
 import { ToastProvider } from "@/components/ui/Toast"
 import type { AvailabilityRule, FloatingBlock } from "@/types/availability"
@@ -86,11 +86,16 @@ function weekDates(): string[] {
   return Array.from({ length: 7 }, (_, i) => format(addDays(start, i), "yyyy-MM-dd"))
 }
 
-/** A day in the visible week other than today, so its label is fixed. */
+// A Wednesday morning, so the visible week has a day after today. A past
+// date's band has no menu (the server refuses the write), so a test that
+// opens the menu needs a later day, and a real clock has none on a Saturday.
+const NOW = new Date(2026, 9, 21, 9, 0, 0)
+
+/** Tomorrow: in the visible week, not today (so its label is fixed), not past. */
 function notToday(): Date {
-  const today = startOfDay(new Date())
-  const start = startOfWeek(today, { weekStartsOn: 0 })
-  return start.getTime() === today.getTime() ? addDays(start, 1) : start
+  const tomorrow = addDays(new Date(), 1)
+  tomorrow.setHours(0, 0, 0, 0)
+  return tomorrow
 }
 
 function lunchOn(day: Date): FloatingBlock {
@@ -111,7 +116,13 @@ function lunchOn(day: Date): FloatingBlock {
   }
 }
 
+afterEach(() => {
+  vi.useRealTimers()
+})
+
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] })
+  vi.setSystemTime(NOW)
   RULES.length = 0
   BLOCKS.length = 0
   askedFor.mockReset()
