@@ -14,7 +14,7 @@
 # trivy:ignore:DS-0026 — Cloud Run uses HTTP startup/liveness probes, not Docker HEALTHCHECK
 
 # ---------- Stage 1: Builder ----------
-FROM cgr.dev/chainguard/python:latest-dev@sha256:87729167739190d9309588120a8ac0ffbf2eb95dd895abb9bada6bb9ecbf5a04 AS builder
+FROM cgr.dev/chainguard/python:latest-dev@sha256:dde1a2549dd62864f0263dae8e877680837b4e738a7ecc85c671c55c069848ac AS builder
 
 WORKDIR /build
 
@@ -40,7 +40,7 @@ RUN poetry config virtualenvs.create false \
 
 
 # ---------- Stage 2: Runtime ----------
-FROM cgr.dev/chainguard/python:latest@sha256:be59f7abb600892c78e6ff0fe1a8f39549da13302dc003c8a5eb1c14b03d995c
+FROM cgr.dev/chainguard/python:latest@sha256:49fd266eb8a1331194c318b742087c7a2939cc5794fa64f17feb9e17e12703e2
 
 WORKDIR /app
 
