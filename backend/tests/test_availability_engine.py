@@ -15,6 +15,7 @@ from app.scheduling_engine.models.availability import AvailabilityRule, Enforcem
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.scheduling_engine.repositories.availability_rule import InMemoryAvailabilityRuleRepository
 from app.scheduling_engine.services.availability import AvailabilityEngine
+from app.scheduling_engine.services.scheduling import SchedulingService
 
 USER_ID = "user-1"
 
@@ -129,6 +130,104 @@ class TestWorkingHoursConflict:
             USER_ID, "2026-03-19T10:00:00Z", "2026-03-19T10:50:00Z"
         ).conflicts
         assert len(conflicts) == 0
+
+
+class TestSplitWorkingDay:
+    """A day with two working ranges, 09:00-12:00 and 14:00-18:00 on Wednesdays.
+
+    Booking has to agree with listing: every time ``get_free_slots`` offers is
+    one ``check_conflicts`` accepts, and a time between the ranges is still
+    outside working hours.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _split_day(self, rule_repo: InMemoryAvailabilityRuleRepository) -> None:
+        for rule_id, start, end in (("am", "09:00", "12:00"), ("pm", "14:00", "18:00")):
+            rule_repo.create(
+                _rule(
+                    RuleType.WORKING_HOURS,
+                    {"day_of_week": 2, "start": start, "end": end},
+                    rule_id=rule_id,
+                )
+            )
+
+    def test_every_listed_time_can_be_booked(
+        self,
+        appt_repo: InMemoryAppointmentRepository,
+        engine: AvailabilityEngine,
+    ) -> None:
+        slots = engine.get_free_slots(USER_ID, "2026-03-18", 50).slots
+        assert {s.start for s in slots} >= {"2026-03-18T09:00:00Z", "2026-03-18T14:00:00Z"}
+        for slot in slots:
+            assert engine.check_conflicts(USER_ID, slot.start, slot.end).conflicts == []
+
+        service = SchedulingService(appt_repo, engine)
+        for start, end in (("09:00", "09:50"), ("15:00", "15:50")):
+            service.create_appointment(
+                USER_ID,
+                data={
+                    "patient_id": "patient-1",
+                    "title": "Session",
+                    "start_at": f"2026-03-18T{start}:00Z",
+                    "end_at": f"2026-03-18T{end}:00Z",
+                    "duration_minutes": 50,
+                },
+            )
+        booked = appt_repo.list_by_range(USER_ID, "2026-03-18T00:00:00Z", "2026-03-19T00:00:00Z")
+        assert len(booked) == 2
+
+    def test_a_time_between_the_ranges_is_outside_working_hours(
+        self, engine: AvailabilityEngine
+    ) -> None:
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-18T12:30:00Z", "2026-03-18T13:20:00Z"
+        ).conflicts
+        assert len(conflicts) == 1
+        assert conflicts[0].enforcement == EnforcementLevel.HARD
+        assert conflicts[0].message == "Outside working hours (09:00-12:00, 14:00-18:00)"
+
+    def test_a_time_across_the_break_is_outside_working_hours(
+        self, engine: AvailabilityEngine
+    ) -> None:
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-18T11:30:00Z", "2026-03-18T14:20:00Z"
+        ).conflicts
+        assert len(conflicts) == 1
+
+    def test_a_hard_range_is_not_softened_by_a_soft_one(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        rule_repo.create(
+            _rule(
+                RuleType.WORKING_HOURS,
+                {"day_of_week": 2, "start": "19:00", "end": "21:00"},
+                rule_id="evening",
+                enforcement=EnforcementLevel.SOFT,
+            )
+        )
+        inside_soft = engine.check_conflicts(
+            USER_ID, "2026-03-18T19:00:00Z", "2026-03-18T19:50:00Z"
+        ).conflicts
+        assert inside_soft == []
+        outside = engine.check_conflicts(
+            USER_ID, "2026-03-18T07:00:00Z", "2026-03-18T07:50:00Z"
+        ).conflicts
+        assert [c.enforcement for c in outside] == [EnforcementLevel.HARD]
+
+    def test_an_unreadable_range_is_skipped(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        rule_repo.create(_rule(RuleType.WORKING_HOURS, {"day_of_week": 2}, rule_id="broken"))
+        assert (
+            engine.check_conflicts(
+                USER_ID, "2026-03-18T15:00:00Z", "2026-03-18T15:50:00Z"
+            ).conflicts
+            == []
+        )
+        outside = engine.check_conflicts(
+            USER_ID, "2026-03-18T07:00:00Z", "2026-03-18T07:50:00Z"
+        ).conflicts
+        assert len(outside) == 1
 
 
 class TestBlockDayOfWeek:
