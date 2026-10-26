@@ -245,6 +245,7 @@ APPOINTMENT_COLUMN_DECISIONS: Final[Mapping[str, str | None]] = {
     "cancelled_by_id": "An internal identifier for whoever cancelled.",
     "late_cancellation": SHOWN,
     "superseded_by_id": "An internal link to the replacement row after a reschedule.",
+    "skipped": "How the practice files a cancelled week; to the patient it is cancelled.",
     "late_change_acknowledged": "The attestation the API already required from the caller.",
     "appointment_type_id": "Internal scheduling bookkeeping with no meaning to a patient.",
     "session_type": SHOWN,
