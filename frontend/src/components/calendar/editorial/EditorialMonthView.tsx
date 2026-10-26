@@ -6,8 +6,9 @@ import { useMemo, useRef } from "react"
 import { format, isSameMonth, isToday } from "date-fns"
 import type { AppointmentResponse } from "@/types/scheduling"
 import { monthGridDays } from "./dateUtils"
-import { editorialStatusMeta } from "./status"
+import { calendarShowing, editorialStatusMeta, heldLabel } from "./status"
 import { useClickPeekEdit } from "./useClickPeekEdit"
+import type { DayRangeHandlers } from "./useDayRangeSelection"
 
 interface EditorialMonthViewProps {
   anchor: Date
@@ -20,6 +21,8 @@ interface EditorialMonthViewProps {
   onEdit: (appointment: AppointmentResponse) => void
   /** Right click on a chip → open the status menu at the cursor. */
   onContextMenu: (appointment: AppointmentResponse, x: number, y: number) => void
+  /** Drag across days to select them. A plain click still opens the day. */
+  daySelection?: DayRangeHandlers
 }
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
@@ -33,6 +36,7 @@ export function EditorialMonthView({
   onPeek,
   onEdit,
   onContextMenu,
+  daySelection,
 }: EditorialMonthViewProps) {
   const days = useMemo(() => monthGridDays(anchor), [anchor])
 
@@ -94,14 +98,21 @@ export function EditorialMonthView({
               key={idx}
               role="button"
               tabIndex={0}
-              onClick={() => onSelectDay(day)}
+              onClick={() => {
+                if (!daySelection?.dragged()) onSelectDay(day)
+              }}
+              onPointerDown={(e) => {
+                if (e.button === 0) daySelection?.begin(day, false)
+              }}
+              onPointerEnter={() => daySelection?.extend(day)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault()
                   onSelectDay(day)
                 }
               }}
-              className="flex cursor-pointer flex-col items-stretch gap-[3px] px-[7px] py-[6px] text-left outline-none transition-colors hover:bg-[var(--ed-pill-hover)] focus-visible:bg-[var(--ed-pill-hover)]"
+              data-range-selected={daySelection?.isSelected(day) ? "true" : undefined}
+              className="flex cursor-pointer select-none flex-col items-stretch gap-[3px] px-[7px] py-[6px] text-left outline-none transition-colors hover:bg-[var(--ed-pill-hover)] focus-visible:bg-[var(--ed-pill-hover)]"
               style={{
                 borderTop: idx >= 7 ? "1px solid var(--ed-hairline)" : undefined,
                 backgroundColor: today ? "var(--ed-today-tint)" : undefined,
@@ -173,8 +184,12 @@ interface MonthChipProps {
 function MonthChip({ appointment, name, onPeek, onEdit, onContextMenu }: MonthChipProps) {
   const ref = useRef<HTMLSpanElement>(null)
   const start = new Date(appointment.start_at)
-  const cancelled = appointment.status === "cancelled"
-  const meta = editorialStatusMeta(appointment.status)
+  const showing = calendarShowing(appointment)
+  const cancelled = showing === "cancelled"
+  const meta = editorialStatusMeta(showing)
+  const label = showing === "pending" ? heldLabel(appointment.pending_expires_at) : meta.label
+  const treatment =
+    showing === "pending" ? " ed-held" : showing === "skipped" ? " ed-skipped" : ""
 
   const { handleClick, handleDoubleClick, handleContextMenu } =
     useClickPeekEdit({
@@ -201,13 +216,14 @@ function MonthChip({ appointment, name, onPeek, onEdit, onContextMenu }: MonthCh
           if (rect) onPeek(appointment, rect)
         }
       }}
-      aria-label={`${name} at ${format(start, "h:mm a")} — ${meta.label}`}
-      className="group flex items-center gap-1.5 truncate rounded-[5px] px-1.5 py-0.5 text-[11px]"
+      aria-label={`${name} at ${format(start, "h:mm a")} — ${label}`}
+      title={showing === "pending" || showing === "skipped" ? label : undefined}
+      className={`group flex items-center gap-1.5 truncate rounded-[5px] px-1.5 py-0.5 text-[11px]${treatment}`}
       style={{
         backgroundColor: meta.bg,
         color: meta.fg,
         textDecoration: cancelled ? "line-through" : undefined,
-        opacity: cancelled ? 0.6 : 1,
+        opacity: cancelled ? 0.6 : undefined,
       }}
     >
       <span

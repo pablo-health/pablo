@@ -2509,6 +2509,12 @@ class AppointmentRow(Base):
     # means "moved"; NULL on a cancelled row means "cancelled outright". No
     # foreign key, matching ``recurring_appointment_id``.
     superseded_by_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False), nullable=True)
+    # A cancelled series occurrence the series carries on past ("skip this
+    # week"), as opposed to an ordinary cancellation. Set only alongside the
+    # cancellation record and cleared with it.
+    skipped: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
     # The caller's attestation that it was told the change was late and went
     # ahead. Load-bearing because the API REFUSES a late change without it, so
     # a client cannot reach this state without having been handed the warning

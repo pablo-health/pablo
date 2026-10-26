@@ -6,7 +6,7 @@ import type { CSSProperties } from "react"
 import { GOOGLE_SYNC_STATUS, type AppointmentResponse } from "@/types/scheduling"
 import { CalendarClock, Repeat, Video } from "lucide-react"
 import { format } from "date-fns"
-import { editorialStatusMeta } from "./status"
+import { calendarShowing, editorialStatusMeta, heldLabel } from "./status"
 
 /** Below this rendered height (px) a block drops to its tightest form. */
 export const EVENT_MICRO_PX = 30
@@ -53,12 +53,23 @@ export function EditorialEventCard({
   micro,
   compact,
 }: EditorialEventCardProps) {
-  const meta = editorialStatusMeta(appointment.status)
+  const showing = calendarShowing(appointment)
+  const meta = editorialStatusMeta(showing)
   const start = new Date(appointment.start_at)
   const end = new Date(appointment.end_at)
   const title = patientName ?? appointment.title
-  const cancelled = appointment.status === "cancelled"
+  const cancelled = showing === "cancelled"
   const showMeta = !compact && !micro
+  // A held time and a skipped week say so in words as well as in how they
+  // are drawn, at every size with room for a second line.
+  const note =
+    showing === "pending"
+      ? heldLabel(appointment.pending_expires_at)
+      : showing === "skipped"
+        ? meta.label
+        : null
+  const treatment =
+    showing === "pending" ? " ed-held" : showing === "skipped" ? " ed-skipped" : ""
   // A move in Google Calendar that couldn't be followed. Shown at every size:
   // it is the one thing on the card asking for a decision.
   const googleDiffers =
@@ -68,14 +79,14 @@ export function EditorialEventCard({
     <button
       type="button"
       onClick={onClick ? () => onClick(appointment) : undefined}
-      className="ed-event group relative flex h-full w-full flex-col items-start overflow-hidden text-left"
+      className={`ed-event group relative flex h-full w-full flex-col items-start overflow-hidden text-left${treatment}`}
       style={{
         padding: micro ? "2px 7px 2px 9px" : "5px 9px 5px 11px",
         backgroundColor: meta.bg,
         color: meta.fg,
         textDecoration: cancelled ? "line-through" : undefined,
       }}
-      aria-label={`${title} at ${format(start, "h:mm a")} — ${meta.label}${
+      aria-label={`${title} at ${format(start, "h:mm a")} — ${note ?? meta.label}${
         googleDiffers ? " — Google Calendar has a different time" : ""
       }`}
     >
@@ -91,6 +102,14 @@ export function EditorialEventCard({
           {showMeta && (
             <div className="mt-px text-[10px] uppercase tracking-[0.05em] opacity-[0.72]">
               {format(start, "h:mm")} – {format(end, "h:mm a")}
+            </div>
+          )}
+          {note && !micro && (
+            <div
+              data-testid="event-note"
+              className="mt-px text-[10px] font-semibold tracking-[0.02em] opacity-[0.85]"
+            >
+              {note}
             </div>
           )}
         </div>

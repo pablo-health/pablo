@@ -259,6 +259,21 @@ class TestCancelAppointment:
         with pytest.raises(AppointmentNotFoundError):
             service.cancel_appointment("nonexistent", USER_ID)
 
+    def test_undoing_a_skip_clears_the_marker(
+        self, service: SchedulingService, repo: InMemoryAppointmentRepository
+    ) -> None:
+        """A restored occurrence is booked again, so it must not still read as
+        skipped anywhere the row is drawn."""
+        created = service.create_appointment(USER_ID, data=_appt_data())
+        created.recurring_appointment_id = "series-1"
+        repo.update(created)
+
+        skipped = service.cancel_appointment(created.id, USER_ID, skip=True)
+        assert (skipped.status, skipped.skipped) == (AppointmentStatus.CANCELLED, True)
+
+        restored = service.restore_appointment(created.id, USER_ID)
+        assert (restored.status, restored.skipped) == (AppointmentStatus.CONFIRMED, False)
+
 
 class TestListPatientAppointments:
     def test_lists_by_patient(self, service: SchedulingService) -> None:

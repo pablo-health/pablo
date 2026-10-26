@@ -200,6 +200,11 @@ class AppointmentResponse(BaseModel):
     duration_minutes: int
     status: str
     session_type: str
+    #: When a pending appointment stops holding its slot. None for every
+    #: other status.
+    pending_expires_at: datetime | None = None
+    #: A cancelled occurrence of a series that the series carries on past.
+    skipped: bool = False
     video_link: str | None = None
     video_platform: str | None = None
     #: Which video service made the room, when one did.

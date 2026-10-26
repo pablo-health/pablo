@@ -3,6 +3,7 @@
 "use client"
 
 import { useEffect, useMemo, useRef } from "react"
+import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react"
 import { format, isSameDay, isToday, startOfDay } from "date-fns"
 import type { AppointmentResponse } from "@/types/scheduling"
 import type { AvailabilityRule } from "@/types/availability"
@@ -19,6 +20,7 @@ import { ScheduleLayer } from "./ScheduleLayer"
 import { FloatingBlockLayer, type FloatingBlockActions } from "./FloatingBlockBand"
 import type { FloatingBlock } from "@/types/availability"
 import { assignLanes } from "./laneLayout"
+import type { DayRangeHandlers } from "./useDayRangeSelection"
 import { matchWholeDayBlockRule, rulesInForceForDate } from "./unavailability"
 import { pastUntilMinute, workingRangesForDay, type MinuteRange } from "./schedule"
 import {
@@ -67,6 +69,9 @@ interface EditorialWeekViewProps {
   floatingBlocks?: FloatingBlock[]
   /** What a floating block's band can do; no bands are drawn without it. */
   floatingActions?: FloatingBlockActions
+  /** Click or drag across the day headers to select days. Headers are
+   * plain labels without it. */
+  daySelection?: DayRangeHandlers
 }
 
 export function EditorialWeekView({
@@ -88,6 +93,7 @@ export function EditorialWeekView({
   onOpenOutside = ignoreOutside,
   floatingBlocks = NO_FLOATING_BLOCKS,
   floatingActions,
+  daySelection,
 }: EditorialWeekViewProps) {
   const days = useMemo(() => weekDays(anchor), [anchor])
   const hours = useMemo(() => gridHours(dayStart, dayEnd), [dayStart, dayEnd])
@@ -127,7 +133,12 @@ export function EditorialWeekView({
         boxShadow: "var(--ed-shadow-card)",
       }}
     >
-      <DayHeaderRow days={days} availabilityRules={availabilityRules} configured={configured} />
+      <DayHeaderRow
+        days={days}
+        availabilityRules={availabilityRules}
+        configured={configured}
+        selection={daySelection}
+      />
       <div ref={scrollerRef} className="relative max-h-[68vh] overflow-y-auto">
         <div className="flex">
           <HourRail hours={hours} rowHeightPx={rowHeightPx} />
@@ -173,14 +184,16 @@ function DayHeaderRow({
   days,
   availabilityRules,
   configured,
+  selection,
 }: {
   days: Date[]
   availabilityRules: AvailabilityRule[]
   configured: boolean
+  selection?: DayRangeHandlers
 }) {
   return (
     <div
-      className="flex border-b"
+      className="flex select-none border-b"
       style={{ borderColor: "var(--ed-hairline-strong)" }}
     >
       <div className="w-[60px] shrink-0" aria-hidden />
@@ -198,7 +211,28 @@ function DayHeaderRow({
           return (
             <div
               key={day.toISOString()}
-              className="flex flex-col items-center justify-center gap-1 py-3"
+              className={`flex flex-col items-center justify-center gap-1 py-3${
+                selection ? " cursor-pointer" : ""
+              }`}
+              {...(selection && {
+                role: "button",
+                tabIndex: 0,
+                "aria-label": `Select ${format(day, "EEEE MMM d")}`,
+                "aria-pressed": selection.isSelected(day),
+                "data-range-selected": selection.isSelected(day) ? "true" : undefined,
+                onPointerDown: (e: ReactPointerEvent) => {
+                  if (e.button !== 0) return
+                  if (e.shiftKey) selection.pick(day, true)
+                  else selection.begin(day, true)
+                },
+                onPointerEnter: () => selection.extend(day),
+                onKeyDown: (e: ReactKeyboardEvent) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault()
+                    selection.pick(day, e.shiftKey)
+                  }
+                },
+              })}
             >
               {today ? (
                 <span

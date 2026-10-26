@@ -640,6 +640,8 @@ def _to_response(
         duration_minutes=appt.duration_minutes,
         status=appt.status,
         session_type=appt.session_type,
+        pending_expires_at=appt.pending_expires_at,
+        skipped=appt.skipped,
         video_link=appt.video_link,
         video_platform=appt.video_platform,
         provider=appt.provider,
@@ -922,18 +924,25 @@ def cancel_appointment(
     gcal_service: GoogleCalendarService = Depends(get_google_calendar_service),
     patient_repo: PatientRepository = Depends(get_patient_repository),
     registry: MeetingProviderRegistry = Depends(get_meeting_registry),
+    skip: bool = Query(
+        False,
+        description="Skip this occurrence of a series; the series carries on.",
+    ),
 ) -> AppointmentResponse:
     """Cancel an appointment (soft delete — sets status to cancelled)."""
     try:
-        appt = service.cancel_appointment(appointment_id, user.id)
+        appt = service.cancel_appointment(appointment_id, user.id, skip=skip)
     except AppointmentNotFoundError as e:
         raise NotFoundError(str(e)) from e
+    except InvalidAppointmentError as e:
+        raise BadRequestError(str(e)) from e
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_CANCELLED,
         user,
         http_request,
         appt.id,
         patient_id=appt.patient_id,
+        changes={"skipped": True} if skip else None,
     )
     _release_meeting(registry, user, appt)
     _push_cancellation_to_google(gcal_service, user, appt)

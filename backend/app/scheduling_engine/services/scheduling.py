@@ -626,8 +626,13 @@ class SchedulingService:
         user_id: str,
         *,
         record: ChangeRecord | None = None,
+        skip: bool = False,
     ) -> Appointment:
         """Cancel a single appointment.
+
+        ``skip`` marks a series occurrence as skipped: the client is not
+        coming that week and the series carries on. Refused on an appointment
+        that is not part of a series, where there is nothing to carry on.
 
         Clears any confirmation token along with it — once a clinician has
         cancelled a hold in-app, its link must stop working. This is the
@@ -648,7 +653,12 @@ class SchedulingService:
         acting for somebody else say so.
         """
         appointment = self.get_appointment(appointment_id, user_id)
+        if skip and not appointment.recurring_appointment_id:
+            raise InvalidAppointmentError(
+                f"Appointment {appointment_id} is not part of a series, so it cannot be skipped"
+            )
         appointment.status = AppointmentStatus.CANCELLED
+        appointment.skipped = skip
         appointment.pending_expires_at = None
         appointment.confirmation_token_hash = None
         record = record or ChangeRecord()
@@ -686,6 +696,7 @@ class SchedulingService:
             exclude_appointment_id=appointment_id,
         )
         appointment.status = AppointmentStatus.CONFIRMED
+        appointment.skipped = False
         appointment.cancelled_at = None
         appointment.cancelled_by = None
         appointment.cancelled_by_id = None
