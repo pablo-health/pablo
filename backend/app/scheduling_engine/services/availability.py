@@ -249,8 +249,18 @@ class AvailabilityEngine:
         proposed_start = _local(start_at, tz)
         proposed_end = _local(end_at, tz)
         conflicts: list[Conflict] = []
+        hours_checked = False
 
         for rule in rules:
+            if rule.rule_type == RuleType.WORKING_HOURS and rule.appointment_type_id is None:
+                # A day's ranges are one answer, not one per range: see
+                # _check_working_hours. Asked once, where the first one sits.
+                if not hours_checked:
+                    hours_checked = True
+                    conflict = self._check_working_hours(rules, proposed_start, proposed_end)
+                    if conflict:
+                        conflicts.append(conflict)
+                continue
             try:
                 conflict = self._check_rule(rule, user_id, proposed_start, proposed_end)
             except (KeyError, TypeError, ValueError):
@@ -518,9 +528,8 @@ class AvailabilityEngine:
             return None
 
         checkers = {
-            RuleType.WORKING_HOURS: lambda: self._check_working_hours(
-                rule, proposed_start, proposed_end
-            ),
+            # WORKING_HOURS is not here: a day's ranges are checked together,
+            # once, by check_conflicts (_check_working_hours).
             RuleType.BLOCK_DAY_OF_WEEK: lambda: self._check_block_day_of_week(rule, proposed_start),
             RuleType.BLOCK_TIME_RANGE: lambda: self._check_block_time_range(
                 rule, proposed_start, proposed_end
@@ -546,26 +555,50 @@ class AvailabilityEngine:
 
     def _check_working_hours(
         self,
-        rule: AvailabilityRule,
+        rules: list[AvailabilityRule],
         proposed_start: datetime,
         proposed_end: datetime,
     ) -> Conflict | None:
-        day_of_week = rule.params["day_of_week"]
-        if proposed_start.weekday() != day_of_week:
-            return None
+        """Whether the time sits inside one of the day's working ranges.
 
-        work_start = _time_to_minutes(rule.params["start"])
-        work_end = _time_to_minutes(rule.params["end"])
+        A day can have several ranges (9-12 and 2-6). The time is inside
+        working hours when any one of them holds all of it, which is how
+        :meth:`get_free_slots` lists slots, range by range. Checking each
+        range on its own would put every time on a split day outside one of
+        them. With no range for the weekday there is nothing to check, as
+        before. A rule whose params cannot be read is skipped.
+        """
         prop_start_min = proposed_start.hour * 60 + proposed_start.minute
         prop_end_min = proposed_end.hour * 60 + proposed_end.minute
-
-        if prop_start_min >= work_start and prop_end_min <= work_end:
+        ranges: list[tuple[int, int, AvailabilityRule]] = []
+        for rule in rules:
+            if rule.rule_type != RuleType.WORKING_HOURS or rule.appointment_type_id is not None:
+                continue
+            try:
+                if rule.params["day_of_week"] != proposed_start.weekday():
+                    continue
+                span = (
+                    _time_to_minutes(rule.params["start"]),
+                    _time_to_minutes(rule.params["end"]),
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+            ranges.append((*span, rule))
+        if not ranges:
+            return None
+        if any(start <= prop_start_min and prop_end_min <= end for start, end, _ in ranges):
             return None
 
+        ranges.sort(key=lambda r: r[0])
+        # The strictest range speaks for the day: a hard one is not softened by
+        # a soft one beside it (the same reading as the daily cap's).
+        hard = [r for _, _, r in ranges if r.enforcement == EnforcementLevel.HARD]
+        rule = hard[0] if hard else ranges[0][2]
+        spans = ", ".join(f"{r.params['start']}-{r.params['end']}" for _, _, r in ranges)
         return Conflict(
             rule=rule,
             enforcement=rule.enforcement,
-            message=f"Outside working hours ({rule.params['start']}-{rule.params['end']})",
+            message=f"Outside working hours ({spans})",
         )
 
     def _check_block_day_of_week(
