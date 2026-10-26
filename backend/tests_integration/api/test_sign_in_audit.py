@@ -194,8 +194,19 @@ def _check_status(app: FastAPI, uid: str) -> tuple[int, Any]:
     return response.status_code, response.json()
 
 
-def _request_as(
-    app: FastAPI, uid: str, email: str, *, auth_time: int, issued_at: int | None = None
+_PASSWORD = {"sign_in_provider": "password", "sign_in_second_factor": "totp"}
+
+
+def _request_as(  # noqa: PLR0913 -- the token is the thing each test varies
+    app: FastAPI,
+    uid: str,
+    email: str,
+    *,
+    auth_time: int,
+    issued_at: int | None = None,
+    firebase: dict[str, Any] | None = None,
+    extra_claims: dict[str, Any] | None = None,
+    user_agent: str = _USER_AGENT,
 ) -> tuple[int, Any]:
     """One authenticated request, with a token for *uid* from the sign-in at *auth_time*.
 
@@ -216,7 +227,8 @@ def _request_as(
             "email": email,
             "iat": issued_at or auth_time,
             "auth_time": auth_time,
-            "firebase": {"sign_in_provider": "password", "sign_in_second_factor": "totp"},
+            "firebase": firebase or _PASSWORD,
+            **(extra_claims or {}),
         },
     )
     with (
@@ -225,9 +237,38 @@ def _request_as(
     ):
         response = client.get(
             _ME_STATUS,
-            headers={"Authorization": "Bearer test-token", "User-Agent": _USER_AGENT},
+            headers={"Authorization": "Bearer test-token", "User-Agent": user_agent},
         )
     return response.status_code, response.json()
+
+
+def _request_from_web_app_server(  # noqa: PLR0913 -- the browser token it was minted from
+    app: FastAPI,
+    uid: str,
+    email: str,
+    *,
+    browser_firebase: dict[str, Any],
+    browser_claims: dict[str, Any],
+    exchanged_at: int,
+) -> tuple[int, Any]:
+    """A request the web app's server makes for a page it renders.
+
+    Its token is minted from the browser's by a custom-token exchange: a
+    ``custom`` provider, the browser's provider as ``source_sign_in_provider``,
+    the browser's custom claims copied, and the exchange's own ``auth_time``.
+    """
+    return _request_as(
+        app,
+        uid,
+        email,
+        auth_time=exchanged_at,
+        firebase={"sign_in_provider": "custom"},
+        extra_claims={
+            **browser_claims,
+            "source_sign_in_provider": browser_firebase["sign_in_provider"],
+        },
+        user_agent="node",
+    )
 
 
 def _sign_in_key(uid: str, auth_time: int) -> str:
@@ -299,6 +340,66 @@ class TestSignInIsRecordedByTheBackend:
             assert sorted(r["changes"]["sign_in"] for r in rows) == sorted(
                 [_sign_in_key(user.uid, first), _sign_in_key(user.uid, first + 60)]
             )
+
+    @pytest.mark.parametrize(
+        ("browser_firebase", "browser_claims"),
+        [
+            pytest.param(_PASSWORD, {}, id="password"),
+            pytest.param(
+                {"sign_in_provider": "google.com", "sign_in_second_factor": "totp"},
+                {},
+                id="google-with-second-factor",
+            ),
+            pytest.param(
+                {"sign_in_provider": "custom"},
+                {"pablo_amr": ["webauthn"], "pablo_passkey": {"hw": True, "att": False}},
+                id="passkey",
+            ),
+        ],
+    )
+    def test_a_sign_in_through_the_web_app_is_one_row_from_the_browser(
+        self,
+        engine: Engine,
+        fastapi_app: FastAPI,
+        own_practice: SimpleNamespace,
+        browser_firebase: dict[str, Any],
+        browser_claims: dict[str, Any],
+    ) -> None:
+        """The web app's server session is not a second sign-in.
+
+        Its requests come first here (the page it renders after sign-in), then
+        the browser's own, then a re-synced server session for the same
+        sign-in: one row, the browser's, carrying the browser's agent.
+        """
+        with _clinician(engine, own_practice) as user:
+            signed_in_at = _now() - 5
+            server = {
+                "browser_firebase": browser_firebase,
+                "browser_claims": browser_claims,
+            }
+            status_code, _ = _request_from_web_app_server(
+                fastapi_app, user.uid, user.email, exchanged_at=signed_in_at + 1, **server
+            )
+            assert status_code == 200
+            assert _sign_in_rows(engine, own_practice.schema, user.user_id) == []
+
+            status_code, _ = _request_as(
+                fastapi_app,
+                user.uid,
+                user.email,
+                auth_time=signed_in_at,
+                firebase=browser_firebase,
+                extra_claims=browser_claims,
+            )
+            assert status_code == 200
+            _request_from_web_app_server(
+                fastapi_app, user.uid, user.email, exchanged_at=signed_in_at + 3, **server
+            )
+
+            rows = _sign_in_rows(engine, own_practice.schema, user.user_id)
+            assert [(r["user_agent"], r["changes"]) for r in rows] == [
+                (_USER_AGENT, {"sign_in": _sign_in_key(user.uid, signed_in_at)})
+            ]
 
     def test_failed_audit_write_does_not_fail_the_request_and_is_retried(
         self, engine: Engine, fastapi_app: FastAPI, own_practice: SimpleNamespace
