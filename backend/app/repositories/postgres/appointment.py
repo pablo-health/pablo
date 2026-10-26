@@ -529,6 +529,7 @@ def _row_to_appointment(row: AppointmentRow) -> Appointment:
         cancelled_by_id=row.cancelled_by_id,
         late_cancellation=row.late_cancellation,
         superseded_by_id=row.superseded_by_id,
+        skipped=row.skipped,
         late_change_acknowledged=row.late_change_acknowledged,
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -591,11 +592,23 @@ def _appointment_to_row(appt: Appointment, row: AppointmentRow) -> None:
     row.reminder_1h_sent = appt.reminder_1h_sent
     row.pending_expires_at = appt.pending_expires_at
     row.confirmation_token_hash = appt.confirmation_token_hash
-    row.cancelled_at = appt.cancelled_at
-    row.cancelled_by = appt.cancelled_by
-    row.cancelled_by_id = appt.cancelled_by_id
-    row.late_cancellation = appt.late_cancellation
-    row.superseded_by_id = appt.superseded_by_id
-    row.late_change_acknowledged = appt.late_change_acknowledged
+    # The cancellation record, together: set as one and cleared as one.
+    (
+        row.cancelled_at,
+        row.cancelled_by,
+        row.cancelled_by_id,
+        row.late_cancellation,
+        row.superseded_by_id,
+        row.skipped,
+        row.late_change_acknowledged,
+    ) = (
+        appt.cancelled_at,
+        appt.cancelled_by,
+        appt.cancelled_by_id,
+        appt.late_cancellation,
+        appt.superseded_by_id,
+        appt.skipped,
+        appt.late_change_acknowledged,
+    )
     row.created_at = appt.created_at
     row.updated_at = appt.updated_at

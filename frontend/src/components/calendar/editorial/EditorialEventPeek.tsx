@@ -6,7 +6,7 @@ import { useEffect, useRef } from "react"
 import { format } from "date-fns"
 import { CalendarDays, Repeat, User, Users, Video, X } from "lucide-react"
 import type { AppointmentResponse } from "@/types/scheduling"
-import { editorialStatusMeta } from "./status"
+import { calendarShowing, editorialStatusMeta, heldLabel } from "./status"
 import { clampToViewport } from "./viewportClamp"
 import { GoogleChangeNotice, type ResolveGoogleChange } from "./GoogleChangeNotice"
 
@@ -63,7 +63,10 @@ export function EditorialEventPeek({
   // Capture the element that had focus before the peek opened so we can
   // restore it on close/unmount.
   const priorFocusRef = useRef<Element | null>(null)
-  const meta = editorialStatusMeta(appointment.status)
+  const showing = calendarShowing(appointment)
+  const meta = editorialStatusMeta(showing)
+  const statusLabel =
+    showing === "pending" ? heldLabel(appointment.pending_expires_at) : meta.label
   const start = new Date(appointment.start_at)
   const end = new Date(appointment.end_at)
   const isGroup =
@@ -148,7 +151,7 @@ export function EditorialEventPeek({
           className="mt-2 inline-block rounded-full px-2.5 py-1 text-[11.5px] font-semibold"
           style={{ backgroundColor: meta.bg, color: meta.fg }}
         >
-          {meta.label}
+          {statusLabel}
         </span>
 
         <div

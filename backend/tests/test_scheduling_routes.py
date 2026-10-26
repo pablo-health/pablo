@@ -2547,3 +2547,57 @@ def test_parse_passes_both_readings_through(write_client: TestClient) -> None:
     assert [r["label"] for r in body["readings"]] == ["Just a weekly cap", "No Tuesdays at all"]
     assert body["readings"][1]["proposals"][0]["params"] == {"day_of_week": 1}
     assert body["unknown_appointment_type"] is None
+
+
+# --- Skipping one occurrence of a series ---
+
+
+def test_skip_marks_a_series_occurrence_and_the_rest_stay_booked(
+    write_client: TestClient,
+) -> None:
+    """Skipping cancels that one occurrence, says so on the row, and leaves
+    every other occurrence of the series booked."""
+    created = write_client.post("/api/appointments/recurring", json=_weekly_series_payload())
+    assert created.status_code == 201, created.text
+    occurrences = created.json()["data"]
+    target = occurrences[1]["id"]
+
+    response = write_client.delete(f"/api/appointments/{target}", params={"skip": "true"})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "cancelled"
+    assert body["skipped"] is True
+    others = [o["id"] for o in occurrences if o["id"] != target]
+    fetched = [write_client.get(f"/api/appointments/{other}").json() for other in others]
+    assert [(f["status"], f["skipped"]) for f in fetched] == [("confirmed", False)] * 3
+
+
+def test_plain_cancel_of_a_series_occurrence_is_not_a_skip(write_client: TestClient) -> None:
+    created = write_client.post("/api/appointments/recurring", json=_weekly_series_payload())
+    target = created.json()["data"][0]["id"]
+
+    response = write_client.delete(f"/api/appointments/{target}")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["skipped"] is False
+
+
+def test_skip_refused_on_an_appointment_outside_a_series(write_client: TestClient) -> None:
+    """A one-off appointment has no series to carry on, so it can be
+    cancelled but not skipped — and a refused skip leaves it booked."""
+    created = write_client.post("/api/appointments", json=_create_payload())
+    appt_id = created.json()["id"]
+
+    response = write_client.delete(f"/api/appointments/{appt_id}", params={"skip": "true"})
+
+    assert response.status_code == 400, response.text
+    assert write_client.get(f"/api/appointments/{appt_id}").json()["status"] == "confirmed"
+
+
+def test_confirmed_booking_carries_no_hold_expiry(write_client: TestClient) -> None:
+    created = write_client.post("/api/appointments", json=_create_payload())
+
+    assert created.status_code == 201, created.text
+    assert created.json()["pending_expires_at"] is None
+    assert created.json()["skipped"] is False

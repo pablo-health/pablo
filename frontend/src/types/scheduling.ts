@@ -8,7 +8,11 @@
 
 import type { SessionStatus } from "@/types/sessions"
 
-export type AppointmentStatus = "confirmed" | "cancelled" | "no_show" | "completed"
+/**
+ * `pending` is a requested time that holds its slot until
+ * `pending_expires_at`, and is not yet agreed to.
+ */
+export type AppointmentStatus = "pending" | "confirmed" | "cancelled" | "no_show" | "completed"
 
 export type RecurrenceFrequency = "weekly" | "biweekly" | "monthly"
 
@@ -27,6 +31,11 @@ export interface AppointmentResponse {
   duration_minutes: number
   status: AppointmentStatus
   session_type: string
+  /** When a pending appointment stops holding its slot. Optional so cached
+   * payloads from older servers still typecheck. */
+  pending_expires_at?: string | null
+  /** A cancelled occurrence of a series that the series carries on past. */
+  skipped?: boolean
   video_link: string | null
   video_platform: string | null
   /**
