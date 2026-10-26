@@ -1184,6 +1184,30 @@ CREATE TABLE __TENANT_SCHEMA__.patient_payment_methods (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.patient_preferences (
+    id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    domain character varying(32) NOT NULL,
+    kind character varying(64) NOT NULL,
+    value jsonb,
+    text character varying(280),
+    strength character varying(8),
+    source character varying(16) NOT NULL,
+    source_ref character varying(128),
+    stated_at timestamp with time zone NOT NULL,
+    confirmed_at timestamp with time zone,
+    retired_at timestamp with time zone,
+    retired_by uuid,
+    created_by uuid,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_patient_preferences_has_content CHECK (((value IS NOT NULL) OR (text IS NOT NULL))),
+    CONSTRAINT ck_patient_preferences_source CHECK (((source)::text = ANY ((ARRAY['clinician'::character varying, 'assistant'::character varying, 'learned'::character varying, 'intake'::character varying, 'migrated'::character varying])::text[]))),
+    CONSTRAINT ck_patient_preferences_strength CHECK (((strength IS NULL) OR ((strength)::text = ANY ((ARRAY['hard'::character varying, 'soft'::character varying])::text[]))))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.patient_problems (
     id uuid NOT NULL,
     patient_id uuid NOT NULL,
@@ -2003,6 +2027,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_payment_methods
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_preferences
+    ADD CONSTRAINT patient_preferences_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_problems
     ADD CONSTRAINT patient_problems_pkey PRIMARY KEY (id);
 
@@ -2606,6 +2635,10 @@ CREATE INDEX ix_patient_messages_patient_id ON __TENANT_SCHEMA__.patient_message
 
 
 CREATE INDEX ix_patient_messages_thread_created ON __TENANT_SCHEMA__.patient_messages USING btree (thread_id, created_at);
+
+
+
+CREATE INDEX ix_patient_preferences_active ON __TENANT_SCHEMA__.patient_preferences USING btree (patient_id, kind) WHERE (retired_at IS NULL);
 
 
 
@@ -3233,6 +3266,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_messages
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_preferences
+    ADD CONSTRAINT patient_preferences_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_problems
     ADD CONSTRAINT patient_problems_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
 
@@ -3476,6 +3514,8 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_messages FORCE ROW LEVEL SECURITY;
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_payment_methods FORCE ROW LEVEL SECURITY;
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_preferences FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_problems FORCE ROW LEVEL SECURITY;
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_source_mappings FORCE ROW LEVEL SECURITY;
@@ -3597,6 +3637,8 @@ ALTER TABLE __TENANT_SCHEMA__.patient_message_threads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE __TENANT_SCHEMA__.patient_messages ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE __TENANT_SCHEMA__.patient_payment_methods ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.patient_preferences ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE __TENANT_SCHEMA__.patient_problems ENABLE ROW LEVEL SECURITY;
 
@@ -3771,6 +3813,10 @@ COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_messages IS 'r
 CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_payment_methods USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
 
 COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_payment_methods IS 'rls-fingerprint-v1-4b2bb3af1f91e78de5eebc854199d2871b885ff70ad25aaf07228e61ba1d45ab';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_preferences USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_preferences IS 'rls-fingerprint-v1-025187651248dd309c5ea4f6352a1e06bc95a9e83e3562f76e00514929e0812f';
 
 CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_problems USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
 

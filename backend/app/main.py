@@ -110,6 +110,7 @@ from .routes import (
     patient_intake_review,
     patient_messages,
     patient_payments,
+    patient_preferences,
     patient_problems,
     patient_profile,
     patient_statements,
@@ -342,6 +343,7 @@ app.include_router(practice_ai_notes_consent.router)
 app.include_router(patients.router)
 app.include_router(patient_activity.router)
 app.include_router(patient_allergies.router)
+app.include_router(patient_preferences.router)
 app.include_router(patient_problems.router)
 app.include_router(patient_chart_history.router)
 app.include_router(practice_billing.router)

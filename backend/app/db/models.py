@@ -52,6 +52,7 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -1946,6 +1947,68 @@ class PatientProblemRow(Base):
         CheckConstraint(
             "status IN ('active', 'rule_out', 'resolved')",
             name="ck_patient_problems_status",
+        ),
+    )
+
+
+class PatientPreferenceRow(Base):
+    """One thing to know about how to work with a client (``app.preferences``).
+
+    ``kind`` names a registered kind (``app.preferences.kinds``), which decides
+    what ``value``, ``text`` and ``strength`` may hold; ``domain`` is copied
+    from the kind so the chart can group without the registry. Scheduling kinds
+    keep a structured ``value`` that scheduling code reads as data. ``text`` is
+    the clinician's own words. ``stated_at`` is when it was last said, which
+    the chart shows; ``source_ref`` is the row or turn it came from, when it
+    came from one.
+
+    Retiring keeps the row (``retired_at``, ``retired_by``); rows go only with
+    the client's record. Access is governed by ``has_patient_access``, like
+    ``patient_problems``.
+    """
+
+    __tablename__ = "patient_preferences"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    domain: Mapped[str] = mapped_column(String(32), nullable=False)
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    value: Mapped[dict | None] = mapped_column(JSONB)
+    text: Mapped[str | None] = mapped_column(String(280))
+    strength: Mapped[str | None] = mapped_column(String(8))
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_ref: Mapped[str | None] = mapped_column(String(128))
+    stated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    created_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "strength IS NULL OR strength IN ('hard', 'soft')",
+            name="ck_patient_preferences_strength",
+        ),
+        CheckConstraint(
+            "source IN ('clinician', 'assistant', 'learned', 'intake', 'migrated')",
+            name="ck_patient_preferences_source",
+        ),
+        CheckConstraint(
+            "value IS NOT NULL OR text IS NOT NULL",
+            name="ck_patient_preferences_has_content",
+        ),
+        Index(
+            "ix_patient_preferences_active",
+            "patient_id",
+            "kind",
+            # ``text`` is a column of this table, so the class body shadows the function.
+            postgresql_where=sql_text("retired_at IS NULL"),
         ),
     )
 
