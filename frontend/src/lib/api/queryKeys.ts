@@ -394,6 +394,13 @@ const baseQueryKeys = {
       [...baseQueryKeys.problems.all, "byPatient", patientId] as const,
   },
 
+  // How to work with a client: their preferences on the chart
+  patientPreferences: {
+    all: ["patientPreferences"] as const,
+    byPatient: (patientId: string) =>
+      [...baseQueryKeys.patientPreferences.all, "byPatient", patientId] as const,
+  },
+
   // A client's history fields on the chart
   chartHistory: {
     all: ["chartHistory"] as const,

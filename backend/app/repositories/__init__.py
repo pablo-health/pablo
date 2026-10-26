@@ -135,6 +135,10 @@ from .patient_message import (
     PatientMessageAccessDeniedError,
     PatientMessageRepository,
 )
+from .patient_preference import (
+    InMemoryPatientPreferenceRepository,
+    PatientPreferenceRepository,
+)
 from .patient_problem import (
     InMemoryPatientProblemRepository,
     PatientProblemRepository,
@@ -527,6 +531,12 @@ def get_chart_proposal_repository() -> ChartProposalRepository:
     return PostgresChartProposalRepository(_get_pg_session())
 
 
+def get_patient_preference_repository() -> PatientPreferenceRepository:
+    from .postgres.patient_preference import PostgresPatientPreferenceRepository
+
+    return PostgresPatientPreferenceRepository(_get_pg_session())
+
+
 def get_patient_problem_repository() -> PatientProblemRepository:
     from .postgres.patient_problem import PostgresPatientProblemRepository
 
@@ -583,6 +593,7 @@ __all__ = [
     "InMemoryPatientIntakeSignatureRepository",
     "InMemoryPatientIntakeSubmissionRepository",
     "InMemoryPatientMessageRepository",
+    "InMemoryPatientPreferenceRepository",
     "InMemoryPatientProblemRepository",
     "InMemoryPatientRepository",
     "InMemoryPracticeNoteTypeRepository",
@@ -604,6 +615,7 @@ __all__ = [
     "PatientIntakeSubmissionRepository",
     "PatientMessageAccessDeniedError",
     "PatientMessageRepository",
+    "PatientPreferenceRepository",
     "PatientProblemRepository",
     "PatientRepository",
     "PracticeAdminRepository",
@@ -652,6 +664,7 @@ __all__ = [
     "get_patient_intake_submission_repository",
     "get_patient_message_repository",
     "get_patient_payment_repository",
+    "get_patient_preference_repository",
     "get_patient_problem_repository",
     "get_patient_repository",
     "get_patient_source_mapping_repository",
