@@ -116,6 +116,15 @@ export function notActiveReason(people: { many: string }): string {
   return `Only active ${people.many} can be added to the waitlist.`
 }
 
+export function onListTitle(name: string): string {
+  return `${name} is on your waitlist`
+}
+
+/** The one tap that copies a new entry's times to the client's record. */
+export function saveAsUsualTimes(name: string): string {
+  return `Save as ${name}'s usual times`
+}
+
 export function placeLine(position: number): string {
   return `Number ${position} on your list`
 }

@@ -10,6 +10,10 @@
  * Only an active client waits (the server refuses anyone else), so for a
  * client on hold or no longer seen the button is disabled and says why.
  * An entry that already exists still shows, whatever the client's status.
+ *
+ * The add dialog stays mounted while it is open, even once the new entry has
+ * moved the page to "On your waitlist", so it can offer to save the entry's
+ * times as the client's usual times.
  */
 
 "use client"
@@ -29,10 +33,12 @@ import {
 import { useToast } from "@/components/ui/Toast"
 import { WAITLIST_SETTINGS_PATH } from "@/components/settings/paths"
 import { usePatientWaitlist, useRemoveWaitlistEntry } from "@/hooks/useWaitlist"
+import { usePatientPreferences } from "@/hooks/usePatientPreferences"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
-import type { WaitlistEntry } from "@/types/waitlist"
+import type { PatientWaitlist, WaitlistEntry } from "@/types/waitlist"
 import { AddToWaitlistDialog } from "./AddToWaitlistDialog"
+import { activeAvailability } from "./usualTimes"
 import {
   ADD_ACTION,
   CLOSE,
@@ -43,12 +49,15 @@ import {
   SAVE_FAILED,
   entrySummary,
   notActiveReason,
+  onListTitle,
   placeLine,
 } from "./waitlistCopy"
 
 interface ClientWaitlistActionProps {
   patientId: string
   patientName: string
+  /** The short name the record uses for the client ("Maya"). */
+  shortName: string
   patientStatus: string
 }
 
@@ -80,7 +89,7 @@ function OnListDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent data-testid="waitlist-entry-dialog">
         <DialogHeader>
-          <DialogTitle>{patientName} is on your waitlist</DialogTitle>
+          <DialogTitle>{onListTitle(patientName)}</DialogTitle>
           <DialogDescription>
             {placeLine(entry.position)}
             {entry.paused ? ` · ${PAUSED}` : ""}
@@ -120,16 +129,56 @@ function OnListDialog({
 export function ClientWaitlistAction({
   patientId,
   patientName,
+  shortName,
   patientStatus,
 }: ClientWaitlistActionProps) {
   const { data } = usePatientWaitlist(patientId)
   const { readOnly } = useReadOnlyMode()
-  const people = usePeopleTerm()
-  const reasonId = useId()
-  const [open, setOpen] = useState(false)
+  const [adding, setAdding] = useState(false)
+  const canAdd = !!data && !data.entry && !readOnly && patientStatus === "active"
+  const preferences = usePatientPreferences(canAdd || adding ? patientId : undefined)
 
   // Nothing to show until we know whether they are on the list.
   if (!data) return null
+
+  return (
+    <>
+      <WaitlistButton
+        data={data}
+        patientName={patientName}
+        patientStatus={patientStatus}
+        onAdd={() => setAdding(true)}
+      />
+      {adding && (
+        <AddToWaitlistDialog
+          patientId={patientId}
+          patientName={patientName}
+          shortName={shortName}
+          defaults={data}
+          availability={preferences.data ? activeAvailability(preferences.data.data) : undefined}
+          open={adding}
+          onOpenChange={setAdding}
+        />
+      )}
+    </>
+  )
+}
+
+function WaitlistButton({
+  data,
+  patientName,
+  patientStatus,
+  onAdd,
+}: {
+  data: PatientWaitlist
+  patientName: string
+  patientStatus: string
+  onAdd: () => void
+}) {
+  const { readOnly } = useReadOnlyMode()
+  const people = usePeopleTerm()
+  const reasonId = useId()
+  const [open, setOpen] = useState(false)
 
   if (data.entry) {
     return (
@@ -177,20 +226,9 @@ export function ClientWaitlistAction({
   }
 
   return (
-    <>
-      <Button variant="outline" size="sm" onClick={() => setOpen(true)} data-testid="waitlist-add">
-        <ListOrdered className="h-4 w-4" />
-        {ADD_ACTION}
-      </Button>
-      {open && (
-        <AddToWaitlistDialog
-          patientId={patientId}
-          patientName={patientName}
-          defaults={data}
-          open={open}
-          onOpenChange={setOpen}
-        />
-      )}
-    </>
+    <Button variant="outline" size="sm" onClick={onAdd} data-testid="waitlist-add">
+      <ListOrdered className="h-4 w-4" />
+      {ADD_ACTION}
+    </Button>
   )
 }
