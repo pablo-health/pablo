@@ -94,6 +94,7 @@ export default function PatientDetailPage({ params, searchParams }: PatientDetai
           <ClientWaitlistAction
             patientId={patient.id}
             patientName={`${patient.first_name} ${patient.last_name}`}
+            shortName={patient.preferred_name || patient.first_name}
             patientStatus={patient.status}
           />
           <NewNoteButton patientId={patient.id} />

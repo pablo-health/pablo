@@ -9,6 +9,11 @@
  *
  * A client on hold cannot be added: the page's action is disabled.
  *
+ * A client with usual times (scheduling.availability on their record) starts
+ * the dialog from them. An entry saved with other times offers "Save as
+ * <client>'s usual times": taking it updates the record, and the chart shows
+ * the new times; closing the offer instead leaves the record as it was.
+ *
  * Isolation between clinicians is proven by the backend's route tests; this
  * spec proves the screens and the routes agree.
  */
@@ -21,6 +26,13 @@ interface Entry {
   id: string
   patient_id: string
   position: number
+}
+
+interface Preference {
+  id: string
+  kind: string
+  strength: string | null
+  value: { days: string[]; times: string[]; modality: string } | null
 }
 
 const tag = () => Date.now().toString(36)
@@ -61,6 +73,16 @@ test("a client added from their page is on the waitlist and can be moved", async
     expect(response.status(), await response.text()).toBe(201)
     const entry = (await response.json()) as Entry
     added.push(entry.id)
+
+    // No usual times on record: offered, and closing the offer writes nothing.
+    const offer = dialog.getByTestId("waitlist-usual-times")
+    await expect(
+      offer.getByRole("button", { name: `Save as ${first.first_name}'s usual times` }),
+    ).toBeVisible()
+    await offer.getByRole("button", { name: "Close" }).click()
+    await expect(dialog).toHaveCount(0)
+    const kept = await api.get<{ data: Preference[] }>(`/api/patients/${first.id}/preferences`)
+    expect(kept.data).toEqual([])
 
     await expect(page.getByRole("button", { name: "On your waitlist" })).toBeVisible()
 
@@ -127,4 +149,68 @@ test("a client on hold cannot be added to the waitlist", async ({ signedInPage: 
 
   await page.goto(`/dashboard/patients/${client.id}`)
   await expect(page.getByTestId("waitlist-add")).toBeDisabled()
+})
+
+test("a client's usual times start the entry, and new ones are saved back with one tap", async ({
+  signedInPage: page,
+  api,
+}) => {
+  const client = await givePatient(api, { first_name: `Tove${tag()}` })
+  const base = `/api/patients/${client.id}/preferences`
+  const usual = await api.post<Preference>(base, {
+    kind: "scheduling.availability",
+    value: { days: ["tue", "thu"], times: ["afternoon"], modality: "in_person" },
+    strength: "soft",
+  })
+  let entryId: string | null = null
+  try {
+    await page.goto(`/dashboard/patients/${client.id}`)
+    await page.getByRole("button", { name: "Add to waitlist" }).click()
+    const dialog = page.getByTestId("waitlist-dialog")
+    for (const name of ["Tue", "Thu", "Afternoon"]) {
+      await expect(dialog.getByRole("checkbox", { name })).toBeChecked()
+    }
+    for (const name of ["Mon", "Wed", "Fri", "Morning", "Evening"]) {
+      await expect(dialog.getByRole("checkbox", { name })).not.toBeChecked()
+    }
+    await expect(dialog.getByRole("radio", { name: "In person" })).toBeChecked()
+
+    // Evenings too, this time.
+    await dialog.getByRole("checkbox", { name: "Evening" }).check()
+    const created = page.waitForResponse(
+      (r) =>
+        new URL(r.url()).pathname === `/api/patients/${client.id}/waitlist` &&
+        r.request().method() === "POST",
+    )
+    await dialog.getByTestId("waitlist-save").click()
+    const response = await created
+    expect(response.status(), await response.text()).toBe(201)
+    entryId = ((await response.json()) as Entry).id
+
+    const saved = page.waitForResponse(
+      (r) =>
+        new URL(r.url()).pathname === `${base}/${usual.id}` && r.request().method() === "PATCH",
+    )
+    await dialog
+      .getByTestId("waitlist-usual-times")
+      .getByRole("button", { name: `Save as ${client.first_name}'s usual times` })
+      .click()
+    expect((await saved).status()).toBe(200)
+    await expect(dialog).toHaveCount(0)
+
+    const now = await api.get<{ data: Preference[] }>(base)
+    expect(now.data.map((p) => [p.id, p.kind, p.strength, p.value])).toEqual([
+      [
+        usual.id,
+        "scheduling.availability",
+        "soft",
+        { days: ["tue", "thu"], times: ["afternoon", "evening"], modality: "in_person" },
+      ],
+    ])
+    await expect(page.getByTestId(`preference-${usual.id}`)).toContainText(
+      "Prefers: Tue, Thu · Afternoon, evening · In person",
+    )
+  } finally {
+    if (entryId) await api.delete(`/api/waitlist/${entryId}`).catch(() => undefined)
+  }
 })
