@@ -217,6 +217,20 @@ class Settings(BaseSettings):
             "extra trusted proxy (e.g. an external HTTP(S) load balancer)."
         ),
     )
+    frontend_forward_secret: SecretStr = Field(
+        default=SecretStr(""),
+        description=(
+            "Lets the frontend server pass the end user's IP and user agent to "
+            "the backend for audit records. When the web app renders a page on "
+            "its server, its calls to the backend come from the server, not the "
+            "user's device; with this set, a request carrying a matching "
+            "X-Pablo-Frontend-Auth header has its X-Pablo-Client-IP and "
+            "X-Pablo-Client-UA headers recorded instead. Set the same value as "
+            "the frontend's FRONTEND_FORWARD_SECRET. Comma-separated to accept "
+            "more than one during a rotation. Empty (default): the headers are "
+            "ignored."
+        ),
+    )
 
     # Sign-up Restriction Settings
     restrict_signups: bool = Field(
