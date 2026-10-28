@@ -251,9 +251,12 @@ Four that are easy to get wrong:
     commit and a fresh worktree's `post-checkout` dirties the beads
     DB. `export.git-add` is set to `false` (`bd config get
     export.git-add`), so the auto-exported `.beads/issues.jsonl` is no
-    longer auto-staged — but it still shows as modified in `git
-    status`. When committing code, `git add` explicit paths (never
-    `git add -A` / `git add .`) so that churn stays out of your commit.
+    longer auto-staged. The published board export lives on the
+    `beads-metadata` branch, not main (`git fetch origin beads-metadata
+    && git show FETCH_HEAD:.beads/issues.jsonl`); on main the file is
+    untracked and ignored, and must not be committed back. When
+    committing code, `git add` explicit paths (never `git add -A` /
+    `git add .`) so that churn stays out of your commit.
     If beads files ever sneak into the index, `git restore --staged`
     them.
 
