@@ -15,7 +15,9 @@
  * registered at startup by `instrumentation.ts`.
  */
 
+// people-term-ok: HTTP header name, never shown to anyone
 export const FORWARDED_CLIENT_IP_HEADER = "X-Pablo-Client-IP"
+// people-term-ok: HTTP header name, never shown to anyone
 export const FORWARDED_CLIENT_UA_HEADER = "X-Pablo-Client-UA"
 export const FORWARD_AUTH_HEADER = "X-Pablo-Frontend-Auth"
 
