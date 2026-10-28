@@ -23,12 +23,17 @@ render_env_files() {
     # Read up front: a failed lookup inside the heredocs below would not stop
     # the script, and would write an empty secret.
     local db_password jwt_secret calendar_key assemblyai_key auth_secret cookie_key client_secret
+    local forward_secret
     db_password="$(secret pablo-db-password)"
     jwt_secret="$(secret JWT_SECRET_KEY)"
     calendar_key="$(secret GOOGLE_CALENDAR_ENCRYPTION_KEY)"
     assemblyai_key="$(optional_secret pablo-assemblyai-api-key)"
     auth_secret="$(secret AUTH_SECRET)"
     cookie_key="$(secret AUTH_COOKIE_SIGNATURE_KEY)"
+    # Lets the frontend server pass the end user's IP to the backend for audit
+    # records. Optional: an install from before it existed has none until
+    # install.sh runs again, and both services then record what they did before.
+    forward_secret="$(optional_secret FRONTEND_FORWARD_SECRET)"
     # Empty when the install chose email and password only.
     client_secret="$(optional_secret GOOGLE_CLIENT_SECRET)"
     # The clinician's one OAuth client serves Google sign-in and Google Calendar.
@@ -75,6 +80,7 @@ GOOGLE_CALENDAR_ENCRYPTION_KEY=${calendar_key}
 GOOGLE_CALENDAR_CLIENT_ID=${GOOGLE_CLIENT_ID}
 GOOGLE_CALENDAR_CLIENT_SECRET=${client_secret}
 ASSEMBLYAI_API_KEY=${assemblyai_key}
+FRONTEND_FORWARD_SECRET=${forward_secret}
 ENV
 
         cat > "${dir}/frontend.env" <<ENV
@@ -101,6 +107,7 @@ NEXT_PUBLIC_FIREBASE_APP_ID=${FIREBASE_APP_ID}
 AUTH_SECRET=${auth_secret}
 AUTH_COOKIE_SIGNATURE_KEY=${cookie_key}
 GOOGLE_CLIENT_SECRET=${client_secret}
+FRONTEND_FORWARD_SECRET=${forward_secret}
 ENV
     )
 }
