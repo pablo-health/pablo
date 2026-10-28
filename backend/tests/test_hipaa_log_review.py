@@ -477,3 +477,83 @@ class TestBlindReview:
             )
         assert probe.called is probed
         assert scan == hipaa_log_review.TenantScan(total_entries=total, rows_hidden=probed)
+
+
+class TestRunRecord:
+    """Each run records which schemas it reviewed and which failed, so a
+    reader can tell a practice that no longer exists (absent from the record)
+    from one whose review failed (listed under ``failed``)."""
+
+    def _run(self, monkeypatch, review, record=None):  # type: ignore[no-untyped-def]
+        monkeypatch.delenv("REVIEW_WINDOW_HOURS", raising=False)
+        with (
+            patch.object(hipaa_log_review, "_assert_schema_flag_consistency", return_value=[]),
+            patch.object(
+                hipaa_log_review,
+                "_list_practice_schemas",
+                return_value=["practice_a", "practice_b", "practice_c"],
+            ),
+            patch.object(hipaa_log_review, "_review_tenant", side_effect=review),
+            patch.object(hipaa_log_review, "_write_run_record", side_effect=record) as write,
+        ):
+            exit_code = hipaa_log_review.run(gcs_bucket="bucket")
+        return exit_code, write
+
+    def test_failed_and_blind_reviews_are_recorded_apart_from_reviewed(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        def review(practice_schema: str, **_: object) -> hipaa_log_review.TenantScan:
+            if practice_schema == "practice_b":
+                msg = "synthetic failure"
+                raise RuntimeError(msg)
+            hidden = practice_schema == "practice_c"
+            return hipaa_log_review.TenantScan(total_entries=0, rows_hidden=hidden)
+
+        exit_code, write = self._run(monkeypatch, review)
+
+        assert exit_code == 1
+        write.assert_called_once_with(
+            {
+                "mode": "daily",
+                "window_hours": 24,
+                "reviewed": ["practice_a", "practice_c"],
+                "failed": ["practice_b"],
+                "blind": ["practice_c"],
+            },
+            gcs_bucket="bucket",
+        )
+
+    def test_a_run_whose_record_cannot_be_written_fails(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        def review(practice_schema: str, **_: object) -> hipaa_log_review.TenantScan:
+            return hipaa_log_review.TenantScan(total_entries=1, rows_hidden=False)
+
+        def record(**_: object) -> None:
+            msg = "bucket unavailable"
+            raise RuntimeError(msg)
+
+        exit_code, _ = self._run(monkeypatch, review, record)
+        assert exit_code == 1
+
+    def test_record_is_written_as_json_under_runs(self) -> None:
+        record = {
+            "mode": "daily",
+            "window_hours": 24,
+            "reviewed": ["practice_a", "practice_b"],
+            "failed": ["practice_c"],
+            "blind": [],
+        }
+        with patch("google.cloud.storage.Client") as client_cls:
+            uri = hipaa_log_review._write_run_record(record, gcs_bucket="bucket")
+
+        bucket = client_cls.return_value.bucket
+        bucket.assert_called_once_with("bucket")
+        (path,) = bucket.return_value.blob.call_args.args
+        assert path.startswith("hipaa-log-review/runs/")
+        assert path.endswith(".json")
+        assert uri == f"gs://bucket/{path}"
+        body = bucket.return_value.blob.return_value.upload_from_string.call_args.args[0]
+        assert json.loads(body) == record
+
+    def test_no_bucket_writes_nothing(self) -> None:
+        with patch("google.cloud.storage.Client") as client_cls:
+            uri = hipaa_log_review._write_run_record({"mode": "daily"}, gcs_bucket=None)
+        assert uri is None
+        client_cls.assert_not_called()
