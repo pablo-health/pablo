@@ -177,6 +177,8 @@ def run(
     exit_code = 0
     zero_window = 0
     hidden: list[str] = []
+    reviewed: list[str] = []
+    failed: list[str] = []
     for schema in schemas:
         try:
             scan = _review_tenant(
@@ -188,7 +190,9 @@ def run(
         except Exception:
             logger.exception("Review failed for tenant schema=%s", schema)
             exit_code = 1
+            failed.append(schema)
             continue
+        reviewed.append(schema)
         if scan.total_entries == 0:
             zero_window += 1
         if scan.rows_hidden:
@@ -211,7 +215,48 @@ def run(
         )
         exit_code = 1
 
+    try:
+        _write_run_record(
+            {
+                "mode": review_mode,
+                "window_hours": window_hours,
+                "reviewed": sorted(reviewed),
+                "failed": sorted(failed),
+                "blind": sorted(hidden),
+            },
+            gcs_bucket=gcs_bucket,
+        )
+    except Exception:
+        # Without the record a reader cannot tell a removed practice from
+        # one whose review failed, so this run did not finish its job.
+        logger.exception("hipaa_log_review_run_record_failed")
+        exit_code = 1
+
     return exit_code
+
+
+def _write_run_record(record: dict[str, Any], *, gcs_bucket: str | None) -> str | None:
+    """Record which practice schemas this run covered.
+
+    Per-tenant reports say what a review found; this says which reviews a run
+    attempted. A practice whose reports stop appearing is either no longer a
+    practice (its schema is gone, so it is absent here) or failed review (it is
+    listed under ``failed``) — the reports alone cannot tell those apart.
+    Schema names only, which already appear in every report path; no PHI.
+    Written even when the run exits non-zero.
+    """
+    ts = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
+    filename = f"hipaa-log-review/runs/{ts}.json"
+    if not gcs_bucket:
+        logger.info("COMPLIANCE_REPORT_BUCKET unset — run record not written")
+        return None
+
+    from google.cloud import storage  # type: ignore[attr-defined]  # noqa: PLC0415
+
+    client = storage.Client()
+    blob = client.bucket(gcs_bucket).blob(filename)
+    blob.upload_from_string(json.dumps(record), content_type="application/json")
+    return f"gs://{gcs_bucket}/{filename}"
 
 
 def _list_practice_schemas(*, include_pentest: bool = False) -> list[str]:
