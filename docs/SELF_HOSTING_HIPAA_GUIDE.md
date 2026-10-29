@@ -143,6 +143,17 @@ Cloud Run provides a good security baseline. If you self-host, consider these ha
 - **Enable project-level Cloud Audit Logs** in addition to Pablo's app-level audit trail, so infrastructure access is recorded independently.
 - **Patch promptly** — pull and redeploy new releases as they ship (see §7).
 
+### The reverse proxy
+
+Run the backend behind a reverse proxy and list the proxy's address in
+`TRUSTED_PROXY_IPS`. Sign-in, passkey, portal code and public booking limits
+are counted per client address, and the backend reads that address from
+`X-Forwarded-For` only when the request comes from a listed proxy. Leave the
+proxy unlisted and every request arrives from the proxy's own address, so all
+your clients share one budget. On Cloud Run set `TRUSTED_PROXY_IPS=*`: only
+Google's front end can reach the container. The single-VM install sets it to
+its Caddy container for you.
+
 ## 7. Staying Up to Date
 
 **You are responsible for pulling updates when we release them.** Security patches, bug fixes, and new features will not apply automatically to your deployment.
@@ -179,6 +190,7 @@ We will never spam you or share your information. This is solely for your protec
 - [ ] Signed BAA with your email provider (if sending portal invitations)
 - [ ] Configured authentication (MFA or IAP)
 - [ ] Verified HTTPS enforcement is active
+- [ ] Backend reachable only through a proxy listed in `TRUSTED_PROXY_IPS`
 - [ ] Generated and stored encryption keys in Secret Manager
 - [ ] Enabled Cloud Audit Logs for Cloud SQL
 - [ ] Set log retention to 6+ years

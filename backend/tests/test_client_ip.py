@@ -29,12 +29,13 @@ def _request(xff: str | None, *, peer: str = "10.0.0.9") -> Request:
     return Request(scope)
 
 
-def _patch_hops(hops: int):
+def _patch_hops(hops: int, *, trusted_proxy_ips: str = "*"):
     # Both call sites import get_settings lazily from app.settings, so patch
     # it at the source. Returns the same patcher twice so the existing
     # two-tuple unpacking in the tests keeps working.
     settings = MagicMock()
     settings.trusted_proxy_hops = hops
+    settings.trusted_proxy_ips = trusted_proxy_ips
     p = patch("app.settings.get_settings", return_value=settings)
     return (p, p)
 
@@ -68,6 +69,59 @@ class TestGetClientIp:
         rl, _ = _patch_hops(1)
         with rl:
             assert get_client_ip(_request(None, peer="10.0.0.9")) == "10.0.0.9"
+
+
+class TestTrustedProxyGate:
+    """The header is only read when the immediate peer is a listed proxy.
+
+    With no proxy trusted (the self-host default when the app port is
+    reachable directly), a caller sending a fresh single-entry header per
+    request would otherwise get a fresh limiter key per request.
+    """
+
+    def test_untrusted_peer_is_keyed_on_its_own_address(self) -> None:
+        rl, _ = _patch_hops(1, trusted_proxy_ips="")
+        with rl:
+            ip = get_client_ip(_request("203.0.113.7", peer="198.51.100.4"))
+        assert ip == "198.51.100.4"
+
+    def test_untrusted_peer_cannot_rotate_keys_by_rotating_the_header(self) -> None:
+        rl, _ = _patch_hops(1, trusted_proxy_ips="")
+        with rl:
+            keys = {
+                get_client_ip(_request(f"203.0.113.{n}", peer="198.51.100.4")) for n in range(5)
+            }
+        assert keys == {"198.51.100.4"}
+
+    def test_peer_not_in_list_is_keyed_on_its_own_address(self) -> None:
+        rl, _ = _patch_hops(1, trusted_proxy_ips="172.30.0.10")
+        with rl:
+            ip = get_client_ip(_request("203.0.113.7", peer="198.51.100.4"))
+        assert ip == "198.51.100.4"
+
+    def test_listed_peer_yields_the_forwarded_client(self) -> None:
+        rl, _ = _patch_hops(1, trusted_proxy_ips="172.30.0.10")
+        with rl:
+            ip = get_client_ip(_request("1.2.3.4, 203.0.113.7", peer="172.30.0.10"))
+        assert ip == "203.0.113.7"
+
+    def test_listed_peer_keeps_hop_semantics(self) -> None:
+        rl, _ = _patch_hops(2, trusted_proxy_ips="172.30.0.10, 172.30.0.11")
+        with rl:
+            ip = get_client_ip(_request("1.2.3.4, 203.0.113.7, 35.0.0.1", peer="172.30.0.11"))
+        assert ip == "203.0.113.7"
+
+    def test_wildcard_trusts_any_peer(self) -> None:
+        rl, _ = _patch_hops(1, trusted_proxy_ips="*")
+        with rl:
+            ip = get_client_ip(_request("203.0.113.7", peer="198.51.100.4"))
+        assert ip == "203.0.113.7"
+
+    def test_no_peer_address_is_never_trusted(self) -> None:
+        rl, _ = _patch_hops(1, trusted_proxy_ips="172.30.0.10")
+        request = Request({"type": "http", "headers": [(b"x-forwarded-for", b"203.0.113.7")]})
+        with rl:
+            assert get_client_ip(request) == "unknown"
 
 
 class TestExtractRequestContext:

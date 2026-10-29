@@ -46,6 +46,12 @@ through the metadata server. There is no key file on the VM. SSH is allowed
 only through Identity-Aware Proxy. Only ports 80 and 443 are open to the
 internet.
 
+Caddy is the only way in. The backend's env file sets `TRUSTED_PROXY_IPS` to
+Caddy's fixed address on the Docker network, so the backend takes the client
+address from Caddy's `X-Forwarded-For` and counts sign-in and booking limits
+per client. If you put the backend behind a different proxy, list that proxy's
+address instead, or every client shares the proxy's one budget.
+
 ## Hostname
 
 Without `--hostname` you get `<ip-with-dashes>.sslip.io`, which works but
