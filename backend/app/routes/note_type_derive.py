@@ -60,6 +60,7 @@ from ..services.note_type_derive_service import (
 )
 from ..services.structured_llm_gateway import StructuredOutputTruncatedError
 from ..settings import get_settings
+from ..uploads import read_bounded
 from .note_types import get_registry
 
 if TYPE_CHECKING:
@@ -181,12 +182,14 @@ async def _sample_texts(
     """Each sample's text, pasted ones first; PDF and Word read like an import."""
     texts = [text.strip() for text in pasted if text.strip()]
     for upload in files:
-        data = await upload.read()
-        if len(data) > MAX_IMPORT_DOC_BYTES:
-            raise HTTPException(
+        data = await read_bounded(
+            upload,
+            MAX_IMPORT_DOC_BYTES,
+            too_large=HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail=f"File too large. Max {MAX_IMPORT_DOC_BYTES // (1024 * 1024)} MB.",
-            )
+            ),
+        )
         try:
             texts.append(
                 await read_document_text(
