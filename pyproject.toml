@@ -33,7 +33,11 @@ firebase-admin = "^7.5.0"
 pyjwt = {extras = ["crypto"], version = ">=2.13.0"}
 
 # PostgreSQL (schema-per-practice multi-tenancy)
-sqlalchemy = "^2.0.51"
+# Held below 2.1: 2.1 makes psycopg (v3) the driver for a bare postgresql://
+# URL, and every DATABASE_URL here, and the code around it, assumes psycopg2.
+# Moving to 2.1 is its own change: pin the driver or migrate, then retype the
+# repositories for the new Select/Row generics.
+sqlalchemy = ">=2.0.51,<2.1"
 alembic = "^1.18.5"
 psycopg2-binary = "^2.9.12"
 
