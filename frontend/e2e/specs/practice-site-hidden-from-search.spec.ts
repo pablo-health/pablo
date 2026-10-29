@@ -74,6 +74,10 @@ test("a practice hides its website from search engines and every visitor's answe
     await page.getByLabel("Website zip").setInputFiles(await siteZip(marker))
     await expect(page.getByTestId("website-draft")).toContainText("3 files")
     await page.getByRole("button", { name: "Publish" }).click()
+    // The draft clears only once the publish has answered. "Live at" is already
+    // true from the website spec before this one, so it would let the reload
+    // below cancel the publish and leave that spec's version live.
+    await expect(page.getByTestId("website-draft")).toHaveText("No draft yet.")
     await expect(page.getByTestId("website-live")).toContainText(`Live at ${SITE}`)
 
     // The setting holds across a reload: it is the server's, not the page's.
