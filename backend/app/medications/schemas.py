@@ -5,8 +5,12 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
+
+#: A prescriber's note lists psychiatric and other medications separately.
+MedicationCategory = Literal["psychiatric", "other"]
 
 
 class CreateMedicationRequest(BaseModel):
@@ -16,10 +20,16 @@ class CreateMedicationRequest(BaseModel):
 
     drug_name: str
     dose: str
+    frequency: str | None = None
+    category: MedicationCategory | None = None
     status: str = "active"
     started_at: date | None = None
     stop_reason: str | None = None
     notes: str | None = None
+    # The clinician's own call; ``None`` uses the default (see
+    # ``app.models.refill_risk``).
+    controlled: bool | None = None
+    interruption_risk: bool | None = None
 
 
 class UpdateMedicationRequest(BaseModel):
@@ -32,11 +42,16 @@ class UpdateMedicationRequest(BaseModel):
 
     drug_name: str | None = None
     dose: str | None = None
+    frequency: str | None = None
+    category: MedicationCategory | None = None
     status: str | None = None
     started_at: date | None = None
     stopped_at: date | None = None
     stop_reason: str | None = None
     notes: str | None = None
+    # Sent as null, either goes back to the default.
+    controlled: bool | None = None
+    interruption_risk: bool | None = None
 
 
 class MedicationResponse(BaseModel):
@@ -48,11 +63,18 @@ class MedicationResponse(BaseModel):
     patient_id: str
     drug_name: str
     dose: str
+    frequency: str | None
+    category: MedicationCategory | None
     status: str
     started_at: date | None
     stopped_at: date | None
     stop_reason: str | None
     notes: str | None
+    controlled: bool | None = None
+    interruption_risk: bool | None = None
+    # What the default list says for this drug name, so the chart can show
+    # what a ``None`` above means (``app.models.refill_risk``).
+    interruption_risk_default: bool = False
     created_by: str
     created_at: datetime
     updated_at: datetime

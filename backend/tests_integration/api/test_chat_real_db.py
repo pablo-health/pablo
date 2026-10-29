@@ -41,13 +41,10 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -109,17 +106,6 @@ def _arming_here_stays_here() -> Iterator[None]:
 
 
 @pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_db_url, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
-
-
-@pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
     """Provision a tenant schema and map ``_TENANT_EMAIL`` to it, so
     ``e2e_client`` resolves it through the real lookup rather than a stand-in.
@@ -142,13 +128,6 @@ def tenant_schema(engine: Engine) -> Iterator[str]:
     with engine.connect() as conn:
         conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
         conn.commit()
-
-
-@pytest.fixture(scope="module")
-def fastapi_app() -> FastAPI:
-    from app.main import app  # noqa: PLC0415
-
-    return app
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +190,12 @@ def e2e_client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI dep
     # middleware's own resolver look ``_TENANT_EMAIL`` up against the rows
     # ``tenant_schema`` seeded, rather than handing it a fixed schema.
     identity = VerifiedIdentity(
-        provider="test", subject_id=e2e_user_id, email=_TENANT_EMAIL, mfa_satisfied=True, claims={}
+        provider="test",
+        subject_id=e2e_user_id,
+        email=_TENANT_EMAIL,
+        email_verified=True,
+        mfa_satisfied=True,
+        claims={},
     )
 
     def _stash_identity(request: Request) -> None:

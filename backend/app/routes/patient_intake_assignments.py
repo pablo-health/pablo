@@ -68,8 +68,12 @@ from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, Request, Response, status
 
-from ..api_errors import ConflictError, ForbiddenError, NotFoundError, UnprocessableEntityError
-from ..auth.patient_context import AuthStrength, PatientContext, get_patient_context
+from ..api_errors import ConflictError, NotFoundError, UnprocessableEntityError
+from ..auth.patient_context import (
+    PatientContext,
+    get_patient_context,
+    require_stepped_up,
+)
 from ..auth.route_access import subscription_exempt
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
 from ..claims.eligibility import (
@@ -97,6 +101,7 @@ from ..models.patient_intake_assignment_api import (
     IntakeCorrectionResponse,
     IntakeProgressResponse,
     IntakeSubmissionResponse,
+    PatientIntakeAssignmentResponse,
     SaveAnswerRequest,
     SavedAnswerResponse,
     SaveIntakeCoverageResponse,
@@ -160,6 +165,7 @@ if TYPE_CHECKING:
     from ..models.patient_document import PatientDocument
     from ..repositories.patient import PatientRepository
     from ..repositories.patient_document import PatientDocumentRepository
+    from ..repositories.row import Row
 
 router = APIRouter(prefix="/api/patient/intake", tags=["patient-intake"])
 
@@ -278,46 +284,54 @@ ClinicianArtifacts = Annotated[
 ]
 
 
-def _require_stepped_up(patient: PatientContext) -> None:
-    """Refuse a single-factor principal on every patient route here.
-
-    Same bar as the rest of the patient intake surface, for the same
-    reason: one factor reaching the wrong person should not open a chart.
-    """
-    if patient.auth_strength is not AuthStrength.STEPPED_UP:
-        raise ForbiddenError("Confirm it is you to continue.", code="STEP_UP_REQUIRED")
-
-
 def _progress(completion: Completion) -> IntakeProgressResponse:
-    return IntakeProgressResponse(complete=completion.complete, missing=completion.missing)
+    return IntakeProgressResponse(
+        complete=completion.complete,
+        missing=completion.missing,
+        parts=completion.parts,
+        parts_left=completion.parts_left,
+    )
 
 
 def _assignment_response(
     service: IntakeAssignmentService,
-    assignment: dict[str, object],
+    assignment: Row,
     patient_id: str,
 ) -> IntakeAssignmentResponse:
     """One assignment with its form's name and the progress on it."""
-    name, number = _version_label(service, str(assignment["version_id"]))
+    name, number, client_title = _version_label(service, str(assignment["version_id"]))
     return IntakeAssignmentResponse(
         id=str(assignment["id"]),
         version_id=str(assignment["version_id"]),
         packet_name=name,
+        client_title=client_title,
         version=number,
         status=str(assignment["status"]),
-        assigned_at=assignment["assigned_at"],  # type: ignore[arg-type]
-        submitted_at=assignment["submitted_at"],  # type: ignore[arg-type]
+        assigned_at=assignment["assigned_at"],
+        submitted_at=assignment["submitted_at"],
         receipt_code=_optional_str(assignment.get("receipt_code")),
         progress=_progress(service.progress(assignment, patient_id)),
     )
+
+
+def _patient_view(assignment: IntakeAssignmentResponse) -> PatientIntakeAssignmentResponse:
+    """The same assignment without the practice's own name for the packet.
+
+    The name is written for the practice's list and never meant for the
+    person filling the packet in; they see ``client_title``, or the
+    portal's own wording when there is none.
+    """
+    return PatientIntakeAssignmentResponse(**assignment.model_dump(exclude={"packet_name"}))
 
 
 def _optional_str(value: object) -> str | None:
     return str(value) if value is not None else None
 
 
-def _version_label(service: IntakeAssignmentService, version_id: str) -> tuple[str, int]:
-    """The form's name and version number, read defensively.
+def _version_label(
+    service: IntakeAssignmentService, version_id: str
+) -> tuple[str, int, str | None]:
+    """The form's name, version number and client-facing title, read defensively.
 
     A version whose template has been archived is still perfectly readable
     — archiving takes a form out of circulation without touching what was
@@ -326,10 +340,12 @@ def _version_label(service: IntakeAssignmentService, version_id: str) -> tuple[s
     """
     version = service.version(version_id)
     if version is None:  # pragma: no cover — the assignment's foreign key holds it
-        return "Intake", 1
+        return "Intake", 1, None
     template = service.template(str(version["template_id"]))
     name = str(template["name"]) if template else "Intake"
-    return name, int(version["version"])  # type: ignore[call-overload]
+    title = template.get("client_title") if template else None
+    client_title = title if isinstance(title, str) and title else None
+    return name, int(version["version"]), client_title
 
 
 # ---------------------------------------------------------------------------
@@ -337,12 +353,12 @@ def _version_label(service: IntakeAssignmentService, version_id: str) -> tuple[s
 # ---------------------------------------------------------------------------
 
 
-@router.get("/assignments", response_model=list[IntakeAssignmentResponse])
+@router.get("/assignments", response_model=list[PatientIntakeAssignmentResponse])
 def list_my_assignments(
     patient: CurrentPatient,
     service: PatientAssignments,
     _: None = Depends(subscription_exempt),
-) -> list[IntakeAssignmentResponse]:
+) -> list[PatientIntakeAssignmentResponse]:
     """The forms this patient has been asked to fill in, newest first.
 
     Not audited. A patient reading their own record is not a disclosure —
@@ -353,9 +369,9 @@ def list_my_assignments(
     does not hold the practice's subscription, and a form they were asked
     to fill in should not fail for a billing state they cannot see.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     return [
-        _assignment_response(service, row, patient.patient_id)
+        _patient_view(_assignment_response(service, row, patient.patient_id))
         for row in service.list_for_patient(patient.patient_id)
     ]
 
@@ -380,10 +396,10 @@ def get_my_assignment(
     that does not exist — so the surface never confirms that somebody
     else's form is real.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     assignment = _own_assignment(service, assignment_id, patient.patient_id)
     saved = service.answers(assignment_id, patient.patient_id)
-    base = _assignment_response(service, assignment, patient.patient_id)
+    base = _patient_view(_assignment_response(service, assignment, patient.patient_id))
     return IntakeAssignmentDetailResponse(
         **base.model_dump(),
         correction=_correction_response(service, assignment, patient.patient_id),
@@ -391,7 +407,7 @@ def get_my_assignment(
             IntakeAssignmentItemResponse(
                 id=str(row["id"]),
                 key=str(row["key"]),
-                position=int(row["position"]),  # type: ignore[call-overload]
+                position=int(row["position"]),
                 item_type=str(row["item_type"]),
                 required=bool(row["required"]),
                 label=_optional_str(row.get("label")),
@@ -434,7 +450,7 @@ def save_my_answer(
     — it is not that the form is closed, it is that this part of it is
     settled and the rest is what they are waiting on.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     assignment = _own_assignment(service, assignment_id, patient.patient_id)
 
     try:
@@ -502,7 +518,7 @@ def list_my_signatures(
     the settled principle behind the patient-principal audit model — and the
     signing event itself is already on the record.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     _own_assignment(service, assignment_id, patient.patient_id)
     return [
         _signature_response(row)
@@ -548,7 +564,7 @@ def sign_my_consent_document(
     it lives on the signature row, and a second copy in the compliance log
     would be a person's name in a place no question needs it.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     assignment = _own_assignment(service, assignment_id, patient.patient_id)
     ip_address, user_agent = extract_request_context(request)
 
@@ -616,7 +632,7 @@ def sign_my_consent_document(
     return _signature_response(signature)
 
 
-def _signature_response(signature: dict[str, object]) -> IntakeSignatureResponse:
+def _signature_response(signature: Row) -> IntakeSignatureResponse:
     """The stored row as the person who signed it is shown it.
 
     The address and the browser are left behind: they are evidence about the
@@ -634,7 +650,7 @@ def _signature_response(signature: dict[str, object]) -> IntakeSignatureResponse
         signer_typed_name=str(signature["signer_typed_name"]),
         consent_statement_version=version,
         consent_statement=consent_statement(version),
-        signed_at=signature["signed_at"],  # type: ignore[arg-type]
+        signed_at=signature["signed_at"],
         auth_strength=str(signature["auth_strength"]),
         session_id=_optional_str(signature.get("session_id")),
         evidence_digest=str(signature["evidence_digest"]),
@@ -670,7 +686,7 @@ def submit_my_assignment(
     On success the answers stop being drafts, every measure on the form is
     scored onto the chart, and the response carries the receipt.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     assignment = _own_assignment(service, assignment_id, patient.patient_id)
     correcting = service.open_correction(assignment, patient.patient_id) is not None
 
@@ -717,7 +733,7 @@ def submit_my_assignment(
     return IntakeSubmissionResponse(
         assignment_id=assignment_id,
         version_id=str(submitted["version_id"]),
-        submitted_at=submitted["submitted_at"],  # type: ignore[arg-type]
+        submitted_at=submitted["submitted_at"],
         receipt_code=str(submitted["receipt_code"]),
         measures=[
             SubmittedMeasureResponse(
@@ -733,7 +749,7 @@ def submit_my_assignment(
 
 
 def _correction_response(
-    service: IntakeAssignmentService, assignment: dict[str, object], patient_id: str
+    service: IntakeAssignmentService, assignment: Row, patient_id: str
 ) -> IntakeCorrectionResponse | None:
     """What the practice has asked this patient to redo, if anything.
 
@@ -747,16 +763,14 @@ def _correction_response(
     if correction is None:
         return None
     return IntakeCorrectionResponse(
-        requested_at=correction["created_at"],  # type: ignore[arg-type]
+        requested_at=correction["created_at"],
         note=_optional_str(correction.get("note_to_patient")),
         item_ids=event_item_ids(correction),
         outstanding=service.outstanding_corrections(assignment, patient_id, correction),
     )
 
 
-def _own_assignment(
-    service: IntakeAssignmentService, assignment_id: str, patient_id: str
-) -> dict[str, object]:
+def _own_assignment(service: IntakeAssignmentService, assignment_id: str, patient_id: str) -> Row:
     """The assignment iff it is the calling patient's, else 404."""
     assignment = service.get_for_patient(assignment_id, patient_id)
     if assignment is None:
@@ -764,7 +778,7 @@ def _own_assignment(
     return assignment
 
 
-def _artifact_response(row: dict[str, object]) -> IntakeArtifactResponse:
+def _artifact_response(row: Row) -> IntakeArtifactResponse:
     side = row.get("side")
     return IntakeArtifactResponse(
         id=str(row["id"]),
@@ -772,7 +786,7 @@ def _artifact_response(row: dict[str, object]) -> IntakeArtifactResponse:
         item_id=str(row["item_id"]),
         document_id=str(row["document_id"]),
         side=str(side) if side is not None else None,
-        created_at=row["created_at"],  # type: ignore[arg-type]
+        created_at=row["created_at"],
     )
 
 
@@ -796,7 +810,7 @@ def _item_labels(service: IntakeAssignmentService, version_id: str) -> dict[str,
 
 
 def _clinician_artifact_response(
-    row: dict[str, object], document: PatientDocument, labels: dict[str, str]
+    row: Row, document: PatientDocument, labels: dict[str, str]
 ) -> ClinicianIntakeArtifactResponse:
     """One artifact as the chart lists it, with its file's own facts.
 
@@ -816,7 +830,7 @@ def _clinician_artifact_response(
         content_type=document.mime_type,
         size_bytes=document.size_bytes,
         scan_status=None,
-        created_at=row["created_at"],  # type: ignore[arg-type]
+        created_at=row["created_at"],
     )
 
 
@@ -864,7 +878,7 @@ def attach_my_artifact(
     What is recorded: which document arrived and which side of a card it is.
     Never the filename — people name files after what is in them.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     assignment = _own_assignment(service, assignment_id, patient.patient_id)
 
     try:
@@ -944,7 +958,7 @@ def remove_my_artifact(
     being filled in, so it was never sent to the practice, and the
     practice's record of what arrived has nothing to keep.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     assignment = _own_assignment(service, assignment_id, patient.patient_id)
 
     try:
@@ -976,7 +990,7 @@ def _artifact_write_response(
     artifacts: IntakeArtifactService,
     assignment_id: str,
     patient: PatientContext,
-    artifact: dict[str, object],
+    artifact: Row,
 ) -> ArtifactWriteResponse:
     """The artifact that changed, and where the form stands now.
 
@@ -1029,7 +1043,7 @@ def save_my_intake_coverage(
     member id, the group or the subscriber — those are the card, and the
     card is not something a compliance log needs a copy of.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     assignment = _own_assignment(service, assignment_id, patient.patient_id)
 
     try:
@@ -1205,7 +1219,7 @@ def get_patient_intake_assignment(
             ClinicianIntakeAnswerResponse(
                 id=str(row["id"]),
                 key=str(row["key"]),
-                position=int(row["position"]),  # type: ignore[call-overload]
+                position=int(row["position"]),
                 item_type=str(row["item_type"]),
                 required=bool(row["required"]),
                 label=_optional_str(row.get("label")),

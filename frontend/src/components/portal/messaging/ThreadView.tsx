@@ -38,7 +38,8 @@ import type {
   PatientMessageAttachment,
   PatientMessageThreadDetail,
 } from "@/lib/api/patientMessages"
-import { formatFileSize, MessageComposer } from "./MessageComposer"
+import { formatCompactFileSize } from "@/lib/utils/fileValidation"
+import { MessageComposer } from "./MessageComposer"
 import type { ComposerAttachment } from "./MessageComposer"
 
 export interface ThreadViewProps {
@@ -149,7 +150,7 @@ export function ThreadView({
                         {attachment.filename}
                       </button>
                       <span className="ml-2 text-xs opacity-80">
-                        {formatFileSize(attachment.size_bytes)}
+                        {formatCompactFileSize(attachment.size_bytes, 0)}
                       </span>
                     </li>
                   ))}

@@ -36,9 +36,7 @@ const DAYS_OFF = ["Friday", "Saturday", "Sunday"]
 async function startFresh(api: ApiClient): Promise<void> {
   const rules = await api.get<{ data: { id: string }[] }>("/api/availability/rules")
   for (const rule of rules.data) await api.delete(`/api/availability/rules/${rule.id}`)
-  const preferences = await api.get<Record<string, unknown>>("/api/users/me/preferences")
-  await api.put("/api/users/me/preferences", {
-    ...preferences,
+  await api.patch("/api/users/me/preferences", {
     calendar_setup_complete: false,
     calendar_default_view: "timeGridWeek",
     timezone: BROWSER_TIME_ZONE,

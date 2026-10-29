@@ -16,7 +16,7 @@ module turned off does to its routes in ``test_portal_module_gate.py``.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
 from app.api_errors import register_exception_handlers
@@ -25,12 +25,15 @@ from app.models.audit import AuditAction, ResourceType
 from app.portal import settings_routes
 from app.portal.portal_settings import InMemoryPortalSettingsStore, get_portal_settings_store
 from app.portal.practice_routes import PracticeAddress
+from app.routes import _deps
 from app.services.audit_service import get_audit_service
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 if TYPE_CHECKING:
     from app.models import User
+
+    from tests.audit_fakes import RecordingAudit
 
 PRACTICE_ID = "practice-1"
 TENANT = "practice_abc123"
@@ -43,14 +46,6 @@ MOUNTED = frozenset({"intake", "messaging", "documents", "appointments", "refill
 ALL_ON = {"intake": True, "messaging": True, "appointments": True, "refills": True}
 
 
-class _RecordingAudit:
-    def __init__(self) -> None:
-        self.entries: list[dict[str, Any]] = []
-
-    def log(self, action: Any, *_args: Any, **kwargs: Any) -> None:
-        self.entries.append({"action": action, **kwargs})
-
-
 @pytest.fixture
 def minted(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Which practices had an address minted, without a platform table."""
@@ -61,9 +56,7 @@ def minted(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         return PracticeAddress(slug="example-therapy", display_name="Example", enabled=True)
 
     monkeypatch.setattr(settings_routes, "ensure_practice_slug", _mint)
-    monkeypatch.setattr(
-        settings_routes, "_resolve_practice_from_email", lambda _email: (PRACTICE_ID, TENANT)
-    )
+    monkeypatch.setattr(_deps, "_resolve_practice_from_email", lambda _email: (PRACTICE_ID, TENANT))
     monkeypatch.setattr(
         settings_routes, "get_settings", lambda: SimpleNamespace(portal_module_names=CONFIGURED)
     )
@@ -77,15 +70,10 @@ def store() -> InMemoryPortalSettingsStore:
 
 
 @pytest.fixture
-def audit() -> _RecordingAudit:
-    return _RecordingAudit()
-
-
-@pytest.fixture
 def client(
     mock_user: User,
     store: InMemoryPortalSettingsStore,
-    audit: _RecordingAudit,
+    recording_audit: RecordingAudit,
     minted: list[str],  # patches the practice lookups
 ) -> TestClient:
     application = FastAPI()
@@ -95,7 +83,7 @@ def client(
     overrides[get_current_user] = lambda: mock_user
     overrides[require_active_subscription] = lambda: mock_user
     overrides[get_portal_settings_store] = lambda: store
-    overrides[get_audit_service] = lambda: audit
+    overrides[get_audit_service] = lambda: recording_audit
     return TestClient(application)
 
 
@@ -103,7 +91,13 @@ def client(
 
 
 def test_a_practice_that_was_never_asked_does_not_offer_the_portal(client: TestClient) -> None:
-    assert client.get(URL).json() == {"enabled": False, "decided": False, "modules": ALL_ON}
+    assert client.get(URL).json() == {
+        "enabled": False,
+        "decided": False,
+        "modules": ALL_ON,
+        "refill_turnaround_days": 2,
+        "message_reply_target_days": 2,
+    }
 
 
 def test_turning_it_on_mints_the_address_and_records_the_decision(
@@ -112,7 +106,13 @@ def test_turning_it_on_mints_the_address_and_records_the_decision(
     response = client.put(URL, json={"enabled": True})
 
     assert response.status_code == 200
-    assert response.json() == {"enabled": True, "decided": True, "modules": ALL_ON}
+    assert response.json() == {
+        "enabled": True,
+        "decided": True,
+        "modules": ALL_ON,
+        "refill_turnaround_days": 2,
+        "message_reply_target_days": 2,
+    }
     assert minted == [PRACTICE_ID]
     assert store.get(PRACTICE_ID).enabled is True
 
@@ -127,30 +127,30 @@ def test_turning_it_off_does_not_mint_anything(client: TestClient, minted: list[
 
 
 def test_a_change_is_audited_with_the_old_and_new_setting_only(
-    client: TestClient, audit: _RecordingAudit, mock_user: User
+    client: TestClient, recording_audit: RecordingAudit, mock_user: User
 ) -> None:
     client.put(URL, json={"enabled": True})
     client.put(URL, json={"enabled": False})
 
-    assert [entry["action"] for entry in audit.entries] == [
+    assert [entry["action"] for entry in recording_audit.entries] == [
         AuditAction.PRACTICE_PORTAL_OFFERING_CHANGED,
         AuditAction.PRACTICE_PORTAL_OFFERING_CHANGED,
     ]
-    first, second = audit.entries
+    first, second = recording_audit.entries
     assert first["resource_type"] == ResourceType.PRACTICE_PORTAL
     assert first["resource_id"] == PRACTICE_ID
     assert first["changes"] == {"enabled": {"old": False, "new": True}}
     assert second["changes"] == {"enabled": {"old": True, "new": False}}
-    assert mock_user.email not in repr(audit.entries)
+    assert mock_user.email not in repr(recording_audit.entries)
 
 
 def test_saving_the_same_setting_again_writes_no_audit_entry(
-    client: TestClient, audit: _RecordingAudit
+    client: TestClient, recording_audit: RecordingAudit
 ) -> None:
     client.put(URL, json={"enabled": True})
     client.put(URL, json={"enabled": True})
 
-    assert len(audit.entries) == 1
+    assert len(recording_audit.entries) == 1
 
 
 def test_the_practice_comes_from_the_caller_not_the_request(
@@ -164,20 +164,20 @@ def test_the_practice_comes_from_the_caller_not_the_request(
 
 
 def test_a_first_time_answer_does_not_overrule_one_already_given(
-    client: TestClient, store: InMemoryPortalSettingsStore, audit: _RecordingAudit
+    client: TestClient, store: InMemoryPortalSettingsStore, recording_audit: RecordingAudit
 ) -> None:
     """The first-client prompt's "not now" is sent only-if-undecided: a
     colleague who turned the portal on meanwhile must not be switched off by
     a screen loaded before they did."""
     client.put(URL, json={"enabled": True})
-    entries = len(audit.entries)
+    entries = len(recording_audit.entries)
 
     response = client.put(URL, json={"enabled": False, "only_if_undecided": True})
 
     assert response.status_code == 200
     assert response.json()["enabled"] is True
     assert store.get(PRACTICE_ID).enabled is True
-    assert len(audit.entries) == entries
+    assert len(recording_audit.entries) == entries
 
 
 def test_an_only_if_undecided_answer_is_taken_when_nobody_has_answered(
@@ -193,7 +193,7 @@ def test_an_only_if_undecided_answer_is_taken_when_nobody_has_answered(
 def test_a_caller_with_no_practice_gets_a_conflict(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(settings_routes, "_resolve_practice_from_email", lambda _email: None)
+    monkeypatch.setattr(_deps, "_resolve_practice_from_email", lambda _email: None)
 
     assert client.get(URL).status_code == 409
     assert client.put(URL, json={"enabled": True}).status_code == 409
@@ -267,15 +267,85 @@ def test_the_last_module_cannot_be_turned_off(client: TestClient) -> None:
 
 
 def test_a_module_change_is_audited_with_the_lists_only(
-    client: TestClient, audit: _RecordingAudit
+    client: TestClient, recording_audit: RecordingAudit
 ) -> None:
     client.put(URL, json={"modules": {"appointments": False}})
     client.put(URL, json={"modules": {"appointments": False}})
 
-    assert len(audit.entries) == 1
-    assert audit.entries[0]["changes"] == {
+    assert len(recording_audit.entries) == 1
+    assert recording_audit.entries[0]["changes"] == {
         "modules": {
             "old": ["intake", "messaging", "appointments", "refills"],
             "new": ["intake", "messaging", "refills"],
         }
     }
+
+
+# ── the reply-time target for client messages ──────────────────────────
+
+
+def test_the_reply_target_starts_at_two_working_days(client: TestClient) -> None:
+    assert client.get(URL).json()["message_reply_target_days"] == 2
+
+
+def test_the_reply_target_is_saved_and_audited_old_and_new(
+    client: TestClient, store: InMemoryPortalSettingsStore, recording_audit: RecordingAudit
+) -> None:
+    response = client.put(URL, json={"message_reply_target_days": 1})
+
+    assert response.status_code == 200
+    assert response.json()["message_reply_target_days"] == 1
+    assert store.get(PRACTICE_ID).message_reply_target_days == 1
+    assert recording_audit.entries[-1]["changes"] == {
+        "message_reply_target_days": {"old": 2, "new": 1}
+    }
+
+
+@pytest.mark.parametrize("days", [0, 6, -1])
+def test_a_reply_target_outside_the_range_is_refused(
+    client: TestClient, store: InMemoryPortalSettingsStore, days: int
+) -> None:
+    # Catches a zero-day target, which would make every message overdue on arrival.
+    response = client.put(URL, json={"message_reply_target_days": days})
+
+    assert response.status_code == 422
+    assert store.get(PRACTICE_ID).message_reply_target_days == 2
+
+
+# ── the refill turnaround target ────────────────────────────────────────
+
+
+def test_the_refill_target_starts_at_two_working_days(client: TestClient) -> None:
+    assert client.get(URL).json()["refill_turnaround_days"] == 2
+
+
+def test_the_refill_target_is_saved_and_audited_old_and_new(
+    client: TestClient, store: InMemoryPortalSettingsStore, recording_audit: RecordingAudit
+) -> None:
+    response = client.put(URL, json={"refill_turnaround_days": 3})
+
+    assert response.status_code == 200
+    assert response.json()["refill_turnaround_days"] == 3
+    assert store.get(PRACTICE_ID).refill_turnaround_days == 3
+    assert recording_audit.entries[-1]["changes"] == {
+        "refill_turnaround_days": {"old": 2, "new": 3}
+    }
+
+
+def test_saving_the_same_refill_target_writes_no_audit_entry(
+    client: TestClient, recording_audit: RecordingAudit
+) -> None:
+    client.put(URL, json={"refill_turnaround_days": 2})
+
+    assert recording_audit.entries == []
+
+
+@pytest.mark.parametrize("days", [0, 11, -1])
+def test_a_refill_target_outside_the_range_is_refused(
+    client: TestClient, store: InMemoryPortalSettingsStore, days: int
+) -> None:
+    # Catches a zero-day target, which would make every request overdue on arrival.
+    response = client.put(URL, json={"refill_turnaround_days": days})
+
+    assert response.status_code == 422
+    assert store.get(PRACTICE_ID).refill_turnaround_days == 2

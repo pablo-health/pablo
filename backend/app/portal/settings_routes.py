@@ -18,7 +18,12 @@ serves — configured and mounted — less the ones with a gate of their own
 (chat). A practice can turn those off for its clients; it can never turn on
 one the deployment does not serve.
 
-Not PHI: a switch and module names.
+The practice's refill turnaround target is set here too, beside the refills
+module it belongs to, and its reply-time target for client messages beside
+messaging. Both are the practice's own: they date items in the practice's
+queue, and nothing a client sees carries them.
+
+Not PHI: a switch, module names and a number.
 """
 
 from __future__ import annotations
@@ -26,16 +31,21 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from ..api_errors import ConflictError, UnprocessableEntityError
-from ..auth.service import _resolve_practice_from_email, require_active_subscription
+from ..api_errors import UnprocessableEntityError
+from ..auth.service import require_active_subscription
 from ..models import User  # noqa: TC001 — fastapi resolves the annotation at runtime
 from ..models.audit import AuditAction, ResourceType
+from ..routes._deps import practice_id_or_409
 from ..services.audit_service import AuditService, get_audit_service
 from ..settings import get_settings
 from .modules import known_modules, mounted_modules_on
 from .portal_settings import (
+    MESSAGE_REPLY_TARGET_MAX_DAYS,
+    MESSAGE_REPLY_TARGET_MIN_DAYS,
+    REFILL_TURNAROUND_MAX_DAYS,
+    REFILL_TURNAROUND_MIN_DAYS,
     PortalSettings,
     PortalSettingsStore,
     choosable_modules,
@@ -55,23 +65,28 @@ class PortalSettingsResponse(BaseModel):
     #: Every module the practice can choose, in the order clients meet them,
     #: and whether it is on.
     modules: dict[str, bool]
+    #: The practice's own target for answering a refill request, in working
+    #: days. For the practice's settings page only.
+    refill_turnaround_days: int
+    #: The practice's own target for answering a client's message, in working
+    #: days. For the practice's settings page only.
+    message_reply_target_days: int
 
 
 class PortalSettingsRequest(BaseModel):
     enabled: bool | None = None
     #: Modules to turn on or off. Ones left out keep their setting.
     modules: dict[str, bool] | None = None
+    refill_turnaround_days: int | None = Field(
+        default=None, ge=REFILL_TURNAROUND_MIN_DAYS, le=REFILL_TURNAROUND_MAX_DAYS
+    )
+    message_reply_target_days: int | None = Field(
+        default=None, ge=MESSAGE_REPLY_TARGET_MIN_DAYS, le=MESSAGE_REPLY_TARGET_MAX_DAYS
+    )
     #: Apply this only if the practice has never answered. The first-client
     #: prompt sends it: a "not now" from a screen loaded before a colleague
     #: turned the portal on must not turn it off for the whole practice.
     only_if_undecided: bool = False
-
-
-def _practice_id(user: User) -> str:
-    practice = _resolve_practice_from_email(user.email)
-    if practice is None:
-        raise ConflictError("No practice is associated with this account yet.")
-    return practice[0]
 
 
 def _choosable(request: Request) -> tuple[str, ...]:
@@ -90,6 +105,8 @@ def _response(settings: PortalSettings, choosable: tuple[str, ...]) -> PortalSet
         enabled=settings.enabled,
         decided=settings.decided_at is not None,
         modules=_modules_on(settings, choosable),
+        refill_turnaround_days=settings.refill_turnaround_days,
+        message_reply_target_days=settings.message_reply_target_days,
     )
 
 
@@ -124,7 +141,7 @@ def get_portal_settings(
     store: Annotated[PortalSettingsStore, Depends(get_portal_settings_store)],
 ) -> PortalSettingsResponse:
     """Whether the caller's practice offers the portal, and which parts."""
-    return _response(store.get(_practice_id(user)), _choosable(request))
+    return _response(store.get(practice_id_or_409(user)), _choosable(request))
 
 
 @router.put("/api/portal/settings", response_model=PortalSettingsResponse)
@@ -136,7 +153,7 @@ def save_portal_settings(
     audit: Annotated[AuditService, Depends(get_audit_service)],
 ) -> PortalSettingsResponse:
     """Turn the practice's portal on or off, and choose what clients can do."""
-    practice_id = _practice_id(user)
+    practice_id = practice_id_or_409(user)
     choosable = _choosable(request)
     before = store.get(practice_id)
     if body.only_if_undecided and before.decided_at is not None:
@@ -152,6 +169,19 @@ def save_portal_settings(
         was_on = [name for name in choosable if current[name]]
         if was_on != list(chosen):
             changes["modules"] = {"old": was_on, "new": list(chosen)}
+
+    days = body.refill_turnaround_days
+    if days is not None and days != before.refill_turnaround_days:
+        after = store.set_refill_turnaround(practice_id, days=days, by=user.id)
+        changes["refill_turnaround_days"] = {"old": before.refill_turnaround_days, "new": days}
+
+    reply_days = body.message_reply_target_days
+    if reply_days is not None and reply_days != before.message_reply_target_days:
+        after = store.set_message_reply_target(practice_id, days=reply_days, by=user.id)
+        changes["message_reply_target_days"] = {
+            "old": before.message_reply_target_days,
+            "new": reply_days,
+        }
 
     if body.enabled is not None:
         if body.enabled:

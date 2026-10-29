@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 
 from ..reliability import LLM_JOB, LLM_REQUEST, Idempotency, call_with_retry
 from .llm_provider import LLMProvider, strip_provider_prefix
-from .llm_telemetry import LLMSpanRequest, llm_span, usage_tokens
+from .llm_telemetry import LLMSpanRequest, llm_span, usage_detail_tokens, usage_tokens
 from .vertex_client import (
     anthropic_vertex_client,
     seconds_to_genai_timeout_ms,
@@ -64,6 +64,8 @@ _MISTRAL_VERTEX_REGION = os.environ.get("MISTRAL_VERTEX_REGION", "us-central1")
 #: Floor on an attempt's timeout, so a spent budget still times out at once
 #: rather than reading as "no timeout" to the SDK.
 _MIN_ATTEMPT_TIMEOUT_SECONDS = 0.001
+_GEMINI_THINKING_LOW_MAX_BUDGET = 2_048
+_GEMINI_THINKING_MEDIUM_MAX_BUDGET = 8_192
 
 
 def _attempt_timeout(timeout_seconds: float, started: float, policy: RetryPolicy) -> float:
@@ -80,6 +82,46 @@ def _attempt_timeout(timeout_seconds: float, started: float, policy: RetryPolicy
         return timeout_seconds
     remaining = deadline - (time.monotonic() - started)
     return max(min(timeout_seconds, remaining), _MIN_ATTEMPT_TIMEOUT_SECONDS)
+
+
+# Gemini models that accept ThinkingLevel.MINIMAL. Measured against Vertex
+# AI on 2026-10-21 by sending one request per model and level:
+#   gemini-3.5-flash         MINIMAL, LOW, MEDIUM, HIGH
+#   gemini-3.1-pro-preview   LOW, MEDIUM, HIGH (MINIMAL rejected)
+#   gemini-3.8-flash         LOW, MEDIUM, HIGH (MINIMAL rejected)
+#   gemini-4-argon           LOW, MEDIUM, HIGH (MINIMAL rejected)
+# A model not listed gets LOW for a zero budget, which every model above
+# accepts. Add a model here only after checking it takes MINIMAL.
+_GEMINI_MINIMAL_THINKING_MODELS: frozenset[str] = frozenset({"gemini-3.5-flash"})
+
+
+def _gemini_thinking_config(types: Any, model: str, budget: int | None) -> Any:
+    """Build native thinking config for Gemini 3.x/4.x and legacy models."""
+    if budget is None:
+        return None
+    normalized = model.lower()
+    if not (normalized.startswith("gemini-3") or normalized.startswith("gemini-4")):
+        return types.ThinkingConfig(thinking_budget=budget)
+    if normalized == "gemini-4-argon":
+        # Argon's latency/quality evals were run with LOW for explicit calls.
+        level = types.ThinkingLevel.LOW
+    elif budget == 0:
+        # Gemini 3.x has no budget=0 switch; the lowest level a model accepts
+        # stands in for it. Only some models accept MINIMAL, and the rest
+        # answer 400 "Thinking level is unsupported", so it is sent only to a
+        # model known to take it and every other model gets LOW.
+        level = (
+            types.ThinkingLevel.MINIMAL
+            if normalized in _GEMINI_MINIMAL_THINKING_MODELS
+            else types.ThinkingLevel.LOW
+        )
+    elif budget <= _GEMINI_THINKING_LOW_MAX_BUDGET:
+        level = types.ThinkingLevel.LOW
+    elif budget <= _GEMINI_THINKING_MEDIUM_MAX_BUDGET:
+        level = types.ThinkingLevel.MEDIUM
+    else:
+        level = types.ThinkingLevel.HIGH
+    return types.ThinkingConfig(thinking_level=level)
 
 
 class StructuredOutputTruncatedError(ValueError):
@@ -109,6 +151,65 @@ class StructuredCompletion:
     data: dict[str, Any]
     output_tokens: int | None = None
     finish_reason: str = "stop"
+
+
+def decode_json_encoded_fields(
+    data: dict[str, Any], schema: dict[str, Any]
+) -> tuple[dict[str, Any], int]:
+    """Decode object and array fields a forced tool call sent as JSON text.
+
+    A Claude tool call now and then writes a nested object parameter as a
+    string holding that object's JSON (``{"subjective": "{\\"chief_complaint\\":
+    ...}"}``) rather than as the object itself. Nothing downstream reads a
+    string where it expects a section, so every section would come back empty
+    although the model wrote all of it. A string is decoded only where the
+    schema asks for an object or an array and the text parses to one.
+
+    Returns the repaired data and how many fields were decoded.
+    """
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return data, 0
+    out = dict(data)
+    decoded = 0
+    for key, sub_schema in properties.items():
+        if not isinstance(sub_schema, dict):
+            continue
+        expected = sub_schema.get("type")
+        value = out.get(key)
+        if isinstance(value, str) and expected in ("object", "array"):
+            try:
+                parsed = json.loads(value)
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, dict if expected == "object" else list):
+                value = parsed
+                out[key] = parsed
+                decoded += 1
+        if isinstance(value, dict) and expected == "object":
+            out[key], inner = decode_json_encoded_fields(value, sub_schema)
+            decoded += inner
+    return out, decoded
+
+
+def tool_input_completion(
+    tool_input: dict[str, Any],
+    response_schema: dict[str, Any],
+    *,
+    provider: str,
+    output_tokens: int | None,
+    finish_reason: str,
+) -> StructuredCompletion:
+    """The result of a forced tool call, with JSON-encoded fields decoded."""
+    data, decoded = decode_json_encoded_fields(tool_input, response_schema)
+    if decoded:
+        # A count only: the fields' content is never logged.
+        logger.warning(
+            "%s tool call sent %d object field(s) as JSON text; decoded them",
+            provider,
+            decoded,
+        )
+    return StructuredCompletion(data=data, output_tokens=output_tokens, finish_reason=finish_reason)
 
 
 class StructuredLLMGateway(ABC):
@@ -196,11 +297,11 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
         timeout_seconds: float | None = None,
         retry_policy: RetryPolicy | None = None,
     ) -> StructuredCompletion:
-        # Never hold a pooled DB connection across the model round-trip — the
-        # caller must release_db_connection() first (raises in dev/test).
-        from ..db import assert_no_held_db_connection
+        # Never hold a pooled DB connection across the model round-trip:
+        # release it here, at the one seam every call passes through.
+        from ..db import release_db_connection_before_external_call
 
-        assert_no_held_db_connection("structured-llm")
+        release_db_connection_before_external_call("structured-llm")
         try:
             from google.genai import types
         except ImportError as exc:
@@ -211,19 +312,21 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
         client = self._get_client()
         normalized_model = strip_provider_prefix(model)
         schema = _to_gemini_schema(types, response_schema)
+        thinking_config = _gemini_thinking_config(types, normalized_model, thinking_budget)
         config = types.GenerateContentConfig(
             system_instruction=system_prompt,
             response_mime_type="application/json",
             response_schema=schema,
+            # This path asks for JSON through response_schema and supplies no
+            # callable tools. Disable the SDK's default AFC machinery explicitly;
+            # otherwise google-genai warns that Models.generate_content should be
+            # replaced with Chat.send_message even though no function is callable.
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
             temperature=temperature,
             max_output_tokens=max_output_tokens,
             # Default thinking when None; an explicit budget (incl. 0 to
             # disable) is forwarded for mechanical extraction callers.
-            thinking_config=(
-                types.ThinkingConfig(thinking_budget=thinking_budget)
-                if thinking_budget is not None
-                else None
-            ),
+            thinking_config=thinking_config,
         )
         policy = retry_policy or LLM_REQUEST
         started = time.monotonic()
@@ -259,13 +362,15 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
             except Exception as exc:
                 logger.exception("Gemini structured completion failed")
                 raise RuntimeError(f"Structured LLM call failed: {exc}") from exc
-            prompt_tokens, output_tokens, total_tokens = usage_tokens(
-                getattr(response, "usage_metadata", None)
-            )
+            usage_metadata = getattr(response, "usage_metadata", None)
+            prompt_tokens, output_tokens, total_tokens = usage_tokens(usage_metadata)
+            cached_tokens, thoughts_tokens = usage_detail_tokens(usage_metadata)
             span.set_token_usage(
                 prompt_tokens=prompt_tokens,
                 completion_tokens=output_tokens,
                 total_tokens=total_tokens,
+                cached_tokens=cached_tokens,
+                thoughts_tokens=thoughts_tokens,
             )
 
         # Classify the finish reason *before* parsing: a length-truncated
@@ -346,11 +451,11 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
         timeout_seconds: float | None = None,
         retry_policy: RetryPolicy | None = None,
     ) -> StructuredCompletion:
-        # Never hold a pooled DB connection across the model round-trip — the
-        # caller must release_db_connection() first (raises in dev/test).
-        from ..db import assert_no_held_db_connection
+        # Never hold a pooled DB connection across the model round-trip:
+        # release it here, at the one seam every call passes through.
+        from ..db import release_db_connection_before_external_call
 
-        assert_no_held_db_connection("structured-llm")
+        release_db_connection_before_external_call("structured-llm")
 
         # ``thinking_budget`` is part of the shared contract but unused here: the
         # Anthropic structured path issues a single non-thinking completion.
@@ -398,10 +503,17 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
                 if prompt_tokens is not None or output_tokens is not None
                 else None
             )
+            # Anthropic reports cache reads apart from input_tokens; fold them
+            # into the prompt so it means the whole prompt on every provider.
+            cached_tokens = getattr(usage, "cache_read_input_tokens", None)
+            if prompt_tokens is not None and cached_tokens:
+                prompt_tokens += cached_tokens
+                total = (total or 0) + cached_tokens
             span.set_token_usage(
                 prompt_tokens=prompt_tokens,
                 completion_tokens=output_tokens,
                 total_tokens=total,
+                cached_tokens=cached_tokens,
             )
 
         # Distinguish a token-capped completion (partial / no tool call) from a
@@ -434,8 +546,10 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
                 f"Structured tool input was not an object ({type(tool_input).__name__})"
             )
 
-        return StructuredCompletion(
-            data=tool_input,
+        return tool_input_completion(
+            tool_input,
+            response_schema,
+            provider="Anthropic",
             output_tokens=output_tokens,
             finish_reason=finish_reason,
         )
@@ -503,9 +617,11 @@ class MistralStructuredLLMGateway(StructuredLLMGateway):
         timeout_seconds: float | None = None,
         retry_policy: RetryPolicy | None = None,
     ) -> StructuredCompletion:
-        from ..db import assert_no_held_db_connection
+        # Never hold a pooled DB connection across the model round-trip:
+        # release it here, at the one seam every call passes through.
+        from ..db import release_db_connection_before_external_call
 
-        assert_no_held_db_connection("structured-llm")
+        release_db_connection_before_external_call("structured-llm")
 
         # ``thinking_budget`` is part of the shared contract but unused here.
         del thinking_budget
@@ -554,10 +670,12 @@ class MistralStructuredLLMGateway(StructuredLLMGateway):
             usage = data.get("usage") or {}
             prompt_tokens = usage.get("prompt_tokens")
             output_tokens = usage.get("completion_tokens")
+            mistral_cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
             span.set_token_usage(
                 prompt_tokens=prompt_tokens,
                 completion_tokens=output_tokens,
                 total_tokens=usage.get("total_tokens"),
+                cached_tokens=mistral_cached,
             )
 
         choices = data.get("choices") or []
@@ -787,6 +905,7 @@ __all__ = [
     "MistralStructuredLLMGateway",
     "StructuredCompletion",
     "StructuredLLMGateway",
+    "decode_json_encoded_fields",
     "get_default_structured_llm_gateway",
     "register_structured_llm_provider",
     "resolve_structured_llm_gateway",

@@ -47,14 +47,11 @@ import logging
 import os
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from app.db.migrate_tenants import fan_out
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session as OrmSession
 
@@ -76,17 +73,6 @@ _THREADS = "patient_message_threads"
 _SUBMISSIONS = "patient_intake_submissions"
 # The clinician who created both patients, and so holds a grant on each.
 _TREATING_CLINICIAN = "3a7e1c82-45bd-5f19-8c62-0e4d7b3a9f15"
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_DB_URL, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 def _new_schema(engine: Engine, label: str) -> str:

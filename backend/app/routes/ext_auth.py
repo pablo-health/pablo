@@ -1,9 +1,14 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""External auth endpoints — called by Firebase blocking functions.
+"""External auth endpoints — called by the optional Identity Platform blocking functions.
 
-The blocking functions call these via OIDC-authenticated HTTP so auth
-gatekeeping works with the PostgreSQL backend.
+The blocking functions (``functions/``) call these via OIDC-authenticated HTTP
+so the identity provider can turn a sign-up or sign-in away before it issues a
+token. They are defense in depth, not the control: the backend enforces the
+allowlist and refuses disabled accounts on every authenticated request
+(``_resolve_user`` in ``auth/service.py``), and records each sign-in itself
+(``auth/sign_in_audit.py``). A deployment may unregister the functions; these
+endpoints stay for the deployments that keep them registered.
 
 Security: OIDC service-to-service auth in production, unauthenticated in dev.
 """
@@ -18,11 +23,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr
 
 from ..auth.route_security import truly_public
-from ..auth.service import E2E_EMAIL_PATTERN
 from ..db import get_db_session
 from ..db.platform_models import EmailTenantMappingRow
-from ..jobs.pentest_identity import PENTEST_EMAIL_PATTERN
-from ..repositories import get_allowlist_repository, get_user_repository
+from ..repositories import (
+    get_allowlist_repository,
+    get_identity_repository,
+    get_user_repository,
+)
+from ..reserved_identities import E2E_EMAIL_PATTERN, PENTEST_EMAIL_PATTERN
 from ..settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -143,7 +151,9 @@ def check_allowlist(
 ) -> CheckAllowlistResponse:
     """Check if an email is on the allowlist.
 
-    Called by the beforeCreate blocking function to gate account creation.
+    Called by the optional beforeCreate blocking function to gate account
+    creation. The backend applies the same allowlist before it creates a user,
+    so this only stops the identity provider's account from being made.
     """
     _verify_blocking_function_token(http_request)
     settings = get_settings()
@@ -191,14 +201,21 @@ def check_status(
 ) -> CheckStatusResponse:
     """Check if a user account is disabled.
 
-    Called by the beforeSignIn blocking function to block disabled users.
+    Called by the optional beforeSignIn blocking function, so the identity
+    provider can turn a disabled account away before issuing a token. The
+    backend refuses a disabled account on every request regardless.
+
+    The sign-in is not recorded here. The backend records it on the sign-in's
+    first authenticated request (``auth/sign_in_audit.py``), which works with
+    or without this hook; writing it here as well would give every sign-in two
+    rows while the hook is still registered.
     """
     _verify_blocking_function_token(http_request)
 
-    repo = get_user_repository()
-    user = repo.get(request.uid)
-    if user is None:
-        # New user — not disabled
-        return CheckStatusResponse(disabled=False)
-
-    return CheckStatusResponse(disabled=user.status == "disabled")
+    # The function sends the identity provider's uid. Users are keyed by
+    # Pablo's own id, so translate through the identity mapping, falling back
+    # to the raw uid for an account created before the mapping existed (the
+    # same rule the request auth path follows).
+    user_id = get_identity_repository().get_user_id("firebase", request.uid) or request.uid
+    user = get_user_repository().get(user_id)
+    return CheckStatusResponse(disabled=user is not None and user.status == "disabled")

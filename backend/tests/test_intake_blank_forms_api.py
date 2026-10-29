@@ -31,7 +31,6 @@ from app.auth.service import require_baa_acceptance
 from app.models import User
 from app.models.audit import ACTOR_TYPE_PATIENT, AuditAction
 from app.repositories import InMemoryIntakeBlankFormRepository
-from app.repositories.audit import InMemoryAuditRepository
 from app.routes import intake_blank_forms
 from app.routes.intake_blank_forms import (
     get_intake_blank_form_service,
@@ -46,6 +45,8 @@ from fastapi.testclient import TestClient
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from app.repositories.audit import InMemoryAuditRepository
 
 _PATIENT_A = "11111111-1111-4111-8111-111111111111"
 _TOKEN_A = "credential-of-patient-a"
@@ -171,11 +172,6 @@ def service(
         storage=storage,
         tenant_id="practice_test_intake",
     )
-
-
-@pytest.fixture
-def audit_repo() -> InMemoryAuditRepository:
-    return InMemoryAuditRepository()
 
 
 @pytest.fixture

@@ -9,11 +9,14 @@ import {
   type RecordingConsent,
 } from "@/components/sessions/RecordingConsentDialog"
 import { Button } from "@/components/ui/button"
+import { useToast } from "@/components/ui/Toast"
 import { createLaunchIntent } from "@/lib/api/devices"
 import {
   armNoHandoffFallback,
   clickThroughAnchor,
   legacyLaunchUri,
+  OPEN_PROMPT_HINT,
+  takeOpenPromptHint,
 } from "@/lib/companionLaunch"
 
 interface StartSessionButtonProps {
@@ -32,9 +35,9 @@ interface ReadyIntent {
  */
 function issueIntent(
   appointmentId: string,
-  aiConsentPrompted = false,
+  answer: Parameters<typeof createLaunchIntent>[1] = {},
 ): Promise<ReadyIntent | null> {
-  return createLaunchIntent(appointmentId, { aiConsentPrompted })
+  return createLaunchIntent(appointmentId, answer)
     .then(({ intent_id, launch_url }) => ({ intentId: intent_id, launchUrl: launch_url }))
     .catch(() => null)
 }
@@ -67,18 +70,23 @@ function issueIntent(
  *     from the dialog's own button, through the same synthesized anchor as 3.
  *     A failed read does not block: the server refuses a declined client's
  *     recording itself.
- *  5. "Record anyway" hands off a second intent that carries the answer, so
- *     the companion does not ask the same question again. It is minted as
- *     soon as the read says nobody has asked, for the same reason as 1: the
- *     dialog's click has to navigate inside its own gesture.
+ *  5. "Start recording and ask" hands off a second intent that tells the
+ *     companion to ask once recording starts, so it does not offer the same
+ *     choice again. It is minted as soon as the read says nobody has asked,
+ *     for the same reason as 1: the dialog's click has to navigate inside its
+ *     own gesture.
  */
-export function StartSessionButton({ appointmentId, patientId }: StartSessionButtonProps) {
+export function StartSessionButton({
+  appointmentId,
+  patientId,
+}: StartSessionButtonProps) {
   // The prefetched intent, if any. `null` until the first hover/focus or click.
   const [intent, setIntent] = useState<ReadyIntent | null>(null)
   const [consent, setConsent] = useState<RecordingConsent | null>(null)
   // What the dialog is asking about; `null` while it is closed.
   const [asking, setAsking] = useState<RecordingConsent | null>(null)
   const checkConsent = useRecordingConsentCheck()
+  const { showToast } = useToast()
   // True from click until the no-handoff window settles, so a rapid second
   // click can't issue a second intent or orphan the first fallback timer.
   const [busy, setBusy] = useState(false)
@@ -115,15 +123,18 @@ export function StartSessionButton({ appointmentId, patientId }: StartSessionBut
     return fetchingRef.current
   }, [appointmentId, intent])
 
-  // The intent "Record anyway" hands off; see 5 above. Issued at most once.
-  const [promptedIntent, setPromptedIntent] = useState<ReadyIntent | null>(null)
-  const promptedRef = useRef<Promise<ReadyIntent | null> | null>(null)
-  const prefetchPromptedIntent = useCallback((): Promise<ReadyIntent | null> => {
-    promptedRef.current ??= issueIntent(appointmentId, true).then((ready) => {
-      setPromptedIntent(ready)
-      return ready
-    })
-    return promptedRef.current
+  // The intent "Start recording and ask" hands off; see 5 above. Issued at
+  // most once.
+  const [askingIntent, setAskingIntent] = useState<ReadyIntent | null>(null)
+  const askingRef = useRef<Promise<ReadyIntent | null> | null>(null)
+  const prefetchAskingIntent = useCallback((): Promise<ReadyIntent | null> => {
+    askingRef.current ??= issueIntent(appointmentId, { askConsentOnRecording: true }).then(
+      (ready) => {
+        setAskingIntent(ready)
+        return ready
+      },
+    )
+    return askingRef.current
   }, [appointmentId])
 
   // Same shape as the intent: one read, shared by hover and click.
@@ -134,11 +145,11 @@ export function StartSessionButton({ appointmentId, patientId }: StartSessionBut
       .catch((): RecordingConsent => ({ kind: "clear" }))
       .then((read) => {
         setConsent(read)
-        if (read.kind === "not_asked") void prefetchPromptedIntent()
+        if (read.kind === "ask_on_recording") void prefetchAskingIntent()
         return read
       })
     return consentRef.current
-  }, [checkConsent, consent, patientId, prefetchPromptedIntent])
+  }, [checkConsent, consent, patientId, prefetchAskingIntent])
 
   const prefetch = () => {
     void prefetchIntent()
@@ -151,13 +162,14 @@ export function StartSessionButton({ appointmentId, patientId }: StartSessionBut
     (intentId: string) => {
       clearFallback()
       setBusy(true)
+      if (takeOpenPromptHint()) showToast(OPEN_PROMPT_HINT, "info")
       cleanupRef.current = armNoHandoffFallback(() => {
         clickThroughAnchor(legacyLaunchUri(intentId))
         cleanupRef.current = null
         setBusy(false)
       })
     },
-    [clearFallback],
+    [clearFallback, showToast],
   )
 
   const onClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
@@ -201,25 +213,20 @@ export function StartSessionButton({ appointmentId, patientId }: StartSessionBut
     armFallback(ready.intentId)
   }
 
-  // From the dialog: asked once, so later clicks on this button hand off directly.
-  const startFromDialog = () => {
+  // "Start recording and ask": chosen once, so later clicks on this button
+  // hand off the same asking intent directly.
+  const askOnRecording = () => {
     setAsking(null)
     setConsent({ kind: "clear" })
-    if (intent) handOff(intent)
-  }
-
-  const recordAnyway = () => {
-    setAsking(null)
-    setConsent({ kind: "clear" })
-    if (promptedIntent) {
-      setIntent(promptedIntent)
-      handOff(promptedIntent)
+    if (askingIntent) {
+      setIntent(askingIntent)
+      handOff(askingIntent)
       return
     }
     // Not issued yet (or it failed): wait for it, and if it never comes, hand
-    // off the plain intent — the companion then asks once more.
+    // off the plain intent; the companion then asks on its own.
     setBusy(true)
-    void prefetchPromptedIntent().then((ready) => {
+    void prefetchAskingIntent().then((ready) => {
       const target = ready ?? intent
       if (!target) {
         setBusy(false)
@@ -251,8 +258,7 @@ export function StartSessionButton({ appointmentId, patientId }: StartSessionBut
         patientId={patientId}
         consent={asking}
         onCancel={() => setAsking(null)}
-        onStart={startFromDialog}
-        onRecordAnyway={recordAnyway}
+        onAskOnRecording={askOnRecording}
       />
     </>
   )

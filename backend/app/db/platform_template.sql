@@ -46,7 +46,10 @@ CREATE TABLE platform.booking_links (
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     require_email_confirmation boolean DEFAULT true NOT NULL,
-    deleted_at timestamp with time zone
+    deleted_at timestamp with time zone,
+    slot_start_at timestamp with time zone,
+    slot_end_at timestamp with time zone,
+    slot_claimed_at timestamp with time zone
 );
 
 CREATE TABLE platform.claim_reviews (
@@ -349,7 +352,8 @@ CREATE TABLE platform.launch_intents (
     created_at timestamp with time zone NOT NULL,
     expires_at timestamp with time zone NOT NULL,
     consumed_at timestamp with time zone,
-    ai_consent_prompted boolean DEFAULT false NOT NULL
+    ai_consent_prompted boolean DEFAULT false NOT NULL,
+    ask_consent_on_recording boolean DEFAULT false NOT NULL
 );
 
 CREATE TABLE platform.panel_applications (
@@ -534,7 +538,9 @@ CREATE TABLE platform.practice_portal_settings (
     enabled_modules text[],
     decided_at timestamp with time zone,
     updated_at timestamp with time zone NOT NULL,
-    updated_by character varying(128)
+    updated_by character varying(128),
+    refill_turnaround_days smallint DEFAULT 2 NOT NULL,
+    message_reply_target_days smallint DEFAULT 2 NOT NULL
 );
 
 CREATE TABLE platform.practice_site_versions (
@@ -562,7 +568,11 @@ CREATE TABLE platform.practice_sites (
     published_by character varying(128),
     updated_at timestamp with time zone NOT NULL,
     draft_theme jsonb,
-    draft_suggested_header jsonb
+    draft_suggested_header jsonb,
+    hide_from_search boolean DEFAULT false NOT NULL,
+    served_version integer,
+    served_hide_from_search boolean,
+    served_hosted_host character varying(253)
 );
 
 CREATE TABLE platform.practices (
@@ -594,7 +604,7 @@ CREATE TABLE platform.practices (
     edition character varying(20) DEFAULT 'therapist'::character varying NOT NULL,
     people_term character varying(10),
     ask_clients_about_ai_notes boolean DEFAULT true NOT NULL,
-    CONSTRAINT ck_practices_audio_retention_days_range CHECK (((audio_retention_days >= 30) AND (audio_retention_days <= 2555))),
+    CONSTRAINT ck_practices_audio_retention_days_range CHECK (((audio_retention_days >= 0) AND (audio_retention_days <= 2555))),
     CONSTRAINT ck_practices_edition CHECK (((edition)::text = ANY (ARRAY[('therapist'::character varying)::text, ('personal'::character varying)::text]))),
     CONSTRAINT ck_practices_people_term CHECK (((people_term)::text = ANY (ARRAY[('clients'::character varying)::text, ('patients'::character varying)::text]))),
     CONSTRAINT practices_pentest_schema_name CHECK ((is_pentest = ((schema_name)::text ~~ like_escape('practice\_pentest\_%'::text, '\'::text)))),
@@ -683,7 +693,7 @@ ALTER TABLE ONLY platform.claim_routes
     ADD CONSTRAINT claim_routes_pkey PRIMARY KEY (control_number);
 
 ALTER TABLE ONLY platform.companion_devices
-    ADD CONSTRAINT companion_devices_pkey PRIMARY KEY (install_id);
+    ADD CONSTRAINT companion_devices_pkey PRIMARY KEY (install_id, user_id);
 
 ALTER TABLE ONLY platform.companion_practice_slugs
     ADD CONSTRAINT companion_practice_slugs_pkey PRIMARY KEY (slug);

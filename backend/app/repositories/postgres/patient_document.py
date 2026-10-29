@@ -108,13 +108,13 @@ class PostgresPatientDocumentRepository(PatientDocumentRepository):
         user_id: str,
         *,
         size_bytes: int,
-        finalized_at: object,
+        finalized_at: datetime,
     ) -> PatientDocument | None:
         row = self._get_for_write(document_id, user_id)
         if row is None:
             return None
         row.size_bytes = size_bytes
-        row.finalized_at = finalized_at  # type: ignore[assignment]
+        row.finalized_at = finalized_at
         row.extraction_status = "pending"
         self._session.flush()
         return _row_to_document(row)
@@ -148,7 +148,7 @@ class PostgresPatientDocumentRepository(PatientDocumentRepository):
         self._session.flush()
         return _row_to_document(row)
 
-    def soft_delete(self, document_id: str, user_id: str, deleted_at: object) -> bool:
+    def soft_delete(self, document_id: str, user_id: str, deleted_at: datetime) -> bool:
         # Delete restricted to uploader — see abstract method docstring.
         row = self._session.execute(
             select(PatientDocumentRow).where(
@@ -159,7 +159,7 @@ class PostgresPatientDocumentRepository(PatientDocumentRepository):
         ).scalar_one_or_none()
         if row is None:
             return False
-        row.deleted_at = deleted_at  # type: ignore[assignment]
+        row.deleted_at = deleted_at
         self._session.flush()
         return True
 
@@ -265,7 +265,7 @@ class PostgresPatientDocumentRepository(PatientDocumentRepository):
         patient_id: str,
         *,
         size_bytes: int,
-        finalized_at: object,
+        finalized_at: datetime,
     ) -> PatientDocument | None:
         row = self._session.execute(
             select(PatientDocumentRow).where(
@@ -277,7 +277,7 @@ class PostgresPatientDocumentRepository(PatientDocumentRepository):
         if row is None:
             return None
         row.size_bytes = size_bytes
-        row.finalized_at = finalized_at  # type: ignore[assignment]
+        row.finalized_at = finalized_at
         self._session.flush()
         return _row_to_document(row)
 
@@ -312,7 +312,7 @@ class PostgresPatientDocumentRepository(PatientDocumentRepository):
         return [_row_to_document(row) for row in rows]
 
     def soft_delete_for_patient_principal(
-        self, document_id: str, patient_id: str, deleted_at: object
+        self, document_id: str, patient_id: str, deleted_at: datetime
     ) -> bool:
         row = self._session.execute(
             select(PatientDocumentRow).where(
@@ -323,7 +323,7 @@ class PostgresPatientDocumentRepository(PatientDocumentRepository):
         ).scalar_one_or_none()
         if row is None:
             return False
-        row.deleted_at = deleted_at  # type: ignore[assignment]
+        row.deleted_at = deleted_at
         self._session.flush()
         return True
 

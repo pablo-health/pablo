@@ -45,8 +45,12 @@ from pydantic import BaseModel
 # so it cannot live in a TYPE_CHECKING block.
 from sqlalchemy.orm import Session  # noqa: TC002
 
-from ..api_errors import ForbiddenError
-from ..auth.patient_context import AuthStrength, PatientContext, get_patient_context
+from ..auth.patient_context import (
+    AuthStrength,
+    PatientContext,
+    get_patient_context,
+    require_stepped_up,
+)
 from ..auth.route_access import subscription_exempt
 from ..db import get_db_session
 from ..models.audit import AuditAction, ResourceType
@@ -120,15 +124,10 @@ class PortalCapabilitiesResponse(BaseModel):
     auth_strength: AuthStrength
 
 
-def _require_stepped_up(patient: PatientContext) -> None:
-    """Refuse a single-factor principal.
-
-    Same bar and same words as the patient chat and intake surfaces. Signing
-    every device out is not reading a chart, but it is a change to the
-    account made from one device about all the others.
-    """
-    if patient.auth_strength is not AuthStrength.STEPPED_UP:
-        raise ForbiddenError("Confirm it is you to continue.", code="STEP_UP_REQUIRED")
+# A single-factor principal is refused on these routes (require_stepped_up).
+# Same bar and same words as the patient chat and intake surfaces. Signing
+# every device out is not reading a chart, but it is a change to the
+# account made from one device about all the others.
 
 
 def _sessions(session: Session) -> DbPortalSessionStore:
@@ -214,7 +213,7 @@ def sign_out_everywhere(
     ending their own sessions, and a patient who signs out everywhere and
     then opens the link still sitting in their inbox should be let back in.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
 
     service = build_portal_auth_service(sessions=_sessions(session))
     revoked = service.revoke_patient(patient_id=patient.patient_id)

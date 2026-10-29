@@ -17,9 +17,11 @@ emitted span attributes.
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import fields
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
+from unittest.mock import MagicMock
 
 import pytest
 from openinference.semconv.trace import (
@@ -32,15 +34,20 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
+from backend.app.db import _request_session
 from backend.app.services.chat_llm_gateway import GeminiChatLLMGateway, StreamEvent
 from backend.app.services.llm_telemetry import (
+    USAGE_LOG_MESSAGE,
     LLMSpanRecorder,
     LLMSpanRequest,
     RetrievalSpanRecorder,
     RetrievedDocumentRef,
     _build_resource,
+    llm_feature,
+    llm_feature_var,
     llm_span,
     retrieval_span,
+    usage_detail_tokens,
 )
 from backend.app.services.structured_llm_gateway import GeminiStructuredLLMGateway
 
@@ -268,6 +275,42 @@ class TestChatGatewayTracing:
         assert attrs["pablo.latency_ms"] >= 0.0
         _assert_no_content(attrs)
 
+    def test_streaming_releases_a_held_db_connection_before_the_model_call(self) -> None:
+        """The gateway is the one seam every chat call passes through, so it
+        releases a pooled connection the route forgot to release -- before the
+        model is called, not after -- and no transaction sits idle across the
+        stream."""
+        order: list[str] = []
+        session = MagicMock()
+        session.in_transaction.return_value = True
+        session.commit.side_effect = lambda: order.append("release")
+
+        class _ModelsRecordingCall(_FakeAioChatModels):
+            async def generate_content_stream(self, **kwargs: Any) -> Any:
+                order.append("model")
+                return await super().generate_content_stream(**kwargs)
+
+        gw = GeminiChatLLMGateway()
+        gw._client = _FakeChatClient()
+        gw._client.aio.models = _ModelsRecordingCall()
+
+        async def _drain() -> None:
+            token = _request_session.set(session)
+            try:
+                async for _ in gw.stream_completion(
+                    model="gemini-2.5-flash-lite",
+                    system_prompt=_SECRET_SYSTEM,
+                    prior_turns=[],
+                    new_user_text=_SECRET_USER,
+                    max_output_tokens=128,
+                ):
+                    pass
+            finally:
+                _request_session.reset(token)
+
+        asyncio.run(_drain())
+        assert order == ["release", "model"]
+
 
 class TestLLMSpanBuilder:
     def test_recorder_exposes_no_content_setter(self) -> None:
@@ -307,6 +350,59 @@ class TestLLMSpanBuilder:
         span_attrs = dict(span_exporter.get_finished_spans()[0].attributes or {})
         assert "pablo.error_class" not in span_attrs
         assert span_attrs["pablo.latency_ms"] >= 0.0
+
+    def test_cross_task_close_does_not_log_otel_detach_error(
+        self, span_exporter: InMemorySpanExporter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A streaming consumer that breaks out early leaves the gateway's
+        async generator suspended inside the span. Whatever closes it later
+        -- another task, or the event loop's generator finalizer -- runs in a
+        different Context from the one that opened the span. A span that
+        attached itself to the context on entry then logged "Failed to detach
+        context" at ERROR on every such close, for a request that had already
+        succeeded (PABLO-sbhz). The span must open and close without touching
+        the ambient context at all."""
+
+        async def _stream() -> Any:
+            with llm_span(LLMSpanRequest(operation="chat", model="m")):
+                yield "first-chunk"
+                yield "second-chunk"  # never reached
+
+        async def _scenario() -> None:
+            gen = _stream()
+            await gen.__anext__()  # span opened in this task's Context
+            await asyncio.create_task(gen.aclose())  # closed from another one
+
+        with caplog.at_level(logging.ERROR, logger="opentelemetry.context"):
+            asyncio.run(_scenario())
+
+        otel = [r.getMessage() for r in caplog.records if r.name.startswith("opentelemetry")]
+        assert otel == []
+        spans = span_exporter.get_finished_spans()
+        assert len(spans) == 1
+        assert "pablo.error_class" not in dict(spans[0].attributes or {})
+
+    def test_span_is_not_made_current(self, span_exporter: InMemorySpanExporter) -> None:
+        """Documents the choice above: the LLM span is a leaf and never the
+        current span, so nothing can parent a child under it by accident."""
+        with llm_span(LLMSpanRequest(operation="chat", model="m")):
+            assert trace.get_current_span() is trace.INVALID_SPAN
+        assert len(span_exporter.get_finished_spans()) == 1
+
+    def test_error_inside_block_records_no_exception_event(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        """Only the class name reaches the span. An exception *event* would
+        carry the message, which is content as far as this span is concerned."""
+        with (
+            pytest.raises(ValueError, match="secret-detail"),
+            llm_span(LLMSpanRequest(operation="chat", model="m")),
+        ):
+            raise ValueError("secret-detail")
+
+        span = span_exporter.get_finished_spans()[0]
+        assert span.events == ()
+        assert "secret-detail" not in repr(span.attributes)
 
     def test_span_builder_records_context_free_metadata(
         self, span_exporter: InMemorySpanExporter
@@ -402,3 +498,113 @@ class TestResourceProject:
         settings = SimpleNamespace(llm_trace_service_name="pablo-backend", llm_trace_project="")
         attrs = dict(_build_resource(settings).attributes)  # type: ignore[arg-type]
         assert "openinference.project.name" not in attrs
+
+
+class TestUsageLog:
+    """One ``llm_call`` record per span: the feature, the model, the token
+    counts, and nothing from the prompt or the completion."""
+
+    @staticmethod
+    def _records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+        return [r for r in caplog.records if r.getMessage() == USAGE_LOG_MESSAGE]
+
+    def test_each_span_writes_one_record_under_its_feature(
+        self, span_exporter: InMemorySpanExporter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        with (
+            llm_feature("note_generation"),
+            llm_span(LLMSpanRequest(operation="structured", model="m")) as rec,
+        ):
+            rec.set_token_usage(prompt_tokens=31, completion_tokens=12, total_tokens=43)
+
+        (record,) = self._records(caplog)
+        assert record.llm_feature == "note_generation"
+        assert record.llm_operation == "structured"
+        assert record.llm_model == "m"
+        assert record.llm_provider == "google"
+        assert (record.llm_prompt_tokens, record.llm_completion_tokens) == (31, 12)
+        assert record.llm_total_tokens == 43
+        assert record.llm_latency_ms >= 0.0
+        assert not hasattr(record, "llm_error_class")
+
+        attrs = dict(span_exporter.get_finished_spans()[0].attributes or {})
+        assert attrs["pablo.llm_feature"] == "note_generation"
+
+    def test_cached_and_thoughts_tokens_ride_on_the_record(
+        self, span_exporter: InMemorySpanExporter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        usage = SimpleNamespace(
+            prompt_token_count=2100,
+            cached_content_token_count=1900,
+            thoughts_token_count=150,
+        )
+        cached, thoughts = usage_detail_tokens(usage)
+        with llm_span(LLMSpanRequest(operation="structured", model="m")) as rec:
+            rec.set_token_usage(
+                prompt_tokens=usage.prompt_token_count,
+                cached_tokens=cached,
+                thoughts_tokens=thoughts,
+            )
+
+        (record,) = self._records(caplog)
+        assert (record.llm_cached_tokens, record.llm_thoughts_tokens) == (1900, 150)
+        attrs = dict(span_exporter.get_finished_spans()[0].attributes or {})
+        assert attrs["pablo.llm_cached_tokens"] == 1900
+
+    def test_usage_detail_tokens_tolerates_missing_fields(self) -> None:
+        assert usage_detail_tokens(None) == (None, None)
+        assert usage_detail_tokens(SimpleNamespace(prompt_token_count=5)) == (None, None)
+
+    def test_a_record_without_cache_info_omits_the_field(
+        self, span_exporter: InMemorySpanExporter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        with llm_span(LLMSpanRequest(operation="structured", model="m")) as rec:
+            rec.set_token_usage(prompt_tokens=3)
+        (record,) = self._records(caplog)
+        assert not hasattr(record, "llm_cached_tokens")
+
+    def test_a_gateway_call_logs_its_tokens_and_no_content(
+        self, span_exporter: InMemorySpanExporter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        gw = GeminiStructuredLLMGateway()
+        gw._client = _FakeStructuredClient()
+        gw.complete_structured(
+            model="gemini-2.5-pro",
+            system_prompt=_SECRET_SYSTEM,
+            user_prompt=_SECRET_USER,
+            response_schema={"type": "object", "properties": {"note": {"type": "string"}}},
+            max_output_tokens=256,
+        )
+
+        (record,) = self._records(caplog)
+        assert record.llm_model == "gemini-2.5-pro"
+        assert (record.llm_prompt_tokens, record.llm_completion_tokens) == (31, 12)
+        assert "llm_feature" not in record.__dict__
+        haystack = " ".join(f"{k}={v}" for k, v in record.__dict__.items())
+        for secret in (_SECRET_SYSTEM, _SECRET_USER, _SECRET_RESPONSE):
+            assert secret not in haystack, f"content marker {secret!r} leaked into the usage log"
+
+    def test_a_failed_call_records_its_error_class(
+        self, span_exporter: InMemorySpanExporter, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        with (
+            pytest.raises(ValueError, match="boom"),
+            llm_span(LLMSpanRequest(operation="chat", model="m")),
+        ):
+            raise ValueError("boom")
+
+        (record,) = self._records(caplog)
+        assert record.llm_error_class == "ValueError"
+        assert "boom" not in " ".join(str(v) for v in record.__dict__.values())
+
+    def test_an_unlabelled_gateway_keeps_the_callers_feature(self) -> None:
+        with llm_feature("outer"):
+            with llm_feature(None):
+                assert llm_feature_var.get() == "outer"
+            assert llm_feature_var.get() == "outer"
+        assert llm_feature_var.get() is None

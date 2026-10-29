@@ -14,7 +14,13 @@ from sqlalchemy import select
 
 from ...db.models import ClientAiConsentEventRow
 from ...db.platform_models import PlatformUserRow
-from ...models.client_ai_consent import AiConsentDecision, AiConsentEvent, AiConsentSource
+from ...models.client_ai_consent import (
+    AiConsentDecision,
+    AiConsentEvent,
+    AiConsentGiver,
+    AiConsentModality,
+    AiConsentSource,
+)
 from ..client_ai_consent import ClientAiConsentRepository
 
 if TYPE_CHECKING:
@@ -32,6 +38,9 @@ def _to_event(row: ClientAiConsentEventRow, recorded_by_name: str | None) -> AiC
         recorded_by_name=(recorded_by_name or "").strip() or None,
         recorded_at=row.recorded_at,
         intake_submission_id=str(row.intake_submission_id) if row.intake_submission_id else None,
+        modality=cast("AiConsentModality | None", row.modality),
+        client_stated_location=row.client_stated_location,
+        consented_by=cast("AiConsentGiver | None", row.consented_by),
     )
 
 
@@ -50,6 +59,9 @@ class PostgresClientAiConsentRepository(ClientAiConsentRepository):
                 recorded_by=event.recorded_by,
                 recorded_at=event.recorded_at,
                 intake_submission_id=event.intake_submission_id,
+                modality=event.modality,
+                client_stated_location=event.client_stated_location,
+                consented_by=event.consented_by,
             )
         )
         self._session.flush()

@@ -40,10 +40,12 @@ from ..models import User  # noqa: TC001 — fastapi resolves the annotation at 
 from ..models.audit import AuditAction, ResourceType
 from ..models.intake_packet_api import (
     CreateTemplateRequest,
+    DocumentUsageResponse,
     IntakeItemResponse,
     IntakeTemplateResponse,
     IntakeVersionDetailResponse,
     IntakeVersionResponse,
+    PacketRef,
     ReplaceItemsRequest,
     UpdateTemplateRequest,
 )
@@ -63,6 +65,7 @@ from ..services.intake_packet_service import (
 
 if TYPE_CHECKING:
     from ..repositories.intake_packet import IntakePacketRepository
+    from ..repositories.row import Row
 
 router = APIRouter(prefix="/api/intake", tags=["intake-packets"])
 
@@ -93,26 +96,29 @@ def get_intake_packet_service(
     def instrument_attested(instrument_code: str) -> bool:
         return licenses.active_for_code(instrument_code) is not None
 
-    return IntakePacketService(repo, published_document, instrument_attested)
+    def published_versions(document_key: str) -> list[str]:
+        return [str(row["id"]) for row in documents.versions(document_key) if row["published_at"]]
+
+    return IntakePacketService(repo, published_document, instrument_attested, published_versions)
 
 
 PacketService = Annotated[IntakePacketService, Depends(get_intake_packet_service)]
 
 
-def _version_response(row: dict[str, object]) -> IntakeVersionResponse:
+def _version_response(row: Row) -> IntakeVersionResponse:
     return IntakeVersionResponse(
         id=str(row["id"]),
-        version=int(row["version"]),  # type: ignore[call-overload]
-        published_at=row["published_at"],  # type: ignore[arg-type]
-        created_at=row["created_at"],  # type: ignore[arg-type]
+        version=int(row["version"]),
+        published_at=row["published_at"],
+        created_at=row["created_at"],
     )
 
 
-def _item_response(row: dict[str, object]) -> IntakeItemResponse:
+def _item_response(row: Row) -> IntakeItemResponse:
     return IntakeItemResponse(
         id=str(row["id"]),
         key=str(row["key"]),
-        position=int(row["position"]),  # type: ignore[call-overload]
+        position=int(row["position"]),
         item_type=str(row["item_type"]),
         required=bool(row["required"]),
         resign_on_new_version=bool(row["resign_on_new_version"]),
@@ -127,28 +133,29 @@ def _optional_str(value: object) -> str | None:
     return str(value) if value is not None else None
 
 
-def _template_response(
-    service: IntakePacketService, row: dict[str, object]
-) -> IntakeTemplateResponse:
+def _optional_text(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _template_response(service: IntakePacketService, row: Row) -> IntakeTemplateResponse:
     return IntakeTemplateResponse(
         id=str(row["id"]),
         name=str(row["name"]),
-        created_at=row["created_at"],  # type: ignore[arg-type]
-        archived_at=row["archived_at"],  # type: ignore[arg-type]
+        client_title=_optional_text(row.get("client_title")),
+        created_at=row["created_at"],
+        archived_at=row["archived_at"],
         versions=[_version_response(v) for v in service.list_versions(str(row["id"]))],
     )
 
 
-def _require_template(service: IntakePacketService, template_id: str) -> dict[str, object]:
+def _require_template(service: IntakePacketService, template_id: str) -> Row:
     row = service.get_template(template_id)
     if row is None:
         raise NotFoundError("Form not found", {"template_id": template_id})
     return row
 
 
-def _require_version(
-    service: IntakePacketService, template_id: str, version_id: str
-) -> dict[str, object]:
+def _require_version(service: IntakePacketService, template_id: str, version_id: str) -> Row:
     """One version of one template.
 
     The template is checked first so a version id from another practice's
@@ -171,6 +178,22 @@ def list_templates(
     return [
         _template_response(service, row)
         for row in service.list_templates(include_archived=include_archived)
+    ]
+
+
+@router.get("/document-usage", response_model=list[DocumentUsageResponse])
+def document_usage(
+    service: PacketService,
+    _user: User = Depends(require_baa_acceptance),
+) -> list[DocumentUsageResponse]:
+    """Which packets ask for each document. A document no packet asks for is
+    not listed."""
+    return [
+        DocumentUsageResponse(
+            document_key=key,
+            packets=[PacketRef(id=str(p["id"]), name=str(p["name"])) for p in packets],
+        )
+        for key, packets in service.document_usage().items()
     ]
 
 
@@ -214,6 +237,8 @@ def update_template(
     _require_template(service, template_id)
     if body.name is not None:
         service.rename_template(template_id, body.name)
+    if "client_title" in body.model_fields_set:
+        service.set_client_title(template_id, body.client_title)
     if body.archived is not None:
         service.set_archived(template_id, body.archived)
     return _template_response(service, _require_template(service, template_id))
@@ -337,7 +362,7 @@ def publish_version(
         resource_id=version_id,
         changes={
             "template_id": template_id,
-            "version": int(published["version"]),  # type: ignore[call-overload]
+            "version": int(published["version"]),
             "item_count": len(items),
         },
     )
@@ -346,7 +371,7 @@ def publish_version(
 
 
 def _version_detail(
-    service: IntakePacketService, template_id: str, version: dict[str, object]
+    service: IntakePacketService, template_id: str, version: Row
 ) -> IntakeVersionDetailResponse:
     base = _version_response(version)
     return IntakeVersionDetailResponse(

@@ -23,13 +23,10 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import date
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 
 if TYPE_CHECKING:
@@ -49,17 +46,6 @@ pytestmark = pytest.mark.skipif(
 
 _CLINICIAN_A = str(uuid.uuid4())
 _CLINICIAN_B = str(uuid.uuid4())
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_db_url, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 @pytest.fixture(scope="module")
@@ -145,9 +131,9 @@ def _release(session: Any, schema_token: Any, uid_token: Any) -> None:
 _INSERT = text(
     "INSERT INTO client_ai_consent_events "
     "(id, patient_id, decision, effective_on, source, recorded_by, recorded_at, "
-    " intake_submission_id) "
+    " intake_submission_id, modality, consented_by) "
     "VALUES (gen_random_uuid(), CAST(:pid AS uuid), :decision, current_date, :source, "
-    "        CAST(:recorded_by AS uuid), now(), NULL)"
+    "        CAST(:recorded_by AS uuid), now(), NULL, :modality, :consented_by)"
 )
 
 
@@ -157,6 +143,8 @@ def _insert(conn: Connection, patient_id: str, user_id: str, **overrides: str | 
         "decision": "consented",
         "source": "clinician",
         "recorded_by": user_id,
+        "modality": None,
+        "consented_by": None,
     }
     params.update(overrides)
     conn.execute(_INSERT, params)
@@ -191,6 +179,111 @@ def test_grantee_records_and_reads_history_in_order(
         ("declined", date(2026, 10, 2)),
     ]
     assert record.current.recorded_by_name == "Dr. A"
+    # Answers recorded without them read null.
+    assert (record.current.modality, record.current.consented_by) == (None, None)
+    assert record.current.client_stated_location is None
+
+
+def test_how_the_answer_was_given_round_trips(
+    engine: Engine, tenant_schema: str, patient_id: str
+) -> None:
+    from app.services.client_ai_consent import (  # noqa: PLC0415
+        ai_consent_record,
+        record_ai_consent,
+    )
+
+    repo, session, s_tok, u_tok = _repo_as(engine, tenant_schema, _CLINICIAN_A)
+    try:
+        record_ai_consent(
+            patient_id,
+            "consented",
+            date(2026, 10, 4),
+            "clinician",
+            _CLINICIAN_A,
+            modality="telehealth",
+            client_stated_location="At home",
+            consented_by="guardian",
+            repo=repo,
+        )
+        session.commit()
+        current = ai_consent_record(patient_id, repo=repo).current
+    finally:
+        _release(session, s_tok, u_tok)
+
+    assert current is not None
+    assert (current.modality, current.client_stated_location, current.consented_by) == (
+        "telehealth",
+        "At home",
+        "guardian",
+    )
+
+
+def test_an_accepted_telehealth_form_says_how_the_answer_was_given(
+    engine: Engine, tenant_schema: str, patient_id: str
+) -> None:
+    """The form recorder's row passes the table's constraints and reads back."""
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    from app.intake.starters import (  # noqa: PLC0415
+        AI_TOOLS_DOCUMENT_ITEM_KEY,
+        AI_TRANSCRIPTION_ITEM_KEY,
+        TELEHEALTH_DOCUMENT_ITEM_KEY,
+        TELEHEALTH_LOCATION_ITEM_KEY,
+    )
+    from app.repositories.patient_intake_signature import (  # noqa: PLC0415
+        InMemoryPatientIntakeSignatureRepository,
+    )
+    from app.services.client_ai_consent import ai_consent_record  # noqa: PLC0415
+    from app.services.intake_form_ai_consent import FormAiConsentRecorder  # noqa: PLC0415
+
+    assignment_id = str(uuid.uuid4())
+    items: list[dict[str, object]] = [
+        {"id": "ai-doc", "key": AI_TOOLS_DOCUMENT_ITEM_KEY, "item_type": "consent_document"},
+        {"id": "ai-choice", "key": AI_TRANSCRIPTION_ITEM_KEY, "item_type": "single_choice"},
+        {"id": "tele-doc", "key": TELEHEALTH_DOCUMENT_ITEM_KEY, "item_type": "consent_document"},
+        {"id": "tele-where", "key": TELEHEALTH_LOCATION_ITEM_KEY, "item_type": "free_text"},
+    ]
+    signatures = InMemoryPatientIntakeSignatureRepository()
+    for item_id in ("ai-doc", "tele-doc"):
+        signatures.add(
+            {
+                "id": f"sig-{item_id}",
+                "assignment_id": assignment_id,
+                "patient_id": patient_id,
+                "item_id": item_id,
+                "signer_role": "patient",
+                "signed_at": datetime(2026, 10, 5, 14, tzinfo=UTC),
+            }
+        )
+
+    repo, session, s_tok, u_tok = _repo_as(engine, tenant_schema, _CLINICIAN_A)
+    try:
+        FormAiConsentRecorder(signatures, repo).record(
+            assignment={"id": assignment_id, "patient_id": patient_id, "submitted_at": None},
+            items=items,
+            answers={
+                "ai-choice": {"key": "consent"},
+                "tele-where": {"text": "At home in Ann Arbor, Michigan"},
+            },
+            accepted_by=_CLINICIAN_A,
+            accepted_at=datetime(2026, 10, 6, 9, tzinfo=UTC),
+        )
+        session.commit()
+        current = ai_consent_record(patient_id, repo=repo).current
+    finally:
+        _release(session, s_tok, u_tok)
+
+    assert current is not None
+    assert (current.source, current.decision, current.effective_on) == (
+        "intake_form",
+        "consented",
+        date(2026, 10, 5),
+    )
+    assert (current.modality, current.client_stated_location, current.consented_by) == (
+        "telehealth",
+        "At home in Ann Arbor, Michigan",
+        "client",
+    )
 
 
 def test_clinician_without_a_grant_reads_nothing(
@@ -233,8 +326,16 @@ def test_clinician_without_a_grant_cannot_write(
         {"decision": "maybe"},
         {"source": "intake_form"},
         {"recorded_by": None},
+        {"modality": "phone"},
+        {"consented_by": "sibling"},
     ],
-    ids=["unknown-decision", "intake-form-without-submission", "clinician-without-recorder"],
+    ids=[
+        "unknown-decision",
+        "intake-form-without-submission",
+        "clinician-without-recorder",
+        "unknown-modality",
+        "unknown-giver",
+    ],
 )
 def test_check_constraints_refuse_malformed_rows(
     engine: Engine, tenant_schema: str, patient_id: str, overrides: dict[str, str | None]

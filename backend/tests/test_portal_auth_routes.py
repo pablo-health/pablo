@@ -70,6 +70,8 @@ if TYPE_CHECKING:
 
     from app.models import User
 
+    from tests.audit_fakes import RecordingAudit
+
 TENANT = "practice_abc123"
 SIGNING_KEY = "route-test-signing-key-not-a-real-secret"
 PORTAL_ORIGIN = "https://portal.example.test"
@@ -110,22 +112,6 @@ class _FakePatientRepository:
         return _PATIENTS.get(patient_id)
 
 
-class _RecordingAudit:
-    """Counts audit calls without a repository behind them."""
-
-    def __init__(self) -> None:
-        self.actions: list[str] = []
-        self.changes: list[dict[str, Any]] = []
-
-    def log(self, action: Any, *_args: Any, **kwargs: Any) -> None:
-        self.actions.append(str(action))
-        self.changes.append(kwargs.get("changes") or {})
-
-    def log_patient_principal_action(self, action: Any, *_args: Any, **kwargs: Any) -> None:
-        self.actions.append(str(action))
-        self.changes.append(kwargs.get("changes") or {})
-
-
 class _FakeTenantGateway:
     """The patient-facing gateway, over in-memory stores.
 
@@ -133,9 +119,9 @@ class _FakeTenantGateway:
     the token claim" is a property worth asserting rather than assuming.
     """
 
-    def __init__(self, stores: PortalStores, audit: _RecordingAudit) -> None:
+    def __init__(self, stores: PortalStores, recording_audit: RecordingAudit) -> None:
         self._stores = stores
-        self._audit = audit
+        self._audit = recording_audit
         self.opened: list[str] = []
         self.commits = 0
 
@@ -243,11 +229,6 @@ def stores() -> PortalStores:
 
 
 @pytest.fixture
-def audit() -> _RecordingAudit:
-    return _RecordingAudit()
-
-
-@pytest.fixture
 def sms() -> FakeSmsGateway:
     return FakeSmsGateway()
 
@@ -258,15 +239,15 @@ def delivery() -> CapturingInviteDelivery:
 
 
 @pytest.fixture
-def gateway(stores: PortalStores, audit: _RecordingAudit) -> _FakeTenantGateway:
-    return _FakeTenantGateway(stores, audit)
+def gateway(stores: PortalStores, recording_audit: RecordingAudit) -> _FakeTenantGateway:
+    return _FakeTenantGateway(stores, recording_audit)
 
 
 @pytest.fixture
 def app(
     mock_user: User,
     stores: PortalStores,
-    audit: _RecordingAudit,
+    recording_audit: RecordingAudit,
     sms: FakeSmsGateway,
     delivery: CapturingInviteDelivery,
     gateway: _FakeTenantGateway,
@@ -280,7 +261,7 @@ def app(
     application.dependency_overrides[get_patient_repository] = _FakePatientRepository
     application.dependency_overrides[get_portal_stores] = lambda: stores
     application.dependency_overrides[get_portal_tenant_gateway] = lambda: gateway
-    application.dependency_overrides[get_audit_service] = lambda: audit
+    application.dependency_overrides[get_audit_service] = lambda: recording_audit
     application.dependency_overrides[get_invite_delivery] = lambda: delivery
     application.dependency_overrides[get_sms_gateway] = lambda: sms
     application.dependency_overrides[get_invite_template_store] = lambda: templates
@@ -394,12 +375,12 @@ def test_invite_texts_nothing(client: TestClient, sms: FakeSmsGateway) -> None:
 
 
 def test_invite_audits_with_a_token_handle_and_nothing_else(
-    client: TestClient, audit: _RecordingAudit, delivery: CapturingInviteDelivery
+    client: TestClient, recording_audit: RecordingAudit, delivery: CapturingInviteDelivery
 ) -> None:
     _issue(client)
 
-    assert audit.actions == [AuditAction.PATIENT_PORTAL_INVITE_ISSUED.value]
-    changes = audit.changes[0]
+    assert recording_audit.actions == [AuditAction.PATIENT_PORTAL_INVITE_ISSUED.value]
+    changes = recording_audit.changes[0]
     assert set(changes) == {"invite_jti"}
     assert changes["invite_jti"] not in _link_token(delivery)
 
@@ -731,14 +712,14 @@ def test_redeem_audits_the_authentication(
     client: TestClient,
     delivery: CapturingInviteDelivery,
     sms: FakeSmsGateway,
-    audit: _RecordingAudit,
+    recording_audit: RecordingAudit,
 ) -> None:
     """§ 164.312(b): a completed authentication that nothing recorded is the
     one failure this path cannot have."""
     token, otp = _issue_and_capture(client, delivery, sms)
     _redeem(client, token, otp)
 
-    assert AuditAction.PATIENT_PORTAL_SESSION_REDEEMED.value in audit.actions
+    assert AuditAction.PATIENT_PORTAL_SESSION_REDEEMED.value in recording_audit.actions
 
 
 def _uniform_401(response: Any) -> bool:
@@ -1043,14 +1024,14 @@ def test_revoke_kills_live_sessions_and_the_invitation_in_flight(
     }
 
 
-def test_revoke_is_idempotent(client: TestClient, audit: _RecordingAudit) -> None:
+def test_revoke_is_idempotent(client: TestClient, recording_audit: RecordingAudit) -> None:
     first = client.delete(_access_url())
     second = client.delete(_access_url())
 
     assert first.status_code == second.status_code == 200
     assert second.json()["sessions_revoked"] == 0
     assert second.json()["invites_revoked"] == 0
-    assert audit.actions == [AuditAction.PATIENT_PORTAL_INVITE_REVOKED.value] * 2
+    assert recording_audit.actions == [AuditAction.PATIENT_PORTAL_INVITE_REVOKED.value] * 2
 
 
 def test_revoke_404s_for_unknown_patient(client: TestClient) -> None:
@@ -1074,7 +1055,7 @@ def test_revoke_404s_for_unknown_patient(client: TestClient) -> None:
 )
 def test_clinician_routes_refuse_an_unauthenticated_caller(
     stores: PortalStores,
-    audit: _RecordingAudit,
+    recording_audit: RecordingAudit,
     method: str,
     url: str,
 ) -> None:
@@ -1088,7 +1069,7 @@ def test_clinician_routes_refuse_an_unauthenticated_caller(
     application.include_router(router)
     application.dependency_overrides[get_patient_repository] = _FakePatientRepository
     application.dependency_overrides[get_portal_stores] = lambda: stores
-    application.dependency_overrides[get_audit_service] = lambda: audit
+    application.dependency_overrides[get_audit_service] = lambda: recording_audit
 
     response = getattr(TestClient(application), method)(url)
     assert response.status_code in {401, 403}

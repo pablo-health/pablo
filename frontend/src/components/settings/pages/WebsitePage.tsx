@@ -11,6 +11,7 @@ import {
   usePublishPracticeSite,
   useRollBackPracticeSite,
   useSetPracticeSiteDraftHeader,
+  useSetPracticeSiteHiddenFromSearch,
   useUploadPracticeSiteDraft,
 } from "@/hooks/usePracticeSite"
 import { ApiError, buildApiUrl } from "@/lib/api/client"
@@ -19,12 +20,14 @@ import { SettingsCard } from "../ui"
 import { useSettingsUserStatus } from "../useSettingsPreferences"
 import { DraftCard } from "../website/DraftCard"
 import { LiveStatus } from "../website/LiveStatus"
+import { SearchEnginesCard } from "../website/SearchEnginesCard"
 import { VersionHistory } from "../website/VersionHistory"
 
 /**
  * Practice > Website. The practice's static website: upload a zip as a draft,
- * preview it, publish it, and put an earlier version back. It is served at the
- * practice's website domains (Practice > Domains) once one of them works.
+ * preview it, publish it, and put an earlier version back, and choose whether
+ * search engines are asked not to list it. It is served at the practice's
+ * website domains (Practice > Domains) once one of them works.
  */
 export function WebsitePage() {
   const queryClient = useQueryClient()
@@ -36,9 +39,10 @@ export function WebsitePage() {
   const publish = usePublishPracticeSite()
   const rollBack = useRollBackPracticeSite()
   const setHeader = useSetPracticeSiteDraftHeader()
+  const setHidden = useSetPracticeSiteHiddenFromSearch()
 
   const canManage = canManageDomains(userStatus)
-  const mutations = [upload, discard, preview, publish, rollBack, setHeader]
+  const mutations = [upload, discard, preview, publish, rollBack, setHeader, setHidden]
   const busy = mutations.some((m) => m.isPending)
   const failure = mutations.map((m) => m.error).find(Boolean)
   const failureMessage =
@@ -78,7 +82,7 @@ export function WebsitePage() {
   return (
     <>
       {userStatus && !canManage && (
-        <p className="mb-3 text-[12.5px] text-muted-foreground">Only the practice owner can change the website.</p>
+        <p className="mb-3 text-[12.5px] text-muted-foreground">Only the practice owner or a practice admin can change the website.</p>
       )}
       {failureMessage && (
         <p role="alert" className="mb-3 text-[12.5px] text-red-700">
@@ -88,6 +92,12 @@ export function WebsitePage() {
       <SettingsCard title="Your website">
         <LiveStatus site={site} />
       </SettingsCard>
+      <SearchEnginesCard
+        hidden={site.hide_from_search}
+        canManage={canManage}
+        busy={busy}
+        onChange={(hide, options) => setHidden.mutate(hide, options)}
+      />
       <DraftCard
         draft={site.draft}
         canManage={canManage}

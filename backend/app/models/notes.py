@@ -11,6 +11,7 @@ models for the ``/api/notes`` surface and for embedding in
 from __future__ import annotations
 
 from datetime import datetime
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -19,8 +20,55 @@ from pydantic import BaseModel, Field
 # annotation it must validate, and Note is used by ``NoteResponse.from_note``.
 from .enums import SOAPSection  # noqa: TC001
 from .note import Note  # noqa: TC001
+from .note_signing import (
+    MAX_SIGNER_FIELD_LEN,
+    NoteAddendum,
+    NoteSignature,
+)
+from .note_source import NoteSource, note_source
 from .scheduling import VisitCodingFields
 from .transcript import TranscriptModel  # noqa: TC001 — runtime Pydantic field
+
+
+class NoteDiagnosisCode(BaseModel):
+    """A diagnosis code an imported note carried, as its export listed it."""
+
+    code: str
+    description: str
+
+
+class NoteSourceResponse(BaseModel):
+    """Where an imported note came from (see :mod:`app.models.note_source`)."""
+
+    #: The system it was exported from, as the importer names it (``simplepractice``).
+    system: str
+    #: The note's class there (``progress``, ``chart``, ``treatment_plan``...).
+    kind: str | None = None
+    #: The note's title there, as the export printed it.
+    title: str | None = None
+    #: Who signed it there, as the document writes it; never matched to a user.
+    signed_by: str | None = None
+    signed_at: datetime | None = None
+    created_at: datetime | None = None
+    #: The visit the note belongs to, when it has one.
+    visit_date: datetime | None = None
+    diagnoses: list[NoteDiagnosisCode] = Field(default_factory=list)
+
+    @staticmethod
+    def from_source(source: NoteSource) -> NoteSourceResponse:
+        return NoteSourceResponse(
+            system=source.system,
+            kind=source.kind,
+            title=source.title,
+            signed_by=source.signed_by,
+            signed_at=source.signed_at,
+            created_at=source.created_at,
+            visit_date=source.visit_date,
+            diagnoses=[
+                NoteDiagnosisCode(code=code, description=description)
+                for code, description in source.diagnoses
+            ],
+        )
 
 
 class NoteResponse(BaseModel):
@@ -44,11 +92,19 @@ class NoteResponse(BaseModel):
     author_user_id: str | None = None
     #: Readable by its author alone (a psychotherapy note).
     restricted: bool = False
+    #: A reference copy of a note signed where it was written: its session is
+    #: ``imported``, or it carries its ``source``. Never a draft, and never
+    #: signed here.
+    imported: bool = False
+    #: Where an archive import brought the note from; ``None`` for a note
+    #: written here or read from a single document.
+    source: NoteSourceResponse | None = None
     created_at: datetime
     updated_at: datetime
 
     @staticmethod
-    def from_note(note: Note) -> NoteResponse:
+    def from_note(note: Note, *, imported: bool = False) -> NoteResponse:
+        source = note_source(note)
         return NoteResponse(
             id=note.id,
             patient_id=note.patient_id,
@@ -65,6 +121,8 @@ class NoteResponse(BaseModel):
             status=note.status,
             author_user_id=note.author_user_id,
             restricted=note.restricted,
+            imported=imported or source is not None,
+            source=NoteSourceResponse.from_source(source) if source is not None else None,
             created_at=note.created_at,
             updated_at=note.updated_at,
         )
@@ -81,6 +139,26 @@ class UpdateNoteEditsRequest(BaseModel):
     """Request body for ``PATCH /api/notes/{id}`` — clinician edits."""
 
     content_edited: dict[str, Any]
+
+
+class RedraftEdits(StrEnum):
+    """What a redraft does with the clinician's edits to the note."""
+
+    #: Fields the clinician changed stay as written; the rest are redrafted.
+    KEEP = "keep"
+    #: The new draft replaces the note, edits included.
+    REPLACE = "replace"
+
+
+class RedraftNoteRequest(BaseModel):
+    """Draft a session's note again (``POST /api/sessions/{id}/note/redraft``).
+
+    ``note_inputs``, when present, replace the note's inputs first. ``edits``
+    is required once the note carries clinician edits.
+    """
+
+    note_inputs: dict[str, str] | None = None
+    edits: RedraftEdits | None = None
 
 
 class FinalizeNoteRequest(BaseModel):
@@ -119,3 +197,119 @@ class CreateStandaloneNoteRequest(VisitCodingFields):
     content_edited: dict[str, Any] | None = None
     dictation_transcript: TranscriptModel | None = None
     appointment_id: str | None = None
+
+
+class NoteSignerFields(BaseModel):
+    """A signature as the clinician entered it for this one signing.
+
+    Prefilled from the clinician's profile and editable; what is stored is
+    exactly what was submitted, never re-derived later.
+    """
+
+    signer_name: str = Field(max_length=MAX_SIGNER_FIELD_LEN)
+    signer_credentials: str | None = Field(default=None, max_length=MAX_SIGNER_FIELD_LEN)
+
+
+class SignNoteRequest(NoteSignerFields):
+    """Request body for ``POST /api/notes/{id}/sign`` — sign and lock.
+
+    The optional rating is the same review of the AI draft finalizing
+    records; a note written by hand has nothing to rate.
+    """
+
+    quality_rating: int | None = Field(default=None, ge=1, le=5)
+    quality_rating_reason: str | None = None
+    quality_rating_sections: list[SOAPSection] | None = None
+
+
+class UnlockNoteRequest(BaseModel):
+    """Request body for ``POST /api/notes/{id}/unlock``.
+
+    ``reason`` is required; a blank one is refused with 400 by the service
+    (a validation error here would be 422).
+    """
+
+    reason: str = Field(max_length=2000)
+
+
+class CreateNoteAddendumRequest(NoteSignerFields):
+    """Request body for ``POST /api/notes/{id}/addenda``."""
+
+    text: str = Field(max_length=20000)
+    #: The dictation this addendum was drafted from, when it was.
+    dictation_id: str | None = None
+
+
+class NoteSignatureResponse(BaseModel):
+    """One signed version of a note, as its signature block shows it."""
+
+    id: str
+    version: int
+    signed_by: str
+    signer_name: str
+    signer_credentials: str | None = None
+    signed_at: datetime
+    unlocked_at: datetime | None = None
+    unlocked_by: str | None = None
+    unlock_reason: str | None = None
+    note_type: str
+    note_type_version: int | None = None
+    #: The body as it was signed.
+    content: dict[str, Any] | None = None
+    content_edited: dict[str, Any] | None = None
+
+    @staticmethod
+    def from_signature(signature: NoteSignature) -> NoteSignatureResponse:
+        return NoteSignatureResponse(
+            id=signature.id,
+            version=signature.version,
+            signed_by=signature.signed_by,
+            signer_name=signature.signer_name,
+            signer_credentials=signature.signer_credentials,
+            signed_at=signature.signed_at,
+            unlocked_at=signature.unlocked_at,
+            unlocked_by=signature.unlocked_by,
+            unlock_reason=signature.unlock_reason,
+            note_type=signature.note_type,
+            note_type_version=signature.note_type_version,
+            content=signature.content,
+            content_edited=signature.content_edited,
+        )
+
+
+class NoteAddendumResponse(BaseModel):
+    """An addendum with its own signature."""
+
+    id: str
+    text: str
+    signer_name: str
+    signer_credentials: str | None = None
+    created_by: str
+    created_at: datetime
+
+    @staticmethod
+    def from_addendum(addendum: NoteAddendum) -> NoteAddendumResponse:
+        return NoteAddendumResponse(
+            id=addendum.id,
+            text=addendum.text,
+            signer_name=addendum.signer_name,
+            signer_credentials=addendum.signer_credentials,
+            created_by=addendum.created_by,
+            created_at=addendum.created_at,
+        )
+
+
+class NoteSigningRecordResponse(BaseModel):
+    """Response for ``GET /api/notes/{id}/signing`` — what a signature block shows.
+
+    ``signature`` is the version the note stands on now (``None`` when the
+    note is unsigned, unlocked, or was finalized before signatures existed).
+    ``versions`` is every signed version oldest first, superseded ones
+    carrying their unlock reason. Addenda belong to the note, not a version.
+    """
+
+    note_id: str
+    finalized_at: datetime | None = None
+    signature: NoteSignatureResponse | None = None
+    versions: list[NoteSignatureResponse]
+    addenda: list[NoteAddendumResponse]

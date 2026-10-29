@@ -102,6 +102,18 @@ def test_redeem_returns_the_consent_prompted_flag(pg_session: Session) -> None:
     redeemed = store.redeem(intent_id)
     assert redeemed is not None
     assert redeemed.ai_consent_prompted is True
+    assert redeemed.ask_consent_on_recording is False
+
+
+def test_redeem_returns_the_ask_on_recording_flag(pg_session: Session) -> None:
+    store = PostgresLaunchIntentStore(pg_session)
+    intent_id = store.create(
+        user_id=_user_id(), appointment_id="appt-a", ask_consent_on_recording=True
+    )
+    redeemed = store.redeem(intent_id)
+    assert redeemed is not None
+    assert redeemed.ask_consent_on_recording is True
+    assert redeemed.ai_consent_prompted is False
 
 
 def test_redeem_is_single_use_atomic(pg_session: Session) -> None:

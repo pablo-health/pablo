@@ -3,7 +3,7 @@
 "use client"
 
 import Link from "next/link"
-import { useState } from "react"
+import { Fragment, useState } from "react"
 
 import { SettingsCard, SettingsRow, Toggle } from "@/components/settings/ui"
 import { Button } from "@/components/ui/button"
@@ -18,6 +18,12 @@ import {
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { usePortalSettings, useSavePortalSettings } from "@/hooks/usePortalSettings"
 import { useSchedulingPolicy } from "@/hooks/useSchedulingPolicy"
+import {
+  MESSAGE_REPLY_TARGET_MAX_DAYS,
+  MESSAGE_REPLY_TARGET_MIN_DAYS,
+  REFILL_TURNAROUND_MAX_DAYS,
+  REFILL_TURNAROUND_MIN_DAYS,
+} from "@/lib/api/portalSettings"
 import { portalModuleLabel } from "@/lib/portalModules"
 
 /**
@@ -75,21 +81,44 @@ export function PortalOfferingCard() {
         {modules.length > 0 && (
           <div data-testid="portal-modules">
             {modules.map(([name, on]) => (
-              <SettingsRow
-                key={name}
-                nested
-                label={portalModuleLabel(name)}
-                description={name === "appointments" ? <BookingLine /> : undefined}
-              >
-                <Toggle
-                  checked={on}
-                  onChange={(next) => save.mutate({ modules: { [name]: next } })}
+              <Fragment key={name}>
+                <SettingsRow
+                  nested
                   label={portalModuleLabel(name)}
-                  // The last part on stays on: a portal with nothing in it
-                  // is the portal switched off, and that has its own switch.
-                  disabled={!settings.enabled || save.isPending || (on && onCount === 1)}
-                />
-              </SettingsRow>
+                  description={name === "appointments" ? <BookingLine /> : undefined}
+                >
+                  <Toggle
+                    checked={on}
+                    onChange={(next) => save.mutate({ modules: { [name]: next } })}
+                    label={portalModuleLabel(name)}
+                    // The last part on stays on: a portal with nothing in it
+                    // is the portal switched off, and that has its own switch.
+                    disabled={!settings.enabled || save.isPending || (on && onCount === 1)}
+                  />
+                </SettingsRow>
+                {name === "refills" && on && settings.enabled && (
+                  <TargetRow
+                    label="Answer refill requests within"
+                    ariaLabel="Refill request target"
+                    testId="refill-turnaround"
+                    choices={REFILL_TARGET_CHOICES}
+                    days={settings.refill_turnaround_days}
+                    disabled={save.isPending}
+                    onChange={(days) => save.mutate({ refill_turnaround_days: days })}
+                  />
+                )}
+                {name === "messaging" && on && settings.enabled && (
+                  <TargetRow
+                    label="Answer messages within"
+                    ariaLabel="Message reply target"
+                    testId="message-reply-target"
+                    choices={REPLY_TARGET_CHOICES}
+                    days={settings.message_reply_target_days}
+                    disabled={save.isPending}
+                    onChange={(days) => save.mutate({ message_reply_target_days: days })}
+                  />
+                )}
+              </Fragment>
             ))}
           </div>
         )}
@@ -119,6 +148,60 @@ export function PortalOfferingCard() {
         </DialogContent>
       </Dialog>
     </>
+  )
+}
+
+function range(min: number, max: number): number[] {
+  return Array.from({ length: max - min + 1 }, (_, i) => min + i)
+}
+
+const REFILL_TARGET_CHOICES = range(REFILL_TURNAROUND_MIN_DAYS, REFILL_TURNAROUND_MAX_DAYS)
+const REPLY_TARGET_CHOICES = range(MESSAGE_REPLY_TARGET_MIN_DAYS, MESSAGE_REPLY_TARGET_MAX_DAYS)
+
+/**
+ * One of the practice's own targets: answering a refill request, or a
+ * client's message. It dates each item in the Inbox (and refills on the
+ * Refills page); clients never see it, which is why the row says "your own"
+ * rather than describing what clients are told.
+ */
+function TargetRow({
+  label,
+  ariaLabel,
+  testId,
+  choices,
+  days,
+  disabled,
+  onChange,
+}: {
+  label: string
+  ariaLabel: string
+  testId: string
+  choices: number[]
+  days: number
+  disabled: boolean
+  onChange: (days: number) => void
+}) {
+  return (
+    <SettingsRow
+      nested
+      label={label}
+      description="Your own target, counted on the days you have hours set, or Monday to Friday."
+    >
+      <select
+        aria-label={ariaLabel}
+        data-testid={testId}
+        value={days}
+        disabled={disabled}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className="rounded-md border border-neutral-200 px-3 py-2 text-sm"
+      >
+        {choices.map((n) => (
+          <option key={n} value={n}>
+            {n === 1 ? "1 working day" : `${n} working days`}
+          </option>
+        ))}
+      </select>
+    </SettingsRow>
   )
 }
 

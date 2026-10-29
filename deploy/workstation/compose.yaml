@@ -1,0 +1,140 @@
+# Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+#
+# The engine on your own machine (Docker Desktop on a Mac, or Windows with
+# WSL), for development and demos, never for real records. The same stack as
+# the VM (deploy/vm/compose.yaml) with three differences: Postgres runs in a
+# container; Google credentials come from your own sign-in impersonating the
+# VM's service account, as there is no metadata server; and Caddy serves
+# plain HTTP on loopback, because Tailscale Funnel terminates HTTPS in front.
+#
+# Started by install.sh --target local, which writes ${PABLO_LOCAL_DIR}.
+
+name: pablo-local
+
+x-google: &google
+  # The published images are amd64; Docker Desktop runs them under emulation
+  # on Apple Silicon.
+  platform: linux/amd64
+  volumes:
+    - ${PABLO_LOCAL_DIR:?set PABLO_LOCAL_DIR}/google.json:/secrets/google.json:ro
+
+x-backend: &backend
+  <<: *google
+  image: ghcr.io/pablo-health/backend:${PABLO_VERSION:?set PABLO_VERSION}
+  env_file: ${PABLO_LOCAL_DIR}/backend.env
+  networks:
+    - pablo
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file: ${PABLO_LOCAL_DIR}/postgres.env
+    environment:
+      POSTGRES_USER: pablo
+      POSTGRES_DB: pablo
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pablo"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - pablo
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb", "--maxmemory-policy", "volatile-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - pablo
+
+  backend:
+    <<: *backend
+    restart: unless-stopped
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/google.json
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health').getcode() == 200 else 1)",
+        ]
+      interval: 10s
+      timeout: 5s
+      start_period: 120s
+      retries: 12
+
+  # One-shot Python in the backend image: migrations and the first
+  # clinician's allowlist entry. The image has no shell.
+  tool:
+    <<: *backend
+    profiles: ["tools"]
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/google.json
+      PYTHONPATH: /app/backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["python"]
+
+  frontend:
+    <<: *google
+    image: ghcr.io/pablo-health/frontend:${PABLO_VERSION:?set PABLO_VERSION}
+    restart: unless-stopped
+    env_file: ${PABLO_LOCAL_DIR}/frontend.env
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/google.json
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/nodejs/bin/node",
+          "-e",
+          "fetch('http://localhost:3000/api/config').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 12
+    networks:
+      - pablo
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      # Loopback only: Funnel and this machine's own browser, nothing else.
+      - "127.0.0.1:8080:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../vm/routes.caddy:/etc/caddy/routes.caddy:ro
+    networks:
+      pablo:
+        # The one address the backend trusts for X-Forwarded-Proto.
+        ipv4_address: 172.30.0.10
+
+networks:
+  pablo:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  postgres-data:

@@ -29,12 +29,15 @@ export type SessionStatus =
   | "recording_complete"
   | "cancelled"
   | "queued"
+  | "transcribing"
   | "processing"
   | "pending_review"
   | "finalized"
   | "failed"
+  // A reference copy of a note documented and signed elsewhere; never signed here.
+  | "imported"
 
-export type TranscriptFormat = "vtt" | "json" | "txt"
+export type TranscriptFormat = "vtt" | "json" | "txt" | "google_meet"
 
 export interface TranscriptModel {
   format: TranscriptFormat
@@ -197,6 +200,10 @@ export interface SessionResponse {
   notes: string | null
   started_at: string | null
   ended_at: string | null
+  /** Seconds into the recording the client was last present; 0 = dictation only. */
+  client_present_end_seconds?: number | null
+  /** How long the clinician dictated after the client left, in seconds. */
+  clinician_addendum_seconds?: number | null
   updated_at: string | null
   transcript_segments: TranscriptSegment[] | null
   processing_started_at: string | null
@@ -205,6 +212,10 @@ export interface SessionResponse {
   // PII-redacted transcript variants
   redacted_transcript: string | null
   naturalized_transcript: string | null
+  /** Who signed an imported note where it was written, as the document states it. */
+  source_signer?: string | null
+  /** The client document keeping the file an imported note was read from. */
+  source_document_id?: string | null
   // Embedded note (None when this session has no generated note yet).
   note: Note | null
 }
@@ -223,6 +234,10 @@ export interface UploadSessionRequest {
   patient_id: string
   session_date: string
   transcript: TranscriptModel
+  /** Note type to draft; SOAP when omitted. */
+  note_type?: string
+  /** Values for that type's declared inputs. */
+  note_inputs?: Record<string, string>
 }
 
 export interface FinalizeSessionRequest {
@@ -230,6 +245,8 @@ export interface FinalizeSessionRequest {
   quality_rating_reason?: string
   quality_rating_sections?: string[]
   soap_note_edited?: SOAPNoteModel
+  /** Signs and locks the note in the same request. */
+  signature?: { signer_name: string; signer_credentials?: string | null }
 }
 
 export interface UpdateSessionRatingRequest {
@@ -303,7 +320,7 @@ export function structuredSoapFromNote(
     c.subjective !== null &&
     "chief_complaint" in (c.subjective as Record<string, unknown>)
   ) {
-    return note.content as unknown as StructuredSOAPNoteModel
+    return note.content as unknown as StructuredSOAPNoteModel  // the chief_complaint probe above identifies the structured shape
   }
   return null
 }
@@ -324,9 +341,14 @@ function projectContent(
     }
   }
   if (noteType === "narrative") {
+    // The registry stores a narrative note as its one section, `note.body`;
+    // that is what the backend writes (a drafted narrative, an archive
+    // import, chat's "save as note"). Rows written by this app before it
+    // followed suit carry a flat `body`, which is still read.
+    const section = isPlainObject(raw.note) ? raw.note : undefined
     return {
       note_type: "narrative",
-      body: (raw.body as string | undefined) ?? "",
+      body: (section?.body as string | undefined) ?? (raw.body as string | undefined) ?? "",
     }
   }
   const sections: Record<string, SchemaSectionValues> = {}
@@ -355,7 +377,7 @@ export function noteContentToJson(
   if (content.note_type === "schema") {
     return { ...content.sections }
   }
-  const { note_type: _t, ...rest } = content
-  void _t
-  return { ...rest }
+  // A narrative note is written the way the registry defines it, as its one
+  // section, so the backend's readers (the PDF, the chart) find the body.
+  return { note: { body: content.body } }
 }

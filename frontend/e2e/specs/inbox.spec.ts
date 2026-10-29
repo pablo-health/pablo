@@ -102,3 +102,55 @@ test("a client message is in the Inbox until it is answered, then it is under Do
   await page.getByRole("button", { name: "Done" }).click()
   await expect(inboxRow(page, messageId)).toContainText("Replied")
 })
+
+/**
+ * The practice's reply-time target dates each waiting message in the Inbox.
+ * It is set under Messaging in portal settings, and it is read when the Inbox
+ * is: a longer target moves a message that is already waiting later.
+ */
+test("a client message carries the practice's reply-by day in the Inbox @portal", async ({
+  api,
+  request,
+  signedInPage: page,
+}) => {
+  type Item = { source_id: string; due_at: string | null }
+  type Settings = { message_reply_target_days: number }
+  const tag = stamp()
+  const { email, phone } = givePortalContactDetails()
+  const patient = await givePatient(api, { first_name: `Reply${tag}`, email, phone })
+  const session = await givePortalSession(api, request, patient.id, email, phone)
+  const before = await api.get<Settings>("/api/portal/settings")
+
+  try {
+    await page.goto("/dashboard/settings/portal")
+    const target = page.getByRole("combobox", { name: "Message reply target" })
+    await target.selectOption("1")
+    await expect
+      .poll(async () => (await api.get<Settings>("/api/portal/settings")).message_reply_target_days)
+      .toBe(1)
+
+    const sent = await request.post(`${BACKEND_URL}/api/patient/messages/threads`, {
+      headers: { Authorization: `Bearer ${session}` },
+      data: { subject: `Reply-by ${tag}`, body: `when can I come in ${tag}` },
+    })
+    expect(sent.status()).toBe(201)
+    const messageId = ((await sent.json()) as { messages: { id: string }[] }).messages[0].id
+    const dueOf = async (): Promise<number> => {
+      const listed = await api.get<{ data: Item[] }>("/api/inbox?kinds=portal_message")
+      const item = listed.data.find((i) => i.source_id === messageId)
+      expect(item?.due_at, "a waiting message has a reply-by time").toBeTruthy()
+      return new Date(item?.due_at ?? 0).getTime()
+    }
+
+    await page.goto("/dashboard/inbox")
+    await expect(inboxRow(page, messageId).getByTestId("refill-due")).toHaveText(/^Due /)
+    const soon = await dueOf()
+
+    await api.put("/api/portal/settings", { message_reply_target_days: 5 })
+    expect(await dueOf(), "a longer target moves a waiting message later").toBeGreaterThan(soon)
+  } finally {
+    await api.put("/api/portal/settings", {
+      message_reply_target_days: before.message_reply_target_days,
+    })
+  }
+})

@@ -33,7 +33,7 @@ jobs:
     name: Version consistency
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Check version sync
         run: bash scripts/check-version-sync.sh
@@ -41,16 +41,21 @@ jobs:
       - name: Check PHI not passed to logger.* calls (THERAPY-za2y)
         run: python3 scripts/check_phi_in_logs.py
 
+      - name: Check model calls go through the LLM gateways
+        run: |
+          python3 scripts/check_llm_single_path_selftest.py
+          python3 scripts/check_llm_single_path.py
+
   migration-lint:
     name: Models ship with migrations
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.13"
 
@@ -66,12 +71,12 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Needs history back to the PR base to diff against it.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.13"
 
@@ -87,7 +92,7 @@ jobs:
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost
           sudo apt-get clean
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Need history back to the PR base for the classify step below.
           fetch-depth: 0
@@ -100,7 +105,7 @@ jobs:
         if: github.event_name == 'pull_request'
         run: bash scripts/ci_classify_diff.sh "origin/${{ github.base_ref }}"
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         if: steps.classify.outputs.substantive != 'false'
         with:
           python-version: "3.13"
@@ -115,14 +120,14 @@ jobs:
 
       - name: Cache Poetry virtualenv
         if: steps.classify.outputs.substantive != 'false'
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .venv
           key: venv-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
 
       - name: Install dependencies
         if: steps.classify.outputs.substantive != 'false'
-        run: poetry install --no-interaction --no-ansi
+        run: poetry install --no-interaction --no-ansi --with pentest
 
       - name: Audit Python dependencies
         if: steps.classify.outputs.substantive != 'false'
@@ -170,7 +175,7 @@ jobs:
     name: Backend integration (Postgres)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Need history back to the PR base for the classify step below.
           fetch-depth: 0
@@ -180,7 +185,7 @@ jobs:
         if: github.event_name == 'pull_request'
         run: bash scripts/ci_classify_diff.sh "origin/${{ github.base_ref }}"
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         if: steps.classify.outputs.substantive != 'false'
         with:
           python-version: "3.13"
@@ -195,14 +200,14 @@ jobs:
 
       - name: Cache Poetry virtualenv
         if: steps.classify.outputs.substantive != 'false'
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .venv
           key: venv-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
 
       - name: Install dependencies
         if: steps.classify.outputs.substantive != 'false'
-        run: poetry install --no-interaction --no-ansi
+        run: poetry install --no-interaction --no-ansi --with pentest
 
       # Postgres comes up via testcontainers — see
       # backend/tests_integration/conftest.py. Docker is preinstalled on
@@ -221,7 +226,7 @@ jobs:
       # tenant-fan-out semantics); re-enable them as those issues close.
       - name: Cache Postgres test image
         if: steps.classify.outputs.substantive != 'false'
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/tc-images
           key: tc-image-postgres-16-alpine
@@ -264,7 +269,7 @@ jobs:
     name: Tenant template matches alembic head
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Need history back to the PR base for the classify step below.
           fetch-depth: 0
@@ -274,7 +279,7 @@ jobs:
         if: github.event_name == 'pull_request'
         run: bash scripts/ci_classify_diff.sh "origin/${{ github.base_ref }}"
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         if: steps.classify.outputs.substantive != 'false'
         with:
           python-version: "3.13"
@@ -289,18 +294,18 @@ jobs:
 
       - name: Cache Poetry virtualenv
         if: steps.classify.outputs.substantive != 'false'
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .venv
           key: venv-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
 
       - name: Install dependencies
         if: steps.classify.outputs.substantive != 'false'
-        run: poetry install --no-interaction --no-ansi
+        run: poetry install --no-interaction --no-ansi --with pentest
 
       - name: Cache Postgres test image
         if: steps.classify.outputs.substantive != 'false'
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/tc-images
           key: tc-image-postgres-16-alpine
@@ -361,7 +366,7 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Need history back to the PR base for the classify step below.
           fetch-depth: 0
@@ -374,7 +379,7 @@ jobs:
         working-directory: .
         run: bash scripts/ci_classify_diff.sh "origin/${{ github.base_ref }}"
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         if: steps.classify.outputs.substantive != 'false'
         with:
           node-version: "24"
@@ -383,10 +388,16 @@ jobs:
 
       - name: Install dependencies
         if: steps.classify.outputs.substantive != 'false'
-        # --audit-signatures verifies each package's npm registry signature
-        # before install, catching account-takeover republishes that share
-        # a pinned version.
-        run: npm ci --audit-signatures
+        run: npm ci
+        env:
+          npm_config_fetch_retries: 5
+          npm_config_fetch_retry_mintimeout: 20000
+
+      - name: Verify dependency signatures and provenance
+        if: steps.classify.outputs.substantive != 'false'
+        # Signature verification is an npm audit subcommand, not an npm ci
+        # option. Keep it separate so an unsupported flag cannot be ignored.
+        run: npm audit signatures
         env:
           npm_config_fetch_retries: 5
           npm_config_fetch_retry_mintimeout: 20000

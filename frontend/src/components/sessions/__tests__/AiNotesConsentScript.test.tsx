@@ -38,11 +38,18 @@ describe("formatRetention", () => {
 describe("consentScript", () => {
   it("covers recording, AI drafting, review, retention and saying no", () => {
     const text = consentScript(90).join(" ")
-    expect(text).toContain("record our session")
+    // Read once recording has started, so the answer is on it.
+    expect(text).toContain("I've started recording our session.")
     expect(text).toContain("AI tool uses it to draft my notes")
     expect(text).toContain("I read and correct every note myself")
     expect(text).toContain("kept for up to 90 days")
     expect(text).toContain("You can say no, now or at any time")
+  })
+
+  it("says the audio goes at signing when the practice deletes it then", () => {
+    const text = consentScript(0).join(" ")
+    expect(text).toContain("The audio is deleted once your note is signed.")
+    expect(text).not.toContain("kept for up to")
   })
 })
 

@@ -19,6 +19,12 @@
   --color-primary-800: #8E6220;
   --color-primary-900: #74501C;
 
+  /* Ink for anything filled with honey (bg-primary-600/700): a badge, a
+     selected chip, a checked box. White on honey-600 is 2.6:1, so honey
+     takes deep-brown ink. Themes that re-tone primary-600 dark (high
+     contrast, boring EHR) flip this back to white below. */
+  --color-on-honey: #2C1810;
+
   /* Pablo Brand: Sage Green secondary */
   --color-secondary-50: #F2F7F3;
   --color-secondary-100: #E0EDE2;
@@ -76,11 +82,6 @@
 }
 
 @layer components {
-
-  /* Primary button - warm honey/amber */
-  .btn-primary {
-    @apply bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700 hover:shadow-md active:scale-[0.98] focus:ring-2 focus:ring-primary-300 focus:outline-none transition-all duration-200 shadow-sm;
-  }
 
   /* Secondary button - sage green */
   .btn-secondary {
@@ -270,7 +271,7 @@
   --brand-panel-accent: #e8a849;
   --auth-action-bg: #d4952f;
   --auth-action-bg-hover: #b07a24;
-  --auth-action-fg: #ffffff;
+  --auth-action-fg: #2c1810;
   --auth-provider-bg: #ffffff;
   --auth-provider-bg-hover: #fefcf8;
   --auth-provider-fg: #3d2b1f;
@@ -297,6 +298,7 @@
   --color-primary-100: #34291b;
   --color-primary-600: #e8a849;
   --color-primary-700: #f0c074;
+  --color-on-honey: #1b1815;
 
   --background: #1b1815;
   --foreground: #f5f1ea;
@@ -351,6 +353,7 @@
   --color-primary-100: #ffe6bf;
   --color-primary-600: #8a5300;
   --color-primary-700: #6b4000;
+  --color-on-honey: #ffffff;
 
   --background: #ffffff;
   --foreground: #000000;
@@ -416,6 +419,7 @@
   --color-primary-100: #cfe0f0;
   --color-primary-600: #0b5394;
   --color-primary-700: #073763;
+  --color-on-honey: #ffffff;
   --primary: #0b5394;
   --primary-foreground: #ffffff;
 

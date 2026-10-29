@@ -35,7 +35,7 @@ from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
-from app.models import Patient, SessionStatus, TherapySession, Transcript
+from app.models import SessionStatus, TherapySession, Transcript
 from app.repositories import (
     InMemoryNotesRepository,
     InMemoryPatientRepository,
@@ -49,24 +49,12 @@ from app.services.note_generation_service import (
 )
 from app.settings import Settings
 
+from tests.patient_seeds import seed_patient
+
 # Minimal WAV signature (RIFF....WAVE) + filler. The bytes are never
 # transcribed, but the upload boundary now sniffs container Content-Types, so a
 # payload declared audio/wav must actually start with a WAV header.
 _AUDIO = b"RIFF\x24\x00\x00\x00WAVE" + b"\x00\x01" * 1024
-
-
-def _seed_patient(patient_repo: InMemoryPatientRepository, user_id: str) -> Patient:
-    patient = Patient(
-        id=str(uuid.uuid4()),
-        first_name="Jordan",
-        last_name="Rivera",
-        diagnosis="Generalized anxiety disorder",
-        created_at=datetime.now(UTC),
-        updated_at=datetime.now(UTC),
-        session_count=0,
-    )
-    patient_repo.create(patient, user_id)
-    return patient
 
 
 def _seed_session(
@@ -134,7 +122,7 @@ def test_upload_audio_accepts_dual_channel_and_parks_in_transcribing(
     mock_repo: InMemoryPatientRepository,
     mock_user_id: str,
 ) -> None:
-    patient = _seed_patient(mock_repo, mock_user_id)
+    patient = seed_patient(mock_repo, mock_user_id)
     session = _seed_session(
         mock_session_repo, mock_user_id, patient.id, SessionStatus.RECORDING_COMPLETE
     )
@@ -163,7 +151,7 @@ def test_upload_audio_rejects_unsupported_media_type(
     mock_repo: InMemoryPatientRepository,
     mock_user_id: str,
 ) -> None:
-    patient = _seed_patient(mock_repo, mock_user_id)
+    patient = seed_patient(mock_repo, mock_user_id)
     session = _seed_session(
         mock_session_repo, mock_user_id, patient.id, SessionStatus.RECORDING_COMPLETE
     )
@@ -189,7 +177,7 @@ def test_upload_audio_rejects_non_audio_mislabeled_as_audio(
     """A payload whose Content-Type claims a container format but whose bytes
     aren't that container is rejected synchronously at the upload boundary,
     not enqueued to fail later in the transcription worker."""
-    patient = _seed_patient(mock_repo, mock_user_id)
+    patient = seed_patient(mock_repo, mock_user_id)
     session = _seed_session(
         mock_session_repo, mock_user_id, patient.id, SessionStatus.RECORDING_COMPLETE
     )
@@ -216,7 +204,7 @@ def test_upload_audio_returns_501_when_transcription_disabled(
     mock_repo: InMemoryPatientRepository,
     mock_user_id: str,
 ) -> None:
-    patient = _seed_patient(mock_repo, mock_user_id)
+    patient = seed_patient(mock_repo, mock_user_id)
     session = _seed_session(
         mock_session_repo, mock_user_id, patient.id, SessionStatus.RECORDING_COMPLETE
     )
@@ -248,7 +236,7 @@ def test_upload_audio_enqueue_failure_reverts_to_recording_complete(
     so the route reverts to ``recording_complete`` and surfaces a 5xx so
     the client retries the upload.
     """
-    patient = _seed_patient(mock_repo, mock_user_id)
+    patient = seed_patient(mock_repo, mock_user_id)
     session = _seed_session(
         mock_session_repo, mock_user_id, patient.id, SessionStatus.RECORDING_COMPLETE
     )
@@ -288,7 +276,7 @@ def test_completed_transcript_yields_pending_review_with_four_section_soap(
     mock_notes_repo: InMemoryNotesRepository,
     mock_user_id: str,
 ) -> None:
-    patient = _seed_patient(mock_repo, mock_user_id)
+    patient = seed_patient(mock_repo, mock_user_id)
     session = _seed_session(
         mock_session_repo, mock_user_id, patient.id, SessionStatus.RECORDING_COMPLETE
     )
@@ -329,7 +317,7 @@ def test_note_generation_failure_marks_session_failed(
     mock_notes_repo: InMemoryNotesRepository,
     mock_user_id: str,
 ) -> None:
-    patient = _seed_patient(mock_repo, mock_user_id)
+    patient = seed_patient(mock_repo, mock_user_id)
     session = _seed_session(
         mock_session_repo, mock_user_id, patient.id, SessionStatus.RECORDING_COMPLETE
     )

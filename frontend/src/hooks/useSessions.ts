@@ -12,10 +12,12 @@ import type {
   UpdateSessionRatingRequest,
   UploadSessionRequest,
 } from "@/types/sessions"
+import type { Note, RedraftNoteRequest } from "@/types/notes"
 import {
   finalizeSession,
   getSession,
   listSessions,
+  redraftSessionNote,
   updateSessionMetadata,
   updateSessionRating,
   uploadSession,
@@ -24,6 +26,7 @@ import { queryKeys } from "@/lib/api/queryKeys"
 import { useAuth } from "@/lib/auth-context"
 import { useConfig } from "@/lib/config"
 import { watchDraft } from "@/lib/draftWatch"
+import { withDashboard } from "./dashboardFreshness"
 import { useAuthMutation } from "./useAuthQuery"
 
 // Query hooks — mock-aware, so they use raw useQuery instead of useAuthQuery.
@@ -149,13 +152,15 @@ export function useUploadSession(token?: string) {
     // the list is next read, and would then never be seen mid-draft.
     onSuccess: (session) => watchDraft(session.id),
     invalidateKeys: (_vars, data) =>
-      data
-        ? [
-            queryKeys.sessions.lists(),
-            queryKeys.patients.detail(data.patient_id),
-            queryKeys.patients.lists(),
-          ]
-        : [],
+      withDashboard(
+        data
+          ? [
+              queryKeys.sessions.lists(),
+              queryKeys.patients.detail(data.patient_id),
+              queryKeys.patients.lists(),
+            ]
+          : [],
+      ),
   })
 }
 
@@ -167,10 +172,13 @@ export function useFinalizeSession(token?: string) {
   >({
     mutationFn: ({ sessionId, data }) =>
       finalizeSession(sessionId, data, token),
-    invalidateKeys: ({ sessionId }) => [
-      queryKeys.sessions.detail(sessionId),
-      queryKeys.sessions.lists(),
-    ],
+    invalidateKeys: ({ sessionId }) =>
+      withDashboard([
+        queryKeys.sessions.detail(sessionId),
+        queryKeys.sessions.lists(),
+        // The note's signing record, which finalizing with a signature writes.
+        queryKeys.notes.all,
+      ]),
     optimistic: {
       queryKey: ({ sessionId }) => queryKeys.sessions.detail(sessionId),
       updater: (previous, { data }) => ({
@@ -191,6 +199,22 @@ export function useFinalizeSession(token?: string) {
             }
           : previous.note,
       }),
+    },
+  })
+}
+
+/**
+ * Draft a session's note again. The returned note is `processing`; it is
+ * written into the cached session so the page starts polling straight away.
+ */
+export function useRedraftSessionNote(token?: string) {
+  return useAuthMutation<Note, { sessionId: string; data: RedraftNoteRequest }>({
+    mutationFn: ({ sessionId, data }) => redraftSessionNote(sessionId, data, token),
+    onSuccess: (note, { sessionId }, queryClient) => {
+      queryClient.setQueryData<SessionResponse>(
+        queryKeys.sessions.detail(sessionId),
+        (previous) => (previous ? { ...previous, note } : previous),
+      )
     },
   })
 }
@@ -227,10 +251,9 @@ export function useUpdateSessionMetadata(token?: string) {
   >({
     mutationFn: ({ sessionId, data }) =>
       updateSessionMetadata(sessionId, data, token),
-    invalidateKeys: ({ sessionId }) => [
-      queryKeys.sessions.detail(sessionId),
-      queryKeys.sessions.lists(),
-    ],
+    // The date shows on the dashboard's awaiting-review rows.
+    invalidateKeys: ({ sessionId }) =>
+      withDashboard([queryKeys.sessions.detail(sessionId), queryKeys.sessions.lists()]),
     optimistic: {
       queryKey: ({ sessionId }) => queryKeys.sessions.detail(sessionId),
       updater: (previous, { data }) =>

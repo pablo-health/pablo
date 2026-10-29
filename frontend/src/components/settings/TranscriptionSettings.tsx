@@ -11,11 +11,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import type { UserPreferences } from "@/lib/api/users"
+import type { PreferenceChanges, UserPreferences } from "@/lib/api/users"
 
 interface TranscriptionSettingsProps {
   preferences: UserPreferences
-  onSave: (prefs: UserPreferences) => void
+  onSave: (changes: PreferenceChanges) => void
   isSaving: boolean
 }
 
@@ -33,7 +33,7 @@ export function TranscriptionSettings({ preferences, onSave, isSaving }: Transcr
           id="auto-transcribe"
           checked={preferences.auto_transcribe}
           onCheckedChange={(checked) =>
-            onSave({ ...preferences, auto_transcribe: checked === true })
+            onSave({ auto_transcribe: checked === true })
           }
           disabled={isSaving}
         />
@@ -46,7 +46,7 @@ export function TranscriptionSettings({ preferences, onSave, isSaving }: Transcr
         <Label htmlFor="quality-preset">Quality Preset</Label>
         <Select
           value={preferences.quality_preset}
-          onValueChange={(v) => onSave({ ...preferences, quality_preset: v })}
+          onValueChange={(v) => onSave({ quality_preset: v })}
           disabled={isSaving}
         >
           <SelectTrigger id="quality-preset">

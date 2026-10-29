@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { render, screen, fireEvent, waitFor } from "@testing-library/react"
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react"
 import { NoteViewer } from "../NoteViewer"
 import { peopleWords } from "@/lib/peopleTerm"
 import type {
@@ -20,6 +20,7 @@ import type {
   StructuredSOAPNoteModel,
 } from "@/types/sessions"
 import { noteContentToJson } from "@/types/sessions"
+import { displayedNote } from "@/lib/displayedNote"
 import type { Note, NoteType } from "@/types/notes"
 import {
   createMockNote,
@@ -579,6 +580,27 @@ describe("NoteViewer (SOAP)", () => {
       expect(screen.queryByText("sourced")).not.toBeInTheDocument()
     })
 
+    it("marks an empty section and an empty sub-field quietly rather than as note content", () => {
+      renderViewer({
+        note: asSoapContent(
+          createMockSOAPNote({
+            subjective: "**Mood/Affect:** Brighter\n\n**Sleep:**",
+            objective: "Calm",
+            assessment: "",
+            plan: "Not stated.",
+          }),
+        ),
+      })
+
+      const assessment = screen.getByRole("heading", { name: "Assessment" }).parentElement!
+      expect(within(assessment).getByText("Nothing entered")).toHaveClass("select-none")
+      const sleep = screen.getByRole("heading", { name: "Sleep" }).parentElement!
+      expect(within(sleep).getByText("Nothing entered")).toBeInTheDocument()
+      expect(screen.getAllByText("Nothing entered")).toHaveLength(2)
+      expect(screen.queryByText("No content")).not.toBeInTheDocument()
+      expect(screen.getByText("Not stated.")).toBeInTheDocument()
+    })
+
     it("falls back to NarrativeContent when no structured data", () => {
       // Default mockSession has soap_note_structured: null
       renderViewer()
@@ -718,6 +740,13 @@ describe("NoteViewer (Narrative)", () => {
     renderNarrative()
 
     expect(screen.getByText(/Met with client to review progress/)).toBeInTheDocument()
+  })
+
+  it("marks an empty body quietly rather than as note content", () => {
+    renderNarrative({ note: { note_type: "narrative", body: "  " } })
+
+    expect(screen.getByText("Nothing entered")).toHaveClass("select-none")
+    expect(screen.queryByText("No content")).not.toBeInTheDocument()
   })
 
   it("does not render SOAP section headers", () => {
@@ -902,5 +931,64 @@ describe("read-only deployment mode", () => {
       expect(screen.getByText("Narrative note not yet generated")).toBeInTheDocument()
       expect(screen.queryAllByRole("textbox")).toHaveLength(0)
     })
+  })
+})
+
+describe("a drafted SOAP note stored structured only", () => {
+  // Generation stores the four structured sections and no narrative beside
+  // them, which is what the editor opens from.
+  function draftedNote(): Note {
+    const { narrative: _omitted, ...sections } = createMockStructuredSOAPNote()
+    return createMockNote({ content: sections as unknown as Record<string, unknown> })
+  }
+
+  it("opens in the editor with each field filled from the draft", () => {
+    const note = draftedNote()
+    render(<NoteViewer note={note} onSave={() => {}} />)
+    fireEvent.click(screen.getByText("Edit"))
+    expect(screen.getByLabelText("Chief Complaint")).toHaveValue(
+      (note.content as { subjective: { chief_complaint: { text: string } } }).subjective
+        .chief_complaint.text,
+    )
+  })
+
+  it("shows the saved edit after a reload, not the draft", async () => {
+    const onSave = vi.fn()
+    const note = draftedNote()
+    const { unmount } = render(<NoteViewer note={note} onSave={onSave} />)
+    fireEvent.click(screen.getByText("Edit"))
+    fireEvent.change(screen.getByLabelText("Next Steps"), {
+      target: { value: "Practice paced breathing" },
+    })
+    fireEvent.click(screen.getByText("Save Changes"))
+    unmount()
+
+    // What the server returns on reload: the draft untouched, the edit beside it.
+    const saved = { ...note, content_edited: noteContentToJson(onSave.mock.calls[0][0]) }
+    render(<NoteViewer note={saved} onSave={onSave} />)
+
+    expect(screen.getByText("Edited")).toBeInTheDocument()
+    expect(screen.getByText(/Practice paced breathing/)).toBeInTheDocument()
+    expect(screen.queryByText("Review progress next session")).not.toBeInTheDocument()
+    // The draft's source references do not attach to the clinician's text.
+    expect(screen.queryByText("(unverified)")).not.toBeInTheDocument()
+  })
+
+  it("exports to PDF exactly what it shows", async () => {
+    const { exportSOAPToPDF } = await import("@/lib/utils/pdfExport")
+    const note = createMockNote({
+      ...draftedNote(),
+      content_edited: { ...createMockSOAPNote({ plan: "Practice paced breathing" }) },
+    })
+    render(<NoteViewer note={note} pdfMetadata={PDF_META} />)
+
+    fireEvent.click(screen.getByText("Export PDF"))
+
+    const { note_type: _type, ...shown } = displayedNote(note).content as NoteContent & {
+      note_type: "soap"
+    }
+    expect(exportSOAPToPDF).toHaveBeenCalledWith(PDF_META, shown, peopleWords("clients"))
+    expect(shown.plan).toBe("Practice paced breathing")
+    expect(screen.getByText(/Practice paced breathing/)).toBeInTheDocument()
   })
 })

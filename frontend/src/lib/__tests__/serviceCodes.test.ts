@@ -21,6 +21,17 @@ describe("the suggestion list", () => {
     expect(COMMON_SERVICE_CODES.map((c) => c.code)).toContain("90837")
   })
 
+  it("offers the codes a prescriber bills for a medical visit and its therapy add-on", () => {
+    const codes = COMMON_SERVICE_CODES.map((c) => c.code)
+    for (const code of [
+      "99202", "99203", "99204", "99205",
+      "99212", "99213", "99214", "99215",
+      "90833", "90836", "90838",
+    ]) {
+      expect(codes).toContain(code)
+    }
+  })
+
   it("lists every code once", () => {
     const codes = COMMON_SERVICE_CODES.map((c) => c.code)
     expect(new Set(codes).size).toBe(codes.length)
@@ -36,6 +47,11 @@ describe("the suggestion list", () => {
 describe("describeServiceCode", () => {
   it("names a code the list happens to know", () => {
     expect(describeServiceCode("90837")).toBe("Therapy session — 60 minutes or more")
+  })
+
+  it("names a medical visit and its therapy add-on", () => {
+    expect(describeServiceCode("99214")).toBe("Medical visit, established — moderate complexity")
+    expect(describeServiceCode("90836")).toBe("Therapy with a medical visit — around 45 minutes")
   })
 
   it("says nothing about a code it does not know rather than guessing", () => {

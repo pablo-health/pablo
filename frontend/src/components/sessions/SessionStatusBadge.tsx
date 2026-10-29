@@ -69,6 +69,11 @@ const statusConfig: Record<string, { label: string; className: string; icon: typ
     className: "bg-red-100 text-red-700 border-red-200",
     icon: AlertCircle,
   },
+  imported: {
+    label: "Imported",
+    className: "bg-neutral-100 text-neutral-700 border-neutral-200",
+    icon: FileText,
+  },
 }
 
 function formatTimestamp(timestamp: string): string {

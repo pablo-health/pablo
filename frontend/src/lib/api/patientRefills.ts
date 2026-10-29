@@ -23,6 +23,7 @@ const BASE = "/api/patient/refills"
 export const MEDICATION_TEXT_MAX = 200
 export const PHARMACY_TEXT_MAX = 200
 export const PATIENT_NOTE_MAX = 2000
+export const DAYS_LEFT_MAX = 365
 
 /** One of the patient's active medications, as the picker lists it. */
 export interface PatientRefillMedication {
@@ -49,6 +50,11 @@ export interface RefillRequest {
   status: RefillRequestStatus
   created_at: string
   decided_at: string | null
+  /**
+   * Only on the response to asking, while the client's clinician is away:
+   * who will review it by when, and the crisis lines. Never on a list read.
+   */
+  away_acknowledgment?: string | null
 }
 
 export interface RefillRequestList {
@@ -65,6 +71,8 @@ export interface CreateRefillRequestInput {
   medication_text?: string | null
   pharmacy_text?: string | null
   patient_note?: string | null
+  /** Days of the medication the patient has left; 0 is today. Omitted when they don't know. */
+  days_left?: number | null
 }
 
 /** A failed request. Carries the status and no part of the payload. */

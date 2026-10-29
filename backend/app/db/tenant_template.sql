@@ -6,6 +6,10 @@
 -- has been created. The placeholder __TENANT_SCHEMA__ is substituted
 -- with the real schema name before execution.
 --
+-- The section after the row-level security marker near the end is what
+-- enable_rls_on_schema gives a practice schema. Provisioning applies it to
+-- practice schemas and not to the template schema itself.
+--
 -- Regenerate after any alembic revision that touches DDL:
 --   poetry run python backend/scripts/regen_tenant_template.py
 
@@ -47,16 +51,24 @@ CREATE FUNCTION __TENANT_SCHEMA__.audit_logs_no_truncate() RETURNS trigger
 
 
 
+
+CREATE TABLE __TENANT_SCHEMA__.patient_clinicians (
+    patient_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    role character varying(20) DEFAULT 'primary'::character varying NOT NULL,
+    granted_at timestamp with time zone DEFAULT now() NOT NULL,
+    granted_by uuid NOT NULL,
+    expires_at timestamp with time zone,
+    starts_at timestamp with time zone,
+    away_period_id uuid,
+    CONSTRAINT patient_clinicians_role_check CHECK (((role)::text = ANY ((ARRAY['primary'::character varying, 'co_treating'::character varying, 'supervisor'::character varying, 'covering'::character varying])::text[])))
+);
+
+
+
 CREATE FUNCTION __TENANT_SCHEMA__.has_patient_access(p_patient_id uuid, p_user_id character varying) RETURNS boolean
     LANGUAGE sql STABLE
-    AS $$
-        SELECT EXISTS (
-            SELECT 1 FROM patient_clinicians
-            WHERE patient_id = p_patient_id
-              AND user_id::text = p_user_id
-              AND (expires_at IS NULL OR expires_at > now())
-        );
-    $$;
+    RETURN (EXISTS (SELECT 1 FROM __TENANT_SCHEMA__.patient_clinicians pc WHERE ((pc.patient_id = has_patient_access.p_patient_id) AND ((pc.user_id)::text = (has_patient_access.p_user_id)::text) AND ((pc.starts_at IS NULL) OR (pc.starts_at <= now())) AND ((pc.expires_at IS NULL) OR (pc.expires_at > now())))));
 
 
 
@@ -96,7 +108,6 @@ CREATE FUNCTION __TENANT_SCHEMA__.practice_outside_appointment(p_source text, p_
         ORDER BY a.created_at, a.id
         LIMIT 1
     $$;
-
 
 
 
@@ -194,7 +205,8 @@ CREATE TABLE __TENANT_SCHEMA__.appointments (
     outside_event_id text,
     outside_calendar_id text,
     auto_booked_at timestamp with time zone,
-    auto_booked_acknowledged_at timestamp with time zone
+    auto_booked_acknowledged_at timestamp with time zone,
+    skipped boolean DEFAULT false NOT NULL
 );
 
 
@@ -375,10 +387,37 @@ CREATE TABLE __TENANT_SCHEMA__.client_ai_consent_events (
     recorded_by uuid,
     recorded_at timestamp with time zone NOT NULL,
     intake_submission_id uuid,
+    modality character varying(16),
+    client_stated_location text,
+    consented_by character varying(16),
+    CONSTRAINT ck_client_ai_consent_events_consented_by CHECK (((consented_by IS NULL) OR ((consented_by)::text = ANY ((ARRAY['client'::character varying, 'parent'::character varying, 'guardian'::character varying])::text[])))),
     CONSTRAINT ck_client_ai_consent_events_decision CHECK (((decision)::text = ANY ((ARRAY['consented'::character varying, 'declined'::character varying])::text[]))),
+    CONSTRAINT ck_client_ai_consent_events_modality CHECK (((modality IS NULL) OR ((modality)::text = ANY ((ARRAY['in_person'::character varying, 'telehealth'::character varying])::text[])))),
     CONSTRAINT ck_client_ai_consent_events_recorded_by CHECK ((((source)::text <> 'clinician'::text) OR (recorded_by IS NOT NULL))),
     CONSTRAINT ck_client_ai_consent_events_source CHECK (((source)::text = ANY ((ARRAY['clinician'::character varying, 'intake_form'::character varying])::text[]))),
     CONSTRAINT ck_client_ai_consent_events_submission CHECK ((((source)::text = 'intake_form'::text) = (intake_submission_id IS NOT NULL)))
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.clinician_away_periods (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    start_date date NOT NULL,
+    end_date date NOT NULL,
+    return_date date NOT NULL,
+    covering_user_id uuid,
+    acknowledgment_enabled boolean DEFAULT true NOT NULL,
+    acknowledgment_text text NOT NULL,
+    ended_at timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    coverage_status character varying(10),
+    coverage_responded_at timestamp with time zone,
+    CONSTRAINT ck_clinician_away_periods_coverage_named CHECK (((covering_user_id IS NULL) = (coverage_status IS NULL))),
+    CONSTRAINT ck_clinician_away_periods_coverage_status CHECK (((coverage_status)::text = ANY ((ARRAY['requested'::character varying, 'accepted'::character varying, 'declined'::character varying])::text[]))),
+    CONSTRAINT ck_clinician_away_periods_dates CHECK ((end_date >= start_date)),
+    CONSTRAINT ck_clinician_away_periods_return CHECK ((return_date > end_date))
 );
 
 
@@ -439,21 +478,6 @@ CREATE TABLE __TENANT_SCHEMA__.compliance_documents (
 
 
 
-CREATE TABLE __TENANT_SCHEMA__.compliance_items (
-    id uuid NOT NULL,
-    user_id uuid NOT NULL,
-    item_type character varying(50) NOT NULL,
-    label character varying(255) NOT NULL,
-    due_date date,
-    notes text,
-    completed_at timestamp with time zone,
-    created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL,
-    source_ref character varying(128)
-);
-
-
-
 CREATE TABLE __TENANT_SCHEMA__.diagnostic_assessments (
     id uuid NOT NULL,
     patient_id uuid NOT NULL,
@@ -474,6 +498,7 @@ CREATE TABLE __TENANT_SCHEMA__.diagnostic_assessments (
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     deleted_at timestamp with time zone,
+    problem_id uuid,
     CONSTRAINT ck_diagnostic_assessments_source CHECK (((source)::text = ANY ((ARRAY['patient_self_report'::character varying, 'clinician_administered_verbal'::character varying, 'manual'::character varying, 'inferred'::character varying])::text[])))
 );
 
@@ -558,6 +583,30 @@ CREATE TABLE __TENANT_SCHEMA__.google_created_calendars (
     calendar_id text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     marked_at timestamp with time zone
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.homework_assignments (
+    id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    note_id uuid,
+    proposal_id uuid,
+    source_field character varying(200),
+    proposed_text text,
+    body text NOT NULL,
+    status character varying(16) NOT NULL,
+    origin character varying(16) NOT NULL,
+    assigned_by uuid,
+    assigned_at timestamp with time zone NOT NULL,
+    withdrawn_by uuid,
+    withdrawn_at timestamp with time zone,
+    completed_at timestamp with time zone,
+    client_note character varying(500),
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_homework_assignments_origin CHECK (((origin)::text = ANY ((ARRAY['note'::character varying, 'clinician'::character varying])::text[]))),
+    CONSTRAINT ck_homework_assignments_status CHECK (((status)::text = ANY ((ARRAY['assigned'::character varying, 'done'::character varying, 'withdrawn'::character varying])::text[])))
 );
 
 
@@ -694,7 +743,8 @@ CREATE TABLE __TENANT_SCHEMA__.intake_packet_templates (
     name character varying(120) NOT NULL,
     created_by uuid,
     created_at timestamp with time zone NOT NULL,
-    archived_at timestamp with time zone
+    archived_at timestamp with time zone,
+    client_title character varying(120)
 );
 
 
@@ -726,6 +776,78 @@ CREATE TABLE __TENANT_SCHEMA__.llm_usage (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.note_addenda (
+    id uuid NOT NULL,
+    note_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    text text NOT NULL,
+    signer_name text NOT NULL,
+    signer_credentials text,
+    digest character varying(64) NOT NULL,
+    prev_digest character varying(64),
+    created_by uuid NOT NULL,
+    created_at timestamp with time zone NOT NULL
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.note_chart_proposal_runs (
+    note_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    status character varying(16) NOT NULL,
+    error_class character varying(100),
+    computed_at timestamp with time zone NOT NULL,
+    considered jsonb DEFAULT '[]'::jsonb NOT NULL,
+    CONSTRAINT ck_note_chart_proposal_runs_status CHECK (((status)::text = ANY ((ARRAY['ok'::character varying, 'failed'::character varying, 'skipped'::character varying])::text[])))
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.note_chart_proposals (
+    id uuid NOT NULL,
+    note_id uuid,
+    patient_id uuid NOT NULL,
+    field_key character varying(64) NOT NULL,
+    item_key character varying(200) DEFAULT ''::character varying NOT NULL,
+    proposed_text text NOT NULL,
+    what_changed text NOT NULL,
+    evidence jsonb DEFAULT '[]'::jsonb NOT NULL,
+    origin character varying(16) NOT NULL,
+    decision character varying(16) DEFAULT 'pending'::character varying NOT NULL,
+    decided_text text,
+    decided_by uuid,
+    decided_at timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    change jsonb,
+    intake_assignment_id uuid,
+    CONSTRAINT ck_note_chart_proposals_decision CHECK (((decision)::text = ANY ((ARRAY['pending'::character varying, 'accepted'::character varying, 'edited'::character varying, 'discarded'::character varying])::text[]))),
+    CONSTRAINT ck_note_chart_proposals_one_source CHECK ((num_nonnulls(note_id, intake_assignment_id) = 1))
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.note_signatures (
+    id uuid NOT NULL,
+    note_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    version integer NOT NULL,
+    note_type character varying(30) NOT NULL,
+    note_type_version integer,
+    content jsonb,
+    content_edited jsonb,
+    digest character varying(64) NOT NULL,
+    signed_by uuid NOT NULL,
+    signer_name text NOT NULL,
+    signer_credentials text,
+    signed_at timestamp with time zone NOT NULL,
+    unlocked_at timestamp with time zone,
+    unlocked_by uuid,
+    unlock_reason text,
+    CONSTRAINT ck_note_signatures_unlock_reason CHECK (((unlocked_at IS NULL) = (unlock_reason IS NULL)))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.notes (
     id uuid NOT NULL,
     patient_id uuid NOT NULL,
@@ -746,7 +868,8 @@ CREATE TABLE __TENANT_SCHEMA__.notes (
     note_type_version integer,
     note_inputs jsonb,
     author_user_id uuid,
-    restricted boolean DEFAULT false NOT NULL
+    restricted boolean DEFAULT false NOT NULL,
+    psychotherapy_window jsonb
 );
 
 
@@ -805,14 +928,28 @@ CREATE TABLE __TENANT_SCHEMA__.patient_charges (
 
 
 
-CREATE TABLE __TENANT_SCHEMA__.patient_clinicians (
+CREATE TABLE __TENANT_SCHEMA__.patient_chart_history (
+    id uuid NOT NULL,
     patient_id uuid NOT NULL,
-    user_id uuid NOT NULL,
-    role character varying(20) DEFAULT 'primary'::character varying NOT NULL,
-    granted_at timestamp with time zone DEFAULT now() NOT NULL,
-    granted_by uuid NOT NULL,
-    expires_at timestamp with time zone,
-    CONSTRAINT patient_clinicians_role_check CHECK (((role)::text = ANY ((ARRAY['primary'::character varying, 'co_treating'::character varying, 'supervisor'::character varying, 'covering'::character varying])::text[])))
+    field_key character varying(64) NOT NULL,
+    text text,
+    source_note_id uuid,
+    updated_by uuid,
+    updated_at timestamp with time zone NOT NULL
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.patient_chart_history_revisions (
+    id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    field_key character varying(64) NOT NULL,
+    text text,
+    source_note_id uuid,
+    written_by uuid,
+    written_at timestamp with time zone NOT NULL,
+    replaced_by uuid NOT NULL,
+    replaced_at timestamp with time zone NOT NULL
 );
 
 
@@ -981,6 +1118,12 @@ CREATE TABLE __TENANT_SCHEMA__.patient_medications (
     updated_at timestamp with time zone NOT NULL,
     deleted_at timestamp with time zone,
     stop_reason text,
+    frequency text,
+    category character varying(16),
+    source_note_id uuid,
+    controlled boolean,
+    interruption_risk boolean,
+    CONSTRAINT ck_patient_medications_category CHECK (((category)::text = ANY ((ARRAY['psychiatric'::character varying, 'other'::character varying])::text[]))),
     CONSTRAINT ck_patient_medications_status CHECK (((status)::text = ANY ((ARRAY['active'::character varying, 'discontinued'::character varying, 'on_hold'::character varying])::text[])))
 );
 
@@ -1020,6 +1163,7 @@ CREATE TABLE __TENANT_SCHEMA__.patient_messages (
     body text NOT NULL,
     created_at timestamp with time zone NOT NULL,
     read_at timestamp with time zone,
+    away_period_id uuid,
     CONSTRAINT ck_patient_messages_sender CHECK (((sender)::text = ANY ((ARRAY['patient'::character varying, 'clinician'::character varying, 'practice'::character varying])::text[])))
 );
 
@@ -1037,6 +1181,49 @@ CREATE TABLE __TENANT_SCHEMA__.patient_payment_methods (
     created_by_user_id character varying(128) NOT NULL,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.patient_preferences (
+    id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    domain character varying(32) NOT NULL,
+    kind character varying(64) NOT NULL,
+    value jsonb,
+    text character varying(280),
+    strength character varying(8),
+    source character varying(16) NOT NULL,
+    source_ref character varying(128),
+    stated_at timestamp with time zone NOT NULL,
+    confirmed_at timestamp with time zone,
+    retired_at timestamp with time zone,
+    retired_by uuid,
+    created_by uuid,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_patient_preferences_has_content CHECK (((value IS NOT NULL) OR (text IS NOT NULL))),
+    CONSTRAINT ck_patient_preferences_source CHECK (((source)::text = ANY ((ARRAY['clinician'::character varying, 'assistant'::character varying, 'learned'::character varying, 'intake'::character varying, 'migrated'::character varying])::text[]))),
+    CONSTRAINT ck_patient_preferences_strength CHECK (((strength IS NULL) OR ((strength)::text = ANY ((ARRAY['hard'::character varying, 'soft'::character varying])::text[]))))
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.patient_problems (
+    id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    label character varying(255) NOT NULL,
+    icd10_code character varying(10),
+    status character varying(16) NOT NULL,
+    onset_date date,
+    "position" integer NOT NULL,
+    source_note_id uuid,
+    added_by uuid,
+    added_at timestamp with time zone NOT NULL,
+    resolved_at timestamp with time zone,
+    updated_at timestamp with time zone NOT NULL,
+    deleted_at timestamp with time zone,
+    CONSTRAINT ck_patient_problems_status CHECK (((status)::text = ANY ((ARRAY['active'::character varying, 'rule_out'::character varying, 'resolved'::character varying])::text[])))
 );
 
 
@@ -1092,6 +1279,13 @@ CREATE TABLE __TENANT_SCHEMA__.patients (
     postal_code character varying(10),
     sex character varying(1),
     preferred_name character varying(255),
+    allergy_status character varying(16) DEFAULT 'not_recorded'::character varying NOT NULL,
+    allergies jsonb DEFAULT '[]'::jsonb NOT NULL,
+    superbill_includes_diagnosis boolean DEFAULT false NOT NULL,
+    pronouns character varying(64),
+    emergency_contact text,
+    CONSTRAINT ck_patients_allergies_match_status CHECK ((((allergy_status)::text = 'recorded'::text) = (jsonb_array_length(allergies) > 0))),
+    CONSTRAINT ck_patients_allergy_status CHECK (((allergy_status)::text = ANY ((ARRAY['not_recorded'::character varying, 'nkda'::character varying, 'recorded'::character varying])::text[]))),
     CONSTRAINT ck_patients_sex CHECK (((sex)::text = ANY ((ARRAY['M'::character varying, 'F'::character varying, 'U'::character varying])::text[])))
 );
 
@@ -1133,6 +1327,14 @@ CREATE TABLE __TENANT_SCHEMA__.payers (
     CONSTRAINT ck_payers_corrected_claim_days CHECK ((corrected_claim_days > 0)),
     CONSTRAINT ck_payers_enrollment_status CHECK (((enrollment_status)::text = ANY ((ARRAY['none'::character varying, 'filed'::character varying, 'pending'::character varying, 'active'::character varying, 'error'::character varying])::text[]))),
     CONSTRAINT ck_payers_timely_filing_days CHECK ((timely_filing_days > 0))
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.practice_admins (
+    user_id uuid NOT NULL,
+    granted_by uuid NOT NULL,
+    granted_at timestamp with time zone NOT NULL
 );
 
 
@@ -1299,6 +1501,8 @@ CREATE TABLE __TENANT_SCHEMA__.refill_requests (
     prescriber_note text,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
+    due_at timestamp with time zone,
+    run_out_date date,
     CONSTRAINT ck_refill_requests_status CHECK (((status)::text = ANY ((ARRAY['requested'::character varying, 'approved'::character varying, 'needs_visit'::character varying, 'declined'::character varying])::text[])))
 );
 
@@ -1375,6 +1579,27 @@ ALTER SEQUENCE __TENANT_SCHEMA__.scheduling_policy_id_seq OWNED BY __TENANT_SCHE
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.session_dictations (
+    id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    note_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    author_user_id uuid NOT NULL,
+    audio_path text NOT NULL,
+    content_type character varying(100) NOT NULL,
+    duration_seconds integer,
+    status character varying(20) NOT NULL,
+    transcript text,
+    used_as character varying(20),
+    addendum_id uuid,
+    created_at timestamp with time zone NOT NULL,
+    transcribed_at timestamp with time zone,
+    CONSTRAINT ck_session_dictations_status CHECK (((status)::text = ANY ((ARRAY['transcribing'::character varying, 'transcribed'::character varying, 'failed'::character varying, 'no_speech'::character varying])::text[]))),
+    CONSTRAINT ck_session_dictations_used_as CHECK (((used_as IS NULL) OR ((used_as)::text = ANY ((ARRAY['redraft'::character varying, 'addendum'::character varying])::text[]))))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.supervision_hours (
     id uuid NOT NULL,
     supervision_relationship_id uuid NOT NULL,
@@ -1408,6 +1633,29 @@ CREATE TABLE __TENANT_SCHEMA__.supervision_relationships (
     notes text,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.tasks (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    item_type character varying(50) NOT NULL,
+    label character varying(255) NOT NULL,
+    due_date date,
+    notes text,
+    completed_at timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    source_ref character varying(128),
+    category character varying(32) DEFAULT 'compliance'::character varying NOT NULL,
+    source character varying(16) DEFAULT 'manual'::character varying NOT NULL,
+    parent_task_id uuid,
+    goal_key character varying(128),
+    repeat_rule character varying(16),
+    patient_id uuid,
+    CONSTRAINT ck_tasks_repeat_rule CHECK (((repeat_rule IS NULL) OR ((repeat_rule)::text = ANY ((ARRAY['weekly'::character varying, 'monthly'::character varying, 'quarterly'::character varying, 'yearly'::character varying])::text[])))),
+    CONSTRAINT ck_tasks_source CHECK (((source)::text = ANY ((ARRAY['manual'::character varying, 'reminder'::character varying, 'plan'::character varying, 'import'::character varying, 'session'::character varying])::text[])))
 );
 
 
@@ -1449,7 +1697,30 @@ CREATE TABLE __TENANT_SCHEMA__.therapy_sessions (
     redacted_transcript text,
     naturalized_transcript text,
     deleted_at timestamp with time zone,
-    transcription_job_metadata jsonb
+    transcription_job_metadata jsonb,
+    client_present_end_seconds double precision,
+    source_signer text,
+    source_document_id uuid
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.waitlist_entries (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    days jsonb NOT NULL,
+    times jsonb NOT NULL,
+    modality character varying(16) NOT NULL,
+    session_type character varying(30),
+    "position" integer NOT NULL,
+    paused boolean DEFAULT false NOT NULL,
+    no_auto_offer boolean DEFAULT false NOT NULL,
+    filled_at timestamp with time zone,
+    created_by uuid,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_waitlist_entries_modality CHECK (((modality)::text = ANY ((ARRAY['in_person'::character varying, 'telehealth'::character varying, 'either'::character varying])::text[])))
 );
 
 
@@ -1527,6 +1798,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.client_ai_consent_events
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.clinician_away_periods
+    ADD CONSTRAINT clinician_away_periods_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.clinician_profiles
     ADD CONSTRAINT clinician_profiles_pkey PRIMARY KEY (user_id);
 
@@ -1544,11 +1820,6 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.companion_sessions
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.compliance_documents
     ADD CONSTRAINT compliance_documents_pkey PRIMARY KEY (id);
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.compliance_items
-    ADD CONSTRAINT compliance_items_pkey PRIMARY KEY (id);
 
 
 
@@ -1584,6 +1855,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.google_calendar_tokens
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.google_created_calendars
     ADD CONSTRAINT google_created_calendars_pkey PRIMARY KEY (user_id, calendar_id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.homework_assignments
+    ADD CONSTRAINT homework_assignments_pkey PRIMARY KEY (id);
 
 
 
@@ -1632,6 +1908,26 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.intake_packet_versions
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_addenda
+    ADD CONSTRAINT note_addenda_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_chart_proposal_runs
+    ADD CONSTRAINT note_chart_proposal_runs_pkey PRIMARY KEY (note_id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_chart_proposals
+    ADD CONSTRAINT note_chart_proposals_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_signatures
+    ADD CONSTRAINT note_signatures_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.notes
     ADD CONSTRAINT notes_pkey PRIMARY KEY (id);
 
@@ -1644,6 +1940,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.outcome_measures
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_charges
     ADD CONSTRAINT patient_charges_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_chart_history
+    ADD CONSTRAINT patient_chart_history_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_chart_history_revisions
+    ADD CONSTRAINT patient_chart_history_revisions_pkey PRIMARY KEY (id);
 
 
 
@@ -1722,6 +2028,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_payment_methods
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_preferences
+    ADD CONSTRAINT patient_preferences_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_problems
+    ADD CONSTRAINT patient_problems_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_source_mappings
     ADD CONSTRAINT patient_source_mappings_pkey PRIMARY KEY (doc_id);
 
@@ -1749,6 +2065,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.llm_usage
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.payer_enrollments
     ADD CONSTRAINT pk_payer_enrollments PRIMARY KEY (payer_id, transaction_type);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.practice_admins
+    ADD CONSTRAINT practice_admins_pkey PRIMARY KEY (user_id);
 
 
 
@@ -1797,6 +2118,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.scheduling_policy
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.session_dictations
+    ADD CONSTRAINT session_dictations_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.supervision_hours
     ADD CONSTRAINT supervision_hours_pkey PRIMARY KEY (id);
 
@@ -1804,6 +2130,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.supervision_hours
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.supervision_relationships
     ADD CONSTRAINT supervision_relationships_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.tasks
+    ADD CONSTRAINT tasks_pkey PRIMARY KEY (id);
 
 
 
@@ -1844,6 +2175,21 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.intake_item_definitions
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.intake_packet_versions
     ADD CONSTRAINT uq_intake_packet_versions_number UNIQUE (template_id, version);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_chart_proposals
+    ADD CONSTRAINT uq_note_chart_proposals_field UNIQUE (note_id, field_key, item_key);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_signatures
+    ADD CONSTRAINT uq_note_signatures_note_version UNIQUE (note_id, version);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_chart_history
+    ADD CONSTRAINT uq_patient_chart_history_field UNIQUE (patient_id, field_key);
 
 
 
@@ -1909,6 +2255,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.claims
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.remittance_holds
     ADD CONSTRAINT ux_remittance_holds_posting_key UNIQUE (posting_key);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.waitlist_entries
+    ADD CONSTRAINT waitlist_entries_pkey PRIMARY KEY (id);
 
 
 
@@ -2056,6 +2407,14 @@ CREATE INDEX ix_client_ai_consent_events_patient_recorded ON __TENANT_SCHEMA__.c
 
 
 
+CREATE INDEX ix_clinician_away_periods_covering_user ON __TENANT_SCHEMA__.clinician_away_periods USING btree (covering_user_id);
+
+
+
+CREATE INDEX ix_clinician_away_periods_user_dates ON __TENANT_SCHEMA__.clinician_away_periods USING btree (user_id, start_date, end_date);
+
+
+
 CREATE INDEX ix_companion_auth_challenges_patient ON __TENANT_SCHEMA__.companion_auth_challenges USING btree (patient_id);
 
 
@@ -2069,10 +2428,6 @@ CREATE INDEX ix_compliance_documents_compliance_item_id ON __TENANT_SCHEMA__.com
 
 
 CREATE INDEX ix_compliance_documents_uploaded_by_user_id ON __TENANT_SCHEMA__.compliance_documents USING btree (uploaded_by_user_id);
-
-
-
-CREATE INDEX ix_compliance_items_user_id ON __TENANT_SCHEMA__.compliance_items USING btree (user_id);
 
 
 
@@ -2097,6 +2452,10 @@ CREATE INDEX ix_ehr_routes_ehr_system ON __TENANT_SCHEMA__.ehr_routes USING btre
 
 
 CREATE INDEX ix_external_calendar_events_user_answer ON __TENANT_SCHEMA__.external_calendar_events USING btree (user_id, answer);
+
+
+
+CREATE INDEX ix_homework_assignments_patient_id ON __TENANT_SCHEMA__.homework_assignments USING btree (patient_id);
 
 
 
@@ -2140,6 +2499,22 @@ CREATE INDEX ix_llm_usage_period ON __TENANT_SCHEMA__.llm_usage USING btree (per
 
 
 
+CREATE INDEX ix_note_addenda_note_id ON __TENANT_SCHEMA__.note_addenda USING btree (note_id);
+
+
+
+CREATE INDEX ix_note_addenda_patient_id ON __TENANT_SCHEMA__.note_addenda USING btree (patient_id);
+
+
+
+CREATE INDEX ix_note_signatures_note_id ON __TENANT_SCHEMA__.note_signatures USING btree (note_id);
+
+
+
+CREATE INDEX ix_note_signatures_patient_id ON __TENANT_SCHEMA__.note_signatures USING btree (patient_id);
+
+
+
 CREATE INDEX ix_notes_deleted_at_partial ON __TENANT_SCHEMA__.notes USING btree (deleted_at) WHERE (deleted_at IS NOT NULL);
 
 
@@ -2177,6 +2552,14 @@ CREATE INDEX ix_patient_charges_claim_id ON __TENANT_SCHEMA__.patient_charges US
 
 
 CREATE INDEX ix_patient_charges_patient_created ON __TENANT_SCHEMA__.patient_charges USING btree (patient_id, created_at);
+
+
+
+CREATE INDEX ix_patient_chart_history_revisions_patient_field ON __TENANT_SCHEMA__.patient_chart_history_revisions USING btree (patient_id, field_key);
+
+
+
+CREATE INDEX ix_patient_clinicians_away_period_id ON __TENANT_SCHEMA__.patient_clinicians USING btree (away_period_id);
 
 
 
@@ -2253,6 +2636,14 @@ CREATE INDEX ix_patient_messages_patient_id ON __TENANT_SCHEMA__.patient_message
 
 
 CREATE INDEX ix_patient_messages_thread_created ON __TENANT_SCHEMA__.patient_messages USING btree (thread_id, created_at);
+
+
+
+CREATE INDEX ix_patient_preferences_active ON __TENANT_SCHEMA__.patient_preferences USING btree (patient_id, kind) WHERE (retired_at IS NULL);
+
+
+
+CREATE INDEX ix_patient_problems_patient_id ON __TENANT_SCHEMA__.patient_problems USING btree (patient_id);
 
 
 
@@ -2340,6 +2731,18 @@ CREATE INDEX ix_remittance_holds_patient_id ON __TENANT_SCHEMA__.remittance_hold
 
 
 
+CREATE INDEX ix_session_dictations_note_id ON __TENANT_SCHEMA__.session_dictations USING btree (note_id);
+
+
+
+CREATE INDEX ix_session_dictations_patient_id ON __TENANT_SCHEMA__.session_dictations USING btree (patient_id);
+
+
+
+CREATE INDEX ix_session_dictations_session_id ON __TENANT_SCHEMA__.session_dictations USING btree (session_id);
+
+
+
 CREATE INDEX ix_supervision_hours_supervision_relationship_id ON __TENANT_SCHEMA__.supervision_hours USING btree (supervision_relationship_id);
 
 
@@ -2353,6 +2756,22 @@ CREATE INDEX ix_supervision_relationships_compliance_item_id ON __TENANT_SCHEMA_
 
 
 CREATE INDEX ix_supervision_relationships_user_id ON __TENANT_SCHEMA__.supervision_relationships USING btree (user_id);
+
+
+
+CREATE INDEX ix_tasks_parent_task_id ON __TENANT_SCHEMA__.tasks USING btree (parent_task_id);
+
+
+
+CREATE INDEX ix_tasks_user_goal_key ON __TENANT_SCHEMA__.tasks USING btree (user_id, goal_key) WHERE (goal_key IS NOT NULL);
+
+
+
+CREATE INDEX ix_tasks_user_id ON __TENANT_SCHEMA__.tasks USING btree (user_id);
+
+
+
+CREATE INDEX ix_tasks_user_patient_id ON __TENANT_SCHEMA__.tasks USING btree (user_id, patient_id) WHERE (patient_id IS NOT NULL);
 
 
 
@@ -2376,6 +2795,14 @@ CREATE INDEX ix_therapy_sessions_user_id ON __TENANT_SCHEMA__.therapy_sessions U
 
 
 
+CREATE INDEX ix_waitlist_entries_patient_id ON __TENANT_SCHEMA__.waitlist_entries USING btree (patient_id);
+
+
+
+CREATE INDEX ix_waitlist_entries_user_position ON __TENANT_SCHEMA__.waitlist_entries USING btree (user_id, "position");
+
+
+
 CREATE UNIQUE INDEX uq_appointments_outside_event_per_calendar ON __TENANT_SCHEMA__.appointments USING btree (outside_source, outside_calendar_id, outside_event_id) WHERE (((status)::text <> 'cancelled'::text) AND (outside_calendar_id IS NOT NULL));
 
 
@@ -2388,11 +2815,19 @@ CREATE UNIQUE INDEX uq_appointments_user_start_active ON __TENANT_SCHEMA__.appoi
 
 
 
+CREATE UNIQUE INDEX uq_homework_assignments_proposal ON __TENANT_SCHEMA__.homework_assignments USING btree (proposal_id) WHERE (proposal_id IS NOT NULL);
+
+
+
 CREATE UNIQUE INDEX uq_instrument_license_attestations_active ON __TENANT_SCHEMA__.instrument_license_attestations USING btree (instrument_code) WHERE (revoked_at IS NULL);
 
 
 
 CREATE UNIQUE INDEX uq_intake_documents_draft ON __TENANT_SCHEMA__.intake_documents USING btree (document_key) WHERE (published_at IS NULL);
+
+
+
+CREATE UNIQUE INDEX uq_note_chart_proposals_intake_field ON __TENANT_SCHEMA__.note_chart_proposals USING btree (intake_assignment_id, field_key, item_key) WHERE (intake_assignment_id IS NOT NULL);
 
 
 
@@ -2420,15 +2855,19 @@ CREATE UNIQUE INDEX uq_patient_intake_signatures_live ON __TENANT_SCHEMA__.patie
 
 
 
+CREATE UNIQUE INDEX uq_patient_messages_away_ack ON __TENANT_SCHEMA__.patient_messages USING btree (thread_id, away_period_id) WHERE (away_period_id IS NOT NULL);
+
+
+
 CREATE UNIQUE INDEX uq_patient_source_mappings_scoped ON __TENANT_SCHEMA__.patient_source_mappings USING btree (scope, source, source_identifier) WHERE (scope IS NOT NULL);
 
 
 
+CREATE UNIQUE INDEX uq_waitlist_entries_open ON __TENANT_SCHEMA__.waitlist_entries USING btree (user_id, patient_id) WHERE (filled_at IS NULL);
+
+
+
 CREATE UNIQUE INDEX ux_chat_messages_conversation_sequence ON __TENANT_SCHEMA__.chat_messages USING btree (conversation_id, sequence);
-
-
-
-CREATE UNIQUE INDEX ux_compliance_items_source_ref ON __TENANT_SCHEMA__.compliance_items USING btree (user_id, item_type, source_ref) WHERE (source_ref IS NOT NULL);
 
 
 
@@ -2453,6 +2892,10 @@ CREATE UNIQUE INDEX ux_patient_coverage_active_primary ON __TENANT_SCHEMA__.pati
 
 
 CREATE UNIQUE INDEX ux_patient_payment_methods_patient_id ON __TENANT_SCHEMA__.patient_payment_methods USING btree (patient_id);
+
+
+
+CREATE UNIQUE INDEX ux_tasks_source_ref ON __TENANT_SCHEMA__.tasks USING btree (user_id, item_type, source_ref) WHERE (source_ref IS NOT NULL);
 
 
 
@@ -2510,7 +2953,7 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.client_ai_consent_events
 
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.compliance_documents
-    ADD CONSTRAINT compliance_documents_compliance_item_id_fkey FOREIGN KEY (compliance_item_id) REFERENCES __TENANT_SCHEMA__.compliance_items(id) ON DELETE CASCADE;
+    ADD CONSTRAINT compliance_documents_compliance_item_id_fkey FOREIGN KEY (compliance_item_id) REFERENCES __TENANT_SCHEMA__.tasks(id) ON DELETE CASCADE;
 
 
 
@@ -2521,6 +2964,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.diagnostic_assessments
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.diagnostic_assessments
     ADD CONSTRAINT diagnostic_assessments_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.diagnostic_assessments
+    ADD CONSTRAINT diagnostic_assessments_problem_id_fkey FOREIGN KEY (problem_id) REFERENCES __TENANT_SCHEMA__.patient_problems(id) ON DELETE SET NULL;
 
 
 
@@ -2586,6 +3034,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.intake_item_definitions
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.intake_packet_versions
     ADD CONSTRAINT fk_intake_packet_versions_template FOREIGN KEY (template_id) REFERENCES __TENANT_SCHEMA__.intake_packet_templates(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_chart_proposals
+    ADD CONSTRAINT fk_note_chart_proposals_intake FOREIGN KEY (intake_assignment_id, patient_id) REFERENCES __TENANT_SCHEMA__.patient_intake_assignments(id, patient_id) ON DELETE CASCADE;
 
 
 
@@ -2679,6 +3132,61 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.payers
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.homework_assignments
+    ADD CONSTRAINT homework_assignments_note_id_fkey FOREIGN KEY (note_id) REFERENCES __TENANT_SCHEMA__.notes(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.homework_assignments
+    ADD CONSTRAINT homework_assignments_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.homework_assignments
+    ADD CONSTRAINT homework_assignments_proposal_id_fkey FOREIGN KEY (proposal_id) REFERENCES __TENANT_SCHEMA__.note_chart_proposals(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_addenda
+    ADD CONSTRAINT note_addenda_note_id_fkey FOREIGN KEY (note_id) REFERENCES __TENANT_SCHEMA__.notes(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_addenda
+    ADD CONSTRAINT note_addenda_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_chart_proposal_runs
+    ADD CONSTRAINT note_chart_proposal_runs_note_id_fkey FOREIGN KEY (note_id) REFERENCES __TENANT_SCHEMA__.notes(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_chart_proposal_runs
+    ADD CONSTRAINT note_chart_proposal_runs_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_chart_proposals
+    ADD CONSTRAINT note_chart_proposals_note_id_fkey FOREIGN KEY (note_id) REFERENCES __TENANT_SCHEMA__.notes(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_chart_proposals
+    ADD CONSTRAINT note_chart_proposals_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_signatures
+    ADD CONSTRAINT note_signatures_note_id_fkey FOREIGN KEY (note_id) REFERENCES __TENANT_SCHEMA__.notes(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_signatures
+    ADD CONSTRAINT note_signatures_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.notes
     ADD CONSTRAINT notes_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
 
@@ -2704,6 +3212,31 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.outcome_measures
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_chart_history
+    ADD CONSTRAINT patient_chart_history_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_chart_history_revisions
+    ADD CONSTRAINT patient_chart_history_revisions_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_chart_history_revisions
+    ADD CONSTRAINT patient_chart_history_revisions_source_note_id_fkey FOREIGN KEY (source_note_id) REFERENCES __TENANT_SCHEMA__.notes(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_chart_history
+    ADD CONSTRAINT patient_chart_history_source_note_id_fkey FOREIGN KEY (source_note_id) REFERENCES __TENANT_SCHEMA__.notes(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_clinicians
+    ADD CONSTRAINT patient_clinicians_away_period_id_fkey FOREIGN KEY (away_period_id) REFERENCES __TENANT_SCHEMA__.clinician_away_periods(id) ON DELETE SET NULL;
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_clinicians
     ADD CONSTRAINT patient_clinicians_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
 
@@ -2719,8 +3252,33 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_medications
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_medications
+    ADD CONSTRAINT patient_medications_source_note_id_fkey FOREIGN KEY (source_note_id) REFERENCES __TENANT_SCHEMA__.notes(id) ON DELETE SET NULL;
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_threads
     ADD CONSTRAINT patient_message_threads_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_messages
+    ADD CONSTRAINT patient_messages_away_period_id_fkey FOREIGN KEY (away_period_id) REFERENCES __TENANT_SCHEMA__.clinician_away_periods(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_preferences
+    ADD CONSTRAINT patient_preferences_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_problems
+    ADD CONSTRAINT patient_problems_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_problems
+    ADD CONSTRAINT patient_problems_source_note_id_fkey FOREIGN KEY (source_note_id) REFERENCES __TENANT_SCHEMA__.notes(id) ON DELETE SET NULL;
 
 
 
@@ -2784,13 +3342,43 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.remittance_holds
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.session_dictations
+    ADD CONSTRAINT session_dictations_addendum_id_fkey FOREIGN KEY (addendum_id) REFERENCES __TENANT_SCHEMA__.note_addenda(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.session_dictations
+    ADD CONSTRAINT session_dictations_note_id_fkey FOREIGN KEY (note_id) REFERENCES __TENANT_SCHEMA__.notes(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.session_dictations
+    ADD CONSTRAINT session_dictations_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.session_dictations
+    ADD CONSTRAINT session_dictations_session_id_fkey FOREIGN KEY (session_id) REFERENCES __TENANT_SCHEMA__.therapy_sessions(id) ON DELETE CASCADE;
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.supervision_hours
     ADD CONSTRAINT supervision_hours_supervision_relationship_id_fkey FOREIGN KEY (supervision_relationship_id) REFERENCES __TENANT_SCHEMA__.supervision_relationships(id) ON DELETE CASCADE;
 
 
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.supervision_relationships
-    ADD CONSTRAINT supervision_relationships_compliance_item_id_fkey FOREIGN KEY (compliance_item_id) REFERENCES __TENANT_SCHEMA__.compliance_items(id) ON DELETE CASCADE;
+    ADD CONSTRAINT supervision_relationships_compliance_item_id_fkey FOREIGN KEY (compliance_item_id) REFERENCES __TENANT_SCHEMA__.tasks(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.tasks
+    ADD CONSTRAINT tasks_parent_task_id_fkey FOREIGN KEY (parent_task_id) REFERENCES __TENANT_SCHEMA__.tasks(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.tasks
+    ADD CONSTRAINT tasks_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE SET NULL;
 
 
 
@@ -2799,7 +3387,29 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.therapy_sessions
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.therapy_sessions
+    ADD CONSTRAINT therapy_sessions_source_document_id_fkey FOREIGN KEY (source_document_id) REFERENCES __TENANT_SCHEMA__.patient_documents(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.waitlist_entries
+    ADD CONSTRAINT waitlist_entries_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
 CREATE POLICY rls_audit_actor_access ON __TENANT_SCHEMA__.audit_logs USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((((actor_type)::text IS DISTINCT FROM 'patient'::text) AND ((user_id)::text = current_setting('app.current_user_id'::text, true))) OR (((actor_type)::text = 'patient'::text) AND ((user_id)::text = current_setting('app.current_patient_id'::text, true)))));
+
+
+
+CREATE POLICY rls_audit_coverage_read ON __TENANT_SCHEMA__.audit_logs FOR SELECT USING (((patient_id IS NOT NULL) AND ((changes ->> 'coverage_period_id'::text) IS NOT NULL) AND (EXISTS ( SELECT 1
+   FROM __TENANT_SCHEMA__.clinician_away_periods ap
+  WHERE (((ap.id)::text = (audit_logs.changes ->> 'coverage_period_id'::text)) AND ((ap.user_id)::text = current_setting('app.current_user_id'::text, true)) AND ((ap.covering_user_id)::text = (audit_logs.user_id)::text)))) AND __TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying)));
+
+
+
+CREATE POLICY rls_audit_owner_client_read ON __TENANT_SCHEMA__.audit_logs FOR SELECT USING (((patient_id IS NOT NULL) AND __TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying) AND (EXISTS ( SELECT 1
+   FROM platform.practices p
+  WHERE (((p.owner_user_id)::text = current_setting('app.current_user_id'::text, true)) AND ((to_regclass(((p.schema_name)::text || '.audit_logs'::text)))::oid = ('__TENANT_SCHEMA__.audit_logs'::regclass)::oid))))));
 
 
 
@@ -2812,3 +3422,759 @@ CREATE POLICY rls_audit_purge_select ON __TENANT_SCHEMA__.audit_logs FOR SELECT 
 
 
 CREATE POLICY rls_patient_doc_access ON __TENANT_SCHEMA__.patient_documents USING (((((category)::text <> ALL ((ARRAY['therapist_private'::character varying, 'psychotherapy_notes'::character varying])::text[])) AND __TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying)) OR (((category)::text = ANY ((ARRAY['therapist_private'::character varying, 'psychotherapy_notes'::character varying])::text[])) AND ((user_id)::text = current_setting('app.current_user_id'::text, true)))));
+
+-- @@ row-level security: applied to practice schemas only @@
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_clinicians FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.appointment_types FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.appointments FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.audit_logs FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.availability_rules FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.chat_conversations FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.chat_messages FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.claim_events FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.claim_lines FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.claim_reminders FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.claims FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.client_ai_consent_events FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.clinician_profiles FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.compliance_documents FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.diagnostic_assessments FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.external_calendar_events FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.google_calendar_settings FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.google_calendar_tokens FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.google_created_calendars FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.homework_assignments FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.ical_sync_configs FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.inbox_item_states FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.llm_usage FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_addenda FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_chart_proposal_runs FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_chart_proposals FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.note_signatures FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.notes FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.outcome_measures FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_charges FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_chart_history FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_chart_history_revisions FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_coverage FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_documents FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_artifacts FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_assignments FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_responses FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_review_events FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_signatures FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_intake_submissions FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_medications FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_attachments FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_threads FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_messages FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_payment_methods FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_preferences FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_problems FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_source_mappings FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patients FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.prescribing_checklist_items FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.prescribing_encounter_addenda FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.prescribing_encounters FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.prescriptions FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.refill_requests FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.remittance_holds FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.session_dictations FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.supervision_hours FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.supervision_relationships FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.tasks FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.telehealth_connections FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.therapy_sessions FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.waitlist_entries FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.appointment_types ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.appointments ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.audit_logs ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.availability_rules ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.chat_conversations ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.chat_messages ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.claim_events ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.claim_lines ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.claim_reminders ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.claims ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.client_ai_consent_events ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.clinician_profiles ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.compliance_documents ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.diagnostic_assessments ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.external_calendar_events ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.google_calendar_settings ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.google_calendar_tokens ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.google_created_calendars ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.homework_assignments ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.ical_sync_configs ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.inbox_item_states ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.llm_usage ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.note_addenda ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.note_chart_proposal_runs ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.note_chart_proposals ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.note_signatures ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.notes ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.outcome_measures ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.patient_charges ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.patient_chart_history ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.patient_chart_history_revisions ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.patient_clinicians ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.patient_coverage ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.patient_documents ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.patient_intake_artifacts ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.patient_intake_assignments ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.patient_intake_responses ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.patient_intake_review_events ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.patient_intake_signatures ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.patient_intake_submissions ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.patient_medications ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.patient_message_attachments ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.patient_message_threads ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.patient_messages ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.patient_payment_methods ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.patient_preferences ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.patient_problems ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.patient_source_mappings ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.patients ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.prescribing_checklist_items ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.prescribing_encounter_addenda ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.prescribing_encounters ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.prescriptions ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.refill_requests ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.remittance_holds ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.session_dictations ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.supervision_hours ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.supervision_relationships ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.tasks ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.telehealth_connections ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.therapy_sessions ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.waitlist_entries ENABLE ROW LEVEL SECURITY;
+
+COMMENT ON POLICY rls_audit_actor_access ON __TENANT_SCHEMA__.audit_logs IS 'rls-fingerprint-v1-07f5a6e076ff6d264d58594ceca1ac0fd70961c38067f412d4326ed0aad73672';
+
+COMMENT ON POLICY rls_audit_coverage_read ON __TENANT_SCHEMA__.audit_logs IS 'rls-fingerprint-v1-07f5a6e076ff6d264d58594ceca1ac0fd70961c38067f412d4326ed0aad73672';
+
+COMMENT ON POLICY rls_audit_owner_client_read ON __TENANT_SCHEMA__.audit_logs IS 'rls-fingerprint-v1-07f5a6e076ff6d264d58594ceca1ac0fd70961c38067f412d4326ed0aad73672';
+
+COMMENT ON POLICY rls_audit_purge_delete ON __TENANT_SCHEMA__.audit_logs IS 'rls-fingerprint-v1-07f5a6e076ff6d264d58594ceca1ac0fd70961c38067f412d4326ed0aad73672';
+
+COMMENT ON POLICY rls_audit_purge_select ON __TENANT_SCHEMA__.audit_logs IS 'rls-fingerprint-v1-07f5a6e076ff6d264d58594ceca1ac0fd70961c38067f412d4326ed0aad73672';
+
+CREATE POLICY rls_chat_message_access ON __TENANT_SCHEMA__.chat_messages USING ((EXISTS ( SELECT 1
+   FROM __TENANT_SCHEMA__.chat_conversations c
+  WHERE ((c.id = chat_messages.conversation_id) AND __TENANT_SCHEMA__.has_patient_access(c.patient_id, (current_setting('app.current_user_id'::text, true))::character varying)))));
+
+COMMENT ON POLICY rls_chat_message_access ON __TENANT_SCHEMA__.chat_messages IS 'rls-fingerprint-v1-6836f929eafc4f1e38513c91e18d5b7b012385ff4287e489143cd5b15f74c255';
+
+CREATE POLICY rls_note_access ON __TENANT_SCHEMA__.notes USING ((((NOT restricted) AND __TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying)) OR (restricted AND ((author_user_id)::text = current_setting('app.current_user_id'::text, true)))));
+
+COMMENT ON POLICY rls_note_access ON __TENANT_SCHEMA__.notes IS 'rls-fingerprint-v1-1791a1da6d89172abaf75a1062f6a955afdd1378b3579e1c9683924aae5dd226';
+
+CREATE POLICY rls_note_child_access ON __TENANT_SCHEMA__.note_addenda USING ((EXISTS ( SELECT 1
+   FROM __TENANT_SCHEMA__.notes n
+  WHERE (n.id = note_addenda.note_id))));
+
+COMMENT ON POLICY rls_note_child_access ON __TENANT_SCHEMA__.note_addenda IS 'rls-fingerprint-v1-8edd01bb2d4c149294a81b9c4a838767d668a7503a2cedb087862d2b6277bea8';
+
+CREATE POLICY rls_note_child_access ON __TENANT_SCHEMA__.note_signatures USING ((EXISTS ( SELECT 1
+   FROM __TENANT_SCHEMA__.notes n
+  WHERE (n.id = note_signatures.note_id))));
+
+COMMENT ON POLICY rls_note_child_access ON __TENANT_SCHEMA__.note_signatures IS 'rls-fingerprint-v1-26c5bfee98b0635892b51a7d1fbe6fa84e70ccc2a31711fa41648a5f34df7df0';
+
+CREATE POLICY rls_note_child_access ON __TENANT_SCHEMA__.session_dictations USING ((EXISTS ( SELECT 1
+   FROM __TENANT_SCHEMA__.notes n
+  WHERE (n.id = session_dictations.note_id))));
+
+COMMENT ON POLICY rls_note_child_access ON __TENANT_SCHEMA__.session_dictations IS 'rls-fingerprint-v1-8087c09238701e996260c5848802a3acbe0cecc6188199c8eaef8b94be6dcbb9';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.chat_conversations USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.chat_conversations IS 'rls-fingerprint-v1-f6d517096fd5ba680f75044eded5534acb7ec7bdafe0475646cecf6614f328af';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.claim_events USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.claim_events IS 'rls-fingerprint-v1-6e5b1bdbaa65a591990fb1d6be4720ee39b98be05b18e6af9ee8f77fab95b126';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.claim_lines USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.claim_lines IS 'rls-fingerprint-v1-876f9dd1418ae5300e7b13e51d91ae779bbfddced6d7e941fc9de47c89d8e806';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.claim_reminders USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.claim_reminders IS 'rls-fingerprint-v1-2c4a919cdeeb48cf86bc8fd03b415e9f6754b4cc743c4373c5cfe8726a058476';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.claims USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.claims IS 'rls-fingerprint-v1-7eb533a1eb9a0a588da844a4f2b66482d3d27b65a97fc233eba4ddbce872eb9a';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.client_ai_consent_events USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.client_ai_consent_events IS 'rls-fingerprint-v1-c150987d46b34e410199cb0b7807e94513d3a2c4c5047cb1f34189fa71724480';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.diagnostic_assessments USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.diagnostic_assessments IS 'rls-fingerprint-v1-b164c2d3a2b313b8425c80dddbe502541137a85bb885602d3347e20b8a913d3a';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.homework_assignments USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.homework_assignments IS 'rls-fingerprint-v1-1044aa2ef55d44ca8e43170e1255ef355ea3665173bf583f57f5c1ac6a70abfd';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.note_chart_proposal_runs USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.note_chart_proposal_runs IS 'rls-fingerprint-v1-6acde0a8e4f33efe9ff7e4ad4ba7e7901ab984b790161079db0cfcfd7c281d05';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.note_chart_proposals USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.note_chart_proposals IS 'rls-fingerprint-v1-90cdd675014cdd3884ccad215e04a08467d39eb5ae6d59fe70ccd48081604e5a';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.outcome_measures USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.outcome_measures IS 'rls-fingerprint-v1-ca258d97cd8165c0be07edf929c55461c56b51f8a8a999e2df48487f212145d0';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_charges USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_charges IS 'rls-fingerprint-v1-8bdfd6ac95751068c3efc0e5df8d6b4a77e1b434d6af0f16bf8b8c72f64c56ec';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_chart_history USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_chart_history IS 'rls-fingerprint-v1-997720327cd5591a57127d3bf318b6d63ba20a2072a736d97e208729043f6305';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_chart_history_revisions USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_chart_history_revisions IS 'rls-fingerprint-v1-379ad77b6c16f59ea9713435ef0af71a0607c92a6d3df477f93e792ce7189e55';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_coverage USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_coverage IS 'rls-fingerprint-v1-dc2c22af3a214a7f5fd7b9f0f403170893022ed0cd57fc9e06ca8975bb228048';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_intake_artifacts USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_intake_artifacts IS 'rls-fingerprint-v1-ad99e9075ddd05dc544739959fcc4c10aab4c5b3a23ae5d85c920289763c0072';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_intake_assignments USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_intake_assignments IS 'rls-fingerprint-v1-10f75f351648857b2f1aa618ac43031026d5c3f826a42970993dffc0c628a93a';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_intake_responses USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_intake_responses IS 'rls-fingerprint-v1-8b180f19e87707ecc11534850144bea93ff17bbb12826d86b1fd31980d1ebcce';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_intake_review_events USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_intake_review_events IS 'rls-fingerprint-v1-0acabdfd70e7431ec9a08d13ff41ff7d37a8a7af12147e37b3f89099e7b1c1f9';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_intake_signatures USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_intake_signatures IS 'rls-fingerprint-v1-8fa49a690186b3bb37c1c44ddfb606e1ae916e54d6c636a7d2946f7aaabaf695';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_intake_submissions USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_intake_submissions IS 'rls-fingerprint-v1-ba22c5169e46176ea1bc3eb4ca241ac773043ff59780f70875e08733da38065c';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_medications USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_medications IS 'rls-fingerprint-v1-c5bc00156756be19034162a10e48b2a4e979ce3fd4a88b16c6dcc794a011c23d';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_message_attachments USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_message_attachments IS 'rls-fingerprint-v1-e68f02bea7956edbe8120f9c45a6bbd6f765e10ff4d63f05da27a70a3656a301';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_message_threads USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_message_threads IS 'rls-fingerprint-v1-e1faf3a2403f14544086e4ce902bfe64f3e810f4329bfc33048aa346178d3abc';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_messages USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_messages IS 'rls-fingerprint-v1-8dc7a1dfd9345a3f3485e51b75a8b91b9ad4128e2b9bdb6527470c4a104a419a';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_payment_methods USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_payment_methods IS 'rls-fingerprint-v1-4b2bb3af1f91e78de5eebc854199d2871b885ff70ad25aaf07228e61ba1d45ab';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_preferences USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_preferences IS 'rls-fingerprint-v1-025187651248dd309c5ea4f6352a1e06bc95a9e83e3562f76e00514929e0812f';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_problems USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.patient_problems IS 'rls-fingerprint-v1-209acf6e67b76eddc385363e0599c3ab34b36bdc2769b0a7642f203db6213c5c';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.patients FOR SELECT USING (__TENANT_SCHEMA__.has_patient_access(id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.patients IS 'rls-fingerprint-v1-44ee2b27afbdb34860844d4eca6f26892d089163a97f61dd084773e187097b32';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.prescribing_checklist_items USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.prescribing_checklist_items IS 'rls-fingerprint-v1-a4501498b0c4b1c06b9a716863034a5019b8e18367cd65a5e64a307581d615d4';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.prescribing_encounter_addenda USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.prescribing_encounter_addenda IS 'rls-fingerprint-v1-8a14561fcc0bb2f3c1a6de6a20b16e09945bc0398b02d7006059ba321d2fc79b';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.prescribing_encounters USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.prescribing_encounters IS 'rls-fingerprint-v1-a3e1f39370ec1d2ec71337825e0f167118d561f629bb113d439eecdf50da96f7';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.prescriptions USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.prescriptions IS 'rls-fingerprint-v1-8db3e549b6e2daaae2f583339e9e189c573168208480f52e25cbc005acbd8d9c';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.refill_requests USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.refill_requests IS 'rls-fingerprint-v1-927e1bbe03952b5e0289e9f6c7a9284b7eb5eb1d021a42f2a02e561ac3ee4c48';
+
+CREATE POLICY rls_patient_access ON __TENANT_SCHEMA__.remittance_holds USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_access ON __TENANT_SCHEMA__.remittance_holds IS 'rls-fingerprint-v1-c26697552b4ccad6851ed77ac5f03b4412ad26a97eb91b8067e19b893c89a2a9';
+
+CREATE POLICY rls_patient_delete ON __TENANT_SCHEMA__.patients FOR DELETE USING (__TENANT_SCHEMA__.has_patient_access(id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_delete ON __TENANT_SCHEMA__.patients IS 'rls-fingerprint-v1-44ee2b27afbdb34860844d4eca6f26892d089163a97f61dd084773e187097b32';
+
+COMMENT ON POLICY rls_patient_doc_access ON __TENANT_SCHEMA__.patient_documents IS 'rls-fingerprint-v1-a8c515c80b6689d309c33d2fd255ead191744dc2586a5f9cd713d73d42aa2f9c';
+
+CREATE POLICY rls_patient_insert ON __TENANT_SCHEMA__.patients FOR INSERT WITH CHECK ((COALESCE(current_setting('app.current_user_id'::text, true), ''::text) <> ''::text));
+
+COMMENT ON POLICY rls_patient_insert ON __TENANT_SCHEMA__.patients IS 'rls-fingerprint-v1-44ee2b27afbdb34860844d4eca6f26892d089163a97f61dd084773e187097b32';
+
+CREATE POLICY rls_patient_modify ON __TENANT_SCHEMA__.patients FOR UPDATE USING (__TENANT_SCHEMA__.has_patient_access(id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_patient_modify ON __TENANT_SCHEMA__.patients IS 'rls-fingerprint-v1-44ee2b27afbdb34860844d4eca6f26892d089163a97f61dd084773e187097b32';
+
+CREATE POLICY rls_patient_self_delete ON __TENANT_SCHEMA__.chat_conversations FOR DELETE USING ((((patient_id)::text = current_setting('app.current_patient_id'::text, true)) AND (owner_user_id IS NULL)));
+
+COMMENT ON POLICY rls_patient_self_delete ON __TENANT_SCHEMA__.chat_conversations IS 'rls-fingerprint-v1-f6d517096fd5ba680f75044eded5534acb7ec7bdafe0475646cecf6614f328af';
+
+CREATE POLICY rls_patient_self_delete ON __TENANT_SCHEMA__.chat_messages FOR DELETE USING ((EXISTS ( SELECT 1
+   FROM __TENANT_SCHEMA__.chat_conversations c
+  WHERE ((c.id = chat_messages.conversation_id) AND ((c.patient_id)::text = current_setting('app.current_patient_id'::text, true)) AND (c.owner_user_id IS NULL)))));
+
+COMMENT ON POLICY rls_patient_self_delete ON __TENANT_SCHEMA__.chat_messages IS 'rls-fingerprint-v1-6836f929eafc4f1e38513c91e18d5b7b012385ff4287e489143cd5b15f74c255';
+
+CREATE POLICY rls_patient_self_delete ON __TENANT_SCHEMA__.patient_intake_artifacts FOR DELETE USING (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_delete ON __TENANT_SCHEMA__.patient_intake_artifacts IS 'rls-fingerprint-v1-ad99e9075ddd05dc544739959fcc4c10aab4c5b3a23ae5d85c920289763c0072';
+
+CREATE POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.chat_conversations FOR INSERT WITH CHECK ((((patient_id)::text = current_setting('app.current_patient_id'::text, true)) AND (owner_user_id IS NULL)));
+
+COMMENT ON POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.chat_conversations IS 'rls-fingerprint-v1-f6d517096fd5ba680f75044eded5534acb7ec7bdafe0475646cecf6614f328af';
+
+CREATE POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.chat_messages FOR INSERT WITH CHECK ((EXISTS ( SELECT 1
+   FROM __TENANT_SCHEMA__.chat_conversations c
+  WHERE ((c.id = chat_messages.conversation_id) AND ((c.patient_id)::text = current_setting('app.current_patient_id'::text, true)) AND (c.owner_user_id IS NULL)))));
+
+COMMENT ON POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.chat_messages IS 'rls-fingerprint-v1-6836f929eafc4f1e38513c91e18d5b7b012385ff4287e489143cd5b15f74c255';
+
+CREATE POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.homework_assignments FOR INSERT WITH CHECK ((((patient_id)::text = current_setting('app.current_patient_id'::text, true)) AND ((status)::text = ANY ((ARRAY['assigned'::character varying, 'done'::character varying])::text[]))));
+
+COMMENT ON POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.homework_assignments IS 'rls-fingerprint-v1-1044aa2ef55d44ca8e43170e1255ef355ea3665173bf583f57f5c1ac6a70abfd';
+
+CREATE POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.outcome_measures FOR INSERT WITH CHECK (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.outcome_measures IS 'rls-fingerprint-v1-ca258d97cd8165c0be07edf929c55461c56b51f8a8a999e2df48487f212145d0';
+
+CREATE POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.patient_coverage FOR INSERT WITH CHECK (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.patient_coverage IS 'rls-fingerprint-v1-dc2c22af3a214a7f5fd7b9f0f403170893022ed0cd57fc9e06ca8975bb228048';
+
+CREATE POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.patient_documents FOR INSERT WITH CHECK ((((patient_id)::text = current_setting('app.current_patient_id'::text, true)) AND ((category)::text = ANY ((ARRAY['intake_artifact'::character varying, 'message'::character varying])::text[]))));
+
+COMMENT ON POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.patient_documents IS 'rls-fingerprint-v1-a8c515c80b6689d309c33d2fd255ead191744dc2586a5f9cd713d73d42aa2f9c';
+
+CREATE POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.patient_intake_artifacts FOR INSERT WITH CHECK (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.patient_intake_artifacts IS 'rls-fingerprint-v1-ad99e9075ddd05dc544739959fcc4c10aab4c5b3a23ae5d85c920289763c0072';
+
+CREATE POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.patient_intake_assignments FOR INSERT WITH CHECK (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.patient_intake_assignments IS 'rls-fingerprint-v1-10f75f351648857b2f1aa618ac43031026d5c3f826a42970993dffc0c628a93a';
+
+CREATE POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.patient_intake_responses FOR INSERT WITH CHECK (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.patient_intake_responses IS 'rls-fingerprint-v1-8b180f19e87707ecc11534850144bea93ff17bbb12826d86b1fd31980d1ebcce';
+
+CREATE POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.patient_intake_review_events FOR INSERT WITH CHECK ((((patient_id)::text = current_setting('app.current_patient_id'::text, true)) AND ((kind)::text = 'corrected'::text)));
+
+COMMENT ON POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.patient_intake_review_events IS 'rls-fingerprint-v1-0acabdfd70e7431ec9a08d13ff41ff7d37a8a7af12147e37b3f89099e7b1c1f9';
+
+CREATE POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.patient_intake_signatures FOR INSERT WITH CHECK (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.patient_intake_signatures IS 'rls-fingerprint-v1-8fa49a690186b3bb37c1c44ddfb606e1ae916e54d6c636a7d2946f7aaabaf695';
+
+CREATE POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.patient_intake_submissions FOR INSERT WITH CHECK (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.patient_intake_submissions IS 'rls-fingerprint-v1-ba22c5169e46176ea1bc3eb4ca241ac773043ff59780f70875e08733da38065c';
+
+CREATE POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.patient_message_attachments FOR INSERT WITH CHECK (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.patient_message_attachments IS 'rls-fingerprint-v1-e68f02bea7956edbe8120f9c45a6bbd6f765e10ff4d63f05da27a70a3656a301';
+
+CREATE POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.patient_message_threads FOR INSERT WITH CHECK (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.patient_message_threads IS 'rls-fingerprint-v1-e1faf3a2403f14544086e4ce902bfe64f3e810f4329bfc33048aa346178d3abc';
+
+CREATE POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.patient_messages FOR INSERT WITH CHECK (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.patient_messages IS 'rls-fingerprint-v1-8dc7a1dfd9345a3f3485e51b75a8b91b9ad4128e2b9bdb6527470c4a104a419a';
+
+CREATE POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.patients FOR INSERT WITH CHECK (((id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.patients IS 'rls-fingerprint-v1-44ee2b27afbdb34860844d4eca6f26892d089163a97f61dd084773e187097b32';
+
+CREATE POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.refill_requests FOR INSERT WITH CHECK (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.refill_requests IS 'rls-fingerprint-v1-927e1bbe03952b5e0289e9f6c7a9284b7eb5eb1d021a42f2a02e561ac3ee4c48';
+
+CREATE POLICY rls_patient_self_read ON __TENANT_SCHEMA__.appointments FOR SELECT USING (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_read ON __TENANT_SCHEMA__.appointments IS 'rls-fingerprint-v1-4c3f36d984e7811c85af6183af521926b0cd0bab6f97ef2f196aa9a35b3f934c';
+
+CREATE POLICY rls_patient_self_read ON __TENANT_SCHEMA__.chat_conversations FOR SELECT USING ((((patient_id)::text = current_setting('app.current_patient_id'::text, true)) AND (owner_user_id IS NULL)));
+
+COMMENT ON POLICY rls_patient_self_read ON __TENANT_SCHEMA__.chat_conversations IS 'rls-fingerprint-v1-f6d517096fd5ba680f75044eded5534acb7ec7bdafe0475646cecf6614f328af';
+
+CREATE POLICY rls_patient_self_read ON __TENANT_SCHEMA__.chat_messages FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM __TENANT_SCHEMA__.chat_conversations c
+  WHERE ((c.id = chat_messages.conversation_id) AND ((c.patient_id)::text = current_setting('app.current_patient_id'::text, true)) AND (c.owner_user_id IS NULL)))));
+
+COMMENT ON POLICY rls_patient_self_read ON __TENANT_SCHEMA__.chat_messages IS 'rls-fingerprint-v1-6836f929eafc4f1e38513c91e18d5b7b012385ff4287e489143cd5b15f74c255';
+
+CREATE POLICY rls_patient_self_read ON __TENANT_SCHEMA__.homework_assignments FOR SELECT USING ((((patient_id)::text = current_setting('app.current_patient_id'::text, true)) AND ((status)::text = ANY ((ARRAY['assigned'::character varying, 'done'::character varying])::text[]))));
+
+COMMENT ON POLICY rls_patient_self_read ON __TENANT_SCHEMA__.homework_assignments IS 'rls-fingerprint-v1-1044aa2ef55d44ca8e43170e1255ef355ea3665173bf583f57f5c1ac6a70abfd';
+
+CREATE POLICY rls_patient_self_read ON __TENANT_SCHEMA__.outcome_measures FOR SELECT USING (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_read ON __TENANT_SCHEMA__.outcome_measures IS 'rls-fingerprint-v1-ca258d97cd8165c0be07edf929c55461c56b51f8a8a999e2df48487f212145d0';
+
+CREATE POLICY rls_patient_self_read ON __TENANT_SCHEMA__.patient_coverage FOR SELECT USING (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_read ON __TENANT_SCHEMA__.patient_coverage IS 'rls-fingerprint-v1-dc2c22af3a214a7f5fd7b9f0f403170893022ed0cd57fc9e06ca8975bb228048';
+
+CREATE POLICY rls_patient_self_read ON __TENANT_SCHEMA__.patient_documents FOR SELECT USING ((((patient_id)::text = current_setting('app.current_patient_id'::text, true)) AND ((category)::text = ANY ((ARRAY['intake_artifact'::character varying, 'message'::character varying])::text[]))));
+
+COMMENT ON POLICY rls_patient_self_read ON __TENANT_SCHEMA__.patient_documents IS 'rls-fingerprint-v1-a8c515c80b6689d309c33d2fd255ead191744dc2586a5f9cd713d73d42aa2f9c';
+
+CREATE POLICY rls_patient_self_read ON __TENANT_SCHEMA__.patient_intake_artifacts FOR SELECT USING (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_read ON __TENANT_SCHEMA__.patient_intake_artifacts IS 'rls-fingerprint-v1-ad99e9075ddd05dc544739959fcc4c10aab4c5b3a23ae5d85c920289763c0072';
+
+CREATE POLICY rls_patient_self_read ON __TENANT_SCHEMA__.patient_intake_assignments FOR SELECT USING (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_read ON __TENANT_SCHEMA__.patient_intake_assignments IS 'rls-fingerprint-v1-10f75f351648857b2f1aa618ac43031026d5c3f826a42970993dffc0c628a93a';
+
+CREATE POLICY rls_patient_self_read ON __TENANT_SCHEMA__.patient_intake_responses FOR SELECT USING (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_read ON __TENANT_SCHEMA__.patient_intake_responses IS 'rls-fingerprint-v1-8b180f19e87707ecc11534850144bea93ff17bbb12826d86b1fd31980d1ebcce';
+
+CREATE POLICY rls_patient_self_read ON __TENANT_SCHEMA__.patient_intake_review_events FOR SELECT USING (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_read ON __TENANT_SCHEMA__.patient_intake_review_events IS 'rls-fingerprint-v1-0acabdfd70e7431ec9a08d13ff41ff7d37a8a7af12147e37b3f89099e7b1c1f9';
+
+CREATE POLICY rls_patient_self_read ON __TENANT_SCHEMA__.patient_intake_signatures FOR SELECT USING (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_read ON __TENANT_SCHEMA__.patient_intake_signatures IS 'rls-fingerprint-v1-8fa49a690186b3bb37c1c44ddfb606e1ae916e54d6c636a7d2946f7aaabaf695';
+
+CREATE POLICY rls_patient_self_read ON __TENANT_SCHEMA__.patient_intake_submissions FOR SELECT USING (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_read ON __TENANT_SCHEMA__.patient_intake_submissions IS 'rls-fingerprint-v1-ba22c5169e46176ea1bc3eb4ca241ac773043ff59780f70875e08733da38065c';
+
+CREATE POLICY rls_patient_self_read ON __TENANT_SCHEMA__.patient_medications FOR SELECT USING (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_read ON __TENANT_SCHEMA__.patient_medications IS 'rls-fingerprint-v1-c5bc00156756be19034162a10e48b2a4e979ce3fd4a88b16c6dcc794a011c23d';
+
+CREATE POLICY rls_patient_self_read ON __TENANT_SCHEMA__.patient_message_attachments FOR SELECT USING (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_read ON __TENANT_SCHEMA__.patient_message_attachments IS 'rls-fingerprint-v1-e68f02bea7956edbe8120f9c45a6bbd6f765e10ff4d63f05da27a70a3656a301';
+
+CREATE POLICY rls_patient_self_read ON __TENANT_SCHEMA__.patient_message_threads FOR SELECT USING (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_read ON __TENANT_SCHEMA__.patient_message_threads IS 'rls-fingerprint-v1-e1faf3a2403f14544086e4ce902bfe64f3e810f4329bfc33048aa346178d3abc';
+
+CREATE POLICY rls_patient_self_read ON __TENANT_SCHEMA__.patient_messages FOR SELECT USING (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_read ON __TENANT_SCHEMA__.patient_messages IS 'rls-fingerprint-v1-8dc7a1dfd9345a3f3485e51b75a8b91b9ad4128e2b9bdb6527470c4a104a419a';
+
+CREATE POLICY rls_patient_self_read ON __TENANT_SCHEMA__.patients FOR SELECT USING (((id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_read ON __TENANT_SCHEMA__.patients IS 'rls-fingerprint-v1-44ee2b27afbdb34860844d4eca6f26892d089163a97f61dd084773e187097b32';
+
+CREATE POLICY rls_patient_self_read ON __TENANT_SCHEMA__.refill_requests FOR SELECT USING (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_read ON __TENANT_SCHEMA__.refill_requests IS 'rls-fingerprint-v1-927e1bbe03952b5e0289e9f6c7a9284b7eb5eb1d021a42f2a02e561ac3ee4c48';
+
+CREATE POLICY rls_patient_self_write ON __TENANT_SCHEMA__.chat_conversations FOR UPDATE USING ((((patient_id)::text = current_setting('app.current_patient_id'::text, true)) AND (owner_user_id IS NULL))) WITH CHECK ((((patient_id)::text = current_setting('app.current_patient_id'::text, true)) AND (owner_user_id IS NULL)));
+
+COMMENT ON POLICY rls_patient_self_write ON __TENANT_SCHEMA__.chat_conversations IS 'rls-fingerprint-v1-f6d517096fd5ba680f75044eded5534acb7ec7bdafe0475646cecf6614f328af';
+
+CREATE POLICY rls_patient_self_write ON __TENANT_SCHEMA__.chat_messages FOR UPDATE USING ((EXISTS ( SELECT 1
+   FROM __TENANT_SCHEMA__.chat_conversations c
+  WHERE ((c.id = chat_messages.conversation_id) AND ((c.patient_id)::text = current_setting('app.current_patient_id'::text, true)) AND (c.owner_user_id IS NULL))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM __TENANT_SCHEMA__.chat_conversations c
+  WHERE ((c.id = chat_messages.conversation_id) AND ((c.patient_id)::text = current_setting('app.current_patient_id'::text, true)) AND (c.owner_user_id IS NULL)))));
+
+COMMENT ON POLICY rls_patient_self_write ON __TENANT_SCHEMA__.chat_messages IS 'rls-fingerprint-v1-6836f929eafc4f1e38513c91e18d5b7b012385ff4287e489143cd5b15f74c255';
+
+CREATE POLICY rls_patient_self_write ON __TENANT_SCHEMA__.homework_assignments FOR UPDATE USING ((((patient_id)::text = current_setting('app.current_patient_id'::text, true)) AND ((status)::text = ANY ((ARRAY['assigned'::character varying, 'done'::character varying])::text[])))) WITH CHECK ((((patient_id)::text = current_setting('app.current_patient_id'::text, true)) AND ((status)::text = ANY ((ARRAY['assigned'::character varying, 'done'::character varying])::text[]))));
+
+COMMENT ON POLICY rls_patient_self_write ON __TENANT_SCHEMA__.homework_assignments IS 'rls-fingerprint-v1-1044aa2ef55d44ca8e43170e1255ef355ea3665173bf583f57f5c1ac6a70abfd';
+
+CREATE POLICY rls_patient_self_write ON __TENANT_SCHEMA__.outcome_measures FOR UPDATE USING (((patient_id)::text = current_setting('app.current_patient_id'::text, true))) WITH CHECK (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_write ON __TENANT_SCHEMA__.outcome_measures IS 'rls-fingerprint-v1-ca258d97cd8165c0be07edf929c55461c56b51f8a8a999e2df48487f212145d0';
+
+CREATE POLICY rls_patient_self_write ON __TENANT_SCHEMA__.patient_coverage FOR UPDATE USING (((patient_id)::text = current_setting('app.current_patient_id'::text, true))) WITH CHECK (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_write ON __TENANT_SCHEMA__.patient_coverage IS 'rls-fingerprint-v1-dc2c22af3a214a7f5fd7b9f0f403170893022ed0cd57fc9e06ca8975bb228048';
+
+CREATE POLICY rls_patient_self_write ON __TENANT_SCHEMA__.patient_documents FOR UPDATE USING ((((patient_id)::text = current_setting('app.current_patient_id'::text, true)) AND ((category)::text = ANY ((ARRAY['intake_artifact'::character varying, 'message'::character varying])::text[])))) WITH CHECK ((((patient_id)::text = current_setting('app.current_patient_id'::text, true)) AND ((category)::text = ANY ((ARRAY['intake_artifact'::character varying, 'message'::character varying])::text[]))));
+
+COMMENT ON POLICY rls_patient_self_write ON __TENANT_SCHEMA__.patient_documents IS 'rls-fingerprint-v1-a8c515c80b6689d309c33d2fd255ead191744dc2586a5f9cd713d73d42aa2f9c';
+
+CREATE POLICY rls_patient_self_write ON __TENANT_SCHEMA__.patient_intake_artifacts FOR UPDATE USING (((patient_id)::text = current_setting('app.current_patient_id'::text, true))) WITH CHECK (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_write ON __TENANT_SCHEMA__.patient_intake_artifacts IS 'rls-fingerprint-v1-ad99e9075ddd05dc544739959fcc4c10aab4c5b3a23ae5d85c920289763c0072';
+
+CREATE POLICY rls_patient_self_write ON __TENANT_SCHEMA__.patient_intake_assignments FOR UPDATE USING (((patient_id)::text = current_setting('app.current_patient_id'::text, true))) WITH CHECK (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_write ON __TENANT_SCHEMA__.patient_intake_assignments IS 'rls-fingerprint-v1-10f75f351648857b2f1aa618ac43031026d5c3f826a42970993dffc0c628a93a';
+
+CREATE POLICY rls_patient_self_write ON __TENANT_SCHEMA__.patient_intake_responses FOR UPDATE USING (((patient_id)::text = current_setting('app.current_patient_id'::text, true))) WITH CHECK (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_write ON __TENANT_SCHEMA__.patient_intake_responses IS 'rls-fingerprint-v1-8b180f19e87707ecc11534850144bea93ff17bbb12826d86b1fd31980d1ebcce';
+
+CREATE POLICY rls_patient_self_write ON __TENANT_SCHEMA__.patient_intake_review_events FOR UPDATE USING ((((patient_id)::text = current_setting('app.current_patient_id'::text, true)) AND ((kind)::text = 'corrected'::text))) WITH CHECK ((((patient_id)::text = current_setting('app.current_patient_id'::text, true)) AND ((kind)::text = 'corrected'::text)));
+
+COMMENT ON POLICY rls_patient_self_write ON __TENANT_SCHEMA__.patient_intake_review_events IS 'rls-fingerprint-v1-0acabdfd70e7431ec9a08d13ff41ff7d37a8a7af12147e37b3f89099e7b1c1f9';
+
+CREATE POLICY rls_patient_self_write ON __TENANT_SCHEMA__.patient_intake_signatures FOR UPDATE USING (((patient_id)::text = current_setting('app.current_patient_id'::text, true))) WITH CHECK (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_write ON __TENANT_SCHEMA__.patient_intake_signatures IS 'rls-fingerprint-v1-8fa49a690186b3bb37c1c44ddfb606e1ae916e54d6c636a7d2946f7aaabaf695';
+
+CREATE POLICY rls_patient_self_write ON __TENANT_SCHEMA__.patient_intake_submissions FOR UPDATE USING (((patient_id)::text = current_setting('app.current_patient_id'::text, true))) WITH CHECK (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_write ON __TENANT_SCHEMA__.patient_intake_submissions IS 'rls-fingerprint-v1-ba22c5169e46176ea1bc3eb4ca241ac773043ff59780f70875e08733da38065c';
+
+CREATE POLICY rls_patient_self_write ON __TENANT_SCHEMA__.patient_message_attachments FOR UPDATE USING (((patient_id)::text = current_setting('app.current_patient_id'::text, true))) WITH CHECK (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_write ON __TENANT_SCHEMA__.patient_message_attachments IS 'rls-fingerprint-v1-e68f02bea7956edbe8120f9c45a6bbd6f765e10ff4d63f05da27a70a3656a301';
+
+CREATE POLICY rls_patient_self_write ON __TENANT_SCHEMA__.patient_message_threads FOR UPDATE USING (((patient_id)::text = current_setting('app.current_patient_id'::text, true))) WITH CHECK (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_write ON __TENANT_SCHEMA__.patient_message_threads IS 'rls-fingerprint-v1-e1faf3a2403f14544086e4ce902bfe64f3e810f4329bfc33048aa346178d3abc';
+
+CREATE POLICY rls_patient_self_write ON __TENANT_SCHEMA__.patient_messages FOR UPDATE USING (((patient_id)::text = current_setting('app.current_patient_id'::text, true))) WITH CHECK (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_write ON __TENANT_SCHEMA__.patient_messages IS 'rls-fingerprint-v1-8dc7a1dfd9345a3f3485e51b75a8b91b9ad4128e2b9bdb6527470c4a104a419a';
+
+CREATE POLICY rls_patient_self_write ON __TENANT_SCHEMA__.patients FOR UPDATE USING (((id)::text = current_setting('app.current_patient_id'::text, true))) WITH CHECK (((id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_write ON __TENANT_SCHEMA__.patients IS 'rls-fingerprint-v1-44ee2b27afbdb34860844d4eca6f26892d089163a97f61dd084773e187097b32';
+
+CREATE POLICY rls_patient_self_write ON __TENANT_SCHEMA__.refill_requests FOR UPDATE USING (((patient_id)::text = current_setting('app.current_patient_id'::text, true))) WITH CHECK (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
+
+COMMENT ON POLICY rls_patient_self_write ON __TENANT_SCHEMA__.refill_requests IS 'rls-fingerprint-v1-927e1bbe03952b5e0289e9f6c7a9284b7eb5eb1d021a42f2a02e561ac3ee4c48';
+
+CREATE POLICY rls_practice_answers ON __TENANT_SCHEMA__.patient_source_mappings USING ((((scope ~~ 'calendar:%'::text) AND (COALESCE(current_setting('app.current_user_id'::text, true), ''::text) <> ''::text)) OR ((COALESCE(current_setting('app.current_user_id'::text, true), ''::text) <> ''::text) AND (scope = ('clinician:'::text || current_setting('app.current_user_id'::text, true)))) OR ((scope IS NULL) AND ((user_id)::text = current_setting('app.current_user_id'::text, true))))) WITH CHECK ((((scope ~~ 'calendar:%'::text) AND (COALESCE(current_setting('app.current_user_id'::text, true), ''::text) <> ''::text)) OR ((COALESCE(current_setting('app.current_user_id'::text, true), ''::text) <> ''::text) AND (scope = ('clinician:'::text || current_setting('app.current_user_id'::text, true)))) OR ((scope IS NULL) AND ((user_id)::text = current_setting('app.current_user_id'::text, true)))));
+
+COMMENT ON POLICY rls_practice_answers ON __TENANT_SCHEMA__.patient_source_mappings IS 'rls-fingerprint-v1-2a332d906dd6bb02b58522f6ba2e22238afb338a24033510a912e38f5f44581e';
+
+CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.appointment_types USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.appointment_types IS 'rls-fingerprint-v1-6e98419bf5a40c0bc01b8b370a27670bf9f0a47985e7bf5b249ea6d3f6bd03b5';
+
+CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.appointments USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.appointments IS 'rls-fingerprint-v1-4c3f36d984e7811c85af6183af521926b0cd0bab6f97ef2f196aa9a35b3f934c';
+
+CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.availability_rules USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.availability_rules IS 'rls-fingerprint-v1-83317d1b3fe2f75a45539af37269031f99d8f1c1ce5178cb590e1a3bd481e418';
+
+CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.clinician_profiles USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.clinician_profiles IS 'rls-fingerprint-v1-3e84d1cdfada26de9bc6eea55c2b6a3fa7afcd84053e8a0fac1b71d4f5f90234';
+
+CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.compliance_documents USING (((uploaded_by_user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((uploaded_by_user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.compliance_documents IS 'rls-fingerprint-v1-fe10afde77627c688c8132762f1d0fd52edeacb2d7bac615d50208f25e250395';
+
+CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.external_calendar_events USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.external_calendar_events IS 'rls-fingerprint-v1-af1dbb4173600faf7176b9635956133e335fc1f88820a543d17e46c3b1430814';
+
+CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.google_calendar_settings USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.google_calendar_settings IS 'rls-fingerprint-v1-12f65c637d0745eba59c34ef1d860bcdb02b86884bf4396795b28abceb56e7f8';
+
+CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.google_calendar_tokens USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.google_calendar_tokens IS 'rls-fingerprint-v1-74298eff89ad9e29b98a31a9dfcdf3abf67b9d94391a27dc03ef2959b02a3a77';
+
+CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.google_created_calendars USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.google_created_calendars IS 'rls-fingerprint-v1-f21599a430eaf68b69f1ca3ccc2d30bc3632c02564bba0de47ed9362c720938a';
+
+CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.ical_sync_configs USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.ical_sync_configs IS 'rls-fingerprint-v1-149779adb5c996f8035cb8dc97d3402f901a41ca95f7726b1823637d1fe6ecdb';
+
+CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.inbox_item_states USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.inbox_item_states IS 'rls-fingerprint-v1-fd2a422236edf58065e3226d3b556dcc3ca299f6aa010709a5c50a7f70c1b6df';
+
+CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.llm_usage USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.llm_usage IS 'rls-fingerprint-v1-d2fc6f859598cb0e2d952c5c2209e0d99a8e391e4c210b79e24c722ce9035f41';
+
+CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.patient_clinicians USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.patient_clinicians IS 'rls-fingerprint-v1-1ee24a53860df4af1410859b56fd179235521d720d2f49bf2d455e9a18283c33';
+
+CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.supervision_hours USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.supervision_hours IS 'rls-fingerprint-v1-73b7981c2c5da9aaa759f7518fe4c06246b2d3418bc638d4b69bdb3257eaaed7';
+
+CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.supervision_relationships USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.supervision_relationships IS 'rls-fingerprint-v1-d9d00076d8e82a2ad53bca434456c16d5ba1c1853e8939c991773a8e6efa1e01';
+
+CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.tasks USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.tasks IS 'rls-fingerprint-v1-1b52a71a014d2f316d66597faaaba7c13dc75773a2ebba25ba589e82ae002aa0';
+
+CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.telehealth_connections USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.telehealth_connections IS 'rls-fingerprint-v1-f1b326afdf1b7cdb085d51a918bbf29b4b14292095e5020f9d39a4405ddb4632';
+
+CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.therapy_sessions USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.therapy_sessions IS 'rls-fingerprint-v1-1efc9f3ee61fa6ae965f066810e694377f93a586d8ea17ad9a97cbaf67e9e5b6';
+
+CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.waitlist_entries USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.waitlist_entries IS 'rls-fingerprint-v1-6c650e863fa6178eec9df9bb53691b1168f969f224a9f1cf1d455c71d6370e50';

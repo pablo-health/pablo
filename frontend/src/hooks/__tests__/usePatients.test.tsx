@@ -263,7 +263,7 @@ describe("usePatients hooks", () => {
 
       const updatedPatient: PatientResponse = {
         ...mockPatient,
-        diagnosis: "Generalized Anxiety Disorder",
+        phone: "555-0100",
       }
 
       vi.mocked(patientsApi.updatePatient).mockResolvedValue(updatedPatient)
@@ -276,7 +276,7 @@ describe("usePatients hooks", () => {
 
       await result.current.mutateAsync({
         patientId: "patient-123",
-        data: { diagnosis: "Generalized Anxiety Disorder" },
+        data: { phone: "555-0100" },
       })
 
       // Should have updated cache
@@ -285,7 +285,7 @@ describe("usePatients hooks", () => {
         "detail",
         "patient-123",
       ])
-      expect(cachedData?.diagnosis).toBe("Generalized Anxiety Disorder")
+      expect(cachedData?.phone).toBe("555-0100")
     })
 
     it("rolls back optimistic update on error", async () => {
@@ -308,7 +308,7 @@ describe("usePatients hooks", () => {
       try {
         await result.current.mutateAsync({
           patientId: "patient-123",
-          data: { diagnosis: "GAD" },
+          data: { phone: "555-0100" },
         })
       } catch {
         // Expected error
@@ -334,7 +334,7 @@ describe("usePatients hooks", () => {
 
       const updatedPatient: PatientResponse = {
         ...mockPatient,
-        diagnosis: "GAD",
+        phone: "555-0100",
       }
 
       vi.mocked(patientsApi.updatePatient).mockResolvedValue(updatedPatient)
@@ -349,7 +349,7 @@ describe("usePatients hooks", () => {
 
       await result.current.mutateAsync({
         patientId: "patient-123",
-        data: { diagnosis: "GAD" },
+        data: { phone: "555-0100" },
       })
 
       // Should invalidate detail

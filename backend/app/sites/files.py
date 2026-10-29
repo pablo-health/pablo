@@ -110,10 +110,6 @@ def content_type_for(path: str) -> str | None:
     return CONTENT_TYPES.get(name.rsplit(".", 1)[1].lower())
 
 
-def is_html(path: str) -> bool:
-    return content_type_for(path) == _HTML
-
-
 def check_path(path: str) -> str:
     """*path* if a website may hold a file there; :class:`SiteFilesError` if not."""
     if not path or len(path) > MAX_PATH_LENGTH:

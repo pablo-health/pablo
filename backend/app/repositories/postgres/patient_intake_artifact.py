@@ -35,6 +35,8 @@ from ..patient_intake_artifact import (
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
+    from ..row import Row
+
 _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindparams(
     bindparam("pid", type_=Uuid(as_uuid=False)),
     bindparam("uid", type_=String()),
@@ -44,7 +46,7 @@ _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindpara
 _SIDE_INDEX = "uq_patient_intake_artifacts_side"
 
 
-def _to_dict(row: PatientIntakeArtifactRow) -> dict[str, object]:
+def _to_dict(row: PatientIntakeArtifactRow) -> Row:
     return {
         "id": row.id,
         "assignment_id": row.assignment_id,
@@ -62,7 +64,7 @@ class PostgresPatientIntakeArtifactRepository(PatientIntakeArtifactRepository):
 
     # --- patient side ---
 
-    def add(self, row: dict[str, object]) -> dict[str, object]:
+    def add(self, row: Row) -> Row:
         """Attach one document, or raise on a clash the caller answers for.
 
         The flush is what makes a refusal arrive now rather than at commit,
@@ -78,7 +80,7 @@ class PostgresPatientIntakeArtifactRepository(PatientIntakeArtifactRepository):
             item_id=str(row["item_id"]),
             document_id=str(row["document_id"]),
             side=str(side) if side is not None else None,
-            created_at=row["created_at"],  # type: ignore[arg-type]
+            created_at=row["created_at"],
         )
         self._session.add(orm_row)
         try:
@@ -92,7 +94,7 @@ class PostgresPatientIntakeArtifactRepository(PatientIntakeArtifactRepository):
             raise
         return _to_dict(orm_row)
 
-    def list_for_assignment(self, assignment_id: str, patient_id: str) -> list[dict[str, object]]:
+    def list_for_assignment(self, assignment_id: str, patient_id: str) -> list[Row]:
         rows = (
             self._session.execute(
                 select(PatientIntakeArtifactRow)
@@ -110,7 +112,7 @@ class PostgresPatientIntakeArtifactRepository(PatientIntakeArtifactRepository):
         )
         return [_to_dict(row) for row in rows]
 
-    def get(self, artifact_id: str, patient_id: str) -> dict[str, object] | None:
+    def get(self, artifact_id: str, patient_id: str) -> Row | None:
         row = (
             self._session.execute(
                 select(PatientIntakeArtifactRow).where(
@@ -150,7 +152,7 @@ class PostgresPatientIntakeArtifactRepository(PatientIntakeArtifactRepository):
 
     # --- clinician side ---
 
-    def list_for_clinician(self, assignment_id: str, user_id: str) -> list[dict[str, object]]:
+    def list_for_clinician(self, assignment_id: str, user_id: str) -> list[Row]:
         rows = (
             self._session.execute(
                 select(PatientIntakeArtifactRow)

@@ -11,6 +11,9 @@ escaped, because ``Paragraph`` parses its text as markup.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+
+# escape() quotes text going into Paragraph markup; nothing here parses XML.
+# nosemgrep
 from xml.sax.saxutils import escape
 
 from reportlab.lib.units import inch
@@ -150,6 +153,8 @@ def _medication(medication: MedicationStatement, styles: StyleSheet1) -> Flowabl
     return _item(
         f"{medication.drug_name} {medication.dose}",
         [
+            ("How often", medication.frequency or ""),
+            ("Kind", _label(medication.category) if medication.category else ""),
             ("Status", _label(medication.status)),
             ("Started", str(medication.started_on or "")),
             ("Stopped", str(medication.stopped_on or "")),

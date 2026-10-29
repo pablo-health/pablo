@@ -31,6 +31,16 @@ from .validators import (
 # an unknown value is rejected here rather than reaching storage.
 PlaceOfServiceCode = Literal["11", "02", "10"]
 
+#: Place-of-service codes for a visit held by video or phone.
+TELEHEALTH_PLACES: frozenset[str] = frozenset({"02", "10"})
+
+
+def is_telehealth(
+    *, provider: str | None, video_link: str | None, place_of_service: str | None
+) -> bool:
+    """Whether a visit is telehealth: a video service, a video link, or a telehealth place."""
+    return bool(provider or video_link or place_of_service in TELEHEALTH_PLACES)
+
 
 class VisitCodingFields(BaseModel):
     """Billing codes a clinician records on a visit.
@@ -71,6 +81,10 @@ class StartSessionFromAppointmentRequest(BaseModel):
     #: its note by hand says ``False``, and so is not refused for a client who
     #: declined AI-assisted notes.
     recording: bool = True
+    #: The clinician will ask the client about AI-assisted notes once
+    #: recording starts, so the answer is on the recording. The only way to
+    #: record a video session for a client with no answer on file.
+    asking_consent_on_recording: bool = False
 
 
 class CreateAppointmentRequest(BaseModel):
@@ -186,6 +200,11 @@ class AppointmentResponse(BaseModel):
     duration_minutes: int
     status: str
     session_type: str
+    #: When a pending appointment stops holding its slot. None for every
+    #: other status.
+    pending_expires_at: datetime | None = None
+    #: A cancelled occurrence of a series that the series carries on past.
+    skipped: bool = False
     video_link: str | None = None
     video_platform: str | None = None
     #: Which video service made the room, when one did.
@@ -419,6 +438,44 @@ class FreeSlotsResponse(BaseModel):
     # the day is simply full. False here means "point the caller at
     # availability settings", not "fully booked".
     configured: bool
+
+
+class FloatingBlockResponse(BaseModel):
+    """Where one floating block sits on a date.
+
+    ``state`` is floating (settled into the earliest free stretch), pinned
+    (set to a start for this date), skipped (nothing protected this date)
+    or unplaced (no free stretch of its length is left). ``start`` and
+    ``end`` are UTC instants, absent when skipped or unplaced.
+    """
+
+    rule_id: str
+    label: str
+    date: date
+    state: Literal["floating", "pinned", "skipped", "unplaced"]
+    duration_minutes: int
+    window_start: str
+    window_end: str
+    start: datetime | None = None
+    end: datetime | None = None
+
+
+class FloatingBlocksResponse(BaseModel):
+    date: date
+    blocks: list[FloatingBlockResponse]
+
+
+class FloatingBlockExceptionRequest(BaseModel):
+    """Pin a floating block to a start for one date, or skip it that date."""
+
+    start: Annotated[str, Field(pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$")] | None = None
+    skip: Literal[True] | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one(self) -> Self:
+        if (self.start is None) == (self.skip is None):
+            raise ValueError("send either start or skip")
+        return self
 
 
 # --- Appointment type models ---

@@ -210,6 +210,27 @@ without losing access to PyMuPDF extraction.
 * Manual smoke against 2-3 real pilot PDFs (or representative samples) —
   this is the actual go/no-go signal. Eval cases come later.
 
+## Other uploads read for the AI
+
+The same client also reads scans uploaded anywhere a document is read for
+the AI rather than stored: importing an existing note, and sample notes
+for proposing a note type. Those go through the shared reader,
+`note_import_service.extract_document_text` (async callers use
+`read_document_text`).
+
+* A PDF below the scanned-doc threshold goes to OCR when a client is passed
+  and `allow_document_ai_ocr` is on. A PDF with a text layer never does.
+* OCR off, no client passed, or OCR returning nothing: the upload is
+  refused with a short 422 rather than imported empty. A scan over
+  `document_ai_max_pages` is refused before any OCR call.
+* `read_document_text` runs the read in a worker thread with a 90 s limit
+  (`DOCUMENT_READ_TIMEOUT_SECONDS`); past it the route answers a retryable
+  503 `DOCUMENT_READ_TIMEOUT`. Routes release the pooled DB connection
+  before reading.
+* The low-confidence marker is dropped: the text is relocated into note
+  fields, where the marker would read as content.
+* Logs carry page counts, byte sizes and status only.
+
 ## Out of scope (do NOT add)
 
 * Handwriting OCR — Document AI's general OCR is poor on cursive. If a

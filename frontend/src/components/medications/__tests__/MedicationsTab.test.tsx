@@ -53,6 +53,8 @@ function makeMedication(overrides: Partial<Medication> = {}): Medication {
     patient_id: "patient_1",
     drug_name: "Sertraline",
     dose: "50 mg daily",
+    frequency: null,
+    category: null,
     status: "active",
     started_at: "2026-01-01",
     stopped_at: null,
@@ -90,6 +92,19 @@ describe("MedicationsTab", () => {
       expect(screen.getByText("Sertraline")).toBeInTheDocument()
       expect(screen.getByText("50 mg daily")).toBeInTheDocument()
       expect(screen.getByText("Active")).toBeInTheDocument()
+    })
+
+    it("shows the frequency beside the dose, and the category when set", () => {
+      medsData = [
+        makeMedication({ dose: "50 mg", frequency: "every morning", category: "psychiatric" }),
+        makeMedication({ id: "med_2", drug_name: "Lisinopril", dose: "10 mg" }),
+      ]
+      render(<MedicationsTab patientId="patient_1" />)
+
+      expect(screen.getByText("50 mg, every morning")).toBeInTheDocument()
+      expect(screen.getByText("Psychiatric")).toBeInTheDocument()
+      expect(screen.getByText("10 mg")).toBeInTheDocument()
+      expect(screen.queryByText("Other")).not.toBeInTheDocument()
     })
 
     it("shows Edit, Discontinue and Delete controls per row", () => {

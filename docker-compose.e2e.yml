@@ -73,6 +73,9 @@ services:
       # (practice-host-lb below).
       - CORS_ORIGINS=http://localhost:${E2E_FRONTEND_PORT:-3000},http://127.0.0.1:${E2E_FRONTEND_PORT:-3000}
       - CORS_ALLOW_CREDENTIALS=true
+      # Where a passkey ceremony may come from: the clinician app's origin.
+      # The relying-party id keeps its default, localhost.
+      - WEBAUTHN_ORIGINS=http://localhost:${E2E_FRONTEND_PORT:-3000}
       - DATABASE_BACKEND=postgres
       - DATABASE_URL=postgresql://pablo:pablo_dev@postgres:5432/pablo
       - GCP_PROJECT_ID=demo-pablo-e2e
@@ -137,6 +140,19 @@ services:
       # shaped by the note type, so a spec sees the same draft every run.
       # With no task queue here, an upload drafts in the API process.
       - NOTE_GENERATION_BASE_URL=http://fake-llm:8083/notes
+      # No OCR service here: an uploaded scan is refused rather than read.
+      # Left on, the reader would first spend seconds looking for cloud
+      # credentials this stack does not have.
+      - ALLOW_DOCUMENT_AI_OCR=false
+      # Drafting falls back to a second model when the first fails. The
+      # stand-in answers this name too, and answers it alone for a transcript
+      # that tells it the first model is down.
+      - 'AI_FALLBACKS={"note_generation": "stand-in-fallback"}'
+      # What a clinician dictates after a session is transcribed by the same
+      # stand-in, which hears the same words in every clip. With no task
+      # queue here, the dictation is transcribed and applied in the API
+      # process. Its audio goes to fake-gcs like any other upload.
+      - DICTATION_TRANSCRIPTION_BASE_URL=http://fake-llm:8083/transcription
       - CLEARINGHOUSE_WEBHOOK_SECRET=e2e-clearinghouse-webhook-shared-secret
       # The practice's tax id is stored encrypted under this key, and filing a
       # claim needs a billing profile, so without it saving one is a 500. The
@@ -168,13 +184,9 @@ services:
       # The token exchange goes over plain HTTP to the stand-in, which the
       # OAuth library refuses by default. Development only, like the URL.
       - OAUTHLIB_INSECURE_TRANSPORT=1
-      # A client's charge ledger is 503 until the deployment has card
-      # payments configured, and what a payer says a client owes lands on
-      # that ledger — so without a key no end-to-end test can see the one
-      # number the billing surface exists to produce. Present, not valid:
-      # reading the ledger never calls the processor, and nothing in this
-      # stack charges a card. Same rule as the clearinghouse key above.
-      - STRIPE_SECRET_KEY=sk_test_e2e_not_a_real_key
+      # No STRIPE_SECRET_KEY, on purpose: this stack is a practice that takes
+      # no cards. The ledger and the balance read without one, and
+      # charges-without-cards.spec.ts holds the chart to that.
       # The desktop-app hand-off. The app itself cannot run here, but what
       # "Start session" hands it can: recording-consent.spec.ts issues real
       # intents and redeems them as the app would.
@@ -190,9 +202,10 @@ services:
       - PORTAL_INVITE_DELIVERY=smtp
       - PORTAL_SMS_GATEWAY=capture
       - PORTAL_SMS_CAPTURE_URL=http://fake-sms:8026
-      # The default modules plus refills, which is off by default and which
-      # portal-refills.spec.ts drives end to end.
-      - PORTAL_MODULES=intake,messaging,appointments,refills
+      # The default modules plus refills and homework, which are off by
+      # default and which portal-refills.spec.ts and homework.spec.ts drive
+      # end to end.
+      - PORTAL_MODULES=intake,messaging,appointments,homework,refills
       # What Settings > Domains tells a practice to point its own hosts at;
       # practice-domains.spec.ts reads it back from the page.
       - PRACTICE_DOMAIN_CNAME_TARGET=sites.e2e-stack.example
@@ -229,6 +242,9 @@ services:
       # which cannot sign a URL at all.
       - GOOGLE_APPLICATION_CREDENTIALS=/srv/gcs-credentials/service-account.json
       - PATIENT_DOCUMENTS_GCS_BUCKET=pablo-e2e-documents
+      # An uploaded records-system export, kept as one zip per import run so
+      # any backend instance can read it; the import specs go through it.
+      - IMPORT_ARCHIVE_STORAGE_ROOT=gs://pablo-e2e-documents/imports
       # Practices' websites, written and read server-side through the same
       # provider; practice-website.spec.ts publishes one.
       - PRACTICE_SITE_BUCKET=pablo-e2e-sites
@@ -389,8 +405,10 @@ services:
       dockerfile: backend/Dockerfile.dev
     # Two entrypoints, in this order, because they do different halves of the
     # job. ``migrate.py`` brings the platform schema and the ``practice``
-    # TEMPLATE to head; it does not touch the per-practice schemas at all, and
-    # ``migrate_tenants.py`` is what fans the tenant chain out across those.
+    # TEMPLATE to head and then provisions (on an empty database, the
+    # deployment's own practice, cloned from that template at head); it does
+    # not migrate existing per-practice schemas, and ``migrate_tenants.py`` is
+    # what fans the tenant chain out across those.
     # A deployment runs both as separate jobs; a stack that ran only the first
     # would be correct on a fresh volume — where every practice is provisioned
     # from the freshly-regenerated template — and would silently leave an
@@ -444,6 +462,8 @@ services:
       dockerfile: Dockerfile.production
       args:
         NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST: localhost:${E2E_AUTH_EMULATOR_PORT:-9099}
+        # Off by default; audio-retention.spec.ts drives the setting.
+        NEXT_PUBLIC_FF_AUDIO_RETENTION: "true"
     # One API_URL serves both the browser and the server-rendered pages, so
     # the frontend runs inside the backend's network namespace: from either
     # side, localhost:<backend port> is the backend. Service names on the
@@ -476,10 +496,16 @@ services:
       # clinician nav shows the page that answers those requests. This
       # REPLACES the list in .env.e2e rather than adding to it, so it has to
       # carry everything that file turns on too: keep the two in step.
-      - FEATURES_ENABLED=patient_portal,refill_requests
+      # Superbills are on so the chart's Superbill action can be driven.
+      - FEATURES_ENABLED=patient_portal,refill_requests,credentialing
       # The backend answers Google Calendar here (through the stand-in), so
       # the settings link and the setup page are shown.
       - GOOGLE_CALENDAR_ENABLED=true
+      # A support address, so load errors and the sidebar show where to write
+      # (support-contact.spec.ts). Unset, both are hidden.
+      - SUPPORT_EMAIL=help@practice.example
+      # A help-articles page, linked under Help beside the address.
+      - HELP_URL=https://practice.example/help
       # The portal is served on a host of its own. One server answers both
       # names: localhost is the clinician app, 127.0.0.1 the portal, whose
       # `/{slug}` addresses are rewritten to the portal route and where

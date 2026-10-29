@@ -15,7 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { formatCents } from "@/lib/money"
 import { isPaymentsUnconfigured } from "@/lib/api/payments"
 import { chargeStatusBadge, declineReason, formatChargeDate } from "@/lib/paymentDisplay"
-import { usePatientCharges } from "@/hooks/usePayments"
+import { usePatientCard, usePatientCharges } from "@/hooks/usePayments"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 
 interface ChargeHistoryProps {
@@ -24,9 +24,14 @@ interface ChargeHistoryProps {
 
 export function ChargeHistory({ patientId }: ChargeHistoryProps) {
   const { data: charges, isLoading, error } = usePatientCharges(patientId)
+  // The same query the card section above makes, so this costs no request.
+  // The ledger reads fine without a card processor; the card route is what
+  // says whether this practice takes cards at all.
+  const card = usePatientCard(patientId)
   const people = usePeopleTerm()
+  const empty = !charges || charges.length === 0
 
-  if (isLoading) {
+  if (isLoading || (empty && card.isLoading)) {
     return (
       <div className="space-y-2">
         <Skeleton className="h-10 w-full" />
@@ -34,10 +39,6 @@ export function ChargeHistory({ patientId }: ChargeHistoryProps) {
       </div>
     )
   }
-
-  // The empty-card section above already says card payments are not set up;
-  // repeating it under a second heading would be noise.
-  if (isPaymentsUnconfigured(error)) return null
 
   if (error) {
     return (
@@ -48,6 +49,11 @@ export function ChargeHistory({ patientId }: ChargeHistoryProps) {
   }
 
   if (!charges || charges.length === 0) {
+    // The card section above already says card payments are not set up;
+    // "No charges yet." under it would read as if charging were possible.
+    // A practice that took cards and has since disconnected still sees its
+    // history, because that list is not empty.
+    if (isPaymentsUnconfigured(card.error)) return null
     return <p className="text-sm text-neutral-500">No charges yet.</p>
   }
 

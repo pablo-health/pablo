@@ -10,7 +10,7 @@
  * their surface is a redirect shell instead.
  */
 
-import { useEffect, useState, Suspense } from "react"
+import { useEffect, useRef, useState, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import {
   applyActionCode,
@@ -19,7 +19,8 @@ import {
   verifyPasswordResetCode,
 } from "firebase/auth"
 import { getFirebaseAuth, initFirebase } from "@/lib/firebase"
-import { safeContinuePath } from "@/lib/auth/returnTo"
+import { useConfig } from "@/lib/config-provider"
+import { safeContinuePath, safeReturnTo } from "@/lib/auth/returnTo"
 import { AuthCard, AuthFeedback, AuthFooter, AuthInput, AuthPrimaryButton } from "@/components/auth"
 import { errorCode } from "@/lib/errors/errorCode"
 
@@ -27,6 +28,7 @@ type ActionMode = "verifyEmail" | "resetPassword" | "recoverEmail" | "revertSeco
 type Status = "loading" | "success" | "error" | "reset-form"
 
 function AuthActionContent() {
+  const config = useConfig()
   const searchParams = useSearchParams()
   const mode = searchParams.get("mode") as ActionMode | null
   const oobCode = searchParams.get("oobCode")
@@ -41,6 +43,11 @@ function AuthActionContent() {
   // Resolved on the client, where the page's own origin is known. The server
   // render carries the fallback so the two never disagree.
   const [continueHref, setContinueHref] = useState("/login")
+  const [continueLabel, setContinueLabel] = useState("Continue to Sign In")
+  // An action code is single-use: running the handler twice (a re-render with
+  // a new config object, or React's dev double-invoke) would spend the code on
+  // the first pass and report "expired" on the second.
+  const handledCode = useRef<string | null>(null)
 
   useEffect(() => {
     setContinueHref(safeContinuePath(continueUrl, window.location.origin))
@@ -53,20 +60,25 @@ function AuthActionContent() {
       return
     }
 
-    // Initialize Firebase if not already done — the page is accessed
-    // directly from email links, so the config provider may not be loaded.
-    const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || ""
-    const authDomain = process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || ""
-    const appId = process.env.NEXT_PUBLIC_FIREBASE_APP_ID || ""
+    if (handledCode.current === oobCode) return
+    handledCode.current = oobCode
+
+    // Take the Firebase config from the runtime config, the same source the
+    // auth provider uses. NEXT_PUBLIC_* values are inlined at build time, and a
+    // deployment that sets them only on the running container leaves them
+    // empty here — initializing with an empty key throws auth/invalid-api-key,
+    // and because this effect runs before the auth provider's, that broken
+    // instance is the one the whole app then shares (a root-level crash).
+    // ConfigProvider only renders this page once the config has loaded.
     initFirebase({
-      apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "",
-      authDomain,
-      projectId,
-      appId,
+      apiKey: config.firebaseApiKey,
+      authDomain: config.firebaseAuthDomain,
+      projectId: config.firebaseProjectId,
+      appId: config.firebaseAppId,
     })
 
     handleAction(mode, oobCode)
-  }, [mode, oobCode])
+  }, [mode, oobCode, config])
 
   async function handleAction(actionMode: ActionMode, code: string) {
     const auth = getFirebaseAuth()
@@ -75,8 +87,26 @@ function AuthActionContent() {
       case "verifyEmail":
         try {
           await applyActionCode(auth, code)
+          // Someone verifying from the browser they signed up in is already
+          // signed in. Refresh their user so the app sees the verified flag,
+          // then send them straight back in rather than to the sign-in page.
+          await auth.authStateReady()
+          if (auth.currentUser) {
+            try {
+              await auth.currentUser.reload()
+            } catch (err) {
+              console.warn("verifyEmail user reload failed:", errorCode(err))
+            }
+            // Honor where the email asked to go (e.g. back to MFA enrollment);
+            // a /login target means "the app" for someone already signed in.
+            window.location.replace(
+              safeReturnTo(safeContinuePath(continueUrl, window.location.origin))
+            )
+            return
+          }
           setStatus("success")
-          setMessage("Your email has been verified.")
+          setMessage("Your email is verified.")
+          setContinueLabel("Continue to Pablo")
         } catch (err) {
           console.error("verifyEmail action failed:", errorCode(err))
           setStatus("error")
@@ -195,9 +225,9 @@ function AuthActionContent() {
           <a
             href={continueHref}
             rel="noopener noreferrer"
-            className="block w-full text-center bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200"
+            className="auth-primary block text-center"
           >
-            Continue to Sign In
+            {continueLabel}
           </a>
         </div>
       )}
@@ -209,7 +239,7 @@ function AuthActionContent() {
           </AuthFeedback>
           <a
             href="/login"
-            className="block w-full text-center bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200"
+            className="auth-primary block text-center"
           >
             Back to Sign In
           </a>

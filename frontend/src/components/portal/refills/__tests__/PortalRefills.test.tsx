@@ -123,6 +123,7 @@ describe("PortalRefills", () => {
     expect(api.createRefillRequest).toHaveBeenCalledWith(TOKEN, {
       medication_id: null,
       medication_text: "Lamotrigine",
+      days_left: null,
       pharmacy_text: null,
       patient_note: null,
     })
@@ -144,6 +145,30 @@ describe("PortalRefills", () => {
     )
     expect(screen.queryByTestId("portal-refills-form")).toBeNull()
     expect(screen.getByTestId("portal-refills-open-form")).toBeTruthy()
+  })
+
+  it("shows what the practice said back when the clinician is away, and nothing otherwise", async () => {
+    const away =
+      "Your request is in. It will be reviewed by Monday, November 2.\n\nIf this is an emergency, call 911."
+    vi.mocked(api.createRefillRequest).mockResolvedValueOnce({
+      ...created,
+      away_acknowledgment: away,
+    })
+    const user = userEvent.setup()
+    renderSurface()
+
+    await user.click(await screen.findByTestId("portal-refills-open-form"))
+    await user.click(screen.getByLabelText("Sertraline 50 mg"))
+    await user.click(screen.getByTestId("portal-refills-submit"))
+
+    expect((await screen.findByTestId("portal-refills-away")).textContent).toBe(away)
+
+    await user.click(screen.getByTestId("portal-refills-open-form"))
+    expect(screen.queryByTestId("portal-refills-away")).toBeNull()
+    await user.click(screen.getByLabelText("Sertraline 50 mg"))
+    await user.click(screen.getByTestId("portal-refills-submit"))
+    await screen.findByTestId("portal-refills-sent")
+    expect(screen.queryByTestId("portal-refills-away")).toBeNull()
   })
 
   it("says your practice when the practice's name is not available", async () => {

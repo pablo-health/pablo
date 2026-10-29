@@ -8,49 +8,10 @@ assert the orchestration logic around it.
 
 import json
 import logging
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 from app.jobs import hipaa_log_review
-
-
-class TestLogTokenUsage:
-    def test_logs_all_token_counts_keyed_by_mode_and_schema(self, caplog) -> None:  # type: ignore[no-untyped-def]
-        usage = SimpleNamespace(
-            prompt_token_count=1200,
-            candidates_token_count=340,
-            thoughts_token_count=512,
-            total_token_count=2052,
-        )
-        resp = SimpleNamespace(usage_metadata=usage)
-        with caplog.at_level(logging.INFO, logger="hipaa_log_review"):
-            hipaa_log_review._log_token_usage(
-                resp, review_mode="daily", tenant_schema="practice_abc"
-            )
-        line = caplog.text
-        assert "token_usage" in line
-        assert "schema=practice_abc" in line
-        assert "mode=daily" in line
-        assert "prompt=1200" in line
-        assert "candidates=340" in line
-        assert "thoughts=512" in line
-        assert "total=2052" in line
-
-    def test_no_usage_metadata_is_silent(self, caplog) -> None:  # type: ignore[no-untyped-def]
-        resp = SimpleNamespace(usage_metadata=None)
-        with caplog.at_level(logging.INFO, logger="hipaa_log_review"):
-            hipaa_log_review._log_token_usage(resp, review_mode="daily", tenant_schema=None)
-        assert "token_usage" not in caplog.text
-
-    def test_missing_fields_log_as_none(self, caplog) -> None:  # type: ignore[no-untyped-def]
-        # The SDK omits thoughts_token_count on non-thinking responses.
-        usage = SimpleNamespace(prompt_token_count=10, total_token_count=10)
-        resp = SimpleNamespace(usage_metadata=usage)
-        with caplog.at_level(logging.INFO, logger="hipaa_log_review"):
-            hipaa_log_review._log_token_usage(resp, review_mode="monthly", tenant_schema=None)
-        assert "thoughts=None" in caplog.text
-        assert "candidates=None" in caplog.text
 
 
 class TestParseSeverity:
@@ -250,8 +211,9 @@ class TestMultiTenantRun:
 
         def fake_review(
             practice_schema: str, window_hours: int, review_mode: str, gcs_bucket
-        ) -> None:
+        ) -> hipaa_log_review.TenantScan:
             calls.append(practice_schema)
+            return hipaa_log_review.TenantScan(total_entries=1, rows_hidden=False)
 
         with (
             patch.object(hipaa_log_review, "_assert_schema_flag_consistency", return_value=[]),
@@ -329,11 +291,14 @@ class TestMultiTenantRun:
         monkeypatch.delenv("REVIEW_WINDOW_HOURS", raising=False)
         calls: list[str] = []
 
-        def flaky(practice_schema: str, window_hours: int, review_mode: str, gcs_bucket) -> None:
+        def flaky(
+            practice_schema: str, window_hours: int, review_mode: str, gcs_bucket
+        ) -> hipaa_log_review.TenantScan:
             calls.append(practice_schema)
             if practice_schema == "practice_b":
                 msg = "synthetic failure"
                 raise RuntimeError(msg)
+            return hipaa_log_review.TenantScan(total_entries=1, rows_hidden=False)
 
         with (
             patch.object(hipaa_log_review, "_assert_schema_flag_consistency", return_value=[]),
@@ -429,3 +394,166 @@ class TestMultiTenantRun:
         assert "Overall severity: NONE" in written
         assert "cross-tenant" not in written.lower() or "foreign-actor" in written.lower()
         mock_notify.assert_not_called()
+
+
+def _clean_payload(total: int) -> dict:  # type: ignore[type-arg]
+    return {
+        "entries": [],
+        "user_aggregates": [],
+        "summary": {
+            "total_entries": total,
+            "entries_sent": 0,
+            "distinct_users": 1,
+            "distinct_patients": 1,
+            "needs_model_review": False,
+        },
+    }
+
+
+class TestBlindReview:
+    """A review that cannot see the audit rows must not read as a quiet day.
+
+    The probe itself runs against real Postgres roles in
+    tests_integration/database/test_hipaa_review_visibility_probe.py; these
+    pin the wiring around it.
+    """
+
+    def _run(self, monkeypatch, scans: dict[str, hipaa_log_review.TenantScan]) -> int:  # type: ignore[no-untyped-def]
+        monkeypatch.delenv("REVIEW_WINDOW_HOURS", raising=False)
+        with (
+            patch.object(hipaa_log_review, "_assert_schema_flag_consistency", return_value=[]),
+            patch.object(hipaa_log_review, "_list_practice_schemas", return_value=list(scans)),
+            patch.object(
+                hipaa_log_review,
+                "_review_tenant",
+                side_effect=lambda practice_schema, **_: scans[practice_schema],
+            ),
+        ):
+            return hipaa_log_review.run()
+
+    def test_hidden_rows_fail_the_run_and_name_the_schema(self, monkeypatch, caplog) -> None:  # type: ignore[no-untyped-def]
+        scans = {
+            "practice_a": hipaa_log_review.TenantScan(total_entries=0, rows_hidden=True),
+            "practice_b": hipaa_log_review.TenantScan(total_entries=3, rows_hidden=False),
+        }
+        with caplog.at_level(logging.INFO, logger="hipaa_log_review"):
+            exit_code = self._run(monkeypatch, scans)
+
+        assert exit_code == 1
+        blind = [r for r in caplog.records if r.getMessage().startswith("hipaa_log_review_blind")]
+        assert len(blind) == 1
+        assert blind[0].levelno == logging.ERROR
+        assert "hidden=1" in blind[0].getMessage()
+        assert "schemas=practice_a" in blind[0].getMessage()
+
+    def test_every_tenant_quiet_is_not_blind(self, monkeypatch, caplog) -> None:  # type: ignore[no-untyped-def]
+        scans = {
+            "practice_a": hipaa_log_review.TenantScan(total_entries=0, rows_hidden=False),
+            "practice_b": hipaa_log_review.TenantScan(total_entries=0, rows_hidden=False),
+        }
+        with caplog.at_level(logging.INFO, logger="hipaa_log_review"):
+            exit_code = self._run(monkeypatch, scans)
+
+        assert exit_code == 0
+        messages = [r.getMessage() for r in caplog.records]
+        assert "hipaa_log_review_run_done tenants=2 zero_window=2 hidden=0" in messages
+        assert not any(m.startswith("hipaa_log_review_blind") for m in messages)
+        assert not any(r.levelno >= logging.ERROR for r in caplog.records)
+
+    @pytest.mark.parametrize(("total", "probed"), [(0, True), (5, False)])
+    def test_only_an_empty_window_is_probed(self, total: int, probed: bool) -> None:
+        with (
+            patch.object(
+                hipaa_log_review, "_load_review_payload", return_value=_clean_payload(total)
+            ),
+            patch.object(hipaa_log_review, "_write_report", return_value="stdout://x"),
+            patch.object(hipaa_log_review, "_audit_rows_hidden", return_value=True) as probe,
+        ):
+            scan = hipaa_log_review._review_tenant(
+                practice_schema="practice_q",
+                window_hours=24,
+                review_mode="daily",
+                gcs_bucket=None,
+            )
+        assert probe.called is probed
+        assert scan == hipaa_log_review.TenantScan(total_entries=total, rows_hidden=probed)
+
+
+class TestRunRecord:
+    """Each run records which schemas it reviewed and which failed, so a
+    reader can tell a practice that no longer exists (absent from the record)
+    from one whose review failed (listed under ``failed``)."""
+
+    def _run(self, monkeypatch, review, record=None):  # type: ignore[no-untyped-def]
+        monkeypatch.delenv("REVIEW_WINDOW_HOURS", raising=False)
+        with (
+            patch.object(hipaa_log_review, "_assert_schema_flag_consistency", return_value=[]),
+            patch.object(
+                hipaa_log_review,
+                "_list_practice_schemas",
+                return_value=["practice_a", "practice_b", "practice_c"],
+            ),
+            patch.object(hipaa_log_review, "_review_tenant", side_effect=review),
+            patch.object(hipaa_log_review, "_write_run_record", side_effect=record) as write,
+        ):
+            exit_code = hipaa_log_review.run(gcs_bucket="bucket")
+        return exit_code, write
+
+    def test_failed_and_blind_reviews_are_recorded_apart_from_reviewed(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        def review(practice_schema: str, **_: object) -> hipaa_log_review.TenantScan:
+            if practice_schema == "practice_b":
+                msg = "synthetic failure"
+                raise RuntimeError(msg)
+            hidden = practice_schema == "practice_c"
+            return hipaa_log_review.TenantScan(total_entries=0, rows_hidden=hidden)
+
+        exit_code, write = self._run(monkeypatch, review)
+
+        assert exit_code == 1
+        write.assert_called_once_with(
+            {
+                "mode": "daily",
+                "window_hours": 24,
+                "reviewed": ["practice_a", "practice_c"],
+                "failed": ["practice_b"],
+                "blind": ["practice_c"],
+            },
+            gcs_bucket="bucket",
+        )
+
+    def test_a_run_whose_record_cannot_be_written_fails(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        def review(practice_schema: str, **_: object) -> hipaa_log_review.TenantScan:
+            return hipaa_log_review.TenantScan(total_entries=1, rows_hidden=False)
+
+        def record(**_: object) -> None:
+            msg = "bucket unavailable"
+            raise RuntimeError(msg)
+
+        exit_code, _ = self._run(monkeypatch, review, record)
+        assert exit_code == 1
+
+    def test_record_is_written_as_json_under_runs(self) -> None:
+        record = {
+            "mode": "daily",
+            "window_hours": 24,
+            "reviewed": ["practice_a", "practice_b"],
+            "failed": ["practice_c"],
+            "blind": [],
+        }
+        with patch("google.cloud.storage.Client") as client_cls:
+            uri = hipaa_log_review._write_run_record(record, gcs_bucket="bucket")
+
+        bucket = client_cls.return_value.bucket
+        bucket.assert_called_once_with("bucket")
+        (path,) = bucket.return_value.blob.call_args.args
+        assert path.startswith("hipaa-log-review/runs/")
+        assert path.endswith(".json")
+        assert uri == f"gs://bucket/{path}"
+        body = bucket.return_value.blob.return_value.upload_from_string.call_args.args[0]
+        assert json.loads(body) == record
+
+    def test_no_bucket_writes_nothing(self) -> None:
+        with patch("google.cloud.storage.Client") as client_cls:
+            uri = hipaa_log_review._write_run_record({"mode": "daily"}, gcs_bucket=None)
+        assert uri is None
+        client_cls.assert_not_called()

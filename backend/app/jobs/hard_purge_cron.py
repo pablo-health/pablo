@@ -49,6 +49,7 @@ from sqlalchemy import text
 
 from ..db import PLATFORM_SCHEMA, _validate_schema_name, get_engine
 from ..db.migrate_tenants import list_active_practice_registry
+from ..logging_config import configure_job_logging
 from ..models.audit import AUDIT_LOG_RETENTION_DAYS, AuditAction, ResourceType
 from .hard_purge_retention_stub import (
     ComplianceRetentionStubPayload,
@@ -181,7 +182,9 @@ def _audio_objects_for_patient(conn: Any, schema: str, patient_id: str) -> list[
 
     ``therapy_sessions.audio_gcs_path`` may hold a single object name or a
     comma-separated pair (stereo: ``"<therapist>,<client>"`` — see
-    ``app.routes.sessions``). Empty parts are dropped.
+    ``app.routes.sessions``). Empty parts are dropped. What the clinician
+    dictated about those sessions afterwards (``session_dictations``) is
+    in the same bucket and goes with them.
     """
     _validate_schema_name(schema)
     # Operator job: schema validated by _validate_schema_name(); not web-reachable.
@@ -190,7 +193,9 @@ def _audio_objects_for_patient(conn: Any, schema: str, patient_id: str) -> list[
     rows = conn.execute(
         text(
             "SELECT audio_gcs_path FROM therapy_sessions "
-            "WHERE patient_id = :pid AND audio_gcs_path IS NOT NULL"
+            "WHERE patient_id = :pid AND audio_gcs_path IS NOT NULL "
+            "UNION ALL "
+            "SELECT audio_path FROM session_dictations WHERE patient_id = :pid"
         ),
         {"pid": patient_id},
     ).fetchall()
@@ -312,7 +317,7 @@ def _delete_document_blobs(objects: list[str]) -> None:
 
 
 def run(argv: list[str] | None = None) -> int:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+    configure_job_logging()
     args = _parse_argv(argv)
 
     stub_writer = get_compliance_retention_stub_writer()

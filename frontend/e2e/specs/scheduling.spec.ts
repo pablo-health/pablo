@@ -140,9 +140,15 @@ test("a clinician books and cancels an appointment", async ({ signedInPage: page
       response.ok(),
   )
   await page.getByRole("button", { name: "Schedule", exact: true }).click()
-  const appointment = (await (await created).json()) as { id: string }
+  const appointment = (await (await created).json()) as {
+    id: string
+    video_platform: string | null
+  }
 
   try {
+    // Booked with no video link, so it's in person: the clinician's default
+    // video platform must not be stamped on it.
+    expect(appointment.video_platform).toBeNull()
     // The week view runs Sunday to Saturday (`weekStartsOn: 0` in
     // editorial/dateUtils), so booking for tomorrow from a SATURDAY puts the
     // appointment in next week, where the default view cannot see it. The

@@ -5,10 +5,12 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import logging
 import uuid
 from collections.abc import Collection, Sequence
 from datetime import UTC, datetime, tzinfo
+from datetime import date as date_cls
 from typing import TYPE_CHECKING, Any, TypedDict
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -50,7 +52,12 @@ from ..models.availability_rule_params import (
     AvailabilityRuleParamsError,
     validate_rule_params,
 )
-from ..models.enums import SessionSource, SessionStatus, SessionType, VideoPlatform
+from ..models.enums import (
+    SessionSource,
+    SessionStatus,
+    session_type_from_label,
+    video_platform_from_label,
+)
 from ..models.scheduling import (
     AppointmentListResponse,
     AppointmentResponse,
@@ -66,6 +73,9 @@ from ..models.scheduling import (
     CreateAvailabilityRuleRequest,
     CreateRecurringAppointmentRequest,
     EditSeriesRequest,
+    FloatingBlockExceptionRequest,
+    FloatingBlockResponse,
+    FloatingBlocksResponse,
     FreeSlotsResponse,
     GoogleCalendarAuthResponse,
     GoogleCalendarConsentOption,
@@ -86,9 +96,11 @@ from ..models.scheduling import (
     UpdateAppointmentTypeRequest,
     UpdateAvailabilityRuleRequest,
     UpdateSchedulingPolicyRequest,
+    is_telehealth,
 )
 from ..notes import NoteTypeAuthorizer, get_default_registry, get_note_type_authorizer
 from ..notes.practice_types import validate_note_inputs
+from ..problems.dependencies import get_problem_service
 from ..rate_limit import get_availability_parse_limiter
 from ..repositories import (
     NotesRepository,
@@ -133,6 +145,7 @@ from ..scheduling_engine.exceptions import (
 )
 from ..scheduling_engine.models.appointment_type import AppointmentType, Audience, HorizonUnit
 from ..scheduling_engine.models.availability import AvailabilityRule, EnforcementLevel, RuleType
+from ..scheduling_engine.services import floating_block
 from ..scheduling_engine.services.availability import AvailabilityEngine
 from ..scheduling_engine.services.scheduling import SchedulingService
 from ..scheduling_engine.services.scheduling_policy import load_policy, update_policy
@@ -180,6 +193,7 @@ _is_valid_gcal_redirect_uri = is_allowed_oauth_redirect_uri
 
 
 if TYPE_CHECKING:
+    from ..problems.service import ProblemService
     from ..repositories.external_calendar_event import ExternalCalendarEventRepository
     from ..scheduling_engine.models.appointment import Appointment
     from ..scheduling_engine.models.busy import BusyTimeSource
@@ -626,6 +640,8 @@ def _to_response(
         duration_minutes=appt.duration_minutes,
         status=appt.status,
         session_type=appt.session_type,
+        pending_expires_at=appt.pending_expires_at,
+        skipped=appt.skipped,
         video_link=appt.video_link,
         video_platform=appt.video_platform,
         provider=appt.provider,
@@ -908,18 +924,25 @@ def cancel_appointment(
     gcal_service: GoogleCalendarService = Depends(get_google_calendar_service),
     patient_repo: PatientRepository = Depends(get_patient_repository),
     registry: MeetingProviderRegistry = Depends(get_meeting_registry),
+    skip: bool = Query(
+        False,
+        description="Skip this occurrence of a series; the series carries on.",
+    ),
 ) -> AppointmentResponse:
     """Cancel an appointment (soft delete — sets status to cancelled)."""
     try:
-        appt = service.cancel_appointment(appointment_id, user.id)
+        appt = service.cancel_appointment(appointment_id, user.id, skip=skip)
     except AppointmentNotFoundError as e:
         raise NotFoundError(str(e)) from e
+    except InvalidAppointmentError as e:
+        raise BadRequestError(str(e)) from e
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_CANCELLED,
         user,
         http_request,
         appt.id,
         patient_id=appt.patient_id,
+        changes={"skipped": True} if skip else None,
     )
     _release_meeting(registry, user, appt)
     _push_cancellation_to_google(gcal_service, user, appt)
@@ -1068,6 +1091,7 @@ def start_session_from_appointment(
     audit: AuditService = Depends(get_audit_service),
     authorizer: NoteTypeAuthorizer = Depends(get_note_type_authorizer),
     consent_gate: RecordingConsentGate = Depends(get_recording_consent_gate),
+    problems: ProblemService = Depends(get_problem_service),
 ) -> SessionResponse:
     """Create a therapy session linked to a calendar appointment.
 
@@ -1081,8 +1105,11 @@ def start_session_from_appointment(
     appointment was booked (SOAP if none was set).
 
     A recorded session (the default) for a client who declined AI-assisted
-    notes is refused with ``CLIENT_DECLINED_AI_NOTES``. ``recording: false``
-    starts one whose note is written by hand, which a decline does not stop.
+    notes is refused with ``CLIENT_DECLINED_AI_NOTES``. A recorded telehealth
+    session for a client with no answer on file is refused with
+    ``CLIENT_AI_CONSENT_NEEDED`` unless ``asking_consent_on_recording`` says the
+    clinician asks once recording starts. ``recording: false`` starts one whose
+    note is written by hand, which neither stops.
     """
     # 1. Fetch appointment
     try:
@@ -1107,7 +1134,18 @@ def start_session_from_appointment(
         patient = session_service.patient_repo.get(appt.patient_id, user.id)
         if patient is None:
             raise NotFoundError("Patient not found for this appointment.")
-        consent_gate.refuse_if_declined(patient, user, http_request, audit)
+        consent_gate.refuse_unless_recordable(
+            patient,
+            user,
+            http_request,
+            audit,
+            telehealth=is_telehealth(
+                provider=appt.provider,
+                video_link=appt.video_link,
+                place_of_service=appt.place_of_service,
+            ),
+            asking_on_recording=body is not None and body.asking_consent_on_recording,
+        )
 
     # 4. Authorize the effective note type — an explicit override, or else
     #    the one seeded on the appointment at booking time.
@@ -1124,10 +1162,8 @@ def start_session_from_appointment(
         scheduled_at=appt.start_at,
         duration_minutes=appt.duration_minutes,
         video_link=appt.video_link,
-        video_platform=VideoPlatform(appt.video_platform) if appt.video_platform else None,
-        session_type=(
-            SessionType(appt.session_type) if appt.session_type else SessionType.INDIVIDUAL
-        ),
+        video_platform=video_platform_from_label(appt.video_platform),
+        session_type=session_type_from_label(appt.session_type),
         source=SessionSource.COMPANION,
         notes=appt.notes,
         note_type=requested_note_type,
@@ -1141,11 +1177,25 @@ def start_session_from_appointment(
     except PatientNotFoundError as e:
         raise NotFoundError("Patient not found for this appointment.") from e
 
-    # 6. Link appointment → session
-    service.update_appointment(appointment_id, user.id, session_id=session.id)
+    # 6. Link appointment → session. A visit with no diagnosis codes yet
+    #    starts from the active problems; the clinician edits them per visit.
+    prefill = [] if appt.diagnosis_codes else problems.visit_codes(appt.patient_id)
+    link: dict[str, Any] = {"session_id": session.id}
+    if prefill:
+        link["diagnosis_codes"] = prefill
+    service.update_appointment(appointment_id, user.id, **link)
 
     # 7. Audit
     audit.log_session_action(AuditAction.SESSION_CREATED, user, http_request, session, patient)
+    if prefill:
+        audit.log_appointment_action(
+            AuditAction.APPOINTMENT_UPDATED,
+            user,
+            http_request,
+            appointment_id,
+            patient_id=appt.patient_id,
+            changes={"changed_fields": ["diagnosis_codes"]},
+        )
 
     return SessionResponse.from_session(session, patient.display_name)
 
@@ -1334,6 +1384,95 @@ def get_free_slots(
         total=len(result.slots),
         configured=result.configured,
     )
+
+
+@router.get("/api/availability/floating-blocks", response_model=FloatingBlocksResponse)
+def get_floating_blocks(
+    date: str = Query(..., description="Date (YYYY-MM-DD)", pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    ctx: TenantContext = Depends(get_tenant_context),
+    engine: AvailabilityEngine = Depends(get_availability_engine),
+    tz: tzinfo = Depends(get_owner_timezone),
+) -> FloatingBlocksResponse:
+    """Where each floating block sits on a date, for the calendar.
+
+    Derived from the day as it stands, never stored: the block settles into
+    the earliest free stretch of its window and moves as the day fills.
+    """
+    try:
+        day = date_cls.fromisoformat(date)
+    except ValueError as e:
+        raise UnprocessableEntityError("date must be a real calendar date") from e
+    blocks = engine.floating_blocks(ctx.user_id, date, tz=tz)
+    return FloatingBlocksResponse(
+        date=day,
+        blocks=[FloatingBlockResponse(**dataclasses.asdict(block)) for block in blocks],
+    )
+
+
+def _floating_rule(
+    rule_repo: AvailabilityRuleRepository, rule_id: str, user_id: str
+) -> AvailabilityRule:
+    rule = rule_repo.get(rule_id, user_id)
+    if rule is None or rule.rule_type != RuleType.FLOATING_BLOCK:
+        raise NotFoundError(f"Floating block not found: {rule_id}")
+    return rule
+
+
+def _write_exception(
+    rule_repo: AvailabilityRuleRepository,
+    rule: AvailabilityRule,
+    day: str,
+    exception: dict[str, Any] | None,
+    tz: tzinfo,
+) -> AvailabilityRule:
+    try:
+        on = date_cls.fromisoformat(day)
+    except ValueError as e:
+        raise UnprocessableEntityError("date must be a real calendar date") from e
+    today = datetime.now(tz).date()
+    if on < today:
+        raise UnprocessableEntityError("A past date can't be changed")
+    params = floating_block.with_exception(rule.params, on, exception, today=today)
+    try:
+        rule.params = validate_rule_params(RuleType.FLOATING_BLOCK, params)
+    except AvailabilityRuleParamsError as e:
+        raise UnprocessableEntityError(f"Invalid params for {RuleType.FLOATING_BLOCK}: {e}") from e
+    rule.updated_at = utc_now()
+    return rule_repo.update(rule)
+
+
+@router.put(
+    "/api/availability/rules/{rule_id}/exceptions/{day}",
+    response_model=AvailabilityRuleResponse,
+)
+def set_floating_block_exception(
+    rule_id: str,
+    day: str,
+    request: FloatingBlockExceptionRequest,
+    ctx: TenantContext = Depends(get_tenant_context),
+    rule_repo: AvailabilityRuleRepository = Depends(get_availability_rule_repository),
+    tz: tzinfo = Depends(get_owner_timezone),
+) -> AvailabilityRuleResponse:
+    """Pin a floating block to a start for one date, or skip it that date."""
+    rule = _floating_rule(rule_repo, rule_id, ctx.user_id)
+    exception = request.model_dump(exclude_none=True)
+    return _rule_to_response(_write_exception(rule_repo, rule, day, exception, tz))
+
+
+@router.delete(
+    "/api/availability/rules/{rule_id}/exceptions/{day}",
+    response_model=AvailabilityRuleResponse,
+)
+def clear_floating_block_exception(
+    rule_id: str,
+    day: str,
+    ctx: TenantContext = Depends(get_tenant_context),
+    rule_repo: AvailabilityRuleRepository = Depends(get_availability_rule_repository),
+    tz: tzinfo = Depends(get_owner_timezone),
+) -> AvailabilityRuleResponse:
+    """Put a floating block back to floating on one date."""
+    rule = _floating_rule(rule_repo, rule_id, ctx.user_id)
+    return _rule_to_response(_write_exception(rule_repo, rule, day, None, tz))
 
 
 @router.post("/api/availability/check", response_model=CheckConflictsResponse)
@@ -1740,7 +1879,7 @@ def get_scheduling_policy(
     # context dependency above has already pointed the search path at this
     # practice, and every other read in this module resolves its session the
     # same way.
-    return SchedulingPolicyResponse(**load_policy(get_db_session()))  # type: ignore[arg-type]
+    return SchedulingPolicyResponse(**load_policy(get_db_session()))
 
 
 @router.patch("/api/scheduling/policy", response_model=SchedulingPolicyResponse)
@@ -1756,7 +1895,7 @@ def update_scheduling_policy(
     session = get_db_session()
     merged = update_policy(session, request.model_dump(exclude_unset=True))
     session.commit()
-    return SchedulingPolicyResponse(**merged)  # type: ignore[arg-type]
+    return SchedulingPolicyResponse(**merged)
 
 
 @router.get("/api/appointment-types", response_model=AppointmentTypeListResponse)

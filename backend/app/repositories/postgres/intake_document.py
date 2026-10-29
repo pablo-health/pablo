@@ -28,8 +28,10 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session
 
+    from ..row import Row
 
-def _to_dict(row: IntakeDocumentRow) -> dict[str, object]:
+
+def _to_dict(row: IntakeDocumentRow) -> Row:
     return {
         "id": row.id,
         "document_key": row.document_key,
@@ -49,29 +51,29 @@ class PostgresIntakeDocumentRepository(IntakeDocumentRepository):
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def add(self, row: dict[str, object]) -> dict[str, object]:
+    def add(self, row: Row) -> Row:
         orm_row = IntakeDocumentRow(
             id=str(row["id"]),
             document_key=str(row["document_key"]),
             title=str(row["title"]),
             body_markdown=str(row["body_markdown"]),
-            version=int(row["version"]),  # type: ignore[call-overload]
+            version=int(row["version"]),
             digest=str(row["digest"]),
-            published_at=row.get("published_at"),  # type: ignore[arg-type]
+            published_at=row.get("published_at"),
             published_by=str(row["published_by"]) if row.get("published_by") else None,
             requires_signature=bool(row["requires_signature"]),
-            signer_roles=list(row["signer_roles"]),  # type: ignore[call-overload]
-            created_at=row["created_at"],  # type: ignore[arg-type]
+            signer_roles=list(row["signer_roles"]),
+            created_at=row["created_at"],
         )
         self._session.add(orm_row)
         self._session.flush()
         return _to_dict(orm_row)
 
-    def get(self, document_id: str) -> dict[str, object] | None:
+    def get(self, document_id: str) -> Row | None:
         row = self._session.get(IntakeDocumentRow, document_id)
         return _to_dict(row) if row else None
 
-    def latest_per_key(self) -> list[dict[str, object]]:
+    def latest_per_key(self) -> list[Row]:
         rows = (
             self._session.execute(
                 select(IntakeDocumentRow).order_by(
@@ -96,7 +98,7 @@ class PostgresIntakeDocumentRepository(IntakeDocumentRepository):
             _to_dict(row) for row in sorted(newest.values(), key=lambda r: order[r.document_key])
         ]
 
-    def versions_for_key(self, document_key: str) -> list[dict[str, object]]:
+    def versions_for_key(self, document_key: str) -> list[Row]:
         rows = (
             self._session.execute(
                 select(IntakeDocumentRow)
@@ -108,7 +110,7 @@ class PostgresIntakeDocumentRepository(IntakeDocumentRepository):
         )
         return [_to_dict(row) for row in rows]
 
-    def latest_for_key(self, document_key: str) -> dict[str, object] | None:
+    def latest_for_key(self, document_key: str) -> Row | None:
         row = (
             self._session.execute(
                 select(IntakeDocumentRow)
@@ -121,7 +123,7 @@ class PostgresIntakeDocumentRepository(IntakeDocumentRepository):
         )
         return _to_dict(row) if row else None
 
-    def published_for_key(self, document_key: str) -> dict[str, object] | None:
+    def published_for_key(self, document_key: str) -> Row | None:
         row = (
             self._session.execute(
                 select(IntakeDocumentRow)
@@ -139,7 +141,7 @@ class PostgresIntakeDocumentRepository(IntakeDocumentRepository):
 
     def update_draft(
         self, document_id: str, *, title: str, body_markdown: str, digest: str
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         row = self._session.get(IntakeDocumentRow, document_id)
         if row is None:
             return None
@@ -151,7 +153,7 @@ class PostgresIntakeDocumentRepository(IntakeDocumentRepository):
 
     def mark_published(
         self, document_id: str, published_at: datetime, published_by: str
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         row = self._session.get(IntakeDocumentRow, document_id)
         if row is None:
             return None

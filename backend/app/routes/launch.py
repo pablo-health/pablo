@@ -18,7 +18,7 @@ fallback scheme — the handoff is indirected through a single-use
    atomically consumes the intent, verifies the redeeming token belongs
    to the same user, and returns the appointment's
    ``{appointment_id, patient_name, video_url, session_id,
-   ai_consent_prompted}``.
+   ai_consent_prompted, ask_consent_on_recording, telehealth}``.
 
 Both endpoints are mounted only when ``ENABLE_LAUNCH_INTENT`` is true;
 otherwise the router is not registered and the paths return 404.
@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
 from ..models import User
 from ..models.audit import AuditAction, ResourceType
+from ..models.scheduling import is_telehealth
 from ..repositories import PatientRepository
 from ..repositories import get_appointment_repository as _appt_repo_factory
 from ..repositories import get_patient_repository as _patient_repo_factory
@@ -69,10 +70,15 @@ def get_patient_repository(
 
 class CreateLaunchIntentRequest(BaseModel):
     appointment_id: str = Field(min_length=1)
-    # The web already asked "No consent on file" and the clinician chose to
-    # record anyway. Carried to the companion so it does not ask again; it
-    # still refuses a client who declined.
+    # An in-person start the clinician chose to record without an answer on
+    # file. The web app no longer offers that; kept so an earlier client's
+    # intent still redeems the way it did. The companion still refuses a
+    # client who declined.
     ai_consent_prompted: bool = False
+    # For a visit with no answer on file, the clinician chose to ask once
+    # recording starts. Carried to the companion so it starts the session
+    # saying so, and shows the script to read once recording is running.
+    ask_consent_on_recording: bool = False
 
 
 class CreateLaunchIntentResponse(BaseModel):
@@ -91,6 +97,11 @@ class RedeemLaunchIntentResponse(BaseModel):
     video_url: str | None
     session_id: str | None
     ai_consent_prompted: bool
+    ask_consent_on_recording: bool
+    # A telehealth visit. With no answer on file, the companion offers only
+    # asking once recording starts, never recording anyway; the session start
+    # refuses anything else (app.services.recording_consent).
+    telehealth: bool
 
 
 @router.post(
@@ -120,6 +131,7 @@ def create_intent(
         user_id=user.id,
         appointment_id=appointment.id,
         ai_consent_prompted=request.ai_consent_prompted,
+        ask_consent_on_recording=request.ask_consent_on_recording,
     )
     settings = get_settings()
     # A browser follows a link to the host it is already on as ordinary
@@ -204,4 +216,10 @@ def redeem_intent(
         video_url=appointment.video_link,
         session_id=appointment.session_id,
         ai_consent_prompted=redeemed.ai_consent_prompted,
+        ask_consent_on_recording=redeemed.ask_consent_on_recording,
+        telehealth=is_telehealth(
+            provider=appointment.provider,
+            video_link=appointment.video_link,
+            place_of_service=appointment.place_of_service,
+        ),
     )

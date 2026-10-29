@@ -102,9 +102,9 @@ _PATCHABLE_FIELDS: tuple[str, ...] = (
     "phone",
     "status",
     "date_of_birth",
-    "diagnosis",
     "rate_cents",
     "sliding_scale_note",
+    "superbill_includes_diagnosis",
     "address_line1",
     "address_line2",
     "city",
@@ -309,7 +309,8 @@ def create_patient(
     - **phone**: Patient's phone number (optional)
     - **status**: Patient status - active, inactive, or on_hold (defaults to active)
     - **date_of_birth**: Date of birth in ISO format (optional)
-    - **diagnosis**: Current diagnosis (optional)
+    - **diagnosis**: A diagnosis as text (optional); it becomes the first
+      entry on the problem list, and the returned ``diagnosis`` is derived from that list
     - **rate_cents**: Per-patient rate override, in cents (optional)
     - **sliding_scale_note**: Free-text note on a sliding-scale arrangement (optional)
     - **address_line1/address_line2/city/state/postal_code**: Mailing address (optional)
@@ -328,6 +329,7 @@ def create_patient(
         diagnosis=request.diagnosis,
         rate_cents=request.rate_cents,
         sliding_scale_note=request.sliding_scale_note,
+        superbill_includes_diagnosis=bool(request.superbill_includes_diagnosis),
         address_line1=request.address_line1,
         address_line2=request.address_line2,
         city=request.city,
@@ -394,8 +396,9 @@ def list_patients(
             )
             for p, stamp in deleted_pairs
         ]
-        for p, _stamp in deleted_pairs:
-            audit.log_patient_action(AuditAction.PATIENT_VIEWED, user, request, p)
+        with audit.batched():
+            for p, _stamp in deleted_pairs:
+                audit.log_patient_action(AuditAction.PATIENT_VIEWED, user, request, p)
         total = len(responses)
         return PatientListResponse(
             data=responses,
@@ -411,9 +414,11 @@ def list_patients(
     # (DOB, email, phone) for every patient returned, so reading it is a
     # per-record content read on par with the GET /api/patients/{id} detail
     # view — audit one patient_viewed per patient. The read-coalescing gate
-    # collapses repeats of the same patient within the window.
-    for p in patients:
-        audit.log_patient_action(AuditAction.PATIENT_VIEWED, user, request, p)
+    # collapses repeats of the same patient within the window; the batch
+    # writes the page's rows in one trip.
+    with audit.batched():
+        for p in patients:
+            audit.log_patient_action(AuditAction.PATIENT_VIEWED, user, request, p)
 
     return PatientListResponse(
         data=responses,
@@ -467,14 +472,22 @@ def update_patient(
     - **phone**: New phone number (optional)
     - **status**: New status - active, inactive, or on_hold (optional)
     - **date_of_birth**: New date of birth (optional)
-    - **diagnosis**: New diagnosis (optional)
     - **rate_cents**: New per-patient rate override, in cents (optional)
     - **sliding_scale_note**: New sliding-scale note (optional)
+    - **superbill_includes_diagnosis**: Whether superbills print the diagnosis (optional)
     - **address_line1/address_line2/city/state/postal_code**: New mailing address (optional)
     - **sex**: New sex on insurance card, the X12 DMG03 code set - M, F, or U (optional)
 
-    Only provided fields will be updated.
+    Only provided fields will be updated. ``diagnosis`` is refused: it is
+    derived from the problem list (``/api/patients/{id}/problems``).
     """
+    if request.diagnosis is not None:
+        raise BadRequestError(
+            "Diagnoses are kept on the problem list.",
+            {"field": "diagnosis"},
+            code="DIAGNOSIS_FROM_PROBLEM_LIST",
+        )
+
     patient = repo.get(patient_id, user.id)
 
     if not patient:

@@ -4,26 +4,27 @@
 
 import { Plus } from "lucide-react"
 import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
-import type { AppointmentStatus } from "@/types/scheduling"
 import { EditorialMiniMonth } from "./EditorialMiniMonth"
-import { editorialStatusMeta } from "./status"
+import { editorialStatusMeta, type CalendarShowing } from "./status"
 
 // "light" tracks any light Pablo theme (via global tokens); "dark" = Midnight.
 export type EditorialTheme = "light" | "dark"
 
-const STATUS_OPTIONS: { value: AppointmentStatus; label: string }[] = [
+const STATUS_OPTIONS: { value: CalendarShowing; label: string }[] = [
+  { value: "pending", label: "Held" },
   { value: "confirmed", label: "Confirmed" },
   { value: "completed", label: "Completed" },
+  { value: "skipped", label: "Skipped" },
   { value: "cancelled", label: "Cancelled" },
   { value: "no_show", label: "No-shows" },
 ]
 
 interface EditorialSidebarProps {
   selected: Date
-  statusFilters: Set<AppointmentStatus>
+  statusFilters: Set<CalendarShowing>
   onSelectDate: (date: Date) => void
   onCreateNew: () => void
-  onToggleStatus: (status: AppointmentStatus) => void
+  onToggleStatus: (status: CalendarShowing) => void
 }
 
 export function EditorialSidebar({

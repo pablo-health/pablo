@@ -355,9 +355,11 @@ class TestGeminiAttemptTimeout:
         gw._client = type("_Client", (), {"models": models})()
         return gw, models
 
-    def _complete(self, gw: GeminiStructuredLLMGateway, **extra: Any) -> StructuredCompletion:
+    def _complete(
+        self, gw: GeminiStructuredLLMGateway, *, model: str = "gemini-3.5-flash", **extra: Any
+    ) -> StructuredCompletion:
         return gw.complete_structured(
-            model="gemini-3.5-flash",
+            model=model,
             system_prompt="s",
             user_prompt="u",
             response_schema={"type": "object", "properties": {"ok": {"type": "boolean"}}},
@@ -381,6 +383,46 @@ class TestGeminiAttemptTimeout:
         gw, models = self._gateway(stalls=0)
         self._complete(gw)
         assert models.configs[0].http_options is None
+
+    def test_structured_json_disables_unused_automatic_function_calling(self) -> None:
+        gw, models = self._gateway(stalls=0)
+        self._complete(gw)
+        assert models.configs[0].automatic_function_calling.disable is True
+
+    def test_argon_uses_thinking_level_instead_of_budget(self) -> None:
+        gw, models = self._gateway(stalls=0)
+        self._complete(gw, model="gemini-4-argon", thinking_budget=0)
+        thinking = models.configs[0].thinking_config
+        assert thinking.thinking_level == "LOW"
+
+    # The zero-budget levels below match what Vertex AI accepted on 2026-10-21
+    # (see _GEMINI_MINIMAL_THINKING_MODELS). This test used to expect MINIMAL
+    # for gemini-3.1-pro-preview, which Vertex rejects with a 400.
+    @pytest.mark.parametrize(
+        ("model", "level"),
+        [
+            ("gemini-3.5-flash", "MINIMAL"),
+            ("gemini-3.1-pro-preview", "LOW"),
+            ("gemini-3.8-flash", "LOW"),
+            ("gemini-4-argon", "LOW"),
+            ("gemini-4-unlisted", "LOW"),
+        ],
+    )
+    def test_zero_budget_sends_the_lowest_level_the_model_accepts(
+        self, model: str, level: str
+    ) -> None:
+        gw, models = self._gateway(stalls=0)
+        self._complete(gw, model=model, thinking_budget=0)
+        thinking = models.configs[0].thinking_config
+        assert thinking.thinking_level == level
+        assert thinking.thinking_budget is None
+
+    def test_gemini_three_maps_positive_budget_to_level(self) -> None:
+        gw, models = self._gateway(stalls=0)
+        self._complete(gw, model="gemini-3.5-flash", thinking_budget=8192)
+        thinking = models.configs[0].thinking_config
+        assert thinking.thinking_level == "MEDIUM"
+        assert thinking.thinking_budget is None
 
     def test_a_stalled_attempt_is_retried_once(self) -> None:
         gw, models = self._gateway(stalls=1)

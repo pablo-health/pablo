@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, cast
 
 from ..models.enums import OutcomeMeasureSource
 from ..repositories.outcome_measure import PatientOutcomeAccessDeniedError
+from ..repositories.row import Row
 from ..utcnow import utc_now
 from .instruments import (
     InstrumentValidationError,
@@ -49,7 +50,7 @@ class OutcomeMeasureService:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _build_response(row: dict[str, object]) -> OutcomeMeasureResponse:
+    def _build_response(row: Row) -> OutcomeMeasureResponse:
         """Build an API response from a repository row dict."""
         total_raw = row.get("total_score")
         total: int | None = int(total_raw) if isinstance(total_raw, int) else None
@@ -65,10 +66,8 @@ class OutcomeMeasureService:
             item_scores = cast("dict[str, int]", item_scores_raw)
 
         item_citations_raw = row.get("item_citations")
-        item_citations: dict[str, object] | None = (
-            cast("dict[str, object]", item_citations_raw)
-            if isinstance(item_citations_raw, dict)
-            else None
+        item_citations: Row | None = (
+            cast("Row", item_citations_raw) if isinstance(item_citations_raw, dict) else None
         )
 
         return OutcomeMeasureResponse(
@@ -82,10 +81,10 @@ class OutcomeMeasureService:
             is_complete=bool(row.get("is_complete", False)),
             source=str(row["source"]),
             item_citations=item_citations,
-            administered_at=row["administered_at"],  # type: ignore[arg-type]
+            administered_at=row["administered_at"],
             created_by=str(row["created_by"]),
-            created_at=row["created_at"],  # type: ignore[arg-type]
-            updated_at=row["updated_at"],  # type: ignore[arg-type]
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
             severity=severity,
         )
 
@@ -137,7 +136,7 @@ class OutcomeMeasureService:
             total = compute_total(defn, item_scores)
             complete = is_complete(defn, item_scores)
 
-        row: dict[str, object] = {
+        row: Row = {
             "id": str(uuid.uuid4()),
             "patient_id": patient_id,
             "session_id": request.session_id,
@@ -198,7 +197,7 @@ class OutcomeMeasureService:
             )
 
         now = utc_now()
-        row: dict[str, object] = {
+        row: Row = {
             "id": str(uuid.uuid4()),
             "patient_id": patient_id,
             "session_id": None,
@@ -263,5 +262,5 @@ class OutcomeMeasureService:
         """
         rows = self._repo.list_by_patient(patient_id, user_id, instrument=instrument)
         live = [r for r in rows if r.get("deleted_at") is None]
-        live.sort(key=lambda r: r["administered_at"])  # type: ignore[arg-type, return-value]
+        live.sort(key=lambda r: r["administered_at"])
         return [self._build_response(r) for r in live]

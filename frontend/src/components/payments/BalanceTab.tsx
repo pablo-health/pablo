@@ -7,9 +7,9 @@
  * they belong to. A total on its own is a number to argue with; the rows
  * behind it are what answer "why".
  *
- * Two actions sit on it, both about the whole balance rather than any one
- * row: charge the card for all of it, or produce the statement the client
- * gets handed. There is no partial payment here on purpose — splitting a
+ * The actions on it are about the whole record rather than any one row:
+ * charge the card for the balance, or produce the statement or the superbill
+ * the client gets handed. There is no partial payment here on purpose — splitting a
  * balance is an allocation decision, and offering it without one would just
  * move the argument.
  */
@@ -18,7 +18,15 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { AlertCircle, Banknote, Check, CreditCard, FileText, ReceiptText } from "lucide-react"
+import {
+  AlertCircle,
+  Banknote,
+  Check,
+  CreditCard,
+  FileText,
+  Receipt,
+  ReceiptText,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
@@ -41,6 +49,7 @@ import {
 import type { ChargeResponse, VisitBalanceResponse } from "@/types/payments"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { RecordPaymentDialog } from "./RecordPaymentDialog"
+import { SuperbillDialog } from "./SuperbillDialog"
 import { WriteOffDialog } from "./WriteOffDialog"
 
 interface BalanceTabProps {
@@ -64,6 +73,7 @@ export function BalanceTab({ patientId }: BalanceTabProps) {
   const [downloading, setDownloading] = useState(false)
   const [writeOffOpen, setWriteOffOpen] = useState(false)
   const [recordPaymentOpen, setRecordPaymentOpen] = useState(false)
+  const [superbillOpen, setSuperbillOpen] = useState(false)
 
   if (balance.isLoading) {
     return (
@@ -143,6 +153,10 @@ export function BalanceTab({ patientId }: BalanceTabProps) {
             <FileText className="mr-2 h-4 w-4" />
             {downloading ? "Preparing..." : "Statement"}
           </Button>
+          <Button variant="outline" onClick={() => setSuperbillOpen(true)}>
+            <Receipt className="mr-2 h-4 w-4" />
+            Superbill
+          </Button>
           {!readOnly && owed > 0 && (
             <Button variant="outline" onClick={() => setWriteOffOpen(true)}>
               <ReceiptText className="mr-2 h-4 w-4" />
@@ -216,6 +230,11 @@ export function BalanceTab({ patientId }: BalanceTabProps) {
           onOpenChange={setWriteOffOpen}
         />
       )}
+      <SuperbillDialog
+        patientId={patientId}
+        open={superbillOpen}
+        onOpenChange={setSuperbillOpen}
+      />
       {!readOnly && (
         <RecordPaymentDialog
           patientId={patientId}

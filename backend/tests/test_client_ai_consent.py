@@ -306,7 +306,77 @@ class TestRoute:
         for row in rows:
             assert row.patient_id == _PATIENT_ID
             assert row.resource_id == _PATIENT_ID
-            assert set(row.changes) == {"event_id", "decision", "effective_on", "source"}
+            assert set(row.changes) == {
+                "event_id",
+                "decision",
+                "effective_on",
+                "source",
+                "modality",
+                "consented_by",
+                "client_stated_location",
+            }
+
+    def test_how_the_answer_was_given_is_kept_and_shown(self) -> None:
+        repo = InMemoryClientAiConsentRepository()
+        client, audit = _client(repo)
+
+        response = client.post(
+            _URL,
+            json={
+                "decision": "consented",
+                "effective_on": "2026-10-01",
+                "modality": "telehealth",
+                "client_stated_location": "  At home  ",
+                "consented_by": "parent",
+            },
+        )
+
+        assert response.status_code == 201, response.text
+        current = response.json()["current"]
+        assert (
+            current["modality"],
+            current["client_stated_location"],
+            current["consented_by"],
+        ) == ("telehealth", "At home", "parent")
+        assert client.get(_URL).json()["history"][-1] == current
+        # The audit row says a place was given, never the place.
+        [row] = _actions(audit, "patient_ai_consent_recorded")
+        assert row.changes["client_stated_location"] is True
+        assert "At home" not in str(row.changes)
+
+    def test_an_answer_without_them_reads_null(self) -> None:
+        client, _ = _client(InMemoryClientAiConsentRepository())
+
+        current = client.post(_URL, json={"decision": "declined"}).json()["current"]
+
+        assert (current["modality"], current["client_stated_location"]) == (None, None)
+        assert current["consented_by"] is None
+
+    def test_a_blank_location_is_none(self) -> None:
+        repo = InMemoryClientAiConsentRepository()
+        client, _ = _client(repo)
+
+        client.post(_URL, json={"decision": "consented", "client_stated_location": "   "})
+
+        assert repo.events[0].client_stated_location is None
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            {"modality": "phone"},
+            {"consented_by": "sibling"},
+            {"client_stated_location": "x" * 201},
+        ],
+        ids=["modality", "consented_by", "location-too-long"],
+    )
+    def test_an_unknown_value_is_422(self, bad: dict[str, str]) -> None:
+        repo = InMemoryClientAiConsentRepository()
+        client, _ = _client(repo)
+
+        response = client.post(_URL, json={"decision": "consented", **bad})
+
+        assert response.status_code == 422
+        assert repo.events == []
 
     def test_reads_are_audited(self) -> None:
         client, audit = _client(InMemoryClientAiConsentRepository())

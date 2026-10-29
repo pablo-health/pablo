@@ -7,13 +7,13 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, cast
 
-from sqlalchemy import select, update
+from sqlalchemy import select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert
 
 from ...db.platform_models import CompanionDeviceRow
 from ...models.companion_device import CompanionDevice, DevicePlatform, KeyStorage
 from ...utcnow import utc_now
-from ..companion_device import CompanionDeviceRepository
+from ..companion_device import LAST_SEEN_RESOLUTION, CompanionDeviceRepository
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -40,7 +40,10 @@ class PostgresCompanionDeviceRepository(CompanionDeviceRepository):
                 revoked_at=device.revoked_at,
             )
             .on_conflict_do_update(
-                index_elements=[CompanionDeviceRow.install_id],
+                # The key is (install_id, user_id), so a conflict is always this
+                # user re-enrolling this install: it rotates this user's key and
+                # never reaches another user's row for the same install.
+                index_elements=[CompanionDeviceRow.install_id, CompanionDeviceRow.user_id],
                 set_={
                     "device_public_key_jwk": device.device_public_key_jwk,
                     "jkt": device.jkt,
@@ -50,20 +53,21 @@ class PostgresCompanionDeviceRepository(CompanionDeviceRepository):
                     "hostname_hash": device.hostname_hash,
                     "last_seen": device.last_seen,
                 },
-                # install_id → user_id ownership is immutable (trust-on-first-
-                # use): only the enrolling owner may update the row, so a second
-                # user submitting the same install_id can't rebind the stored
-                # key. Do NOT reset revoked_at here — a re-enrollment must not
-                # silently un-revoke a device; reactivation is a separate,
-                # explicit action.
-                where=(CompanionDeviceRow.user_id == device.user_id),
+                # Revocation is sticky: never reset revoked_at, and never replace
+                # a revoked row's key. The service rejects re-enrolling a revoked
+                # device up front; this guard covers a revoke that lands between
+                # that check and this write. Reactivation is a separate action.
+                where=CompanionDeviceRow.revoked_at.is_(None),
             )
         )
         self._session.execute(stmt)
         self._session.flush()
 
-    def get(self, install_id: str) -> CompanionDevice | None:
-        stmt = select(CompanionDeviceRow).where(CompanionDeviceRow.install_id == install_id)
+    def get(self, user_id: str, install_id: str) -> CompanionDevice | None:
+        stmt = select(CompanionDeviceRow).where(
+            CompanionDeviceRow.install_id == install_id,
+            CompanionDeviceRow.user_id == user_id,
+        )
         row = self._session.execute(stmt).scalar_one_or_none()
         if row is None:
             return None
@@ -108,14 +112,26 @@ class PostgresCompanionDeviceRepository(CompanionDeviceRepository):
             for row in rows
         ]
 
-    def touch_last_seen(self, install_id: str, when: datetime | None = None) -> None:
+    def touch_last_seen(self, user_id: str, install_id: str, when: datetime | None = None) -> None:
         ts = when or utc_now()
-        stmt = (
-            update(CompanionDeviceRow)
+        # SKIP LOCKED rather than a plain UPDATE: a companion sends several
+        # requests at once for the same enrollment, and a plain UPDATE queues
+        # each one behind whichever request locked the row first, until it
+        # hits lock_timeout. Skipping is safe because the request holding the
+        # lock is recording the same fact.
+        claimable = (
+            select(CompanionDeviceRow.install_id, CompanionDeviceRow.user_id)
             .where(
                 CompanionDeviceRow.install_id == install_id,
+                CompanionDeviceRow.user_id == user_id,
                 CompanionDeviceRow.revoked_at.is_(None),
+                CompanionDeviceRow.last_seen < ts - LAST_SEEN_RESOLUTION,
             )
+            .with_for_update(skip_locked=True)
+        )
+        stmt = (
+            update(CompanionDeviceRow)
+            .where(tuple_(CompanionDeviceRow.install_id, CompanionDeviceRow.user_id).in_(claimable))
             .values(last_seen=ts)
         )
         self._session.execute(stmt)

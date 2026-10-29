@@ -4,10 +4,13 @@
  * ImportNotesDialog
  *
  * Bring an existing patient's documented history into Pablo. The clinician
- * drops one file or a whole chart's worth of prior SOAP notes (PDF/Word/TXT);
- * each is read, parsed into a structured note dated from the document, and
- * filed as a session awaiting review. Files import a few at a time with a
- * per-file progress list, so one unreadable file never blocks the rest.
+ * picks the note type to read them into (the same visit-note types "New note"
+ * offers) and drops one file or a whole chart's worth of prior notes
+ * (PDF/Word/TXT); each is read into that type's fields, dated from the
+ * document, and kept as a reference copy of a note signed where it was
+ * written (never one to sign here). Files import a few at a
+ * time with a per-file progress list, so one unreadable file never blocks the
+ * rest.
  */
 
 "use client"
@@ -34,9 +37,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { useImportNotes, type ImportItem } from "@/hooks/useImportNotes"
+import { useNoteTypes } from "@/hooks/useNoteTypes"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { formatFileSize, getFileExtension } from "@/lib/utils/fileValidation"
+import { DEFAULT_NOTE_TYPE } from "@/types/noteTypes"
 
 const ACCEPTED_EXTENSIONS = [".pdf", ".docx", ".txt"] as const
 const MAX_BYTES = 15 * 1024 * 1024
@@ -60,7 +72,14 @@ export function ImportNotesDialog({
   const people = usePeopleTerm()
   const { items, isRunning, isComplete, doneCount, errorCount, start, reset } =
     useImportNotes(patientId)
+  const { data: catalog } = useNoteTypes()
+  // The types "New note" starts a visit note from, less the ones a model
+  // never writes (restricted) or the subscription doesn't include (locked).
+  const noteTypes = (catalog?.note_types ?? []).filter(
+    (t) => t.context === "session" && !t.restricted && !t.is_locked,
+  )
 
+  const [noteType, setNoteType] = useState(DEFAULT_NOTE_TYPE)
   const [selected, setSelected] = useState<File[]>([])
   const [rejected, setRejected] = useState<string[]>([])
   const [isDragging, setIsDragging] = useState(false)
@@ -93,6 +112,7 @@ export function ImportNotesDialog({
   }, [])
 
   const resetAll = useCallback(() => {
+    setNoteType(DEFAULT_NOTE_TYPE)
     setSelected([])
     setRejected([])
     setIsDragging(false)
@@ -114,10 +134,15 @@ export function ImportNotesDialog({
     if (e.dataTransfer.files?.length) addFiles(e.dataTransfer.files)
   }
 
-  const goToReview = useCallback(() => {
+  // An imported note was signed where it was written, so it never waits in
+  // Review. One note opens to read beside its document; several are in the
+  // chart's notes already.
+  const importedSessionId =
+    doneCount === 1 ? items.find((item) => item.status === "done")?.session?.id : undefined
+  const openNote = useCallback(() => {
     handleOpenChange(false)
-    router.push("/dashboard/sessions")
-  }, [handleOpenChange, router])
+    router.push(`/dashboard/sessions/${importedSessionId}`)
+  }, [handleOpenChange, router, importedSessionId])
 
   const summary = useMemo(() => {
     if (!started) return null
@@ -133,14 +158,39 @@ export function ImportNotesDialog({
         <DialogHeader>
           <DialogTitle>Import existing notes</DialogTitle>
           <DialogDescription>
-            Upload prior SOAP notes (PDF, Word, or TXT). Pablo reads each one, pulls out
-            the date and the S/O/A/P sections, and files it against this {people.one}
-            for your review. Drop a whole chart&apos;s worth at once.
+            Upload notes you&apos;ve already written (PDF, Word, or TXT). Pablo reads each
+            one into the note type you choose, dates it from the document, and adds it to
+            this {people.one}&apos;s notes. Drop a whole chart&apos;s worth at once.
           </DialogDescription>
         </DialogHeader>
 
         {!started ? (
           <div className="space-y-4">
+            <div className="space-y-1.5">
+              <label
+                htmlFor="import-note-type"
+                className="text-sm font-medium text-neutral-700"
+              >
+                Import as
+              </label>
+              <Select value={noteType} onValueChange={setNoteType}>
+                <SelectTrigger id="import-note-type" aria-label="Import as" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {noteTypes.length === 0 ? (
+                    <SelectItem value={DEFAULT_NOTE_TYPE}>SOAP</SelectItem>
+                  ) : (
+                    noteTypes.map((t) => (
+                      <SelectItem key={t.key} value={t.key}>
+                        {t.label}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+
             {/* Drop zone */}
             <div
               onDragEnter={(e) => {
@@ -252,9 +302,9 @@ export function ImportNotesDialog({
               <Button variant="outline" onClick={() => handleOpenChange(false)}>
                 Close
               </Button>
-              {doneCount > 0 && (
-                <Button onClick={goToReview}>
-                  Go to Review
+              {importedSessionId && (
+                <Button onClick={openNote}>
+                  Open note
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Button>
               )}
@@ -269,7 +319,7 @@ export function ImportNotesDialog({
                 Cancel
               </Button>
               <Button
-                onClick={() => start(selected)}
+                onClick={() => start(selected, noteType)}
                 disabled={isRunning || selected.length === 0}
               >
                 {isRunning ? (

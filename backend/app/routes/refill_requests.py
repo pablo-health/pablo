@@ -56,6 +56,7 @@ from ..api_errors import ConflictError, NotFoundError
 from ..auth.patient_context import PatientContext, get_patient_context
 from ..auth.route_access import subscription_exempt
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
+from ..away.service import AwayAcknowledger, get_away_acknowledger
 from ..models import AuditAction, User
 from ..models.audit import ResourceType
 from ..models.refill_request import REFILL_STATUS_REQUESTED, RefillRequest
@@ -69,6 +70,7 @@ from ..models.refill_request_api import (
     RefillRequestList,
     RefillRequestResponse,
 )
+from ..models.refill_risk import run_out_from_days_left
 from ..portal.factory import get_notice_delivery
 from ..portal.notices import send_portal_notice
 from ..rate_limit import get_refill_request_limiter
@@ -84,6 +86,12 @@ from ..services.refill_request_hooks import (
     RefillRequestEvent,
     RefillRequestEventKind,
     dispatch_refill_request_event,
+)
+from ..services.refill_turnaround import (
+    PracticeToday,
+    RefillDueClock,
+    get_practice_today,
+    get_refill_due_clock,
 )
 from ..utcnow import utc_now
 from .patient_intake_assignments import get_clinician_patient_repository
@@ -187,14 +195,26 @@ def create_refill_request(
     patient: CurrentPatient,
     repo: RefillRequestRepository = Depends(get_refill_request_repository),
     audit: AuditService = Depends(get_audit_service),
+    due_clock: RefillDueClock = Depends(get_refill_due_clock),
+    practice_today: PracticeToday = Depends(get_practice_today),
+    away: AwayAcknowledger = Depends(get_away_acknowledger),
     _: None = Depends(subscription_exempt),
 ) -> PatientRefillRequestResponse:
     """Ask for a refill of one medication.
+
+    While the client's clinician is away, the response says when the request
+    will be reviewed (see :mod:`app.away.service`). Nothing is stored for it.
 
     A ``medication_id`` must be one of the patient's own active medications;
     anything else is a 404 that says nothing about whose it was. The name is
     copied onto the request so it keeps reading correctly if the list
     changes later.
+
+    The request is stamped with the practice's own due time as it is
+    stored. The response is the patient's view, which does not carry it.
+
+    A ``days_left`` answer is stored as the date the client runs out,
+    counted from today on the practice's calendar.
     """
     get_refill_request_limiter().check(patient.patient_id)
 
@@ -208,6 +228,17 @@ def create_refill_request(
         medication_text = (body.medication_text or "").strip()
 
     now = utc_now()
+    # Asked first, on the patient's own session: the due clock below reads the
+    # practice's calendar as its owner and leaves that principal armed for the
+    # rest of the request, which the session refuses to combine with this one.
+    away_acknowledgment = away.refill_acknowledgment(
+        practice_schema=patient.practice_schema, patient_id=patient.patient_id, now=now
+    )
+    run_out_date = (
+        None
+        if body.days_left is None
+        else run_out_from_days_left(practice_today(patient.practice_schema, now), body.days_left)
+    )
     stored = repo.add(
         RefillRequest(
             id=str(uuid.uuid4()),
@@ -219,6 +250,8 @@ def create_refill_request(
             status=REFILL_STATUS_REQUESTED,
             created_at=now,
             updated_at=now,
+            due_at=due_clock(patient.practice_schema, now),
+            run_out_date=run_out_date,
         )
     )
     audit.log_patient_principal_action(
@@ -230,6 +263,7 @@ def create_refill_request(
         changes={
             "from_medication_list": body.medication_id is not None,
             "has_note": body.patient_note is not None,
+            "has_days_left": body.days_left is not None,
         },
     )
     _schedule_hooks(
@@ -238,7 +272,9 @@ def create_refill_request(
         practice_schema=patient.practice_schema,
         request=stored,
     )
-    return PatientRefillRequestResponse.from_request(stored)
+    response = PatientRefillRequestResponse.from_request(stored)
+    response.away_acknowledgment = away_acknowledgment
+    return response
 
 
 # ---------------------------------------------------------------------------

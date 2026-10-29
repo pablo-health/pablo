@@ -108,10 +108,27 @@ class _PreflightError(RuntimeError):
     pass
 
 
-def _install(monkeypatch: pytest.MonkeyPatch, recorder: _Recorder) -> None:
-    """Point the entrypoint's lazy imports at the recorder."""
+def _install(
+    monkeypatch: pytest.MonkeyPatch, recorder: _Recorder, calls: list[str] | None = None
+) -> None:
+    """Point the entrypoint's lazy imports at the recorder.
+
+    ``calls`` records the order of the practice migration and provisioning.
+    """
     db_mod = ModuleType("app.db")
     db_mod.get_engine = MagicMock  # type: ignore[attr-defined]
+
+    provisioning = ModuleType("app.db.provisioning")
+    provisioning.ensure_schemas = lambda _engine: (calls or []).append("provision")  # type: ignore[attr-defined]
+    if calls is not None:
+        original_is_migrated = recorder.is_migrated
+
+        def _recording_is_migrated(engine: Any) -> bool:
+            calls.append("practice-migration")
+            return original_is_migrated(engine)
+
+        recorder.is_migrated = _recording_is_migrated  # type: ignore[method-assign]
+    monkeypatch.setitem(sys.modules, "app.db.provisioning", provisioning)
 
     spm = ModuleType("app.db.single_practice_migration")
     spm.PreflightError = _PreflightError  # type: ignore[attr-defined]
@@ -126,9 +143,31 @@ def _install(monkeypatch: pytest.MonkeyPatch, recorder: _Recorder) -> None:
     monkeypatch.setitem(sys.modules, "app.db.single_practice_migration", spm)
 
 
+def test_an_upgrade_provisions_after_the_practice_migration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Provisioning refuses a registry still pointing at the template, so the
+    practice migration has to have moved an old install off it first. The app
+    touches no database when it starts, so this is the only place it happens."""
+    calls: list[str] = []
+    _install(monkeypatch, _Recorder(migrated=True), calls)
+
+    assert migrate_entrypoint._after_upgrade() == 0
+    assert calls == ["practice-migration", "provision"]
+
+
+def test_a_refusing_preflight_stops_before_provisioning(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+    recorder = _Recorder(migrated=False, raises=_PreflightError("rows would vanish"))
+    _install(monkeypatch, recorder, calls)
+
+    assert migrate_entrypoint._after_upgrade() == 1
+    assert calls == ["practice-migration"]
+
+
 def test_an_already_migrated_deployment_does_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Every fresh install lands here — it boots straight onto its own practice —
-    so this is the common path and must be silent and cheap."""
+    """Every fresh install lands here — it is provisioned straight onto its own
+    practice — so this is the common path and must be silent and cheap."""
     recorder = _Recorder(migrated=True)
     _install(monkeypatch, recorder)
 

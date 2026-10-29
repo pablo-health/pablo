@@ -92,14 +92,14 @@ describe("SuperbillsPage", () => {
     click.mockRestore()
   })
 
-  it("shows every finding of a refusal with the field it lives in", async () => {
+  it("shows every finding of a refusal as a sentence", async () => {
     const user = userEvent.setup()
     mockFetchSuperbill.mockRejectedValue(
       new SuperbillRefusedError("The superbill is missing required information.", [
         {
           severity: "blocking",
           code: "missing_field",
-          message: "rendering_provider.npi is required.",
+          message: "Add your NPI in Settings, under Practice identity.",
           field: "rendering_provider.npi",
         },
         {
@@ -117,8 +117,8 @@ describe("SuperbillsPage", () => {
     expect(await screen.findByText("The superbill was not generated")).toBeInTheDocument()
     const items = screen.getAllByRole("listitem")
     expect(items).toHaveLength(2)
-    expect(items[0]).toHaveTextContent("rendering_provider.npi is required.")
-    expect(items[0]).toHaveTextContent("rendering_provider.npi")
+    expect(items[0]).toHaveTextContent("Add your NPI in Settings, under Practice identity.")
+    expect(items[0]).not.toHaveTextContent("rendering_provider")
     expect(items[1]).toHaveTextContent("The visit on 2026-09-08 has no claim built from it.")
     expect(screen.queryByRole("status")).not.toBeInTheDocument()
   })

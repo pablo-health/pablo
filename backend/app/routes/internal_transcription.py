@@ -50,13 +50,14 @@ from ..db.platform_models import PlatformUserRow, PracticeRow
 # ``app.routes.subscription``; otherwise the import fails and metering
 # becomes a no-op, so OSS runs with no billing behaviour at all.
 try:
-    from ..routes.subscription import (  # type: ignore[import-not-found]
+    from ..routes.subscription import (  # type: ignore[import-not-found]  # subscription routes exist only in the SaaS overlay
         record_recorded_session,
     )
 except ImportError:  # pragma: no cover -- no subscription overlay installed
-    record_recorded_session = None  # type: ignore[assignment]
+    record_recorded_session = None  # type: ignore[assignment]  # subscription routes exist only in the SaaS overlay
 from ..models import SessionStatus, UploadTranscriptToSessionRequest
 from ..models.audit import AuditAction
+from ..notes.client_present import client_present_end, is_call, segments_from_utterances
 from ..repositories import (
     get_notes_repository,
     get_patient_repository,
@@ -78,6 +79,8 @@ from ..services.assemblyai_transcription_service import (
 from ..services.cloud_tasks_service import enqueue_cloud_task
 from ..services.file_storage import file_storage_from_settings
 from ..services.session_service import SessionService
+from ..services.transcription_keyterms import session_keyterms
+from ..services.transcription_profile import transcription_profile_for_user
 from ..settings import get_settings
 
 if TYPE_CHECKING:
@@ -253,6 +256,7 @@ def process_transcription_result(
     user_id: str,
     transcript_content: str,
     transcript_format: str = "google_meet",
+    client_present_end_seconds: float | None = None,
 ) -> dict[str, str]:
     """Persist the transcript and hand SOAP generation to the shared worker.
 
@@ -351,7 +355,10 @@ def process_transcription_result(
             # multi-second LLM call; an idle SSL drop then 500'd the
             # PENDING_REVIEW write and orphaned the session in PROCESSING).
             session = session_service.prepare_transcript_session_for_generation(
-                session_id, user_id, transcript_request
+                session_id,
+                user_id,
+                transcript_request,
+                client_present_end_seconds=client_present_end_seconds,
             )
             _record_transcript_upload_audit(session, user_id)
 
@@ -614,15 +621,28 @@ def assemblyai_submit(
                 ttl_seconds=_SPEECH_AUDIO_URL_TTL_SECONDS,
             )
 
+        keyterms = (
+            session_keyterms(db, session_row.patient_id, request.user_id)
+            if settings.assemblyai_chart_keyterms
+            else []
+        )
+        logger.info(
+            "assemblyai-submit: session=%s vocabulary of %d terms",
+            request.session_id,
+            len(keyterms),
+        )
         try:
             therapist_bytes = storage.download_bytes(bucket=bucket, object_name=therapist_object)
             client_bytes = storage.download_bytes(bucket=bucket, object_name=client_object)
             service = AssemblyAiTranscriptionService(settings)
+            transcription_profile = transcription_profile_for_user(db, request.user_id)
             jobs = asyncio.run(
                 service.submit_dual_channel(
                     therapist_audio=therapist_bytes,
                     client_audio=client_bytes,
                     audio_url_factory=_stage_prepared_audio,
+                    keyterms=keyterms,
+                    transcription_profile=transcription_profile,
                 )
             )
         except Exception as exc:
@@ -897,6 +917,12 @@ def transcription_poll(
 
     _warn_if_one_sided(jobs, request.session_id, video_platform=video_platform, note_type=note_type)
     transcript = AssemblyAiTranscriptionService.merge_utterances(jobs)
+    # Measured here, from the provider's own utterance ends: the merged text
+    # keeps only each turn's start.
+    boundary = client_present_end(
+        segments_from_utterances(u for job in jobs for u in job.get("utterances", [])),
+        client_channel_expected=is_call(video_platform),
+    )
     _delete_staged_speech_objects(audio_gcs_path, request.session_id)
 
     try:
@@ -911,6 +937,7 @@ def transcription_poll(
             # none, and returns "" — so every SOAP comes back empty ("No
             # transcript provided"). Match the label to the bytes.
             transcript_format="google_meet",
+            client_present_end_seconds=boundary,
         )
     except SessionNotFoundError:
         raise HTTPException(

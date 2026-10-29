@@ -15,6 +15,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Self
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
+from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, model_validator
 
 from ..api_errors import BadRequestError, NotFoundError, UnprocessableEntityError
@@ -33,15 +34,19 @@ from ..notes import (
     NoteTypeRegistry,
     get_default_registry,
     get_note_type_authorizer,
+    is_practice_key,
 )
+from ..notes.note_type_patch import PatchError, resolve_spec
 from ..notes.practice_types import (
     SLUG_PATTERN,
     PracticeNoteTypeSpec,
+    check_against_base,
+    definition_for,
     practice_key,
     stored_to_definition,
-    to_definition,
     validate_note_inputs,
 )
+from ..notes.spec_templates import spec_template
 from ..repositories import PracticeNoteTypeRepository, get_practice_note_type_repository
 from ..services.audit_service import AuditService, get_audit_service
 from ..services.note_generation_service import (
@@ -53,6 +58,7 @@ from .notes import get_note_generation_service
 
 if TYPE_CHECKING:
     from ..models import User
+    from ..notes.registry import BasedOn
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +74,11 @@ class NoteFieldSchema(BaseModel):
         description="Field shape: 'text', 'list', or 'structured'.",
     )
     ai_hint: str = ""
+    source: str | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description="What code prints the field from instead of drafting it; omitted when drafted.",
+    )
 
     @classmethod
     def from_def(cls, field_def: NoteFieldDef) -> NoteFieldSchema:
@@ -76,6 +87,7 @@ class NoteFieldSchema(BaseModel):
             label=field_def.label,
             kind=field_def.kind,
             ai_hint=field_def.ai_hint,
+            source=field_def.source,
         )
 
 
@@ -85,6 +97,14 @@ class NoteSectionSchema(BaseModel):
     key: str
     label: str
     fields: list[NoteFieldSchema]
+    review_only: bool = Field(
+        default=False,
+        exclude_if=lambda value: value is False,
+        description=(
+            "Drafted for review beside the note; never shown or printed as part of it. "
+            "Left out when false, as a spec stores it."
+        ),
+    )
 
     @classmethod
     def from_def(cls, section: NoteSectionDef) -> NoteSectionSchema:
@@ -92,6 +112,7 @@ class NoteSectionSchema(BaseModel):
             key=section.key,
             label=section.label,
             fields=[NoteFieldSchema.from_def(f) for f in section.fields],
+            review_only=section.review_only,
         )
 
 
@@ -103,6 +124,11 @@ class NoteInputSchema(BaseModel):
     kind: str = Field(description="'text' or 'choice'.")
     options: list[str] = Field(default_factory=list)
     required: bool = False
+    default: str | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description="The value a note takes when none was chosen. Left out when there is none.",
+    )
 
     @classmethod
     def from_def(cls, input_def: NoteInputDef) -> NoteInputSchema:
@@ -112,6 +138,25 @@ class NoteInputSchema(BaseModel):
             kind=input_def.kind,
             options=list(input_def.options),
             required=input_def.required,
+            default=input_def.default,
+        )
+
+
+class BasedOnSchema(BaseModel):
+    """Serialized :class:`BasedOn`: the base a practice type adjusts, and by how much."""
+
+    key: str
+    label: str
+    additions: int
+    hidden: int
+
+    @classmethod
+    def from_def(cls, based_on: BasedOn) -> BasedOnSchema:
+        return cls(
+            key=based_on.key,
+            label=based_on.label,
+            additions=based_on.additions,
+            hidden=based_on.hidden,
         )
 
 
@@ -148,6 +193,22 @@ class NoteTypeSchema(BaseModel):
             "unavailable rather than as live picker options."
         ),
     )
+    spec: PracticeNoteTypeSpec | None = Field(
+        default=None,
+        description=(
+            "The stored definition of a practice-defined type, prompts "
+            "included, so it can be edited and saved again without losing "
+            "them. Returned only by the single-type read; null for built-in "
+            "types and in the list."
+        ),
+    )
+    based_on: BasedOnSchema | None = Field(
+        default=None,
+        description=(
+            "For a practice type built on a base: the base, and how many parts "
+            "the practice added and hid. Null for every other type."
+        ),
+    )
 
     @classmethod
     def from_def(
@@ -167,6 +228,7 @@ class NoteTypeSchema(BaseModel):
             version=definition.version,
             restricted=definition.restricted,
             is_locked=is_locked,
+            based_on=BasedOnSchema.from_def(definition.based_on) if definition.based_on else None,
         )
 
 
@@ -219,6 +281,70 @@ def list_note_types(
     )
 
 
+class SampleVisitSchema(BaseModel):
+    """A synthetic visit transcript to try a draft on."""
+
+    id: str
+    label: str
+    transcript: str
+
+
+class NoteTypeBaseSchema(BaseModel):
+    """A built-in type a practice can base its own on, with what the editor needs."""
+
+    key: str
+    label: str
+    description: str
+    slug: str = Field(description="The slug a practice type based on this one saves under.")
+    spec: PracticeNoteTypeSpec
+    required_fields: list[str] = Field(
+        description="Fields ('section.field') a type based on this one cannot hide."
+    )
+    samples: list[SampleVisitSchema]
+
+
+class NoteTypeBaseListResponse(BaseModel):
+    bases: list[NoteTypeBaseSchema]
+
+
+@router.get(
+    "/bases",
+    response_model=NoteTypeBaseListResponse,
+    dependencies=[Depends(get_current_user)],
+)
+def list_note_type_bases(
+    registry: NoteTypeRegistry = Depends(get_registry),
+    _: None = Depends(subscription_exempt),
+) -> NoteTypeBaseListResponse:
+    """Built-in note types a practice can start its own from, by adjusting them.
+
+    Those are the built-ins written as specs. Each carries its spec, so the
+    editor can show the base beside what the practice changes, and sample
+    visits for trying a draft.
+    """
+    bases = []
+    for definition in registry.all():
+        template = spec_template(definition.key)
+        base = registry.base_for(definition.key)
+        if template is None or base is None or base.source_spec is None:
+            continue
+        bases.append(
+            NoteTypeBaseSchema(
+                key=base.key,
+                label=base.label,
+                description=base.description,
+                slug=template.slug,
+                spec=base.source_spec,
+                required_fields=list(base.required_fields),
+                samples=[
+                    SampleVisitSchema(id=s.id, label=s.label, transcript=s.transcript)
+                    for s in template.samples
+                ],
+            )
+        )
+    return NoteTypeBaseListResponse(bases=bases)
+
+
 @router.get("/{key}", response_model=NoteTypeSchema)
 def get_note_type(
     key: str,
@@ -233,18 +359,26 @@ def get_note_type(
     registry: NoteTypeRegistry = Depends(get_registry),
     user: User = Depends(get_current_user),
     authorizer: NoteTypeAuthorizer = Depends(get_note_type_authorizer),
+    repo: PracticeNoteTypeRepository = Depends(get_practice_note_type_repository),
     _: None = Depends(subscription_exempt),
 ) -> NoteTypeSchema:
     """Return a single note-type definition by key.
 
     A retired practice type is still returned here, so the notes written
-    with it keep rendering; it is only left out of the list above.
+    with it keep rendering; it is only left out of the list above. A
+    practice type also carries its stored ``spec``, which the definition
+    cannot give back: its system prompt has the generation floor appended.
     """
     try:
         definition = registry.get(key, version)
     except KeyError as exc:
         raise NotFoundError(f"Note type {key!r} not found") from exc
-    return NoteTypeSchema.from_def(definition, is_locked=not authorizer.is_allowed(user, key))
+    schema = NoteTypeSchema.from_def(definition, is_locked=not authorizer.is_allowed(user, key))
+    if is_practice_key(key):
+        stored = repo.get(key, definition.version)
+        if stored is not None:
+            schema.spec = PracticeNoteTypeSpec.model_validate(stored.definition)
+    return schema
 
 
 _SLUG = Path(pattern=SLUG_PATTERN, description="The part of the key after 'custom.'.")
@@ -256,21 +390,84 @@ def save_practice_note_type(
     slug: str = _SLUG,
     user: User = Depends(require_baa_acceptance),
     repo: PracticeNoteTypeRepository = Depends(get_practice_note_type_repository),
+    registry: NoteTypeRegistry = Depends(get_registry),
 ) -> NoteTypeSchema:
     """Save a new version of one of the practice's own note types.
 
     The key is ``custom.<slug>``. Each save writes the next version and
     leaves earlier versions in place, so notes already written against them
-    still render; saving a retired type makes it available again.
+    still render; saving a retired type makes it available again. A type
+    with a base stores only its base and patch, which must fit the base.
     """
+    key = practice_key(slug)
+    if spec.base == key:
+        raise _patch_refused(PatchError([(("base",), "a note type cannot be based on itself")]))
+    _check_base(spec, registry)
     stored = repo.add_version(
-        practice_key(slug),
+        key,
         spec.model_dump(mode="json"),
         created_by=user.id,
         created_at=utc_now(),
     )
     logger.info("Saved practice note type %s version %d", stored.key, stored.version)
-    return NoteTypeSchema.from_def(stored_to_definition(stored))
+    return NoteTypeSchema.from_def(stored_to_definition(stored, registry.base_for))
+
+
+class ResolvedSpecResponse(BaseModel):
+    spec: PracticeNoteTypeSpec
+
+
+@router.post(
+    "/resolve",
+    response_model=ResolvedSpecResponse,
+    dependencies=[Depends(require_baa_acceptance)],
+)
+def resolve_note_type_spec(
+    spec: PracticeNoteTypeSpec,
+    registry: NoteTypeRegistry = Depends(get_registry),
+) -> ResolvedSpecResponse:
+    """A type with a base, as the full spec it resolves to. Nothing is saved.
+
+    For detaching a type from its base: saving the result gives a type that
+    drafts exactly as the based one does now, and no longer follows the base.
+    A full spec comes back unchanged.
+    """
+    _check_base(spec, registry)
+    if spec.base is None or spec.patch is None:
+        return ResolvedSpecResponse(spec=spec)
+    base = registry.base_for(spec.base)
+    if base is None or base.source_spec is None:
+        raise NotFoundError(f"Note type {spec.base!r} not found")
+    resolved = resolve_spec(base.source_spec, spec.patch, base.required_fields)
+    return ResolvedSpecResponse(
+        spec=resolved.model_copy(update={"label": spec.label, "description": spec.description})
+    )
+
+
+def _check_base(spec: PracticeNoteTypeSpec, registry: NoteTypeRegistry) -> None:
+    try:
+        check_against_base(spec, registry.base_for)
+    except PatchError as exc:
+        raise _patch_refused(exc) from exc
+
+
+def _patch_refused(error: PatchError) -> RequestValidationError:
+    """A patch that does not fit its base, located the way a schema refusal is.
+
+    Each problem's location is under ``patch`` (or is ``base``), so the
+    editor puts the message where it puts any other validation message.
+    """
+    return RequestValidationError(
+        [
+            {
+                "type": "value_error",
+                "loc": ("body", *(where if where[:1] == ("base",) else ("patch", *where))),
+                "msg": message,
+                "input": None,
+            }
+            for where, message in error.problems
+        ]
+    )
 
 
 @router.delete(
@@ -281,6 +478,7 @@ def save_practice_note_type(
 def retire_practice_note_type(
     slug: str = _SLUG,
     repo: PracticeNoteTypeRepository = Depends(get_practice_note_type_repository),
+    registry: NoteTypeRegistry = Depends(get_registry),
 ) -> NoteTypeSchema:
     """Retire one of the practice's own note types.
 
@@ -291,7 +489,7 @@ def retire_practice_note_type(
     if stored is None:
         raise NotFoundError(f"Note type {practice_key(slug)!r} not found")
     logger.info("Retired practice note type %s", stored.key)
-    return NoteTypeSchema.from_def(stored_to_definition(stored))
+    return NoteTypeSchema.from_def(stored_to_definition(stored, registry.base_for))
 
 
 PREVIEW_KEY = practice_key("preview")
@@ -426,7 +624,8 @@ def _resolve_preview_definition(
     user: User,
 ) -> NoteTypeDefinition:
     if body.spec is not None:
-        return to_definition(PREVIEW_KEY, 0, body.spec)
+        _check_base(body.spec, registry)
+        return definition_for(PREVIEW_KEY, 0, body.spec, registry.base_for)
     key = body.key or ""
     try:
         definition = registry.get(key, body.version)

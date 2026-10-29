@@ -11,8 +11,9 @@ through to it for session-scoped endpoints.
 
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..api_errors import APIError, BadRequestError, ConflictError, NotFoundError, ServerError
 from ..models import (
@@ -32,10 +33,20 @@ from ..models import (
     UploadTranscriptToSessionRequest,
 )
 from ..notes import NoteTypeDefinition, get_default_registry
+from ..notes.chart_context import ChartContext, chart_context_for
+from ..notes.client_present import client_present_end, is_call, segments_from_transcript
 from ..notes.practice_types import validate_note_inputs
-from ..repositories import PatientRepository, TherapySessionRepository
+from ..repositories import (
+    ChartHistoryRepository,
+    MedicationRepository,
+    PatientProblemRepository,
+    PatientRepository,
+    TherapySessionRepository,
+)
 from ..utcnow import utc_now
+from .imported_notes import refuse_imported
 from .note_generation_service import (
+    EmptyNoteGenerationError,
     NoteGenerationService,
     TransientNoteGenerationError,
 )
@@ -45,6 +56,10 @@ from .note_service import (
     NoteService,
 )
 
+if TYPE_CHECKING:
+    from ..chart_proposals.step import ChartProposalStep
+    from ..people_term_lookup import PeopleTermLookup
+
 DEFAULT_NOTE_TYPE = "soap"
 
 
@@ -52,6 +67,25 @@ class InvalidNoteTypeError(BadRequestError):
     """Raised when a request specifies a note_type not in the registry."""
 
     code = "INVALID_NOTE_TYPE"
+
+
+def _resolve_note_type(
+    note_type: str, note_inputs: dict[str, str] | None
+) -> tuple[NoteTypeDefinition, dict[str, str]]:
+    """The definition a session's note is written against, and its kept inputs.
+
+    Raises:
+        InvalidNoteTypeError: For a key the practice's catalog lacks, or inputs
+            the type does not accept.
+    """
+    registry = get_default_registry()
+    if not registry.has(note_type):
+        raise InvalidNoteTypeError(f"Unknown note_type: {note_type!r}")
+    definition = registry.get(note_type)
+    try:
+        return definition, validate_note_inputs(definition, note_inputs)
+    except ValueError as e:
+        raise InvalidNoteTypeError(str(e)) from e
 
 
 logger = logging.getLogger(__name__)
@@ -141,6 +175,16 @@ class SessionInTerminalStatusError(ConflictError):
         )
 
 
+@dataclass(frozen=True, slots=True)
+class RatingUpdate:
+    """A finalized session after its note's quality rating changed."""
+
+    session: TherapySession
+    patient: Patient
+    note: Note
+    old_rating: int | None
+
+
 # Valid status transitions (state machine)
 VALID_TRANSITIONS: dict[str, set[str]] = {
     SessionStatus.SCHEDULED: {SessionStatus.IN_PROGRESS, SessionStatus.CANCELLED},
@@ -165,6 +209,18 @@ TERMINAL_STATUSES = {SessionStatus.FINALIZED, SessionStatus.CANCELLED, SessionSt
 
 def _now() -> datetime:
     return utc_now()
+
+
+def _client_present_end(session: TherapySession) -> float | None:
+    """The client-present boundary read from the session's transcript.
+
+    A call gives the client a channel of their own, so a call with no client
+    turn is a dictation; without a call there is no such channel to expect.
+    """
+    return client_present_end(
+        segments_from_transcript(session.transcript),
+        client_channel_expected=is_call(session.video_platform),
+    )
 
 
 def _commit_intermediate(user_id: str) -> None:
@@ -204,11 +260,39 @@ class SessionService:
         patient_repo: PatientRepository,
         note_generation_service: NoteGenerationService,
         note_service: NoteService,
+        problem_repo: PatientProblemRepository | None = None,
+        medication_repo: MedicationRepository | None = None,
+        history_repo: ChartHistoryRepository | None = None,
+        proposal_step: "ChartProposalStep | None" = None,
+        people: "PeopleTermLookup | None" = None,
     ) -> None:
         self.session_repo = session_repo
         self.patient_repo = patient_repo
         self.note_generation_service = note_generation_service
         self.note_service = note_service
+        self.problem_repo = problem_repo
+        self.medication_repo = medication_repo
+        self.history_repo = history_repo
+        self.proposal_step = proposal_step
+        self.people = people
+
+    def _chart_for(self, patient: Patient, user_id: str) -> ChartContext | None:
+        """The chart a draft is written against; ``None`` when this service can't read it."""
+        if self.problem_repo is None:
+            return None
+        medications = (
+            self.medication_repo.list_by_patient(patient.id, user_id)
+            if self.medication_repo is not None
+            else []
+        )
+        history = self.history_repo.entries(patient.id) if self.history_repo is not None else []
+        return chart_context_for(
+            patient,
+            self.problem_repo.list_by_patient(patient.id),
+            medications,
+            history,
+            person=self.people.person(user_id) if self.people is not None else None,
+        )
 
     def _get_patient_or_raise(self, patient_id: str, user_id: str) -> Patient:
         patient = self.patient_repo.get(patient_id, user_id)
@@ -236,6 +320,7 @@ class SessionService:
         user_id: str,
         note_inputs: dict[str, str] | None = None,
         definition: NoteTypeDefinition | None = None,
+        chart: ChartContext | None = None,
     ) -> Note:
         result = self.note_generation_service.generate_note(
             note_type,
@@ -244,15 +329,34 @@ class SessionService:
             session.session_date,
             inputs=note_inputs,
             definition=definition,
+            chart=chart,
+            client_present_end_seconds=session.client_present_end_seconds,
         )
-        return self.note_service.create_or_update_for_session(
+        step = self.proposal_step
+        drafted = (
+            step.draft(
+                self.note_generation_service,
+                definition,
+                chart,
+                session.transcript,
+                result,
+                visit_date=session.session_date.date(),
+            )
+            if step is not None
+            else None
+        )
+        note = self.note_service.create_or_update_for_session(
             session_id=session.id,
             patient_id=session.patient_id,
             note_type=result.note_type,
             content=result.content,
             user_id=user_id,
             note_type_version=result.note_type_version,
+            psychotherapy_proposal=result.psychotherapy_proposal,
         )
+        if step is not None:
+            step.store(note, definition, chart, drafted, result.content)
+        return note
 
     def create_session_for_generation(
         self,
@@ -275,14 +379,32 @@ class SessionService:
         counting once at creation is idempotent — a generation retry can't
         double-count it.
 
+        A requested ``note_type`` and its inputs are remembered the way
+        ``schedule_session`` remembers them, on an empty Note row, so the
+        worker drafts that type through the same path a recorded session
+        takes. Without a type the worker falls back to the default.
+
         Returns ``(session, patient)``.
 
         Raises:
             PatientNotFoundError: If patient doesn't exist or doesn't belong to user.
+            InvalidNoteTypeError: If the requested note type can't be drafted
+                from a transcript.
         """
         patient = self.patient_repo.get(patient_id, user_id)
         if not patient:
             raise PatientNotFoundError(f"Patient {patient_id} not found")
+
+        note_type = request.note_type
+        definition: NoteTypeDefinition | None = None
+        note_inputs: dict[str, str] = {}
+        if note_type is not None:
+            definition, note_inputs = _resolve_note_type(note_type, request.note_inputs)
+            # A restricted note is written by hand; a draft never fills one.
+            if definition.context != "session" or definition.restricted:
+                raise InvalidNoteTypeError(
+                    f"{definition.label} notes can't be drafted from a transcript."
+                )
 
         now = _now()
         session_number = self.session_repo.get_session_number_for_patient(patient_id)
@@ -300,7 +422,18 @@ class SessionService:
             created_at=now,
             processing_started_at=now,
         )
+        session.client_present_end_seconds = _client_present_end(session)
         session = self.session_repo.create(session)
+        if note_type is not None and definition is not None:
+            self.note_service.create_or_update_for_session(
+                session_id=session.id,
+                patient_id=patient_id,
+                note_type=note_type,
+                content=None,
+                user_id=user_id,
+                note_type_version=definition.version,
+                note_inputs=note_inputs or None,
+            )
 
         patient.session_count += 1
         if patient.last_session_date is None or request.session_date > patient.last_session_date:
@@ -356,6 +489,7 @@ class SessionService:
             definition: NoteTypeDefinition | None = get_default_registry().get(note_type)
         except KeyError:
             definition = None
+        chart = self._chart_for(patient, user_id)
 
         # Release the pooled connection before the multi-second model call. The
         # SELECTs above (session, patient, existing note) opened a read
@@ -379,6 +513,7 @@ class SessionService:
                 user_id,
                 note_inputs=existing_note.note_inputs if existing_note is not None else None,
                 definition=definition,
+                chart=chart,
             )
             logger.info("Note generation completed for session %s", session.id)
 
@@ -412,7 +547,11 @@ class SessionService:
         except Exception as e:
             logger.exception("Note generation failed for session %s", session.id)
             session.status = SessionStatus.FAILED
-            session.error = "SOAP generation failed"
+            session.error = (
+                "SOAP generation failed (the draft came back empty)"
+                if isinstance(e, EmptyNoteGenerationError)
+                else "SOAP generation failed"
+            )
             self.session_repo.update(session)
             # Persist FAILED status before the middleware-level rollback
             # discards it -- the prior behavior left no DB audit trail
@@ -452,15 +591,24 @@ class SessionService:
         source_text: str,
         note_content: dict[str, Any],
         note_type: str = DEFAULT_NOTE_TYPE,
+        note_type_version: int | None = None,
+        note_inputs: dict[str, str] | None = None,
+        source_signer: str | None = None,
+        source_document_id: str | None = None,
     ) -> tuple[TherapySession, Patient, Note]:
         """Create a session from an already-written note imported as a file.
 
         Unlike :meth:`upload_session`, the note content is supplied by the
-        caller — parsed from an uploaded SOAP document — rather than
+        caller — parsed from an uploaded document — rather than
         generated from a transcript, so there is no LLM call here. The
         original document text is stored as the session transcript so it can
-        be shown beside the parsed note during review. The session lands in
-        ``PENDING_REVIEW``, exactly like a generated note.
+        be shown beside the parsed note. The session lands in ``IMPORTED``:
+        the visit was documented and signed where it happened, so the note is
+        a reference copy and never one to sign (see
+        :mod:`app.services.imported_notes`). ``note_inputs`` are the values
+        the document states for the type's declared inputs; ``source_signer``
+        is who signed it there, as written; ``source_document_id`` is the
+        client document keeping the uploaded file itself.
 
         Returns ``(session, patient, note)``.
 
@@ -480,12 +628,14 @@ class SessionService:
             patient_id=patient_id,
             session_date=session_date,
             session_number=session_number,
-            status=SessionStatus.PENDING_REVIEW,
+            status=SessionStatus.IMPORTED,
             transcript=Transcript(format=TranscriptFormat.TXT, content=source_text),
             source=SessionSource.IMPORTED.value,
             created_at=now,
             processing_started_at=now,
             processing_completed_at=now,
+            source_signer=source_signer,
+            source_document_id=source_document_id,
         )
         session = self.session_repo.create(session)
 
@@ -495,6 +645,8 @@ class SessionService:
             note_type=note_type,
             content=note_content,
             user_id=user_id,
+            note_type_version=note_type_version,
+            note_inputs=note_inputs or None,
         )
 
         patient.session_count += 1
@@ -518,6 +670,7 @@ class SessionService:
 
         Raises:
             SessionNotFoundError: If session doesn't exist.
+            ImportedNoteError: If the session holds an imported note.
             InvalidSessionStatusError: If session is not in pending_review status.
             NoteNotFoundError: If the session has no note (generation never ran).
         """
@@ -525,6 +678,7 @@ class SessionService:
         if not session:
             raise SessionNotFoundError(f"Session {session_id} not found")
 
+        refuse_imported(session)
         if session.status != SessionStatus.PENDING_REVIEW:
             raise InvalidSessionStatusError(session.status, "pending_review")
 
@@ -545,18 +699,31 @@ class SessionService:
             )
 
         finalized_at = _now()
-        note = self.note_service.finalize_note(
-            note.id,
-            quality_rating=request.quality_rating,
-            quality_rating_reason=request.quality_rating_reason,
-            quality_rating_sections=(
-                [s.value for s in request.quality_rating_sections]
-                if request.quality_rating_sections
-                else None
-            ),
-            finalized_at=finalized_at,
-            user_id=user_id,
+        rating_sections = (
+            [s.value for s in request.quality_rating_sections]
+            if request.quality_rating_sections
+            else None
         )
+        if request.signature is not None:
+            note, _ = self.note_service.sign_note(
+                note.id,
+                signer_name=request.signature.signer_name,
+                signer_credentials=request.signature.signer_credentials,
+                quality_rating=request.quality_rating,
+                quality_rating_reason=request.quality_rating_reason,
+                quality_rating_sections=rating_sections,
+                now=finalized_at,
+                user_id=user_id,
+            )
+        else:
+            note = self.note_service.finalize_note(
+                note.id,
+                quality_rating=request.quality_rating,
+                quality_rating_reason=request.quality_rating_reason,
+                quality_rating_sections=rating_sections,
+                finalized_at=finalized_at,
+                user_id=user_id,
+            )
 
         session.status = SessionStatus.FINALIZED
         session = self.session_repo.update(session)
@@ -569,10 +736,8 @@ class SessionService:
         session_id: str,
         user_id: str,
         request: UpdateSessionRatingRequest,
-    ) -> tuple[TherapySession, Patient, Note, int | None]:
+    ) -> RatingUpdate:
         """Update quality rating on a finalized session's note.
-
-        Returns ``(session, patient, note, old_rating)``.
 
         Raises:
             SessionNotFoundError: If session doesn't exist.
@@ -607,7 +772,7 @@ class SessionService:
             raise InvalidSessionStatusError(session.status, "finalized") from exc
 
         patient = self._get_patient_or_raise(session.patient_id, user_id)
-        return session, patient, note, old_rating
+        return RatingUpdate(session=session, patient=patient, note=note, old_rating=old_rating)
 
     def update_soap_note_edits(
         self,
@@ -647,14 +812,7 @@ class SessionService:
             raise PatientNotFoundError(f"Patient {request.patient_id} not found")
 
         note_type = request.note_type or DEFAULT_NOTE_TYPE
-        registry = get_default_registry()
-        if not registry.has(note_type):
-            raise InvalidNoteTypeError(f"Unknown note_type: {note_type!r}")
-        definition = registry.get(note_type)
-        try:
-            note_inputs = validate_note_inputs(definition, request.note_inputs)
-        except ValueError as e:
-            raise InvalidNoteTypeError(str(e)) from e
+        definition, note_inputs = _resolve_note_type(note_type, request.note_inputs)
 
         now = _now()
         session_number = self.session_repo.get_session_number_for_patient(request.patient_id)
@@ -793,6 +951,8 @@ class SessionService:
         session_id: str,
         user_id: str,
         request: UploadTranscriptToSessionRequest,
+        *,
+        client_present_end_seconds: float | None = None,
     ) -> TherapySession:
         """Attach a transcript to an existing session and mark it ``PROCESSING``.
 
@@ -802,6 +962,10 @@ class SessionService:
         handed to the worker (``generate_session_note``), which reads the
         transcript and note type off the persisted session. The session is not
         re-counted here — it was counted when it was first created.
+
+        ``client_present_end_seconds`` is the boundary when the caller measured
+        it from the provider's own timings; otherwise it is read from the
+        transcript (see :func:`_client_present_end`).
 
         Returns the updated ``session``.
 
@@ -817,6 +981,11 @@ class SessionService:
             raise InvalidSessionStatusError(session.status, "recording_complete or failed")
 
         session.transcript = Transcript(format=request.format, content=request.content)
+        session.client_present_end_seconds = (
+            client_present_end_seconds
+            if client_present_end_seconds is not None
+            else _client_present_end(session)
+        )
         session.status = SessionStatus.PROCESSING
         session.processing_started_at = _now()
         session.updated_at = _now()

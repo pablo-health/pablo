@@ -16,7 +16,7 @@ live. They are different questions and a draft is the reason: a document
 being edited is the latest row and is not the one anybody may be asked to
 sign.
 
-Rows are plain ``dict[str, object]`` matching the column layout, the same
+Rows are plain ``Row`` matching the column layout, the same
 shape the other repositories in this package hand back.
 """
 
@@ -28,20 +28,22 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from .row import Row
+
 
 class IntakeDocumentRepository(ABC):
     """Abstract base class for consent-document data access."""
 
     @abstractmethod
-    def add(self, row: dict[str, object]) -> dict[str, object]:
+    def add(self, row: Row) -> Row:
         """Insert one version."""
 
     @abstractmethod
-    def get(self, document_id: str) -> dict[str, object] | None:
+    def get(self, document_id: str) -> Row | None:
         """One version by its id, or ``None`` if there is no such id."""
 
     @abstractmethod
-    def latest_per_key(self) -> list[dict[str, object]]:
+    def latest_per_key(self) -> list[Row]:
         """The newest version of every document, oldest document first.
 
         What the settings list renders: a practice thinks in documents, and
@@ -49,15 +51,15 @@ class IntakeDocumentRepository(ABC):
         """
 
     @abstractmethod
-    def versions_for_key(self, document_key: str) -> list[dict[str, object]]:
+    def versions_for_key(self, document_key: str) -> list[Row]:
         """Every version of one document, newest number first."""
 
     @abstractmethod
-    def latest_for_key(self, document_key: str) -> dict[str, object] | None:
+    def latest_for_key(self, document_key: str) -> Row | None:
         """The highest-numbered version of one document, or ``None``."""
 
     @abstractmethod
-    def published_for_key(self, document_key: str) -> dict[str, object] | None:
+    def published_for_key(self, document_key: str) -> Row | None:
         """The newest PUBLISHED version of one document, or ``None``.
 
         A document whose only version is a draft answers ``None``. That is
@@ -68,7 +70,7 @@ class IntakeDocumentRepository(ABC):
     @abstractmethod
     def update_draft(
         self, document_id: str, *, title: str, body_markdown: str, digest: str
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         """Rewrite an unpublished version's text. ``None`` if there is no such id.
 
         The repository does not know the freeze rule; the service refuses a
@@ -79,7 +81,7 @@ class IntakeDocumentRepository(ABC):
     @abstractmethod
     def mark_published(
         self, document_id: str, published_at: datetime, published_by: str
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         """Freeze a version. Returns ``None`` if there is no such id."""
 
 
@@ -87,47 +89,47 @@ class InMemoryIntakeDocumentRepository(IntakeDocumentRepository):
     """In-memory repository for unit tests."""
 
     def __init__(self) -> None:
-        self.rows: dict[str, dict[str, object]] = {}
+        self.rows: dict[str, Row] = {}
 
-    def add(self, row: dict[str, object]) -> dict[str, object]:
+    def add(self, row: Row) -> Row:
         self.rows[str(row["id"])] = dict(row)
         return dict(row)
 
-    def get(self, document_id: str) -> dict[str, object] | None:
+    def get(self, document_id: str) -> Row | None:
         row = self.rows.get(document_id)
         return dict(row) if row else None
 
-    def latest_per_key(self) -> list[dict[str, object]]:
-        ordered = sorted(self.rows.values(), key=lambda r: (r["created_at"], str(r["id"])))  # type: ignore[index]
-        newest: dict[str, dict[str, object]] = {}
+    def latest_per_key(self) -> list[Row]:
+        ordered = sorted(self.rows.values(), key=lambda r: (r["created_at"], str(r["id"])))
+        newest: dict[str, Row] = {}
         order: dict[str, int] = {}
         for index, row in enumerate(ordered):
             key = str(row["document_key"])
             order.setdefault(key, index)
             held = newest.get(key)
-            if held is None or int(row["version"]) > int(held["version"]):  # type: ignore[call-overload]
+            if held is None or int(row["version"]) > int(held["version"]):
                 newest[key] = row
         return [
             dict(row)
             for row in sorted(newest.values(), key=lambda r: order[str(r["document_key"])])
         ]
 
-    def versions_for_key(self, document_key: str) -> list[dict[str, object]]:
+    def versions_for_key(self, document_key: str) -> list[Row]:
         rows = [dict(r) for r in self.rows.values() if str(r["document_key"]) == document_key]
-        rows.sort(key=lambda r: int(r["version"]), reverse=True)  # type: ignore[call-overload]
+        rows.sort(key=lambda r: int(r["version"]), reverse=True)
         return rows
 
-    def latest_for_key(self, document_key: str) -> dict[str, object] | None:
+    def latest_for_key(self, document_key: str) -> Row | None:
         rows = self.versions_for_key(document_key)
         return rows[0] if rows else None
 
-    def published_for_key(self, document_key: str) -> dict[str, object] | None:
+    def published_for_key(self, document_key: str) -> Row | None:
         published = [r for r in self.versions_for_key(document_key) if r["published_at"]]
         return published[0] if published else None
 
     def update_draft(
         self, document_id: str, *, title: str, body_markdown: str, digest: str
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         row = self.rows.get(document_id)
         if row is None:
             return None
@@ -138,7 +140,7 @@ class InMemoryIntakeDocumentRepository(IntakeDocumentRepository):
 
     def mark_published(
         self, document_id: str, published_at: datetime, published_by: str
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         row = self.rows.get(document_id)
         if row is None:
             return None

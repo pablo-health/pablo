@@ -89,6 +89,11 @@ test("a practice's own host serves its portal and nothing else @portal", async (
       [PRIMARY, "/dashboard"],
       [PRIMARY, "/login"],
       [PRIMARY, "/api/logout"],
+      // Paths no portal page serves: probes for server internals must not
+      // get the portal's page with a 200, on the primary or via an alias.
+      [PRIMARY, "/phpinfo"],
+      [PRIMARY, "/actuator/env"],
+      [ALIAS, "/server-status"],
       [PENDING, "/"],
       [PENDING, "/api/config"],
       [`unknown-${Date.now()}.e2e-practice.example`, "/"],

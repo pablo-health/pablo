@@ -36,8 +36,13 @@ import type {
 } from "@/types/scheduling"
 import type { PatientResponse } from "@/types/patients"
 import type { UserPreferences } from "@/lib/api/users"
-import { DEFAULT_NOTE_TYPE, type NoteInputSchema } from "@/types/noteTypes"
+import { DEFAULT_NOTE_TYPE } from "@/types/noteTypes"
+import { NoteInputFields } from "@/components/notes/NoteInputFields"
 import { ApiError } from "@/lib/api/client"
+import { isReviewInput } from "@/lib/mdm"
+import { filledInputs } from "@/lib/noteInputs"
+import { browserTimeZone } from "@/lib/dates"
+import { isTelehealth } from "@/lib/telehealth"
 import type { EditorialTheme } from "./editorial/EditorialSidebar"
 import "./editorial/editorial.css"
 
@@ -295,63 +300,6 @@ function fieldStyle(): React.CSSProperties {
   }
 }
 
-/** One control per input the chosen note type declares. */
-function NoteInputFields({
-  inputs,
-  values,
-  onChange,
-}: {
-  inputs: NoteInputSchema[]
-  values: Record<string, string>
-  onChange: (key: string, value: string) => void
-}) {
-  return (
-    <>
-      {inputs.map((input) => (
-        <div key={input.key}>
-          <FieldLabel hint={input.required ? "Required" : undefined}>{input.label}</FieldLabel>
-          {input.kind === "choice" ? (
-            <Select value={values[input.key] ?? ""} onValueChange={(v) => onChange(input.key, v)}>
-              <SelectTrigger aria-label={input.label} aria-required={input.required} className="w-full">
-                <SelectValue placeholder="Choose…" />
-              </SelectTrigger>
-              <SelectContent>
-                {input.options.map((option) => (
-                  <SelectItem key={option} value={option}>
-                    {option}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : (
-            <input
-              value={values[input.key] ?? ""}
-              aria-label={input.label}
-              aria-required={input.required}
-              onChange={(e) => onChange(input.key, e.target.value)}
-              className={FIELD_CLASS}
-              style={fieldStyle()}
-            />
-          )}
-        </div>
-      ))}
-    </>
-  )
-}
-
-/** The declared inputs' non-blank values, trimmed — the shape the API takes. */
-function filledInputs(
-  inputs: NoteInputSchema[],
-  values: Record<string, string>,
-): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const input of inputs) {
-    const value = values[input.key]?.trim()
-    if (value) out[input.key] = value
-  }
-  return out
-}
-
 function AppointmentForm({
   appointment,
   defaultStart,
@@ -462,7 +410,10 @@ function AppointmentForm({
     appointment?.note_inputs ?? {},
   )
   const [noteInputsRejected, setNoteInputsRejected] = useState(false)
-  const declaredInputs = noteTypes.find((t) => t.key === noteType)?.inputs ?? []
+  // The medical decision making choices are made at review, beside the note.
+  const declaredInputs = (noteTypes.find((t) => t.key === noteType)?.inputs ?? []).filter(
+    (input) => !isReviewInput(input.key),
+  )
   // Creating a series has no field for inputs, so nothing is collected (or
   // required) there; each occurrence can take them once it's booked.
   const bookingSeries = !isEditing && repeat !== "none"
@@ -523,7 +474,16 @@ function AppointmentForm({
     checkConflictsMutation.isPending
 
   const save = (ruleOverride: boolean) => {
-    const videoPlatform = appointment?.video_platform ?? preferences?.default_video_platform ?? null
+    // The default video platform belongs to telehealth visits only; an
+    // in-person visit stamped with one would read as a video session.
+    const telehealth = isTelehealth({
+      provider: appointment?.provider ?? null,
+      video_link: videoLink || null,
+      place_of_service: appointment?.place_of_service ?? null,
+    })
+    const videoPlatform =
+      appointment?.video_platform ??
+      (telehealth ? (preferences?.default_video_platform ?? null) : null)
     const payload = {
       patient_id: patientId,
       title,
@@ -593,7 +553,7 @@ function AppointmentForm({
         {
           ...payload,
           frequency: repeat,
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          timezone: browserTimeZone(),
           count,
           end_date: endDate,
         },
@@ -1087,6 +1047,16 @@ function AppointmentForm({
                   inputs={collectedInputs}
                   values={noteInputs}
                   onChange={changeNoteInput}
+                  renderField={(input, control) => (
+                    <div>
+                      <FieldLabel hint={input.required ? "Required" : undefined}>
+                        {input.label}
+                      </FieldLabel>
+                      {control}
+                    </div>
+                  )}
+                  textClassName={FIELD_CLASS}
+                  textStyle={fieldStyle()}
                 />
               )}
               {bookingSeries && declaredInputs.length > 0 && (

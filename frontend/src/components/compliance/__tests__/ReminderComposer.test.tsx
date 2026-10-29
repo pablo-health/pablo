@@ -10,20 +10,18 @@ import {
 } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { ReminderComposer } from "../ReminderComposer"
-import type {
-  ComplianceItem,
-  ComplianceTemplate,
-} from "@/types/compliance"
+import type { ComplianceTemplate } from "@/types/compliance"
+import type { Task } from "@/types/tasks"
 
 const createMutate = vi.hoisted(() => vi.fn().mockResolvedValue(undefined))
 const updateMutate = vi.hoisted(() => vi.fn().mockResolvedValue(undefined))
 
-vi.mock("@/hooks/useCompliance", () => ({
-  useCreateComplianceItem: () => ({
+vi.mock("@/hooks/useTasks", () => ({
+  useCreateTask: () => ({
     mutateAsync: createMutate,
     isPending: false,
   }),
-  useUpdateComplianceItem: () => ({
+  useUpdateTask: () => ({
     mutateAsync: updateMutate,
     isPending: false,
   }),
@@ -53,9 +51,14 @@ const BAA: ComplianceTemplate = {
 
 const TEMPLATES = [LICENSE, BAA]
 
-function makeItem(overrides: Partial<ComplianceItem> = {}): ComplianceItem {
+function makeItem(overrides: Partial<Task> = {}): Task {
   return {
     id: "item-1",
+    category: "compliance",
+    repeat_rule: null,
+    parent_task_id: null,
+    goal_key: null,
+    source: "manual",
     item_type: "license",
     label: "Professional license",
     due_date: "2027-01-01",
@@ -68,8 +71,8 @@ function makeItem(overrides: Partial<ComplianceItem> = {}): ComplianceItem {
 }
 
 function renderComposer(props: {
-  items?: ComplianceItem[]
-  initialItem?: ComplianceItem | null
+  items?: Task[]
+  initialItem?: Task | null
 }) {
   const onOpenChange = vi.fn()
   const client = new QueryClient({
@@ -169,6 +172,7 @@ describe("ReminderComposer", () => {
       // Mutation called with the template's canonical label and the chosen date.
       expect(createMutate).toHaveBeenCalledTimes(1)
       expect(createMutate).toHaveBeenCalledWith({
+        category: "compliance",
         item_type: "license",
         label: "Professional license",
         due_date: "2027-12-01",
@@ -196,6 +200,7 @@ describe("ReminderComposer", () => {
 
       await waitFor(() =>
         expect(createMutate).toHaveBeenCalledWith({
+          category: "compliance",
           item_type: "baa",
           label: "BAA — Spruce",
           due_date: "2027-09-01",
@@ -240,11 +245,17 @@ describe("ReminderComposer", () => {
       expect(updateMutate).toHaveBeenCalledTimes(1)
       expect(updateMutate).toHaveBeenCalledWith({
         id: "item-1",
+        // A full replace: what the reminder form does not edit is carried.
         payload: {
+          category: "compliance",
           item_type: "license",
           label: "Professional license",
           due_date: "2027-04-01",
           notes: null,
+          repeat_rule: null,
+          parent_task_id: null,
+          goal_key: null,
+          patient_id: null,
         },
       })
       expect(createMutate).not.toHaveBeenCalled()

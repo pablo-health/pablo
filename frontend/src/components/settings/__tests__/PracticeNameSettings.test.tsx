@@ -60,7 +60,7 @@ describe("PracticeNameSettings", () => {
 
     const input = screen.getByLabelText("Practice name")
     expect(input).toHaveAttribute("readonly")
-    expect(screen.getByText("Only the practice owner can change this.")).toBeInTheDocument()
+    expect(screen.getByText("Only the practice owner or a practice admin can change this.")).toBeInTheDocument()
 
     await user.type(input, "x")
     expect(input).toHaveValue("Jane Doe")

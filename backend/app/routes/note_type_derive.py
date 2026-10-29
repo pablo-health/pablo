@@ -21,7 +21,12 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from ..api_errors import BadRequestError, NotFoundError, UnprocessableEntityError
+from ..api_errors import (
+    BadRequestError,
+    NotFoundError,
+    ServiceUnavailableError,
+    UnprocessableEntityError,
+)
 from ..auth.route_access import subscription_exempt
 from ..auth.service import get_current_user, require_baa_acceptance
 from ..db import release_db_connection
@@ -33,14 +38,18 @@ from ..notes.references import (
     reference_from_definition,
     registered_note_type_references,
 )
+from ..services.ai_features import AIFeature
 from ..services.audit_service import AuditService, get_audit_service
+from ..services.document_ai_ocr import DocumentAiOcrClient, get_document_ocr_client
+from ..services.hedged_structured_llm_gateway import generation_gateway
 from ..services.http_structured_llm_gateway import HttpStructuredLLMGateway
 from ..services.note_import_service import (
     MAX_IMPORT_DOC_BYTES,
+    DocumentReadTimeoutError,
     DocumentTextExtractionError,
     NoteImportService,
     UnsupportedDocumentTypeError,
-    extract_document_text,
+    read_document_text,
 )
 from ..services.note_type_derive_service import (
     MAX_DESCRIPTION_CHARS,
@@ -51,6 +60,7 @@ from ..services.note_type_derive_service import (
 )
 from ..services.structured_llm_gateway import StructuredOutputTruncatedError
 from ..settings import get_settings
+from ..uploads import read_bounded
 from .note_types import get_registry
 
 if TYPE_CHECKING:
@@ -70,6 +80,14 @@ class CoverageSchema(BaseModel):
     )
     checked: bool = Field(
         description="False when the sample could not be checked; unplaced is then empty."
+    )
+    excluded: int = Field(
+        default=0,
+        description=(
+            "Lines set aside as not note content: blocks the sample marks as not part "
+            "of the note (such as how codes were chosen), signature lines, and facts "
+            "that only identify the client or clinician. Never counted as unplaced."
+        ),
     )
 
 
@@ -121,8 +139,11 @@ def get_note_type_derive_service() -> NoteTypeDeriveService:
     """
     base_url = get_settings().note_generation_base_url
     if base_url:
-        gateway = HttpStructuredLLMGateway(base_url)
-        return NoteTypeDeriveService(NoteImportService(llm_gateway=gateway), llm_gateway=gateway)
+        stand_in = HttpStructuredLLMGateway(base_url)
+        return NoteTypeDeriveService(
+            NoteImportService(llm_gateway=generation_gateway(AIFeature.NOTE_IMPORT, stand_in)),
+            llm_gateway=generation_gateway(AIFeature.NOTE_TYPE_DERIVE, stand_in),
+        )
     return NoteTypeDeriveService(NoteImportService())
 
 
@@ -155,20 +176,24 @@ def _resolve_reference(key: str | None, registry: NoteTypeRegistry) -> NoteTypeR
         raise NotFoundError(f"Reference {key!r} not found") from exc
 
 
-async def _sample_texts(pasted: list[str], files: list[UploadFile]) -> list[str]:
+async def _sample_texts(
+    pasted: list[str], files: list[UploadFile], ocr: DocumentAiOcrClient
+) -> list[str]:
     """Each sample's text, pasted ones first; PDF and Word read like an import."""
     texts = [text.strip() for text in pasted if text.strip()]
     for upload in files:
-        data = await upload.read()
-        if len(data) > MAX_IMPORT_DOC_BYTES:
-            raise HTTPException(
+        data = await read_bounded(
+            upload,
+            MAX_IMPORT_DOC_BYTES,
+            too_large=HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail=f"File too large. Max {MAX_IMPORT_DOC_BYTES // (1024 * 1024)} MB.",
-            )
+            ),
+        )
         try:
             texts.append(
-                extract_document_text(
-                    data, content_type=upload.content_type, filename=upload.filename
+                await read_document_text(
+                    data, content_type=upload.content_type, filename=upload.filename, ocr=ocr
                 )
             )
         except UnsupportedDocumentTypeError as exc:
@@ -177,6 +202,8 @@ async def _sample_texts(pasted: list[str], files: list[UploadFile]) -> list[str]
             ) from exc
         except DocumentTextExtractionError as exc:
             raise UnprocessableEntityError(str(exc)) from exc
+        except DocumentReadTimeoutError as exc:
+            raise ServiceUnavailableError(str(exc), code="DOCUMENT_READ_TIMEOUT") from exc
     if len(texts) > MAX_SAMPLES:
         raise BadRequestError(f"Send at most {MAX_SAMPLES} sample notes.")
     if any(len(text) > MAX_SAMPLE_CHARS for text in texts):
@@ -196,6 +223,7 @@ async def derive_note_type(
     user: User = Depends(require_baa_acceptance),
     registry: NoteTypeRegistry = Depends(get_registry),
     deriver: NoteTypeDeriveService = Depends(get_note_type_derive_service),
+    ocr: DocumentAiOcrClient = Depends(get_document_ocr_client),
     audit: AuditService = Depends(get_audit_service),
 ) -> DeriveNoteTypeResponse:
     """Propose a note type from up to three sample notes and/or a description.
@@ -205,7 +233,11 @@ async def derive_note_type(
     out, in plain words) and ``reference`` (a note type or reference key to
     compare against). Send at least one sample or a description.
     """
-    texts = await _sample_texts(samples or [], files or [])
+    if files:
+        # Reading a scanned sample is an OCR call; hold no pooled connection
+        # through it. The audit write below checks out a fresh one.
+        release_db_connection()
+    texts = await _sample_texts(samples or [], files or [], ocr)
     if not texts and not (description and description.strip()):
         raise BadRequestError("Send a sample note or a description.")
     chosen = _resolve_reference(reference, registry)
@@ -244,7 +276,11 @@ async def derive_note_type(
         spec=derived.spec,
         coverage=[
             CoverageSchema(
-                sample=c.sample, passages=c.passages, unplaced=c.unplaced, checked=c.checked
+                sample=c.sample,
+                passages=c.passages,
+                unplaced=c.unplaced,
+                checked=c.checked,
+                excluded=c.excluded,
             )
             for c in derived.coverage
         ],

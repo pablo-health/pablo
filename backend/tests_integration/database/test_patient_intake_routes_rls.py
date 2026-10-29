@@ -29,13 +29,10 @@ import json
 import os
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
 
 if TYPE_CHECKING:
@@ -57,17 +54,6 @@ _TREATING_CLINICIAN = "6c2f9a41-8b3d-5e7a-9f04-1d8c3b6e2a95"
 # What the route submits: an all-zero PHQ-9 and an all-zero GAD-7.
 _PHQ9 = {str(i): 0 for i in range(1, 10)}
 _GAD7 = {str(i): 0 for i in range(1, 8)}
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_DB_URL, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 @pytest.fixture(scope="module")

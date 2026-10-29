@@ -16,6 +16,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from ..notes.client_present import recording_end, segments_from_transcript
 from .enums import (
     SessionSource,
     SessionStatus,
@@ -24,6 +25,7 @@ from .enums import (
     TranscriptFormat,
     VideoPlatform,
 )
+from .notes import NoteSignerFields  # noqa: TC001 — runtime Pydantic field
 from .soap_note import (
     CONFIDENCE_THRESHOLDS,
     AssessmentNote,
@@ -57,11 +59,19 @@ class UploadSessionRequest(BaseModel):
     patient_id: str
     session_date: datetime
     transcript: TranscriptModel
+    note_type: str | None = Field(
+        default=None,
+        description="Note-type registry key to draft. Defaults to 'soap'.",
+    )
+    note_inputs: dict[str, str] | None = Field(
+        default=None,
+        description="Values for the note type's declared inputs.",
+    )
 
     @classmethod
     def validate_session_date(cls, v: str) -> str:
         """Validate session_date is ISO format."""
-        return validate_iso_date(v, "session_date")  # type: ignore
+        return validate_iso_date(v, "session_date")  # type: ignore  # validate_iso_date returns None only for a None input, which the str annotation rules out
 
 
 class FinalizeSessionRequest(BaseModel):
@@ -69,12 +79,16 @@ class FinalizeSessionRequest(BaseModel):
 
     The quality rating is optional: a clinician can finalize a note
     without rating it. When a rating is supplied it must be 1-5.
+
+    ``signature`` signs and locks the note in the same transaction, with the
+    name and credentials as entered (see ``NoteService.sign_note``).
     """
 
     quality_rating: int | None = Field(default=None, ge=1, le=5)
     quality_rating_reason: str | None = None
     quality_rating_sections: list[SOAPSection] | None = None
     soap_note_edited: SOAPNoteModel | None = None
+    signature: NoteSignerFields | None = None
 
 
 class UpdateSessionRatingRequest(BaseModel):
@@ -103,6 +117,14 @@ class ScheduleSessionRequest(BaseModel):
     note_inputs: dict[str, str] | None = Field(
         default=None,
         description="Values for the note type's declared inputs.",
+    )
+    asking_consent_on_recording: bool = Field(
+        default=False,
+        description=(
+            "The clinician asks the client about AI-assisted notes once recording "
+            "starts, so the answer is on the recording. Required to record a "
+            "session with a video link for a client with no answer on file."
+        ),
     )
 
 
@@ -194,6 +216,11 @@ class SessionResponse(BaseModel):
     notes: str | None = None
     started_at: datetime | None = None
     ended_at: datetime | None = None
+    # Seconds into the recording when the client was last present (0 for a
+    # dictation), and how long the clinician dictated after that. Both None
+    # when the boundary is unknown.
+    client_present_end_seconds: float | None = None
+    clinician_addendum_seconds: float | None = None
     updated_at: datetime | None = None
     # Parsed transcript segments for source linking
     transcript_segments: list[TranscriptSegmentModel] | None = None
@@ -203,6 +230,10 @@ class SessionResponse(BaseModel):
     # PII-redacted transcript variants
     redacted_transcript: str | None = None
     naturalized_transcript: str | None = None
+    # An imported note's signer as its document states it (see TherapySession).
+    source_signer: str | None = None
+    # The client document holding the file an imported note was read from.
+    source_document_id: str | None = None
     # Embedded note (None when this session has no generated note yet).
     note: NoteResponse | None = None
 
@@ -221,6 +252,8 @@ class SessionResponse(BaseModel):
         transcript_segments = None
         if note is not None and note.content is not None:
             transcript_segments = parse_transcript_segments(session.transcript.content)
+        if note is not None and session.status == SessionStatus.IMPORTED:
+            note = note.model_copy(update={"imported": True})
 
         return SessionResponse(
             id=session.id,
@@ -244,6 +277,8 @@ class SessionResponse(BaseModel):
             notes=session.notes,
             started_at=session.started_at,
             ended_at=session.ended_at,
+            client_present_end_seconds=session.client_present_end_seconds,
+            clinician_addendum_seconds=_clinician_addendum_seconds(session),
             updated_at=session.updated_at,
             transcript_segments=transcript_segments,
             processing_started_at=session.processing_started_at,
@@ -251,8 +286,18 @@ class SessionResponse(BaseModel):
             error=session.error,
             redacted_transcript=session.redacted_transcript,
             naturalized_transcript=session.naturalized_transcript,
+            source_signer=session.source_signer,
+            source_document_id=session.source_document_id,
             note=note,
         )
+
+
+def _clinician_addendum_seconds(session: TherapySession) -> float | None:
+    boundary = session.client_present_end_seconds
+    if boundary is None:
+        return None
+    end = recording_end(segments_from_transcript(session.transcript))
+    return max(end - boundary, 0.0)
 
 
 class SessionListResponse(BaseModel):
@@ -306,6 +351,9 @@ class TherapySession:
     notes: str | None = None
     started_at: datetime | None = None
     ended_at: datetime | None = None
+    #: Seconds into the recording when the client was last present; see
+    #: :mod:`app.notes.client_present`.
+    client_present_end_seconds: float | None = None
     updated_at: datetime | None = None
     audio_gcs_path: str | None = None
     transcription_job_metadata: dict[str, Any] | None = None
@@ -315,6 +363,11 @@ class TherapySession:
     # PII-redacted transcript variants (note-side variants live on Note).
     redacted_transcript: str | None = None
     naturalized_transcript: str | None = None
+    #: Who signed an imported note in the system it came from, exactly as the
+    #: document states it. Never matched to a user; ``None`` when unstated.
+    source_signer: str | None = None
+    #: The client document holding the file an imported note was read from.
+    source_document_id: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TherapySession:
@@ -342,6 +395,7 @@ class TherapySession:
             notes=data.get("notes"),
             started_at=data.get("started_at"),
             ended_at=data.get("ended_at"),
+            client_present_end_seconds=data.get("client_present_end_seconds"),
             updated_at=data.get("updated_at"),
             audio_gcs_path=data.get("audio_gcs_path"),
             transcription_job_metadata=data.get("transcription_job_metadata"),
@@ -350,6 +404,8 @@ class TherapySession:
             error=data.get("error"),
             redacted_transcript=data.get("redacted_transcript"),
             naturalized_transcript=data.get("naturalized_transcript"),
+            source_signer=data.get("source_signer"),
+            source_document_id=data.get("source_document_id"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -372,6 +428,7 @@ class TherapySession:
             "notes": self.notes,
             "started_at": self.started_at,
             "ended_at": self.ended_at,
+            "client_present_end_seconds": self.client_present_end_seconds,
             "updated_at": self.updated_at,
             "audio_gcs_path": self.audio_gcs_path,
             "transcription_job_metadata": self.transcription_job_metadata,
@@ -380,6 +437,8 @@ class TherapySession:
             "error": self.error,
             "redacted_transcript": self.redacted_transcript,
             "naturalized_transcript": self.naturalized_transcript,
+            "source_signer": self.source_signer,
+            "source_document_id": self.source_document_id,
         }
 
 

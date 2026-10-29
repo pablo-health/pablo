@@ -14,6 +14,10 @@ application-layer and database-layer authorisation stay in lockstep.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .row import Row
 
 
 class PatientOutcomeAccessDeniedError(Exception):
@@ -28,7 +32,7 @@ class PatientOutcomeAccessDeniedError(Exception):
 class OutcomeMeasureRepository(ABC):
     """Abstract base class for outcome measure data access.
 
-    Rows are plain ``dict[str, object]`` matching the ``OutcomeMeasureRow``
+    Rows are plain ``Row`` matching the ``OutcomeMeasureRow``
     column layout (uuid columns as ``str``, JSONB as ``dict | None``).
 
     * Reads return ``None`` / empty when access is denied — same shape as
@@ -39,7 +43,7 @@ class OutcomeMeasureRepository(ABC):
     """
 
     @abstractmethod
-    def get(self, measure_id: str, user_id: str) -> dict[str, object] | None:
+    def get(self, measure_id: str, user_id: str) -> Row | None:
         """Get a measure by ID, or ``None`` if absent or inaccessible."""
 
     @abstractmethod
@@ -49,7 +53,7 @@ class OutcomeMeasureRepository(ABC):
         user_id: str,
         *,
         instrument: str | None = None,
-    ) -> list[dict[str, object]]:
+    ) -> list[Row]:
         """List measures for a patient (including soft-deleted).
 
         The service layer filters ``deleted_at IS NULL`` so both live and
@@ -58,11 +62,11 @@ class OutcomeMeasureRepository(ABC):
         """
 
     @abstractmethod
-    def add(self, row: dict[str, object], user_id: str) -> dict[str, object]:
+    def add(self, row: Row, user_id: str) -> Row:
         """Insert a new row. Raises :class:`PatientOutcomeAccessDeniedError` if blocked."""
 
     @abstractmethod
-    def add_self_report(self, row: dict[str, object]) -> dict[str, object]:
+    def add_self_report(self, row: Row) -> Row:
         """Insert a row the patient recorded about themselves.
 
         No ``user_id`` and no grant check, because there is no clinician in
@@ -75,7 +79,7 @@ class OutcomeMeasureRepository(ABC):
         """
 
     @abstractmethod
-    def update(self, row: dict[str, object], user_id: str) -> dict[str, object]:
+    def update(self, row: Row, user_id: str) -> Row:
         """Update an existing row (full replacement).
 
         Raises :class:`PatientOutcomeAccessDeniedError` if blocked.
@@ -94,7 +98,7 @@ class InMemoryOutcomeMeasureRepository(OutcomeMeasureRepository):
     """
 
     def __init__(self) -> None:
-        self._rows: dict[str, dict[str, object]] = {}
+        self._rows: dict[str, Row] = {}
         self._access: set[tuple[str, str]] = set()
         self._allow_all = False
 
@@ -111,7 +115,7 @@ class InMemoryOutcomeMeasureRepository(OutcomeMeasureRepository):
 
     # --- read methods ---
 
-    def get(self, measure_id: str, user_id: str = _TEST_DEFAULT_USER) -> dict[str, object] | None:
+    def get(self, measure_id: str, user_id: str = _TEST_DEFAULT_USER) -> Row | None:
         row = self._rows.get(measure_id)
         if row is None:
             return None
@@ -125,7 +129,7 @@ class InMemoryOutcomeMeasureRepository(OutcomeMeasureRepository):
         user_id: str = _TEST_DEFAULT_USER,
         *,
         instrument: str | None = None,
-    ) -> list[dict[str, object]]:
+    ) -> list[Row]:
         if not self._can_access(patient_id, user_id):
             return []
         rows = [
@@ -140,24 +144,24 @@ class InMemoryOutcomeMeasureRepository(OutcomeMeasureRepository):
 
     def add(
         self,
-        row: dict[str, object],
+        row: Row,
         user_id: str = _TEST_DEFAULT_USER,
-    ) -> dict[str, object]:
+    ) -> Row:
         patient_id = str(row["patient_id"])
         if not self._can_access(patient_id, user_id):
             raise PatientOutcomeAccessDeniedError(patient_id, user_id)
         self._rows[str(row["id"])] = dict(row)
         return dict(row)
 
-    def add_self_report(self, row: dict[str, object]) -> dict[str, object]:
+    def add_self_report(self, row: Row) -> Row:
         self._rows[str(row["id"])] = dict(row)
         return dict(row)
 
     def update(
         self,
-        row: dict[str, object],
+        row: Row,
         user_id: str = _TEST_DEFAULT_USER,
-    ) -> dict[str, object]:
+    ) -> Row:
         patient_id = str(row["patient_id"])
         if not self._can_access(patient_id, user_id):
             raise PatientOutcomeAccessDeniedError(patient_id, user_id)

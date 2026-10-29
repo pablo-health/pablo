@@ -1,12 +1,22 @@
 # Pablo — HIPAA Security Rule Control Narrative
 
 **Scope:** this document maps each 45 CFR §164 Security Rule control to how
-Pablo (the deployed Cloud Run + Firebase + Cloud SQL application) meets it,
-with pointers to the code, workflow, or runtime configuration that provides
-the evidence. It complements — but does not replace — the weekly pentest
-report produced by `/pentest`; the pentest covers what is *technically
-observable at runtime*, this document covers the paper and process controls
-plus the CI/CD safeguards that run before any code reaches production.
+Pablo meets it, with pointers to the code, workflow, or runtime
+configuration that provides the evidence. It complements — but does not
+replace — the weekly pentest report produced by `/pentest`; the pentest
+covers what is *technically observable at runtime*, this document covers the
+paper and process controls plus the CI/CD safeguards that run before any
+code reaches production.
+
+**Which deployment a row describes.** A status of **Met** describes Pablo
+Health's hosted service (Pablo One), where Pablo Health is the business
+associate. The weekly pentest, "Pablo notifies the covered entity" in §7,
+and the annual verification in §8 are hosted-service commitments. A
+self-hosted install built by `install.sh` (one VM, Postgres on a disk,
+pgBackRest) shares the code-level controls, which are marked **(code)**
+where the evidence is in this repository; every **Operator-responsibility**
+row, and everything in §7 and §8, is the self-hoster's own. The
+self-hoster's view of the same ground is `docs/SELF_HOSTING_HIPAA_GUIDE.md`.
 
 **Audience:** HHS OCR auditors, Covered Entity compliance teams evaluating
 Pablo as a Business Associate, and Pablo engineers confirming a change did
@@ -79,12 +89,12 @@ the gate ran.
 | §164.308(a)(5)(i) | Security awareness & training | Partial / Operator-responsibility | Covered Entity owns workforce training. Pablo publishes `docs/SELF_HOSTING_HIPAA_GUIDE.md` for operator-level awareness. |
 | §164.308(a)(5)(ii)(A) | Security reminders | Operator-responsibility | — |
 | §164.308(a)(5)(ii)(B) | Protection from malicious software | **Met (CI/CD-enforced)** | Trivy CRITICAL/HIGH gate (`.github/workflows/security.yml`), pip-audit + npm audit on every PR, CodeQL SAST, weekly re-scan of deployed base images. Chainguard zero-CVE bases (`backend/Dockerfile.production`). |
-| §164.308(a)(5)(ii)(C) | Log-in monitoring — detect anomalies | Met | Firebase Auth anti-abuse (strict bad-password lockout); `audit_logs` records every authentication event. Pentest §9 probes with ≤10 bad passwords per rule #1. |
+| §164.308(a)(5)(ii)(C) | Log-in monitoring — detect anomalies | Met (code) | The backend writes one `signed_in` row to `audit_logs` per sign-in (`backend/app/auth/sign_in_audit.py`); `hipaa_log_review` flags anomalous patterns over those rows. Failed attempts never reach the backend: Identity Platform's bad-password lockout handles them and holds their record. Pentest §9 probes with ≤10 bad passwords per rule #1. |
 | §164.308(a)(5)(ii)(D) | Password management (**NPRM**: MFA required) | Met | Firebase Auth TOTP MFA is required for all clinician accounts; JWT carries `firebase.sign_in_second_factor=totp`. Pentest §4 verifies this claim is present on issued tokens. |
 | §164.308(a)(6)(i)-(ii) | Security incident response & reporting | Partial / Operator-responsibility | `docs/HIPAA_AUDIT_LOGS.md` documents the audit trail; incident response runbook is operator-owned. Pablo's audit logs provide the forensic record. |
-| §164.308(a)(7)(i) | Contingency plan | Partial / Operator-responsibility | Cloud SQL automated backups + point-in-time recovery (operator-configured). |
-| §164.308(a)(7)(ii)(A) | Data backup plan — tested | Met | Cloud SQL daily automated backups with 7-day retention by default; PITR enabled. `docs/GCP_DEPLOYMENT.md` documents the operator-tunable retention. |
-| §164.308(a)(7)(ii)(B) | Disaster recovery plan — restore ≤72h (**NPRM**) | Met | Cloud SQL PITR + container image retention in GHCR (see `release.yml` — images SHA-tagged for rollback). Cloud Run rollback is sub-5min. |
+| §164.308(a)(7)(i) | Contingency plan | Partial / Operator-responsibility | Hosted: Cloud SQL automated backups + point-in-time recovery. Self-hosted: pgBackRest with continuous WAL archiving and daily disk snapshots (`deploy/vm/bootstrap.sh`, `deploy/vm/lib/vm.sh`); the written plan is the operator's. |
+| §164.308(a)(7)(ii)(A) | Data backup plan — tested | Met | Hosted: Cloud SQL daily automated backups with 7-day retention by default; PITR enabled. Self-hosted: weekly full, daily differential, continuous WAL to Cloud Storage, and a monthly restore drill (`deploy/vm/crontab`, `deploy/vm/bin/pablo-backup`). |
+| §164.308(a)(7)(ii)(B) | Disaster recovery plan — restore ≤72h (**NPRM**) | Met | Hosted: Cloud SQL PITR + container image retention in GHCR (see `release.yml` — images SHA-tagged for rollback); Cloud Run rollback is sub-5min. Self-hosted: the data disk outlives the VM and a re-run of `install.sh` adopts it; a restore from pgBackRest is a manual, operator-tested step (`docs/self-hosting/operations.md`). |
 | §164.308(a)(7)(ii)(C) | Emergency mode operation | Partial / Operator-responsibility | — |
 | §164.308(a)(7)(ii)(D) | Contingency plan testing ≥12mo | Operator-responsibility | Covered Entity owns disaster recovery tests. Pablo's rollback is exercised implicitly by every release. |
 | §164.308(a)(7)(ii)(E) | Applications & data criticality analysis | Partial / Operator-responsibility | `docs/TECHNICAL_ARCHITECTURE.md` documents the data tiers. |
@@ -123,15 +133,15 @@ run. Every row has an observable runtime artifact.
 |---|---|---|---|
 | §164.312(a)(1) | Unique user identification | Met | Firebase UID per user; `firebase_uid` column on `users` table. JWT carries the UID; it is stamped into every `audit_logs` row. Tenant isolation enforced in `backend/app/repositories/` (CLAUDE.md guardrail #2). |
 | §164.312(a)(2)(i) | Unique user identification (req) | Met | Same as above. |
-| §164.312(a)(2)(ii) | Emergency access procedure | Met | Admin role + owner role can impersonate/reset; every impersonation is audit-logged. |
-| §164.312(a)(2)(iii) | Automatic logoff / session timeout | Met | Firebase ID tokens expire after 1h; refresh-token revocation on logout. Frontend forces re-auth on expiry. |
-| §164.312(a)(2)(iv) | Encryption / decryption of ePHI at rest (**NPRM: required**) | Met | Cloud SQL AES-256 at rest (GCP-managed keys by default; CMEK operator-configurable). GCS default encryption. Secret Manager encryption at rest. |
+| §164.312(a)(2)(ii) | Emergency access procedure | Partial / Operator-responsibility | There is no impersonation feature. Emergency access to a clinician's records is a coverage grant (a colleague gets access to that clinician's clients for a date range, audit-logged like any other access) or, for the operator, direct database access through IAP SSH, which Google's admin activity log records. The procedure for invoking either is the operator's to write. |
+| §164.312(a)(2)(iii) | Automatic logoff / session timeout | Met (code) | The backend ends a session after 15 minutes without a request (`idle_timeout_seconds`, `backend/app/settings.py`), tracked in Redis; when that check cannot run the request is refused rather than allowed (`idle_session_fail_open=false`). The frontend warns and signs out proactively (`frontend/src/components/IdleTimeout.tsx`). Identity Platform ID tokens also expire hourly, which is not the control. |
+| §164.312(a)(2)(iv) | Encryption / decryption of ePHI at rest (**NPRM: required**) | Met | Hosted: Cloud SQL AES-256 at rest (GCP-managed keys by default; CMEK operator-configurable). Self-hosted: Compute Engine disks and Cloud Storage with Google-managed keys by default; the installer configures no CMEK. Both: GCS default encryption, Secret Manager encryption at rest, and application-level AES-256-GCM for OAuth tokens, telehealth connections and the tax ID (`backend/app/services/token_encryption.py`). |
 | §164.312(b) | Audit controls — record & examine activity | **Met (CI/CD-enforced)** | `backend/app/services/audit_service.py` + `backend/app/repositories/audit.py`. Scheduled review in `backend/app/jobs/hipaa_log_review.py`. CLAUDE.md guardrail #1 enforces that every PHI route must take an `AuditService` dependency — pentest §13 and code review verify. Schema is PHI-free by design (CLAUDE.md guardrail #4). |
 | §164.312(c)(1) | Integrity — protect ePHI from improper alteration/destruction | Met | Tenant-scoped repositories; admin-only deletion; row versioning on clinical models; audit log captures every mutation. |
 | §164.312(c)(2) | Mechanism to authenticate ePHI (**NPRM**) | Met | Cloud SQL + application-layer tenant checks ensure rows can only be read/written by authorized users; audit log provides chain of custody. |
 | §164.312(d) | Person or entity authentication (**NPRM: MFA required**) | **Met (CI/CD-enforced)** | Firebase TOTP MFA required; JWT `firebase.sign_in_second_factor=totp` verified server-side. Pentest §4 probes this on every run. Frontend enforces MFA enrollment. |
-| §164.312(e)(1) | Transmission security | Met | HTTPS-only on Cloud Run (auto-managed TLS). HSTS header set; `testssl.sh` in pentest §1 verifies TLS 1.2+ only, no weak suites. |
-| §164.312(e)(2)(i) | Integrity controls in transit | Met | TLS integrity; Cloud SQL uses TLS to the backend; `cloud-sql-proxy` encrypted channel. |
+| §164.312(e)(1) | Transmission security | Met | Hosted: HTTPS-only on Cloud Run (auto-managed TLS). Self-hosted: Caddy with Let's Encrypt (`deploy/vm/Caddyfile`). Both: the backend refuses plain HTTP outside development and trusts forwarded headers only from `TRUSTED_PROXY_IPS` (`backend/app/middleware/security.py`); HSTS header set; `testssl.sh` in pentest §1 verifies TLS 1.2+ only, no weak suites, on the hosted service. |
+| §164.312(e)(2)(i) | Integrity controls in transit | Met | TLS integrity. Hosted: Cloud SQL over the `cloud-sql-proxy` encrypted channel. Self-hosted: Postgres listens only on loopback and the VM's private container network, so the database connection never leaves the host (`deploy/vm/bootstrap.sh`). |
 | §164.312(e)(2)(ii) | Encryption in transit (**NPRM: required**) | Met | Same as §164.312(e)(1); no plaintext HTTP. |
 
 ---
@@ -167,9 +177,11 @@ the BAA-covered subprocessor list.
 
 ## 7. Breach Notification Rule (§164.400–414) — interaction points
 
-Pablo is the BA, not the Covered Entity. The CE notifies affected
-individuals and HHS; Pablo notifies the CE. Operational support from
-Pablo for a breach investigation:
+For the hosted service, Pablo Health is the BA, not the Covered Entity. The
+CE notifies affected individuals and HHS; Pablo Health notifies the CE. A
+self-hosting practice is the CE with no BA in the picture and carries the
+whole of §164.400–414 itself. Operational support in the code for a breach
+investigation, in either case:
 
 - **Audit log export** — `backend/app/jobs/hipaa_log_review.py` can
   produce a PHI-free access report for any date range, redacted by
@@ -187,8 +199,11 @@ Pablo for a breach investigation:
 
 The 2024 NPRM, anticipated to finalize in 2026, requires a Business
 Associate to provide its Covered Entity customers with **annual written
-verification** that the BA's Security Rule safeguards are in place.
-Pablo's annual verification is assembled from:
+verification** that the BA's Security Rule safeguards are in place. This
+section is about Pablo Health's hosted service; a self-hosted install has
+no BA to receive one from, and its own evidence is the quarterly
+`hipaa_attestation` output. Pablo Health's annual verification is assembled
+from:
 
 1. This document (control narrative, updated within 12 months).
 2. The most recent weekly pentest report from
@@ -208,6 +223,12 @@ evidence.
 
 ## 9. Change log
 
+- **2026-10-28** — Separated hosted-service claims from self-hosted ones.
+  Removed the impersonation claim at §164.312(a)(2)(ii) (no such feature
+  exists); corrected automatic logoff to the server-enforced 15-minute idle
+  timeout; corrected log-in monitoring to the backend's `signed_in` audit
+  rows; added the single-VM install's backup, encryption and transmission
+  evidence beside the Cloud SQL / Cloud Run rows.
 - **2026-04-18** — Initial version. Written concurrent with the
   `pentest-hipaa-refactor` branch, which split the weekly pentest
   pipeline into deterministic Python collectors + LLM narrative +

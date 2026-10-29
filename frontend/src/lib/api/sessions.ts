@@ -14,6 +14,7 @@ import type {
   UpdateSessionRatingRequest,
   UploadSessionRequest,
 } from "@/types/sessions"
+import type { Note, RedraftNoteRequest } from "@/types/notes"
 import { apiClient, get, patch, post } from "./client"
 
 /**
@@ -60,16 +61,17 @@ export async function uploadSession(
 }
 
 /**
- * Import an existing, already-written SOAP note (PDF or TXT) as a session.
+ * Import an existing, already-written note (PDF, Word or TXT) as a session.
  *
- * The backend extracts the document's text, parses it into a structured SOAP
- * note plus the date the session took place, and creates a session in
- * "pending_review" dated from the document (or from `sessionDate` if given).
- * One file per call — the caller uploads several in parallel for a bulk
- * chart import.
+ * The backend extracts the document's text, parses it into the fields of
+ * `noteType` (SOAP when omitted) plus the date the session took place, and
+ * creates a session in "pending_review" dated from the document (or from
+ * `sessionDate` if given). One file per call — the caller uploads several in
+ * parallel for a bulk chart import.
  *
  * @param patientId - Patient this note belongs to
- * @param file - The PDF or TXT document
+ * @param file - The PDF, Word or TXT document
+ * @param options.noteType - Note type to read the document into
  * @param options.sessionDate - Optional ISO override for the session date
  * @param options.token - Optional auth token for server-side calls
  * @returns The created pending-review session with its parsed note
@@ -77,10 +79,13 @@ export async function uploadSession(
 export async function importNote(
   patientId: string,
   file: File,
-  options: { sessionDate?: string; token?: string } = {}
+  options: { noteType?: string; sessionDate?: string; token?: string } = {}
 ): Promise<SessionResponse> {
   const form = new FormData()
   form.append("file", file)
+  if (options.noteType) {
+    form.append("note_type", options.noteType)
+  }
   if (options.sessionDate) {
     form.append("session_date", options.sessionDate)
   }
@@ -196,4 +201,19 @@ export async function updateSessionMetadata(
   token?: string
 ): Promise<SessionResponse> {
   return patch<SessionResponse>(`/api/sessions/${sessionId}`, data, token)
+}
+
+/**
+ * Draft a session's note again, optionally with new inputs.
+ *
+ * Answers at once with the note marked `processing`; the new draft is
+ * written off the request, so poll the session until the note's status
+ * leaves `processing` (`complete`, or `failed` with the note unchanged).
+ */
+export async function redraftSessionNote(
+  sessionId: string,
+  data: RedraftNoteRequest,
+  token?: string
+): Promise<Note> {
+  return post<Note>(`/api/sessions/${sessionId}/note/redraft`, data, token)
 }

@@ -12,7 +12,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import proxy from "../proxy"
 import { authProviderMiddleware } from "@/lib/auth/middleware"
-import { lookupPracticeHost } from "@/lib/portal-host/practice-host-lookup"
+import { lookupPortalSlug, lookupPracticeHost } from "@/lib/portal-host/practice-host-lookup"
+import { UNKNOWN_PRACTICE_HEADER, UNKNOWN_PRACTICE_PATH } from "@/lib/portal-host/unknown-practice"
 import { fetchSiteFile, lookupSiteHost } from "@/lib/portal-host/practice-site-lookup"
 
 // Stubbing the provider chain keeps the edge auth stack (and its env
@@ -26,6 +27,7 @@ vi.mock("@/lib/auth/middleware", () => ({
 // only matters what the proxy does with each answer.
 vi.mock("@/lib/portal-host/practice-host-lookup", () => ({
   lookupPracticeHost: vi.fn(async () => null),
+  lookupPortalSlug: vi.fn(async () => true),
 }))
 
 // Likewise the website lookup and file fetch (practice-site-lookup.test.ts).
@@ -164,6 +166,81 @@ describe("frontend/proxy.ts portal host", () => {
 
       expect(response.status).toBe(404)
       expect(response.headers.get("location")).toBeNull()
+      expect(authProviderMiddleware).not.toHaveBeenCalled()
+    },
+  )
+
+  describe("a slug no practice holds", () => {
+    beforeEach(() => {
+      // Both real providers forward the request's headers on a public path
+      // (requestHeadersWithNonce copies them), which is how the mark reaches
+      // the page; the default stub drops them.
+      vi.mocked(authProviderMiddleware).mockImplementation((req: NextRequest) =>
+        NextResponse.next({ request: { headers: req.headers } }),
+      )
+    })
+
+    afterEach(() => {
+      vi.mocked(authProviderMiddleware).mockImplementation(() => NextResponse.next())
+      vi.mocked(lookupPortalSlug).mockReset()
+      vi.mocked(lookupPortalSlug).mockResolvedValue(true)
+    })
+
+    // Serving a path no route matches is what makes the status a 404; the
+    // mark is what makes app/not-found.tsx show the portal's card there.
+    it.each([
+      ["the portal host", PORTAL, "/no-such-practice"],
+      ["the portal host's /portal route", PORTAL, "/portal/no-such-practice/forms"],
+    ])("on %s, is served as the unknown-practice 404, marked", async (_where, host, path) => {
+      vi.stubEnv("PORTAL_HOSTS", PORTAL)
+      vi.mocked(lookupPortalSlug).mockResolvedValue(null)
+      const response = await proxy(at(`https://${host}${path}`, host))
+
+      expect(lookupPortalSlug).toHaveBeenCalledWith("no-such-practice")
+      expect(response.headers.get("x-middleware-rewrite")).toBe(`https://${host}${UNKNOWN_PRACTICE_PATH}`)
+      expect(response.headers.get(`x-middleware-request-${UNKNOWN_PRACTICE_HEADER}`)).toBe("1")
+      expect(response.headers.get("location")).toBeNull()
+      // The provider saw the public portal route, so it neither redirected
+      // to sign-in nor withheld the security headers.
+      expect(vi.mocked(authProviderMiddleware).mock.calls[0][0].nextUrl.pathname).toMatch(/^\/portal\/no-such-practice/)
+    })
+
+    it("is served the same way with no portal host, at /portal/{slug}", async () => {
+      vi.stubEnv("PORTAL_HOSTS", "")
+      vi.mocked(lookupPortalSlug).mockResolvedValue(null)
+      const response = await proxy(at("https://app.example.org/portal/no-such-practice", "app.example.org"))
+
+      expect(response.headers.get("x-middleware-rewrite")).toBe(`https://app.example.org${UNKNOWN_PRACTICE_PATH}`)
+    })
+
+    it("serves the portal as before when the lookup could not be made", async () => {
+      vi.stubEnv("PORTAL_HOSTS", PORTAL)
+      vi.mocked(lookupPortalSlug).mockResolvedValue("unavailable")
+      const response = await proxy(at(`https://${PORTAL}/acme`, PORTAL))
+
+      expect(response.headers.get("x-middleware-rewrite")).toBe(`https://${PORTAL}/portal/acme`)
+      expect(response.headers.get(`x-middleware-request-${UNKNOWN_PRACTICE_HEADER}`)).toBeNull()
+    })
+
+    it("drops a mark the visitor sent for a practice that exists", async () => {
+      vi.stubEnv("PORTAL_HOSTS", PORTAL)
+      const response = await proxy(
+        new NextRequest(`https://${PORTAL}/acme`, { headers: { host: PORTAL, [UNKNOWN_PRACTICE_HEADER]: "1" } }),
+      )
+
+      expect(response.headers.get("x-middleware-rewrite")).toBe(`https://${PORTAL}/portal/acme`)
+      expect(response.headers.get(`x-middleware-request-${UNKNOWN_PRACTICE_HEADER}`)).toBeNull()
+    })
+  })
+
+  it.each(["/actuator/env", "/acme/phpinfo", "/portal/acme/actuator"])(
+    "answers %s, which no portal page serves, with a 404 before the page is ever reached",
+    async (path) => {
+      vi.stubEnv("PORTAL_HOSTS", PORTAL)
+      const response = await proxy(at(`https://${PORTAL}${path}`, PORTAL))
+
+      expect(response.status).toBe(404)
+      expect(response.headers.get("x-middleware-rewrite")).toBeNull()
       expect(authProviderMiddleware).not.toHaveBeenCalled()
     },
   )
@@ -312,7 +389,7 @@ describe("frontend/proxy.ts website host", () => {
     vi.mocked(lookupPracticeHost).mockReset()
     vi.mocked(lookupPracticeHost).mockResolvedValue(null)
     vi.mocked(lookupSiteHost).mockReset()
-    vi.mocked(lookupSiteHost).mockResolvedValue({ primaryHost: SITE, portalHost: null })
+    vi.mocked(lookupSiteHost).mockResolvedValue({ primaryHost: SITE, portalHost: null, hideFromSearch: false })
     vi.mocked(fetchSiteFile).mockClear()
     vi.stubEnv("APP_HOSTS", APP)
   })
@@ -333,6 +410,7 @@ describe("frontend/proxy.ts website host", () => {
         pathname: path,
         method: "GET",
         ifNoneMatch: '"v2"',
+        hideFromSearch: false,
       })
       expect(response.headers.get("location")).toBeNull()
       expect(authProviderMiddleware).not.toHaveBeenCalled()
@@ -373,7 +451,7 @@ describe("frontend/proxy.ts website host", () => {
 
   it("sends /portal on a hosted website address to the practice's portal host", async () => {
     const hosted = "acme.hosted.example"
-    vi.mocked(lookupSiteHost).mockResolvedValue({ primaryHost: null, portalHost: "acme.portal.hosted.example" })
+    vi.mocked(lookupSiteHost).mockResolvedValue({ primaryHost: null, portalHost: "acme.portal.hosted.example", hideFromSearch: false })
 
     const response = await proxy(at(`https://${hosted}/portal/forms?from=email`, hosted))
 
@@ -389,6 +467,50 @@ describe("frontend/proxy.ts website host", () => {
     expect(response.status).toBe(405)
     expect(response.headers.get("allow")).toBe("GET, HEAD")
     expect(fetchSiteFile).not.toHaveBeenCalled()
+  })
+
+  it("leaves robots.txt and every answer to the website while the practice lets search engines list it", async () => {
+    for (const [host, path] of [
+      [SITE, "/robots.txt"],
+      [WWW, "/"],
+    ]) {
+      const response = await proxy(at(`https://${host}${path}`, host))
+      expect(response.headers.get("x-robots-tag"), `${host}${path}`).toBeNull()
+    }
+    expect(fetchSiteFile).toHaveBeenCalledWith(expect.objectContaining({ pathname: "/robots.txt", hideFromSearch: false }))
+  })
+
+  describe("for a practice that asks search engines not to list its website", () => {
+    beforeEach(() => {
+      vi.mocked(lookupSiteHost).mockResolvedValue({ primaryHost: SITE, portalHost: null, hideFromSearch: true })
+    })
+
+    it("asks for each file with the setting, so its answer says noindex", async () => {
+      await proxy(at(`https://${SITE}/about/`, SITE))
+
+      expect(fetchSiteFile).toHaveBeenCalledWith(expect.objectContaining({ pathname: "/about/", hideFromSearch: true }))
+    })
+
+    it.each([SITE, WWW])("answers robots.txt on %s itself, disallowing everything", async (host) => {
+      const response = await proxy(at(`https://${host}/robots.txt`, host))
+
+      expect(response.status).toBe(200)
+      expect(await response.text()).toBe("User-agent: *\nDisallow: /\n")
+      expect(response.headers.get("content-type")).toBe("text/plain; charset=utf-8")
+      expect(response.headers.get("x-robots-tag")).toBe("noindex, nofollow")
+      expect(response.headers.get("location")).toBeNull()
+      expect(fetchSiteFile).not.toHaveBeenCalled()
+    })
+
+    it("says noindex on the redirect to the primary and on a refused method", async () => {
+      const redirect = await proxy(at(`https://${WWW}/team/`, WWW))
+      expect(redirect.status).toBe(301)
+      expect(redirect.headers.get("x-robots-tag")).toBe("noindex, nofollow")
+
+      const refused = await proxy(at(`https://${SITE}/contact`, SITE, { method: "POST" }))
+      expect(refused.status).toBe(405)
+      expect(refused.headers.get("x-robots-tag")).toBe("noindex, nofollow")
+    })
   })
 
   it("leaves a portal host's files to the app, as before", async () => {

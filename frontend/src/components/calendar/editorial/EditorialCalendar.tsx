@@ -36,6 +36,10 @@ import { AutoBookedNotice } from "./AutoBookedNotice"
 import { GoogleChangesBanner } from "./GoogleChangesBanner"
 import { needsGoogleDecision } from "./GoogleChangeNotice"
 import { useOutsideReview } from "./useOutsideReview"
+import { useDayRangeSelection } from "./useDayRangeSelection"
+import { CalendarRangeBar } from "./CalendarRangeBar"
+import { calendarShowing, type CalendarShowing } from "./status"
+import { useFloatingBlockBands } from "./useFloatingBlockBands"
 import { matchWholeDayBlockRule } from "./unavailability"
 import { openingAnchor } from "./schedule"
 import {
@@ -47,15 +51,21 @@ import {
   type EditorialView,
 } from "./dateUtils"
 
-const ALL_STATUSES: AppointmentStatus[] = [
+const ALL_STATUSES: CalendarShowing[] = [
+  "pending",
   "confirmed",
   "completed",
+  "skipped",
   "cancelled",
   "no_show",
 ]
-const DEFAULT_STATUS_FILTERS = new Set<AppointmentStatus>([
+// Held times and skipped weeks are part of the week as planned, so they show
+// by default; an ordinary cancellation does not.
+const DEFAULT_STATUS_FILTERS = new Set<CalendarShowing>([
+  "pending",
   "confirmed",
   "completed",
+  "skipped",
   "no_show",
 ])
 
@@ -103,9 +113,10 @@ export function EditorialCalendar({
   const preset = DENSITY_PRESETS[density]
   const [view, setView] = useState<EditorialView>(defaultView)
   const [anchor, setAnchor] = useState<Date>(() => new Date())
-  const [statusFilters, setStatusFilters] = useState<Set<AppointmentStatus>>(
+  const [statusFilters, setStatusFilters] = useState<Set<CalendarShowing>>(
     DEFAULT_STATUS_FILTERS,
   )
+  const daySelection = useDayRangeSelection()
   const [pickerOpen, setPickerOpen] = useState(false)
   const [peek, setPeek] = useState<PeekState | null>(null)
   const [ctxMenu, setCtxMenu] = useState<CtxMenuState | null>(null)
@@ -166,6 +177,13 @@ export function EditorialCalendar({
     () => availabilityRulesData?.data ?? [],
     [availabilityRulesData],
   )
+  // Time kept free inside a window, e.g. lunch. Asked for only once a
+  // practice has such a rule, since each visible day is its own request.
+  const floating = useFloatingBlockBands(
+    view,
+    anchor,
+    availabilityRules.some((rule) => rule.rule_type === "floating_block"),
+  )
   // Only day view needs this at the EditorialCalendar level — week view
   // attributes each of its own 7 columns internally.
   const dayBlockedLabel = useMemo(() => {
@@ -194,9 +212,7 @@ export function EditorialCalendar({
 
   const filteredAppointments = useMemo(() => {
     const all = data?.data ?? []
-    return all.filter((a) =>
-      statusFilters.has(a.status as AppointmentStatus),
-    )
+    return all.filter((a) => statusFilters.has(calendarShowing(a)))
   }, [data, statusFilters])
 
   // Dynamic working-hours window expands to contain any out-of-default
@@ -215,7 +231,7 @@ export function EditorialCalendar({
     [onViewChange],
   )
 
-  const handleToggleStatus = useCallback((status: AppointmentStatus) => {
+  const handleToggleStatus = useCallback((status: CalendarShowing) => {
     setStatusFilters((prev) => {
       const next = new Set(prev)
       if (next.has(status)) next.delete(status)
@@ -368,6 +384,10 @@ export function EditorialCalendar({
 
         <AutoBookedNotice />
 
+        {daySelection.range && (
+          <CalendarRangeBar range={daySelection.range} onClear={daySelection.clear} />
+        )}
+
         {pickerOpen && (
           <div
             className="absolute right-6 top-32 z-30 w-[300px] rounded-2xl p-4 lg:right-8"
@@ -399,6 +419,9 @@ export function EditorialCalendar({
             rowHeightPx={preset.rowPx}
             outsideSessions={outsideSessions}
             onOpenOutside={outsideReview.openSingle}
+            floatingBlocks={floating.blocks}
+            floatingActions={floating.actions}
+            daySelection={daySelection.handlers}
           />
         )}
         {view === "day" && (
@@ -419,6 +442,8 @@ export function EditorialCalendar({
             rowHeightPx={preset.rowPx}
             outsideSessions={outsideSessions}
             onOpenOutside={outsideReview.openSingle}
+            floatingBlocks={floating.blocks}
+            floatingActions={floating.actions}
           />
         )}
         {view === "month" && (
@@ -430,6 +455,7 @@ export function EditorialCalendar({
             onPeek={handlePeek}
             onEdit={handleEdit}
             onContextMenu={handleContextMenu}
+            daySelection={daySelection.handlers}
           />
         )}
 
@@ -466,7 +492,7 @@ export function EditorialCalendar({
   )
 }
 
-function StatusFooter({ statusFilters }: { statusFilters: Set<AppointmentStatus> }) {
+function StatusFooter({ statusFilters }: { statusFilters: Set<CalendarShowing> }) {
   // Subtle reminder of which statuses are hidden — editorial caption style.
   const hidden = ALL_STATUSES.filter((s) => !statusFilters.has(s))
   if (hidden.length === 0) return null
@@ -475,7 +501,7 @@ function StatusFooter({ statusFilters }: { statusFilters: Set<AppointmentStatus>
       className="text-[11px] italic"
       style={{ color: "var(--ed-ink-soft)" }}
     >
-      Hiding: {hidden.map((s) => s.replace("_", " ")).join(", ")}
+      Hiding: {hidden.map((s) => (s === "pending" ? "held" : s.replace("_", " "))).join(", ")}
     </p>
   )
 }

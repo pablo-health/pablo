@@ -1,18 +1,20 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Parse an existing, already-written SOAP note into the structured shape.
+"""Parse an existing, already-written note into a note type's structured shape.
 
 Where :mod:`note_generation_service` *synthesizes* a note from a session
 transcript, this module *extracts* the content of a note the clinician has
 already written — e.g. a PDF or Word doc exported from another records
-system — and maps it into the registry's SOAP fields without inventing any
-clinical material. It also reads the date (and time, when present) the
-session took place, so an imported note can be filed against the day it
-actually happened rather than the day it was uploaded.
+system — and maps it into the fields of a registry note type (SOAP unless
+the caller names another) without inventing any clinical material. It also
+reads the date (and time, when present) the session took place, so an
+imported note can be filed against the day it actually happened rather than
+the day it was uploaded.
 
 The extracted text feeds the same structured-output gateway and the same
-SOAP response schema used for generation, so the resulting ``content`` is
-shape-identical to a generated note and renders in the editor unchanged.
+registry response schema used for generation, so the resulting ``content`` is
+shape-identical to a generated note of that type and renders in the editor
+unchanged.
 """
 
 from __future__ import annotations
@@ -21,14 +23,22 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
-from typing import Any
+from functools import partial
+from typing import TYPE_CHECKING, Any, Protocol
+
+from anyio import fail_after, to_thread
 
 from ..notes import NoteTypeDefinition, NoteTypeRegistry, get_default_registry
+from ..notes.diagnoses import DIAGNOSES_KIND_LABEL
+from ..notes.mdm_review import REVIEW_INPUTS
 from ..settings import get_settings
 
 # These helpers build/validate the registry-shaped JSON for a note type.
 # They are imported (not reimplemented) so an imported note is exactly the
 # same shape as a generated one; see CLAUDE.md "Don't duplicate OSS".
+from .ai_features import AIFeature
+from .document_ai_ocr import LOW_CONFIDENCE_MARKER
+from .hedged_structured_llm_gateway import generation_gateway
 from .note_generation_service import (
     SOAP_KEY,
     _build_registry_response_schema,
@@ -39,8 +49,11 @@ from .structured_llm_gateway import (
     StructuredCompletion,
     StructuredLLMGateway,
     StructuredOutputTruncatedError,
-    get_default_structured_llm_gateway,
 )
+
+if TYPE_CHECKING:
+    from ..notes import NoteInputDef
+    from .document_ai_ocr import OcrResult
 
 logger = logging.getLogger(__name__)
 
@@ -55,15 +68,26 @@ _MAX_DOCX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
 # Largest document accepted for import, before any text is extracted.
 MAX_IMPORT_DOC_BYTES = 15 * 1024 * 1024
 
+# Reading a scanned PDF is an OCR network call. A few pages take seconds; the
+# OCR client's own deadline is 60s per attempt with one retry. Past this the
+# caller gets a retryable error instead of a request held open for minutes.
+DOCUMENT_READ_TIMEOUT_SECONDS = 90.0
+
 # Cap the extracted text fed to the parser. A single SOAP note is a few KB;
 # anything past this is either not one note or an attempt to run up LLM cost.
 _MAX_EXTRACTED_CHARS = 1_000_000
 
-# Keys we add to the SOAP response schema so the model also reports when the
+# Keys we add to the note type's response schema so the model also reports when the
 # session occurred. Kept distinct from the note ``content`` so they never
 # leak into the rendered note body.
 _SESSION_DATE_KEY = "session_date"
 _SESSION_TIME_KEY = "session_time"
+# Likewise the values the document states for the note type's declared inputs,
+# and who signed it. An imported note is a reference copy of a note signed
+# elsewhere, so its signer is read as written and shown, never matched to a user.
+_NOTE_INPUTS_KEY = "note_inputs"
+_SIGNED_BY_KEY = "signed_by"
+_MAX_SIGNER_CHARS = 200
 
 # A parsed field counts as "grounded" in the source when it is a
 # whitespace-normalized substring of the source, or its word-token overlap
@@ -87,15 +111,37 @@ _EMPTY_FIELD_RULE = (
     "an empty list for list fields). Never fabricate text to fill a field."
 )
 
+# An import keeps every word of the note: a detail filed under a heading the
+# note type lacks goes to the field whose meaning fits best.
+_IMPORT_RULES = (
+    _VERBATIM_RULES + "- When the source files a detail under a heading we do not "
+    "have, place it under the field whose meaning fits best, but keep the "
+    "source's exact wording (including any sub-labels) intact.\n" + _EMPTY_FIELD_RULE
+)
+
 EXTRACT_SYSTEM_PROMPT = (
     "You are a clinical documentation assistant. You are given the full text "
     "of an existing, already-written therapy progress note in SOAP format "
     "(often exported from another records system). Your job is to RELOCATE "
     "that note's existing text into the named fields below — not to rewrite "
-    "it.\n\n" + _VERBATIM_RULES + "- When the source files a detail under a heading we do not "
-    "have, place it under the field whose meaning fits best, but keep the "
-    "source's exact wording (including any sub-labels) intact.\n" + _EMPTY_FIELD_RULE
+    "it.\n\n" + _IMPORT_RULES
 )
+
+
+def _extract_system_prompt(definition: NoteTypeDefinition) -> str:
+    """The import system prompt for ``definition``; SOAP keeps its own."""
+    if definition.key == SOAP_KEY:
+        return EXTRACT_SYSTEM_PROMPT
+    # Not the type's own system prompt: that one tells a model how to write a
+    # draft, and an import writes nothing of its own.
+    return (
+        "You are a clinical documentation assistant. You are given the full text "
+        "of an existing, already-written clinical note (often exported from "
+        "another records system). Your job is to RELOCATE that note's existing "
+        f"text into the named fields of a {definition.label} note below — not to "
+        "rewrite it.\n\n" + _IMPORT_RULES
+    )
+
 
 # An import must keep every word of the note, so a detail with no matching
 # field goes to the nearest one. Extracting into a note type to see whether
@@ -107,17 +153,34 @@ EXTRACT_INTO_SYSTEM_PROMPT = (
     "that note's existing text into the named fields below — not to rewrite "
     "it.\n\n" + _VERBATIM_RULES + "- Place text only in a field whose label and description say "
     "it belongs there. Text that no field is meant for is left out, not "
-    "forced into the closest field.\n" + _EMPTY_FIELD_RULE
+    "forced into the closest field.\n"
+    '- One line may hold several labelled facts ("Date: ... Codes: ..."). '
+    "Place each fact in the field it belongs to; a line is not one unit.\n" + _EMPTY_FIELD_RULE
 )
 
 
 class DocumentTextExtractionError(ValueError):
     """Raised when an uploaded document yields no usable text.
 
-    The common case is a scanned / image-only PDF that has no embedded text
-    layer; rather than import an empty note, callers should surface this so
-    the clinician knows to upload a text-based export.
+    Rather than import an empty note, callers surface the message as a 4xx.
+    A scanned PDF only lands here when OCR is off or could not read it.
     """
+
+
+class DocumentReadTimeoutError(RuntimeError):
+    """Reading an upload ran past :data:`DOCUMENT_READ_TIMEOUT_SECONDS`. Retryable."""
+
+
+class PdfOcr(Protocol):
+    """What the reader needs from an OCR client (``DocumentAiOcrClient``)."""
+
+    @property
+    def is_configured(self) -> bool: ...
+
+    @property
+    def max_pages(self) -> int: ...
+
+    def extract(self, *, pdf_bytes: bytes, mime_type: str) -> OcrResult | None: ...
 
 
 class UnsupportedDocumentTypeError(ValueError):
@@ -141,20 +204,25 @@ class FieldGrounding:
 
 @dataclass(frozen=True)
 class ParsedImportedNote:
-    """Result of parsing an uploaded SOAP note.
+    """Result of parsing an uploaded note into one note type.
 
-    ``content`` is the registry-shaped SOAP dict — identical in shape to a
+    ``content`` is that type's registry-shaped dict — identical in shape to a
     generated note's ``content`` — and renders in the note editor unchanged.
     ``session_date`` / ``session_time`` are read from the document, or
     ``None`` when the document did not state them (the time often is absent).
     ``grounding`` reports, per field, whether the parse stayed faithful to
-    the source text (see :func:`check_grounding`).
+    the source text (see :func:`check_grounding`). ``note_inputs`` holds the
+    values the document plainly states for the type's declared inputs, each a
+    declared option (see :func:`_read_note_inputs`); ``signed_by`` is who signed
+    the note, as written, or ``None`` when the document names no signer.
     """
 
     content: dict[str, Any]
     session_date: date | None
     session_time: time | None
     grounding: tuple[FieldGrounding, ...] = field(default_factory=tuple)
+    note_inputs: dict[str, str] = field(default_factory=dict)
+    signed_by: str | None = None
 
     @property
     def ungrounded(self) -> tuple[FieldGrounding, ...]:
@@ -194,6 +262,18 @@ def _looks_like_docx(content_type: str | None, filename: str | None) -> bool:
     if content_type and "wordprocessingml" in content_type.lower():
         return True
     return bool(filename and filename.lower().endswith(".docx"))
+
+
+_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def document_mime_type(content_type: str | None, filename: str | None) -> str:
+    """The content type an accepted import is kept under, read the way it was parsed."""
+    if _looks_like_pdf(content_type, filename):
+        return "application/pdf"
+    if _looks_like_docx(content_type, filename):
+        return _DOCX_MIME
+    return "text/plain"
 
 
 def _docx_block_lines(document: Any) -> list[str]:
@@ -273,17 +353,18 @@ def _extract_docx_text(data: bytes) -> str:
     return body
 
 
-def _extract_pdf_text(data: bytes) -> str:
+def _extract_pdf_text(data: bytes, ocr: PdfOcr | None) -> str:
     """Pull the embedded text layer out of a PDF via PyMuPDF.
 
-    Raises :class:`DocumentTextExtractionError` for a scanned / image-only
-    PDF (text below :data:`_SCANNED_PDF_TEXT_THRESHOLD`).
+    A scanned / image-only PDF (text below :data:`_SCANNED_PDF_TEXT_THRESHOLD`)
+    is read with OCR instead, when ``ocr`` is given and switched on.
     """
     import pymupdf  # imported lazily
 
     try:
         with pymupdf.open(stream=data, filetype="pdf") as doc:
             body = "".join(page.get_text() for page in doc).strip()
+            page_count = int(doc.page_count)
     except Exception as exc:
         # MuPDF raises a range of errors on corrupt / encrypted / non-PDF
         # input; surface a clean 4xx rather than a 500 with a traceback.
@@ -291,11 +372,46 @@ def _extract_pdf_text(data: bytes) -> str:
             "Couldn't read this PDF — it may be corrupted, password-protected, or not a PDF."
         ) from exc
     if len(body) < _SCANNED_PDF_TEXT_THRESHOLD:
-        raise DocumentTextExtractionError(
-            "This PDF has no extractable text — it looks like a scan or image. "
-            "Upload a text-based PDF or TXT export instead."
-        )
+        return _ocr_scanned_pdf(data, page_count, ocr)
     return body
+
+
+def _ocr_scanned_pdf(data: bytes, page_count: int, ocr: PdfOcr | None) -> str:
+    """Read a scanned PDF's text with OCR, or say plainly why it can't be read.
+
+    The OCR client folds every failure (no project, API error, page cap) into
+    ``None``. The page cap is checked here first so the reader is told the one
+    thing they can change. Logs carry counts and sizes only.
+    """
+    if ocr is None or not ocr.is_configured:
+        raise DocumentTextExtractionError(
+            "Scanned PDFs can't be read here. Upload a Word or text version instead."
+        )
+    if page_count > ocr.max_pages:
+        raise DocumentTextExtractionError(
+            f"This scanned PDF has more than {ocr.max_pages} pages. Upload a shorter one."
+        )
+    result = ocr.extract(pdf_bytes=data, mime_type="application/pdf")
+    # The low-confidence marker is a note to a reader of the raw text. Here
+    # the text is relocated into note fields, where it would read as content.
+    text = result.text.removeprefix(LOW_CONFIDENCE_MARKER).strip() if result else ""
+    if result is None or not text:
+        logger.warning(
+            "Scanned PDF not read by OCR: pages=%d bytes=%d status=%s",
+            page_count,
+            len(data),
+            "failed" if result is None else "empty",
+        )
+        raise DocumentTextExtractionError(
+            "We couldn't read this scanned PDF. Try again, or upload a Word or text version."
+        )
+    logger.info(
+        "Scanned PDF read by OCR: pages=%d bytes=%d low_confidence_pages=%d",
+        page_count,
+        len(data),
+        len(result.low_confidence_pages),
+    )
+    return text
 
 
 def extract_document_text(
@@ -303,16 +419,21 @@ def extract_document_text(
     *,
     content_type: str | None = None,
     filename: str | None = None,
+    ocr: PdfOcr | None = None,
 ) -> str:
     """Extract plain text from an uploaded clinical document.
 
-    Supports text-based PDFs (PyMuPDF), Word .docx (standard-library zip/XML),
-    and plain-text files. Raises :class:`UnsupportedDocumentTypeError` for
-    anything else and :class:`DocumentTextExtractionError` when a supported
-    file yields no usable text.
+    Supports PDFs (PyMuPDF, with OCR for a scan when ``ocr`` is given), Word
+    .docx (python-docx), and plain-text files. Raises
+    :class:`UnsupportedDocumentTypeError` for anything else and
+    :class:`DocumentTextExtractionError` when a supported file yields no
+    usable text.
+
+    Blocking, and with ``ocr`` a network call: from an async route use
+    :func:`read_document_text`.
     """
     if _looks_like_pdf(content_type, filename):
-        text = _extract_pdf_text(data)
+        text = _extract_pdf_text(data, ocr)
     elif _looks_like_docx(content_type, filename):
         text = _extract_docx_text(data)
     elif _looks_like_text(content_type, filename):
@@ -330,6 +451,36 @@ def extract_document_text(
     return text
 
 
+async def read_document_text(
+    data: bytes,
+    *,
+    content_type: str | None = None,
+    filename: str | None = None,
+    ocr: PdfOcr | None = None,
+) -> str:
+    """:func:`extract_document_text` off the event loop, with a time limit.
+
+    The worker thread carries the request's context. On timeout the thread is
+    abandoned (it ends at the OCR client's own deadline) and the caller gets
+    :class:`DocumentReadTimeoutError`, which routes answer with a retryable 503.
+    """
+    extract = partial(
+        extract_document_text, data, content_type=content_type, filename=filename, ocr=ocr
+    )
+    try:
+        with fail_after(DOCUMENT_READ_TIMEOUT_SECONDS):
+            return await to_thread.run_sync(extract, abandon_on_cancel=True)
+    except TimeoutError as exc:
+        logger.warning(
+            "Reading an upload timed out after %.0fs: bytes=%d",
+            DOCUMENT_READ_TIMEOUT_SECONDS,
+            len(data),
+        )
+        raise DocumentReadTimeoutError(
+            "Reading this document is taking longer than usual. Try again in a moment."
+        ) from exc
+
+
 # ---------------------------------------------------------------------------
 # Structured parse
 # ---------------------------------------------------------------------------
@@ -340,18 +491,45 @@ def _field_guide(definition: NoteTypeDefinition) -> str:
     for section in definition.sections:
         lines.append(f"## {section.key} — {section.label}")
         for fld in section.fields:
-            kind = "list of strings" if fld.kind == "list" else "text"
+            kind = {"list": "list of strings", "diagnoses": DIAGNOSES_KIND_LABEL}.get(
+                fld.kind, "text"
+            )
             hint = f" — {fld.ai_hint}" if fld.ai_hint else ""
             lines.append(f"- {fld.key} ({kind}): {fld.label}{hint}")
     return "\n".join(lines)
+
+
+def _importable_inputs(definition: NoteTypeDefinition) -> tuple[NoteInputDef, ...]:
+    """The declared inputs an import reads; the MDM review's choices are the clinician's."""
+    return tuple(i for i in definition.inputs if i.key not in REVIEW_INPUTS)
+
+
+def _inputs_guide(definition: NoteTypeDefinition) -> str:
+    """The prompt block asking for the declared inputs, or nothing when there are none."""
+    inputs = _importable_inputs(definition)
+    if not inputs:
+        return ""
+    lines = []
+    for item in inputs:
+        options = " / ".join(f'"{o}"' for o in item.options)
+        allowed = f"one of {options}" if options else "the document's own words"
+        lines.append(f"- {item.key}: {item.label} ({allowed})")
+    return (
+        f"\n# Note details\n"
+        f"Also report, under {_NOTE_INPUTS_KEY}, these details of the visit:\n"
+        + "\n".join(lines)
+        + "\n\nChoose an option only when the document plainly states it. When it "
+        'does not, or you are unsure, return "". Never guess one from context.\n'
+    )
 
 
 def _build_extract_prompt(definition: NoteTypeDefinition, source_text: str) -> str:
     """Render the field guide + source note into the extraction user prompt."""
     field_guide = _field_guide(definition)
 
+    source = "SOAP note" if definition.key == SOAP_KEY else "clinical note"
     return f"""# Source note
-The following is the complete text of an existing SOAP note. Reorganize its
+The following is the complete text of an existing {source}. Reorganize its
 content into the fields described below.
 
 \"\"\"
@@ -369,7 +547,11 @@ Also report when *this* documented session took place:
 Use the date/time of the session this note documents (usually labeled "Date"
 or "Session Date" near the top). Do NOT use the date of the next appointment
 or any future follow-up mentioned in the plan.
-"""
+
+# Signature
+- {_SIGNED_BY_KEY}: who signed this note, copied exactly as its signature
+  line writes the name and credentials, or "" if the note shows no signature.
+{_inputs_guide(definition)}"""
 
 
 def _build_extract_into_prompt(definition: NoteTypeDefinition, source_text: str) -> str:
@@ -387,10 +569,17 @@ its content into the fields described below.
 
 
 def _build_extract_schema(definition: NoteTypeDefinition) -> dict[str, Any]:
-    """SOAP registry schema plus the session date/time fields."""
+    """The note type's registry schema plus the session date/time, signer and inputs."""
     schema = _build_registry_response_schema(definition)
     schema["properties"][_SESSION_DATE_KEY] = {"type": "string"}
     schema["properties"][_SESSION_TIME_KEY] = {"type": "string"}
+    schema["properties"][_SIGNED_BY_KEY] = {"type": "string"}
+    inputs = _importable_inputs(definition)
+    if inputs:
+        schema["properties"][_NOTE_INPUTS_KEY] = {
+            "type": "object",
+            "properties": {i.key: {"type": "string"} for i in inputs},
+        }
     return schema
 
 
@@ -415,12 +604,54 @@ def _parse_iso_time(raw: Any) -> time | None:
         return None
 
 
+def _read_note_inputs(definition: NoteTypeDefinition, raw: Any, source_text: str) -> dict[str, str]:
+    """The declared inputs the document states, each a value the type accepts.
+
+    A choice is matched to its declared option without regard to case; a value
+    off the list is dropped. A free-text input is kept only when its words are
+    in the document. Blank values are dropped and ``required`` is never
+    enforced: an input the document is silent on stays unset.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    source = _norm_ws(source_text)
+    found: dict[str, str] = {}
+    for item in _importable_inputs(definition):
+        value = raw.get(item.key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        if item.options:
+            option = next((o for o in item.options if o.lower() == value.strip().lower()), None)
+            if option is not None:
+                found[item.key] = option
+        elif _norm_ws(value) in source:
+            found[item.key] = value.strip()
+    return found
+
+
+def _read_signer(raw: Any, source_text: str) -> str | None:
+    """Who signed the note, as written; ``None`` unless the document says it."""
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    signer = raw.strip()
+    if len(signer) > _MAX_SIGNER_CHARS or _norm_ws(signer) not in _norm_ws(source_text):
+        return None
+    return signer
+
+
 def _norm_ws(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip().lower()
 
 
 def _word_tokens(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", text.lower())
+
+
+def _grounding_text(item: Any) -> str:
+    """The words one field item states; a stated diagnosis is its label, code and status."""
+    if isinstance(item, dict):
+        return " ".join(str(value).strip() for value in item.values() if value).strip()
+    return str(item).strip()
 
 
 def check_grounding(content: dict[str, Any], source_text: str) -> tuple[FieldGrounding, ...]:
@@ -443,7 +674,7 @@ def check_grounding(content: dict[str, Any], source_text: str) -> tuple[FieldGro
             is_list = isinstance(value, list)
             items = value if is_list else ([value] if value else [])
             for index, item in enumerate(items):
-                text = str(item).strip()
+                text = _grounding_text(item)
                 if not text:
                     continue
                 path = f"{section}.{key}" + (f"[{index}]" if is_list else "")
@@ -459,7 +690,7 @@ def check_grounding(content: dict[str, Any], source_text: str) -> tuple[FieldGro
 
 
 class NoteImportService:
-    """Parse an existing SOAP note's text into the structured note shape."""
+    """Parse an existing note's text into a note type's structured shape."""
 
     def __init__(
         self,
@@ -467,7 +698,7 @@ class NoteImportService:
         registry: NoteTypeRegistry | None = None,
         model: str | None = None,
     ) -> None:
-        self._llm_gateway = llm_gateway or get_default_structured_llm_gateway()
+        self._llm_gateway = llm_gateway or generation_gateway(AIFeature.NOTE_IMPORT)
         self._registry = registry or get_default_registry()
         self._model = model
 
@@ -477,7 +708,9 @@ class NoteImportService:
         # far faster than the pro/thinking default. Falls back to ai_model
         # when no flash model is configured.
         settings = get_settings()
-        return self._model or settings.ai_model_flash or settings.ai_model
+        return self._model or settings.model_for(
+            AIFeature.NOTE_IMPORT, settings.ai_model_flash or settings.ai_model
+        )
 
     def _complete_with_retry(
         self,
@@ -540,9 +773,15 @@ class NoteImportService:
 
     def parse_soap_note(self, source_text: str) -> ParsedImportedNote:
         """Parse the extracted text of a SOAP note into structured content."""
-        definition = self._registry.get(SOAP_KEY)
+        return self.parse_note(source_text)
+
+    def parse_note(
+        self, source_text: str, definition: NoteTypeDefinition | None = None
+    ) -> ParsedImportedNote:
+        """Parse a note's extracted text into ``definition``'s fields (SOAP by default)."""
+        definition = definition or self._registry.get(SOAP_KEY)
         completion = self._complete_with_retry(
-            system_prompt=EXTRACT_SYSTEM_PROMPT,
+            system_prompt=_extract_system_prompt(definition),
             user_prompt=_build_extract_prompt(definition, source_text),
             response_schema=_build_extract_schema(definition),
         )
@@ -559,13 +798,19 @@ class NoteImportService:
                 len(grounding),
                 ungrounded,
             )
-        # Store the SOAPSentence-shaped content a *generated* SOAP note uses, so
-        # an imported note renders and edits in the note viewer identically.
-        # source_segment_ids stay empty — there is no transcript to attribute to.
-        content = _coerce_content_to_soap_note(registry_content).to_dict()
+        content = registry_content
+        if definition.key == SOAP_KEY:
+            # Store the SOAPSentence-shaped content a *generated* SOAP note uses,
+            # so an imported note renders and edits in the note viewer
+            # identically. source_segment_ids stay empty — there is no
+            # transcript to attribute to. Every other type keeps the registry
+            # shape, as its generated notes do.
+            content = _coerce_content_to_soap_note(registry_content).to_dict()
         return ParsedImportedNote(
             content=content,
             session_date=_parse_iso_date(data.get(_SESSION_DATE_KEY)),
             session_time=_parse_iso_time(data.get(_SESSION_TIME_KEY)),
             grounding=grounding,
+            note_inputs=_read_note_inputs(definition, data.get(_NOTE_INPUTS_KEY), source_text),
+            signed_by=_read_signer(data.get(_SIGNED_BY_KEY), source_text),
         )

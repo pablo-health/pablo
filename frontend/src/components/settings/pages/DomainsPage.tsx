@@ -78,7 +78,7 @@ export function DomainsPage() {
     <>
       <DomainConnectReturn />
       {userStatus && !canManage && (
-        <p className="mb-3 text-[12.5px] text-muted-foreground">Only the practice owner can change domains.</p>
+        <p className="mb-3 text-[12.5px] text-muted-foreground">Only the practice owner or a practice admin can change domains.</p>
       )}
       {failureMessage && (
         <p role="alert" className="mb-3 text-[12.5px] text-red-700">

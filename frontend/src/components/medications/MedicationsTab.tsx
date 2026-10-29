@@ -19,7 +19,12 @@ import { useToast } from "@/components/ui/Toast"
 import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import { usePatientMedications, useDeleteMedication, useUpdateMedication } from "@/hooks/useMedications"
 import { MedicationModal } from "./MedicationModal"
-import type { Medication, MedicationStatus } from "@/types/medications"
+import type {
+  Medication,
+  MedicationCategory,
+  MedicationStatus,
+} from "@/types/medications"
+import { formatDate } from "@/lib/dates"
 
 interface MedicationsTabProps {
   patientId: string
@@ -43,10 +48,9 @@ const STATUS_BADGE: Record<
   },
 }
 
-function formatDate(iso: string | null): string | null {
-  if (!iso) return null
-  const d = new Date(iso)
-  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
+const CATEGORY_LABELS: Record<MedicationCategory, string> = {
+  psychiatric: "Psychiatric",
+  other: "Other",
 }
 
 export function MedicationsTab({ patientId }: MedicationsTabProps) {
@@ -179,8 +183,13 @@ export function MedicationsTab({ patientId }: MedicationsTabProps) {
                       {med.drug_name}
                     </span>
                     <span className="text-xs text-neutral-500 shrink-0">
-                      {med.dose}
+                      {med.frequency ? `${med.dose}, ${med.frequency}` : med.dose}
                     </span>
+                    {med.category && (
+                      <span className="text-xs text-neutral-400 shrink-0">
+                        {CATEGORY_LABELS[med.category]}
+                      </span>
+                    )}
                   </span>
                   <span className="text-xs text-neutral-400">
                     {med.started_at

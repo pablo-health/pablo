@@ -25,6 +25,7 @@ const mockPreview = vi.fn()
 const mockPublish = vi.fn()
 const mockRollBack = vi.fn()
 const mockSetHeader = vi.fn()
+const mockSetHidden = vi.fn()
 const mockStatus = vi.fn()
 
 vi.mock("@/lib/api/practiceSite", async (importOriginal) => ({
@@ -36,6 +37,7 @@ vi.mock("@/lib/api/practiceSite", async (importOriginal) => ({
   publishPracticeSite: (...a: unknown[]) => mockPublish(...a),
   rollBackPracticeSite: (...a: unknown[]) => mockRollBack(...a),
   setPracticeSiteDraftHeader: (...a: unknown[]) => mockSetHeader(...a),
+  setPracticeSiteHiddenFromSearch: (...a: unknown[]) => mockSetHidden(...a),
 }))
 
 vi.mock("@/lib/api/users", async (importOriginal) => ({
@@ -58,6 +60,7 @@ function site(overrides: Partial<PracticeSite> = {}): PracticeSite {
     has_active_host: false,
     draft: null,
     versions: [],
+    hide_from_search: false,
     ...overrides,
   }
 }
@@ -105,7 +108,7 @@ const WITH_SUGGESTION = site({
 describe("WebsitePage", () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockStatus.mockResolvedValue({ is_practice_owner: true })
+    mockStatus.mockResolvedValue({ is_practice_owner: true, is_practice_admin: true })
   })
   afterEach(() => {
     vi.restoreAllMocks()
@@ -154,13 +157,55 @@ describe("WebsitePage", () => {
   })
 
   it("shows someone other than the owner the site, and no controls", async () => {
-    mockStatus.mockResolvedValue({ is_practice_owner: false })
+    mockStatus.mockResolvedValue({ is_practice_owner: false, is_practice_admin: false })
     mockGet.mockResolvedValue({ ...PUBLISHED, draft: WITH_DRAFT.draft })
     renderWithProviders(<WebsitePage />)
 
-    expect(await screen.findByText("Only the practice owner can change the website.")).toBeVisible()
+    expect(await screen.findByText("Only the practice owner or a practice admin can change the website.")).toBeVisible()
     expect(screen.getByTestId("website-version-1")).toBeVisible()
     expect(screen.queryByRole("button")).not.toBeInTheDocument()
+  })
+
+  it("hides the website from search engines, and says what that does and doesn't do", async () => {
+    mockGet.mockResolvedValue(PUBLISHED)
+    mockSetHidden.mockResolvedValue({ ...PUBLISHED, hide_from_search: true })
+    renderWithProviders(<WebsitePage />)
+
+    const toggle = await screen.findByRole("switch", { name: "Hide from search engines" })
+    expect(toggle).toHaveAttribute("aria-checked", "false")
+    expect(
+      screen.getByText(
+        "Asks Google and other search engines not to list your website. Anyone with the address can still visit it.",
+      ),
+    ).toBeVisible()
+
+    await userEvent.click(toggle)
+
+    expect(mockSetHidden).toHaveBeenCalledWith(true)
+    expect(await screen.findByRole("switch", { name: "Hide from search engines" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    )
+  })
+
+  it("shows the search setting, unchangeable, to someone other than the owner", async () => {
+    mockStatus.mockResolvedValue({ is_practice_owner: false, is_practice_admin: false })
+    mockGet.mockResolvedValue({ ...PUBLISHED, hide_from_search: true })
+    renderWithProviders(<WebsitePage />)
+
+    const toggle = await screen.findByRole("switch", { name: "Hide from search engines" })
+    expect(toggle).toHaveAttribute("aria-checked", "true")
+    expect(toggle).toBeDisabled()
+  })
+
+  it("says so when the search setting couldn't be saved", async () => {
+    mockGet.mockResolvedValue(PUBLISHED)
+    mockSetHidden.mockRejectedValue(new Error("network"))
+    renderWithProviders(<WebsitePage />)
+
+    await userEvent.click(await screen.findByRole("switch", { name: "Hide from search engines" }))
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("That change couldn't be saved. Try again.")
   })
 
   it("uploads the chosen zip as the draft", async () => {
@@ -342,7 +387,7 @@ describe("WebsitePage", () => {
   })
 
   it("shows the suggestion without Accept or Edit to someone who can't change the website", async () => {
-    mockStatus.mockResolvedValue({ is_practice_owner: false })
+    mockStatus.mockResolvedValue({ is_practice_owner: false, is_practice_admin: false })
     mockGet.mockResolvedValue(WITH_SUGGESTION)
     renderWithProviders(<WebsitePage />)
 

@@ -116,8 +116,10 @@ const nextConfig: NextConfig = {
             value: "strict-origin-when-cross-origin",
           },
           {
+            // The microphone is this site's own, for dictating to a note;
+            // no embedded frame gets it.
             key: "Permissions-Policy",
-            value: "geolocation=(), microphone=(), camera=()",
+            value: "geolocation=(), microphone=(self), camera=()",
           },
           {
             key: "Content-Security-Policy",

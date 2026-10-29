@@ -61,13 +61,19 @@ class RedeemedIntent:
     user_id: str
     appointment_id: str
     ai_consent_prompted: bool = False
+    ask_consent_on_recording: bool = False
 
 
 class LaunchIntentStore(Protocol):
     """Protocol for launch-intent stores."""
 
     def create(
-        self, user_id: str, appointment_id: str, *, ai_consent_prompted: bool = False
+        self,
+        user_id: str,
+        appointment_id: str,
+        *,
+        ai_consent_prompted: bool = False,
+        ask_consent_on_recording: bool = False,
     ) -> str:
         """Mint a new intent, store its hash, return the raw id (once)."""
         ...
@@ -91,6 +97,7 @@ class InMemoryLaunchIntentStore:
         appointment_id: str
         created_at: float
         ai_consent_prompted: bool
+        ask_consent_on_recording: bool
 
     def __init__(
         self,
@@ -103,7 +110,12 @@ class InMemoryLaunchIntentStore:
         self._lock = Lock()
 
     def create(
-        self, user_id: str, appointment_id: str, *, ai_consent_prompted: bool = False
+        self,
+        user_id: str,
+        appointment_id: str,
+        *,
+        ai_consent_prompted: bool = False,
+        ask_consent_on_recording: bool = False,
     ) -> str:
         # 128-bit random, URL-safe (22 chars, no padding).
         intent_id = secrets.token_urlsafe(16)
@@ -118,6 +130,7 @@ class InMemoryLaunchIntentStore:
                 appointment_id=appointment_id,
                 created_at=now,
                 ai_consent_prompted=ai_consent_prompted,
+                ask_consent_on_recording=ask_consent_on_recording,
             )
         return intent_id
 
@@ -135,6 +148,7 @@ class InMemoryLaunchIntentStore:
             user_id=record.user_id,
             appointment_id=record.appointment_id,
             ai_consent_prompted=record.ai_consent_prompted,
+            ask_consent_on_recording=record.ask_consent_on_recording,
         )
 
     def _prune(self, now: float) -> None:
@@ -162,7 +176,12 @@ class RedisLaunchIntentStore:
         self.ttl_seconds = ttl_seconds
 
     def create(
-        self, user_id: str, appointment_id: str, *, ai_consent_prompted: bool = False
+        self,
+        user_id: str,
+        appointment_id: str,
+        *,
+        ai_consent_prompted: bool = False,
+        ask_consent_on_recording: bool = False,
     ) -> str:
         intent_id = secrets.token_urlsafe(16)
         intent_hash = _hash_intent(intent_id)
@@ -172,6 +191,7 @@ class RedisLaunchIntentStore:
                 "appointment_id": appointment_id,
                 "created_at": time.time(),
                 "ai_consent_prompted": ai_consent_prompted,
+                "ask_consent_on_recording": ask_consent_on_recording,
             }
         )
         self._redis.setex(f"{self.KEY_PREFIX}{intent_hash}", self.ttl_seconds, data)
@@ -194,6 +214,7 @@ class RedisLaunchIntentStore:
             user_id=data["user_id"],
             appointment_id=data["appointment_id"],
             ai_consent_prompted=data.get("ai_consent_prompted", False),
+            ask_consent_on_recording=data.get("ask_consent_on_recording", False),
         )
 
 
@@ -212,7 +233,12 @@ class PostgresLaunchIntentStore:
         self.ttl_seconds = ttl_seconds
 
     def create(
-        self, user_id: str, appointment_id: str, *, ai_consent_prompted: bool = False
+        self,
+        user_id: str,
+        appointment_id: str,
+        *,
+        ai_consent_prompted: bool = False,
+        ask_consent_on_recording: bool = False,
     ) -> str:
         intent_id = secrets.token_urlsafe(16)
         intent_hash = _hash_intent(intent_id)
@@ -223,9 +249,9 @@ class PostgresLaunchIntentStore:
                 """
                 INSERT INTO platform.launch_intents
                     (intent_hash, user_id, appointment_id, created_at, expires_at, consumed_at,
-                     ai_consent_prompted)
+                     ai_consent_prompted, ask_consent_on_recording)
                 VALUES (:intent_hash, :user_id, :appointment_id, :created_at, :expires_at, NULL,
-                        :ai_consent_prompted)
+                        :ai_consent_prompted, :ask_consent_on_recording)
                 """
             ),
             {
@@ -235,6 +261,7 @@ class PostgresLaunchIntentStore:
                 "created_at": now,
                 "expires_at": expires_at,
                 "ai_consent_prompted": ai_consent_prompted,
+                "ask_consent_on_recording": ask_consent_on_recording,
             },
         )
         self._session.flush()
@@ -252,7 +279,7 @@ class PostgresLaunchIntentStore:
                  WHERE intent_hash = :intent_hash
                    AND consumed_at IS NULL
                    AND expires_at > :now
-             RETURNING user_id, appointment_id, ai_consent_prompted
+             RETURNING user_id, appointment_id, ai_consent_prompted, ask_consent_on_recording
                 """
             ),
             {"intent_hash": intent_hash, "now": utc_now()},
@@ -264,7 +291,10 @@ class PostgresLaunchIntentStore:
         # uuid.UUID. The route compares it against the str user id from
         # the token, so coerce to str here for a meaningful equality.
         return RedeemedIntent(
-            user_id=str(row[0]), appointment_id=row[1], ai_consent_prompted=row[2]
+            user_id=str(row[0]),
+            appointment_id=row[1],
+            ai_consent_prompted=row[2],
+            ask_consent_on_recording=row[3],
         )
 
 
@@ -308,9 +338,18 @@ def _ensure_memory_store() -> InMemoryLaunchIntentStore:
 
 
 def create_launch_intent(
-    user_id: str, appointment_id: str, *, ai_consent_prompted: bool = False
+    user_id: str,
+    appointment_id: str,
+    *,
+    ai_consent_prompted: bool = False,
+    ask_consent_on_recording: bool = False,
 ) -> str:
-    return _build_store().create(user_id, appointment_id, ai_consent_prompted=ai_consent_prompted)
+    return _build_store().create(
+        user_id,
+        appointment_id,
+        ai_consent_prompted=ai_consent_prompted,
+        ask_consent_on_recording=ask_consent_on_recording,
+    )
 
 
 def redeem_launch_intent(intent_id: str) -> RedeemedIntent | None:

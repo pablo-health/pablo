@@ -118,6 +118,7 @@ from ..repositories import (
 from ..services import AuditService, get_audit_service
 from ..services.practice_billing_profile import load_billing_profile
 from ..utcnow import utc_now
+from ._deps import client_not_found, visible_patient
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -177,7 +178,6 @@ BillingProfile = Annotated["Mapping[str, object]", Depends(get_billing_profile_l
 
 _CLAIM_NOT_FOUND = "Claim not found."
 _HOLD_NOT_FOUND = "Remittance hold not found."
-_CLIENT_NOT_FOUND = "Client not found."
 
 
 def get_claim_sources(
@@ -213,14 +213,6 @@ def _practice_timezone(users: UserRepository, user_id: str) -> tzinfo:
         return ZoneInfo(users.get_preferences(user_id).timezone)
     except (ZoneInfoNotFoundError, ValueError):
         return ZoneInfo("UTC")
-
-
-def _require_patient(patients: PatientRepository, patient_id: str, user_id: str) -> Patient:
-    """404 unless this client is visible to this clinician in this practice."""
-    patient = patients.get(patient_id, user_id)
-    if patient is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_CLIENT_NOT_FOUND)
-    return patient
 
 
 def _require_claim(
@@ -391,7 +383,7 @@ def build_claim(
         ) from exc
 
     created = claims.create(claim)
-    patient = _require_patient(patients, created.patient_id, user.id)
+    patient = visible_patient(patients, created.patient_id, user.id, client_not_found)
     audit.log(
         AuditAction.CLAIM_CREATED,
         user,
@@ -913,7 +905,7 @@ def list_patient_claims(
     audit: AuditService = Depends(get_audit_service),
 ) -> ClaimListResponse:
     """The client's claims, newest first."""
-    patient = _require_patient(patients, patient_id, user.id)
+    patient = visible_patient(patients, patient_id, user.id, client_not_found)
     data = [_to_response(claim) for claim in claims.list_by_patient(patient_id)]
     audit.log(
         AuditAction.PATIENT_CLAIMS_VIEWED,

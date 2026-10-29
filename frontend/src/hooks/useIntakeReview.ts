@@ -13,6 +13,7 @@ import {
   type IntakeAssignment,
   type IntakeReview,
 } from "@/lib/api/intakeReview"
+import { queryKeys } from "@/lib/api/queryKeys"
 
 import { useAuthQuery } from "./useAuthQuery"
 
@@ -56,13 +57,17 @@ function useReviewMutation<TVariables>(
   patientId: string,
   assignmentId: string,
   mutationFn: (variables: TVariables) => Promise<IntakeAssignment>,
+  alsoRefresh: readonly (readonly unknown[])[] = [],
 ) {
   const queryClient = useQueryClient()
   const queryKey = intakeReviewKeys.detail(patientId, assignmentId)
 
   return useMutation<IntakeAssignment, Error, TVariables>({
     mutationFn,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey }),
+    onSuccess: () =>
+      Promise.all(
+        [queryKey, ...alsoRefresh].map((key) => queryClient.invalidateQueries({ queryKey: key })),
+      ),
     onError: (error) => {
       if (error instanceof ApiError && error.status === 409) {
         void queryClient.invalidateQueries({ queryKey })
@@ -84,14 +89,21 @@ export function useRequestIntakeCorrection(
   )
 }
 
-/** Accept the form. */
+/**
+ * Accept the form. Accepting is when its answers propose chart updates, so the
+ * chart's list of what is waiting, and the dashboard's count of it, are read
+ * again.
+ */
 export function useAcceptIntakeAssignment(
   patientId: string,
   assignmentId: string,
   token?: string,
 ) {
-  return useReviewMutation<void>(patientId, assignmentId, () =>
-    acceptIntakeAssignment(patientId, assignmentId, token),
+  return useReviewMutation<void>(
+    patientId,
+    assignmentId,
+    () => acceptIntakeAssignment(patientId, assignmentId, token),
+    [queryKeys.chartProposals.all, queryKeys.dashboard.all],
   )
 }
 

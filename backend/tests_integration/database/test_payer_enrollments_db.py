@@ -23,13 +23,10 @@ import base64
 import os
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -80,17 +77,6 @@ def _encryption_key() -> Iterator[None]:
 
 
 @pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_db_url, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
-
-
-@pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
     from app.db.provisioning import create_practice_schema  # noqa: PLC0415
 
@@ -132,12 +118,12 @@ class _TenantSession:
 
 
 def _reminders_visible_to(engine: Engine, schema: str, user_id: str) -> list[Any]:
-    from app.db.models import ComplianceItemRow  # noqa: PLC0415
+    from app.db.models import TaskRow  # noqa: PLC0415
     from sqlalchemy import select  # noqa: PLC0415
 
     scoped = _TenantSession(engine, schema, user_id)
     try:
-        return list(scoped.session.execute(select(ComplianceItemRow)).scalars().all())
+        return list(scoped.session.execute(select(TaskRow)).scalars().all())
     finally:
         scoped.close()
 

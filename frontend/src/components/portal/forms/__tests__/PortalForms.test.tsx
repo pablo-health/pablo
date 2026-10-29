@@ -11,11 +11,12 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import * as api from "@/lib/api/patientIntake"
 import { PatientIntakeError } from "@/lib/api/patientIntake"
+import * as shell from "@/lib/portal-shell/api"
 import { PortalForms } from "../PortalForms"
 import { ASSIGNMENT, INTAKE_FORM, assignmentDetail } from "./formFixtures"
 
@@ -29,6 +30,11 @@ vi.mock("@/lib/api/patientIntake", async (importOriginal) => {
     saveAnswer: vi.fn(),
     submitAssignment: vi.fn(),
   }
+})
+
+vi.mock("@/lib/portal-shell/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/portal-shell/api")>()
+  return { ...actual, fetchCapabilities: vi.fn() }
 })
 
 const TOKEN = "portal-session-token"
@@ -51,6 +57,14 @@ beforeEach(() => {
   vi.mocked(api.fetchIntakeForm).mockResolvedValue(INTAKE_FORM)
   vi.mocked(api.listAssignments).mockResolvedValue([ASSIGNMENT])
   vi.mocked(api.fetchAssignment).mockResolvedValue(assignmentDetail())
+  vi.mocked(shell.fetchCapabilities).mockResolvedValue({
+    ok: true,
+    data: {
+      practice: { display_name: "Example Therapy" },
+      modules: { intake: true },
+      auth_strength: "stepped_up",
+    },
+  })
 })
 
 describe("PortalForms", () => {
@@ -58,8 +72,98 @@ describe("PortalForms", () => {
     renderModule()
 
     expect(await screen.findByTestId("forms-list")).toBeInTheDocument()
-    expect(screen.getByText("Intake")).toBeInTheDocument()
     expect(screen.getByTestId("forms-list-state")).toHaveTextContent("4 questions left")
+  })
+
+  it("titles an untitled form by whose it is", async () => {
+    vi.mocked(api.listAssignments).mockResolvedValue([{ ...ASSIGNMENT, client_title: null }])
+
+    renderModule()
+
+    await waitFor(() =>
+      expect(screen.getByTestId("forms-list-title")).toHaveTextContent(
+        "Forms from Example Therapy",
+      ),
+    )
+  })
+
+  it("titles each form by the title written for the client, so two can be told apart", async () => {
+    vi.mocked(api.listAssignments).mockResolvedValue([
+      { ...ASSIGNMENT, id: "a-1", client_title: "Before your first visit" },
+      { ...ASSIGNMENT, id: "a-2", client_title: "Yearly check-in" },
+      { ...ASSIGNMENT, id: "a-3", client_title: "   " },
+    ])
+
+    renderModule()
+
+    await waitFor(() => expect(screen.getAllByTestId("forms-list-title")).toHaveLength(3))
+    expect(screen.getAllByTestId("forms-list-title").map((row) => row.textContent)).toEqual([
+      "Before your first visit",
+      "Yearly check-in",
+      // A blank title is no title.
+      "Forms from Example Therapy",
+    ])
+  })
+
+  it("says your practice when the practice's name cannot be read", async () => {
+    vi.mocked(shell.fetchCapabilities).mockResolvedValue({ ok: false })
+
+    renderModule()
+
+    await waitFor(() =>
+      expect(screen.getByTestId("forms-list-title")).toHaveTextContent(
+        "Forms from your practice",
+      ),
+    )
+  })
+
+  it("counts a form in parts in the parts the walk shows, from the server", async () => {
+    // Thirty required questions are outstanding, but the walk counts in
+    // parts, so the row does too — from where the patient picks up.
+    vi.mocked(api.listAssignments).mockResolvedValue([
+      {
+        ...ASSIGNMENT,
+        status: "in_progress",
+        progress: {
+          complete: false,
+          missing: Array.from({ length: 30 }, (_, i) => `item-${i}`),
+          parts: 14,
+          parts_left: 7,
+        },
+      },
+    ])
+
+    renderModule()
+
+    expect(await screen.findByTestId("forms-list-state")).toHaveTextContent(
+      "7 of 14 parts left",
+    )
+  })
+
+  it("names only the number of parts on a form nobody has started", async () => {
+    vi.mocked(api.listAssignments).mockResolvedValue([
+      {
+        ...ASSIGNMENT,
+        progress: { complete: false, missing: ["a", "b"], parts: 3, parts_left: 3 },
+      },
+    ])
+
+    renderModule()
+
+    expect(await screen.findByTestId("forms-list-state")).toHaveTextContent("3 parts")
+  })
+
+  it("keeps the question count on a form with no sections", async () => {
+    vi.mocked(api.listAssignments).mockResolvedValue([
+      {
+        ...ASSIGNMENT,
+        progress: { complete: false, missing: ["a", "b"], parts: 1, parts_left: 1 },
+      },
+    ])
+
+    renderModule()
+
+    expect(await screen.findByTestId("forms-list-state")).toHaveTextContent("2 questions left")
   })
 
   it("says a form is ready to send only when the server says it is", async () => {

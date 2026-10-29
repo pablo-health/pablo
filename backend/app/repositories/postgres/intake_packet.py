@@ -33,18 +33,21 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session
 
+    from ..row import Row
 
-def _template_to_dict(row: IntakePacketTemplateRow) -> dict[str, object]:
+
+def _template_to_dict(row: IntakePacketTemplateRow) -> Row:
     return {
         "id": row.id,
         "name": row.name,
+        "client_title": row.client_title,
         "created_by": row.created_by,
         "created_at": row.created_at,
         "archived_at": row.archived_at,
     }
 
 
-def _version_to_dict(row: IntakePacketVersionRow) -> dict[str, object]:
+def _version_to_dict(row: IntakePacketVersionRow) -> Row:
     return {
         "id": row.id,
         "template_id": row.template_id,
@@ -60,7 +63,7 @@ def _optional_str(value: object) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _item_to_dict(row: IntakeItemDefinitionRow) -> dict[str, object]:
+def _item_to_dict(row: IntakeItemDefinitionRow) -> Row:
     return {
         "id": row.id,
         "version_id": row.version_id,
@@ -81,19 +84,19 @@ class PostgresIntakePacketRepository(IntakePacketRepository):
 
     # --- templates ---
 
-    def add_template(self, row: dict[str, object]) -> dict[str, object]:
+    def add_template(self, row: Row) -> Row:
         orm_row = IntakePacketTemplateRow(
             id=str(row["id"]),
             name=str(row["name"]),
             created_by=str(row["created_by"]) if row.get("created_by") else None,
-            created_at=row["created_at"],  # type: ignore[arg-type]
-            archived_at=row.get("archived_at"),  # type: ignore[arg-type]
+            created_at=row["created_at"],
+            archived_at=row.get("archived_at"),
         )
         self._session.add(orm_row)
         self._session.flush()
         return _template_to_dict(orm_row)
 
-    def list_templates(self, *, include_archived: bool = False) -> list[dict[str, object]]:
+    def list_templates(self, *, include_archived: bool = False) -> list[Row]:
         stmt = select(IntakePacketTemplateRow)
         if not include_archived:
             stmt = stmt.where(IntakePacketTemplateRow.archived_at.is_(None))
@@ -106,7 +109,7 @@ class PostgresIntakePacketRepository(IntakePacketRepository):
         )
         return [_template_to_dict(row) for row in rows]
 
-    def get_template(self, template_id: str) -> dict[str, object] | None:
+    def get_template(self, template_id: str) -> Row | None:
         row = self._session.get(IntakePacketTemplateRow, template_id)
         return _template_to_dict(row) if row else None
 
@@ -117,7 +120,7 @@ class PostgresIntakePacketRepository(IntakePacketRepository):
         name: str | None = None,
         archived_at: datetime | None = None,
         unarchive: bool = False,
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         row = self._session.get(IntakePacketTemplateRow, template_id)
         if row is None:
             return None
@@ -130,22 +133,30 @@ class PostgresIntakePacketRepository(IntakePacketRepository):
         self._session.flush()
         return _template_to_dict(row)
 
+    def set_client_title(self, template_id: str, client_title: str | None) -> Row | None:
+        row = self._session.get(IntakePacketTemplateRow, template_id)
+        if row is None:
+            return None
+        row.client_title = client_title
+        self._session.flush()
+        return _template_to_dict(row)
+
     # --- versions ---
 
-    def add_version(self, row: dict[str, object]) -> dict[str, object]:
+    def add_version(self, row: Row) -> Row:
         orm_row = IntakePacketVersionRow(
             id=str(row["id"]),
             template_id=str(row["template_id"]),
-            version=int(row["version"]),  # type: ignore[call-overload]
-            published_at=row.get("published_at"),  # type: ignore[arg-type]
+            version=int(row["version"]),
+            published_at=row.get("published_at"),
             published_by=str(row["published_by"]) if row.get("published_by") else None,
-            created_at=row["created_at"],  # type: ignore[arg-type]
+            created_at=row["created_at"],
         )
         self._session.add(orm_row)
         self._session.flush()
         return _version_to_dict(orm_row)
 
-    def list_versions(self, template_id: str) -> list[dict[str, object]]:
+    def list_versions(self, template_id: str) -> list[Row]:
         rows = (
             self._session.execute(
                 select(IntakePacketVersionRow)
@@ -157,11 +168,11 @@ class PostgresIntakePacketRepository(IntakePacketRepository):
         )
         return [_version_to_dict(row) for row in rows]
 
-    def get_version(self, version_id: str) -> dict[str, object] | None:
+    def get_version(self, version_id: str) -> Row | None:
         row = self._session.get(IntakePacketVersionRow, version_id)
         return _version_to_dict(row) if row else None
 
-    def latest_version(self, template_id: str) -> dict[str, object] | None:
+    def latest_version(self, template_id: str) -> Row | None:
         row = (
             self._session.execute(
                 select(IntakePacketVersionRow)
@@ -176,7 +187,7 @@ class PostgresIntakePacketRepository(IntakePacketRepository):
 
     def mark_published(
         self, version_id: str, published_at: datetime, published_by: str
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         row = self._session.get(IntakePacketVersionRow, version_id)
         if row is None:
             return None
@@ -187,7 +198,7 @@ class PostgresIntakePacketRepository(IntakePacketRepository):
 
     # --- items ---
 
-    def list_items(self, version_id: str) -> list[dict[str, object]]:
+    def list_items(self, version_id: str) -> list[Row]:
         rows = (
             self._session.execute(
                 select(IntakeItemDefinitionRow)
@@ -199,9 +210,7 @@ class PostgresIntakePacketRepository(IntakePacketRepository):
         )
         return [_item_to_dict(row) for row in rows]
 
-    def replace_items(
-        self, version_id: str, rows: list[dict[str, object]]
-    ) -> list[dict[str, object]]:
+    def replace_items(self, version_id: str, rows: list[Row]) -> list[Row]:
         self._session.execute(
             delete(IntakeItemDefinitionRow).where(IntakeItemDefinitionRow.version_id == version_id)
         )
@@ -215,19 +224,19 @@ class PostgresIntakePacketRepository(IntakePacketRepository):
                     id=str(row["id"]),
                     version_id=version_id,
                     key=str(row["key"]),
-                    position=int(row["position"]),  # type: ignore[call-overload]
+                    position=int(row["position"]),
                     item_type=str(row["item_type"]),
                     required=bool(row["required"]),
                     label=_optional_str(row.get("label")),
                     help_text=_optional_str(row.get("help_text")),
-                    config=row["config"],  # type: ignore[arg-type]
+                    config=row["config"],
                     resign_on_new_version=bool(row["resign_on_new_version"]),
                 )
             )
         self._session.flush()
         return self.list_items(version_id)
 
-    def set_item_config(self, item_id: str, config: dict[str, object]) -> dict[str, object] | None:
+    def set_item_config(self, item_id: str, config: Row) -> Row | None:
         row = self._session.get(IntakeItemDefinitionRow, item_id)
         if row is None:
             return None

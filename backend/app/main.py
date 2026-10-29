@@ -11,15 +11,16 @@ import os
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 
-from fastapi import APIRouter, Depends, FastAPI
+from fastapi import APIRouter, Depends, FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 
 from .api_errors import register_exception_handlers
 from .auth.route_security import truly_public
 from .db import get_engine
 from .db.middleware import DatabaseSessionMiddleware
-from .db.provisioning import ensure_schemas
 from .diagnostics.router import (
     diagnostic_assessments_router,
     diagnostic_definitions_router,
@@ -56,6 +57,7 @@ from .routes import (
     admin,
     admin_pentest,
     auth,
+    away_periods,
     billing_export,
     billing_queue,
     billing_report,
@@ -69,11 +71,13 @@ from .routes import (
     client_ai_consent,
     compliance,
     coverage,
+    covering,
     credentialing,
     dashboard,
     domain_connect,
     ehr_routes,
     ext_auth,
+    homework,
     ical_sync,
     inbox,
     instrument_licenses,
@@ -83,27 +87,38 @@ from .routes import (
     internal_transcription,
     launch,
     migration,
+    note_chart_proposals,
+    note_mdm,
+    note_redraft,
     note_type_derive,
     note_types,
     notes,
     outside_sessions,
     passkey,
+    patient_activity,
+    patient_allergies,
     patient_appointments,
     patient_booking,
+    patient_chart_history,
+    patient_chart_proposals,
     patient_chat,
     patient_documents,
+    patient_import_origin,
     patient_intake,
     patient_intake_assignments,
     patient_intake_export,
     patient_intake_review,
     patient_messages,
     patient_payments,
+    patient_preferences,
+    patient_problems,
     patient_profile,
     patient_statements,
     patient_write_offs,
     patients,
     payment_webhooks,
     people_term,
+    practice_admins,
     practice_ai_notes_consent,
     practice_balances,
     practice_billing,
@@ -111,14 +126,18 @@ from .routes import (
     public_booking,
     refill_requests,
     scheduling,
+    session_dictations,
     sessions,
     superbills,
     supervision,
     telehealth,
     telehealth_webhooks,
     users,
+    visit_times,
+    waitlist,
 )
-from .settings import get_settings, log_startup_posture
+from .routes import tasks as task_routes
+from .settings import Settings, get_settings, log_startup_posture
 from .sites import public_routes as site_public_routes
 from .sites import routes as site_routes
 from .version_check import get_min_versions, get_server_version
@@ -152,6 +171,33 @@ else:
 log_startup_posture(settings, logger)
 
 
+def _refuse_loops_in_multiple_workers(settings: Settings) -> None:
+    """Fail startup when more than one worker would each run the background loops.
+
+    The loops started in ``lifespan`` take no cross-process lock, so with
+    WEB_CONCURRENCY=2 the claims pipeline would submit from two processes at
+    once. Refusing to start is the safe answer; the loops also run as
+    scheduled jobs, which is what a multi-worker deployment should use.
+    """
+    if settings.web_concurrency <= 1 or settings.is_saas:
+        return
+    enabled = [
+        name
+        for name, on in (
+            ("CALENDAR_AUTO_SYNC_ENABLED", settings.calendar_auto_sync_enabled),
+            ("CLAIMS_PIPELINE_ENABLED", settings.claims_pipeline_enabled),
+        )
+        if on
+    ]
+    if enabled:
+        raise RuntimeError(
+            f"WEB_CONCURRENCY={settings.web_concurrency} with in-process background "
+            f"loops on ({', '.join(enabled)}): each worker would run its own copy. "
+            "Set those to false and run the loops as scheduled jobs, or set "
+            "WEB_CONCURRENCY=1."
+        )
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Manage background tasks across the application lifecycle."""
@@ -175,6 +221,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             "(e.g. https://app.pablo.health).",
             settings.app_url,
         )
+
+    _refuse_loops_in_multiple_workers(settings)
 
     tasks: list[asyncio.Task[None]] = []
     if settings.calendar_auto_sync_enabled and not settings.is_saas:
@@ -234,8 +282,12 @@ get_default_registry().set_practice_source(
 app.add_middleware(DPoPMiddleware, settings=settings)
 
 # Database session middleware (must be added before security middleware
-# so it wraps the request lifecycle inside the security layer)
-ensure_schemas(get_engine())
+# so it wraps the request lifecycle inside the security layer).
+#
+# Importing the app touches no database. Schemas are provisioned by the
+# migrate step (backend/bin/migrate.py), which runs before the app starts:
+# provisioning here ran on every container start, under an advisory lock, and
+# a slow first database connection on a new instance crashed the import.
 app.add_middleware(DatabaseSessionMiddleware)
 
 # Security middleware - HIPAA TLS enforcement (order matters: security first)
@@ -243,6 +295,23 @@ app.add_middleware(SecurityHeadersMiddleware, settings=settings)
 app.add_middleware(HTTPSEnforcementMiddleware, settings=settings)
 
 # CORS configuration
+# Request headers a cross-origin browser may send. The X-Client-* headers
+# describe the client (its build, app, device, browser and version) and are
+# optional: a client that sends none of them is served the same way. They are
+# listed so a deployment whose frontend and API sit on different origins does
+# not start failing preflight when a newer client begins sending one.
+CORS_ALLOW_HEADERS = [
+    "Authorization",
+    "Content-Type",
+    "X-Tenant-ID",
+    "X-Client-Version",
+    "X-Client-Platform",
+    "X-Client-Build",
+    "X-Client-App",
+    "X-Client-Device",
+    "X-Client-Browser",
+]
+
 # Parse CORS origins (comma-separated string to list)
 cors_origins = [origin.strip() for origin in settings.cors_origins.split(",")]
 app.add_middleware(
@@ -250,13 +319,7 @@ app.add_middleware(
     allow_origins=cors_origins,
     allow_credentials=settings.cors_allow_credentials,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=[
-        "Authorization",
-        "Content-Type",
-        "X-Tenant-ID",
-        "X-Client-Version",
-        "X-Client-Platform",
-    ],
+    allow_headers=CORS_ALLOW_HEADERS,
     # A download saves under the name the route sends; a cross-origin page
     # cannot read that header unless it is listed here.
     expose_headers=["Content-Disposition"],
@@ -278,8 +341,14 @@ app.include_router(users.router)
 app.include_router(people_term.router)
 app.include_router(practice_ai_notes_consent.router)
 app.include_router(patients.router)
+app.include_router(patient_activity.router)
+app.include_router(patient_allergies.router)
+app.include_router(patient_preferences.router)
+app.include_router(patient_problems.router)
+app.include_router(patient_chart_history.router)
 app.include_router(practice_billing.router)
 app.include_router(practice_domains.router)
+app.include_router(practice_admins.router)
 # The practice's website: managed in Settings > Website, served to its hosts.
 app.include_router(site_routes.router)
 app.include_router(site_public_routes.router)
@@ -359,6 +428,7 @@ def _portal_module_router_pairs(modules: Iterable[str]) -> list[tuple[str, APIRo
         "messaging": patient_messages.patient_messages_router,
         "appointments": patient_appointments.router,
         "refills": refill_requests.patient_refills_router,
+        "homework": homework.patient_homework_router,
     }
     return [(name, router) for name, router in by_module.items() if name in wanted]
 
@@ -376,14 +446,22 @@ app.include_router(
     patient_booking.router, dependencies=[Depends(require_portal_module("appointments"))]
 )
 app.include_router(sessions.router)
+app.include_router(visit_times.router)
 app.include_router(internal_transcription.router)
 app.include_router(dashboard.router)
 app.include_router(notes.router)
 app.include_router(notes.patient_notes_router)
 app.include_router(notes.internal_jobs_router)
+app.include_router(note_redraft.router)
+app.include_router(note_chart_proposals.router)
+app.include_router(patient_chart_proposals.router)
+app.include_router(patient_import_origin.router)
+app.include_router(note_mdm.router)
+app.include_router(session_dictations.router)
 app.include_router(patient_documents.patient_documents_router)
 app.include_router(patient_documents.documents_router)
 app.include_router(patient_documents.internal_jobs_router)
+app.include_router(migration.internal_jobs_router)
 # The patient's own half of the same table. Unconditional rather than a
 # portal module: it is the seam the modules that DO gate — sending in what
 # an intake form asked for, attaching a file to a message — both upload
@@ -396,6 +474,18 @@ app.include_router(patient_documents.patient_router)
 app.include_router(patient_messages.patient_threads_router)
 app.include_router(patient_messages.message_threads_router)
 app.include_router(refill_requests.refill_requests_router)
+# The clinician's half of homework: reading a note's plan, confirming what
+# it proposes. Unconditional, like the chart it sits on; the client's half
+# went up with the portal modules above.
+app.include_router(homework.router)
+# The clinician's waitlist: the list itself, and one client's place on it.
+app.include_router(waitlist.router)
+app.include_router(waitlist.patient_waitlist_router)
+# The clinician's away dates; the acknowledgment they drive is sent from the
+# portal's own message and refill routes.
+app.include_router(away_periods.router)
+# A colleague answering a request to cover those dates.
+app.include_router(covering.router)
 # One list of everything that needs the clinician. Its sources are
 # registered here like a deployment's own would be; one a deployment already
 # registered for the same kind is kept.
@@ -416,6 +506,7 @@ app.include_router(migration.router)
 app.include_router(note_types.router)
 app.include_router(note_type_derive.router)
 app.include_router(compliance.router)
+app.include_router(task_routes.router)
 app.include_router(supervision.router)
 app.include_router(credentialing.router)
 app.include_router(outcome_measures_router)
@@ -529,15 +620,24 @@ app.include_router(patient_profile.router)
 
 
 @app.get("/api/health")
-def health_check(_public: None = Depends(truly_public)) -> dict[str, object]:
+def health_check(response: Response, _public: None = Depends(truly_public)) -> dict[str, object]:
     """Health check endpoint.
 
     Returns server status, deployed git SHA, and minimum required
-    client versions. Verifies DB connectivity — a failed SELECT 1
-    bubbles up as 5xx so deploy smoke tests catch broken bindings.
+    client versions. Verifies DB connectivity: when the database cannot be
+    reached, or no pooled connection frees up in time, it answers 503
+    ``{"status": "unavailable"}``. A new instance's first connections can
+    take a while to come up, and a platform health probe reading 503 keeps
+    traffic away until they do. Deploy smoke tests still see a 5xx for a
+    broken binding.
     """
-    with get_engine().connect() as conn:
-        conn.execute(text("SELECT 1"))
+    try:
+        with get_engine().connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except (OperationalError, PoolTimeoutError) as exc:
+        logger.warning("Health check: database unavailable (%s)", type(exc).__name__)
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {"status": "unavailable"}
     return {
         "status": "healthy",
         "server_version": get_server_version(),

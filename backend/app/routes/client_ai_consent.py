@@ -31,7 +31,7 @@ from ..services.client_ai_consent import (
     ai_consent_record,
     record_ai_consent,
 )
-from .patient_payments import _require_patient
+from ._deps import client_not_found, visible_patient
 from .scheduling import get_owner_timezone
 
 if TYPE_CHECKING:
@@ -57,7 +57,7 @@ def get_ai_consent(
     audit: AuditService = Depends(get_audit_service),
 ) -> AiConsentRecord:
     """The client's current answer, or ``null`` if nobody has asked, and the history."""
-    patient = _require_patient(patients, patient_id, user.id)
+    patient = visible_patient(patients, patient_id, user.id, client_not_found)
     record = ai_consent_record(patient_id, repo=consents)
     audit.log_patient_action(
         AuditAction.PATIENT_AI_CONSENT_VIEWED,
@@ -91,7 +91,7 @@ def post_ai_consent(
     timezone preference, so an answer recorded in the evening is not dated
     tomorrow.
     """
-    patient = _require_patient(patients, patient_id, user.id)
+    patient = visible_patient(patients, patient_id, user.id, client_not_found)
     today = datetime.now(tz).date()
     try:
         event = record_ai_consent(
@@ -100,6 +100,9 @@ def post_ai_consent(
             payload.effective_on or today,
             "clinician",
             user.id,
+            modality=payload.modality,
+            client_stated_location=payload.client_stated_location,
+            consented_by=payload.consented_by,
             today=today,
             repo=consents,
         )
@@ -118,6 +121,10 @@ def post_ai_consent(
             "decision": event.decision,
             "effective_on": event.effective_on.isoformat(),
             "source": event.source,
+            "modality": event.modality,
+            "consented_by": event.consented_by,
+            # Whether a place was given, never the place: the record holds it.
+            "client_stated_location": event.client_stated_location is not None,
         },
     )
     return ai_consent_record(patient_id, repo=consents)

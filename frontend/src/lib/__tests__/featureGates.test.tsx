@@ -11,7 +11,7 @@ const account = vi.hoisted(() => ({
 vi.mock("../config", () => ({ useConfig: () => deployment }))
 vi.mock("../featureGates.extensions", () => ({ useAccountFeatures: () => account.value }))
 
-import { useFeature } from "../featureGates"
+import { useFeature, useSettledFeature } from "../featureGates"
 
 /**
  * Which optional features are on for the person looking at the screen.
@@ -71,5 +71,33 @@ describe("useFeature", () => {
 
     const { result } = renderHook(() => useFeature("superbills"))
     expect(result.current).toBe(true)
+  })
+})
+
+describe("useSettledFeature", () => {
+  beforeEach(() => {
+    deployment.features = {}
+    account.value = { features: {}, resolved: true }
+  })
+
+  it("has no answer while the account answer is loading, even where the deployment says no", () => {
+    // The case that 404'd a granted settings page on a direct load: the
+    // deployment says no, the account is about to say yes.
+    account.value = { features: {}, resolved: false }
+    const { result } = renderHook(() => useSettledFeature("early_feature"))
+    expect(result.current).toBeNull()
+  })
+
+  it("then gives the same answer useFeature does", () => {
+    deployment.features = { superbills: true }
+    account.value = { features: { early_feature: true, superbills: false }, resolved: true }
+    expect(renderHook(() => useSettledFeature("early_feature")).result.current).toBe(true)
+    expect(renderHook(() => useSettledFeature("superbills")).result.current).toBe(false)
+    expect(renderHook(() => useSettledFeature("nobody_turned_on")).result.current).toBe(false)
+  })
+
+  it("is settled at once for something not gated at all", () => {
+    account.value = { features: {}, resolved: false }
+    expect(renderHook(() => useSettledFeature(undefined)).result.current).toBe(true)
   })
 })

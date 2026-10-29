@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -22,10 +23,10 @@ from app.repositories import (
     InMemoryPracticeNoteTypeRepository,
     get_practice_note_type_repository,
 )
-from app.repositories.audit import InMemoryAuditRepository
 from app.routes.note_type_derive import get_note_type_derive_service
 from app.routes.note_types import get_registry
 from app.services.audit_service import AuditService, get_audit_service
+from app.services.document_ai_ocr import OcrResult, get_document_ocr_client
 from app.services.note_import_service import NoteImportService
 from app.services.note_type_derive_checks import SampleText, copied_paths
 from app.services.note_type_derive_service import (
@@ -39,10 +40,13 @@ from app.services.structured_llm_gateway import (
 )
 from fastapi.testclient import TestClient
 
+from tests.scanned_pdf_fakes import SCANNED_PDF, FakeOcrClient
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     from app.models import User
+    from app.repositories.audit import InMemoryAuditRepository
 
 # Synthetic: written for this test, about no one.
 SAMPLE = """\
@@ -50,6 +54,9 @@ Interval history: Pat Anonymous reports sleeping seven hours since the dose chan
 Current medications: sertraline 50 mg each morning
 Plan: Return in four weeks for a medication check.
 """
+
+POSITIONAL = re.compile(r"^(?:field|section|input)_\d+$")
+"""What the guard once named a part it had to replace; never acceptable now."""
 
 STRAY = "Pat brought a watercolor of the lighthouse at Faketown harbor to share today."
 
@@ -125,11 +132,6 @@ def repo() -> InMemoryPracticeNoteTypeRepository:
     return InMemoryPracticeNoteTypeRepository()
 
 
-@pytest.fixture
-def audit_repo() -> InMemoryAuditRepository:
-    return InMemoryAuditRepository()
-
-
 @pytest.fixture(autouse=True)
 def _no_registered_references() -> Iterator[None]:
     clear_registered_note_type_references()
@@ -203,7 +205,9 @@ def test_a_sample_yields_its_sections_in_order_and_full_coverage(
     assert response.status_code == 200, response.text
     body = response.json()
     assert [s["label"] for s in body["spec"]["sections"]] == ["Interval history", "Plan"]
-    assert body["coverage"] == [{"sample": 0, "passages": 3, "unplaced": [], "checked": True}]
+    assert body["coverage"] == [
+        {"sample": 0, "passages": 3, "unplaced": [], "checked": True, "excluded": 0}
+    ]
     extract_call = gateway.calls[1]
     assert extract_call["thinking_budget"] == 0
     assert SAMPLE.strip() in extract_call["user_prompt"]
@@ -287,7 +291,7 @@ def test_the_response_schema_is_the_spec_schema_inlined() -> None:
     assert "user_template" not in schema["properties"]
     section = schema["properties"]["sections"]["items"]
     field = section["properties"]["fields"]["items"]
-    assert field["properties"]["kind"]["enum"] == ["text", "list"]
+    assert field["properties"]["kind"]["enum"] == ["text", "list", "diagnoses"]
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +340,7 @@ def test_a_hint_still_copied_after_its_rewrite_is_neutralized(
     assert copied_paths(spec, SampleText([SAMPLE])) == []
 
 
-def test_copied_labels_keys_and_prompt_are_neutralized_when_the_rewrite_fails(
+def test_copied_labels_and_keys_lose_their_copied_words_when_the_rewrite_fails(
     client: TestClient, gateway: FakeStructuredLLMGateway
 ) -> None:
     proposal = {
@@ -356,17 +360,19 @@ def test_copied_labels_keys_and_prompt_are_neutralized_when_the_rewrite_fails(
     body = _derive(client, samples=[SAMPLE]).json()
 
     assert body["spec"]["system_prompt"] == ""
-    assert body["spec"]["sections"][0]["key"] == "section_1"
-    assert body["spec"]["sections"][0]["label"] == "Section 1"
+    section = body["spec"]["sections"][0]
+    assert not POSITIONAL.match(section["key"])
+    assert section["label"] == "Reports seven hours"
+    assert section["key"] == "reports_seven_hours"
     assert {g["outcome"] for g in body["guard"]} == {"neutralized"}
-    assert "Pat" not in repr(body["spec"])
+    assert "anonymous" not in repr(body["spec"]).lower()
 
 
 def test_a_sample_heading_used_as_a_label_is_structure_not_a_copy() -> None:
     index = SampleText(["CHIEF COMPLAINT AND REASON FOR VISIT\nClient said little."])
 
     assert not index.copied("Chief complaint and reason for visit", heading_allowed=True)
-    assert index.copied("Chief complaint and reason for visit")
+    assert not index.copied("Chief complaint and reason for visit")
 
 
 def test_a_name_copied_on_its_own_is_a_copy() -> None:
@@ -437,6 +443,35 @@ def test_bad_requests_are_refused_before_any_model_call(
     client: TestClient, gateway: FakeStructuredLLMGateway, form: dict[str, Any], status_code: int
 ) -> None:
     assert _derive(client, **form).status_code == status_code
+    assert gateway.calls == []
+
+
+def test_a_scanned_sample_is_read_with_ocr(
+    client: TestClient, gateway: FakeStructuredLLMGateway
+) -> None:
+    ocr = FakeOcrClient(result=OcrResult(text=SAMPLE, page_count=3, avg_confidence=0.97))
+    app.dependency_overrides[get_document_ocr_client] = lambda: ocr
+    gateway.responses = [_reply(PROPOSAL), _reply(EXTRACTED)]
+    try:
+        response = _derive(client, files={"files": ("scan.pdf", SCANNED_PDF, "application/pdf")})
+    finally:
+        app.dependency_overrides.pop(get_document_ocr_client, None)
+
+    assert response.status_code == 200, response.text
+    assert len(ocr.calls) == 1
+    assert SAMPLE.strip() in gateway.calls[1]["user_prompt"]
+
+
+def test_a_scanned_sample_with_ocr_off_is_refused(
+    client: TestClient, gateway: FakeStructuredLLMGateway
+) -> None:
+    app.dependency_overrides[get_document_ocr_client] = lambda: FakeOcrClient(is_configured=False)
+    try:
+        response = _derive(client, files={"files": ("scan.pdf", SCANNED_PDF, "application/pdf")})
+    finally:
+        app.dependency_overrides.pop(get_document_ocr_client, None)
+
+    assert response.status_code == 422
     assert gateway.calls == []
 
 

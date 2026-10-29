@@ -150,7 +150,7 @@ export const SEEDED_ITEMS: IntakeAssignmentItem[] = [
 export const ASSIGNMENT: IntakeAssignment = {
   id: ASSIGNMENT_ID,
   version_id: "9c8b7a65-4321-4098-8765-4321fedcba09",
-  packet_name: "Intake",
+  client_title: null,
   version: 1,
   status: "assigned",
   assigned_at: "2026-09-19T14:00:00Z",

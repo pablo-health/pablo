@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+import app.services.bedrock_structured_llm_gateway as module
 import app.services.structured_llm_gateway as structured
 import botocore.session
 import httpx
@@ -179,12 +180,20 @@ class TestSuccess:
         _call(gw)
         sent = client.requests[0]
         assert sent["modelId"] == "us.anthropic.claude-haiku-4-5-20251001-v1:0"
-        assert sent["system"] == [{"text": "SYSTEM"}]
+        assert sent["system"] == [
+            {"text": "SYSTEM"},
+            {"cachePoint": {"type": "default"}},
+        ]
         assert sent["messages"] == [{"role": "user", "content": [{"text": "9 to 5"}]}]
         assert sent["inferenceConfig"] == {"maxTokens": 256, "temperature": 0.0}
         spec = sent["toolConfig"]["tools"][0]["toolSpec"]
         assert spec["inputSchema"] == {"json": to_json_schema(_SCHEMA)}
         assert sent["toolConfig"]["toolChoice"] == {"tool": {"name": spec["name"]}}
+
+    def test_non_claude_model_does_not_receive_a_cache_point(self) -> None:
+        gw, client = _gateway(_response({"proposals": []}))
+        _call(gw, model="bedrock:us.amazon.nova-pro-v1:0")
+        assert client.requests[0]["system"] == [{"text": "SYSTEM"}]
 
     def test_guardrail_is_reported_as_safety(self) -> None:
         gw, _ = _gateway(_response({"proposals": []}, stop_reason="guardrail_intervened"))
@@ -320,6 +329,59 @@ class TestTimeouts:
         _call(gw)
         assert built == [15.0, 9.5, 180.0]
 
+    def test_a_client_idle_past_the_limit_is_rebuilt_before_its_next_call(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A NAT drops idle connections silently; a stale pool must not be reused."""
+        clock = [1000.0]
+        monkeypatch.setattr(module, "_now", lambda: clock[0])
+        built: list[_StubClient] = []
+
+        def factory(_timeout: float) -> _StubClient:
+            client = _StubClient(_response({"proposals": []}))
+            built.append(client)
+            return client
+
+        gw = BedrockStructuredLLMGateway(client_factory=factory)
+        first = gw.client(15.0)
+        clock[0] += module._MAX_CLIENT_IDLE_SECONDS - 1
+        assert gw.client(15.0) is first, "used within the limit: reused"
+        clock[0] += module._MAX_CLIENT_IDLE_SECONDS + 1
+        fresh = gw.client(15.0)
+        assert fresh is not first, "idle past the limit: rebuilt"
+        clock[0] += 1
+        assert gw.client(15.0) is fresh
+        assert len(built) == 2
+
+    def test_a_client_in_steady_use_is_never_rebuilt(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        clock = [0.0]
+        monkeypatch.setattr(module, "_now", lambda: clock[0])
+        built: list[float] = []
+
+        def factory(timeout: float) -> _StubClient:
+            built.append(timeout)
+            return _StubClient(_response({"proposals": []}))
+
+        gw = BedrockStructuredLLMGateway(client_factory=factory)
+        for _ in range(12):  # an hour of calls, each well inside the limit
+            gw.client(15.0)
+            clock[0] += module._MAX_CLIENT_IDLE_SECONDS / 2
+        assert built == [15.0]
+
+    def test_with_no_bound_given_the_retry_deadline_does_not_cut_the_attempt(self) -> None:
+        """A long draft on Bedrock as the only model keeps the full default bound."""
+        built: list[float] = []
+        client = _StubClient(_response({"proposals": []}))
+
+        def factory(timeout: float) -> _StubClient:
+            built.append(timeout)
+            return client
+
+        gw = BedrockStructuredLLMGateway(client_factory=factory)
+        _call(gw, retry_policy=None)
+        _call(gw, retry_policy=None, timeout_seconds=40.0)
+        assert built == [180.0, 25.0]
+
     def test_a_real_client_carries_the_bound_and_no_retries_of_its_own(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -427,6 +489,22 @@ class TestTelemetry:
         haystack = repr(attrs)
         assert "SYSTEM-marker" not in haystack
         assert "USER-marker" not in haystack
+
+    def test_cache_reads_count_toward_the_prompt_and_are_reported_apart(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        response = _response({"proposals": []})
+        response["usage"] = {
+            "inputTokens": 20,
+            "cacheReadInputTokens": 100,
+            "outputTokens": 9,
+            "totalTokens": 129,
+        }
+        gw, _ = _gateway(response)
+        _call(gw)
+        attrs = dict(span_exporter.get_finished_spans()[0].attributes or {})
+        assert attrs[SpanAttributes.LLM_TOKEN_COUNT_PROMPT] == 120
+        assert attrs["pablo.llm_cached_tokens"] == 100
 
 
 class TestResolution:

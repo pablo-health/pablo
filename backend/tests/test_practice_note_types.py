@@ -22,6 +22,7 @@ from app.notes import NoteTypeRegistry, register_builtin_note_types
 from app.notes.practice_types import (
     GENERATION_FLOOR,
     PracticeNoteTypeSpec,
+    PromptBlocks,
     RepositoryPracticeNoteTypeSource,
     render_user_prompt,
     to_definition,
@@ -113,7 +114,21 @@ class TestSpecValidation:
                 "at least two options",
             ),
             ({"inputs": [{"key": "a", "label": "A", "options": ["x", "y"]}]}, "takes no options"),
-            ({"sections": []}, "at least 1"),
+            (
+                {
+                    "inputs": [
+                        {
+                            "key": "a",
+                            "label": "A",
+                            "kind": "choice",
+                            "options": ["x", "y"],
+                            "default": "z",
+                        }
+                    ]
+                },
+                "default of input 'a' is not one of its options",
+            ),
+            ({"sections": []}, "at least one section"),
         ],
     )
     def test_rejects(self, overrides: dict[str, Any], message: str) -> None:
@@ -173,7 +188,7 @@ def test_template_substitutes_only_known_placeholders() -> None:
         Transcript(format="txt", content="[00:01] Kurt: Hello"),
         NOW,
         {"segment": "Starter"},
-        "Fields: ...",
+        PromptBlocks(fields="Fields: ..."),
     )
 
     assert "Segment: Starter" in prompt
@@ -320,6 +335,29 @@ class TestRoutes:
         keys = [t["key"] for t in client.get("/api/note-types").json()["note_types"]]
         assert "custom.coach" not in keys
         assert client.get("/api/note-types/custom.coach").status_code == 200
+
+    def test_single_read_returns_the_stored_spec_for_editing(self, client: TestClient) -> None:
+        client.put("/api/note-types/custom/coach", json=COACH_SPEC)
+        client.put("/api/note-types/custom/coach", json={**COACH_SPEC, "label": "Coach v2"})
+
+        latest = client.get("/api/note-types/custom.coach").json()
+        assert latest["spec"]["system_prompt"] == COACH_SPEC["system_prompt"]
+        assert latest["spec"]["user_template"] == COACH_SPEC["user_template"]
+        assert latest["spec"]["label"] == "Coach v2"
+        old = client.get("/api/note-types/custom.coach", params={"version": 1}).json()
+        assert old["spec"]["label"] == "Interview Coach"
+        # Saving the spec back unchanged is a lossless round trip.
+        again = client.put("/api/note-types/custom/coach", json=latest["spec"])
+        assert again.status_code == 200, again.text
+        stored = client.get("/api/note-types/custom.coach").json()["spec"]
+        assert stored == latest["spec"]
+
+    def test_built_in_and_list_entries_carry_no_spec(self, client: TestClient) -> None:
+        client.put("/api/note-types/custom/coach", json=COACH_SPEC)
+
+        assert client.get("/api/note-types/soap").json()["spec"] is None
+        listed = client.get("/api/note-types").json()["note_types"]
+        assert all(t["spec"] is None for t in listed)
 
     def test_rejects_a_bad_slug(self, client: TestClient) -> None:
         response = client.put("/api/note-types/custom/Bad-Slug", json=COACH_SPEC)

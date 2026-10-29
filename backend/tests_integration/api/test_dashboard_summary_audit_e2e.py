@@ -101,13 +101,6 @@ def pg_session(engine: Engine) -> Iterator[Session]:
         session.close()
 
 
-@pytest.fixture(scope="module")
-def fastapi_app() -> FastAPI:
-    from app.main import app  # noqa: PLC0415  # deferred — caches settings on import
-
-    return app
-
-
 @pytest.fixture
 def e2e_user() -> User:
     from app.models import User  # noqa: PLC0415  # deferred — see module docstring
@@ -156,7 +149,13 @@ def e2e_client(
         get_tenant_context,
         require_baa_acceptance,
     )
-    from app.repositories import InMemoryNotesRepository  # noqa: PLC0415
+    from app.chart_proposals.dependencies import (  # noqa: PLC0415
+        get_chart_proposal_repository,
+    )
+    from app.repositories import (  # noqa: PLC0415
+        InMemoryChartProposalRepository,
+        InMemoryNotesRepository,
+    )
     from app.repositories.postgres.audit import PostgresAuditRepository  # noqa: PLC0415
     from app.routes.scheduling import get_scheduling_service  # noqa: PLC0415
     from app.routes.sessions import (  # noqa: PLC0415
@@ -187,6 +186,8 @@ def e2e_client(
     notes_repo = InMemoryNotesRepository()
     notes_repo.grant_all_access()
     fastapi_app.dependency_overrides[get_sessions_notes_repository] = lambda: notes_repo
+    chart_proposals = InMemoryChartProposalRepository()
+    fastapi_app.dependency_overrides[get_chart_proposal_repository] = lambda: chart_proposals
     fastapi_app.dependency_overrides[get_scheduling_service] = lambda: SchedulingService(
         InMemoryAppointmentRepository()
     )

@@ -31,7 +31,7 @@ export function InboxPage() {
         label={label}
         value={preferences.inbox_reply_earlier_messages ?? "ask"}
         options={OPTIONS}
-        onChange={(next) => save({ ...preferences, inbox_reply_earlier_messages: next })}
+        onChange={(next) => save({ inbox_reply_earlier_messages: next })}
       />
     </SettingsCard>
   )

@@ -34,7 +34,7 @@ string with a foreign key and the convention with a unique constraint.
 
 The enrollment arm kept the string a while longer, having no claim to point a
 foreign key at, and kept the bug with it. It now keys on
-``compliance_items.source_ref`` — a column the compliance route does not write,
+``tasks.source_ref`` — a column the task routes do not write,
 unique per clinician and kind — so neither arm can be edited into filing twice.
 
 An event carries identifiers, codes and dates only. It never carries a
@@ -53,7 +53,7 @@ from typing import TYPE_CHECKING, Literal, get_args
 
 from sqlalchemy import select
 
-from ..db.models import ClaimReminderRow, ClaimRow, ComplianceItemRow
+from ..db.models import ClaimReminderRow, ClaimRow, TaskRow
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
@@ -241,7 +241,7 @@ _FILING_REFUSED_PHRASE = "could not be filed with {payer}"
 #: id as the control number. Neither field names a claim, and there is no
 #: patient anywhere in it.
 #:
-#: So it stays a ``compliance_items`` row: it belongs to the practice's payer
+#: So it stays a compliance ``tasks`` row: it belongs to the practice's payer
 #: relationship, like a licence belongs to the clinician. Everything else here
 #: is about one patient's claim and goes to ``claim_reminders``, where a
 #: foreign key can hold it.
@@ -251,7 +251,7 @@ NON_CLAIM_KINDS: tuple[str, ...] = ("enrollment_action_required",)
 
 
 def compliance_item_type(kind: ClaimEventKind) -> str:
-    """The ``compliance_items.item_type`` a non-claim event is filed under."""
+    """The ``tasks.item_type`` a non-claim event is filed under."""
     return f"claim_{kind}"
 
 
@@ -294,7 +294,7 @@ def _notes(event: ClaimEvent) -> str | None:
 
 def _find_compliance_reminder(
     session: Session, *, kind: ClaimEventKind, control_number: str, user_id: str | None
-) -> ComplianceItemRow | None:
+) -> TaskRow | None:
     """The non-claim arm's lookup, by the column the clinician cannot edit.
 
     ``source_ref`` holds the vendor request id the reminder was raised for. It
@@ -304,13 +304,13 @@ def _find_compliance_reminder(
     request that already had one.
     """
     query = (
-        select(ComplianceItemRow)
-        .where(ComplianceItemRow.item_type == compliance_item_type(kind))
-        .where(ComplianceItemRow.source_ref == control_number)
+        select(TaskRow)
+        .where(TaskRow.item_type == compliance_item_type(kind))
+        .where(TaskRow.source_ref == control_number)
         .limit(1)
     )
     if user_id is not None:
-        query = query.where(ComplianceItemRow.user_id == user_id)
+        query = query.where(TaskRow.user_id == user_id)
     return session.execute(query).scalar_one_or_none()
 
 
@@ -345,7 +345,7 @@ def find_claim_reminder(
 
 
 def _write_compliance_reminder(session: Session, event: ClaimEvent) -> None:
-    """The non-claim arm: a ``compliance_items`` row, as it always was.
+    """The non-claim arm: a compliance ``tasks`` row, as it always was.
 
     Reached only by :data:`NON_CLAIM_KINDS` — a payer wanting the practice to
     sign or attest something. There is no claim and no patient, so there is no
@@ -366,7 +366,7 @@ def _write_compliance_reminder(session: Session, event: ClaimEvent) -> None:
     now = utc_now()
     due_date = event.detail.deadline_date or (event.occurred_at + _REMINDER_DUE_IN).date()
     session.add(
-        ComplianceItemRow(
+        TaskRow(
             id=str(uuid.uuid4()),
             user_id=event.user_id,
             item_type=compliance_item_type(event.kind),
@@ -441,7 +441,7 @@ def resolve_compliance_reminder(
     was never written (a deployment that routes events elsewhere), is left
     alone.
     """
-    row: ComplianceItemRow | ClaimReminderRow | None
+    row: TaskRow | ClaimReminderRow | None
     if kind in NON_CLAIM_KINDS:
         row = _find_compliance_reminder(
             session, kind=kind, control_number=control_number, user_id=user_id

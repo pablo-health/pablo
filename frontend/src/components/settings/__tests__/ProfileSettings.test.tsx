@@ -64,8 +64,6 @@ describe("ProfileSettings", () => {
     await user.type(screen.getByLabelText("Display Name"), "Dr. Jones")
     await user.click(screen.getByRole("button", { name: "Save" }))
 
-    expect(onSave).toHaveBeenCalledWith(
-      expect.objectContaining({ therapist_display_name: "Dr. Jones" })
-    )
+    expect(onSave).toHaveBeenCalledWith({ therapist_display_name: "Dr. Jones" })
   })
 })

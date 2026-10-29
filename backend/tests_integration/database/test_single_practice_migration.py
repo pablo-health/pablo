@@ -20,12 +20,9 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from app.db import (
     DEFAULT_PRACTICE_ID,
     DEFAULT_PRACTICE_OWN_SCHEMA,
@@ -62,17 +59,6 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_db_url, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
-
-
 def _counts(counts, table: str):
     for c in counts:
         if c.table == table:
@@ -97,6 +83,7 @@ _POLICY_NAME_BY_SHAPE = {
     Shape.PATIENT_ACCESS_BY_PATIENT_ID: "rls_patient_access",
     Shape.PATIENT_DOCUMENTS: "rls_patient_doc_access",
     Shape.NOTES: "rls_note_access",
+    Shape.NOTE_CHILD: "rls_note_child_access",
     Shape.CHAT_MESSAGES: "rls_chat_message_access",
     Shape.PRACTICE_ANSWERS: "rls_practice_answers",
 }

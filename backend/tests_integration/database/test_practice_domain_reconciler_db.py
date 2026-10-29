@@ -8,8 +8,10 @@ back as its owner. The cloud is ``FakeDomainServing``; DNS is a table. What is
 proved: each step a host takes (pending, verifying, active, error, removing and
 gone), that a second sweep changes and creates nothing, that a lapse on a
 served host leaves its routing in place and recovers by itself, that a removal
-made mid-sweep is not overwritten, the email identity extension point, and the
-revision going down and up.
+made mid-sweep is not overwritten, the email identity extension point, the
+revision going down and up, and -- with a website mirror given -- that a
+published website is copied, routed at, recorded as served and kept up to
+date through a publish, a search change and a copy that fails.
 """
 
 from __future__ import annotations
@@ -23,15 +25,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from app.db.models import AuditLogRow
 from app.db.tenant_session import tenant_db_session
 from app.models.audit import AuditAction
 from app.repositories.postgres.practice_domain import PostgresPracticeDomainRepository
-from app.services.practice_domain_cloud import CertificateStatus, DomainServingError
+from app.services.practice_domain_cloud import (
+    CertificateStatus,
+    DomainServingError,
+    HostRoute,
+)
 from app.services.practice_domain_email import EmailIdentity
 from app.services.practice_domain_reconcile_store import (
     ACTOR_COMPONENT,
@@ -47,7 +51,9 @@ from app.services.practice_domain_reconciler import (
     challenge_record,
 )
 from app.services.practice_domain_service import PracticeDomainService
-from sqlalchemy import create_engine, select, text
+from app.settings import get_settings
+from app.sites.mirror import SiteMirrorError
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from tests.practice_domain_serving_fake import FakeDomainServing
@@ -87,17 +93,6 @@ class Practice:
     owner: str
 
 
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_db_url, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
-
-
 @pytest.fixture
 def practice(engine: Engine) -> Iterator[Practice]:
     from app.db.provisioning import create_practice_schema  # noqa: PLC0415
@@ -124,7 +119,12 @@ def practice(engine: Engine) -> Iterator[Practice]:
         )
     yield made
     with engine.begin() as conn:
-        for table in ("practice_domains", "practice_domain_apexes"):
+        for table in (
+            "practice_domains",
+            "practice_domain_apexes",
+            "practice_sites",
+            "companion_practice_slugs",
+        ):
             conn.execute(
                 text(f"DELETE FROM platform.{table} WHERE practice_id = :i"),  # noqa: S608 — fixed table names
                 {"i": made.id},
@@ -143,6 +143,9 @@ class _OnlyThesePractices(PostgresReconcileStore):
     def all_hosts(self) -> list[PracticeDomain]:
         return [h for h in super().all_hosts() if h.practice_id in self._ids]
 
+    def practices_with_sites(self) -> list[str]:
+        return [p for p in super().practices_with_sites() if p in self._ids]
+
 
 class _Provisioner:
     def __init__(self) -> None:
@@ -158,12 +161,30 @@ class _Provisioner:
         self.removed.append(apex)
 
 
+class _FakeMirror:
+    """The public bucket as a list of what was copied into it."""
+
+    def __init__(self) -> None:
+        self.copied: list[tuple[str, int, bool]] = []
+        self.tidied: list[tuple[str, set[int]]] = []
+        self.failure: SiteMirrorError | None = None
+
+    def mirror(self, practice_id: str, version: int, *, hide_from_search: bool) -> None:
+        if self.failure is not None:
+            raise self.failure
+        self.copied.append((practice_id, version, hide_from_search))
+
+    def tidy(self, practice_id: str, keep: Any) -> None:
+        self.tidied.append((practice_id, set(keep)))
+
+
 @dataclass
 class Harness:
     practice: Practice
     serving: FakeDomainServing
     zone: Zone
     provisioner: _Provisioner | None = None
+    mirror: _FakeMirror | None = None
     now: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def service(self, repo: PracticeDomainRepository) -> PracticeDomainService:
@@ -178,8 +199,67 @@ class Harness:
             lookup=lambda name, rdtype: self.zone.get((name, rdtype), []),
             service_for=self.service,
             email=self.provisioner,
+            mirror=self.mirror,
             now=lambda: self.now,
         ).sweep()
+
+    def publish(self, version: int, *, hide_from_search: bool = False) -> None:
+        """Give the practice a website whose live version is *version*."""
+        with tenant_db_session(self.practice.schema, self.practice.owner) as session:
+            session.execute(
+                text(
+                    "INSERT INTO platform.practice_sites"
+                    " (practice_id, live_version, next_version, hide_from_search, updated_at)"
+                    " VALUES (:p, :v, :n, :h, now())"
+                    " ON CONFLICT (practice_id) DO UPDATE SET live_version = :v,"
+                    " next_version = :n, hide_from_search = :h, updated_at = now()"
+                ),
+                {"p": self.practice.id, "v": version, "n": version + 1, "h": hide_from_search},
+            )
+            session.execute(
+                text(
+                    "INSERT INTO platform.practice_site_versions"
+                    " (practice_id, version, file_count, total_bytes, published_at, published_by)"
+                    " VALUES (:p, :v, 1, 1, now(), :o) ON CONFLICT DO NOTHING"
+                ),
+                {"p": self.practice.id, "v": version, "o": self.practice.owner},
+            )
+
+    def served(self) -> tuple[int | None, bool | None]:
+        with tenant_db_session(self.practice.schema, self.practice.owner) as session:
+            row = session.execute(
+                text(
+                    "SELECT served_version, served_hide_from_search"
+                    " FROM platform.practice_sites WHERE practice_id = :p"
+                ),
+                {"p": self.practice.id},
+            ).one()
+            return row[0], row[1]
+
+    def served_hosted(self) -> str | None:
+        with tenant_db_session(self.practice.schema, self.practice.owner) as session:
+            return session.execute(
+                text(
+                    "SELECT served_hosted_host FROM platform.practice_sites WHERE practice_id = :p"
+                ),
+                {"p": self.practice.id},
+            ).scalar_one()
+
+    def set_slug(self, slug: str) -> None:
+        """Give the practice its hosted address's slug (or a new one)."""
+        with tenant_db_session(self.practice.schema, self.practice.owner) as session:
+            session.execute(
+                text("DELETE FROM platform.companion_practice_slugs WHERE practice_id = :p"),
+                {"p": self.practice.id},
+            )
+            session.execute(
+                text(
+                    "INSERT INTO platform.companion_practice_slugs"
+                    " (slug, practice_id, display_name, enabled, created_at)"
+                    " VALUES (:s, :p, 'Hosted Test', true, now())"
+                ),
+                {"s": slug, "p": self.practice.id},
+            )
 
     def add_challenge(self, host: str) -> None:
         """Publish the host's ``_acme-challenge`` CNAME as it was shown."""
@@ -1180,3 +1260,250 @@ def test_the_revision_goes_down_and_comes_up_twice(engine: Engine) -> None:
     _migration("upgrade", engine)
 
     assert shape() == (True, True)
+
+
+# --- serving a website from object storage ------------------------------------
+
+
+@pytest.fixture
+def static(practice: Practice) -> Harness:
+    return Harness(practice=practice, serving=FakeDomainServing(), zone={}, mirror=_FakeMirror())
+
+
+def _site_ready(harness: Harness, host: str, apex: str) -> None:
+    harness.add(host, "site")
+    harness.sweep()
+    _ready(harness, host, apex)
+
+
+def test_a_website_served_by_the_deployment_moves_to_the_bucket_once_published(
+    static: Harness,
+) -> None:
+    """A website host active before the deployment served websites from object
+    storage (or before its first publish) is on the deployment's own matcher;
+    the run after a publish copies the version and moves it."""
+    apex = _apex()
+    host = f"www.{apex}"
+    _site_ready(static, host, apex)
+    static.sweep()
+    assert static.serving.routes[host] == HostRoute.default()
+    assert static.mirror is not None
+    assert static.mirror.copied == []
+
+    static.publish(2)
+    static.sweep()
+
+    assert static.mirror.copied == [(static.practice.id, 2, False)]
+    assert static.serving.routes[host] == HostRoute.site(static.practice.id, 2)
+    assert static.serving.invalidated == [host]
+    assert static.served() == (2, False)
+    assert static.mirror.tidied == [(static.practice.id, {2})]
+
+
+def test_a_website_not_published_stays_on_the_deployment(static: Harness) -> None:
+    apex = _apex()
+    host = f"www.{apex}"
+    _site_ready(static, host, apex)
+
+    static.sweep()
+
+    assert static.serving.routes[host] == HostRoute.default()
+    assert static.mirror is not None
+    assert static.mirror.copied == []
+
+
+def test_a_new_version_and_a_search_change_are_served_on_the_next_run(static: Harness) -> None:
+    apex = _apex()
+    host = f"www.{apex}"
+    static.publish(2)
+    _site_ready(static, host, apex)
+    static.sweep()
+    assert static.mirror is not None
+    static.mirror.copied.clear()
+    static.serving.invalidated.clear()
+
+    static.sweep()
+    assert static.mirror.copied == []  # nothing changed: nothing copied
+    assert static.serving.invalidated == []
+
+    static.publish(3)
+    static.sweep()
+    assert static.mirror.copied == [(static.practice.id, 3, False)]
+    assert static.serving.routes[host] == HostRoute.site(static.practice.id, 3)
+    assert static.serving.invalidated == [host]
+    assert static.served() == (3, False)
+
+    static.publish(3, hide_from_search=True)
+    static.sweep()
+    assert static.mirror.copied[-1] == (static.practice.id, 3, True)
+    assert static.served() == (3, True)
+
+
+def test_a_copy_that_fails_leaves_the_hosts_where_they_were(static: Harness) -> None:
+    apex = _apex()
+    host = f"www.{apex}"
+    static.publish(2)
+    _site_ready(static, host, apex)
+    static.sweep()
+    assert static.serving.routes[host] == HostRoute.site(static.practice.id, 2)
+
+    static.publish(3)
+    assert static.mirror is not None
+    static.mirror.failure = SiteMirrorError("storage is away", transient=True)
+    static.sweep()
+    assert static.serving.routes[host] == HostRoute.site(static.practice.id, 2)
+    assert static.served() == (2, False)
+
+    static.mirror.failure = None
+    static.sweep()
+    assert static.serving.routes[host] == HostRoute.site(static.practice.id, 3)
+    assert static.served() == (3, False)
+
+
+def test_the_bare_domain_is_redirected_to_the_website_primary(static: Harness) -> None:
+    apex = _apex()
+    www, bare = f"www.{apex}", apex
+    static.publish(1)
+    static.add(www, "site")
+    static.add(bare, "site")
+    static.sweep()
+    _ready(static, www, apex)
+    _ready(static, bare, apex)
+
+    static.sweep()
+    # The bare domain is made primary (step 8) once both are active; the
+    # next sweep routes www at a redirect to it.
+    static.sweep()
+
+    assert static.serving.routes[bare] == HostRoute.site(static.practice.id, 1)
+    assert static.serving.routes[www] == HostRoute.alias(bare)
+    assert static.served() == (1, False)
+
+
+def test_an_unpublished_website_never_copies_and_a_retired_practice_is_tidied(
+    static: Harness, engine: Engine
+) -> None:
+    apex = _apex()
+    host = f"www.{apex}"
+    static.publish(2)
+    _site_ready(static, host, apex)
+    static.sweep()
+
+    with engine.begin() as conn:
+        conn.execute(
+            text("UPDATE platform.practices SET is_active = false WHERE id = :i"),
+            {"i": static.practice.id},
+        )
+    static.sweep()
+
+    assert static.host(host) is None
+    assert static.serving.host_rules == set()
+    assert static.mirror is not None
+    assert static.mirror.tidied[-1] == (static.practice.id, set())
+
+
+# --- the hosted website address --------------------------------------------------
+
+HOSTED_DOMAIN = "hosted.example"
+
+
+@pytest.fixture
+def hosted(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    monkeypatch.setenv("PRACTICE_HOSTED_DOMAIN", HOSTED_DOMAIN)
+    monkeypatch.setenv("PRACTICE_HOSTED_DOMAIN_READY", "true")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+def _slug() -> str:
+    return f"p{uuid.uuid4().hex[:8]}"
+
+
+def test_a_published_website_with_only_a_hosted_address_is_routed(
+    static: Harness, hosted: None
+) -> None:
+    slug = _slug()
+    host = f"{slug}.{HOSTED_DOMAIN}"
+    static.set_slug(slug)
+    static.publish(2)
+
+    static.sweep()
+
+    assert static.serving.routes[host] == HostRoute.site(static.practice.id, 2)
+    assert static.serving.map_entries == set()  # the hosted wildcard covers it
+    assert static.serving.invalidated == [host]
+    assert static.served() == (2, False)
+    assert static.served_hosted() == host
+
+    static.sweep()
+    assert static.serving.calls.count(("ensure_host_rule", host)) == 1  # nothing to redo
+
+
+def test_a_slug_change_moves_the_hosted_address_and_the_old_rule_goes(
+    static: Harness, hosted: None
+) -> None:
+    first, second = _slug(), _slug()
+    static.set_slug(first)
+    static.publish(1)
+    static.sweep()
+    assert static.served_hosted() == f"{first}.{HOSTED_DOMAIN}"
+
+    static.set_slug(second)
+    static.sweep()
+
+    assert f"{first}.{HOSTED_DOMAIN}" not in static.serving.host_rules
+    assert static.serving.routes[f"{second}.{HOSTED_DOMAIN}"] == HostRoute.site(
+        static.practice.id, 1
+    )
+    assert static.served_hosted() == f"{second}.{HOSTED_DOMAIN}"
+
+
+def test_the_hosted_address_and_a_custom_host_share_the_website_matcher(
+    static: Harness, hosted: None
+) -> None:
+    apex = _apex()
+    host = f"www.{apex}"
+    slug = _slug()
+    static.set_slug(slug)
+    static.publish(3)
+    _site_ready(static, host, apex)
+
+    static.sweep()
+
+    assert static.serving.routes[host] == HostRoute.site(static.practice.id, 3)
+    assert static.serving.routes[f"{slug}.{HOSTED_DOMAIN}"] == HostRoute.site(static.practice.id, 3)
+    assert static.served_hosted() == f"{slug}.{HOSTED_DOMAIN}"
+
+
+def test_the_hosted_address_goes_with_a_retired_practice(
+    static: Harness, hosted: None, engine: Engine
+) -> None:
+    slug = _slug()
+    host = f"{slug}.{HOSTED_DOMAIN}"
+    static.set_slug(slug)
+    static.publish(1)
+    static.sweep()
+    assert host in static.serving.host_rules
+
+    with engine.begin() as conn:
+        conn.execute(
+            text("UPDATE platform.practices SET is_active = false WHERE id = :i"),
+            {"i": static.practice.id},
+        )
+    static.sweep()
+
+    assert host not in static.serving.host_rules
+    assert static.served_hosted() is None
+    assert static.mirror is not None
+    assert static.mirror.tidied[-1] == (static.practice.id, set())
+
+
+def test_without_a_hosted_domain_nothing_is_routed_for_it(static: Harness) -> None:
+    static.set_slug(_slug())
+    static.publish(1)
+
+    static.sweep()
+
+    assert static.serving.host_rules == set()
+    assert static.served_hosted() is None

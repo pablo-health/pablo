@@ -25,6 +25,9 @@ class AuditAction(StrEnum):
     PATIENT_RESTORED = "patient_restored"
     PATIENT_EXPORTED = "patient_exported"
     PATIENT_PURGED = "patient_purged"
+    # The practice owner read who acted on this patient's record, and when.
+    # Reading the trail is itself an access to it, so it lands in the trail.
+    PATIENT_ACTIVITY_VIEWED = "patient_activity_viewed"
     # Chart closure (THERAPY-hek). Orthogonal to soft-delete: closing a
     # chart marks the clinical/administrative care episode as ended, but
     # the row stays live and the day-30 hard-purge clock (THERAPY-cgy)
@@ -45,6 +48,22 @@ class AuditAction(StrEnum):
     # worker, not on the upload request — so the note's creation is audited
     # there, at the point the PHI actually comes into existence.
     SESSION_NOTE_GENERATED = "session_note_generated"
+    # Signing and locking a note, adding to it after, and unlocking it to
+    # correct an error. ``changes`` names the version or addendum by id; the
+    # unlock reason is the clinician's words about the note and lives on the
+    # signed version it superseded, never in the audit row.
+    NOTE_SIGNED = "note_signed"
+    NOTE_ADDENDUM_ADDED = "note_addendum_added"
+    NOTE_UNLOCKED = "note_unlocked"
+    # A session's note sent to be drafted again (new inputs, or more from the
+    # clinician). The new draft is audited where it is written, as
+    # SESSION_NOTE_GENERATED with ``redraft`` in ``changes``.
+    NOTE_REDRAFT_REQUESTED = "note_redraft_requested"
+    # A clip the clinician dictated about a session after its recording
+    # stopped (``changes`` names it by id and length, never what it said), and
+    # a read of what was dictated.
+    SESSION_DICTATION_ADDED = "session_dictation_added"
+    SESSION_DICTATIONS_VIEWED = "session_dictations_viewed"
     # Recorded session audio deleted by the per-practice audio retention
     # cron (THERAPY-ab7). The action value is defined here so audit-log
     # readers and dashboards render it consistently regardless of which
@@ -83,6 +102,11 @@ class AuditAction(StrEnum):
     APPOINTMENT_SERIES_CREATED = "appointment_series_created"
     APPOINTMENT_SERIES_UPDATED = "appointment_series_updated"
     APPOINTMENT_SERIES_CANCELLED = "appointment_series_cancelled"
+    # A client's own cancellation freed a slot and the open-slot event was
+    # raised for it (scheduling_engine/services/open_slots.py). Written by the
+    # system into the clinician's trail; the payload is the type id and the
+    # derived modality, never anything about the client.
+    APPOINTMENT_SLOT_OPENED = "appointment_slot_opened"
 
     # Admin operations
     EXPORT_QUEUE_VIEWED = "export_queue_viewed"
@@ -167,6 +191,11 @@ class AuditAction(StrEnum):
     PRACTICE_RENAMED = "practice_renamed"
     BAA_RESIGNED = "baa_resigned"
 
+    # The practice owner making a clinician a practice admin, or taking that
+    # away. No PHI; ``changes`` carries the clinician's user id.
+    PRACTICE_ADMIN_GRANTED = "practice_admin_granted"
+    PRACTICE_ADMIN_REVOKED = "practice_admin_revoked"
+
     # The authorisation letting Pablo apply to insurance panels on a
     # clinician's behalf: sign her name to a payer's form, and ring the payer
     # to chase it. Not a HIPAA event — no PHI is involved — but the moment
@@ -187,6 +216,21 @@ class AuditAction(StrEnum):
     # passwordless sign-in event, audited alongside recovery so login
     # monitoring covers the whole authenticator surface.
     PASSKEY_AUTHENTICATED = "passkey_authenticated"
+    # The desktop recording app exchanged its one-time code for a session:
+    # the app was opened and signed in. Written whether or not the device
+    # enrolled, so "has this clinician ever used the recording app" has an
+    # answer in their own audit trail. The payload is the enrollment outcome
+    # and platform only.
+    COMPANION_SIGNED_IN = "companion_signed_in"
+    # That sign-in also bound a device key to the account (a new install, or
+    # an existing one re-enrolling). Carries the install id, platform and key
+    # storage — device facts, never anything about a client.
+    COMPANION_DEVICE_ENROLLED = "companion_device_enrolled"
+    # One row per sign-in, whatever the method: written when the identity
+    # provider's sign-in hook asks the backend whether the account may sign
+    # in, which happens after every factor has been verified. The
+    # factor-specific events above still record HOW; this records THAT.
+    SIGNED_IN = "signed_in"
 
     # Patient-context chat (THERAPY-bhv). Two-tier audit policy per
     # docs/architecture/patient-context-chat-oss.md §10: lifecycle events
@@ -322,6 +366,7 @@ class AuditAction(StrEnum):
     PRACTICE_SITE_DRAFT_SAVED = "practice_site_draft_saved"
     PRACTICE_SITE_PUBLISHED = "practice_site_published"
     PRACTICE_SITE_ROLLED_BACK = "practice_site_rolled_back"
+    PRACTICE_SITE_SEARCH_VISIBILITY_CHANGED = "practice_site_search_visibility_changed"
 
     # A patient signed themselves out. The mirror image of
     # PATIENT_PORTAL_SESSION_REDEEMED and recorded for the same reason:
@@ -483,6 +528,13 @@ class AuditAction(StrEnum):
     INTAKE_ACCEPTED = "intake_accepted"
     INTAKE_CLINICIAN_ENTRY = "intake_clinician_entry"
 
+    # An accepted form's answers proposed chart updates, and a clinician
+    # decided one. The first carries how many were proposed and whether the
+    # written answers were read; the second the field and the decision. Never
+    # an answer or a proposed text.
+    INTAKE_CHART_UPDATES_PROPOSED = "intake_chart_updates_proposed"
+    INTAKE_CHART_UPDATE_DECIDED = "intake_chart_update_decided"
+
     # A clinician opened the review of a form: every answer on it, the
     # earlier answers each one replaced, and what was asked for and by
     # whom. Wider than the submission read beside it, which is why it is
@@ -556,6 +608,43 @@ class AuditAction(StrEnum):
     REFILL_REQUEST_VIEWED = "refill_request_viewed"
     REFILL_REQUEST_QUEUE_VIEWED = "refill_request_queue_viewed"
     REFILL_REQUEST_DECIDED = "refill_request_decided"
+
+    # Coverage of an away period (``app.away.coverage``). ACCEPTED and
+    # DECLINED are the colleague's answer, one row on the period.
+    # ACCESS_GRANTED is one row per client the colleague gains a covering
+    # grant on, naming the window; ACCESS_ENDED is one per client whose grant
+    # was cut short (the period ended early, its dates or colleague changed,
+    # or the colleague withdrew). A grant that simply reaches its return time
+    # writes nothing: its end was recorded when it was granted.
+    # ACTIVITY_VIEWED is the returning clinician reading what the colleague
+    # did, one row naming the period and the count. Ids and times only.
+    COVERAGE_ACCEPTED = "coverage_accepted"
+    COVERAGE_DECLINED = "coverage_declined"
+    COVERAGE_ACCESS_GRANTED = "coverage_access_granted"
+    COVERAGE_ACCESS_ENDED = "coverage_access_ended"
+    COVERAGE_ACTIVITY_VIEWED = "coverage_activity_viewed"
+
+    # Homework. VIEWED is a clinician opening a client's homework; ADDED is
+    # one the clinician wrote by hand; WITHDRAWN is one taken back;
+    # EDITED is a reworded assignment; MARKED is the client marking one done
+    # or not done. Accepting a suggestion is recorded where chart updates
+    # are decided. Payloads carry ids, never the task's words or the
+    # client's note.
+    HOMEWORK_VIEWED = "homework_viewed"
+    HOMEWORK_ADDED = "homework_added"
+    HOMEWORK_WITHDRAWN = "homework_withdrawn"
+    HOMEWORK_EDITED = "homework_edited"
+    HOMEWORK_MARKED = "homework_marked"
+
+    # The waitlist. VIEWED is a clinician reading their list (one row per
+    # client on it) or one client's place on it; the others are changes to
+    # one entry, or to the order. Payloads carry ids, the operation and the
+    # names of the fields that changed, never the days or times wanted.
+    WAITLIST_VIEWED = "waitlist_viewed"
+    WAITLIST_ENTRY_ADDED = "waitlist_entry_added"
+    WAITLIST_ENTRY_UPDATED = "waitlist_entry_updated"
+    WAITLIST_ENTRY_REMOVED = "waitlist_entry_removed"
+    WAITLIST_REORDERED = "waitlist_reordered"
 
     # The Inbox. VIEWED is the list, one row per patient on it — what it
     # discloses is per patient: that something of theirs waits, and what.
@@ -749,6 +838,9 @@ class ResourceType(StrEnum):
     PATIENT_COVERAGE = "patient_coverage"
     PATIENT_MESSAGE_THREAD = "patient_message_thread"
     REFILL_REQUEST = "refill_request"
+    AWAY_PERIOD = "away_period"
+    HOMEWORK_ASSIGNMENT = "homework_assignment"
+    WAITLIST_ENTRY = "waitlist_entry"
     INBOX_ITEM = "inbox_item"
     INVITATION = "invitation"
     PRACTICE_PORTAL = "practice_portal"

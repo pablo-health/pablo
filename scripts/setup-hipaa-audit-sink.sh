@@ -23,18 +23,22 @@
 # This script is idempotent — safe to re-run.
 #
 # Usage:
-#   ./setup-hipaa-audit-sink.sh <PROJECT_ID> [--lock]
+#   ./setup-hipaa-audit-sink.sh <PROJECT_ID> [--no-lock]
 #
-# By default, retention is set but NOT locked. Pass --lock to make the
-# retention policy irreversible (recommended for production HIPAA evidence).
+# The retention policy is locked once it is set and verified. Locking is
+# IRREVERSIBLE: the period cannot be shortened or removed, and the bucket
+# cannot be deleted until every object in it has aged out. That is the
+# property HIPAA § 164.312(c)(2) asks for, so it is the default. Pass
+# --no-lock only for an evaluation project you intend to throw away; a
+# later run without the flag locks it.
 
 set -euo pipefail
 
 PROJECT_ID="${1:-}"
 LOCK_FLAG="${2:-}"
 
-if [[ -z "$PROJECT_ID" ]]; then
-    echo "Usage: $0 <PROJECT_ID> [--lock]" >&2
+if [[ -z "$PROJECT_ID" ]] || [[ -n "$LOCK_FLAG" && "$LOCK_FLAG" != "--no-lock" ]]; then
+    echo "Usage: $0 <PROJECT_ID> [--no-lock]" >&2
     exit 1
 fi
 
@@ -58,9 +62,11 @@ else
     gsutil mb -p "$PROJECT_ID" -l us -c ARCHIVE "$BUCKET"
 fi
 
+retention_policy() { gsutil retention get "$BUCKET" 2>&1; }
+retention_days() { retention_policy | grep -oE 'Duration: [0-9]+' | awk '{print $2}'; }
+
 # Step 2: Set retention (idempotent — gsutil retention set re-asserts)
-CURRENT_RETENTION=$(gsutil retention get "$BUCKET" 2>&1 | grep -oE 'Duration: [0-9]+' | awk '{print $2}' || echo "0")
-if [[ "$CURRENT_RETENTION" == "$RETENTION_DAYS" ]]; then
+if [[ "$(retention_days)" == "$RETENTION_DAYS" ]]; then
     echo "    [skip] Retention already set to ${RETENTION_DAYS}d"
 else
     echo "    [set]  Retention to ${RETENTION_DAYS}d"
@@ -95,20 +101,24 @@ create_sink() {
 create_sink "$ADMIN_SINK" "$ADMIN_FILTER"
 create_sink "$APP_SINK" "$APP_FILTER"
 
-# Step 4 (optional): Lock retention — IRREVERSIBLE.
-if [[ "$LOCK_FLAG" == "--lock" ]]; then
-    LOCKED=$(gsutil retention get "$BUCKET" 2>&1 | grep -c "LOCKED" || true)
-    if [[ "$LOCKED" -gt 0 ]]; then
-        echo "    [skip] Retention already locked"
-    else
-        echo "    [lock] Locking retention policy (IRREVERSIBLE)..."
-        gsutil retention lock "$BUCKET"
-    fi
-else
+# Step 4: Lock retention — IRREVERSIBLE. Only after the period is verified
+# on the bucket itself: a lock freezes whatever is there, so a wrong or
+# missing period would be the permanent one.
+if [[ "$LOCK_FLAG" == "--no-lock" ]]; then
     echo ""
-    echo "    NOTE: Retention is set but NOT locked. For production HIPAA"
-    echo "    evidence, re-run with --lock to make the policy irreversible:"
-    echo "      $0 ${PROJECT_ID} --lock"
+    echo "    WARNING: --no-lock: retention is set but a project owner can still"
+    echo "    shorten it and delete audit history. Not for real records. To lock:"
+    echo "      $0 ${PROJECT_ID}"
+elif retention_policy | grep -q "(LOCKED)"; then
+    echo "    [skip] Retention already locked"
+else
+    VERIFIED_RETENTION=$(retention_days)
+    if [[ "$VERIFIED_RETENTION" != "$RETENTION_DAYS" ]]; then
+        echo "    Retention on ${BUCKET} reads as '${VERIFIED_RETENTION:-none}', not ${RETENTION_DAYS}d; not locking. Run this again." >&2
+        exit 1
+    fi
+    echo "    [lock] Locking ${RETENTION_DAYS}d retention (IRREVERSIBLE)..."
+    gcloud storage buckets update "$BUCKET" --lock-retention-policy --quiet
 fi
 
 echo ""

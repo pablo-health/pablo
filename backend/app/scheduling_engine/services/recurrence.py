@@ -5,11 +5,15 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from dateutil.rrule import MONTHLY, WEEKLY, rrule
 
 from ..models.appointment import RecurrenceFrequency
+
+if TYPE_CHECKING:
+    from ...repositories.row import Row
 
 _FREQ_MAP = {
     RecurrenceFrequency.WEEKLY: (WEEKLY, 1),
@@ -59,7 +63,7 @@ class RecurrenceGenerator:
         if end_date is None and count is None:
             end_date = (local_start + timedelta(days=DEFAULT_HORIZON_DAYS)).date()
 
-        rule_kwargs: dict[str, object] = {
+        rule_kwargs: Row = {
             "freq": freq,
             "interval": interval,
             "dtstart": local_start,
@@ -71,7 +75,7 @@ class RecurrenceGenerator:
         if count is not None:
             rule_kwargs["count"] = count
 
-        occurrences = list(rrule(**rule_kwargs))  # type: ignore[arg-type]
+        occurrences = list(rrule(**rule_kwargs))
 
         # Convert each local occurrence back to UTC
         utc = ZoneInfo("UTC")

@@ -14,6 +14,7 @@ import {
 } from "@/lib/api/scheduling"
 import { queryKeys } from "@/lib/api/queryKeys"
 import { calendarFreshness } from "./calendarFreshness"
+import { withDashboard } from "./dashboardFreshness"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
 
 /** Sessions removed from Google Calendar in bulk and held for the therapist. */
@@ -33,13 +34,13 @@ export function useResolveGoogleChange() {
   >({
     mutationFn: ({ appointmentId, resolution }) =>
       resolveGoogleChange(appointmentId, resolution),
-    invalidateKeys: [queryKeys.appointments.all],
+    invalidateKeys: withDashboard([queryKeys.appointments.all]),
   })
 }
 
 export function useResolveHeldGoogleRemovals() {
   return useAuthMutation<HeldGoogleRemovals, GoogleChangeResolution>({
     mutationFn: (resolution) => resolveHeldGoogleRemovals(resolution),
-    invalidateKeys: [queryKeys.appointments.all],
+    invalidateKeys: withDashboard([queryKeys.appointments.all]),
   })
 }

@@ -1,0 +1,12 @@
+# Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+#
+# Plain HTTP on the machine's loopback: Tailscale Funnel terminates HTTPS in
+# front and forwards here. The routes are shared with the VM (routes.caddy).
+
+{
+	auto_https off
+}
+
+:80 {
+	import routes.caddy
+}

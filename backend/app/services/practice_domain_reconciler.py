@@ -3,65 +3,10 @@
 """Serving a practice's hosts: bringing what the load balancer serves into line
 with ``platform.practice_domains``.
 
-One sweep visits every host, practice by practice, and takes it one step
-further each time — every step is safe to repeat, so a sweep that stops half
-way loses nothing:
+One repeatable sweep visits every host, practice by practice, and takes each
+one step further (records, DNS authorisation, certificate, mapping).
 
-1. Look the practice's records up (``PracticeDomainService.check``, the same
-   check Settings > Domains runs), which also records a domain's ownership
-   when its ``_pablo-verify`` TXT is found, notes when a host's records are
-   all in place, and reports a host that has stayed not active too long since
-   (audited here as ``practice_domain_stuck``). Such a host is checked as
-   before: it goes active by itself if what held it up clears.
-2. Per host, ask for its DNS authorisation (storing the ``_acme-challenge``
-   value, so the practice is shown the record at once) and its certificate.
-   ``pending`` becomes ``verifying``: the records are known and the job is
-   waiting on the practice's DNS and on the certificate. What it is waiting
-   for is kept in ``last_error``.
-3. The issuer tries to authorise a certificate as soon as it is requested —
-   usually before the practice has added the ``_acme-challenge`` record — and
-   after that failed attempt it may not look again for a long time. So when a
-   certificate is stuck behind a failed attempt and this sweep's check finds
-   that record in place, the certificate is deleted and requested again
-   against the same authorisation (the record stays right), at most once per
-   :data:`REISSUE_INTERVAL` per host.
-4. When the domain's ownership is confirmed, the host's own record points
-   here, and the certificate is active: add the certificate-map entry and the
-   URL-map host rule, and the host becomes ``active``.
-5. ``error`` is kept for what the practice or whoever runs the deployment has
-   to act on: a request the cloud refused, or a CAA record that forbids the
-   certificate. A record not added yet is waiting, not an error.
-6. An ``active`` host is checked again every sweep. If its record stops
-   pointing here, or its certificate stops being active, it goes to ``error``
-   with the reason — and its host rule stays: taking a working site down over
-   a DNS blip would be worse than the blip. No answer in time changes nothing.
-   It comes back to ``active`` by itself once both are right again.
-7. A ``removing`` host has its host rule, map entry, certificate and DNS
-   authorisation removed, in that order, and then its row is deleted; with the
-   last host under a domain, the domain's row (and its email identity) go too.
-   The hosts of a practice that is no longer active (``is_active`` false, or
-   offboarded with ``deleted_at`` set, or gone) are made ``removing`` first.
-
-8. A purpose (portal, website) with an ``active`` host and no primary gets
-   one, since links are built on the primary and would otherwise never name
-   the practice's own domain. After the practice's hosts are done, so that
-   two going active in one sweep are chosen between rather than raced: the
-   bare domain first, then a name that is not a ``www.`` alias, then the
-   oldest. The write only claims a primary where there is none, so a primary
-   the practice chose is never replaced; and a sweep that finds active hosts
-   with no primary — added before this rule, or left by removing the primary
-   — fills it the same way.
-
-Then, when the deployment registered one, each domain whose ownership is
-confirmed has its email sending identity ensured (see
-``practice_domain_email``).
-
-Every status change is audited with the system as the actor, scoped to the
-practice. Status writes are guarded on the status the sweep read, so a removal
-the practice makes meanwhile is never overwritten. Cloud calls happen outside
-any database transaction.
-
-No PHI: hostnames, practice ids and setup state.
+Design notes: ``docs/design/practice-domain-reconciler.md``.
 """
 
 from __future__ import annotations
@@ -73,8 +18,9 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from ..models.audit import AuditAction
 from ..models.practice_domain import IN_PROGRESS_STATUSES, ServingState
+from ..sites.mirror import SiteMirrorError
 from ..utcnow import utc_now
-from .practice_domain_cloud import DomainServingError
+from .practice_domain_cloud import DomainServingError, HostRoute
 from .practice_domain_hosts import apex_or_none
 from .practice_domain_service import CERT_AUTH_LABEL, CERT_AUTH_SUFFIX, VERIFY_LABEL
 
@@ -91,6 +37,7 @@ if TYPE_CHECKING:
         PracticeDomainApex,
     )
     from ..repositories.practice_domain import PracticeDomainRepository
+    from ..sites.mirror import SiteMirror
     from .practice_domain_cloud import CertificateStatus, DomainServing
     from .practice_domain_dns import DnsLookup
     from .practice_domain_email import EmailIdentityProvisioner
@@ -128,9 +75,73 @@ class PracticeScope(Protocol):
     def audit(self, action: AuditAction, changes: dict[str, Any]) -> None: ...
 
 
+@dataclass(frozen=True)
+class SiteServing:
+    """A practice's published website, and what the load balancer serves of it."""
+
+    #: The version the practice published last; ``None`` with nothing published.
+    live_version: int | None
+    #: The version copied to the public bucket and routed to; ``None`` until one is.
+    served_version: int | None
+    hide_from_search: bool
+    served_hide_from_search: bool | None
+    #: The versions whose files are kept, so a roll back can be served.
+    retained: tuple[int, ...] = ()
+    #: The practice's hosted website address, where the deployment has one
+    #: that is served and the practice has a slug; ``None`` otherwise.
+    hosted_host: str | None = None
+    #: The hosted address routed at the served version; ``None`` when none is.
+    served_hosted_host: str | None = None
+
+    @property
+    def behind(self) -> bool:
+        """Whether what is served is not what was published."""
+        return self.live_version is not None and (
+            self.live_version != self.served_version
+            or self.hide_from_search != self.served_hide_from_search
+        )
+
+    @property
+    def hosted_behind(self) -> bool:
+        """Whether the hosted address routed is not the one the website has now."""
+        return self.live_version is not None and self.hosted_host != self.served_hosted_host
+
+
 class ReconcileStore(Protocol):
     def all_hosts(self) -> list[PracticeDomain]:
         """Every host of every practice, ``removing`` ones included."""
+        ...
+
+    def site(self, practice_id: str) -> SiteServing | None:
+        """The practice's website, or ``None`` when it never had one."""
+        ...
+
+    def record_served(
+        self,
+        practice_id: str,
+        version: int,
+        *,
+        hide_from_search: bool,
+        hosted_host: str | None,
+    ) -> None:
+        """Note that *version* with that search setting is what the load
+        balancer serves now, and *hosted_host* the hosted address routed at
+        it. Guarded on the website still saying so: a publish meanwhile wins,
+        and the next run serves it."""
+        ...
+
+    def clear_served_hosted_host(self, practice_id: str) -> None:
+        """Note that no hosted address is routed for the website any more."""
+        ...
+
+    def any_site_behind(self) -> bool:
+        """Whether any website with an active host or a hosted address has a
+        version, search setting or hosted address the load balancer does not
+        serve yet. Cheap, like :meth:`any_in_progress`."""
+        ...
+
+    def practices_with_sites(self) -> list[str]:
+        """Every practice with a published website, hosts or no hosts."""
         ...
 
     def practice(self, practice_id: str) -> AbstractContextManager[PracticeScope]:
@@ -218,6 +229,7 @@ class PracticeDomainReconciler:
         lookup: DnsLookup,
         service_for: Callable[[PracticeDomainRepository], PracticeDomainService],
         email: EmailIdentityProvisioner | None = None,
+        mirror: SiteMirror | None = None,
         now: Callable[[], datetime] = utc_now,
     ) -> None:
         self._serving = serving
@@ -225,6 +237,8 @@ class PracticeDomainReconciler:
         self._lookup = lookup
         self._service_for = service_for
         self._email = email
+        #: Given when the deployment serves websites from object storage.
+        self._mirror = mirror
         self._now = now
 
     def sweep(self) -> SweepReport:
@@ -233,12 +247,17 @@ class PracticeDomainReconciler:
         for host in self._store.all_hosts():
             by_practice.setdefault(host.practice_id, []).append(host)
             report.statuses[host.domain] = host.status
+        if self._mirror is not None:
+            # A website with a hosted address and no domain of its own has no
+            # host row to be visited through; its website still has to be served.
+            for practice_id in self._store.practices_with_sites():
+                by_practice.setdefault(practice_id, [])
         retired = self._store.retired_practices(by_practice.keys()) if by_practice else set()
         for practice_id, hosts in by_practice.items():
             report.hosts += len(hosts)
             try:
                 if practice_id in retired:
-                    self._retire(hosts, report)
+                    self._retire(practice_id, hosts, report)
                 else:
                     self._practice(practice_id, hosts, report)
             except Exception:
@@ -256,18 +275,30 @@ class PracticeDomainReconciler:
         apexes: dict[str, PracticeDomainApex] = {}
         if live:
             records, apexes = self._check_dns(practice_id)
+        # Removals first, so a website host whose primary is going away is
+        # routed this sweep with the primary already gone; then the primary
+        # website host before its aliases, so an alias made this sweep has
+        # something active to point at.
         for host in hosts:
             if host.status == "removing":
                 self._take_down(host, report)
-            else:
-                apex = apex_or_none(host.domain)
-                self._bring_up(host, records.get(host.domain, []), apexes.get(apex or ""), report)
+        site = self._site_plan(practice_id, live)
+        routed: set[str] = set()
+        for host in sorted(live, key=lambda h: not h.is_primary):
+            apex = apex_or_none(host.domain)
+            route = self._route_for(host, live, site, routed)
+            if self._bring_up(
+                host, records.get(host.domain, []), apexes.get(apex or ""), report, route
+            ):
+                routed.add(host.domain)
+        if site is not None:
+            self._serve_site(practice_id, live, site, routed, report)
         if live:
             self._settle_primaries(practice_id, report)
         if self._email is not None and live:
             self._email_identities(self._email, practice_id, live, apexes)
 
-    def _retire(self, hosts: list[PracticeDomain], report: SweepReport) -> None:
+    def _retire(self, practice_id: str, hosts: list[PracticeDomain], report: SweepReport) -> None:
         """Stop serving every host of a practice that is no longer active."""
         for host in hosts:
             if host.status != "removing":
@@ -287,6 +318,186 @@ class PracticeDomainReconciler:
                 report.written += 1
                 report.statuses[host.domain] = "removing"
             self._take_down(replace(host, status="removing", is_primary=False), report)
+        if self._mirror is None:
+            return
+        serving = self._store.site(practice_id)
+        if serving is not None and serving.served_hosted_host is not None:
+            self._unroute_hosted(practice_id, serving.served_hosted_host)
+        if serving is not None:
+            try:
+                self._mirror.tidy(practice_id, ())
+            except SiteMirrorError as e:
+                logger.warning(
+                    "practice_domain_reconcile_mirror_tidy_failed practice_id=%s: %s",
+                    practice_id,
+                    e,
+                )
+
+    # --- the website ---------------------------------------------------------
+
+    def _site_plan(self, practice_id: str, live: list[PracticeDomain]) -> _SitePlan | None:
+        """What version the practice's website hosts route at this sweep, once
+        the public bucket holds it (step 9). ``None``: the deployment does not
+        serve websites this way, or the practice has no website host, or none
+        published."""
+        if self._mirror is None:
+            return None
+        serving = self._store.site(practice_id)
+        if serving is None or serving.live_version is None:
+            return None
+        if not any(h.purpose == "site" for h in live) and serving.hosted_host is None:
+            if serving.served_hosted_host is not None:
+                # The hosted domain went away, or the slug did: nothing routes
+                # the website any more, so the rule that did goes.
+                self._unroute_hosted(practice_id, serving.served_hosted_host)
+            return None
+        plan = _SitePlan(serving, practice_id, version=serving.served_version)
+        if not serving.behind:
+            return plan
+        try:
+            self._mirror.mirror(
+                practice_id, serving.live_version, hide_from_search=serving.hide_from_search
+            )
+        except SiteMirrorError as e:
+            logger.warning(
+                "practice_domain_reconcile_mirror_failed practice_id=%s transient=%s: %s",
+                practice_id,
+                e.transient,
+                e,
+            )
+            return plan
+        return _SitePlan(serving, practice_id, version=serving.live_version, flip=True)
+
+    @staticmethod
+    def _route_for(
+        host: PracticeDomain, live: list[PracticeDomain], site: _SitePlan | None, routed: set[str]
+    ) -> HostRoute:
+        """Where the host's rule points if it is served this sweep."""
+        if host.purpose != "site" or site is None or site.version is None:
+            return HostRoute.default()
+        primary = next(
+            (h for h in live if h.purpose == "site" and h.is_primary and h.domain != host.domain),
+            None,
+        )
+        if primary is not None and (primary.status == "active" or primary.domain in routed):
+            return HostRoute.alias(primary.domain)
+        return HostRoute.site(host.practice_id, site.version)
+
+    def _serve_site(
+        self,
+        practice_id: str,
+        live: list[PracticeDomain],
+        site: _SitePlan,
+        routed: set[str],
+        report: SweepReport,
+    ) -> None:
+        """After the hosts: the copied version is what every served website
+        host now routes at, so empty the cache in front of them, record it,
+        and drop every other version from the public bucket. The hosted
+        address is routed here too, with no certificate work of its own."""
+        serving = site.serving
+        hosted_changed = False
+        if site.version is not None and (site.flip or serving.hosted_behind):
+            hosted_changed = self._route_hosted(site, routed)
+        if not site.flip and not hosted_changed:
+            return
+        if serving.live_version is None:
+            return
+        served = [h.domain for h in live if h.purpose == "site" and h.status == "active"]
+        if any(domain not in routed for domain in served):
+            # A served host could not be moved this sweep; what is recorded
+            # as served stays as it was, and the next sweep tries again.
+            return
+        website_hosts = {h.domain for h in live if h.purpose == "site"}
+        if serving.hosted_host is not None and serving.hosted_host in routed:
+            website_hosts.add(serving.hosted_host)
+        if not site.flip:
+            # Only the hosted address changed: record it, nothing else moved.
+            self._store.record_served(
+                practice_id,
+                serving.live_version,
+                hide_from_search=serving.hide_from_search,
+                hosted_host=serving.hosted_host if serving.hosted_host in routed else None,
+            )
+            report.written += 1
+            return
+        for domain in sorted(routed & website_hosts):
+            try:
+                self._serving.invalidate_host(domain)
+            except DomainServingError as e:
+                # Caches in front expire on their own; the new version is
+                # served either way.
+                logger.warning(
+                    "practice_domain_reconcile_invalidate_failed domain=%s: %s", domain, e
+                )
+        self._store.record_served(
+            practice_id,
+            serving.live_version,
+            hide_from_search=serving.hide_from_search,
+            hosted_host=serving.hosted_host if serving.hosted_host in routed else None,
+        )
+        report.written += 1
+        logger.info(
+            "practice_domain_reconcile_site_served practice_id=%s version=%s",
+            practice_id,
+            serving.live_version,
+        )
+        # Only the live version stays public. A roll back copies the version it
+        # brings back from the private bucket, where every retained version is
+        # kept, so a page the practice published and withdrew is not left for
+        # anyone with its path.
+        try:
+            self._mirror.tidy(  # type: ignore[union-attr]  # a plan exists only with a mirror
+                practice_id, {serving.live_version}
+            )
+        except SiteMirrorError as e:
+            logger.warning(
+                "practice_domain_reconcile_mirror_tidy_failed practice_id=%s: %s", practice_id, e
+            )
+
+    def _route_hosted(self, site: _SitePlan, routed: set[str]) -> bool:
+        """Route the website's hosted address at the version its other hosts
+        are on, and take the rule for a previous address down. Returns whether
+        anything changed. The hosted wildcard certificate covers the host, so
+        there is no authorisation, certificate or map entry to make."""
+        serving = site.serving
+        changed = False
+        previous = serving.served_hosted_host
+        if previous is not None and previous != serving.hosted_host:
+            if not self._unroute_hosted(site.practice_id, previous):
+                return False
+            changed = True
+        if serving.hosted_host is None or site.version is None:
+            return changed
+        try:
+            self._serving.ensure_host_rule(
+                serving.hosted_host, HostRoute.site(site.practice_id, site.version)
+            )
+        except DomainServingError as e:
+            logger.warning(
+                "practice_domain_reconcile_hosted_route_failed host=%s transient=%s: %s",
+                serving.hosted_host,
+                e.transient,
+                e,
+            )
+            return changed
+        routed.add(serving.hosted_host)
+        return changed or serving.hosted_host != previous
+
+    def _unroute_hosted(self, practice_id: str, host: str) -> bool:
+        """Take the hosted address's host rule down and forget it."""
+        try:
+            self._serving.remove_host_rule(host)
+        except DomainServingError as e:
+            logger.warning(
+                "practice_domain_reconcile_hosted_unroute_failed host=%s transient=%s: %s",
+                host,
+                e.transient,
+                e,
+            )
+            return False
+        self._store.clear_served_hosted_host(practice_id)
+        return True
 
     def _check_dns(
         self, practice_id: str
@@ -312,7 +523,10 @@ class PracticeDomainReconciler:
         records: list[DnsRecord],
         apex: PracticeDomainApex | None,
         report: SweepReport,
-    ) -> None:
+        route: HostRoute | None = None,
+    ) -> bool:
+        """Take the host one step further. Returns whether it is served now:
+        its map entry and host rule (pointing where *route* says) are in place."""
         reissued_at = host.cert_reissued_at
         try:
             auth_value = self._serving.ensure_dns_authorization(host.domain)
@@ -324,7 +538,7 @@ class PracticeDomainReconciler:
                 certificate = self._serving.recreate_certificate(host.domain)
         except DomainServingError as e:
             self._refused(host, e, report)
-            return
+            return False
         found = replace(
             ServingState.of(host),
             cert_auth_value=auth_value,
@@ -337,14 +551,17 @@ class PracticeDomainReconciler:
         if owned and pointing == "ok" and certificate.state == "ACTIVE":
             try:
                 self._serving.ensure_map_entry(host.domain)
-                self._serving.ensure_host_rule(host.domain)
+                if route is None or route.kind == "default":
+                    self._serving.ensure_host_rule(host.domain)
+                else:
+                    self._serving.ensure_host_rule(host.domain, route)
             except DomainServingError as e:
                 self._refused(host, e, report)
-                return
+                return False
             verified_at = host.verified_at if host.status == "active" else self._now()
             active = replace(found, status="active", last_error=None, verified_at=verified_at)
             self._write(host, active, report)
-            return
+            return True
 
         status, reason, on_practice = _waiting(
             host, auth_value, certificate, challenge=challenge, owned=owned, pointing=pointing
@@ -352,6 +569,7 @@ class PracticeDomainReconciler:
         self._write(host, replace(found, status=status, last_error=reason), report)
         if on_practice:
             report.awaiting_practice.add(host.domain)
+        return False
 
     def _claim_reissue(self, host: PracticeDomain) -> bool:
         """Record the re-request before making it, against the time last
@@ -506,6 +724,19 @@ class PracticeDomainReconciler:
                         AuditAction.PRACTICE_DOMAIN_EMAIL_IDENTITY_CHANGED,
                         {"domain": name, "status": identity.status},
                     )
+
+
+@dataclass(frozen=True)
+class _SitePlan:
+    """How a practice's website is served this sweep (see ``_site_plan``)."""
+
+    serving: SiteServing
+    practice_id: str
+    #: The version its hosts route at; ``None`` keeps them on the deployment.
+    version: int | None
+    #: Whether that version was copied this sweep and is to be recorded as
+    #: served once the hosts are on it.
+    flip: bool = False
 
 
 def _primary_preference(host: PracticeDomain) -> tuple[bool, bool, datetime, str]:

@@ -351,7 +351,7 @@ def assemble_draft(  # noqa: PLR0913 — every source row the claim snapshots, k
         total_paid_cents=0,
         diagnosis_codes=diagnosis_codes,
         place_of_service=appointment.place_of_service,
-        billing_snapshot=_billing_snapshot(billing_profile, rendering_provider, user),
+        billing_snapshot=billing_snapshot(billing_profile, rendering_provider, user),
         subscriber_snapshot=_subscriber_snapshot(patient, coverage, payer),
         created_at=built_at,
         updated_at=built_at,
@@ -359,11 +359,15 @@ def assemble_draft(  # noqa: PLR0913 — every source row the claim snapshots, k
     )
 
 
-def _billing_snapshot(
+def billing_snapshot(
     billing_profile: Mapping[str, object],
     rendering_provider: ClinicianProfile | None,
     user: User,
 ) -> BillingSnapshot:
+    """Who is filing: the practice from its billing profile, the clinician from theirs.
+
+    Shared with the superbill, which prints the same two parties a claim names.
+    """
     rendering_npi = rendering_provider.npi_number if rendering_provider is not None else None
     first_name, last_name = _split_name(user.legal_name or user.name)
     return BillingSnapshot(
@@ -395,18 +399,7 @@ def _billing_snapshot(
 def _subscriber_snapshot(
     patient: Patient, coverage: PatientCoverage, payer: Payer
 ) -> SubscriberSnapshot:
-    client = PersonSnapshot(
-        first_name=patient.first_name,
-        last_name=patient.last_name,
-        date_of_birth=_iso_date(patient.date_of_birth),
-        sex=_sex(patient.sex),
-        address_line1=patient.address_line1,
-        address_line2=patient.address_line2,
-        city=patient.city,
-        state=patient.state,
-        postal_code=patient.postal_code,
-        phone=patient.phone,
-    )
+    client = client_snapshot(patient)
     if coverage.subscriber_relationship == "self":
         subscriber = client.model_copy()
     else:
@@ -431,6 +424,22 @@ def _subscriber_snapshot(
         payer_name=payer.name,
         subscriber=subscriber,
         patient=client,
+    )
+
+
+def client_snapshot(patient: Patient) -> PersonSnapshot:
+    """The client as a claim, and a superbill, names them."""
+    return PersonSnapshot(
+        first_name=patient.first_name,
+        last_name=patient.last_name,
+        date_of_birth=_iso_date(patient.date_of_birth),
+        sex=_sex(patient.sex),
+        address_line1=patient.address_line1,
+        address_line2=patient.address_line2,
+        city=patient.city,
+        state=patient.state,
+        postal_code=patient.postal_code,
+        phone=patient.phone,
     )
 
 

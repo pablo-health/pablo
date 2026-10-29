@@ -2,19 +2,25 @@
 
 """Firebase authentication service with practice-based access control."""
 
+import contextlib
 import logging
-import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import jwt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth as firebase_auth
 from firebase_admin import exceptions as firebase_exceptions
 
-from ..logging_config import tenant_id_var, user_id_var
+from ..logging_config import (
+    bind_log_auth_session,
+    bind_log_claimed_user_id,
+    bind_log_tenant_id,
+    bind_log_user_id,
+)
 from ..models import User
 from ..repositories import (
     AllowlistRepository,
@@ -24,6 +30,7 @@ from ..repositories import (
     get_identity_repository,
     get_user_repository,
 )
+from ..reserved_identities import E2E_EMAIL_PATTERN, PENTEST_EMAIL_PATTERN
 from ..settings import Settings, get_settings
 from ..utcnow import utc_now
 from ..version_check import check_client_version
@@ -43,11 +50,6 @@ from .route_access import (
 
 logger = logging.getLogger(__name__)
 
-# Reserved E2E test-user prefix. Mirrors PENTEST_EMAIL_PATTERN (see
-# jobs/pentest_identity.py). The bypass that honors this pattern is
-# gated on settings.is_prod_project in both auth/service.py and
-# routes/ext_auth.py.
-E2E_EMAIL_PATTERN = re.compile(r"^e2etest-[0-9a-f]{8}@pablo\.health$")
 security = HTTPBearer()
 
 
@@ -76,7 +78,7 @@ def _get_cached_token(request: Request | None, token: str) -> dict[str, Any] | N
         return None
     cached_raw = getattr(request.state, "verified_firebase_token_raw", None)
     if cached_raw is not None and cached_raw == token:
-        return request.state.decoded_firebase_token  # type: ignore[no-any-return]
+        return request.state.decoded_firebase_token  # type: ignore[no-any-return]  # request.state is untyped Starlette state
     return None
 
 
@@ -141,6 +143,28 @@ def _resolve_pablo_user_id(
     return pablo_id
 
 
+def _note_expired_token_subject(token: str) -> None:
+    """Put the user an expired token names on this request's access line.
+
+    Only for an EXPIRED token, whose signature Firebase has already checked
+    before it looked at the expiry. The claim is read without verification
+    and goes to the log as ``claimed_user_id`` only; nothing decides
+    anything with it. It lets the burst of 401s a browser sends just before
+    signing in again be read as that person's session.
+    """
+    with contextlib.suppress(Exception):
+        # Unverified on purpose, per the docstring: the caller is the
+        # ExpiredIdTokenError branch, and the request still gets its 401.
+        # nosemgrep
+        claims = jwt.decode(token, options={"verify_signature": False, "verify_exp": False})
+        _bind_auth_session(claims, claimed=True)
+        subject = claims.get("sub")
+        if isinstance(subject, str) and subject:
+            user_id = get_identity_repository().get_user_id("firebase", subject)
+            if user_id is not None:
+                bind_log_claimed_user_id(str(user_id))
+
+
 def verify_firebase_token(token: str) -> dict[str, Any]:
     """Verify a Firebase ID token (project-level, single-pass).
 
@@ -162,6 +186,7 @@ def verify_firebase_token(token: str) -> dict[str, Any]:
         # distinguishable from revoked / malformed tokens when triaging
         # 401s. No PHI: the failure reason only, never token material.
         logger.warning("Firebase ID token rejected: expired (TOKEN_EXPIRED)")
+        _note_expired_token_subject(token)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
@@ -302,6 +327,7 @@ def _verify_request_identity(request: Request | None, token: str) -> VerifiedIde
         stashed = getattr(request.state, "verified_identity", None)
         stashed_token = getattr(request.state, "verified_identity_token", None)
         if isinstance(stashed, VerifiedIdentity) and stashed_token == token:
+            _bind_auth_session(stashed.claims)
             return stashed
     cached = _get_cached_token(request, token)
     if cached is not None:
@@ -315,7 +341,17 @@ def _verify_request_identity(request: Request | None, token: str) -> VerifiedIde
     if request is not None:
         request.state.verified_identity = identity
         request.state.verified_identity_token = token
+    _bind_auth_session(identity.claims)
     return identity
+
+
+def _bind_auth_session(claims: dict[str, Any], *, claimed: bool = False) -> None:
+    """Put this sign-in's opaque session id on the request's access line."""
+    from . import idle_session
+
+    with contextlib.suppress(Exception):
+        if (key := idle_session.session_log_key(claims)) is not None:
+            bind_log_auth_session(key, claimed=claimed)
 
 
 def _identity_for_decoded(
@@ -334,6 +370,7 @@ def _identity_for_decoded(
         stashed = getattr(request.state, "verified_identity", None)
         if isinstance(stashed, VerifiedIdentity) and stashed.claims is decoded_token:
             return stashed
+    _bind_auth_session(decoded_token)
     return FirebaseVerifier().verify_from_decoded(decoded_token)
 
 
@@ -372,7 +409,7 @@ def get_current_user_id(
         create_if_missing=False,
         provider=identity.provider,
     )
-    user_id_var.set(str(pablo_user_id))
+    bind_log_user_id(str(pablo_user_id))
     return pablo_user_id
 
 
@@ -483,16 +520,33 @@ def get_tenant_context(
         create_if_missing=False,
         provider=identity.provider,
     )
-    user_id_var.set(str(pablo_user_id))
+    bind_log_user_id(str(pablo_user_id))
 
     # Resolve practice from user's email
     email = _extract_email(decoded_token)
+    if email and not identity.email_verified:
+        # The mapping exists before the invitee has an account, and a
+        # password account can be registered for any address — so an email
+        # the issuer has not verified must not be looked up at all. The
+        # schema-resolving middleware applies the same rule.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": {
+                    "code": "EMAIL_NOT_VERIFIED",
+                    "message": "Verify your email address to continue",
+                    "details": {},
+                }
+            },
+        )
     if email:
         practice = _resolve_practice_from_email(email)
         if practice:
             practice_id, schema_name = practice
+            # Bound before the provisioning wait so a 503 from it is
+            # attributed to the practice it concerns.
+            bind_log_tenant_id(practice_id)
             _await_provisioning_ready(practice_id)
-            tenant_id_var.set(practice_id)
             # A practice is registered under an email before anyone has signed
             # in, so this is the first moment both halves of "who owns it" are
             # in hand: the registered address, and the account it belongs to.
@@ -578,6 +632,10 @@ def _resolve_practice_from_email(email: str) -> tuple[str, str] | None:
 _PROVISIONING_POLL_INTERVAL_S = 0.2
 _PROVISIONING_POLL_ROUNDS = 5
 
+#: ``event`` field on the log line emitted whenever a request is turned away
+#: with a 503 because its practice is not provisioned.
+PROVISIONING_UNAVAILABLE_EVENT = "provisioning_unavailable"
+
 
 def _await_provisioning_ready(practice_id: str) -> None:
     """Block until a freshly-async-provisioned tenant flips to ready.
@@ -605,6 +663,18 @@ def _await_provisioning_ready(practice_id: str) -> None:
         if row is None or row.provisioning_status == "ready":
             return
         if row.provisioning_status == "failed":
+            # Every request from this practice fails until an operator
+            # intervenes, so this is an ERROR, not a client-side 503 to shrug
+            # off. ``event`` is the stable filter key.
+            logger.error(
+                "provisioning_unavailable practice_id=%s status=failed",
+                practice_id,
+                extra={
+                    "event": PROVISIONING_UNAVAILABLE_EVENT,
+                    "practice_id": practice_id,
+                    "provisioning_status": "failed",
+                },
+            )
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={
@@ -619,6 +689,20 @@ def _await_provisioning_ready(practice_id: str) -> None:
             )
         time.sleep(_PROVISIONING_POLL_INTERVAL_S)
 
+    # Still in progress after the poll budget. A brand-new practice can
+    # legitimately land here while its schema is being built, and the client
+    # retries on Retry-After, so one occurrence is a WARNING. It carries the
+    # same ``event`` as the failed case so a practice that never leaves this
+    # state shows up in the same query.
+    logger.warning(
+        "provisioning_unavailable practice_id=%s status=in_progress",
+        practice_id,
+        extra={
+            "event": PROVISIONING_UNAVAILABLE_EVENT,
+            "practice_id": practice_id,
+            "provisioning_status": "in_progress",
+        },
+    )
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail={
@@ -738,7 +822,14 @@ def get_session_peek_claims(
     ``tests/test_route_mfa_guardrails.py``.
     """
     token = auth_credentials.credentials
-    return _verify_request_identity(request, token).claims
+    identity = _verify_request_identity(request, token)
+    # Log attribution only. The idle controller polls this from every open
+    # tab, so a person's session shows up as theirs rather than anonymous.
+    with contextlib.suppress(Exception):
+        user_id = get_identity_repository().get_user_id(identity.provider, identity.subject_id)
+        if user_id is not None:
+            bind_log_user_id(str(user_id))
+    return identity.claims
 
 
 def _resolve_user(
@@ -795,23 +886,28 @@ def _resolve_user(
                 email = (fb_user.email or "").lower()
                 logger.info("Resolved email from Firebase Auth: uid=%s", subject_id)
             except Exception as exc:
-                logger.warning(
+                # ERROR: with no email the account cannot be mapped to a
+                # practice, so this sign-in ends in a refusal. Exception type
+                # only — the provider's message can echo account details.
+                logger.error(
                     "Could not look up email from Firebase Auth for uid=%s: %s",
                     subject_id,
-                    exc,
+                    type(exc).__name__,
                 )
 
         # Reserved test-identity prefixes bypass the allowlist in non-prod
         # only (Firebase signup doesn't verify email — an attacker could
         # otherwise mint a token for an arbitrary e2etest-<hex>@pablo.health
         # address and ride this path into prod).
-        from ..jobs.pentest_identity import PENTEST_EMAIL_PATTERN
-
         settings = get_settings()
         is_prod_project = settings.is_prod_project
         is_pentest_user = not is_prod_project and bool(email and PENTEST_EMAIL_PATTERN.match(email))
         is_e2e_user = not is_prod_project and bool(email and E2E_EMAIL_PATTERN.match(email))
-        is_provisioned_tenant = bool(email and _email_has_tenant_mapping(email))
+        # A practice mapping vouches for the address only once the issuer
+        # has confirmed the account holder controls it (see providers).
+        is_provisioned_tenant = bool(
+            email and identity.email_verified and _email_has_tenant_mapping(email)
+        )
         if (
             settings.restrict_signups
             and not is_pentest_user
@@ -826,6 +922,30 @@ def _resolve_user(
                     "error": {
                         "code": "SIGNUP_NOT_ALLOWED",
                         "message": "Your email is not authorized to access this platform",
+                        "details": {},
+                    }
+                },
+            )
+
+        # An identity with no user row whose email already belongs to a
+        # user is a different sign-in for that email — most often a
+        # provider account deleted and re-created, which mints a new uid.
+        # Refuse it before linking anything. Never attach the new identity
+        # to the existing user by email: that would hand the account to
+        # whoever holds the new identity.
+        if email and user_repo.get_by_email(email) is not None:
+            logger.warning(
+                "Refused sign-in: email already belongs to another user: uid=%s", subject_id
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": {
+                        "code": "ACCOUNT_CONFLICT",
+                        "message": (
+                            "This email is already linked to a different sign-in. "
+                            "Contact your administrator to restore access."
+                        ),
                         "details": {},
                     }
                 },
@@ -871,7 +991,18 @@ def _resolve_user(
             },
         )
 
-    user_id_var.set(str(pablo_user_id))
+    # The sign-in's audit row, written by its first request whatever the
+    # identity provider's hooks do (``sign_in_audit``). Only for a disabled-
+    # and allowlist-cleared user, hence here. Before the arm below, so the
+    # request session's commit inside ``tenant_db_session`` happens first and
+    # the GUC is set on the transaction the rest of the request runs in.
+    # Token-exchange and CLI callers pass no request and are not a sign-in.
+    if request is not None:
+        from .sign_in_audit import record_sign_in
+
+        record_sign_in(str(pablo_user_id), decoded_token, request)
+
+    bind_log_user_id(str(pablo_user_id))
     # Arm the RLS ``app.current_user_id`` GUC for the resolved user, right
     # beside the logging var above. Both name "who this request is"; they
     # drifted apart historically — only ``get_tenant_context`` armed the RLS
@@ -933,6 +1064,7 @@ def require_active_subscription(
     if not settings.is_saas:
         return user
 
+    # The subscription routes exist only in the SaaS overlay.
     from ..routes.subscription import _fetch_subscription  # type: ignore[import-not-found]
 
     sub = _fetch_subscription(user.email, settings)

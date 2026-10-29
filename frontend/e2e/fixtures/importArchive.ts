@@ -16,6 +16,7 @@
 import { readdir, readFile, stat } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { jsPDF } from "jspdf"
 import JSZip from "jszip"
 import type { ApiClient } from "./api"
 
@@ -34,8 +35,15 @@ async function walk(dir: string): Promise<string[]> {
   return out
 }
 
-/** The fixture folder as the zip a practice would upload. */
-export async function exportZip(folder: string): Promise<{ name: string; mimeType: string; buffer: Buffer }> {
+/**
+ * The fixture folder as the zip a practice would upload. ``extras`` adds files
+ * at the given export-relative paths, for a spec that needs one more note than
+ * the capture has.
+ */
+export async function exportZip(
+  folder: string,
+  extras: Record<string, Buffer | Uint8Array> = {},
+): Promise<{ name: string; mimeType: string; buffer: Buffer }> {
   const zip = new JSZip()
   const top = "Export - Complete - e2e"
   for (const file of await walk(folder)) {
@@ -43,6 +51,7 @@ export async function exportZip(folder: string): Promise<{ name: string; mimeTyp
     if (rel === "README.md" || rel.endsWith(".py")) continue // fixture housekeeping, not export
     zip.file(`${top}/${rel.split(path.sep).join("/")}`, await readFile(file))
   }
+  for (const [rel, data] of Object.entries(extras)) zip.file(`${top}/${rel}`, data)
   const buffer = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" })
   return { name: "export.zip", mimeType: "application/zip", buffer }
 }
@@ -83,4 +92,38 @@ export async function deletePatient(api: ApiClient, patientId: string): Promise<
 export async function noteCount(api: ApiClient, patientId: string): Promise<number> {
   const notes = await api.get<{ total: number }>(`/api/patients/${patientId}/notes`)
   return notes.total
+}
+
+/**
+ * A progress note as SimplePractice's export prints one, for the client the
+ * fixture calls Lulu L. Llama: the header the reader keys on, the title line,
+ * one body paragraph, the footer. Later than every note in the capture, so it
+ * is the one read for the chart.
+ */
+export function progressNotePdf(body: string): Uint8Array {
+  const doc = new jsPDF({ unit: "pt", format: "letter" })
+  doc.setFont("helvetica", "normal")
+  doc.setFontSize(10)
+  const lines = [
+    "Client:             Lulu L. Llama",
+    "DOB:              03/14/1990",
+    "Provider:          Avery Provider",
+    "",
+    "Appointment:  Individual appointment on September 28, 2026        Diagnosis:   F41.1 - Generalized anxiety disorder",
+    "               2:00 pm - 3:00 pm ET, 60 min",
+    "                   Billing code: 90834 - Psychotherapy, 45 min",
+    "",
+    "                                 Progress Note",
+    "",
+    body,
+    "",
+    "",
+    "Created on Sep 28, 2026 at 3:10 pm ET. Last updated on Sep 28, 2026 at 3:10 pm ET.                                  Page 1 of 1",
+  ]
+  let y = 60
+  for (const line of lines) {
+    if (line) doc.text(line, 40, y)
+    y += 14
+  }
+  return new Uint8Array(doc.output("arraybuffer"))
 }

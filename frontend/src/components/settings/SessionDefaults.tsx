@@ -10,11 +10,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import type { UserPreferences } from "@/lib/api/users"
+import type { PreferenceChanges, UserPreferences } from "@/lib/api/users"
 
 interface SessionDefaultsProps {
   preferences: UserPreferences
-  onSave: (prefs: UserPreferences) => void
+  onSave: (changes: PreferenceChanges) => void
   isSaving: boolean
 }
 
@@ -42,7 +42,7 @@ const PLATFORMS = [
 
 export function SessionDefaults({ preferences, onSave, isSaving }: SessionDefaultsProps) {
   const handleChange = (field: keyof UserPreferences, value: string | number) => {
-    onSave({ ...preferences, [field]: value })
+    onSave({ [field]: value })
   }
 
   return (

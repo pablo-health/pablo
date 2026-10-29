@@ -10,7 +10,7 @@ verified token but deliberately skip MFA and the idle-session touch
 """
 
 import logging
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Request
@@ -23,15 +23,20 @@ from ..auth.firebase_init import initialize_firebase_app
 from ..auth.providers import second_factor_satisfied
 from ..auth.route_security import truly_public
 from ..auth.service import get_session_peek_claims
+from ..db import arm_current_user_id, get_db_session, set_tenant_schema
+from ..logging_config import bind_log_user_id
+from ..models.audit import AuditAction
 from ..models.companion_device import CompanionEnrollment
 from ..rate_limit import require_rate_limit
 from ..repositories import get_identity_repository
+from ..services import AuditService, get_audit_service
 from ..services.auth_code_store import create_auth_code, exchange_auth_code
 from ..services.companion_device_service import (
-    DeviceOwnershipConflictError,
+    DeviceRevokedError,
     InvalidDeviceJWKError,
     get_companion_device_service,
 )
+from ..services.session_generation_worker import resolve_tenant_schema_for_user
 from ..settings import get_settings
 from ..version_check import check_client_version
 
@@ -80,9 +85,17 @@ class ExchangeAuthCodeRequest(BaseModel):
     enrollment: CompanionEnrollment | None = None
 
 
+EnrollmentStatus = Literal["enrolled", "failed"]
+
+
 class ExchangeAuthCodeResponse(BaseModel):
     id_token: str
     refresh_token: str
+    # Outcome of the enrollment payload, so the companion can tell the
+    # clinician and offer a retry instead of the failure only reaching the
+    # server log. None when the request carried no payload. Sign-in
+    # succeeds either way.
+    enrollment: EnrollmentStatus | None = None
 
 
 @router.post("/native/code", response_model=CreateAuthCodeResponse)
@@ -139,6 +152,8 @@ def create_native_code(
 @router.post("/native/exchange", response_model=ExchangeAuthCodeResponse)
 def exchange_native_code(
     request: ExchangeAuthCodeRequest,
+    http_request: Request,
+    audit: AuditService = Depends(get_audit_service),
     _: None = Depends(require_rate_limit),
     _public: None = Depends(truly_public),
 ) -> ExchangeAuthCodeResponse:
@@ -150,7 +165,8 @@ def exchange_native_code(
     If the native app includes an ``enrollment`` payload (companion
     install_id + Secure-Enclave / TPM public key), this is also the
     enrollment point: we persist a ``companion_devices`` row keyed to
-    the authenticated user. See THERAPY-xo0o.
+    the authenticated user and the install_id. Several users may enroll
+    the same install; each gets their own row. See THERAPY-xo0o.
     """
     entry = exchange_auth_code(request.code)
     if entry is None:
@@ -159,12 +175,43 @@ def exchange_native_code(
     if entry.redirect_uri != request.redirect_uri:
         raise BadRequestError("redirect_uri mismatch.")
 
+    enrollment: EnrollmentStatus | None = None
     if request.enrollment is not None:
-        _enroll_companion_device(entry.firebase_uid, request.enrollment)
+        enrollment = _enroll_companion_device(entry.firebase_uid, request.enrollment)
+
+    # The recording app was opened and signed in: record it in the user's
+    # own trail, and the device enrollment with it. Best-effort — a sign-in
+    # must not be refused because the audit store hiccuped.
+    user_id = _arm_audit_trail_for(entry.firebase_uid)
+    if user_id is not None:
+        try:
+            audit.log_account_security_event(
+                AuditAction.COMPANION_SIGNED_IN,
+                user_id,
+                http_request,
+                changes={
+                    "enrollment": enrollment or "not_requested",
+                    "platform": request.enrollment.platform if request.enrollment else None,
+                },
+            )
+            if request.enrollment is not None and enrollment == "enrolled":
+                audit.log_account_security_event(
+                    AuditAction.COMPANION_DEVICE_ENROLLED,
+                    user_id,
+                    http_request,
+                    changes={
+                        "install_id": request.enrollment.install_id,
+                        "platform": request.enrollment.platform,
+                        "key_storage": request.enrollment.key_storage,
+                    },
+                )
+        except Exception:
+            logger.warning("companion_sign_in_audit_failed user_id=%s", user_id, exc_info=True)
 
     return ExchangeAuthCodeResponse(
         id_token=entry.id_token,
         refresh_token=entry.refresh_token,
+        enrollment=enrollment,
     )
 
 
@@ -224,18 +271,52 @@ def touch_session(
     return _session_status(idle_session.peek(claims))
 
 
-def _enroll_companion_device(firebase_uid: str | None, enrollment: CompanionEnrollment) -> None:
+def _arm_audit_trail_for(firebase_uid: str | None) -> str | None:
+    """Point this request's session at the user's own practice, for an audit write.
+
+    Same shape as the passkey sign-in record: the route is public, so the
+    request sits on the default schema until the user's practice is resolved
+    and the session re-armed. Returns the internal user id, or ``None`` when
+    there is no trail to write to (an unknown account, or one with no
+    practice, as on a self-hosted install with no tenant). Never raises.
+    """
+    if firebase_uid is None:
+        return None
+    try:
+        found = get_identity_repository().get_user_id("firebase", firebase_uid)
+        if found is None:
+            return None
+        user_id = str(found)
+        bind_log_user_id(user_id)
+        schema = resolve_tenant_schema_for_user(user_id)
+        if schema is None:
+            logger.info("companion_sign_in_no_tenant user_id=%s", user_id)
+            return None
+        session = get_db_session()
+        set_tenant_schema(session, schema)
+        arm_current_user_id(session, user_id)
+    except Exception:
+        logger.warning("companion_sign_in_audit_arm_failed", exc_info=True)
+        return None
+    return user_id
+
+
+def _enroll_companion_device(
+    firebase_uid: str | None, enrollment: CompanionEnrollment
+) -> EnrollmentStatus:
     """Persist a companion device row, mapping firebase_uid → pablo user_id.
 
     Failures here do NOT block the token exchange — a stale or invalid
-    payload should not prevent the user from getting their tokens.
-    The companion will retry enrollment on next launch when it sees
-    that DPoP-protected endpoints are rejecting it (THERAPY-6qtr).
+    payload should not prevent the user from getting their tokens. The
+    outcome is returned so the exchange response can report it: until a
+    device is enrolled the web app cannot tell the companion is installed,
+    so a silent failure leaves the clinician looking at a download prompt
+    for an app they already have.
     """
     if firebase_uid is None:
         # Legacy in-flight code (pre-deploy) — no uid stashed; skip.
         logger.info("companion_enrollment_skipped reason=missing_firebase_uid")
-        return
+        return "failed"
     try:
         pablo_user_id = get_identity_repository().resolve_or_create("firebase", firebase_uid)
         get_companion_device_service().enroll(pablo_user_id, enrollment)
@@ -245,10 +326,13 @@ def _enroll_companion_device(firebase_uid: str | None, enrollment: CompanionEnro
             enrollment.install_id,
             err,
         )
-    except DeviceOwnershipConflictError:
+    except DeviceRevokedError:
         logger.warning(
-            "companion_enrollment_rejected reason=ownership_conflict install_id=%s",
+            "companion_enrollment_rejected reason=revoked install_id=%s",
             enrollment.install_id,
         )
     except Exception:
         logger.exception("companion_enrollment_failed install_id=%s", enrollment.install_id)
+    else:
+        return "enrolled"
+    return "failed"

@@ -22,4 +22,8 @@ export interface DashboardSummary {
   transcription_pending_count: number
   awaiting_review_total: number
   awaiting_review: AwaitingReviewItem[]
+  /** patient_id -> chart updates waiting, for today's appointment patients that have any. */
+  pending_chart_updates_by_patient: Record<string, number>
+  /** How many of the clinician's clients have any chart update waiting. */
+  pending_chart_updates_total: number
 }

@@ -100,6 +100,11 @@ PHI_PATH_MARKERS: tuple[str, ...] = (
     # letter from a prior provider — and the routes hand back signed URLs to
     # the files themselves. Marked for the same reason as the line above.
     "/patient/documents",
+    # The client's own homework: what their clinician asked them to work on,
+    # and the note they leave when they finish it.
+    "/patient/homework",
+    # Who is waiting for a time with the clinician, and what they want.
+    "/waitlist",
 )
 
 FORBIDDEN_UNDERSCORE_PARAMS: frozenset[str] = frozenset({"_audit", "_http_request"})
@@ -146,6 +151,10 @@ AUDIT_EXEMPT_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # clinician read and decision on the same rows.
         ("get", "/api/patient/refills"),
         ("get", "/api/patient/refills/medications"),
+        # homework.py — the client reading their OWN confirmed homework. Same
+        # principle as the two above. Marking one done or not done IS
+        # recorded, and so is every clinician read and decision.
+        ("get", "/api/patient/homework"),
         # patient_intake_assignments.py — the patient reading a form they
         # were asked to fill in, and what they have saved against it so
         # far. Same principle as the two above: the audit log records
@@ -208,7 +217,8 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
     {
         # internal_transcription.py — Cloud Tasks worker that hands audio already
         # audited at upload (SESSION_AUDIO_UPLOADED) to the transcription
-        # provider; discloses nothing to a user. The transcript that results is
+        # provider, with the chart's medication and allergy names as its
+        # vocabulary when that is on; discloses nothing to a user. The transcript that results is
         # audited on the completion path.
         ("post", "/api/internal/assemblyai-submit"),  # provider submit worker, no disclosure
         # admin.py — operates on therapist accounts / invitees, never patient data
@@ -224,7 +234,6 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("post", "/api/admin/pentest/audit"),  # emits a PlatformAudit pentest-run row, PHI-free
         # auth.py / ext_auth.py — auth tokens and boolean checks only
         ("post", "/api/auth/native/code"),  # mints a short-lived native auth code
-        ("post", "/api/auth/native/exchange"),  # exchanges code for auth tokens
         ("get", "/api/auth/session"),  # caller's own idle-session liveness, no PHI
         ("post", "/api/auth/session/touch"),  # refreshes caller's own idle heartbeat, no PHI
         ("post", "/api/ext/auth/check-allowlist"),  # allowlist membership check
@@ -245,6 +254,7 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # patient. Publishing IS audited (INTAKE_TEMPLATE_PUBLISHED), because
         # that is the version every later submission gets read back against.
         ("get", "/api/intake/templates"),  # lists the practice's own forms
+        ("get", "/api/intake/document-usage"),  # which of its forms ask for which document
         ("post", "/api/intake/templates"),  # creates a form, no patient data
         ("get", "/api/intake/templates/{template_id}"),  # one form and its versions
         ("patch", "/api/intake/templates/{template_id}"),  # renames or archives a form
@@ -268,6 +278,8 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("get", "/api/intake/documents"),  # lists the practice's own documents
         ("post", "/api/intake/documents"),  # starts a document, no patient data
         ("get", "/api/intake/documents/{document_id}"),  # one version and its rendering
+        # the practice's published versions of one document, for a picker
+        ("get", "/api/intake/documents/keys/{document_key}/published"),
         ("put", "/api/intake/documents/{document_id}"),  # edits an unpublished draft
         ("post", "/api/intake/documents/{document_id}/new-version"),  # starts the next draft
         ("get", "/api/intake/starters"),  # the built-in documents a practice can start from
@@ -373,6 +385,7 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("post", "/api/webhooks/telehealth/room"),  # waiting-room callback, no disclosure
         # booking_links.py — owner's own link metadata (slug/copy/duration), no patient data
         ("post", "/api/booking-links"),  # creates a booking link
+        ("post", "/api/booking-links/slot"),  # creates a single-slot link: type + one window
         ("get", "/api/booking-links"),  # lists caller's own booking links
         ("patch", "/api/booking-links/{link_id}"),  # updates link copy/duration/active
         ("delete", "/api/booking-links/{link_id}"),  # deletes a booking link
@@ -399,6 +412,14 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ),  # lists evidence docs for therapist's own item
         ("get", "/api/compliance/documents/{document_id}/file"),  # streams evidence doc bytes
         ("delete", "/api/compliance/documents/{document_id}"),  # removes evidence doc
+        # tasks.py — the clinician's own tasks; compliance items are one category of them.
+        # The routes that return a task audit it, since a task can name a client.
+        ("get", "/api/tasks/templates"),  # compliance template catalog
+        ("delete", "/api/tasks/{task_id}"),  # deletes a clinician task and its steps
+        ("post", "/api/tasks/{task_id}/documents"),  # uploads evidence doc for own task
+        ("get", "/api/tasks/{task_id}/documents"),  # lists evidence docs for own task
+        ("get", "/api/tasks/documents/{document_id}/file"),  # streams evidence doc bytes
+        ("delete", "/api/tasks/documents/{document_id}"),  # removes evidence doc
         # ehr_routes.py — EHR UI-navigation config (selectors/steps), no patient data
         ("get", "/api/ehr-routes/{ehr_system}"),  # navigation route config
         ("patch", "/api/ehr-routes/{ehr_system}/steps/{step_index}"),  # updates a nav step
@@ -411,6 +432,8 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("get", "/api/note-types/{key}"),  # single note-type definition
         ("put", "/api/note-types/custom/{slug}"),  # saves a practice's own note format
         ("delete", "/api/note-types/custom/{slug}"),  # retires a practice's own note format
+        ("get", "/api/note-types/bases"),  # built-in note formats a practice can adjust
+        ("post", "/api/note-types/resolve"),  # a note format applied to its base; no client data
         ("get", "/api/note-types/derive/references"),  # names of comparison references
         # scheduling.py — therapist's own availability/OAuth, no client attached
         ("get", "/api/availability/rules"),  # therapist availability rules
@@ -420,6 +443,9 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("post", "/api/availability/rules/parse"),  # NL rule proposals, no client attached
         ("get", "/api/availability/slots"),  # open free-slot times, no client
         ("post", "/api/availability/check"),  # conflict check, rule messages only
+        ("get", "/api/availability/floating-blocks"),  # protected-time positions, no client
+        ("put", "/api/availability/rules/{rule_id}/exceptions/{day}"),  # pin/skip one date
+        ("delete", "/api/availability/rules/{rule_id}/exceptions/{day}"),  # clear pin/skip
         ("get", "/api/scheduling/policy"),  # practice booking policy; no patient data
         ("patch", "/api/scheduling/policy"),  # practice booking policy; no patient data
         # practice_billing.py — the practice's own billing identity (legal
@@ -433,6 +459,10 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # record of who changed where clients are sent.
         ("get", "/api/practice/domains"),  # practice hostnames; no patient data
         ("get", "/api/practice/domains/describe"),  # parses a typed hostname; reads nothing
+        (
+            "get",
+            "/api/practice/admins",
+        ),  # the practice's clinicians and who is an admin; no patient data
         # sites/routes.py and sites/public_routes.py — the practice's public
         # website: its files, versions and hosts. Uploads, publishes and roll
         # backs are audited by app.sites.service, whoever calls it.
@@ -443,6 +473,7 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("post", "/api/practice/website/draft/preview"),  # mints a preview address
         ("post", "/api/practice/website/publish"),  # website files; audited in the service
         ("post", "/api/practice/website/versions/{version}/live"),  # audited in the service
+        ("put", "/api/practice/website/search"),  # a yes or no; audited in the service
         ("get", "/api/practice/website/preview/{token}/{path:path}"),  # draft website file
         ("get", "/api/sites/hosts/{host}"),  # host to host, no PHI
         ("get", "/api/sites/hosts/{host}/file"),  # a published website file
@@ -500,6 +531,14 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("get", "/api/users/baa/{version}"),  # versioned BAA document text
         ("get", "/api/users/me"),  # caller's own profile
         ("get", "/api/users/me/baa-status"),  # caller's own BAA status
+        # away_periods.py — the caller's own away dates and out-of-office text;
+        # names no client and carries nothing clinical
+        ("get", "/api/away-periods"),  # caller's away dates + colleagues who may cover
+        ("post", "/api/away-periods/preview"),  # suggested text for dates, nothing stored
+        ("post", "/api/away-periods"),  # sets caller's away dates; grants nothing
+        # covering.py — the away dates the caller is asked to cover: colleagues
+        # and dates, no client
+        ("get", "/api/covering"),  # requests naming the caller, no client
         ("get", "/api/users/me/preferences"),  # caller's own UI preferences
         ("get", "/api/users/me/security-guide-status"),  # caller's own security-guide status
         ("get", "/api/users/me/status"),  # caller's own account/onboarding status
@@ -510,6 +549,7 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("post", "/api/users/me/acknowledge-security-guide"),  # records caller's own ack
         ("post", "/api/users/me/mfa-enrolled"),  # records caller's own MFA enrollment
         ("put", "/api/users/me/preferences"),  # saves caller's own preferences
+        ("patch", "/api/users/me/preferences"),  # changes some of caller's own preferences
         ("put", "/api/users/me/preferences/theme"),  # saves caller's own theme
         # people_term.py — the word the UI uses ("clients"/"patients"), no PHI
         ("get", "/api/users/me/people-term"),  # caller's own vocabulary and what set it

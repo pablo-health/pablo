@@ -22,7 +22,7 @@ the row policy for it is already in place.
 partial unique index is built on, which is what makes at most one live row
 per assignment, item and role.
 
-Rows are plain ``dict[str, object]`` matching the column layout, the same
+Rows are plain ``Row`` matching the column layout, the same
 shape the other repositories in this package hand back.
 """
 
@@ -34,6 +34,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from .row import Row
+
 
 class PatientIntakeSignatureRepository(ABC):
     """Abstract base class for intake signature data access."""
@@ -41,7 +43,7 @@ class PatientIntakeSignatureRepository(ABC):
     # --- patient side ---
 
     @abstractmethod
-    def add(self, row: dict[str, object]) -> dict[str, object]:
+    def add(self, row: Row) -> Row:
         """Record one signature.
 
         The caller has already checked everything that could refuse it. What
@@ -51,9 +53,7 @@ class PatientIntakeSignatureRepository(ABC):
         """
 
     @abstractmethod
-    def list_live_for_assignment(
-        self, assignment_id: str, patient_id: str
-    ) -> list[dict[str, object]]:
+    def list_live_for_assignment(self, assignment_id: str, patient_id: str) -> list[Row]:
         """The live signatures on one form, oldest first.
 
         Oldest first, so a document asking for two signatures reads in the
@@ -71,7 +71,7 @@ class PatientIntakeSignatureRepository(ABC):
     @abstractmethod
     def get_live(
         self, assignment_id: str, patient_id: str, item_id: str, signer_role: str
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         """This role's live signature on this item, or ``None``.
 
         What answers "has this already been signed" before a write is
@@ -90,11 +90,11 @@ class InMemoryPatientIntakeSignatureRepository(PatientIntakeSignatureRepository)
     """
 
     def __init__(self) -> None:
-        self.rows: dict[str, dict[str, object]] = {}
+        self.rows: dict[str, Row] = {}
 
     # --- patient side ---
 
-    def add(self, row: dict[str, object]) -> dict[str, object]:
+    def add(self, row: Row) -> Row:
         clash = self.get_live(
             str(row["assignment_id"]),
             str(row["patient_id"]),
@@ -106,9 +106,7 @@ class InMemoryPatientIntakeSignatureRepository(PatientIntakeSignatureRepository)
         self.rows[str(row["id"])] = dict(row)
         return dict(row)
 
-    def list_live_for_assignment(
-        self, assignment_id: str, patient_id: str
-    ) -> list[dict[str, object]]:
+    def list_live_for_assignment(self, assignment_id: str, patient_id: str) -> list[Row]:
         return self._live(
             lambda row: (
                 str(row["assignment_id"]) == assignment_id and str(row["patient_id"]) == patient_id
@@ -117,7 +115,7 @@ class InMemoryPatientIntakeSignatureRepository(PatientIntakeSignatureRepository)
 
     def get_live(
         self, assignment_id: str, patient_id: str, item_id: str, signer_role: str
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         found = self._live(
             lambda row: (
                 str(row["assignment_id"]) == assignment_id
@@ -130,13 +128,13 @@ class InMemoryPatientIntakeSignatureRepository(PatientIntakeSignatureRepository)
 
     # --- helpers ---
 
-    def _live(self, matches: Callable[[dict[str, object]], bool]) -> list[dict[str, object]]:
+    def _live(self, matches: Callable[[Row], bool]) -> list[Row]:
         rows = [
             dict(row)
             for row in self.rows.values()
             if row.get("superseded_at") is None and matches(row)
         ]
-        rows.sort(key=lambda row: (row["signed_at"], str(row["id"])))  # type: ignore[index]
+        rows.sort(key=lambda row: (row["signed_at"], str(row["id"])))
         return rows
 
 

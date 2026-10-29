@@ -22,7 +22,10 @@
  *     scripts, and a portal session lives in its origin's storage;
  *   - a host that is not working, has nothing published, or is nobody's is the
  *     same plain 404 as an unknown host;
- *   - only GET and HEAD: a website is static.
+ *   - only GET and HEAD: a website is static;
+ *   - a practice that asks search engines not to list its website has every
+ *     answer on its hosts carry `X-Robots-Tag: noindex, nofollow`, and its
+ *     `/robots.txt` disallows everything, whatever the website uploaded.
  *
  * The page never reaches the app. The proxy fetches the file from the backend
  * and answers with it and the headers below: no app shell, no app script, no
@@ -44,6 +47,8 @@ export interface SiteHost {
   primaryHost: string | null
   /** On a hosted website address only: the host the practice's portal is on. */
   portalHost: string | null
+  /** The practice asks search engines not to list its website. */
+  hideFromSearch: boolean
 }
 
 export type SiteHostAnswer = SiteHost | null | "unavailable"
@@ -51,6 +56,7 @@ export type SiteHostAnswer = SiteHost | null | "unavailable"
 export type SiteHostDecision =
   | { kind: "serve"; pathname: string }
   | { kind: "redirect"; location: string }
+  | { kind: "disallow-robots" }
   | { kind: "not-found" }
   | { kind: "unavailable" }
   | { kind: "method-not-allowed" }
@@ -69,8 +75,41 @@ export const SITE_SECURITY_HEADERS: Readonly<Record<string, string>> = {
   "X-Frame-Options": "DENY",
 }
 
+/**
+ * For a practice that asks search engines not to list its website: every
+ * answer on its hosts, redirects included, says so, and `/robots.txt` is
+ * {@link DISALLOW_ALL_ROBOTS} in place of any the website has. Both are
+ * requests well-behaved crawlers honor; neither keeps anyone from visiting.
+ */
+export const HIDDEN_FROM_SEARCH_HEADERS: Readonly<Record<string, string>> = {
+  "X-Robots-Tag": "noindex, nofollow",
+}
+
+export const ROBOTS_PATH = "/robots.txt"
+export const DISALLOW_ALL_ROBOTS = "User-agent: *\nDisallow: /\n"
+
+/** The headers every answer on a website host carries. */
+export function siteHeaders(hideFromSearch: boolean): Record<string, string> {
+  return hideFromSearch ? { ...SITE_SECURITY_HEADERS, ...HIDDEN_FROM_SEARCH_HEADERS } : { ...SITE_SECURITY_HEADERS }
+}
+
 const HTML_MAX_AGE = 60
 const ASSET_MAX_AGE = 3600
+
+/**
+ * The `/robots.txt` of a website whose practice asks search engines not to
+ * list it, answered without asking the backend, in place of any the website has.
+ */
+export function disallowRobotsResponse(method: string): Response {
+  return new Response(method === "HEAD" ? null : DISALLOW_ALL_ROBOTS, {
+    status: 200,
+    headers: {
+      ...siteHeaders(true),
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": `public, max-age=${ASSET_MAX_AGE}`,
+    },
+  })
+}
 
 /**
  * How long a browser may keep an answer. A file's address carries no version,
@@ -88,6 +127,8 @@ export function routeSiteHost(request: PracticeHostRequest & { method: string },
   if (found === "unavailable") return { kind: "unavailable" }
   if (found === null) return { kind: "not-found" }
   if (!SITE_METHODS.includes(request.method)) return { kind: "method-not-allowed" }
+  // On every host of the site, alias or not, so a crawler is told without a hop.
+  if (found.hideFromSearch && request.pathname === ROBOTS_PATH) return { kind: "disallow-robots" }
   if (found.portalHost !== null && isUnder(request.pathname, PORTAL_PREFIX)) {
     const rest = request.pathname.slice(PORTAL_PREFIX.length) || "/"
     return { kind: "redirect", location: `https://${found.portalHost}${rest}${request.search}` }

@@ -19,6 +19,7 @@ from app.repositories import (
     InMemoryIdentityRepository,
     InMemoryUserRepository,
 )
+from app.repositories.practice_admin import InMemoryPracticeAdminRepository
 from app.route_introspection import iter_api_routes
 from app.routes.users import _user_has_totp_factor
 
@@ -106,6 +107,7 @@ class TestUpdateProfile:
         mock_user_repo.update(mock_user)
         practice = SimpleNamespace(
             owner_email="",
+            owner_user_id=None,
             name="Renamed Practice",
             phone="555-010-0100",
             address="5 Oak Ave, Town, NY 10001",
@@ -139,7 +141,12 @@ class TestUpdateProfile:
         prefilling a form needs to tell "nothing on file" from "blank"."""
         mock_user_repo.update(mock_user)
         practice = SimpleNamespace(
-            owner_email="", name="Renamed Practice", phone=None, address="   ", people_term=None
+            owner_email="",
+            owner_user_id=None,
+            name="Renamed Practice",
+            phone=None,
+            address="   ",
+            people_term=None,
         )
         fake_session = MagicMock()
         fake_session.get.return_value = practice
@@ -841,6 +848,7 @@ class TestPracticeRename:
         defaults: dict[str, Any] = {
             "id": "practice-1",
             "owner_email": "test@example.com",
+            "owner_user_id": None,
             "name": "Jane Doe",
             "phone": None,
             "address": None,
@@ -926,7 +934,7 @@ class TestPracticeRename:
             client, practice, {"practice_name": "Hijacked", "legal_name": "Changed Legal"}
         )
         assert response.status_code == 403
-        assert response.json()["error"]["code"] == "NOT_PRACTICE_OWNER"
+        assert response.json()["error"]["code"] == "NOT_PRACTICE_ADMIN"
         assert practice.name == "Jane Doe"
         # Refused whole, not half-applied.
         stored = mock_user_repo.get(mock_user.id)
@@ -989,6 +997,80 @@ class TestPracticeRename:
                 mock_settings.return_value.is_saas = False
                 body = client.get("/api/users/me/status").json()
             assert body["is_practice_owner"] is expected, owner_email
+            # The owner may always change practice settings; nobody else here
+            # has been made an admin.
+            assert body["is_practice_admin"] is expected, owner_email
+
+    def test_status_reports_a_granted_admin(
+        self,
+        client: Any,
+        mock_user: User,
+        mock_user_repo: InMemoryUserRepository,
+        practice_admins: InMemoryPracticeAdminRepository,
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        practice_admins.grant(mock_user.id, granted_by="owner", granted_at=datetime.now(UTC))
+        fake_session = MagicMock()
+        fake_session.get.return_value = self._practice(owner_email="owner@example.com")
+        with (
+            patch("app.settings.get_settings") as mock_settings,
+            patch(
+                "app.auth.service._resolve_practice_from_email",
+                return_value=("practice-1", "practice_1"),
+            ),
+            patch("app.db.get_db_session", return_value=fake_session),
+        ):
+            mock_settings.return_value.is_saas = False
+            body = client.get("/api/users/me/status").json()
+        assert body["is_practice_owner"] is False
+        assert body["is_practice_admin"] is True
+
+    def test_a_practice_admin_can_rename(
+        self,
+        client: Any,
+        mock_user: User,
+        mock_user_repo: InMemoryUserRepository,
+        practice_admins: InMemoryPracticeAdminRepository,
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        practice_admins.grant(mock_user.id, granted_by="owner", granted_at=datetime.now(UTC))
+        practice = self._practice(owner_email="owner@example.com")
+        with patch("app.services.audit_service.AuditService.log") as audit_log:
+            response = self._patch(client, practice, {"practice_name": "Riverside"})
+        assert response.status_code == 200
+        assert practice.name == "Riverside"
+        assert practice.baa_practice_name == "Jane Doe"
+        assert audit_log.call_args.args[0] == "practice_renamed"
+
+    def test_record_activity_is_offered_to_the_recorded_owner_only(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        """Narrower than ``is_practice_owner`` on purpose: a practice
+        registered under no email calls every member its owner for renaming,
+        but only the account it recorded may read who acted on a record —
+        the same test the route and the audit row policy make."""
+        mock_user_repo.update(mock_user)
+        for owner_user_id, expected in (
+            (mock_user.id, True),
+            (None, False),
+            ("someone-else", False),
+        ):
+            fake_session = MagicMock()
+            fake_session.get.return_value = self._practice(
+                owner_email="", owner_user_id=owner_user_id
+            )
+            with (
+                patch("app.settings.get_settings") as mock_settings,
+                patch(
+                    "app.auth.service._resolve_practice_from_email",
+                    return_value=("practice-1", "practice_1"),
+                ),
+                patch("app.db.get_db_session", return_value=fake_session),
+            ):
+                mock_settings.return_value.is_saas = False
+                body = client.get("/api/users/me/status").json()
+            assert body["is_practice_owner"] is True, owner_user_id
+            assert body["can_view_record_activity"] is expected, owner_user_id
 
 
 class TestAudioRetentionSelfService:
@@ -1106,7 +1188,7 @@ class TestAudioRetentionSelfService:
         ):
             too_low = client.put(
                 "/api/users/me/practice/audio-retention",
-                json={"audio_retention_days": 29},
+                json={"audio_retention_days": -1},
             )
             too_high = client.put(
                 "/api/users/me/practice/audio-retention",
@@ -1116,6 +1198,29 @@ class TestAudioRetentionSelfService:
         assert too_high.status_code == 422
         # No DB write attempted for an out-of-range value.
         fake_session.flush.assert_not_called()
+
+    @pytest.mark.parametrize("days", [0, 1, 29, 2555])
+    def test_every_value_from_signing_to_seven_years_is_accepted(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository, days: int
+    ) -> None:
+        """0 is "delete when the note is signed"; 1 and up are days."""
+        mock_user_repo.update(mock_user)
+        practice = self._practice()
+        fake_session = MagicMock()
+        fake_session.get.return_value = practice
+        with (
+            patch(
+                "app.auth.service._resolve_practice_from_email",
+                return_value=("practice-1", "practice_1"),
+            ),
+            patch("app.db.get_db_session", return_value=fake_session),
+        ):
+            response = client.put(
+                "/api/users/me/practice/audio-retention",
+                json={"audio_retention_days": days},
+            )
+        assert response.status_code == 200
+        assert practice.audio_retention_days == days
 
     def test_no_practice_mapping_returns_404(
         self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
@@ -1311,6 +1416,22 @@ class TestBaaResign:
         practice = self._practice(owner_email="owner@example.com")
         response = self._post(client, practice, "2026-09-26")
         assert response.status_code == 403
+        assert practice.baa_practice_name == "Jane Doe"
+
+    def test_a_practice_admin_cannot_resign(
+        self,
+        client: Any,
+        mock_user: User,
+        mock_user_repo: InMemoryUserRepository,
+        practice_admins: InMemoryPracticeAdminRepository,
+    ) -> None:
+        """The owner signs for the covered entity; an admin may rename, not sign."""
+        mock_user_repo.update(mock_user)
+        practice_admins.grant(mock_user.id, granted_by="owner", granted_at=datetime.now(UTC))
+        practice = self._practice(owner_email="owner@example.com")
+        response = self._post(client, practice, "2026-09-26")
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "NOT_PRACTICE_OWNER"
         assert practice.baa_practice_name == "Jane Doe"
 
     def test_only_current_version_can_be_signed(

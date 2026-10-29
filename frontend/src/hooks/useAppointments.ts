@@ -21,7 +21,17 @@ import {
 } from "@/lib/api/scheduling"
 import { queryKeys } from "@/lib/api/queryKeys"
 import { calendarFreshness } from "./calendarFreshness"
+import { withDashboard } from "./dashboardFreshness"
 import { useAuthQuery, useAuthMutation } from "./useAuthQuery"
+
+/**
+ * What an appointment write leaves stale besides appointments: the dashboard,
+ * and where each floating block sits, since a booking can push one along the
+ * day or leave it no room.
+ */
+function afterAppointmentWrite(keys: readonly (readonly unknown[])[]) {
+  return withDashboard([...keys, queryKeys.availability.floatingBlocksAll()])
+}
 
 export function useAppointmentList(start: string, end: string, token?: string) {
   return useAuthQuery({
@@ -73,14 +83,14 @@ export function useCreateAppointment(token?: string) {
     // appear is the bug this hook exists to prevent, so it should not hinge on
     // a single mechanism: if the append misses, the refetch still corrects it.
     // Scoped to lists() rather than all() so unrelated detail queries survive.
-    invalidateKeys: [queryKeys.appointments.lists()],
+    invalidateKeys: afterAppointmentWrite([queryKeys.appointments.lists()]),
   })
 }
 
 export function useCreateRecurringAppointment(token?: string) {
   return useAuthMutation<AppointmentListResponse, CreateRecurringAppointmentRequest>({
     mutationFn: (data) => createRecurringAppointment(data, token),
-    invalidateKeys: [queryKeys.appointments.lists()],
+    invalidateKeys: afterAppointmentWrite([queryKeys.appointments.lists()]),
   })
 }
 
@@ -92,7 +102,7 @@ export function useUpdateAppointment(token?: string) {
   >({
     mutationFn: ({ appointmentId, data }) =>
       updateAppointment(appointmentId, data, token),
-    invalidateKeys: [queryKeys.appointments.all],
+    invalidateKeys: afterAppointmentWrite([queryKeys.appointments.all]),
     optimistic: {
       queryKey: ({ appointmentId }) =>
         queryKeys.appointments.detail(appointmentId),
@@ -104,7 +114,7 @@ export function useUpdateAppointment(token?: string) {
 export function useCancelAppointment(token?: string) {
   return useAuthMutation({
     mutationFn: (appointmentId: string) => cancelAppointment(appointmentId, token),
-    invalidateKeys: [queryKeys.appointments.all],
+    invalidateKeys: afterAppointmentWrite([queryKeys.appointments.all]),
   })
 }
 
@@ -115,13 +125,13 @@ export function useEditAppointmentSeries(token?: string) {
   >({
     mutationFn: ({ appointmentId, data }) =>
       editAppointmentSeries(appointmentId, data, token),
-    invalidateKeys: [queryKeys.appointments.all],
+    invalidateKeys: afterAppointmentWrite([queryKeys.appointments.all]),
   })
 }
 
 export function useCancelAppointmentSeries(token?: string) {
   return useAuthMutation<AppointmentListResponse, string>({
     mutationFn: (appointmentId) => cancelAppointmentSeries(appointmentId, token),
-    invalidateKeys: [queryKeys.appointments.all],
+    invalidateKeys: afterAppointmentWrite([queryKeys.appointments.all]),
   })
 }

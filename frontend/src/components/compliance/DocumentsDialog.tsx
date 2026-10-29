@@ -13,11 +13,12 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import {
-  useComplianceDocuments,
-  useDeleteComplianceDocument,
-  useUploadComplianceDocument,
-} from "@/hooks/useCompliance"
-import { downloadComplianceDocument } from "@/lib/api/compliance"
+  useDeleteTaskDocument,
+  useTaskDocuments,
+  useUploadTaskDocument,
+} from "@/hooks/useTasks"
+import { downloadTaskDocument } from "@/lib/api/tasks"
+import { formatCompactFileSize } from "@/lib/utils/fileValidation"
 import {
   COMPLIANCE_DOC_ALLOWED_MIME_TYPES,
   COMPLIANCE_DOC_MAX_BYTES,
@@ -37,9 +38,9 @@ export interface DocumentsDialogProps {
  * a copy, or remove one. Wraps the /api/compliance/{id}/documents endpoints.
  */
 export function DocumentsDialog({ open, onOpenChange, item }: DocumentsDialogProps) {
-  const { data: documents = [], isLoading } = useComplianceDocuments(item.id, open)
-  const upload = useUploadComplianceDocument(item.id)
-  const remove = useDeleteComplianceDocument(item.id)
+  const { data: documents = [], isLoading } = useTaskDocuments(item.id, open)
+  const upload = useUploadTaskDocument(item.id)
+  const remove = useDeleteTaskDocument(item.id)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [error, setError] = useState<string | null>(null)
@@ -143,7 +144,7 @@ function DocumentRow({
   async function handleDownload() {
     setDownloading(true)
     try {
-      const blob = await downloadComplianceDocument(doc.id)
+      const blob = await downloadTaskDocument(doc.id)
       const url = URL.createObjectURL(blob)
       const a = document.createElement("a")
       a.href = url
@@ -162,7 +163,9 @@ function DocumentRow({
         <p className="text-sm font-medium text-neutral-900 truncate">
           {doc.filename}
         </p>
-        <p className="text-xs text-neutral-500 mt-0.5">{formatSize(doc.size_bytes)}</p>
+        <p className="text-xs text-neutral-500 mt-0.5">
+          {formatCompactFileSize(doc.size_bytes, 0)}
+        </p>
       </div>
       <Button
         variant="ghost"
@@ -203,10 +206,4 @@ function EmptyState() {
       </p>
     </div>
   )
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }

@@ -25,7 +25,10 @@ export interface PatientResponse {
   phone: string | null
   status: string
   date_of_birth: string | null
+  /** The active problems as one line, derived from the problem list. */
   diagnosis: string | null
+  allergy_status?: AllergyStatus
+  allergies?: AllergyEntry[]
   session_count: number
   last_session_date: string | null
   next_session_date: string | null
@@ -40,9 +43,38 @@ export interface PatientResponse {
   postal_code: string | null
   /** X12 DMG03 administrative sex code (M/F/U) — "Sex on insurance card". */
   sex: string | null
+  /** What the person is called, when it is not their first name. */
+  preferred_name?: string | null
+  /** The pronouns the person uses, in their own words. */
+  pronouns?: string | null
+  /** Who to call in an emergency, as written. */
+  emergency_contact?: string | null
   /** The chart has no first or no last name yet — for one added from a
    * calendar event with the name left blank. Adding the name clears it. */
   needs_name?: boolean
+  /** Whether this person's superbills print their diagnosis. Off unless turned on. */
+  superbill_includes_diagnosis?: boolean
+}
+
+/**
+ * The allergy record. "nkda" (no known drug allergies) is its own state,
+ * distinct from "not_recorded"; "recorded" always has at least one entry.
+ */
+export type AllergyStatus = "not_recorded" | "nkda" | "recorded"
+
+export interface AllergyEntry {
+  substance: string
+  reaction?: string | null
+  severity?: "mild" | "moderate" | "severe" | null
+  /** What has been said about it since (taken without a reaction, say); the entry stands. */
+  note?: string | null
+  /** The note the entry, or its note, was accepted from. */
+  source_note_id?: string | null
+}
+
+export interface UpdateAllergiesRequest {
+  status: AllergyStatus
+  allergies: AllergyEntry[]
 }
 
 /**
@@ -86,13 +118,13 @@ export interface UpdatePatientRequest {
   phone?: string
   status?: string
   date_of_birth?: string
-  diagnosis?: string
   address_line1?: string
   address_line2?: string
   city?: string
   state?: string
   postal_code?: string
   sex?: string
+  superbill_includes_diagnosis?: boolean
 }
 
 /**

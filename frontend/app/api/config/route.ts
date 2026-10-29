@@ -58,6 +58,10 @@ export async function GET(request: NextRequest) {
     // Runtime toggle (no client rebuild) for the WebAuthn passkey UI, dark
     // until the egm.4 cutover. Set PASSKEYS_ENABLED=true on the container.
     passkeysEnabled: process.env.PASSKEYS_ENABLED === 'true',
+    // Google sign-in needs the deployment's own OAuth client. A self-hosted
+    // install that chose email and password only has none, and a Google
+    // button there could only fail.
+    googleSignInEnabled: Boolean(process.env.GOOGLE_CLIENT_ID),
     // Which optional features this deployment has turned on. Absent means off.
     features: enabledFeatures(),
     // Where the app sends someone whose subscription has ended when they
@@ -76,5 +80,13 @@ export async function GET(request: NextRequest) {
     // backend has GOOGLE_CALENDAR_CLIENT_ID and GOOGLE_CALENDAR_CLIENT_SECRET
     // set — without those the connect flow has nothing to send Google.
     googleCalendarEnabled: process.env.GOOGLE_CALENDAR_ENABLED === 'true',
+    // Where a clinician can write to reach a person about this deployment,
+    // shown beside load errors and under Help in the sidebar. Read at request
+    // time like the toggles above. Unset hides both, so a deployment that has
+    // not chosen an address shows no contact line rather than a broken link.
+    supportEmail: (process.env.SUPPORT_EMAIL || '').trim(),
+    // A page of help articles for this deployment, linked from Help in the
+    // sidebar beside the support address. Unset hides the link.
+    helpUrl: (process.env.HELP_URL || '').trim(),
   })
 }

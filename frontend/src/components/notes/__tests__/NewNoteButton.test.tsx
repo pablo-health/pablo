@@ -7,11 +7,19 @@
  * pre-filled) and creating a blank note from a session note type.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest"
 import { render, screen, fireEvent } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 
 import { NewNoteButton } from "../NewNoteButton"
+import { ApiError } from "@/lib/api/client"
 import type { NoteTypeSchema } from "@/types/noteTypes"
+
+// Radix Select needs pointer capture, which jsdom lacks.
+beforeAll(() => {
+  Element.prototype.hasPointerCapture = vi.fn()
+  Element.prototype.releasePointerCapture = vi.fn()
+})
 
 const mockMutateAsync = vi.fn()
 const mockPush = vi.fn()
@@ -72,6 +80,26 @@ function soapType(): NoteTypeSchema {
   } as NoteTypeSchema
 }
 
+function followUpType(): NoteTypeSchema {
+  return {
+    key: "psychiatric_follow_up",
+    label: "Psychiatric follow-up",
+    description: "E/M visit with psychotherapy",
+    context: "session",
+    is_locked: false,
+    inputs: [
+      {
+        key: "place_of_service",
+        label: "Place of service",
+        kind: "choice",
+        options: ["Telehealth", "In office"],
+        required: true,
+      },
+      { key: "mdm_risk", label: "Risk", kind: "choice", options: ["Low"], required: false },
+    ],
+  } as NoteTypeSchema
+}
+
 describe("NewNoteButton", () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -127,6 +155,84 @@ describe("NewNoteButton", () => {
         "/dashboard/patients/patient-1/notes/note-9",
       ),
     )
+  })
+
+  it("asks for a type's inputs before creating it, and sends them", async () => {
+    // Catches a blank psychiatric note being posted with no place of
+    // service, which the server rejects every time.
+    const user = userEvent.setup()
+    mockCatalog = { note_types: [soapType(), followUpType()] }
+    mockMutateAsync.mockResolvedValue({ id: "note-9" })
+    render(<NewNoteButton patientId="patient-1" />)
+
+    await user.click(screen.getByRole("button", { name: /new note/i }))
+    await user.click(screen.getByText("Psychiatric follow-up"))
+
+    expect(mockMutateAsync).not.toHaveBeenCalled()
+    // The MDM choices are made at review, beside the note.
+    expect(screen.queryByRole("combobox", { name: "Risk" })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: "Create" }))
+    expect(await screen.findByText("Place of service is required")).toBeInTheDocument()
+    expect(mockMutateAsync).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole("combobox", { name: "Place of service" }))
+    await user.click(await screen.findByRole("option", { name: "In office" }))
+    await user.click(screen.getByRole("button", { name: "Create" }))
+
+    expect(mockMutateAsync).toHaveBeenCalledWith({
+      patientId: "patient-1",
+      data: {
+        note_type: "psychiatric_follow_up",
+        note_inputs: { place_of_service: "In office" },
+      },
+    })
+    await vi.waitFor(() =>
+      expect(mockPush).toHaveBeenCalledWith(
+        "/dashboard/patients/patient-1/notes/note-9",
+      ),
+    )
+  })
+
+  it("goes back to the list of note types", async () => {
+    const user = userEvent.setup()
+    mockCatalog = { note_types: [soapType(), followUpType()] }
+    render(<NewNoteButton patientId="patient-1" />)
+
+    await user.click(screen.getByRole("button", { name: /new note/i }))
+    await user.click(screen.getByText("Psychiatric follow-up"))
+    await user.click(screen.getByRole("button", { name: "Back" }))
+
+    expect(screen.getByText("From a transcript")).toBeInTheDocument()
+    expect(
+      screen.queryByRole("combobox", { name: "Place of service" }),
+    ).not.toBeInTheDocument()
+  })
+
+  it("says so beside the inputs when the server rejects them", async () => {
+    // Catches a rejected value surfacing only as a toast behind the dialog.
+    const user = userEvent.setup()
+    mockCatalog = { note_types: [followUpType()] }
+    mockMutateAsync.mockRejectedValue(
+      new ApiError(
+        "INVALID_NOTE_INPUTS",
+        "'In office' is not an option for 'place_of_service'",
+        {},
+        400,
+      ),
+    )
+    render(<NewNoteButton patientId="patient-1" />)
+
+    await user.click(screen.getByRole("button", { name: /new note/i }))
+    await user.click(screen.getByText("Psychiatric follow-up"))
+    await user.click(screen.getByRole("combobox", { name: "Place of service" }))
+    await user.click(await screen.findByRole("option", { name: "In office" }))
+    await user.click(screen.getByRole("button", { name: "Create" }))
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "These note details weren't accepted",
+    )
+    expect(mockPush).not.toHaveBeenCalled()
   })
 
   describe("read-only deployment mode", () => {

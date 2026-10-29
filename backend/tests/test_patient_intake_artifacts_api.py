@@ -51,7 +51,6 @@ from app.repositories import (
     InMemoryPatientRepository,
     get_patient_repository,
 )
-from app.repositories.audit import InMemoryAuditRepository
 from app.repositories.coverage import (
     InMemoryPatientCoverageRepository,
     InMemoryPayerRepository,
@@ -75,6 +74,8 @@ from fastapi.testclient import TestClient
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from app.repositories.audit import InMemoryAuditRepository
 
 _PATIENT_A = "11111111-1111-4111-8111-111111111111"
 _PATIENT_B = "22222222-2222-4222-8222-222222222222"
@@ -116,11 +117,6 @@ def _auth(token: str) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def packets() -> InMemoryIntakePacketRepository:
-    return InMemoryIntakePacketRepository()
 
 
 @pytest.fixture
@@ -181,11 +177,6 @@ def artifact_service(
         InMemoryPayerRepository(),
         coverage,
     )
-
-
-@pytest.fixture
-def audit_repo() -> InMemoryAuditRepository:
-    return InMemoryAuditRepository()
 
 
 @pytest.fixture

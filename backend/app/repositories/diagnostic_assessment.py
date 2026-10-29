@@ -12,6 +12,10 @@ implementation delegates the check to the ``has_patient_access`` SQL function.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .row import Row
 
 
 class PatientDiagnosticAccessDeniedError(Exception):
@@ -26,13 +30,13 @@ class PatientDiagnosticAccessDeniedError(Exception):
 class DiagnosticAssessmentRepository(ABC):
     """Abstract base class for diagnostic assessment data access.
 
-    Rows are plain ``dict[str, object]`` matching the
+    Rows are plain ``Row`` matching the
     ``DiagnosticAssessmentRow`` column layout (uuid columns as ``str``, JSONB
     as ``dict``).
     """
 
     @abstractmethod
-    def get(self, assessment_id: str, user_id: str) -> dict[str, object] | None:
+    def get(self, assessment_id: str, user_id: str) -> Row | None:
         """Get an assessment by id, or ``None`` if absent or inaccessible."""
 
     @abstractmethod
@@ -42,15 +46,15 @@ class DiagnosticAssessmentRepository(ABC):
         user_id: str,
         *,
         instrument: str | None = None,
-    ) -> list[dict[str, object]]:
+    ) -> list[Row]:
         """List assessments for a patient (including soft-deleted). ``[]`` if denied."""
 
     @abstractmethod
-    def add(self, row: dict[str, object], user_id: str) -> dict[str, object]:
+    def add(self, row: Row, user_id: str) -> Row:
         """Insert a new row. Raises :class:`PatientDiagnosticAccessDeniedError` if blocked."""
 
     @abstractmethod
-    def update(self, row: dict[str, object], user_id: str) -> dict[str, object]:
+    def update(self, row: Row, user_id: str) -> Row:
         """Full-replacement update; raises ``PatientDiagnosticAccessDeniedError`` if blocked."""
 
 
@@ -61,7 +65,7 @@ class InMemoryDiagnosticAssessmentRepository(DiagnosticAssessmentRepository):
     """In-memory repository for unit tests."""
 
     def __init__(self) -> None:
-        self._rows: dict[str, dict[str, object]] = {}
+        self._rows: dict[str, Row] = {}
         self._access: set[tuple[str, str]] = set()
         self._allow_all = False
 
@@ -74,9 +78,7 @@ class InMemoryDiagnosticAssessmentRepository(DiagnosticAssessmentRepository):
     def _can_access(self, patient_id: str, user_id: str) -> bool:
         return self._allow_all or (patient_id, user_id) in self._access
 
-    def get(
-        self, assessment_id: str, user_id: str = _TEST_DEFAULT_USER
-    ) -> dict[str, object] | None:
+    def get(self, assessment_id: str, user_id: str = _TEST_DEFAULT_USER) -> Row | None:
         row = self._rows.get(assessment_id)
         if row is None or not self._can_access(str(row["patient_id"]), user_id):
             return None
@@ -88,7 +90,7 @@ class InMemoryDiagnosticAssessmentRepository(DiagnosticAssessmentRepository):
         user_id: str = _TEST_DEFAULT_USER,
         *,
         instrument: str | None = None,
-    ) -> list[dict[str, object]]:
+    ) -> list[Row]:
         if not self._can_access(patient_id, user_id):
             return []
         return [
@@ -98,16 +100,14 @@ class InMemoryDiagnosticAssessmentRepository(DiagnosticAssessmentRepository):
             and (instrument is None or str(r["instrument"]) == instrument)
         ]
 
-    def add(self, row: dict[str, object], user_id: str = _TEST_DEFAULT_USER) -> dict[str, object]:
+    def add(self, row: Row, user_id: str = _TEST_DEFAULT_USER) -> Row:
         patient_id = str(row["patient_id"])
         if not self._can_access(patient_id, user_id):
             raise PatientDiagnosticAccessDeniedError(patient_id, user_id)
         self._rows[str(row["id"])] = dict(row)
         return dict(row)
 
-    def update(
-        self, row: dict[str, object], user_id: str = _TEST_DEFAULT_USER
-    ) -> dict[str, object]:
+    def update(self, row: Row, user_id: str = _TEST_DEFAULT_USER) -> Row:
         patient_id = str(row["patient_id"])
         if not self._can_access(patient_id, user_id):
             raise PatientDiagnosticAccessDeniedError(patient_id, user_id)

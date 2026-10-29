@@ -8,6 +8,7 @@ import {
   createIntakeDocumentVersion,
   listIntakeDocuments,
   listIntakeStarters,
+  listPublishedVersions,
   publishIntakeDocument,
   updateIntakeDocument,
 } from "@/lib/api/intakeDocuments"
@@ -20,6 +21,16 @@ import type {
   UpdateDocumentInput,
 } from "@/types/intakeDocuments"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
+
+/** The published versions of one document, for a consent question's wording picker. */
+export function usePublishedVersions(documentKey: string | null, token?: string) {
+  return useAuthQuery({
+    queryKey: queryKeys.intakeDocuments.publishedVersions(documentKey ?? ""),
+    queryFn: (): Promise<IntakeDocument[]> => listPublishedVersions(documentKey ?? "", token),
+    enabled: Boolean(documentKey),
+    staleTime: 60 * 1000,
+  })
+}
 
 export function useIntakeDocuments(token?: string) {
   return useAuthQuery({

@@ -12,14 +12,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String, Uuid, bindparam, or_, select, text
+from sqlalchemy import String, Uuid, bindparam, select, text
 
 from ...db.models import OutcomeMeasureRow, PatientClinicianRow
-from ...utcnow import utc_now
 from ..outcome_measure import OutcomeMeasureRepository, PatientOutcomeAccessDeniedError
+from ._grants import live_grant
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+    from ..row import Row
 
 
 _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindparams(
@@ -28,7 +30,7 @@ _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindpara
 )
 
 
-def _row_to_dict(row: OutcomeMeasureRow) -> dict[str, object]:
+def _row_to_dict(row: OutcomeMeasureRow) -> Row:
     return {
         "id": row.id,
         "patient_id": row.patient_id,
@@ -63,7 +65,7 @@ class PostgresOutcomeMeasureRepository(OutcomeMeasureRepository):
 
     # --- reads ---
 
-    def get(self, measure_id: str, user_id: str) -> dict[str, object] | None:
+    def get(self, measure_id: str, user_id: str) -> Row | None:
         """Fetch by id with access check, or ``None`` if absent/denied."""
         row = self._session.execute(
             select(OutcomeMeasureRow)
@@ -73,11 +75,7 @@ class PostgresOutcomeMeasureRepository(OutcomeMeasureRepository):
             )
             .where(
                 OutcomeMeasureRow.id == measure_id,
-                PatientClinicianRow.user_id == user_id,
-                or_(
-                    PatientClinicianRow.expires_at.is_(None),
-                    PatientClinicianRow.expires_at > utc_now(),
-                ),
+                *live_grant(user_id),
             )
         ).scalar_one_or_none()
         return _row_to_dict(row) if row else None
@@ -88,7 +86,7 @@ class PostgresOutcomeMeasureRepository(OutcomeMeasureRepository):
         user_id: str,
         *,
         instrument: str | None = None,
-    ) -> list[dict[str, object]]:
+    ) -> list[Row]:
         if not self._has_access(patient_id, user_id):
             return []
         query = select(OutcomeMeasureRow).where(
@@ -101,51 +99,51 @@ class PostgresOutcomeMeasureRepository(OutcomeMeasureRepository):
 
     # --- writes ---
 
-    def _insert(self, row: dict[str, object]) -> dict[str, object]:
+    def _insert(self, row: Row) -> Row:
         orm_row = OutcomeMeasureRow(
             id=str(row["id"]),
             patient_id=str(row["patient_id"]),
-            session_id=row.get("session_id"),  # type: ignore[arg-type]
-            appointment_id=row.get("appointment_id"),  # type: ignore[arg-type]
+            session_id=row.get("session_id"),
+            appointment_id=row.get("appointment_id"),
             instrument=str(row["instrument"]),
-            total_score=row.get("total_score"),  # type: ignore[arg-type]
-            item_scores=row.get("item_scores"),  # type: ignore[arg-type]
+            total_score=row.get("total_score"),
+            item_scores=row.get("item_scores"),
             is_complete=bool(row.get("is_complete", False)),
             source=str(row["source"]),
-            item_citations=row.get("item_citations"),  # type: ignore[arg-type]
-            administered_at=row["administered_at"],  # type: ignore[arg-type]
+            item_citations=row.get("item_citations"),
+            administered_at=row["administered_at"],
             created_by=str(row["created_by"]),
-            created_at=row["created_at"],  # type: ignore[arg-type]
-            updated_at=row["updated_at"],  # type: ignore[arg-type]
-            deleted_at=row.get("deleted_at"),  # type: ignore[arg-type]
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            deleted_at=row.get("deleted_at"),
         )
         self._session.add(orm_row)
         self._session.flush()
         return _row_to_dict(orm_row)
 
-    def add(self, row: dict[str, object], user_id: str) -> dict[str, object]:
+    def add(self, row: Row, user_id: str) -> Row:
         patient_id = str(row["patient_id"])
         if not self._has_access(patient_id, user_id):
             raise PatientOutcomeAccessDeniedError(patient_id, user_id)
         return self._insert(row)
 
-    def add_self_report(self, row: dict[str, object]) -> dict[str, object]:
+    def add_self_report(self, row: Row) -> Row:
         return self._insert(row)
 
-    def update(self, row: dict[str, object], user_id: str) -> dict[str, object]:
+    def update(self, row: Row, user_id: str) -> Row:
         patient_id = str(row["patient_id"])
         if not self._has_access(patient_id, user_id):
             raise PatientOutcomeAccessDeniedError(patient_id, user_id)
         orm_row = self._session.get(OutcomeMeasureRow, str(row["id"]))
         if orm_row is None:
             return self.add(row, user_id)
-        orm_row.total_score = row.get("total_score")  # type: ignore[assignment]
-        orm_row.item_scores = row.get("item_scores")  # type: ignore[assignment]
+        orm_row.total_score = row.get("total_score")
+        orm_row.item_scores = row.get("item_scores")
         orm_row.is_complete = bool(row.get("is_complete", False))
         orm_row.source = str(row["source"])
-        orm_row.item_citations = row.get("item_citations")  # type: ignore[assignment]
-        orm_row.administered_at = row["administered_at"]  # type: ignore[assignment]
-        orm_row.updated_at = row["updated_at"]  # type: ignore[assignment]
-        orm_row.deleted_at = row.get("deleted_at")  # type: ignore[assignment]
+        orm_row.item_citations = row.get("item_citations")
+        orm_row.administered_at = row["administered_at"]
+        orm_row.updated_at = row["updated_at"]
+        orm_row.deleted_at = row.get("deleted_at")
         self._session.flush()
         return _row_to_dict(orm_row)

@@ -13,7 +13,9 @@ the same schema the Gemini path uses.
 Selected for ``bedrock:``-prefixed model ids (for example
 ``bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0``) by
 :func:`~app.services.structured_llm_gateway.resolve_structured_llm_gateway`,
-so it can be named as a fallback in ``AI_MODEL_FLASH_FALLBACKS``.
+so it can be named as a fallback in ``AI_MODEL_FLASH_FALLBACKS`` (short,
+interactive calls) or ``AI_MODEL_FALLBACKS`` (drafting, importing and
+deriving notes).
 
 Bounds. Each attempt is bounded by the botocore read timeout, and
 botocore's own retries are off: attempts belong to the caller's retry
@@ -61,6 +63,7 @@ from .structured_llm_gateway import (
     StructuredLLMGateway,
     StructuredOutputTruncatedError,
     _attempt_timeout,
+    tool_input_completion,
 )
 
 if TYPE_CHECKING:
@@ -79,7 +82,54 @@ _MAX_CONNECT_TIMEOUT_SECONDS = 5.0
 #: rather than building one per call.
 _TIMEOUT_STEP_SECONDS = 0.5
 
+#: A cached client unused for this long is rebuilt before its next call.
+#:
+#: Its pooled connections may already be dead. A NAT or proxy between the
+#: service and Bedrock drops a TCP connection that has been idle past its own
+#: timeout (Cloud NAT's default is 1200 s) without telling either end, and the
+#: next request written to that socket is never answered: it hangs until the
+#: read timeout. For an interactive call that is the whole attempt; for a long
+#: call it is minutes before the fallback even starts. Rebuilding costs one TLS
+#: handshake. Half the most common NAT default leaves margin for clock drift
+#: and for a NAT configured a little tighter.
+_MAX_CLIENT_IDLE_SECONDS = 600.0
+
 _TOOL_NAME = "emit_structured_output"
+
+# Bedrock evaluates Converse cache checkpoints in tools -> system -> messages
+# order. Placing one after the stable system prompt therefore makes both the
+# tool schema and system instructions reusable. Everything after the
+# checkpoint is sent uncached: the user message, and for a caller that passes
+# ``uncached_suffix``, the per-patient part of its system prompt.
+_CACHE_POINT: dict[str, dict[str, str]] = {"cachePoint": {"type": "default"}}
+
+
+def system_content(
+    system_prompt: str, model: str, *, uncached_suffix: str | None = None
+) -> list[dict[str, Any]]:
+    """Build Converse system content, caching the stable prefix for Claude.
+
+    Cache points are model-specific in Bedrock. The gateway can also be used
+    with Nova or another provider, so only Anthropic Claude requests receive
+    the explicit checkpoint. Omitting ``ttl`` selects Bedrock's broadly
+    supported five-minute cache instead of rejecting models without 1h TTL.
+
+    ``uncached_suffix`` is system text that follows the checkpoint, so it is
+    sent on every call and written to no cache. The model reads the two text
+    blocks as one system prompt.
+    """
+    blocks: list[dict[str, Any]] = [{"text": system_prompt}]
+    if "anthropic.claude-" in model:
+        blocks.append(_CACHE_POINT)
+    if uncached_suffix:
+        blocks.append({"text": uncached_suffix})
+    return blocks
+
+
+def _now() -> float:
+    """Monotonic seconds; a function so a test can move the clock."""
+    return time.monotonic()
+
 
 #: Bedrock's own error codes for a model that did not answer in time.
 _TIMEOUT_CODES = frozenset({"ModelTimeoutException"})
@@ -170,7 +220,7 @@ def build_botocore_session(
         extra_args={"RoleSessionName": "pablo-structured-llm"},
     )
 
-    class _GoogleWebIdentityProvider(CredentialProvider):  # type: ignore[misc]
+    class _GoogleWebIdentityProvider(CredentialProvider):  # type: ignore[misc]  # base class resolves to Any from an untyped import
         METHOD = "google-web-identity"
 
         def load(self) -> Any:
@@ -201,17 +251,39 @@ class BedrockStructuredLLMGateway(StructuredLLMGateway):
         self._session: Any = None
         # One client per bound: botocore fixes timeouts when a client is
         # built, and building one costs tens of milliseconds. Hedged legs
-        # run on worker threads, hence the lock.
-        self._clients: dict[float, Any] = {}
+        # run on worker threads, hence the lock. Each entry carries when it
+        # was last handed out, so an idle one is rebuilt (_MAX_CLIENT_IDLE_SECONDS).
+        self._clients: dict[float, tuple[Any, float]] = {}
         self._lock = threading.Lock()
+
+    def client(self, timeout_seconds: float) -> Any:
+        """A bedrock-runtime client bounded by ``timeout_seconds``, shared by bound.
+
+        Also what the streaming chat gateway calls through, so both share
+        one credential session.
+        """
+        return self._client(timeout_seconds)
 
     def _client(self, timeout_seconds: float) -> Any:
         bound = math.ceil(timeout_seconds / _TIMEOUT_STEP_SECONDS) * _TIMEOUT_STEP_SECONDS
+        now = _now()
         with self._lock:
-            if bound not in self._clients:
+            cached = self._clients.get(bound)
+            if cached is None or now - cached[1] > _MAX_CLIENT_IDLE_SECONDS:
+                if cached is not None:
+                    logger.info(
+                        "Bedrock client idle %.0fs; rebuilding it (bound=%.1fs)",
+                        now - cached[1],
+                        bound,
+                    )
+                # The replaced client is not closed here: a call still running
+                # on it keeps its own reference, and its pool goes with it.
                 factory = self._client_factory or self._build_client
-                self._clients[bound] = factory(bound)
-            return self._clients[bound]
+                client = factory(bound)
+            else:
+                client = cached[0]
+            self._clients[bound] = (client, now)
+            return client
 
     def _build_client(self, timeout_seconds: float) -> Any:
         from botocore.config import Config
@@ -249,11 +321,11 @@ class BedrockStructuredLLMGateway(StructuredLLMGateway):
         timeout_seconds: float | None = None,
         retry_policy: RetryPolicy | None = None,
     ) -> StructuredCompletion:
-        # Never hold a pooled DB connection across the model round-trip — the
-        # caller must release_db_connection() first (raises in dev/test).
-        from ..db import assert_no_held_db_connection
+        # Never hold a pooled DB connection across the model round-trip:
+        # release it here, at the one seam every call passes through.
+        from ..db import release_db_connection_before_external_call
 
-        assert_no_held_db_connection("structured-llm")
+        release_db_connection_before_external_call("structured-llm")
 
         # ``thinking_budget`` is part of the shared contract but unused here:
         # the forced tool call is a single non-thinking completion.
@@ -264,7 +336,7 @@ class BedrockStructuredLLMGateway(StructuredLLMGateway):
         normalized_model = strip_provider_prefix(model)
         request: dict[str, Any] = {
             "modelId": normalized_model,
-            "system": [{"text": system_prompt}],
+            "system": system_content(system_prompt, normalized_model),
             "messages": [{"role": "user", "content": [{"text": user_prompt}]}],
             "inferenceConfig": {"maxTokens": max_output_tokens, "temperature": temperature},
             "toolConfig": {
@@ -283,7 +355,13 @@ class BedrockStructuredLLMGateway(StructuredLLMGateway):
         started = time.monotonic()
 
         def attempt() -> dict[str, Any]:
-            attempt_bound = _attempt_timeout(bound, started, policy)
+            # As on the Gemini path, only a caller's own bound is cut to the
+            # policy's deadline. With none given, each attempt keeps the full
+            # default: a note drafted on this model as the primary takes far
+            # longer than the request preset's 25 s.
+            attempt_bound = (
+                bound if timeout_seconds is None else _attempt_timeout(bound, started, policy)
+            )
             try:
                 response: dict[str, Any] = self._client(attempt_bound).converse(**request)
             except Exception as exc:
@@ -307,10 +385,18 @@ class BedrockStructuredLLMGateway(StructuredLLMGateway):
                 ) from exc
             usage = response.get("usage") or {}
             output_tokens = usage.get("outputTokens")
+            # Converse reports cache reads apart from ``inputTokens``; fold them
+            # into the prompt count so it means the same as on the Gemini path
+            # (the whole prompt, of which ``cached_tokens`` was served from cache).
+            cached_tokens = usage.get("cacheReadInputTokens")
+            prompt_tokens = usage.get("inputTokens")
+            if prompt_tokens is not None and cached_tokens:
+                prompt_tokens += cached_tokens
             span.set_token_usage(
-                prompt_tokens=usage.get("inputTokens"),
+                prompt_tokens=prompt_tokens,
                 completion_tokens=output_tokens,
                 total_tokens=usage.get("totalTokens"),
+                cached_tokens=cached_tokens,
             )
 
         # A token-capped answer is a partial tool call (or none at all); say
@@ -345,8 +431,10 @@ class BedrockStructuredLLMGateway(StructuredLLMGateway):
                 f"Structured tool input was not an object ({type(tool_input).__name__})"
             )
 
-        return StructuredCompletion(
-            data=tool_input,
+        return tool_input_completion(
+            tool_input,
+            response_schema,
+            provider="Bedrock",
             output_tokens=output_tokens,
             finish_reason=finish_reason,
         )
@@ -405,5 +493,6 @@ __all__ = [
     "BedrockStructuredLLMGateway",
     "build_botocore_session",
     "google_id_token",
+    "system_content",
     "to_json_schema",
 ]

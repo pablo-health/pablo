@@ -33,8 +33,12 @@ from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 
-from ..api_errors import ForbiddenError, NotFoundError
-from ..auth.patient_context import AuthStrength, PatientContext, get_patient_context
+from ..api_errors import NotFoundError
+from ..auth.patient_context import (
+    PatientContext,
+    get_patient_context,
+    require_stepped_up,
+)
 from ..auth.route_access import subscription_exempt
 from ..models import (
     AuditAction,
@@ -115,16 +119,11 @@ def get_patient_chat_turn_service(
 # ---------------------------------------------------------------------------
 
 
-def _require_stepped_up(patient: PatientContext) -> None:
-    """Refuse a single-factor principal on every route here.
-
-    A between-visit conversation is the patient's own words about how
-    they are doing. A link that reached the wrong inbox is one factor in
-    a stranger's hands, and unlike an appointment time the blast radius
-    of reading it is not one person's schedule.
-    """
-    if patient.auth_strength is not AuthStrength.STEPPED_UP:
-        raise ForbiddenError("Confirm it is you to continue.", code="STEP_UP_REQUIRED")
+# A single-factor principal is refused on every route here (require_stepped_up).
+# A between-visit conversation is the patient's own words about how
+# they are doing. A link that reached the wrong inbox is one factor in
+# a stranger's hands, and unlike an appointment time the blast radius
+# of reading it is not one person's schedule.
 
 
 def _own_conversation(
@@ -173,7 +172,7 @@ def create_conversation(
 ) -> PatientChatConversationResponse:
     """Start a conversation. Exempt from the subscription gate like every
     patient route: a patient does not hold the practice's subscription."""
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     conv = chat_service.create_patient_conversation(
         patient_id=patient.patient_id, title=request_body.title
     )
@@ -200,7 +199,7 @@ def list_conversations(
     _: None = Depends(subscription_exempt),
 ) -> PatientChatConversationListResponse:
     """The conversations this patient started, most recent first."""
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     rows, total = chat_service.list_patient_conversations(
         patient_id=patient.patient_id,
         include_archived=include_archived,
@@ -236,7 +235,7 @@ def get_conversation(
     _: None = Depends(subscription_exempt),
 ) -> PatientChatConversationDetailResponse:
     """One conversation with its messages in order."""
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     conv = _own_conversation(conversation_id, patient, chat_service)
     messages = chat_service.list_patient_messages(conv.id, patient.patient_id)
     audit.log_patient_principal_action(
@@ -263,7 +262,7 @@ def update_conversation(
     _: None = Depends(subscription_exempt),
 ) -> PatientChatConversationResponse:
     """Rename, archive or un-archive."""
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     conv = _own_conversation(conversation_id, patient, chat_service)
     was_archived = conv.archived_at is not None
 
@@ -296,7 +295,7 @@ def delete_conversation(
 ) -> Response:
     """Delete a conversation. ``purge`` (the default) removes it and its
     messages outright; ``archive`` is the reversible form."""
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     conv = _own_conversation(conversation_id, patient, chat_service)
 
     if mode == "archive":
@@ -341,7 +340,7 @@ async def send_message(
     clinician route does and for the same session-lifecycle reason. A
     second turn arriving while one is in flight gets a 409.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     get_chat_send_limiter().check(patient.patient_id)
 
     conv = _own_conversation(conversation_id, patient, chat_service)

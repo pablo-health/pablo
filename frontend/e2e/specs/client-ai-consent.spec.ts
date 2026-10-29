@@ -10,17 +10,24 @@
  */
 
 import { test, expect } from "../fixtures/auth"
+import { BROWSER_TIME_ZONE } from "../fixtures/clock"
 import { givePatient } from "../fixtures/scenarios"
 
 /** A civil date some days back, as the date input takes it and as the chart
- * shows it. Computed from today so the answer is never dated in the future. */
+ * shows it. Computed from the browser's today (not this process's, which is
+ * UTC) so the answer is never dated in the future. */
 function daysAgo(days: number): { iso: string; shown: string } {
-  const day = new Date()
-  day.setDate(day.getDate() - days)
-  const pad = (n: number) => String(n).padStart(2, "0")
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: BROWSER_TIME_ZONE })
+  const day = new Date(`${today}T00:00:00Z`)
+  day.setUTCDate(day.getUTCDate() - days)
   return {
-    iso: `${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}`,
-    shown: day.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+    iso: day.toISOString().slice(0, 10),
+    shown: day.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      timeZone: "UTC",
+    }),
   }
 }
 
@@ -62,4 +69,39 @@ test("a clinician records a client's AI-notes answer and changes it", async ({
   await expect(history).toHaveCount(2)
   await expect(history.nth(0)).toContainText(`Declined ${declinedOn.shown}`)
   await expect(history.nth(1)).toContainText(`Agreed ${agreedOn.shown}`)
+})
+
+test("an answer keeps how it was given: telehealth, where the client was, and who answered", async ({
+  signedInPage: page,
+  api,
+}) => {
+  const patient = await givePatient(api)
+  const today = daysAgo(0)
+
+  await page.goto(`/dashboard/patients/${patient.id}`)
+  const line = page.getByTestId("ai-consent-line")
+  await line.click()
+  const dialog = page.getByRole("dialog", { name: "AI notes" })
+  await dialog.getByLabel("Client agreed").check()
+  await dialog.getByLabel("Answered by").selectOption("parent")
+  await dialog.getByLabel("Telehealth").check()
+  await dialog.getByLabel("Where the client said they were").fill("At home")
+  await dialog.getByRole("button", { name: "Save" }).click()
+  await expect(dialog).toBeHidden()
+
+  // Stored, not held in the page: read back after a reload and from the API.
+  await page.reload()
+  await line.click()
+  const history = dialog.getByTestId("ai-consent-history").getByRole("listitem")
+  await expect(history.first()).toContainText(
+    `Agreed ${today.shown} · Telehealth · At home · Parent`,
+  )
+  const record = await api.get<{
+    current: { modality: string; client_stated_location: string; consented_by: string }
+  }>(`/api/patients/${patient.id}/ai-consent`)
+  expect(record.current).toMatchObject({
+    modality: "telehealth",
+    client_stated_location: "At home",
+    consented_by: "parent",
+  })
 })

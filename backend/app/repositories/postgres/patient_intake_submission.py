@@ -25,6 +25,8 @@ from ...db.models import PatientIntakeSubmissionRow
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
+    from ..row import Row
+
 from ..patient_intake_submission import PatientIntakeSubmissionRepository
 
 _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindparams(
@@ -33,7 +35,7 @@ _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindpara
 )
 
 
-def _row_to_dict(row: PatientIntakeSubmissionRow) -> dict[str, object]:
+def _row_to_dict(row: PatientIntakeSubmissionRow) -> Row:
     return {
         "id": row.id,
         "patient_id": row.patient_id,
@@ -48,22 +50,20 @@ class PostgresPatientIntakeSubmissionRepository(PatientIntakeSubmissionRepositor
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def add_for_patient_principal(self, row: dict[str, object]) -> dict[str, object]:
+    def add_for_patient_principal(self, row: Row) -> Row:
         orm_row = PatientIntakeSubmissionRow(
             id=str(row["id"]),
             patient_id=str(row["patient_id"]),
-            submitted_at=row["submitted_at"],  # type: ignore[arg-type]
-            payload=row["payload"],  # type: ignore[arg-type]
+            submitted_at=row["submitted_at"],
+            payload=row["payload"],
             created_by=str(row["created_by"]),
-            created_at=row["created_at"],  # type: ignore[arg-type]
+            created_at=row["created_at"],
         )
         self._session.add(orm_row)
         self._session.flush()
         return _row_to_dict(orm_row)
 
-    def get_for_patient_principal(
-        self, submission_id: str, patient_id: str
-    ) -> dict[str, object] | None:
+    def get_for_patient_principal(self, submission_id: str, patient_id: str) -> Row | None:
         row = self._session.execute(
             select(PatientIntakeSubmissionRow).where(
                 PatientIntakeSubmissionRow.id == submission_id,
@@ -72,7 +72,7 @@ class PostgresPatientIntakeSubmissionRepository(PatientIntakeSubmissionRepositor
         ).scalar_one_or_none()
         return _row_to_dict(row) if row else None
 
-    def list_for_clinician(self, patient_id: str, user_id: str) -> list[dict[str, object]]:
+    def list_for_clinician(self, patient_id: str, user_id: str) -> list[Row]:
         if not self._has_access(patient_id, user_id):
             return []
         rows = (

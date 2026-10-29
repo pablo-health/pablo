@@ -35,6 +35,17 @@ export async function listIntakeDocuments(
   return get<IntakeDocument[]>(`${ENDPOINT}${query}`, token)
 }
 
+/** Every published version of one document, newest first: what a consent question may ask for. */
+export async function listPublishedVersions(
+  documentKey: string,
+  token?: string
+): Promise<IntakeDocument[]> {
+  return get<IntakeDocument[]>(
+    `${ENDPOINT}/keys/${encodeURIComponent(documentKey)}/published`,
+    token
+  )
+}
+
 /**
  * One version of a document, by its id.
  *

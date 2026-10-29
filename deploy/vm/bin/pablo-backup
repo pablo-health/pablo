@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+#
+# Database backups to the backup bucket, and the proof they restore.
+#
+#   pablo-backup full | diff    take a backup (the crontab runs both)
+#   pablo-backup restore-drill  restore the latest backup into a scratch
+#                               cluster, check it answers, then delete it
+#   pablo-backup info           list what the bucket holds
+#
+# WAL is archived continuously (archive_command), so a restore can reach any
+# moment since the oldest retained full backup.
+
+set -euo pipefail
+
+readonly DRILL_DIR=/mnt/disks/pablo/restore-drill
+readonly DRILL_PORT=5499
+# Written by postgres, which cannot write to the disk's root.
+readonly DRILL_LOG=/var/lib/postgresql/restore-drill.log
+
+as_postgres() { sudo -u postgres "$@"; }
+
+case "${1:-}" in
+    full | diff)
+        as_postgres pgbackrest --stanza=pablo --type="$1" backup
+        ;;
+    info)
+        as_postgres pgbackrest --stanza=pablo info
+        ;;
+    restore-drill)
+        rm -rf "$DRILL_DIR"
+        install -d -o postgres -g postgres -m 0700 "$DRILL_DIR"
+        trap 'as_postgres /usr/lib/postgresql/16/bin/pg_ctl -D "$DRILL_DIR" stop -m fast >/dev/null 2>&1 || true; rm -rf "$DRILL_DIR"' EXIT
+
+        as_postgres pgbackrest --stanza=pablo --pg1-path="$DRILL_DIR" \
+            --type=immediate --target-action=promote \
+            --archive-mode=off restore
+        # The cluster's config lives in /etc, not in the data directory, so
+        # the scratch copy gets a minimal one of its own; with no
+        # archive_command it cannot archive into the live stanza.
+        as_postgres touch "${DRILL_DIR}/postgresql.conf"
+        echo "local all postgres peer" | as_postgres tee "${DRILL_DIR}/pg_hba.conf" >/dev/null
+        if ! as_postgres /usr/lib/postgresql/16/bin/pg_ctl -D "$DRILL_DIR" -w -l "$DRILL_LOG" \
+            -o "-p ${DRILL_PORT} -c listen_addresses='' -c unix_socket_directories=/tmp -c archive_mode=off" start; then
+            tail -20 "$DRILL_LOG" >&2
+            echo '{"event":"restore_drill","status":"failed"}' | logger -t pablo-backup
+            exit 1
+        fi
+
+        users=$(as_postgres psql -h /tmp -p "$DRILL_PORT" -d pablo -tAc "SELECT count(*) FROM platform.users")
+        echo "{\"event\":\"restore_drill\",\"status\":\"ok\",\"platform_users\":${users}}" | logger -t pablo-backup
+        echo "Restore drill passed: the latest backup restores and answers (${users} users)."
+        ;;
+    *)
+        echo "usage: pablo-backup full|diff|info|restore-drill" >&2
+        exit 2
+        ;;
+esac

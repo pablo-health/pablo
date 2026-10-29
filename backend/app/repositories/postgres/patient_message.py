@@ -16,10 +16,11 @@ for a schema migrated without its policies.
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import String, Uuid, bindparam, func, or_, select, text
 
+from ...db import current_practice_schema
 from ...db.models import (
     PatientDocumentRow,
     PatientMessageAttachmentRow,
@@ -73,20 +74,20 @@ def _thread(row: PatientMessageThreadRow) -> PatientMessageThread:
 
 
 def _group_attachments(
-    rows: Sequence[Row[tuple[str, str, str, str, int]]],
+    rows: Sequence[Row[Any]],
 ) -> dict[str, list[MessageAttachment]]:
     """Fold the join's flat rows into one list per message."""
     from ...models import MessageAttachment  # noqa: PLC0415 — avoids a cycle at import time
 
     found: dict[str, list[MessageAttachment]] = {}
-    for message_id, document_id, filename, mime_type, size_bytes in rows:
-        found.setdefault(message_id, []).append(
+    for row in rows:
+        found.setdefault(row.message_id, []).append(
             MessageAttachment(
-                message_id=message_id,
-                document_id=document_id,
-                filename=filename,
-                mime_type=mime_type,
-                size_bytes=size_bytes,
+                message_id=row.message_id,
+                document_id=row.document_id,
+                filename=row.filename,
+                mime_type=row.mime_type,
+                size_bytes=row.size_bytes,
             )
         )
     return found
@@ -109,6 +110,13 @@ def _message(row: PatientMessageRow) -> PatientMessage:
 class PostgresPatientMessageRepository(PatientMessageRepository):
     def __init__(self, session: Session) -> None:
         self._session = session
+
+    def practice_schema(self) -> str | None:
+        """The practice schema this repository's session is pointed at; ``None`` without one."""
+        try:
+            return current_practice_schema(self._session)
+        except RuntimeError:
+            return None
 
     # --- internal helpers ---
 

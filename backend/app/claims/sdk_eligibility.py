@@ -32,6 +32,7 @@ from ..models.eligibility import (
     EligibilityStatus,
     VisitLimit,
 )
+from ..money import dollars_to_cents
 
 if TYPE_CHECKING:
     from stedi.models import (
@@ -69,12 +70,11 @@ def _dollars_to_cents(amount: str | None) -> int | None:
 
     The vendor sends decimal strings whose precision is whatever the payer
     sent (``25``, ``25.0``, ``25.00`` all occur), so this rounds rather than
-    truncating and never uses float arithmetic for the cents themselves.
+    truncating and never uses float arithmetic for the cents themselves. A
+    string that is not a number is left unsaid rather than failing the check.
     """
-    if amount is None:
-        return None
     try:
-        return round(float(amount) * 100)
+        return dollars_to_cents(amount)
     except ValueError:
         return None
 

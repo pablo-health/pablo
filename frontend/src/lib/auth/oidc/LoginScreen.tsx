@@ -65,11 +65,11 @@ export function OidcLoginScreen() {
         <button
           onClick={handleSignIn}
           disabled={redirecting}
-          className="w-full bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200 disabled:opacity-60 flex items-center justify-center gap-2"
+          className="auth-primary flex items-center justify-center gap-2"
         >
           {redirecting ? (
             <>
-              <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
               Redirecting to sign-in…
             </>
           ) : (

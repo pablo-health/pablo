@@ -1,0 +1,180 @@
+{
+  "drafted": {
+    "mdm": {
+      "data_reviewed": "State prescription monitoring program (PDMP) reviewed. Home blood pressure readings reviewed.",
+      "management_risk": "Prescription drug management involving the continuation of a controlled substance (methylphenidate).",
+      "problems_addressed": "ADHD combined, stable and well controlled. Work-related anxiety with avoidance and rumination, improving."
+    },
+    "mse": {
+      "speech": "Clinician stated: \"Speech normal in rate and volume.\"",
+      "cognition": "Not stated.",
+      "mood_affect": "Mood described as \"stressed\". Clinician stated affect: \"anxious but reactive and appropriate.\"",
+      "orientation": "Clinician stated: \"alert and oriented.\"",
+      "thought_content": "Clinician stated: \"No evidence of psychosis.\"",
+      "thought_process": "Clinician stated: \"linear and goal directed.\"",
+      "insight_judgment": "Clinician stated: \"Insight and judgment good.\"",
+      "appearance_behavior": "Clinician stated: \"Casually dressed, well groomed. Good eye contact on video.\""
+    },
+    "plan": {
+      "labs": "Home blood pressure 124/78. Recheck at the next visit.",
+      "pdmp": "State prescription monitoring program (PDMP) reviewed on 2026-10-06: no concerns",
+      "follow_up": "Return in four weeks.",
+      "medication_plan": [
+        "Continue methylphenidate 36 milligrams every morning. 30 day supply sent to the usual pharmacy."
+      ],
+      "informed_consent": "Not stated.",
+      "emergency_instructions": "Not stated.",
+      "referrals_coordination": ""
+    },
+    "risk": {
+      "safety_plan": "",
+      "overall_risk": "Clinician stated: \"Risk is assessed as low\"",
+      "self_harm_violence": "Clinician stated: \"No self harm, no access concerns raised.\"",
+      "risk_protective_factors": "Protective factors include stable employment, medication adherence, and a supportive relationship with their partner.",
+      "suicidal_homicidal_ideation": "Clinician stated: \"The client denies suicidal ideation, intent or plan. Denies homicidal ideation.\""
+    },
+    "measures": {
+      "measures_reviewed": ""
+    },
+    "encounter": {
+      "visit_details": "Date of service: 2026-10-06\nE/M code: Not stated.\nPsychotherapy add-on code: Not stated.\nPsychotherapy start and end time: Not stated.\nPsychotherapy minutes: 18 minutes.",
+      "place_of_service": "Visit conducted by synchronous audio and video telehealth on a HIPAA-compliant platform. The client was located at client's home; the provider was located at provider's office. The client consented to receive care by telehealth."
+    },
+    "assessment": {
+      "diagnoses": [
+        {
+          "code": null,
+          "label": "ADHD combined",
+          "status": null
+        }
+      ],
+      "formulation": "Clinician stated: \"Presentation stable and well controlled on the current dose. Work related anxiety with avoidance and rumination improving with cognitive behavioral work.\"",
+      "medical_necessity": "Continued treatment is necessary to manage ADHD symptoms with medication and to address work-related anxiety and avoidance behaviors through cognitive behavioral therapy."
+    },
+    "subjective": {
+      "adherence": "The client is taking methylphenidate 36 mg extended release every morning as prescribed. They report being careful to take it before 8:00 AM to avoid sleep disruption.",
+      "side_effects": "The client denies headaches and heart racing. They report slight jitteriness the first week that has since resolved. They report decreased appetite at lunch. They deny sleep issues as long as the medication is taken early.",
+      "chief_complaint": "The client stated, \"it's been a rough couple of weeks\" at work with a new manager, feeling like \"everything I handed comes back with comments.\"",
+      "psychiatric_ros": "Anxiety is present, specifically related to work. Sleep is adequate. Attention and focus are improved in the mornings but drift in the afternoons when the medication wears off. Psychosis is denied.",
+      "interval_history": "The client reports that methylphenidate is mostly good, helping them get through their inbox, though it wears off around 4:00 PM causing slight fogginess. They report significant work-related anxiety triggered by a new manager's feedback, leading to automatic thoughts of incompetence, avoidance behaviors (delaying email replies), and evening rumination. Sleep is adequate (6.5 to 7 hours) and restful if medication is taken before 8:00 AM. Appetite is reduced at lunch, but weight remains stable. Home blood pressure was checked and reported as 124/78."
+    },
+    "medications": {
+      "allergies": "Not stated.",
+      "current_medications": [
+        "methylphenidate 36 milligram extended release every morning",
+        "multivitamin"
+      ]
+    },
+    "psychotherapy": {
+      "progress": "The client demonstrated progress by successfully negotiating flexible hours on Fridays (a previous goal) and showing a reduction in in-session anxiety (from 85 to 40, and 8 to 4) when evaluating thoughts objectively.",
+      "response": "The client engaged well, successfully identified evidence contrary to their negative thoughts, recognized their cognitive distortions, and agreed to implement the behavioral experiments and structural changes.",
+      "goal_plan": "The client will conduct an email reply experiment (replying within two hours or by the end of the day, writing predictions and actual outcomes), schedule a 15-minute worry time at 7:00 PM, stop checking work emails after 7:00 PM, run twice a week (Tuesday and Saturday), and practice noticing the \"not trying hard enough\" story.",
+      "therapy_cadence": "Not stated.",
+      "issues_addressed": "Work-related anxiety, cognitive distortions (catastrophizing, mind reading, mental filter), avoidance behaviors (delaying email replies), evening rumination, and a core belief of \"not trying hard enough\" stemming from childhood ADHD experiences.",
+      "psychotherapy_time": "Start time: Not stated. End time: Not stated. Minutes: 18 minutes.",
+      "modality_interventions": "Cognitive behavioral therapy. Interventions included identifying automatic thoughts, completing a thought record to examine evidence for and against negative beliefs, identifying cognitive distortions, setting up a behavioral experiment for email replies, scheduling a dedicated worry time, and running the \"movie to the end\" to de-catastrophize worst-case scenarios."
+    },
+    "substance_use": {
+      "alcohol": "A beer or two on the weekend.",
+      "cannabis": "No cannabis.",
+      "other_substances": "Denies any other controlled medications, benzodiazepines, pain medication, sleeping pills, or other stimulants.",
+      "tobacco_nicotine": "Not asked."
+    }
+  },
+  "dictated": [
+    "Add to the plan. The client will send me a home. Blood pressure reading in two weeks."
+  ],
+  "redrafted": {
+    "mdm": {
+      "data_reviewed": "State prescription monitoring program (PDMP) report and home blood pressure readings.",
+      "management_risk": "Prescription drug management involving the continuation of a controlled substance.",
+      "problems_addressed": "ADHD combined: stable and well controlled. Work-related anxiety: improving."
+    },
+    "mse": {
+      "speech": "Clinician stated: \"Speech normal in rate and volume.\"",
+      "cognition": "Not stated.",
+      "mood_affect": "Clinician stated: \"Mood described as stressed. Affect anxious but reactive and appropriate.\"",
+      "orientation": "Clinician stated: \"alert and oriented.\"",
+      "thought_content": "Clinician stated: \"No evidence of psychosis.\"",
+      "thought_process": "Clinician stated: \"Thought process linear and goal directed.\"",
+      "insight_judgment": "Clinician stated: \"Insight and judgment good.\"",
+      "appearance_behavior": "Clinician stated: \"Casually dressed, well groomed. Good eye contact on video.\""
+    },
+    "plan": {
+      "labs": "The client will send a home blood pressure reading in two weeks. Recheck blood pressure at the next visit.",
+      "pdmp": "State prescription monitoring program (PDMP) reviewed on 2026-10-06: no concerns.",
+      "follow_up": "Return in four weeks.",
+      "medication_plan": [
+        "Continue methylphenidate 36 milligrams every morning. Reason: Presentation stable and well controlled on the current dose."
+      ],
+      "informed_consent": "Not stated.",
+      "emergency_instructions": "Not stated.",
+      "referrals_coordination": ""
+    },
+    "risk": {
+      "safety_plan": "",
+      "overall_risk": "Clinician stated: \"Risk is assessed as low\"",
+      "self_harm_violence": "Clinician stated: \"No self harm, no access concerns raised.\"",
+      "risk_protective_factors": "Protective factors include stable employment and a supportive partner.",
+      "suicidal_homicidal_ideation": "Clinician stated: \"The client denies suicidal ideation, intent or plan. Denies homicidal ideation.\""
+    },
+    "measures": {
+      "measures_reviewed": ""
+    },
+    "encounter": {
+      "visit_details": "Date of service: 2026-10-06.\nE/M code: Not stated.\nPsychotherapy add-on code: Not stated.\nPsychotherapy start time: Not stated.\nPsychotherapy end time: Not stated.\nPsychotherapy minutes: 18.",
+      "place_of_service": "Visit conducted by synchronous audio and video telehealth on a HIPAA-compliant platform. The client was located at client's home; the provider was located at provider's office. The client consented to receive care by telehealth."
+    },
+    "assessment": {
+      "diagnoses": [
+        {
+          "code": null,
+          "label": "ADHD combined",
+          "status": null
+        },
+        {
+          "code": null,
+          "label": "Work related anxiety",
+          "status": null
+        }
+      ],
+      "formulation": "Clinician stated: \"ADHD combined. Presentation stable and well controlled on the current dose. Work related anxiety with avoidance and rumination improving with cognitive behavioral work.\"",
+      "medical_necessity": "Continued treatment is necessary to manage ADHD symptoms with medication and to address work-related anxiety and avoidance through cognitive behavioral therapy."
+    },
+    "subjective": {
+      "adherence": "The client is taking the methylphenidate as prescribed. They noted taking it late once (around 10:00 AM) which delayed sleep, so they are now careful to take it early.",
+      "side_effects": "The client denies headaches, heart racing, or current jitteriness (noted slight jitteriness the first week that resolved). Reports reduced appetite at lunch. Denies sleep issues when medication is taken early.",
+      "chief_complaint": "The client is here for a medication follow-up and to discuss work-related anxiety, stating, \"it's been a rough couple of weeks. We got a new manager in September and I feel like everything I handed comes back with comments.\"",
+      "psychiatric_ros": "Mood/Anxiety: Positive for stress and anxiety related to work. Sleep: Positive for restful sleep. Attention: Positive for improved focus. Mania or hypomania, obsessions, trauma symptoms, and psychosis: Not stated.",
+      "interval_history": "The client reports that their methylphenidate is working well for focus, allowing them to get through their inbox, though it wears off around 4:00 PM causing slight fogginess. They are experiencing significant anxiety related to a new manager at work, leading to catastrophizing, rumination, and avoidance behaviors such as delaying email replies. Sleep is generally 6.5 to 7 hours and restful, provided the medication is taken before 8:00 AM. Appetite is reduced at lunch, but weight remains stable."
+    },
+    "medications": {
+      "allergies": "Not stated.",
+      "current_medications": [
+        "methylphenidate 36 milligram extended release every morning",
+        "multivitamin"
+      ]
+    },
+    "psychotherapy": {
+      "progress": "The client demonstrated progress by successfully asking for flexible hours on Fridays (a previous goal) and recognizing that their anxiety decreases when they evaluate the evidence against their automatic thoughts.",
+      "response": "The client engaged well, recognized their cognitive distortions, successfully identified evidence against their negative beliefs, and agreed to implement the behavioral experiments and new routines.",
+      "goal_plan": "The client will reply to comment emails within two hours (or by end of day if in meetings) and record predictions versus actual outcomes. They will implement a 15-minute worry time at 7:00 PM, stop checking work emails after 7:00 PM, run on Tuesday and Saturday mornings, and notice the \"not trying hard enough\" story.",
+      "therapy_cadence": "Not stated.",
+      "issues_addressed": "Work-related anxiety, cognitive distortions (catastrophizing, mind reading), rumination, and avoidance behaviors regarding emails and a new manager.",
+      "psychotherapy_time": "Start time: Not stated. End time: Not stated. Minutes: 18.",
+      "modality_interventions": "Cognitive behavioral therapy (CBT). Interventions included identifying automatic thoughts and mental filters, thought records (examining evidence for and against beliefs), behavioral experiments (replying to emails within two hours and predicting outcomes), scheduling worry time, and planning task management for ADHD."
+    },
+    "substance_use": {
+      "alcohol": "A beer or two on the weekend.",
+      "cannabis": "Denied.",
+      "other_substances": "Denies any other controlled medications, benzodiazepines, pain medications, sleeping pills, or other stimulants.",
+      "tobacco_nicotine": "Not asked."
+    }
+  },
+  "confirmed": {
+    "start_seconds": 241,
+    "minutes": 18,
+    "window_text": "3:08 PM to 3:26 PM, 18 minutes",
+    "keep_dictated": false
+  }
+}

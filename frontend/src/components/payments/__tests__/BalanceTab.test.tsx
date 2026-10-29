@@ -50,6 +50,12 @@ vi.mock("@/hooks/usePayments", () => ({
   }),
 }))
 
+// The superbill dialog reads the client's diagnosis setting off the chart.
+vi.mock("@/hooks/usePatients", () => ({
+  usePatient: () => ({ data: { superbill_includes_diagnosis: false } }),
+  useUpdatePatient: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}))
+
 vi.mock("@/lib/access/readOnlyMode", () => ({
   useReadOnlyMode: () => ({ readOnly: false }),
 }))
@@ -342,6 +348,17 @@ describe("BalanceTab", () => {
           "The statement could not be generated.",
         ),
       )
+    })
+  })
+
+  describe("the superbill", () => {
+    it("opens with the diagnosis left off", async () => {
+      setup()
+
+      await userEvent.click(screen.getByRole("button", { name: /Superbill/ }))
+
+      expect(screen.getByRole("dialog")).toBeInTheDocument()
+      expect(screen.getByLabelText("Include the diagnosis")).not.toBeChecked()
     })
   })
 })

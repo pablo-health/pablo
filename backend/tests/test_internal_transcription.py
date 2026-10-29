@@ -15,9 +15,18 @@ import types
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
+import pytest
 from app.routes import internal_transcription as it
 
 _JOB = {"transcript_id": "t1", "speaker": "Therapist", "original_offset": 0.0}
+
+
+def _submit_settings(*, chart_keyterms: bool = False) -> types.SimpleNamespace:
+    return types.SimpleNamespace(
+        transcription_audio_bucket="bucket",
+        transcription_task_queue="queue",
+        assemblyai_chart_keyterms=chart_keyterms,
+    )
 
 
 def _fake_session_db(session_row: object) -> tuple[MagicMock, MagicMock]:
@@ -44,9 +53,7 @@ class TestAssemblyAiSubmitWorker:
         fake_storage.download_bytes.side_effect = [b"therapist-bytes", b"client-bytes"]
         service = MagicMock()
         service.submit_dual_channel = AsyncMock(return_value=[_JOB])
-        settings = types.SimpleNamespace(
-            transcription_audio_bucket="bucket", transcription_task_queue="queue"
-        )
+        settings = _submit_settings()
 
         with (
             patch.object(it, "_resolve_schema_for_user", return_value=None),
@@ -82,6 +89,49 @@ class TestAssemblyAiSubmitWorker:
         mock_enqueue.assert_called_once()
         assert mock_enqueue.call_args.kwargs["endpoint_path"] == "/api/internal/transcription-poll"
 
+    @pytest.mark.parametrize("enabled", [True, False])
+    def test_the_vocabulary_is_read_from_the_chart_and_logged_by_count_only(
+        self, enabled: bool, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        session_row = types.SimpleNamespace(
+            video_platform=None,
+            transcription_job_metadata=None,
+            audio_gcs_path="audio/s1/therapist.pcm,audio/s1/client.pcm",
+            patient_id="p1",
+            status="transcribing",
+            error=None,
+        )
+        cm, db = _fake_session_db(session_row)
+        fake_storage = MagicMock()
+        fake_storage.download_bytes.side_effect = [b"therapist-bytes", b"client-bytes"]
+        service = MagicMock()
+        service.submit_dual_channel = AsyncMock(return_value=[_JOB])
+
+        with (
+            caplog.at_level(logging.INFO, logger=it.logger.name),
+            patch.object(it, "_resolve_schema_for_user", return_value=None),
+            patch.object(it, "create_standalone_session", return_value=cm),
+            patch.object(it, "file_storage_from_settings", return_value=fake_storage),
+            patch.object(it, "AssemblyAiTranscriptionService", return_value=service),
+            patch.object(it, "get_settings", return_value=_submit_settings(chart_keyterms=enabled)),
+            patch.object(it, "session_keyterms", return_value=["Sertraline", "Zoloft"]) as read,
+            patch.object(it, "enqueue_cloud_task"),
+        ):
+            it.assemblyai_submit(
+                it.AssemblyAiSubmitRequest(session_id="s1", user_id="u1"), _invoker=None
+            )
+
+        sent = service.submit_dual_channel.await_args.kwargs["keyterms"]
+        if enabled:
+            read.assert_called_once_with(db, "p1", "u1")
+            assert sent == ["Sertraline", "Zoloft"]
+        else:
+            read.assert_not_called()
+            assert sent == []
+        assert f"vocabulary of {len(sent)} terms" in caplog.text
+        assert "Sertraline" not in caplog.text
+        assert "Zoloft" not in caplog.text
+
     def test_already_submitted_is_idempotent(self) -> None:
         session_row = types.SimpleNamespace(
             video_platform=None,
@@ -93,9 +143,7 @@ class TestAssemblyAiSubmitWorker:
         cm, _db = _fake_session_db(session_row)
         service = MagicMock()
         service.submit_dual_channel = AsyncMock(return_value=[_JOB])
-        settings = types.SimpleNamespace(
-            transcription_audio_bucket="bucket", transcription_task_queue="queue"
-        )
+        settings = _submit_settings()
 
         with (
             patch.object(it, "_resolve_schema_for_user", return_value=None),
@@ -123,9 +171,7 @@ class TestAssemblyAiSubmitWorker:
             error=None,
         )
         cm, _db = _fake_session_db(session_row)
-        settings = types.SimpleNamespace(
-            transcription_audio_bucket="bucket", transcription_task_queue="queue"
-        )
+        settings = _submit_settings()
 
         with (
             patch.object(it, "_resolve_schema_for_user", return_value=None),
@@ -144,9 +190,7 @@ class TestAssemblyAiSubmitWorker:
 
     def test_missing_session_is_dropped(self) -> None:
         cm, _db = _fake_session_db(None)
-        settings = types.SimpleNamespace(
-            transcription_audio_bucket="bucket", transcription_task_queue="queue"
-        )
+        settings = _submit_settings()
 
         with (
             patch.object(it, "_resolve_schema_for_user", return_value=None),
@@ -197,9 +241,7 @@ class TestAssemblyAiSubmitWorker:
         }
         service = MagicMock()
         service.submit_dual_channel = AsyncMock(return_value=[dict(submitted_job)])
-        settings = types.SimpleNamespace(
-            transcription_audio_bucket="bucket", transcription_task_queue="queue"
-        )
+        settings = _submit_settings()
         real_shift_job_offsets = it.AssemblyAiTranscriptionService.shift_job_offsets
 
         with (
@@ -265,9 +307,7 @@ class TestAssemblyAiSubmitWorker:
         submitted_job = {"transcript_id": "t1", "speaker": "Therapist", "diarized": False}
         service = MagicMock()
         service.submit_dual_channel = AsyncMock(return_value=[dict(submitted_job)])
-        settings = types.SimpleNamespace(
-            transcription_audio_bucket="bucket", transcription_task_queue="queue"
-        )
+        settings = _submit_settings()
         real_shift_job_offsets = it.AssemblyAiTranscriptionService.shift_job_offsets
 
         with (

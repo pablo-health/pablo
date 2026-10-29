@@ -9,6 +9,7 @@
 
 import { getClientAuthProvider } from "@/lib/auth/provider"
 import { apiErrorInterceptors } from "./client.extensions"
+import { forwardedClientHeaders } from "./clientForwarding"
 
 /**
  * Observe a failed response before its body is consumed and return a partial
@@ -89,6 +90,30 @@ export function handleTerminalAuthLogout(reason: "idle_timeout" | "session_expir
     }
     window.location.assign(`/login?reason=${reason}${returnToParam()}`)
   })()
+}
+
+let dashboardStepUpInFlight = false
+
+/**
+ * Send a dashboard whose data loads are refused for want of a second factor
+ * to the passkey step-up page.
+ *
+ * The dashboard layout gates on the server session cookie, but the page's own
+ * requests carry the browser's Firebase token, and the two can disagree: a
+ * returning session can pass the gate on a cookie that holds the upgraded
+ * token while the browser sends one without the passkey factor. Every panel
+ * then fails with `MFA_REQUIRED` and nothing on the page offers a way out.
+ *
+ * Only reads trigger this. A refused mutation is an action the user just took
+ * — adding or removing a passkey in Settings — and that screen explains it
+ * inline. Re-entry guarded so a dashboard's burst of parallel loads navigates
+ * once.
+ */
+function handleDashboardStepUp() {
+  if (typeof window === "undefined" || dashboardStepUpInFlight) return
+  if (!(window.location?.pathname ?? "").startsWith("/dashboard")) return
+  dashboardStepUpInFlight = true
+  window.location.assign("/mfa-step-up")
 }
 
 /**
@@ -183,9 +208,9 @@ function findErrorEnvelope(data: unknown): ApiErrorResponse | null {
   const top = data as Record<string, unknown>
   const detail = top.detail
   if (typeof detail === "object" && detail !== null && "error" in detail) {
-    return detail as unknown as ApiErrorResponse
+    return detail as unknown as ApiErrorResponse  // parsed JSON narrowed structurally; no runtime schema validates it
   }
-  return top as unknown as ApiErrorResponse
+  return top as unknown as ApiErrorResponse  // parsed JSON narrowed structurally; no runtime schema validates it
 }
 
 /**
@@ -199,6 +224,29 @@ function plainDetailFrom(data: unknown): string | null {
   if (typeof data !== "object" || data === null) return null
   const detail = (data as Record<string, unknown>).detail
   return typeof detail === "string" && detail !== "" ? detail : null
+}
+
+/** One entry of a request-validation failure: where in the body, and why. */
+export interface ValidationIssue {
+  loc: (string | number)[]
+  msg: string
+}
+
+/**
+ * The per-field problems of a request the API refused as invalid (a 422 from
+ * request validation), which arrive as `{"detail": [{loc, msg, ...}]}` with no
+ * envelope. Carried on `ApiError.details.validation` so a form can put each
+ * message beside the field it names.
+ */
+function validationIssuesFrom(data: unknown): ValidationIssue[] | null {
+  if (typeof data !== "object" || data === null) return null
+  const detail = (data as Record<string, unknown>).detail
+  if (!Array.isArray(detail)) return null
+  const issues = detail.filter(
+    (d): d is ValidationIssue =>
+      typeof d === "object" && d !== null && Array.isArray(d.loc) && typeof d.msg === "string",
+  )
+  return issues.length > 0 ? issues.map(({ loc, msg }) => ({ loc, msg })) : null
 }
 
 export class ApiError extends Error {
@@ -258,7 +306,8 @@ export const TERMINAL_AUTH_CODES = new Set([
  *
  * Client-side: prefers the supplied token, else asks the active auth
  * provider for the current user's id token. Server-side: returns the
- * supplied token or null. Shared by ``apiClient`` and the SSE consumer so
+ * supplied token or null, and with a token, also the end user's IP and agent
+ * for the backend's audit records (see `clientForwarding.ts`). Shared by ``apiClient`` and the SSE consumer so
  * SSE calls land with the same auth posture as regular API calls without
  * going through the JSON fetch wrapper.
  *
@@ -278,11 +327,34 @@ export async function getAuthHeader(
       // Provider not initialized or no current user — proceed without token.
     }
   }
-  return authToken ? { Authorization: `Bearer ${authToken}` } : {}
+  if (!authToken) return {}
+  const auth = { Authorization: `Bearer ${authToken}` }
+  // A page rendered on the server calls the backend from the server, so pass
+  // along whose request it is rendering. Only for calls made on someone's
+  // behalf (a token), which are always inside a request.
+  if (typeof window === "undefined") {
+    return { ...(await forwardedClientHeaders()), ...auth }
+  }
+  return auth
 }
 
 export function buildApiUrl(endpoint: string): string {
   return `${getApiUrl()}${endpoint}`
+}
+
+/**
+ * The `X-Client-Build` header naming the commit this bundle was built from, or
+ * nothing when the build did not record one (a local `next dev`, a build made
+ * outside CI). It lets a failed request be matched to the build the person was
+ * actually running. The API never requires it.
+ *
+ * Read on each call rather than once at import: Next inlines the literal
+ * `process.env.NEXT_PUBLIC_…` reference at build time either way, and reading it
+ * late is what lets a test set it.
+ */
+function clientBuildHeader(): Record<string, string> {
+  const build = process.env.NEXT_PUBLIC_CLIENT_BUILD
+  return build ? { "X-Client-Build": build } : {}
 }
 
 /**
@@ -322,6 +394,7 @@ export async function apiClient<T>(
       ...(fetchOptions.body instanceof FormData
         ? {}
         : { "Content-Type": "application/json" }),
+      ...clientBuildHeader(),
       ...(fetchOptions.headers as Record<string, string>),
       ...(await getAuthHeader(token, forceRefresh)),
     }
@@ -374,7 +447,7 @@ export async function apiClient<T>(
         const text = await response.text()
         return (text ? JSON.parse(text) : undefined) as T
       }
-      return (await response.text()) as unknown as T
+      return (await response.text()) as unknown as T  // a non-JSON body is handed back as text for callers that ask for it
     }
 
     let errorData: ApiErrorResponse | null = null
@@ -395,7 +468,8 @@ export async function apiClient<T>(
       errorData?.error?.message ||
       plainDetailFrom(errorBody) ||
       `API request failed with status ${response.status}`
-    const errorDetails = errorData?.error?.details
+    const validation = validationIssuesFrom(errorBody)
+    const errorDetails = errorData?.error?.details ?? (validation ? { validation } : undefined)
 
     // An unrecoverable 401 boots the user to /login instead of stranding them
     // on a logged-in-looking page that throws on every action. IDLE_TIMEOUT
@@ -405,13 +479,20 @@ export async function apiClient<T>(
     // to client-managed tokens (no caller-supplied `token`), since a caller
     // that owns its token owns its own auth handling. Both paths are re-entry
     // guarded so a parallel burst of 401s fires one redirect. MFA_REQUIRED is
-    // intentionally excluded (it drives the step-up flow, not a logout).
+    // never a logout: a refused dashboard read goes to passkey step-up instead.
     if (response.status === 401 && typeof window !== "undefined") {
       if (errorCode === "IDLE_TIMEOUT") {
         handleTerminalAuthLogout("idle_timeout")
       } else if (!token && TERMINAL_AUTH_CODES.has(errorCode)) {
         handleTerminalAuthLogout("session_expired")
       }
+    }
+    if (
+      errorCode === "MFA_REQUIRED" &&
+      !token &&
+      (fetchOptions.method ?? "GET").toUpperCase() === "GET"
+    ) {
+      handleDashboardStepUp()
     }
 
     const apiError = new ApiError(errorCode, errorMessage, errorDetails, response.status)

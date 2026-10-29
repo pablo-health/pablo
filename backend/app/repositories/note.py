@@ -16,8 +16,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
+from ..models.enums import SessionStatus
+
 if TYPE_CHECKING:
     from ..models import Note
+    from ..models.note_signing import NoteAddendum, NoteSignature
+    from .session import InMemoryTherapySessionRepository
 
 
 class PatientAccessDeniedError(Exception):
@@ -101,8 +105,9 @@ class NotesRepository(ABC):
         """Count session-attached notes awaiting signature for accessible patients.
 
         Session-attached means ``session_id IS NOT NULL`` — these are the
-        "notes awaiting your signature" the dashboard surfaces. Counts over
-        the full set, not a page.
+        "notes awaiting your signature" the dashboard surfaces. An imported
+        note is never signed here, so its session's ``imported`` status
+        leaves it out. Counts over the full set, not a page.
         """
 
     @abstractmethod
@@ -116,6 +121,32 @@ class NotesRepository(ABC):
     @abstractmethod
     def delete(self, note_id: str, user_id: str) -> None:
         """Soft-delete a note. No-op if it doesn't exist or is inaccessible."""
+
+    # --- signed versions and addenda ---
+    #
+    # Callers load the note through :meth:`get` first, so these take the
+    # note's ``patient_id`` for the same access gate rather than re-reading
+    # the note. Reads return ``[]`` without access; writes raise.
+
+    @abstractmethod
+    def list_signatures(self, note: Note, user_id: str) -> list[NoteSignature]:
+        """Every signed version of the note, oldest first."""
+
+    @abstractmethod
+    def add_signature(self, signature: NoteSignature, user_id: str) -> NoteSignature:
+        """Insert a signed version."""
+
+    @abstractmethod
+    def record_unlock(self, signature: NoteSignature, user_id: str) -> NoteSignature:
+        """Write a signed version's unlock fields — the only change a version takes."""
+
+    @abstractmethod
+    def list_addenda(self, note: Note, user_id: str) -> list[NoteAddendum]:
+        """The note's addenda in chain order, oldest first."""
+
+    @abstractmethod
+    def add_addendum(self, addendum: NoteAddendum, user_id: str) -> NoteAddendum:
+        """Append an addendum."""
 
 
 _TEST_DEFAULT_USER = "__inmemory_test_default__"
@@ -140,8 +171,13 @@ class InMemoryNotesRepository(NotesRepository):
     the argument.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, session_repo: InMemoryTherapySessionRepository | None = None) -> None:
+        # Sessions, when given, so a count can leave out an imported note the
+        # way the Postgres query's join does.
+        self._session_repo = session_repo
         self._notes: dict[str, Note] = {}
+        self._signatures: dict[str, NoteSignature] = {}
+        self._addenda: list[NoteAddendum] = []
         self._access: set[tuple[str, str]] = set()  # (patient_id, user_id)
         self._allow_all = False
 
@@ -210,8 +246,16 @@ class InMemoryNotesRepository(NotesRepository):
             for n in self._notes.values()
             if n.session_id is not None
             and n.finalized_at is None
+            and not self._imported(n.session_id)
             and self._can_access(n.patient_id, user_id)
         )
+
+    def _imported(self, session_id: str) -> bool:
+        # Read past the session repo's own access set, as the SQL join does:
+        # the note's access was checked already.
+        sessions = self._session_repo._sessions if self._session_repo else {}
+        session = sessions.get(session_id)
+        return session is not None and session.status == SessionStatus.IMPORTED
 
     def list_finalized(
         self, user_id: str = _TEST_DEFAULT_USER, *, limit: int | None = None
@@ -249,3 +293,37 @@ class InMemoryNotesRepository(NotesRepository):
         if not self._can_access(existing.patient_id, user_id):
             return
         self._notes.pop(note_id, None)
+
+    # --- signed versions and addenda ---
+
+    def list_signatures(self, note: Note, user_id: str = _TEST_DEFAULT_USER) -> list[NoteSignature]:
+        if not self._can_access(note.patient_id, user_id):
+            return []
+        found = [s for s in self._signatures.values() if s.note_id == note.id]
+        return sorted(found, key=lambda s: s.version)
+
+    def add_signature(
+        self, signature: NoteSignature, user_id: str = _TEST_DEFAULT_USER
+    ) -> NoteSignature:
+        if not self._can_access(signature.patient_id, user_id):
+            raise PatientAccessDeniedError(signature.patient_id, user_id)
+        self._signatures[signature.id] = signature
+        return signature
+
+    def record_unlock(
+        self, signature: NoteSignature, user_id: str = _TEST_DEFAULT_USER
+    ) -> NoteSignature:
+        return self.add_signature(signature, user_id)
+
+    def list_addenda(self, note: Note, user_id: str = _TEST_DEFAULT_USER) -> list[NoteAddendum]:
+        if not self._can_access(note.patient_id, user_id):
+            return []
+        return [a for a in self._addenda if a.note_id == note.id]
+
+    def add_addendum(
+        self, addendum: NoteAddendum, user_id: str = _TEST_DEFAULT_USER
+    ) -> NoteAddendum:
+        if not self._can_access(addendum.patient_id, user_id):
+            raise PatientAccessDeniedError(addendum.patient_id, user_id)
+        self._addenda.append(addendum)
+        return addendum

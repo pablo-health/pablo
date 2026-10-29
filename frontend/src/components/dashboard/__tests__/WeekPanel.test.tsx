@@ -51,6 +51,24 @@ describe("WeekPanel", () => {
     expect(upcomingRow).toHaveAttribute("href", "/dashboard/calendar")
   })
 
+  // A failed load used to show every count as 0, which reads as "nothing to do".
+  it("says the numbers didn't load instead of showing zeros", () => {
+    const refetch = vi.fn()
+    useDashboardSummary.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      refetch,
+    })
+
+    renderPanel()
+
+    expect(screen.getByText("This week’s numbers didn’t load.")).toBeInTheDocument()
+    expect(screen.queryByText(/notes awaiting your review/i)).not.toBeInTheDocument()
+    screen.getByRole("button", { name: "Try again" }).click()
+    expect(refetch).toHaveBeenCalledTimes(1)
+  })
+
   it("renders em-dash placeholders while loading", () => {
     useDashboardSummary.mockReturnValue({ data: undefined, isLoading: true })
 

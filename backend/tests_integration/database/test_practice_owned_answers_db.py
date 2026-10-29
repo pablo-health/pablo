@@ -24,12 +24,10 @@ import os
 import threading
 import uuid
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 from alembic import command
-from alembic.config import Config
 from alembic.script import ScriptDirectory
 from app.calendar_providers.source_identity import (
     GOOGLE_CALENDAR_SOURCE,
@@ -55,7 +53,7 @@ from app.scheduling_engine.exceptions import OutsideEventAlreadyBookedError
 from app.scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from app.services.outside_sessions import OutsideSessions
 from app.settings import get_settings
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
@@ -77,17 +75,6 @@ _B = "66666666-7777-8888-9999-000000000000"
 MAIN = "shared@group.calendar.google.test"
 SH = "sessions_health"
 _ROLE = "pablo_practice_directory"
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_db_url, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 def _new_key() -> str:

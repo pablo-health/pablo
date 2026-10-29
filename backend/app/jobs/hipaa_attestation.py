@@ -29,6 +29,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from ..logging_config import configure_job_logging
+
 logger = logging.getLogger("hipaa_attestation")
 
 
@@ -62,7 +64,7 @@ class Evidence:
 
 
 def run() -> int:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    configure_job_logging()
 
     gcs_bucket = os.environ.get("COMPLIANCE_REPORT_BUCKET")
     project_id = os.environ.get("GCP_PROJECT_ID") or os.environ.get(
@@ -150,6 +152,7 @@ def _empty_inventory() -> dict[str, Any]:
 def _bucket_inventory(gcs_bucket: str) -> dict[str, Any]:
     """List evidence blobs under each routine's prefix and summarize."""
     try:
+        # google.cloud is a namespace package that mypy cannot resolve
         from google.cloud import storage  # type: ignore[attr-defined]  # noqa: PLC0415
     except ImportError:
         logger.exception("google-cloud-storage not installed — empty inventory")
@@ -202,6 +205,7 @@ def _bucket_retention(gcs_bucket: str | None) -> tuple[int | None, bool | None]:
     if not gcs_bucket:
         return None, None
     try:
+        # google.cloud is a namespace package that mypy cannot resolve
         from google.cloud import storage  # type: ignore[attr-defined]  # noqa: PLC0415
     except ImportError:
         return None, None
@@ -305,7 +309,7 @@ record; session tokens are bound to the UUID, not the email.
   Platform policy).
 - Password policy is NIST SP 800-63B compliant (minimum 15
   characters, no composition rules, breach-list checks) — configured
-  by `setup-solo.sh` step 6e.
+  by `install.sh` (`deploy/vm/lib/identity.sh`).
 
 *Verify in GCP Console → Identity Platform → Settings → Sign-in methods.*
 
@@ -402,6 +406,7 @@ def _write_report(report: str, gcs_bucket: str | None) -> str:
         sys.stdout.write(report + "\n")
         return f"stdout://{filename}"
     try:
+        # google.cloud is a namespace package that mypy cannot resolve
         from google.cloud import storage  # type: ignore[attr-defined]  # noqa: PLC0415
     except ImportError:
         logger.exception("google-cloud-storage not installed — cannot upload")

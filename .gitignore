@@ -63,6 +63,8 @@ local/
 
 # End-to-end suite output (frontend/e2e): reports, traces, saved sign-in state
 frontend/e2e/test-results/
+frontend/test-results/
+functions/lib/
 frontend/e2e/playwright-report/
 frontend/e2e/.auth/
 
@@ -70,6 +72,10 @@ frontend/e2e/.auth/
 .dolt/
 *.db
 .beads-credential-key
+# The board export is published to the `beads-metadata` branch, not main; a
+# local `bd export` here is scratch. Kept out of .beads/.gitignore so local
+# overrides of that directory's tracked files are not disturbed.
+/.beads/issues.jsonl
 
 # Per-run pentest reports detail the live attack surface — on-request only, never committed.
 # (Methodology guide, README, and VULNERABILITY_EXCEPTIONS.md stay tracked.)

@@ -12,8 +12,9 @@
  * undone. Uploading the same export again adds only what is new.
  */
 
-import { useEffect, useState } from "react"
+import { Suspense, useEffect, useState } from "react"
 import Link from "next/link"
+import { useSearchParams } from "next/navigation"
 import { Loader2 } from "lucide-react"
 import { useQueryClient } from "@tanstack/react-query"
 import { SettingsCard } from "../ui"
@@ -45,12 +46,25 @@ function Receipt({ run }: { run: ImportRunDetail }) {
   const clients = (counts.contact?.created ?? 0) + (counts.contact?.merged ?? 0)
   const notes = counts.note?.new ?? 0
   const skipped = run.report?.not_landed.length ?? 0
+  // Clients whose imported notes proposed something for their chart; the
+  // proposals wait at the top of each one's Chart card.
+  const checked = run.report?.chart_updates
+  const charts = checked?.clients ?? 0
   return (
     <div role="status" data-testid="import-receipt" className="space-y-1 text-sm">
       <p className="text-foreground">
         Imported {clients} {clients === 1 ? people.one : people.many} and {notes}{" "}
         {notes === 1 ? "note" : "notes"}.
       </p>
+      {!checked && notes > 0 && (
+        <p className="text-xs text-muted-foreground">Reading the notes for chart updates…</p>
+      )}
+      {charts > 0 && (
+        <p className="text-foreground" data-testid="import-chart-updates">
+          Chart updates from the notes are ready to review on {charts}{" "}
+          {charts === 1 ? people.one : people.many}, at the top of each chart.
+        </p>
+      )}
       {skipped > 0 && (
         <p className="text-xs text-muted-foreground">
           {skipped === 1 ? "1 item stayed behind." : `${skipped} items stayed behind.`} History has the details.
@@ -70,12 +84,31 @@ function Receipt({ run }: { run: ImportRunDetail }) {
   )
 }
 
+/**
+ * Opens the run a link names (`?run=<id>`), so a chart's "Imported from" line
+ * lands on that import in history. Its own component behind a Suspense
+ * boundary, because reading search params suspends a client render; read
+ * through the router rather than `window.location`, which on an in-app link
+ * still shows the page the reader came from on first render.
+ */
+function RunFromLink({ onRun }: { onRun: (runId: string) => void }) {
+  const asked = useSearchParams().get("run")
+  useEffect(() => {
+    if (asked) onRun(asked)
+  }, [asked, onRun])
+  return null
+}
+
 export function ImportPage() {
   const queryClient = useQueryClient()
   const people = usePeopleTerm()
   const history = useImportHistory()
   const [activeId, setActiveId] = useState<string | null>(null)
+  // The run a link asked for, shown open in history.
+  const [openId, setOpenId] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
+  // Opens a protected export; sent with the upload, kept nowhere.
+  const [password, setPassword] = useState("")
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const active = useImportRun(activeId)
@@ -101,7 +134,7 @@ export function ImportPage() {
     setUploading(true)
     setError(null)
     try {
-      const started = await startImport(file)
+      const started = await startImport(file, "both", password.trim() || undefined)
       queryClient.setQueryData(importKeys.run(started.id), started)
       setActiveId(started.id)
       await queryClient.invalidateQueries({ queryKey: importKeys.runs() })
@@ -157,10 +190,32 @@ export function ImportPage() {
 
   return (
     <div className="space-y-6">
+      <Suspense fallback={null}>
+        <RunFromLink onRun={setOpenId} />
+      </Suspense>
       <SettingsCard
         title="Import from SimplePractice"
         description={`Upload your SimplePractice export to bring your ${people.many} and notes across. You can upload a newer export later; only what's new is added.`}
       >
+        {/* SimplePractice protects every export with a password and shows it
+            beside the download. It opens the zip once and is kept nowhere. */}
+        <div className="mb-4 max-w-sm space-y-1">
+          <label htmlFor="import-export-password" className="text-sm font-medium text-foreground">
+            Export password
+          </label>
+          <input
+            id="import-export-password"
+            type="password"
+            autoComplete="off"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            data-testid="import-archive-password"
+            className="border-input focus-visible:border-ring focus-visible:ring-ring/50 flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:ring-[3px]"
+          />
+          <p className="text-xs text-muted-foreground">
+            SimplePractice shows it when the export is ready to download.
+          </p>
+        </div>
         <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">
           {uploading && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
           {uploading ? "Uploading" : "Upload export (.zip)"}
@@ -209,6 +264,7 @@ export function ImportPage() {
           <ImportHistory
             runs={history.data.runs}
             busyId={busyId}
+            openId={openId}
             onUndo={handleUndo}
             onDeleteArchive={handleDeleteArchive}
           />

@@ -88,9 +88,11 @@ function addSecurityHeaders(response: NextResponse, nonce: string): NextResponse
   response.headers.set("X-Content-Type-Options", "nosniff")
   response.headers.set("X-Frame-Options", "DENY")
   response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin")
+  // Same policy as next.config.ts: the microphone only for this site's own
+  // pages (dictating to a note).
   response.headers.set(
     "Permissions-Policy",
-    "geolocation=(), microphone=(), camera=()"
+    "geolocation=(), microphone=(self), camera=()"
   )
   return response
 }

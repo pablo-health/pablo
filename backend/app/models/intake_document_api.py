@@ -93,10 +93,15 @@ class PatientDocumentResponse(BaseModel):
 
 
 class StarterSummary(BaseModel):
-    """``GET /api/intake/starters``: one document a practice can start from."""
+    """``GET /api/intake/starters``: one document or set of questions a
+    practice can start from."""
 
     key: str
     title: str
+    #: Whether adopting it adds a document to read and sign, or only
+    #: questions. The editor offers the first kind beside the practice's own
+    #: documents, and the second beside its questions.
+    has_document: bool
 
 
 class StarterAdoptedResponse(BaseModel):
@@ -104,12 +109,13 @@ class StarterAdoptedResponse(BaseModel):
 
     The practice's published copy of the document, and the items to put on a
     form for it: a consent item pointing at the copy, then the starter's own
-    questions. The items are handed back rather than written onto a form, so
-    the editor adds them to the draft the practice has open, beside whatever
-    else it has not saved yet.
+    questions. A starter that is questions alone has no document, and its
+    items are just its questions. The items are handed back rather than
+    written onto a form, so the editor adds them to the draft the practice
+    has open, beside whatever else it has not saved yet.
     """
 
-    document: IntakeDocumentResponse
+    document: IntakeDocumentResponse | None
     items: list[ItemDraft]
 
 

@@ -41,7 +41,7 @@ export function SettingsNav() {
             desc: sayPeople(item.desc, people),
           }))
           .filter((item) => {
-            if (!isOn(item.feature)) return false
+            if (!isOn(item.feature) || item.inNav === false) return false
             if (!needle) return true
             return `${item.label} ${item.desc} ${group.label}`.toLowerCase().includes(needle)
           }),

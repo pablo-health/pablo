@@ -3,69 +3,75 @@
 "use client"
 
 import { useState } from "react"
-import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
-import { useAudioRetention } from "@/hooks/useAudioRetention"
+import { Input } from "@/components/ui/input"
+import { useAudioRetention, useAudioRetentionSetting } from "@/hooks/useAudioRetention"
 import { ApiError } from "@/lib/api/client"
 import {
   AUDIO_RETENTION_DEFAULT_DAYS,
   AUDIO_RETENTION_MAX_DAYS,
   AUDIO_RETENTION_MIN_DAYS,
+  AUDIO_RETENTION_ON_SIGNING,
 } from "@/lib/api/practices"
 
-interface AudioRetentionSettingsProps {
-  practiceId: string
-  /**
-   * Current retention window from the backend, if known. If omitted,
-   * the slider initializes at the documented default (365 days). The
-   * endpoint accepts only PUT — there is no GET — so callers that
-   * don't already have the value must accept this default.
-   */
-  initialDays?: number
+type Choice = "on_signing" | "days"
+
+/**
+ * When the practice deletes session audio: once the note is signed, or a
+ * number of days after the session.
+ *
+ * Deleting on signing waits for the signature because redrafting a note and
+ * dictating more both use the recording; the backend deletes it in the request
+ * that signs (app.services.audio_retention).
+ */
+export function AudioRetentionSettings() {
+  const { data, error, isLoading } = useAudioRetentionSetting()
+  if (error instanceof ApiError && error.status === 403) {
+    return (
+      <p className="text-sm text-neutral-600">
+        Only the practice owner can change this.
+      </p>
+    )
+  }
+  if (isLoading || !data) return null
+  return <RetentionForm savedDays={data.audio_retention_days} />
 }
 
-export function AudioRetentionSettings({
-  practiceId,
-  initialDays,
-}: AudioRetentionSettingsProps) {
-  const persisted = initialDays ?? AUDIO_RETENTION_DEFAULT_DAYS
-  const [days, setDays] = useState<number>(persisted)
-  const [savedDays, setSavedDays] = useState<number>(persisted)
+function RetentionForm({ savedDays: initialSaved }: { savedDays: number }) {
+  const [savedDays, setSavedDays] = useState(initialSaved)
+  const [choice, setChoice] = useState<Choice>(
+    initialSaved === AUDIO_RETENTION_ON_SIGNING ? "on_signing" : "days",
+  )
+  const [daysText, setDaysText] = useState(
+    String(
+      initialSaved === AUDIO_RETENTION_ON_SIGNING ? AUDIO_RETENTION_DEFAULT_DAYS : initialSaved,
+    ),
+  )
   const [showSaved, setShowSaved] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-
   const mutation = useAudioRetention()
 
+  const days = choice === "on_signing" ? AUDIO_RETENTION_ON_SIGNING : Number(daysText)
+  const daysValid =
+    choice === "on_signing" ||
+    (Number.isInteger(days) && days >= AUDIO_RETENTION_MIN_DAYS && days <= AUDIO_RETENTION_MAX_DAYS)
   const isDirty = days !== savedDays
   const isSaving = mutation.isPending
 
   const handleSave = () => {
     setErrorMessage(null)
     mutation.mutate(
-      { practiceId, days },
+      { days },
       {
-        onSuccess: (data) => {
-          setSavedDays(data.audio_retention_days)
-          setDays(data.audio_retention_days)
+        onSuccess: (saved) => {
+          setSavedDays(saved.audio_retention_days)
           setShowSaved(true)
           window.setTimeout(() => setShowSaved(false), 2000)
         },
         onError: (err) => {
-          if (err instanceof ApiError && err.status === 400) {
-            setErrorMessage(
-              `Days must be between ${AUDIO_RETENTION_MIN_DAYS} and ${AUDIO_RETENTION_MAX_DAYS}.`,
-            )
-          } else if (err instanceof ApiError && err.status === 422) {
-            setErrorMessage(
-              `Days must be between ${AUDIO_RETENTION_MIN_DAYS} and ${AUDIO_RETENTION_MAX_DAYS}.`,
-            )
-          } else {
-            setErrorMessage(
-              err instanceof Error
-                ? err.message
-                : "Failed to update audio retention.",
-            )
-          }
+          setErrorMessage(
+            err instanceof Error ? err.message : "Couldn't save the audio setting.",
+          )
         },
       },
     )
@@ -73,56 +79,58 @@ export function AudioRetentionSettings({
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-2 max-w-md">
-        <div className="flex items-center justify-between">
-          <Label htmlFor="audio-retention-days">Retention window</Label>
-          <span
-            className="text-sm font-medium text-neutral-900"
-            aria-live="polite"
-            data-testid="audio-retention-value"
-          >
-            {days} days
-          </span>
+      <fieldset className="space-y-3" disabled={isSaving}>
+        <legend className="sr-only">When session audio is deleted</legend>
+        <label className="flex items-center gap-2 text-sm text-neutral-900">
+          <input
+            type="radio"
+            name="audio-retention"
+            checked={choice === "on_signing"}
+            onChange={() => setChoice("on_signing")}
+            className="accent-primary"
+          />
+          Delete when the note is signed
+        </label>
+        <div className="flex flex-wrap items-center gap-2 text-sm text-neutral-900">
+          <label className="flex items-center gap-2">
+            <input
+              type="radio"
+              name="audio-retention"
+              checked={choice === "days"}
+              onChange={() => setChoice("days")}
+              className="accent-primary"
+            />
+            Delete after
+          </label>
+          <Input
+            type="number"
+            inputMode="numeric"
+            aria-label="Days to keep session audio"
+            min={AUDIO_RETENTION_MIN_DAYS}
+            max={AUDIO_RETENTION_MAX_DAYS}
+            value={daysText}
+            onChange={(e) => {
+              setDaysText(e.target.value)
+              setChoice("days")
+            }}
+            className="w-24"
+          />
+          <span>days after the session</span>
         </div>
-        <input
-          id="audio-retention-days"
-          type="range"
-          min={AUDIO_RETENTION_MIN_DAYS}
-          max={AUDIO_RETENTION_MAX_DAYS}
-          step={1}
-          value={days}
-          onChange={(e) => setDays(Number(e.target.value))}
-          disabled={isSaving}
-          aria-valuemin={AUDIO_RETENTION_MIN_DAYS}
-          aria-valuemax={AUDIO_RETENTION_MAX_DAYS}
-          aria-valuenow={days}
-          className="w-full h-2 bg-neutral-200 rounded-lg appearance-none cursor-pointer accent-primary disabled:opacity-50 disabled:cursor-not-allowed"
-        />
-        <div className="flex justify-between text-xs text-neutral-500">
-          <span>{AUDIO_RETENTION_MIN_DAYS} days</span>
-          <span>{AUDIO_RETENTION_MAX_DAYS} days</span>
-        </div>
-      </div>
+      </fieldset>
 
-      <p className="text-sm text-neutral-600">
-        Recordings older than {days} days are deleted nightly; each deletion
-        writes an audit log row.
-      </p>
+      {!daysValid && (
+        <p className="text-sm text-red-600" role="alert">
+          Enter a number of days from {AUDIO_RETENTION_MIN_DAYS} to {AUDIO_RETENTION_MAX_DAYS}.
+        </p>
+      )}
 
       <div className="flex items-center gap-3">
-        <Button
-          size="sm"
-          onClick={handleSave}
-          disabled={!isDirty || isSaving}
-        >
+        <Button size="sm" onClick={handleSave} disabled={!isDirty || !daysValid || isSaving}>
           {isSaving ? "Saving..." : "Save"}
         </Button>
         {showSaved && (
-          <span
-            className="text-sm text-secondary-600"
-            role="status"
-            aria-live="polite"
-          >
+          <span className="text-sm text-secondary-600" role="status" aria-live="polite">
             Saved
           </span>
         )}

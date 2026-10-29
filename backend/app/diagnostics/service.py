@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, cast
 
 from ..models.enums import OutcomeMeasureSource
 from ..repositories.diagnostic_assessment import PatientDiagnosticAccessDeniedError
+from ..repositories.row import Row
 from ..utcnow import utc_now
 from .evaluator import UnknownEvaluatorTypeError, evaluate
 from .schemas import (
@@ -113,7 +114,7 @@ class DiagnosticService:
 
         now = utc_now()
         confirmed = request.source == OutcomeMeasureSource.MANUAL
-        row: dict[str, object] = {
+        row: Row = {
             "id": str(uuid.uuid4()),
             "patient_id": patient_id,
             "session_id": request.session_id,
@@ -167,14 +168,14 @@ class DiagnosticService:
     ) -> list[DiagnosticAssessmentResponse]:
         rows = self._repo.list_by_patient(patient_id, user_id, instrument=instrument)
         live = [r for r in rows if r.get("deleted_at") is None]
-        live.sort(key=lambda r: r["assessed_at"])  # type: ignore[arg-type, return-value]
+        live.sort(key=lambda r: r["assessed_at"])
         return [self._build_response(r) for r in live]
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
-    def _build_response(self, row: dict[str, object]) -> DiagnosticAssessmentResponse:
+    def _build_response(self, row: Row) -> DiagnosticAssessmentResponse:
         code = str(row["instrument"])
         version = int(cast("int", row["definition_version"]))
         criterion_responses = cast("dict[str, bool]", row.get("criterion_responses") or {})
@@ -202,12 +203,13 @@ class DiagnosticService:
             meets_criteria=(None if (mc := row.get("meets_criteria")) is None else bool(mc)),
             determined_icd10=determined,
             diagnosis_label=label,
+            problem_id=str(row["problem_id"]) if row.get("problem_id") else None,
             source=str(row["source"]),
-            confirmed_at=row.get("confirmed_at"),  # type: ignore[arg-type]
-            assessed_at=row["assessed_at"],  # type: ignore[arg-type]
+            confirmed_at=row.get("confirmed_at"),
+            assessed_at=row["assessed_at"],
             created_by=str(row["created_by"]),
-            created_at=row["created_at"],  # type: ignore[arg-type]
-            updated_at=row["updated_at"],  # type: ignore[arg-type]
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
             suggested_icd10=suggested,
             unmet_reasons=unmet,
         )

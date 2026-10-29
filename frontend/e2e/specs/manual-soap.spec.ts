@@ -3,7 +3,7 @@
 import { test, expect } from "../fixtures/auth"
 import { givePatient } from "../fixtures/scenarios"
 
-test("a clinician authors, persists, and finalizes a manual SOAP note", async ({
+test("a clinician authors, persists, and signs a manual SOAP note", async ({
   signedInPage: page,
   api,
 }) => {
@@ -33,11 +33,16 @@ test("a clinician authors, persists, and finalizes a manual SOAP note", async ({
   await page.reload()
   await expect(page.getByText(complaint)).toBeVisible()
 
-  const finalized = page.waitForResponse(
-    (response) => response.url().endsWith("/finalize") && response.ok(),
+  const signed = page.waitForResponse(
+    (response) => response.url().endsWith("/sign") && response.ok(),
   )
-  await page.getByRole("button", { name: /Finalize note/ }).click()
-  await finalized
-  await expect(page.getByText(/Finalized \d/)).toBeVisible()
+  await page.getByRole("button", { name: "Sign and lock" }).click()
+  const signDialog = page.getByRole("dialog", { name: "Sign and lock note" })
+  await signDialog.getByLabel("Your name").fill("Sam Ortiz")
+  await signDialog.getByRole("button", { name: "Sign and lock" }).click()
+  await signed
+  await expect(page.getByTestId("signature-block")).toContainText(
+    "Electronically signed by Sam Ortiz",
+  )
   await expect(page.getByRole("button", { name: /^Edit$/ })).toHaveCount(0)
 })

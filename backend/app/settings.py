@@ -17,7 +17,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import Field, PositiveInt, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Matches -prod, -production, -prod<N> at end of project id. The
@@ -52,6 +52,19 @@ class Settings(BaseSettings):
     environment: Literal["development", "staging", "production"] = Field(
         default="production",
         description="Deployment environment",
+    )
+    # entrypoint.py reads WEB_CONCURRENCY itself, before anything imports
+    # Settings; this field exists so the app can see the worker count too.
+    web_concurrency: int = Field(
+        default=1,
+        ge=1,
+        description=(
+            "Number of uvicorn worker processes. Leave at 1 on platforms that "
+            "add instances under load; raise it on a fixed-size host so one "
+            "slow request does not hold up the rest. Above 1, the in-process "
+            "background loops (calendar auto-sync, claims pipeline) must be "
+            "off, since each worker would run its own copy."
+        ),
     )
 
     # Security Settings - HIPAA TLS Requirements
@@ -202,6 +215,20 @@ class Settings(BaseSettings):
             "end), never the leftmost (client-spoofable) entry. Cloud Run "
             "directly = 1 (GFE appends the real client IP last); add 1 per "
             "extra trusted proxy (e.g. an external HTTP(S) load balancer)."
+        ),
+    )
+    frontend_forward_secret: SecretStr = Field(
+        default=SecretStr(""),
+        description=(
+            "Lets the frontend server pass the end user's IP and user agent to "
+            "the backend for audit records. When the web app renders a page on "
+            "its server, its calls to the backend come from the server, not the "
+            "user's device; with this set, a request carrying a matching "
+            "X-Pablo-Frontend-Auth header has its X-Pablo-Client-IP and "
+            "X-Pablo-Client-UA headers recorded instead. Set the same value as "
+            "the frontend's FRONTEND_FORWARD_SECRET. Comma-separated to accept "
+            "more than one during a rotation. Empty (default): the headers are "
+            "ignored."
         ),
     )
 
@@ -440,10 +467,33 @@ class Settings(BaseSettings):
             "Directory an uploaded records-system export is unpacked into while "
             "it is previewed and applied. One subdirectory per practice (a hash "
             "of the tenant, never its name). Archives are deleted on apply and "
-            "at most 48 hours after upload. Must be storage every backend "
-            "instance that serves the practice can read — a single-instance "
-            "deployment can use local disk; a multi-instance one needs a "
-            "shared volume."
+            "at most 48 hours after upload. On a deployment with more than one "
+            "backend instance this is only a per-instance cache: set "
+            "import_archive_storage_root too, so every instance can fetch the "
+            "archive."
+        ),
+    )
+    import_archive_storage_root: str | None = Field(
+        default=None,
+        description=(
+            "Where an uploaded export is kept so that any backend instance can "
+            "read it: gs://<bucket>[/prefix], s3://<bucket>[/prefix], or an "
+            "absolute directory every instance mounts. One plain zip per import "
+            "run, written unlocked (the export's password opens the upload once "
+            "and is kept nowhere), deleted on apply and at most 48 hours after "
+            "upload. Unset on a single-instance deployment: the unpacked copy in "
+            "import_archive_dir is then the only one."
+        ),
+    )
+    import_task_queue: str = Field(
+        default="pablo-soap-generation",
+        description=(
+            "Cloud Tasks queue for an import's preview and apply, which read "
+            "every file in the export and can run for minutes. Reuses the "
+            "pablo-soap-generation queue (same IAM, same retry profile) so it "
+            "ships with no new infrastructure; in development the steps run as "
+            "request background tasks instead, and a deployment without a queue "
+            "keeps doing that."
         ),
     )
     webauthn_attestation_roots_dir: str = Field(
@@ -561,6 +611,12 @@ class Settings(BaseSettings):
                 # transcript.
                 raise ValueError(
                     "NOTE_GENERATION_BASE_URL must not be set outside ENVIRONMENT=development"
+                )
+            if self.dictation_transcription_base_url:
+                # And here it is the clinician's recorded voice.
+                raise ValueError(
+                    "DICTATION_TRANSCRIPTION_BASE_URL must not be set outside "
+                    "ENVIRONMENT=development"
                 )
         return self
 
@@ -723,6 +779,19 @@ class Settings(BaseSettings):
     firebase_workload_identity: bool = Field(
         default=False,
         description="Use Workload Identity Federation for Firebase Admin creds (non-GCP hosts)",
+    )
+    # Application default credentials that impersonate a service account (a
+    # developer's own sign-in, off Google Cloud) can sign bytes through IAM but
+    # are not a key firebase-admin can sign a custom token with directly. Naming
+    # the account routes custom-token signing (passkeys) through IAM signBlob,
+    # the same way the workload-identity path does. On Google Cloud the metadata
+    # server's credentials already sign that way; leave it empty there.
+    firebase_service_account_id: str = Field(
+        default="",
+        description=(
+            "Service account email firebase-admin signs custom tokens as, through "
+            "IAM signBlob, when application default credentials impersonate it."
+        ),
     )
     firebase_wif_audience: str = Field(
         default="",
@@ -898,6 +967,20 @@ class Settings(BaseSettings):
             "Bucket for practices' published websites, on the provider "
             "selected by file_storage_provider. Leave unset to turn practice "
             "websites off."
+        ),
+    )
+    # Serving published websites from object storage (app.sites.mirror and
+    # app.jobs.practice_domain_reconcile). Unset, a website host is answered
+    # by the frontend, which fetches the files through the backend. Set, the
+    # reconciler copies each published version into this world-readable
+    # bucket and routes the website's hosts straight at it, so a visitor's
+    # request never reaches the deployment. Needs practice_domain_site_backend.
+    practice_site_live_bucket: str | None = Field(
+        default=None,
+        description=(
+            "World-readable bucket, on the same provider as practice_site_bucket, "
+            "that published websites are copied to and served from by the load "
+            "balancer. Leave unset to serve websites through the frontend."
         ),
     )
 
@@ -1268,6 +1351,18 @@ class Settings(BaseSettings):
             "rule points at. Must already exist in the URL map."
         ),
     )
+    practice_domain_site_backend: str = Field(
+        default="",
+        description=(
+            "Backend bucket that fronts practice_site_live_bucket: a name, for one "
+            "in practice_domain_serving_project, or "
+            "projects/<project>/global/backendBuckets/<name> for one in the project "
+            "that owns the bucket (a backend bucket lives with its bucket). Set "
+            "with practice_site_live_bucket: the reconciler then routes each "
+            "published website's hosts to a path matcher of the practice's own, "
+            "serving the live version's folder from the bucket."
+        ),
+    )
     # Every practice's addresses under a domain of the deployment's
     # (app.portal.hosted): <slug>.<domain> for its website and
     # <slug>.portal.<domain> for its portal. Serving them needs the two
@@ -1490,7 +1585,8 @@ class Settings(BaseSettings):
         default="intake,messaging,appointments",
         description=(
             "Comma-separated patient-facing portal modules to serve: any of "
-            "intake, messaging, documents, appointments, refills, billing, chat. A "
+            "intake, messaging, documents, appointments, homework, refills, billing, "
+            "chat. A "
             "module left out has its patient-facing routes unmounted, so "
             "they answer 404 rather than merely being hidden. Unknown names "
             "are ignored."
@@ -1581,6 +1677,55 @@ class Settings(BaseSettings):
             "fallback."
         ),
     )
+    ai_models: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "The primary model per AI feature, as a JSON object from feature "
+            "key (the keys listed on ai_fallbacks) to one model id, provider "
+            "prefix allowed. A feature named here uses that model in place "
+            "of its tier's default (ai_model, or ai_model_flash for the "
+            "interactive features); one not named keeps the default. With "
+            "ai_fallbacks, a feature can run on any provider and fall back to "
+            "any other, the tier default included. Empty by default.\n\n"
+            "A section of a note drafted by a call of its own also has a key "
+            "here: ``note_generation.risk_mse`` names the model for the risk, "
+            "mental status and measures sections, ``note_generation.hpi`` the "
+            "model for the history of present illness, "
+            "``note_generation.psychotherapy`` the model for the psychotherapy "
+            "block, and the note model "
+            "(``note_generation``) drafts each when it is not named. Such a "
+            "call falls back as ``note_generation`` does."
+        ),
+    )
+    ai_fallbacks: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Fallback models per AI feature, as a JSON object from feature "
+            "key to comma-separated model ids (provider prefix allowed), e.g. "
+            '``{"note_generation": "<provider>:<model>"}``. A feature moves '
+            "on to its fallbacks, in order, only when its own model fails "
+            "transiently, gives an unusable answer or runs out of time. A "
+            "feature not named here has no fallback: there is deliberately "
+            "no default list, so a feature is never answered by a model "
+            "nobody chose for it. Which models suit which feature is "
+            "configurable per deployment; nothing is set by default.\n\n"
+            "Keys read by this codebase (others may be read by extensions):\n"
+            "- ``note_generation``: drafting a note of any type, and the "
+            "source-attribution, chart-update and homework calls that follow it.\n"
+            "- ``note_import``: reading an imported note into a note type.\n"
+            "- ``note_type_derive``: proposing a note type from samples.\n"
+            "- ``availability_parse``: reading hours a clinician describes. "
+            "Falls back to ai_model_flash_fallbacks when not named here.\n"
+            "- ``chat``: the clinician's assistant chat.\n"
+            "- ``patient_chat``: chat with a client. Client-facing: name a "
+            "fallback here only once that model has passed the same crisis "
+            "evaluation as the primary.\n\n"
+            "Long calls (the note keys) run one model at a time unless "
+            "ai_hedge_delays_ms names them; chat changes model only before "
+            "the first word of an answer is streamed, never part-way through "
+            "one."
+        ),
+    )
     ai_hedge_after_seconds: float | None = Field(
         default=None,
         gt=0,
@@ -1592,9 +1737,36 @@ class Settings(BaseSettings):
             "regardless. Unset (default) uses 4 seconds."
         ),
     )
+    ai_hedge_delays_ms: dict[str, PositiveInt] = Field(
+        default_factory=dict,
+        description=(
+            "The stall threshold per AI feature, in milliseconds, as a JSON "
+            "object from feature key (the keys listed on ai_fallbacks) to a "
+            'whole number, e.g. ``{"availability_parse": 7000}``. A feature '
+            "named here uses it in place of ai_hedge_after_seconds, so a "
+            "primary model that is slower than the default threshold but "
+            "healthy is not given a second, discarded call on most requests: "
+            "set it above that model's usual worst answer time (its p95). "
+            "An interactive call (availability_parse) not named here uses "
+            "ai_hedge_after_seconds. A long call (the note keys) is raced "
+            "only when named here, since the interactive default would start "
+            "a second draft on nearly every request: set it above the "
+            "primary's usual worst healthy answer time, e.g. 20000 for a "
+            "draft that is normally done within 20 s. The value is not "
+            "clamped: the next leg starts only if the threshold falls inside "
+            "the call's budget (25 s interactive, 300 s long), and it gets "
+            "its normal attempt timeout or what is left of the budget, "
+            "whichever is less. A threshold at or past the primary's own "
+            "attempt timeout (15 s for availability_parse, 180 s for a long "
+            "call) means a stall is waited out to that timeout before the "
+            "next leg starts. Empty (default) leaves interactive calls on "
+            "ai_hedge_after_seconds and long calls unraced."
+        ),
+    )
 
     # Amazon Bedrock, for ``bedrock:``-prefixed models (most usefully as an
-    # entry in ai_model_flash_fallbacks, a second provider on a second cloud).
+    # entry in ai_model_flash_fallbacks or ai_fallbacks, a second provider
+    # on a second cloud).
     aws_bedrock_region: str = Field(
         default="us-east-1",
         description=(
@@ -1627,6 +1799,44 @@ class Settings(BaseSettings):
     def flash_fallback_models(self) -> tuple[str, ...]:
         """``ai_model_flash_fallbacks`` split into model ids, in order."""
         return tuple(m.strip() for m in self.ai_model_flash_fallbacks.split(",") if m.strip())
+
+    def model_for(self, feature: str, default: str) -> str:
+        """``feature``'s primary model: its ``ai_models`` entry, else ``default``."""
+        return (self.ai_models.get(feature) or "").strip() or default
+
+    def fallbacks_for(self, feature: str) -> tuple[str, ...]:
+        """The fallback models ``ai_fallbacks`` names for ``feature``, in order.
+
+        Empty for a feature it does not name. ``availability_parse`` alone
+        also reads ai_model_flash_fallbacks, the setting it had before
+        features were keyed; no other feature reads that list.
+        """
+        if feature in self.ai_fallbacks:
+            return tuple(m.strip() for m in self.ai_fallbacks[feature].split(",") if m.strip())
+        if feature == "availability_parse":
+            return self.flash_fallback_models
+        return ()
+
+    def hedge_after_for(self, feature: str) -> float | None:
+        """``feature``'s stall threshold in seconds, if one is configured.
+
+        Its ``ai_hedge_delays_ms`` entry, else ``ai_hedge_after_seconds``;
+        ``None`` when neither is set, for the caller's own default.
+        """
+        if feature in self.ai_hedge_delays_ms:
+            return self.ai_hedge_delays_ms[feature] / 1000
+        return self.ai_hedge_after_seconds
+
+    def long_call_hedge_after_for(self, feature: str) -> float | None:
+        """``feature``'s stall threshold in seconds for a long call, if one
+        is configured.
+
+        Its ``ai_hedge_delays_ms`` entry alone; ``None`` otherwise, so that a
+        long call is never raced on the interactive default.
+        """
+        if feature in self.ai_hedge_delays_ms:
+            return self.ai_hedge_delays_ms[feature] / 1000
+        return None
 
     note_max_output_tokens: int = Field(
         default=16384,
@@ -1812,6 +2022,16 @@ class Settings(BaseSettings):
         ),
     )
 
+    dictation_transcription_base_url: str | None = Field(
+        default=None,
+        description=(
+            "Origin that transcribes a clinician's dictated clip instead of "
+            "the transcription provider — the end-to-end harness's stand-in, "
+            "which answers every clip with the same words. Unset (the "
+            "ordinary case) means the configured provider."
+        ),
+    )
+
     clearinghouse_webhook_secret: SecretStr = Field(
         default=SecretStr(""),
         description=(
@@ -1876,6 +2096,10 @@ class Settings(BaseSettings):
         default="best",
         description="AssemblyAI speech model, e.g. best, nano, slam-1.",
     )
+    assemblyai_medical_speech_model: str = Field(
+        default="universal-3-5-pro",
+        description="AssemblyAI pre-recorded model used with Medical Mode for prescribers.",
+    )
     assemblyai_vad_enabled: bool = Field(
         default=False,
         description=(
@@ -1896,6 +2120,16 @@ class Settings(BaseSettings):
             'B"). Comma-separated in the environment, e.g. '
             "ASSEMBLYAI_SPEAKER_LABELS_CHANNELS=Client. Empty (default) keeps "
             "today's one-speaker-per-channel behavior."
+        ),
+    )
+
+    assemblyai_chart_keyterms: bool = Field(
+        default=False,
+        description=(
+            "Send each session's vocabulary to AssemblyAI as keyterms_prompt: the "
+            "client's medication and allergy names from the chart, generic and "
+            "brand, at most 200 words (app.drug_names.keyterms). A session whose "
+            "chart names nothing is sent none. Off (default) sends no vocabulary."
         ),
     )
 
@@ -2144,6 +2378,16 @@ def log_startup_posture(settings: Settings, logger: logging.Logger) -> None:
         bool(settings.ical_feed_base_url),
         bool(settings.google_calendar_base_url),
     )
+    if not settings.use_redis and not settings.is_development:
+        # Every rate-limit window lives in one process, so each replica
+        # grants the full budget again and a restart clears it. Right for a
+        # single-instance self-host, which is why this is a warning and not
+        # a refusal; wrong, silently, for anything that scales out.
+        logger.warning(
+            "Rate limits are kept in memory (USE_REDIS=false): each replica "
+            "enforces its own budget and a restart resets it. Set USE_REDIS=true "
+            "for any deployment running more than one instance."
+        )
 
 
 # Global settings instance for backwards compatibility

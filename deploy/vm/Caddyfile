@@ -1,0 +1,13 @@
+# Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+#
+# One hostname for the whole app. Caddy gets and renews its certificate from
+# Let's Encrypt on its own (ports 80 and 443 must be open to the internet).
+# The routes are in routes.caddy, shared with the local setup.
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$PABLO_HOST} {
+	import routes.caddy
+}

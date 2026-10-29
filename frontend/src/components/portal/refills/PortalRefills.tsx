@@ -64,6 +64,9 @@ export function PortalRefills({ sessionToken }: PortalRefillsProps) {
   const queryClient = useQueryClient()
   const [formOpened, setFormOpened] = useState(false)
   const [sentId, setSentId] = useState<string | null>(null)
+  // What the practice said back about the request just sent, when the
+  // clinician is away. Held here because only the create response carries it.
+  const [awayNote, setAwayNote] = useState<string | null>(null)
 
   const medications = useQuery({
     queryKey: keys.medications(sessionToken),
@@ -98,6 +101,7 @@ export function PortalRefills({ sessionToken }: PortalRefillsProps) {
       void queryClient.invalidateQueries({ queryKey: keys.requests(sessionToken) })
       setFormOpened(false)
       setSentId(created.id)
+      setAwayNote(created.away_acknowledgment ?? null)
     },
   })
 
@@ -118,6 +122,7 @@ export function PortalRefills({ sessionToken }: PortalRefillsProps) {
 
   function openForm() {
     setSentId(null)
+    setAwayNote(null)
     setFormOpened(true)
   }
 
@@ -149,13 +154,19 @@ export function PortalRefills({ sessionToken }: PortalRefillsProps) {
           messagingEnabled={messagingEnabled}
           notice={
             sentId ? (
-              <p
-                role="status"
-                data-testid="portal-refills-sent"
-                className="text-sm text-neutral-700"
-              >
-                {sentConfirmation(practiceName)}
-              </p>
+              <div role="status" className="flex flex-col gap-2">
+                <p data-testid="portal-refills-sent" className="text-sm text-neutral-700">
+                  {sentConfirmation(practiceName)}
+                </p>
+                {awayNote && (
+                  <p
+                    data-testid="portal-refills-away"
+                    className="whitespace-pre-wrap rounded-md bg-neutral-100 px-3 py-2 text-sm text-neutral-900"
+                  >
+                    {awayNote}
+                  </p>
+                )}
+              </div>
             ) : null
           }
         />

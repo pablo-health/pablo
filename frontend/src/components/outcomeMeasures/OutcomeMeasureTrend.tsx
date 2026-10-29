@@ -21,6 +21,7 @@ import {
   tripsSafetySignal,
   type InstrumentMeta,
 } from "@/lib/outcomeMeasures"
+import { MEDIUM_DATE, formatDate } from "@/lib/dates"
 
 interface OutcomeMeasureTrendProps {
   meta: InstrumentMeta
@@ -28,14 +29,6 @@ interface OutcomeMeasureTrendProps {
   measures: OutcomeMeasure[]
   onDelete: (measure: OutcomeMeasure) => void
   deletingId?: string | null
-}
-
-function formatDate(value: string): string {
-  return new Date(value).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  })
 }
 
 /** Inline sparkline of complete administrations (those with a numeric total). */
@@ -142,7 +135,7 @@ export function OutcomeMeasureTrend({
             >
               <span className="flex min-w-0 items-center gap-2">
                 <span className="text-neutral-700">
-                  {formatDate(m.administered_at)}
+                  {formatDate(m.administered_at, MEDIUM_DATE, "en-US")}
                 </span>
                 {tripped && meta.safetySignal && (
                   <span

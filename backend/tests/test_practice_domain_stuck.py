@@ -46,6 +46,8 @@ if TYPE_CHECKING:
 
     from app.models import User
 
+    from tests.audit_fakes import RecordingAudit
+
 PRACTICE_ID = "practice-1"
 APEX = "ours.example"
 HOST = f"portal.{APEX}"
@@ -67,14 +69,6 @@ class Clock:
 
     def advance(self, by: timedelta) -> None:
         self.now += by
-
-
-class _RecordingAudit:
-    def __init__(self) -> None:
-        self.entries: list[dict[str, Any]] = []
-
-    def log(self, action: Any, *_args: Any, **kwargs: Any) -> None:
-        self.entries.append({"action": action, **kwargs})
 
 
 @pytest.fixture(autouse=True)
@@ -462,15 +456,11 @@ class TestReport:
 
 class TestRoutes:
     @pytest.fixture
-    def audit(self) -> _RecordingAudit:
-        return _RecordingAudit()
-
-    @pytest.fixture
     def client(
         self,
         mock_user: User,
         service: PracticeDomainService,
-        audit: _RecordingAudit,
+        recording_audit: RecordingAudit,
         zone: Zone,
     ) -> Iterator[TestClient]:
         app = FastAPI()
@@ -478,7 +468,7 @@ class TestRoutes:
         app.include_router(practice_domains.router)
         app.dependency_overrides[require_active_subscription] = lambda: mock_user
         app.dependency_overrides[get_practice_domain_service] = lambda: service
-        app.dependency_overrides[get_audit_service] = lambda: audit
+        app.dependency_overrides[get_audit_service] = lambda: recording_audit
         app.dependency_overrides[get_dns_lookup] = lambda: (
             lambda name, rdtype: zone.get((name, rdtype), [])
         )
@@ -493,13 +483,15 @@ class TestRoutes:
         ):
             yield TestClient(app)
 
-    def _stuck_entries(self, audit: _RecordingAudit) -> list[dict[str, Any]]:
-        return [e for e in audit.entries if e["action"] == AuditAction.PRACTICE_DOMAIN_STUCK]
+    def _stuck_entries(self, recording_audit: RecordingAudit) -> list[dict[str, Any]]:
+        return [
+            e for e in recording_audit.entries if e["action"] == AuditAction.PRACTICE_DOMAIN_STUCK
+        ]
 
     def test_a_check_that_finds_it_stuck_audits_it_once(
         self,
         client: TestClient,
-        audit: _RecordingAudit,
+        recording_audit: RecordingAudit,
         zone: Zone,
         clock: Clock,
     ) -> None:
@@ -512,7 +504,7 @@ class TestRoutes:
 
         assert domain["stuck"] is True
         assert domain["stuck_message"] == DEFAULT_STUCK_MESSAGE
-        assert self._stuck_entries(audit) == [
+        assert self._stuck_entries(recording_audit) == [
             {
                 "action": AuditAction.PRACTICE_DOMAIN_STUCK,
                 "resource_type": ResourceType.PRACTICE,
@@ -525,7 +517,7 @@ class TestRoutes:
         self,
         client: TestClient,
         repo: InMemoryPracticeDomainRepository,
-        audit: _RecordingAudit,
+        recording_audit: RecordingAudit,
     ) -> None:
         """The page shows the message on a plain read; the report goes out
         then too rather than waiting for the next check."""
@@ -535,16 +527,16 @@ class TestRoutes:
         client.get("/api/practice/domains")
 
         assert domain["stuck"] is True
-        assert [e["changes"] for e in self._stuck_entries(audit)] == [{"domain": HOST}]
+        assert [e["changes"] for e in self._stuck_entries(recording_audit)] == [{"domain": HOST}]
 
     def test_a_host_not_stuck_says_nothing(
-        self, client: TestClient, audit: _RecordingAudit
+        self, client: TestClient, recording_audit: RecordingAudit
     ) -> None:
         (domain,) = client.get("/api/practice/domains").json()["domains"]
 
         assert domain["stuck"] is False
         assert domain["stuck_message"] is None
-        assert self._stuck_entries(audit) == []
+        assert self._stuck_entries(recording_audit) == []
 
 
 def _with(domain: PracticeDomain, **changes: Any) -> PracticeDomain:

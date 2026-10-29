@@ -65,7 +65,9 @@ class PracticeRow(PlatformBase):
         Boolean, nullable=False, default=False, server_default="false"
     )
     # Per-practice audio retention window (days). DB CHECK enforces
-    # 30..2555 (≈7y). Default 365 matches privacy-policy commitment.
+    # 0..2555 (≈7y); 0 deletes a session's audio once its note is signed
+    # (app.services.audio_retention). Default 365 matches privacy-policy
+    # commitment.
     audio_retention_days: Mapped[int] = mapped_column(
         Integer, nullable=False, default=365, server_default="365"
     )
@@ -141,7 +143,7 @@ class PracticeRow(PlatformBase):
     # DDL — the platform chain's baseline already carries them, captured — it
     # makes ``alembic -n platform check`` able to pass, which is what turns
     # "models and schema agree" into something CI can assert. See PABLO-k7it.
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         CheckConstraint(
             "edition IN ('therapist', 'personal')",
             name="ck_practices_edition",
@@ -156,9 +158,10 @@ class PracticeRow(PlatformBase):
             "provisioning_status IN ('in_progress', 'ready', 'failed')",
             name="practices_provisioning_status_chk",
         ),
-        # Added by ``d7a3f1c8e2b4``. Thirty days to seven years.
+        # Added by ``d7a3f1c8e2b4``; ``b8e3f5a1c724`` lowered the floor from
+        # thirty days to 0, "delete when the note is signed".
         CheckConstraint(
-            "audio_retention_days >= 30 AND audio_retention_days <= 2555",
+            "audio_retention_days >= 0 AND audio_retention_days <= 2555",
             name="ck_practices_audio_retention_days_range",
         ),
         # Added by ``f1c8d4a92b65`` alongside the immutability trigger on
@@ -410,6 +413,18 @@ class PracticePortalSettingsRow(PlatformBase):
     #: When the practice first answered whether to offer the portal, either
     #: way. ``None`` means it has not been asked yet.
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: The practice's own target for answering a refill request, in working
+    #: days. Sets each request's due time when it arrives; never shown to
+    #: clients.
+    refill_turnaround_days: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=2, server_default=text("2")
+    )
+    #: The practice's own target for answering a client's message, in working
+    #: days. Sets each waiting message's reply-by time in the Inbox; never
+    #: shown to clients.
+    message_reply_target_days: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=2, server_default=text("2")
+    )
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     #: The clinician who last changed it. ``None`` for the rows the migration
     #: wrote.
@@ -481,7 +496,7 @@ class PracticeDomainRow(PlatformBase):
     __tablename__ = "practice_domains"
     # PlatformBase annotates __table_args__ as the dict-only shape; see
     # PracticeRow for why the tuple form needs the ignore.
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         CheckConstraint(
             "kind IN ('subdomain', 'vanity')",
             name="practice_domains_kind_check",
@@ -562,7 +577,7 @@ class PracticeDomainApexRow(PlatformBase):
 
     __tablename__ = "practice_domain_apexes"
     # See PracticeDomainRow for why the tuple form needs the ignore.
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         CheckConstraint(
             "email_identity_status IN ('pending', 'verified', 'failed')",
             name="practice_domain_apexes_email_identity_status_check",
@@ -605,7 +620,7 @@ class PracticeSiteRow(PlatformBase):
 
     __tablename__ = "practice_sites"
     # See PracticeDomainRow for why the tuple form needs the ignore.
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         Index(
             "uq_practice_sites_preview_token_hash",
             "preview_token_hash",
@@ -641,6 +656,25 @@ class PracticeSiteRow(PlatformBase):
     #: The last publish or roll back.
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     published_by: Mapped[str | None] = mapped_column(String(128))
+    #: Ask search engines not to list the website: every answer on its hosts
+    #: carries ``X-Robots-Tag: noindex, nofollow`` and its ``robots.txt``
+    #: disallows everything (``frontend/src/lib/portal-host/practice-site.ts``).
+    hide_from_search: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    #: What the load balancer serves for the website's hosts, where the
+    #: deployment serves websites from object storage (``app.sites.mirror``):
+    #: the version copied to the public bucket and routed to, and the
+    #: ``hide_from_search`` its ``robots.txt`` reflects. Written by the domain
+    #: reconciler once both are in place; ``None`` until then. A publish, a
+    #: roll back or a search change leaves them behind ``live_version`` /
+    #: ``hide_from_search``, which is what asks the reconciler for a run.
+    served_version: Mapped[int | None] = mapped_column(Integer)
+    served_hide_from_search: Mapped[bool | None] = mapped_column(Boolean)
+    #: The hosted website address (``<slug>.<hosted domain>``) the reconciler
+    #: routed at the served version, so a slug change or the hosted domain
+    #: going away can take that host rule down; ``None`` when none is routed.
+    served_hosted_host: Mapped[str | None] = mapped_column(String(253))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
@@ -918,7 +952,7 @@ class PlatformPanelApplicationRow(PlatformBase):
     # PlatformBase annotates __table_args__ as the dict-only shape; the tuple
     # form (needed for the constraints and indexes) trips mypy here, same as
     # PracticeRow above.
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         CheckConstraint(
             f"status IN ({_sql_in_list(PANEL_APPLICATION_STATUSES)})",
             name="ck_panel_applications_status",
@@ -986,6 +1020,12 @@ class CompanionDeviceRow(PlatformBase):
     Microsoft Software KSP) on Windows boxes without TPM 2.0. All Macs
     from 2018+ have Secure Enclave so Mac rows are always ``hardware``.
 
+    Keyed by ``(install_id, user_id)``, not ``install_id`` alone: the
+    companion keeps one install_id and device key per OS user no matter
+    which Pablo account signs in, so one install can carry an enrollment
+    for each account that signs in on it. Each enrollment is its own row,
+    and every lookup names both columns.
+
     No PHI: install_id is a random UUID; hostname_hash is the device's
     hostname run through a one-way hash on the client. Refresh tokens
     are not stored here — Firebase manages those.
@@ -998,7 +1038,7 @@ class CompanionDeviceRow(PlatformBase):
     user_id: Mapped[str] = mapped_column(
         Uuid(as_uuid=False),
         ForeignKey(f"{PLATFORM_SCHEMA}.users.id", ondelete="CASCADE"),
-        nullable=False,
+        primary_key=True,
         index=True,
     )
     device_public_key_jwk: Mapped[dict] = mapped_column(JSONB, nullable=False)
@@ -1056,9 +1096,16 @@ class LaunchIntentRow(PlatformBase):
         DateTime(timezone=True), nullable=False, index=True
     )
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # True when the web asked "No consent on file" and the clinician chose to
-    # record anyway, so the companion does not ask the same question again.
+    # True when an earlier web app offered recording an in-person visit with
+    # no answer on file and the clinician chose to, so the companion does not
+    # ask the same question again. The web app no longer sets it.
     ai_consent_prompted: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    # True when the web found no answer on file and the clinician chose to
+    # ask once recording starts, so the companion starts
+    # the session saying so (app.services.recording_consent).
+    ask_consent_on_recording: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
 
@@ -1116,7 +1163,7 @@ class DiagnosticDefinitionRow(PlatformBase):
     # SQLAlchemy allows __table_args__ to be either a dict or a tuple-of-
     # constraints-plus-dict; PlatformBase annotates the dict-only shape, so the
     # tuple form (needed for the UniqueConstraint + Index) trips mypy here.
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         UniqueConstraint("code", "version", name="uq_diagnostic_definitions_code_version"),
         Index("ix_diagnostic_definitions_code_active", "code", "active"),
         {"schema": PLATFORM_SCHEMA},
@@ -1319,6 +1366,14 @@ class BookingLinkRow(PlatformBase):
     # deleted -- its slug stays claimed via the UNIQUE(slug) constraint
     # above, forever, for every caller including the original owner.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # A single-slot link books exactly this window and nothing else, once.
+    # NULL on an ordinary link, which offers whatever the diary has free.
+    slot_start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    slot_end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When a single-slot link was used. Set by a conditional UPDATE in the
+    # booking's own transaction, so a second visitor waits on the row lock and
+    # then finds it set — the link books once however close the two arrive.
+    slot_claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = {"schema": PLATFORM_SCHEMA}
 
@@ -1403,7 +1458,7 @@ class CredentialEducationRow(PlatformBase):
     """
 
     __tablename__ = "credential_education"
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         Index("ix_credential_education_user_id", "user_id"),
         {"schema": PLATFORM_SCHEMA},
     )
@@ -1431,7 +1486,7 @@ class CredentialTrainingRow(PlatformBase):
     """
 
     __tablename__ = "credential_training"
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         Index("ix_credential_training_user_id", "user_id"),
         {"schema": PLATFORM_SCHEMA},
     )
@@ -1463,7 +1518,7 @@ class CredentialEmploymentRow(PlatformBase):
     """
 
     __tablename__ = "credential_employment"
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         Index("ix_credential_employment_user_id", "user_id"),
         {"schema": PLATFORM_SCHEMA},
     )
@@ -1493,7 +1548,7 @@ class CredentialReferenceRow(PlatformBase):
     """
 
     __tablename__ = "credential_references"
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         Index("ix_credential_references_user_id", "user_id"),
         {"schema": PLATFORM_SCHEMA},
     )
@@ -1528,7 +1583,7 @@ class CredentialDisclosureRow(PlatformBase):
     """
 
     __tablename__ = "credential_disclosures"
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         CheckConstraint(
             "answer IS NOT TRUE OR explanation IS NOT NULL",
             name="ck_credential_disclosures_explained",
@@ -1576,7 +1631,7 @@ class CredentialGovernmentIdRow(PlatformBase):
     """
 
     __tablename__ = "credential_government_ids"
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         CheckConstraint(
             f"tax_id_type IS NULL OR tax_id_type IN ({_sql_in_list(CREDENTIAL_TAX_ID_TYPES)})",
             name="ck_credential_government_ids_tax_id_type",
@@ -1631,7 +1686,7 @@ class CredentialLicenseRow(PlatformBase):
     """
 
     __tablename__ = "credential_licenses"
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         CheckConstraint(
             f"status IN ({_sql_in_list(CREDENTIAL_LICENSE_STATUSES)})",
             name="ck_credential_licenses_status",
@@ -1667,7 +1722,7 @@ class CredentialLicenseRow(PlatformBase):
     practice_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     # Free text: the abbreviations differ by state and discipline (LMFT,
     # LCSW, LPCC, PMHNP-BC), and a new one shouldn't need a migration. Same
-    # posture as ``compliance_items.item_type``.
+    # posture as ``tasks.item_type``.
     license_type: Mapped[str] = mapped_column(String(50), nullable=False)
     license_number: Mapped[str] = mapped_column(String(100), nullable=False)
     state: Mapped[str] = mapped_column(String(2), nullable=False)
@@ -1697,7 +1752,7 @@ class CredentialLiabilityPolicyRow(PlatformBase):
     """
 
     __tablename__ = "credential_liability_policies"
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         Index("ix_credential_liability_policies_user_id", "user_id"),
         Index(
             "ux_credential_liability_policies_one_current",
@@ -1763,7 +1818,7 @@ class CredentialConfirmationRow(PlatformBase):
     """
 
     __tablename__ = "credential_confirmations"
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         CheckConstraint(
             f"source IN ({_sql_in_list(CREDENTIAL_CONFIRMATION_SOURCES)})",
             name="ck_credential_confirmations_source",
@@ -1808,7 +1863,7 @@ class CredentialServiceLocationRow(PlatformBase):
     """
 
     __tablename__ = "credential_service_locations"
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         Index("ix_credential_service_locations_user_id", "user_id"),
         Index(
             "ux_credential_service_locations_one_primary",
@@ -1849,7 +1904,7 @@ class CredentialBankAccountRow(PlatformBase):
     """
 
     __tablename__ = "credential_bank_accounts"
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         CheckConstraint(
             f"account_type IN ({_sql_in_list(CREDENTIAL_BANK_ACCOUNT_TYPES)})",
             name="ck_credential_bank_accounts_account_type",
@@ -1949,7 +2004,7 @@ class PayerAuthorizationRow(PlatformBase):
     __tablename__ = "payer_authorizations"
     # PlatformBase annotates __table_args__ as the dict-only shape; the
     # tuple form trips mypy here, same as PracticeRow above.
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         # No unique constraint on (user_id, kind, version). Re-signing the same
         # version after a revocation is a real sequence, and the second
         # signature is a different event from the first.
@@ -2028,7 +2083,7 @@ class PayerParticipationRow(PlatformBase):
     __tablename__ = "payer_participations"
     # PlatformBase annotates __table_args__ as the dict-only shape; the
     # tuple form trips mypy here, same as PracticeRow above.
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         CheckConstraint(
             f"status IN ({_sql_in_list(PARTICIPATION_STATUSES)})",
             name="ck_payer_participations_status",
@@ -2093,7 +2148,7 @@ class PayerParticipationEventRow(PlatformBase):
     __tablename__ = "payer_participation_events"
     # PlatformBase annotates __table_args__ as the dict-only shape; the
     # tuple form trips mypy here, same as PracticeRow above.
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         CheckConstraint(
             f"to_status IN ({_sql_in_list(PARTICIPATION_STATUSES)})",
             name="ck_payer_participation_events_to_status",
@@ -2165,7 +2220,7 @@ class ContractedRateRow(PlatformBase):
     __tablename__ = "contracted_rates"
     # PlatformBase annotates __table_args__ as the dict-only shape; the
     # tuple form trips mypy here, same as PracticeRow above.
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         CheckConstraint(
             f"basis IN ({_sql_in_list(CONTRACTED_RATE_BASES)})",
             name="ck_contracted_rates_basis",

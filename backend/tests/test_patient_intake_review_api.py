@@ -34,14 +34,22 @@ from app.auth.patient_context import (
     PatientResolverRegistry,
     get_patient_resolver_registry,
 )
-from app.intake.starters import AI_TOOLS_CONSENT, AI_TRANSCRIPTION_ITEM_KEY
+from app.chart_history.dependencies import get_chart_history_repository
+from app.chart_proposals.dependencies import (
+    get_chart_proposal_repository,
+    get_proposal_medication_repository,
+)
+from app.intake.starters import AI_TOOLS_CONSENT, AI_TRANSCRIPTION_ITEM_KEY, CLIENT_DETAILS
 from app.main import app as real_app
+from app.medications.repository import InMemoryMedicationRepository
 from app.models import Patient
 from app.models.audit import AuditAction
 from app.outcome_measures.service import OutcomeMeasureService
 from app.portal.delivery import CapturingNoticeDelivery, NoticesNotConfigured
 from app.portal.factory import get_notice_delivery
 from app.repositories import (
+    InMemoryChartHistoryRepository,
+    InMemoryChartProposalRepository,
     InMemoryIntakePacketRepository,
     InMemoryPatientDocumentRepository,
     InMemoryPatientIntakeArtifactRepository,
@@ -50,7 +58,6 @@ from app.repositories import (
     InMemoryPatientRepository,
     get_patient_repository,
 )
-from app.repositories.audit import InMemoryAuditRepository
 from app.repositories.client_ai_consent import InMemoryClientAiConsentRepository
 from app.repositories.coverage import (
     InMemoryPatientCoverageRepository,
@@ -58,6 +65,7 @@ from app.repositories.coverage import (
 )
 from app.repositories.outcome_measure import InMemoryOutcomeMeasureRepository
 from app.routes import patient_intake_assignments
+from app.routes import patients as patients_routes
 from app.routes.patient_intake import get_intake_outcome_measure_service
 from app.routes.patient_intake_assignments import (
     get_clinician_intake_assignment_service,
@@ -68,6 +76,7 @@ from app.routes.patient_intake_assignments import (
 from app.routes.patient_intake_review import (
     get_clinician_signature_repository,
     get_form_ai_consent_recorder,
+    get_intake_proposal_generator,
     get_intake_review_service,
     get_practice_name,
 )
@@ -83,6 +92,8 @@ from fastapi.testclient import TestClient
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from app.repositories.audit import InMemoryAuditRepository
 
 _PATIENT_A = "11111111-1111-4111-8111-111111111111"
 _PATIENT_B = "22222222-2222-4222-8222-222222222222"
@@ -144,11 +155,6 @@ def _patient(patient_id: str, first: str, last: str, email: str) -> Patient:
 
 
 @pytest.fixture
-def packets() -> InMemoryIntakePacketRepository:
-    return InMemoryIntakePacketRepository()
-
-
-@pytest.fixture
 def assignments_repo() -> InMemoryPatientIntakeAssignmentRepository:
     repo = InMemoryPatientIntakeAssignmentRepository()
     repo.grant_all_access()
@@ -158,11 +164,6 @@ def assignments_repo() -> InMemoryPatientIntakeAssignmentRepository:
 @pytest.fixture
 def signatures_repo() -> InMemoryPatientIntakeSignatureRepository:
     return InMemoryPatientIntakeSignatureRepository()
-
-
-@pytest.fixture
-def audit_repo() -> InMemoryAuditRepository:
-    return InMemoryAuditRepository()
 
 
 @pytest.fixture
@@ -283,6 +284,30 @@ def consent_repo() -> InMemoryClientAiConsentRepository:
     return InMemoryClientAiConsentRepository()
 
 
+class _NoModel:
+    """No model configured: written answers are never read."""
+
+    def chart_proposal_completion(self) -> None:
+        return None
+
+
+@pytest.fixture
+def chart_proposals() -> InMemoryChartProposalRepository:
+    return InMemoryChartProposalRepository()
+
+
+@pytest.fixture
+def chart_history() -> InMemoryChartHistoryRepository:
+    return InMemoryChartHistoryRepository()
+
+
+@pytest.fixture
+def medication_list() -> InMemoryMedicationRepository:
+    repo = InMemoryMedicationRepository()
+    repo.grant_all_access()
+    return repo
+
+
 @pytest.fixture
 def chart(
     client: TestClient,
@@ -292,8 +317,16 @@ def chart(
     signatures_repo: InMemoryPatientIntakeSignatureRepository,
     consent_repo: InMemoryClientAiConsentRepository,
     notices: CapturingNoticeDelivery,
+    chart_proposals: InMemoryChartProposalRepository,
+    chart_history: InMemoryChartHistoryRepository,
+    medication_list: InMemoryMedicationRepository,
 ) -> TestClient:
     """The shared clinician client, with every intake store in memory."""
+    real_app.dependency_overrides[get_chart_proposal_repository] = lambda: chart_proposals
+    real_app.dependency_overrides[get_chart_history_repository] = lambda: chart_history
+    real_app.dependency_overrides[get_proposal_medication_repository] = lambda: medication_list
+    real_app.dependency_overrides[get_intake_proposal_generator] = _NoModel
+    real_app.dependency_overrides[patients_routes.get_patient_repository] = lambda: patients
     real_app.dependency_overrides[get_form_ai_consent_recorder] = lambda: FormAiConsentRecorder(
         signatures_repo, consent_repo
     )
@@ -583,6 +616,194 @@ class TestAccept:
         assignment = _submitted(portal, service, published_version)
         response = chart.post(f"{_base(_PATIENT_B, str(assignment['id']))}/accept")
         assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Chart updates an accepted form proposes
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def details_version(packets: InMemoryIntakePacketRepository) -> str:
+    """A published form asking what brings the client in, then the "About you"
+    starter's questions, each marked with the chart field it fills."""
+    from app.intake.items import ItemDraft  # noqa: PLC0415 — one caller, in a fixture
+
+    packet_service = IntakePacketService(packets)
+    template = packet_service.create_template("Details", _CLINICIAN)
+    version_id = str(packet_service.list_versions(str(template["id"]))[0]["id"])
+    packet_service.replace_items(
+        version_id,
+        [ItemDraft(key="reason", item_type="reason"), *CLIENT_DETAILS.questions],
+    )
+    packet_service.publish(version_id, _CLINICIAN)
+    return version_id
+
+
+_DETAILS = {
+    "reason": {"text": "Panic before every shift."},
+    "preferred_name": {"text": "Addie"},
+    "pronouns": {"text": "she/they"},
+    "emergency_contact": {"name": "Jordan Lee", "relationship": "sister", "phone": "555-0100"},
+    "current_medications": {"text": "Sertraline 50 mg daily"},
+    "prior_treatment": {"text": "Counseling in college for a year."},
+}
+
+
+def _details_submitted(
+    portal: TestClient, service: IntakeAssignmentService, version_id: str
+) -> str:
+    assignment, _ = service.assign(_PATIENT_A, version_id, _CLINICIAN)
+    for key, value in _DETAILS.items():
+        response = portal.put(
+            f"{ASSIGNMENTS}/{assignment['id']}/items/{_item_id(service, version_id, key)}",
+            json={"value": value},
+            headers=_auth(),
+        )
+        assert response.status_code == 200, response.text
+    handed_in = portal.post(f"{ASSIGNMENTS}/{assignment['id']}/submit", headers=_auth())
+    assert handed_in.status_code == 200, handed_in.text
+    return str(assignment["id"])
+
+
+class TestChartUpdatesFromTheForm:
+    def test_handing_in_proposes_nothing_until_the_form_is_accepted(
+        self,
+        chart: TestClient,
+        portal: TestClient,
+        service: IntakeAssignmentService,
+        details_version: str,
+        chart_proposals: InMemoryChartProposalRepository,
+    ) -> None:
+        assignment_id = _details_submitted(portal, service, details_version)
+        assert chart_proposals.list_for_intake(assignment_id) == []
+
+        accepted = chart.post(f"{_base(_PATIENT_A, assignment_id)}/accept")
+        assert accepted.status_code == 200, accepted.text
+        fields = sorted(p.field_key for p in chart_proposals.list_for_intake(assignment_id))
+        assert fields == [
+            "emergency_contact",
+            "medications",
+            "preferred_name",
+            "pronouns",
+            "psychotherapy_history",
+        ]
+
+    def test_the_chart_lists_them_under_the_form_with_a_pointer_to_each_answer(
+        self,
+        chart: TestClient,
+        portal: TestClient,
+        service: IntakeAssignmentService,
+        details_version: str,
+    ) -> None:
+        assignment_id = _details_submitted(portal, service, details_version)
+        chart.post(f"{_base(_PATIENT_A, assignment_id)}/accept")
+
+        body = chart.get(f"/api/patients/{_PATIENT_A}/chart-proposals").json()
+        assert body["groups"] == []
+        assert body["pending"] == 5
+        (group,) = body["intakes"]
+        assert group["assignment_id"] == assignment_id
+        assert group["packet_name"] == "Details"
+        contact = next(p for p in group["proposals"] if p["field_key"] == "emergency_contact")
+        assert contact["label"] == "Contacts: Emergency contact"
+        assert contact["proposed_text"] == "Jordan Lee (sister), 555-0100"
+        assert contact["current_text"] is None
+        assert contact["origin"] == "intake"
+        (evidence,) = contact["evidence"]
+        assert evidence["item_id"] == _item_id(service, details_version, "emergency_contact")
+        assert evidence["question"] == "Who should we contact in an emergency?"
+
+    def test_accepting_one_changes_the_chart_and_discarding_one_does_not(
+        self,
+        chart: TestClient,
+        portal: TestClient,
+        service: IntakeAssignmentService,
+        details_version: str,
+        chart_proposals: InMemoryChartProposalRepository,
+        patients: InMemoryPatientRepository,
+        mock_user_id: str,
+    ) -> None:
+        assignment_id = _details_submitted(portal, service, details_version)
+        chart.post(f"{_base(_PATIENT_A, assignment_id)}/accept")
+        by_field = {p.field_key: p for p in chart_proposals.list_for_intake(assignment_id)}
+        decide = f"{_base(_PATIENT_A, assignment_id)}/chart-proposals"
+
+        accepted = chart.post(
+            f"{decide}/{by_field['pronouns'].id}/decision", json={"decision": "accept"}
+        )
+        assert accepted.status_code == 200, accepted.text
+        assert accepted.json()["decision"] == "accepted"
+        discarded = chart.post(
+            f"{decide}/{by_field['emergency_contact'].id}/decision", json={"decision": "discard"}
+        )
+        assert discarded.status_code == 200, discarded.text
+
+        patient = patients.get(_PATIENT_A, mock_user_id)
+        assert patient is not None
+        assert patient.pronouns == "she/they"
+        assert patient.emergency_contact is None
+        shown = chart.get(f"/api/patients/{_PATIENT_A}").json()
+        assert shown["pronouns"] == "she/they"
+        left = chart.get(f"/api/patients/{_PATIENT_A}/chart-proposals").json()
+        assert left["pending"] == 3
+
+        again = chart.post(
+            f"{decide}/{by_field['pronouns'].id}/decision", json={"decision": "accept"}
+        )
+        assert again.status_code == 409
+
+    def test_a_proposal_is_decided_only_through_its_own_form_and_chart(
+        self,
+        chart: TestClient,
+        portal: TestClient,
+        service: IntakeAssignmentService,
+        details_version: str,
+        chart_proposals: InMemoryChartProposalRepository,
+    ) -> None:
+        assignment_id = _details_submitted(portal, service, details_version)
+        chart.post(f"{_base(_PATIENT_A, assignment_id)}/accept")
+        proposal = chart_proposals.list_for_intake(assignment_id)[0]
+
+        other_chart = chart.post(
+            f"{_base(_PATIENT_B, assignment_id)}/chart-proposals/{proposal.id}/decision",
+            json={"decision": "accept"},
+        )
+        assert other_chart.status_code == 404
+        unknown = chart.post(
+            f"{_base(_PATIENT_A, assignment_id)}/chart-proposals/not-a-proposal/decision",
+            json={"decision": "accept"},
+        )
+        assert unknown.status_code == 404
+
+    def test_proposing_and_deciding_are_audited_without_the_answers(
+        self,
+        chart: TestClient,
+        portal: TestClient,
+        service: IntakeAssignmentService,
+        details_version: str,
+        chart_proposals: InMemoryChartProposalRepository,
+        mock_audit_service: AuditService,
+    ) -> None:
+        assignment_id = _details_submitted(portal, service, details_version)
+        chart.post(f"{_base(_PATIENT_A, assignment_id)}/accept")
+        proposal = next(
+            p for p in chart_proposals.list_for_intake(assignment_id) if p.field_key == "pronouns"
+        )
+        chart.post(
+            f"{_base(_PATIENT_A, assignment_id)}/chart-proposals/{proposal.id}/decision",
+            json={"decision": "accept"},
+        )
+        logged = _logged(mock_audit_service)
+        proposed = next(
+            e for e in logged if e.action == AuditAction.INTAKE_CHART_UPDATES_PROPOSED.value
+        )
+        assert proposed.changes == {"proposed": 5, "written_answers": "no_consent"}
+        decided = next(
+            e for e in logged if e.action == AuditAction.INTAKE_CHART_UPDATE_DECIDED.value
+        )
+        assert decided.changes == {"chart_proposal": "accepted", "field_key": "pronouns"}
+        assert "she/they" not in repr([e.changes for e in logged])
 
 
 # ---------------------------------------------------------------------------

@@ -208,6 +208,30 @@
   box-shadow: var(--ed-shadow-card-hover);
 }
 
+/* A held time: drawn tentative, so it never reads as a booked session. */
+.ed-held {
+  outline: 1px dashed var(--ed-status-confirmed-rail);
+  outline-offset: -1px;
+  box-shadow: none;
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 6px,
+    var(--ed-hairline) 6px 7px
+  );
+}
+
+/* A skipped occurrence: still on the calendar, but out of the way. */
+.ed-skipped {
+  opacity: 0.5;
+  box-shadow: none;
+}
+
+/* Days in the selected range. */
+[data-range-selected="true"] {
+  background-color: var(--ed-pill-hover);
+  box-shadow: inset 0 -2px 0 var(--ed-ink-muted);
+}
+
 /* Mini-month day cell. */
 .ed-mini-day {
   transition: background-color 140ms ease, color 140ms ease;
@@ -285,4 +309,18 @@
  * cards. */
 .ed-past {
   background-color: var(--ed-past-wash);
+}
+
+/* Time kept free inside a window (a floating block, e.g. lunch). Soft and
+ * dashed so it reads as held rather than booked, and as something that can
+ * move; the accent ties it to the clinician's own time rather than to a
+ * client. Stacked above the background layers and below event cards. */
+.ed-floating-block {
+  background-color: color-mix(in srgb, var(--ed-accent) 12%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--ed-accent) 70%, transparent);
+  color: var(--ed-ink-muted);
+}
+.ed-floating-block:hover,
+.ed-floating-block:focus-visible {
+  background-color: color-mix(in srgb, var(--ed-accent) 20%, transparent);
 }

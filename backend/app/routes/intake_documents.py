@@ -37,8 +37,12 @@ from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, Request, status
 
-from ..api_errors import ConflictError, ForbiddenError, NotFoundError, UnprocessableEntityError
-from ..auth.patient_context import AuthStrength, PatientContext, get_patient_context
+from ..api_errors import ConflictError, NotFoundError, UnprocessableEntityError
+from ..auth.patient_context import (
+    PatientContext,
+    get_patient_context,
+    require_stepped_up,
+)
 from ..auth.route_access import subscription_exempt
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
 from ..db import current_practice_schema, get_db_session
@@ -46,7 +50,7 @@ from ..db.platform_models import PracticeRow
 from ..intake.consent_statement import CURRENT_CONSENT_STATEMENT_VERSION, consent_statement
 from ..intake.documents import fill_practice_values, render_html
 from ..intake.items import ItemDraft
-from ..intake.starters import STARTERS, starter
+from ..intake.starters import intake_starters, starter
 from ..models import User  # noqa: TC001 — fastapi resolves the annotation at runtime
 from ..models.audit import AuditAction, ResourceType
 from ..models.intake_document_api import (
@@ -58,6 +62,7 @@ from ..models.intake_document_api import (
     UpdateDocumentRequest,
 )
 from ..repositories import get_intake_document_repository
+from ..services.audio_retention import retention_phrase
 from ..services.audit_service import AuditService, get_audit_service
 from ..services.intake_document_service import (
     IntakeDocumentService,
@@ -67,6 +72,7 @@ from ..services.intake_document_service import (
 
 if TYPE_CHECKING:
     from ..repositories.intake_document import IntakeDocumentRepository
+    from ..repositories.row import Row
 
 router = APIRouter(prefix="/api/intake/documents", tags=["intake-documents"])
 
@@ -121,7 +127,10 @@ def _practice_values() -> dict[str, str]:
     )
     if practice is None:
         return {}
-    return {"audio_retention_days": str(practice.audio_retention_days)}
+    return {
+        "audio_retention": retention_phrase(practice.audio_retention_days),
+        "audio_retention_days": str(practice.audio_retention_days),
+    }
 
 
 def get_document_values(
@@ -144,22 +153,17 @@ DocumentValues = Annotated[dict[str, str], Depends(get_document_values)]
 PatientDocumentValues = Annotated[dict[str, str], Depends(get_patient_document_values)]
 
 
-def _require_stepped_up(patient: PatientContext) -> None:
-    """Refuse a single-factor principal on the portal route.
-
-    Same bar as the rest of the patient intake surface. A consent document
-    is the practice's own text rather than anybody's record, but it is read
-    on the way to signing something, and one factor reaching the wrong
-    person should not put a signature in front of them.
-    """
-    if patient.auth_strength is not AuthStrength.STEPPED_UP:
-        raise ForbiddenError("Confirm it is you to continue.", code="STEP_UP_REQUIRED")
+# A single-factor principal is refused on the portal route (require_stepped_up).
+# Same bar as the rest of the patient intake surface. A consent document
+# is the practice's own text rather than anybody's record, but it is read
+# on the way to signing something, and one factor reaching the wrong
+# person should not put a signature in front of them.
 
 
 def _signer_roles(value: object) -> list[str]:
     """A stored ``signer_roles`` column read back as a list of names.
 
-    The repositories hand rows back as ``dict[str, object]``, so the JSONB
+    The repositories hand rows back as ``Row``, so the JSONB
     column arrives as ``object``. Anything that is not a list reads as the
     patient alone rather than raising: the column is a record of what an
     editor sent, and the service is where a role has to be one the engine
@@ -168,7 +172,7 @@ def _signer_roles(value: object) -> list[str]:
     return [str(role) for role in value] if isinstance(value, list) else ["patient"]
 
 
-def _response(row: dict[str, object], values: dict[str, str]) -> IntakeDocumentResponse:
+def _response(row: Row, values: dict[str, str]) -> IntakeDocumentResponse:
     """The practice's view: its markdown as typed, rendered with its settings."""
     body = str(row["body_markdown"])
     return IntakeDocumentResponse(
@@ -177,16 +181,16 @@ def _response(row: dict[str, object], values: dict[str, str]) -> IntakeDocumentR
         title=str(row["title"]),
         body_markdown=body,
         rendered_html=render_html(fill_practice_values(body, values)),
-        version=int(row["version"]),  # type: ignore[call-overload]
+        version=int(row["version"]),
         digest=str(row["digest"]),
-        published_at=row["published_at"],  # type: ignore[arg-type]
+        published_at=row["published_at"],
         requires_signature=bool(row["requires_signature"]),
         signer_roles=_signer_roles(row["signer_roles"]),
-        created_at=row["created_at"],  # type: ignore[arg-type]
+        created_at=row["created_at"],
     )
 
 
-def _require(service: IntakeDocumentService, document_id: str) -> dict[str, object]:
+def _require(service: IntakeDocumentService, document_id: str) -> Row:
     row = service.get(document_id)
     if row is None:
         raise NotFoundError("Document not found", {"document_id": document_id})
@@ -233,6 +237,22 @@ def create_document(
     except SignerRoleError as exc:
         raise UnprocessableEntityError(str(exc)) from exc
     return _response(created, values)
+
+
+@router.get("/keys/{document_key}/published", response_model=list[IntakeDocumentResponse])
+def list_published_versions(
+    document_key: str,
+    service: DocumentService,
+    values: DocumentValues,
+    _user: User = Depends(require_baa_acceptance),
+) -> list[IntakeDocumentResponse]:
+    """Every published version of one document, newest first.
+
+    What a consent question can be pointed at when a practice wants a
+    particular wording rather than the newest. Drafts are left out: nobody
+    can be asked to sign words that were never published.
+    """
+    return [_response(row, values) for row in service.versions(document_key) if row["published_at"]]
 
 
 @router.get("/{document_id}", response_model=IntakeDocumentResponse)
@@ -302,7 +322,7 @@ def publish_document(
         resource_id=document_id,
         changes={
             "document_key": str(published["document_key"]),
-            "version": int(published["version"]),  # type: ignore[call-overload]
+            "version": int(published["version"]),
             "digest": str(published["digest"]),
         },
     )
@@ -354,7 +374,7 @@ def read_document(
     does not hold the practice's subscription, and paperwork they were
     asked to read should not fail for a billing state they cannot see.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     row = service.get(document_id)
     if row is None or row["published_at"] is None:
         raise NotFoundError("Document not found", {"document_id": document_id})
@@ -365,7 +385,7 @@ def read_document(
         # The practice's settings as they are now, so a changed setting
         # reads correctly in the next document anybody opens.
         rendered_html=render_html(fill_practice_values(str(row["body_markdown"]), values)),
-        version=int(row["version"]),  # type: ignore[call-overload]
+        version=int(row["version"]),
         digest=str(row["digest"]),
         requires_signature=bool(row["requires_signature"]),
         signer_roles=_signer_roles(row["signer_roles"]),
@@ -383,7 +403,10 @@ def list_starters(
     _user: User = Depends(require_baa_acceptance),
 ) -> list[StarterSummary]:
     """The documents a practice can start from, in the order to list them."""
-    return [StarterSummary(key=s.key, title=s.title) for s in STARTERS]
+    return [
+        StarterSummary(key=s.key, title=s.title, has_document=s.body_markdown is not None)
+        for s in intake_starters()
+    ]
 
 
 @starter_router.post("/{starter_key}", response_model=StarterAdoptedResponse)
@@ -398,11 +421,14 @@ def adopt_starter(
     """The practice's copy of a starter, and the items that put it on a form.
 
     Publishes the copy the first time, which is audited the way any other
-    publish is: a signature will be read against that text.
+    publish is: a signature will be read against that text. A starter that
+    is questions alone hands back its questions and no document.
     """
     chosen = starter(starter_key)
     if chosen is None:
         raise NotFoundError("Starter not found", {"starter_key": starter_key})
+    if chosen.body_markdown is None or chosen.document_item_key is None:
+        return StarterAdoptedResponse(document=None, items=list(chosen.questions))
 
     document, created = service.adopt_starter(chosen, user.id)
     if created:
@@ -414,7 +440,7 @@ def adopt_starter(
             resource_id=str(document["id"]),
             changes={
                 "document_key": str(document["document_key"]),
-                "version": int(document["version"]),  # type: ignore[call-overload]
+                "version": int(document["version"]),
                 "digest": str(document["digest"]),
             },
         )

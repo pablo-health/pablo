@@ -3,8 +3,14 @@ import { authProviderMiddleware } from "@/lib/auth/middleware"
 import { appHostsFromEnv, classifyHost, routePracticeHost } from "@/lib/portal-host/practice-host"
 import { browserScheme } from "@/lib/portal-host/practice-host-api"
 import { lookupPracticeHost } from "@/lib/portal-host/practice-host-lookup"
-import { SITE_METHODS, routeSiteHost } from "@/lib/portal-host/practice-site"
+import {
+  HIDDEN_FROM_SEARCH_HEADERS,
+  SITE_METHODS,
+  disallowRobotsResponse,
+  routeSiteHost,
+} from "@/lib/portal-host/practice-site"
 import { fetchSiteFile, lookupSiteHost } from "@/lib/portal-host/practice-site-lookup"
+import { UNKNOWN_PRACTICE_PATH, checkPortalPractice } from "@/lib/portal-host/unknown-practice"
 import {
   type PortalHostDecision,
   hasFileExtension,
@@ -90,17 +96,38 @@ export default async function proxy(request: NextRequest) {
       })
     case "redirect":
       return NextResponse.redirect(decision.location, 301)
-    case "rewrite":
-      return servePortalAt(request, decision.pathname)
+    case "rewrite": {
+      // A practice's own host has already found its practice; the shared
+      // portal host has only a slug, which may name none.
+      if (hostClass.kind === "practice") return servePortalAt(request, decision.pathname)
+      const checked = await checkPortalPractice(request, decision.pathname)
+      return servePortalAt(checked.request, decision.pathname, checked.unknown ? UNKNOWN_PRACTICE_PATH : undefined)
+    }
     case "portal":
-      return authProviderMiddleware(request)
+      return servePortalRoute(request)
     case "default":
       // The Firebase helper is matched only so a portal host can refuse it;
       // everywhere else it passes through untouched, exactly as when the
       // matcher left it out.
       if (pathname.startsWith(FIREBASE_HELPER_PREFIX)) return NextResponse.next()
+      // With no portal host, the portal is served here at /portal/{slug}.
+      if (isUnder(pathname, PORTAL_PREFIX)) return servePortalRoute(request)
       return authProviderMiddleware(request)
   }
+}
+
+const PORTAL_PREFIX = "/portal"
+
+/**
+ * A request already at a portal route, `/portal/{slug}/...`: served as it is,
+ * or — when no practice holds the slug — answered 404 with the portal's card
+ * (`@/lib/portal-host/unknown-practice`).
+ */
+async function servePortalRoute(request: NextRequest): Promise<Response> {
+  const { pathname } = request.nextUrl
+  const checked = await checkPortalPractice(request, pathname)
+  if (!checked.unknown) return authProviderMiddleware(checked.request)
+  return servePortalAt(checked.request, pathname, UNKNOWN_PRACTICE_PATH)
 }
 
 const NOT_FOUND_HEADERS = { "Content-Type": "text/plain; charset=utf-8", "X-Content-Type-Options": "nosniff" }
@@ -133,6 +160,8 @@ async function serveSiteHost(request: NextRequest, host: string, hostname: strin
   const { pathname, search, protocol } = request.nextUrl
   const found = await lookupSiteHost(hostname)
   const decision = routeSiteHost({ host, hostname, pathname, search, protocol, method: request.method }, found)
+  const hideFromSearch = typeof found === "object" && found !== null && found.hideFromSearch
+  const searchHeaders = hideFromSearch ? HIDDEN_FROM_SEARCH_HEADERS : {}
   switch (decision.kind) {
     case "serve":
       return fetchSiteFile({
@@ -141,11 +170,14 @@ async function serveSiteHost(request: NextRequest, host: string, hostname: strin
         pathname: decision.pathname,
         method: request.method,
         ifNoneMatch: request.headers.get("if-none-match"),
+        hideFromSearch,
       })
+    case "disallow-robots":
+      return disallowRobotsResponse(request.method)
     case "redirect":
-      return NextResponse.redirect(decision.location, 301)
+      return NextResponse.redirect(decision.location, { status: 301, headers: searchHeaders })
     case "method-not-allowed":
-      return new NextResponse(null, { status: 405, headers: { Allow: SITE_METHODS.join(", ") } })
+      return new NextResponse(null, { status: 405, headers: { ...searchHeaders, Allow: SITE_METHODS.join(", ") } })
     case "unavailable":
       return new NextResponse("Service Unavailable", {
         status: 503,
@@ -165,8 +197,11 @@ async function serveSiteHost(request: NextRequest, host: string, hostname: strin
  * other security headers, and the portal needs those as much as any page. So
  * the provider sees the request as the portal route it will be served as, and
  * its pass-through becomes a rewrite carrying the same headers.
+ *
+ * `servedPath`, when given, is served in place of `pathname` — the
+ * unknown-practice 404, which the provider still sees as the portal route.
  */
-async function servePortalAt(request: NextRequest, pathname: string) {
+async function servePortalAt(request: NextRequest, pathname: string, servedPath?: string) {
   const target = new URL(`${pathname}${request.nextUrl.search}`, request.url)
   const served = await authProviderMiddleware(
     new NextRequest(target, { method: request.method, headers: request.headers }),
@@ -174,7 +209,8 @@ async function servePortalAt(request: NextRequest, pathname: string) {
   // A public path is never sent anywhere; if the provider ever does, obey it
   // rather than serve a page it refused.
   if (served.headers.has("location")) return served
-  return NextResponse.rewrite(target, { headers: served.headers })
+  const destination = servedPath === undefined ? target : new URL(servedPath, request.url)
+  return NextResponse.rewrite(destination, { headers: served.headers })
 }
 
 export const config = {

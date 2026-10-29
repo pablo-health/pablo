@@ -222,6 +222,57 @@ class PatientDocumentsService:
             content_type=content_type,
         )
 
+    @property
+    def configured(self) -> bool:
+        """Whether this deployment stores documents at all."""
+        return bool(self._settings.patient_documents_gcs_bucket)
+
+    def store_imported_file(
+        self,
+        *,
+        patient_id: str,
+        user_id: str,
+        filename: str,
+        mime_type: str,
+        data: bytes,
+        extracted_text: str,
+    ) -> PatientDocument:
+        """Write the file an imported note was read from; return its unsaved row.
+
+        The import has already read the file and checked it against its own
+        limits (PDF, Word or text, up to the import's size cap), so the row
+        lands finished, carrying the text the import extracted. Only storage
+        is touched here, so it can run off the event loop and a failure
+        leaves nothing in the database; :meth:`record_imported_file` writes
+        the row once the import is going ahead.
+        """
+        document_id = str(uuid.uuid4())
+        object_name = self._object_name(document_id, DocumentCategory.CHART)
+        self._storage().upload_bytes(
+            bucket=self._bucket(),
+            object_name=object_name,
+            data=data,
+            content_type=mime_type,
+        )
+        now = utc_now()
+        return PatientDocument(
+            id=document_id,
+            patient_id=patient_id,
+            user_id=user_id,
+            filename=filename,
+            mime_type=mime_type,
+            gcs_path=object_name,
+            size_bytes=len(data),
+            category=DocumentCategory.CHART,
+            created_at=now,
+            finalized_at=now,
+            extracted_text=extracted_text,
+        )
+
+    def record_imported_file(self, document: PatientDocument) -> PatientDocument:
+        """Add the row for a file :meth:`store_imported_file` wrote."""
+        return self._repo.add(document)
+
     def _bucket(self) -> str:
         bucket = self._settings.patient_documents_gcs_bucket
         if not bucket:

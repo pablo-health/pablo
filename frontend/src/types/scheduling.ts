@@ -6,7 +6,13 @@
  * Type definitions for appointment scheduling, matching backend API models.
  */
 
-export type AppointmentStatus = "confirmed" | "cancelled" | "no_show" | "completed"
+import type { SessionStatus } from "@/types/sessions"
+
+/**
+ * `pending` is a requested time that holds its slot until
+ * `pending_expires_at`, and is not yet agreed to.
+ */
+export type AppointmentStatus = "pending" | "confirmed" | "cancelled" | "no_show" | "completed"
 
 export type RecurrenceFrequency = "weekly" | "biweekly" | "monthly"
 
@@ -25,6 +31,11 @@ export interface AppointmentResponse {
   duration_minutes: number
   status: AppointmentStatus
   session_type: string
+  /** When a pending appointment stops holding its slot. Optional so cached
+   * payloads from older servers still typecheck. */
+  pending_expires_at?: string | null
+  /** A cancelled occurrence of a series that the series carries on past. */
+  skipped?: boolean
   video_link: string | null
   video_platform: string | null
   /**
@@ -34,6 +45,8 @@ export interface AppointmentResponse {
   provider?: string | null
   /** The service's own handle for the meeting. Opens nothing by itself. */
   meeting_external_id?: string | null
+  /** The visit's place-of-service code ("11" office, "02"/"10" telehealth). */
+  place_of_service?: string | null
   notes: string | null
   note_type: string
   /** Values for the note type's declared inputs. */
@@ -53,6 +66,8 @@ export interface AppointmentResponse {
   outside_source?: string | null
   outside_event_id?: string | null
   session_id: string | null
+  /** Status of the linked session, when there is one the caller can see. */
+  session_status?: SessionStatus | null
   created_at: string
   updated_at: string | null
 }

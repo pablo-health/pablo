@@ -13,10 +13,12 @@ output directory; the console gets scores and counts, never sample text.
 Writes to ``--out`` (a new temporary directory when omitted):
 
 - ``proposal.json`` — the proposed note type;
-- ``report.json`` / ``report.md`` — structure score against the reference
-  spec (sections and fields matched by label, order agreement, missing and
-  extra), the coverage report (sample passages no field took), and the
-  copied-text check on the final proposal (expected empty);
+- ``report.json`` / ``report.md`` — structure scores against the reference
+  spec: by label (sections and fields matched by name, order agreement,
+  missing and extra) and by meaning (a judge model maps each reference
+  field to the proposed fields that would hold the same content); the
+  coverage report (sample passages no field took); and the copied-text
+  check on the final proposal (expected empty);
 - with ``--transcript``, ``drafts.json`` / ``drafts.md`` — the transcript
   drafted with the proposal and with the reference, side by side, through
   the same generation path a preview uses.
@@ -43,8 +45,14 @@ from app.services.note_generation_service import RegistryNoteGenerationService
 from app.services.note_import_service import NoteImportService, extract_document_text
 from app.services.note_type_derive_checks import SampleText, copied_paths, words
 from app.services.note_type_derive_service import NoteTypeDeriveService
-from app.services.structured_llm_gateway import StructuredCompletion, StructuredLLMGateway
+from app.services.structured_llm_gateway import (
+    StructuredCompletion,
+    StructuredLLMGateway,
+    get_default_structured_llm_gateway,
+)
 from fastapi.testclient import TestClient
+
+from evals.derive_meaning import model_judge, score_meaning
 
 if TYPE_CHECKING:
     from app.notes import NoteTypeDefinition
@@ -272,7 +280,7 @@ def _report_markdown(report: dict[str, Any]) -> str:
     structure = report.get("structure")
     if structure:
         lines += [
-            "## Structure against the reference",
+            "## Structure against the reference, by label",
             "",
             f"- Sections: recall {structure['section_recall']}, precision "
             f"{structure['section_precision']}, order {structure['section_order']}",
@@ -295,11 +303,30 @@ def _report_markdown(report: dict[str, Any]) -> str:
             *(f"- {f}" for f in structure["extra_fields"]),
             "",
         ]
+    meaning = report.get("meaning")
+    if meaning:
+        lines += [
+            "## Structure against the reference, by meaning",
+            "",
+            f"- Fields: recall {meaning['field_recall']}, precision "
+            f"{meaning['field_precision']}; sections reached {meaning['section_recall']}",
+            "",
+            "Where each reference field went:",
+            *(f"- {m['reference']} -> {', '.join(m['proposed'])}" for m in meaning["matches"]),
+            "",
+            "Reference fields with no home:",
+            *(f"- {f}" for f in meaning["missing_fields"]),
+            "",
+            "Proposed fields no reference field needed:",
+            *(f"- {f}" for f in meaning["unused_fields"]),
+            "",
+        ]
     lines += ["## Coverage", ""]
     for c in report["coverage"]:
         lines.append(
             f"### Sample {c['sample']} ({c['file']}): {len(c['unplaced'])} of "
             f"{c['passages']} passages unplaced{'' if c['checked'] else ' (not checked)'}"
+            f"; {c.get('excluded', 0)} lines left out as not note content"
         )
         lines += [f"- {p}" for p in c["unplaced"]] + [""]
     lines += [
@@ -341,8 +368,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     derived: DerivedNoteType = service.derive(samples, args.description)
 
     copied = copied_paths(derived.spec, SampleText(samples)) if samples else []
+    judge = model_judge(gateway or get_default_structured_llm_gateway())
     report: dict[str, Any] = {
         "structure": asdict(score_structure(derived.spec, reference)) if reference else None,
+        "meaning": asdict(score_meaning(derived.spec, reference, judge)) if reference else None,
         "coverage": [
             {**asdict(c), "file": paths[c.sample].name if paths else ""} for c in derived.coverage
         ],
@@ -376,15 +405,22 @@ def _summary(report: dict[str, Any]) -> str:
     s = report["structure"]
     if s:
         lines.append(
-            f"Sections: recall {s['section_recall']} precision {s['section_precision']} "
+            f"By label: sections recall {s['section_recall']} precision {s['section_precision']} "
             f"order {s['section_order']} | fields: recall {s['field_recall']} "
             f"precision {s['field_precision']} | missing sections {len(s['missing_sections'])}, "
             f"extra {len(s['extra_sections'])}"
+        )
+    m = report["meaning"]
+    if m:
+        lines.append(
+            f"By meaning: fields recall {m['field_recall']} precision {m['field_precision']} "
+            f"| reference sections reached {m['section_recall']}"
         )
     for c in report["coverage"]:
         lines.append(
             f"Sample {c['sample']}: {len(c['unplaced'])}/{c['passages']} passages unplaced"
             + ("" if c["checked"] else " (not checked)")
+            + f", {c['excluded']} lines excluded as not note content"
         )
     lines.append(
         f"Copied text in final proposal: {len(report['copied_in_final'])} (expected 0); "

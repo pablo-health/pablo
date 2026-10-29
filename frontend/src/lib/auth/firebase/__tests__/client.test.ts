@@ -161,8 +161,8 @@ describe("syncAuthTick", () => {
   const auth = {} as Auth
   const setUser = vi.fn()
 
-  const fakeUser = (getIdToken: () => Promise<string>) =>
-    ({ uid: "u1", email: "u@x", displayName: null, photoURL: null, getIdToken }) as unknown as User
+  const fakeUser = (getIdToken: () => Promise<string>, refreshToken?: string) =>
+    ({ uid: "u1", email: "u@x", displayName: null, photoURL: null, getIdToken, refreshToken }) as unknown as User
 
   beforeEach(() => {
     setUser.mockReset()
@@ -187,6 +187,18 @@ describe("syncAuthTick", () => {
     )
     expect(setUser).toHaveBeenCalledWith(expect.objectContaining({ uid: "u1" }))
     expect(clearFirebaseAuthStorage).not.toHaveBeenCalled()
+  })
+
+  it("sends the refresh token with the sync, as the login screen does", async () => {
+    // A host without the GCP metadata server seeds the session from it; this
+    // sync fires before the login screen's own call, so it must carry it too.
+    await syncAuthTick(auth, fakeUser(() => Promise.resolve("tok"), "rt-1"), setUser)
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/login",
+      expect.objectContaining({
+        headers: { Authorization: "Bearer tok", "X-Refresh-Token": "rt-1" },
+      }),
+    )
   })
 
   it("clears the stale session when the token refresh rejects", async () => {

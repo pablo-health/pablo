@@ -12,11 +12,13 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from ..models.refill_risk import interruption_risk_by_default
 from ..utcnow import utc_now
 from .repository import PatientMedicationAccessDeniedError
 from .schemas import MedicationResponse
 
 if TYPE_CHECKING:
+    from ..repositories.row import Row
     from .repository import MedicationRepository
     from .schemas import CreateMedicationRequest, UpdateMedicationRequest
 
@@ -44,21 +46,26 @@ class MedicationService:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _build_response(row: dict[str, object]) -> MedicationResponse:
+    def _build_response(row: Row) -> MedicationResponse:
         """Build an API response from a repository row dict."""
         return MedicationResponse(
             id=str(row["id"]),
             patient_id=str(row["patient_id"]),
             drug_name=str(row["drug_name"]),
             dose=str(row["dose"]),
+            frequency=str(row["frequency"]) if row.get("frequency") is not None else None,
+            category=row.get("category"),
             status=str(row["status"]),
-            started_at=row.get("started_at"),  # type: ignore[arg-type]
-            stopped_at=row.get("stopped_at"),  # type: ignore[arg-type]
+            started_at=row.get("started_at"),
+            stopped_at=row.get("stopped_at"),
             stop_reason=str(row["stop_reason"]) if row.get("stop_reason") is not None else None,
             notes=str(row["notes"]) if row.get("notes") is not None else None,
+            controlled=row.get("controlled"),
+            interruption_risk=row.get("interruption_risk"),
+            interruption_risk_default=interruption_risk_by_default(str(row["drug_name"])),
             created_by=str(row["created_by"]),
-            created_at=row["created_at"],  # type: ignore[arg-type]
-            updated_at=row["updated_at"],  # type: ignore[arg-type]
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
         )
 
     # ------------------------------------------------------------------
@@ -70,25 +77,33 @@ class MedicationService:
         patient_id: str,
         user_id: str,
         req: CreateMedicationRequest,
-    ) -> dict[str, object]:
+        *,
+        source_note_id: str | None = None,
+    ) -> Row:
         """Create and persist a new medication record.
 
+        ``source_note_id`` is the note whose accepted proposal added it.
         Returns the saved row dict.
 
         Raises :class:`PatientMedicationAccessError` when the caller has no
         access grant for the patient — surfaced as 404 at the route layer.
         """
         now = utc_now()
-        row: dict[str, object] = {
+        row: Row = {
             "id": str(uuid.uuid4()),
             "patient_id": patient_id,
             "drug_name": req.drug_name,
             "dose": req.dose,
+            "frequency": req.frequency or None,
+            "category": req.category,
             "status": req.status,
             "started_at": req.started_at,
             "stopped_at": None,
             "stop_reason": req.stop_reason,
             "notes": req.notes,
+            "controlled": req.controlled,
+            "interruption_risk": req.interruption_risk,
+            "source_note_id": source_note_id,
             "created_by": user_id,
             "created_at": now,
             "updated_at": now,
@@ -104,8 +119,13 @@ class MedicationService:
         med_id: str,
         user_id: str,
         req: UpdateMedicationRequest,
-    ) -> dict[str, object]:
+        *,
+        source_note_id: str | None = None,
+    ) -> Row:
         """Apply a partial update to a medication record.
+
+        ``source_note_id``, when given, is the note whose accepted proposal made
+        the change; an edit on the chart leaves the last one in place.
 
         Automatically sets ``stopped_at`` to today when ``status`` changes
         to ``"discontinued"`` and no explicit ``stopped_at`` is given.
@@ -120,6 +140,14 @@ class MedicationService:
             existing["drug_name"] = req.drug_name
         if req.dose is not None:
             existing["dose"] = req.dose
+        # Sent as null, these two clear: either can be unknown.
+        if "frequency" in req.model_fields_set:
+            existing["frequency"] = req.frequency or None
+        if "category" in req.model_fields_set:
+            existing["category"] = req.category
+        for flag in ("controlled", "interruption_risk"):
+            if flag in req.model_fields_set:
+                existing[flag] = getattr(req, flag)
         if req.status is not None:
             old_status = existing.get("status")
             existing["status"] = req.status
@@ -127,14 +155,14 @@ class MedicationService:
             if req.status == "discontinued" and old_status != "discontinued":
                 auto = req.stopped_at if req.stopped_at is not None else datetime.now(UTC).date()
                 existing["stopped_at"] = auto
-        if req.started_at is not None:
-            existing["started_at"] = req.started_at
-        if req.stopped_at is not None:
-            existing["stopped_at"] = req.stopped_at
-        if req.stop_reason is not None:
-            existing["stop_reason"] = req.stop_reason
-        if req.notes is not None:
-            existing["notes"] = req.notes
+        given = {
+            "started_at": req.started_at,
+            "stopped_at": req.stopped_at,
+            "stop_reason": req.stop_reason,
+            "notes": req.notes,
+            "source_note_id": source_note_id,
+        }
+        existing.update({key: value for key, value in given.items() if value is not None})
 
         existing["updated_at"] = utc_now()
 
@@ -166,7 +194,7 @@ class MedicationService:
         user_id: str,
         *,
         status: str | None = None,
-    ) -> list[dict[str, object]]:
+    ) -> list[Row]:
         """List live medications for a patient.
 
         Returns active records first, then discontinued/on_hold, each group

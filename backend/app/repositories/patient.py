@@ -272,12 +272,6 @@ class InMemoryPatientRepository(PatientRepository):
         # tombstone-then-purge lifecycle as PostgresPatientRepository
         # without adding a deleted_at field to the Patient dataclass.
         self._deleted_at: dict[str, datetime] = {}
-        # Same parallel-map trick as ``_deleted_at``, and for the same
-        # reason: ``preferred_name`` is a column on ``patients`` that the
-        # patient-facing surface reads and writes, but the clinician-facing
-        # ``Patient`` dataclass does not carry it, so there is nowhere on
-        # the domain model to keep it.
-        self._preferred_name: dict[str, str | None] = {}
         self._session_repo = session_repo
 
     # --- access helpers (mirror has_patient_access semantics) ---
@@ -317,7 +311,7 @@ class InMemoryPatientRepository(PatientRepository):
         return PatientFacingPatient(
             first_name=patient.first_name,
             last_name=patient.last_name,
-            preferred_name=self._preferred_name.get(patient_id),
+            preferred_name=patient.preferred_name,
             date_of_birth=patient.date_of_birth,
             email=patient.email,
             phone=patient.phone,
@@ -339,10 +333,7 @@ class InMemoryPatientRepository(PatientRepository):
         for column, value in changes.items():
             if column not in PATIENT_SELF_WRITABLE_COLUMNS:
                 continue
-            if column == "preferred_name":
-                self._preferred_name[patient_id] = value
-            else:
-                setattr(patient, column, value)
+            setattr(patient, column, value)
         patient.updated_at = utc_now()
         return self.get_for_patient_principal(patient_id)
 

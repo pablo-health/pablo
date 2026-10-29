@@ -27,7 +27,7 @@ from typing import Any
 import pytest
 from app.services import document_ai_ocr as ocr_module
 from app.services.document_ai_ocr import (
-    _LOW_CONFIDENCE_MARKER,
+    LOW_CONFIDENCE_MARKER,
     PABLO_OCR_PROCESSOR_NAME,
     DocumentAiOcrClient,
     OcrResult,
@@ -354,7 +354,7 @@ class TestExtract:
         result = client.extract(pdf_bytes=_pdf_with_pages(2), mime_type="application/pdf")
 
         assert result is not None
-        assert result.text.startswith(_LOW_CONFIDENCE_MARKER)
+        assert result.text.startswith(LOW_CONFIDENCE_MARKER)
         assert "garbled text" in result.text
 
     def test_page_count_cap_skips_call(self) -> None:

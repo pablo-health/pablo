@@ -31,14 +31,11 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import UTC, date, datetime, time, timedelta
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 import pytest
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -129,17 +126,6 @@ def _arming_here_stays_here() -> Iterator[None]:
     yield
     for var, token in reversed(tokens):
         var.reset(token)
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_DB_URL, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 def _seed_owner_timezone(engine: Engine) -> None:
@@ -1237,6 +1223,108 @@ def test_cancelling_is_audited_as_the_patient(
 
     assert rows, "the cancellation wrote no patient-actor audit row"
     assert str(rows[0][1]) == practice["a"], "the audit row names somebody other than the patient"
+
+
+def _slot_opened_rows(engine: Engine, appointment_id: str) -> list[Any]:
+    """The open-slot audit rows for an appointment, read as the clinician."""
+    with engine.begin() as conn:
+        conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
+        conn.execute(text("SELECT set_config('app.current_user_id', :c, true)"), {"c": _CLINICIAN})
+        return list(
+            conn.execute(
+                text(
+                    "SELECT actor_type, user_id, patient_id, changes FROM audit_logs "
+                    "WHERE resource_id = :r AND action = 'appointment_slot_opened'"
+                ),
+                {"r": appointment_id},
+            ).fetchall()
+        )
+
+
+def test_a_client_cancellation_raises_the_open_slot_event(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """The slot the client gave back is announced, and recorded, by id alone."""
+    from app.scheduling_engine.services.open_slots import OpenSlot, subscribe  # noqa: PLC0415
+
+    _open_policy(engine)
+    _clear_appointments(engine)
+    appointment_id = _seed_appointment(engine, practice["a"], _at(10))
+
+    heard: list[OpenSlot] = []
+    unsubscribe = subscribe(heard.append)
+    try:
+        response = patient_a_client.post(f"/api/patient/booking/{appointment_id}/cancel")
+    finally:
+        unsubscribe()
+
+    assert response.status_code == 200, response.text
+    [slot] = heard
+    assert slot.appointment_id == appointment_id
+    assert slot.clinician_id == _CLINICIAN
+    assert slot.start_at == _at(10)
+    assert slot.end_at > slot.start_at
+    assert slot.session_type == _SESSION_TYPE
+    assert slot.modality == "in_person"
+
+    [row] = _slot_opened_rows(engine, appointment_id)
+    actor_type, user_id, patient_id, changes = row
+    assert actor_type == "system"
+    assert str(user_id) == _CLINICIAN, "the slot is in the clinician's diary"
+    assert patient_id is None, "the open-slot record must not name the client"
+    assert changes == {"appointment_type_id": slot.appointment_type_id, "modality": "in_person"}
+
+
+def test_a_clinician_cancellation_raises_no_open_slot_event(
+    engine: Engine, practice: dict[str, Any]
+) -> None:
+    """The clinician's own cancel is theirs to fill; nothing is announced."""
+    from app.db import arm_current_user_id, set_tenant_schema  # noqa: PLC0415
+    from app.repositories.postgres.appointment import (  # noqa: PLC0415
+        PostgresAppointmentRepository,
+    )
+    from app.scheduling_engine.services.open_slots import open_slot_for  # noqa: PLC0415
+    from app.scheduling_engine.services.scheduling import SchedulingService  # noqa: PLC0415
+    from sqlalchemy.orm import Session  # noqa: PLC0415
+
+    _clear_appointments(engine)
+    appointment_id = _seed_appointment(engine, practice["a"], _at(10))
+
+    with Session(bind=engine) as s:
+        set_tenant_schema(s, _SCHEMA)
+        arm_current_user_id(s, _CLINICIAN)
+        cancelled = SchedulingService(PostgresAppointmentRepository(s)).cancel_appointment(
+            appointment_id, _CLINICIAN
+        )
+        s.commit()
+
+    assert open_slot_for(cancelled) is None
+    assert _slot_opened_rows(engine, appointment_id) == []
+
+
+def test_a_client_moving_their_appointment_raises_no_open_slot_event(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """A move gives up one time for another; only an outright cancel opens one."""
+    from app.scheduling_engine.services.open_slots import OpenSlot, subscribe  # noqa: PLC0415
+
+    _open_policy(engine)
+    _clear_appointments(engine)
+    appointment_id = _seed_appointment(engine, practice["a"], _at(10))
+
+    heard: list[OpenSlot] = []
+    unsubscribe = subscribe(heard.append)
+    try:
+        response = patient_a_client.post(
+            f"/api/patient/booking/{appointment_id}/reschedule",
+            json={"start_at": _at(14).isoformat()},
+        )
+    finally:
+        unsubscribe()
+
+    assert response.status_code == 200, response.text
+    assert heard == []
+    assert _slot_opened_rows(engine, appointment_id) == []
 
 
 def test_a_reschedule_leaves_the_old_slot_cancelled_and_a_new_appointment(

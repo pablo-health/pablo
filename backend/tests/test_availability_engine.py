@@ -15,6 +15,7 @@ from app.scheduling_engine.models.availability import AvailabilityRule, Enforcem
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.scheduling_engine.repositories.availability_rule import InMemoryAvailabilityRuleRepository
 from app.scheduling_engine.services.availability import AvailabilityEngine
+from app.scheduling_engine.services.scheduling import SchedulingService
 
 USER_ID = "user-1"
 
@@ -129,6 +130,104 @@ class TestWorkingHoursConflict:
             USER_ID, "2026-03-19T10:00:00Z", "2026-03-19T10:50:00Z"
         ).conflicts
         assert len(conflicts) == 0
+
+
+class TestSplitWorkingDay:
+    """A day with two working ranges, 09:00-12:00 and 14:00-18:00 on Wednesdays.
+
+    Booking has to agree with listing: every time ``get_free_slots`` offers is
+    one ``check_conflicts`` accepts, and a time between the ranges is still
+    outside working hours.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _split_day(self, rule_repo: InMemoryAvailabilityRuleRepository) -> None:
+        for rule_id, start, end in (("am", "09:00", "12:00"), ("pm", "14:00", "18:00")):
+            rule_repo.create(
+                _rule(
+                    RuleType.WORKING_HOURS,
+                    {"day_of_week": 2, "start": start, "end": end},
+                    rule_id=rule_id,
+                )
+            )
+
+    def test_every_listed_time_can_be_booked(
+        self,
+        appt_repo: InMemoryAppointmentRepository,
+        engine: AvailabilityEngine,
+    ) -> None:
+        slots = engine.get_free_slots(USER_ID, "2026-03-18", 50).slots
+        assert {s.start for s in slots} >= {"2026-03-18T09:00:00Z", "2026-03-18T14:00:00Z"}
+        for slot in slots:
+            assert engine.check_conflicts(USER_ID, slot.start, slot.end).conflicts == []
+
+        service = SchedulingService(appt_repo, engine)
+        for start, end in (("09:00", "09:50"), ("15:00", "15:50")):
+            service.create_appointment(
+                USER_ID,
+                data={
+                    "patient_id": "patient-1",
+                    "title": "Session",
+                    "start_at": f"2026-03-18T{start}:00Z",
+                    "end_at": f"2026-03-18T{end}:00Z",
+                    "duration_minutes": 50,
+                },
+            )
+        booked = appt_repo.list_by_range(USER_ID, "2026-03-18T00:00:00Z", "2026-03-19T00:00:00Z")
+        assert len(booked) == 2
+
+    def test_a_time_between_the_ranges_is_outside_working_hours(
+        self, engine: AvailabilityEngine
+    ) -> None:
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-18T12:30:00Z", "2026-03-18T13:20:00Z"
+        ).conflicts
+        assert len(conflicts) == 1
+        assert conflicts[0].enforcement == EnforcementLevel.HARD
+        assert conflicts[0].message == "Outside working hours (09:00-12:00, 14:00-18:00)"
+
+    def test_a_time_across_the_break_is_outside_working_hours(
+        self, engine: AvailabilityEngine
+    ) -> None:
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-18T11:30:00Z", "2026-03-18T14:20:00Z"
+        ).conflicts
+        assert len(conflicts) == 1
+
+    def test_a_hard_range_is_not_softened_by_a_soft_one(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        rule_repo.create(
+            _rule(
+                RuleType.WORKING_HOURS,
+                {"day_of_week": 2, "start": "19:00", "end": "21:00"},
+                rule_id="evening",
+                enforcement=EnforcementLevel.SOFT,
+            )
+        )
+        inside_soft = engine.check_conflicts(
+            USER_ID, "2026-03-18T19:00:00Z", "2026-03-18T19:50:00Z"
+        ).conflicts
+        assert inside_soft == []
+        outside = engine.check_conflicts(
+            USER_ID, "2026-03-18T07:00:00Z", "2026-03-18T07:50:00Z"
+        ).conflicts
+        assert [c.enforcement for c in outside] == [EnforcementLevel.HARD]
+
+    def test_an_unreadable_range_is_skipped(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        rule_repo.create(_rule(RuleType.WORKING_HOURS, {"day_of_week": 2}, rule_id="broken"))
+        assert (
+            engine.check_conflicts(
+                USER_ID, "2026-03-18T15:00:00Z", "2026-03-18T15:50:00Z"
+            ).conflicts
+            == []
+        )
+        outside = engine.check_conflicts(
+            USER_ID, "2026-03-18T07:00:00Z", "2026-03-18T07:50:00Z"
+        ).conflicts
+        assert len(outside) == 1
 
 
 class TestBlockDayOfWeek:
@@ -1238,6 +1337,103 @@ class TestNaiveInputIsHostIndependent:
             USER_ID, "2026-08-26T08:00:00", "2026-08-26T08:50:00", tz=NY
         ).conflicts
         assert len(naive_early) == 1
+
+
+class TestDaylightSavingTransitionDays:
+    """Slots on the two days a year the local clock jumps.
+
+    2026-03-08 springs forward (02:00 EST becomes 03:00 EDT, so the hour
+    02:00-02:59 never happens) and 2026-11-01 falls back (02:00 EDT becomes
+    01:00 EST, so 01:00-01:59 happens twice). Both are Sundays. The engine
+    walks the day in wall-clock minutes, so these pin the UTC instants it
+    hands out when a working window sits on the jump, and that an ordinary
+    nine-to-five on the same date is untouched by it.
+
+    The expected lists read working hours as instants: a window runs from the
+    moment the clock first reads its start to the moment it reads its end, so
+    01:00-03:00 is one real hour on the spring day and three on the fall day.
+    """
+
+    SUNDAY = 6
+    SLOT, BUFFER = 30, 10
+
+    def _hours(self, rule_repo: InMemoryAvailabilityRuleRepository, start: str, end: str) -> None:
+        rule_repo.create(
+            _rule(RuleType.WORKING_HOURS, {"day_of_week": self.SUNDAY, "start": start, "end": end})
+        )
+        rule_repo.create(_rule(RuleType.BUFFER_AFTER, {"minutes": self.BUFFER}, rule_id="buf"))
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "PABLO-8gna.8: get_free_slots walks wall-clock minutes, so on the spring-forward "
+            "day it offers slots at local 01:40 and 02:20 — the second in the hour that does "
+            "not exist, rendered as 07:20Z (03:20 EDT), outside the 01:00-03:00 window"
+        ),
+    )
+    def test_spring_forward_skips_the_missing_hour(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        self._hours(rule_repo, "01:00", "03:00")
+
+        slots = engine.get_free_slots(USER_ID, "2026-03-08", self.SLOT, tz=NY).slots
+
+        # 01:00 EST is 06:00Z and 03:00 EDT is 07:00Z: one real hour, which
+        # fits a single 30-minute slot once the 10-minute buffer follows it.
+        assert [(s.start, s.end) for s in slots] == [
+            ("2026-03-08T06:00:00Z", "2026-03-08T06:30:00Z"),
+        ]
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "PABLO-8gna.8: get_free_slots walks wall-clock minutes, so on the fall-back day "
+            "the slot at local 01:40 is rendered 05:40Z-07:10Z (90 real minutes across the "
+            "repeated hour) and the second 01:00-02:00 hour is never offered"
+        ),
+    )
+    def test_fall_back_offers_the_repeated_hour_once_each(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        self._hours(rule_repo, "01:00", "03:00")
+
+        slots = engine.get_free_slots(USER_ID, "2026-11-01", self.SLOT, tz=NY).slots
+
+        # 01:00 EDT is 05:00Z and 03:00 EST is 08:00Z: three real hours, every
+        # slot 30 minutes long, none repeated, 40 minutes apart.
+        assert [(s.start, s.end) for s in slots] == [
+            ("2026-11-01T05:00:00Z", "2026-11-01T05:30:00Z"),
+            ("2026-11-01T05:40:00Z", "2026-11-01T06:10:00Z"),
+            ("2026-11-01T06:20:00Z", "2026-11-01T06:50:00Z"),
+            ("2026-11-01T07:00:00Z", "2026-11-01T07:30:00Z"),
+        ]
+
+    @pytest.mark.parametrize(
+        ("date_str", "first_start", "last_start"),
+        [
+            # EDT from 03:00 on, so 09:00 is 13:00Z and the day is UTC-4.
+            ("2026-03-08", "2026-03-08T13:00:00Z", "2026-03-08T20:00:00Z"),
+            # EST from 02:00 on, so 09:00 is 14:00Z and the day is UTC-5.
+            ("2026-11-01", "2026-11-01T14:00:00Z", "2026-11-01T21:00:00Z"),
+        ],
+    )
+    def test_an_ordinary_day_on_the_transition_date(
+        self,
+        rule_repo: InMemoryAvailabilityRuleRepository,
+        engine: AvailabilityEngine,
+        date_str: str,
+        first_start: str,
+        last_start: str,
+    ) -> None:
+        self._hours(rule_repo, "09:00", "17:00")
+
+        slots = engine.get_free_slots(USER_ID, date_str, 50, tz=NY).slots
+
+        # Eight hours, each holding one 50-minute slot and its 10-minute buffer.
+        assert len(slots) == 8
+        assert slots[0].start == first_start
+        assert slots[-1].start == last_start
+        assert all(s.end[11:] == f"{int(s.start[11:13]):02d}:50:00Z" for s in slots)
 
 
 # 2026-03-16 is a Monday, so this week runs Mon 16 through Sun 22.

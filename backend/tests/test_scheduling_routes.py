@@ -17,6 +17,8 @@ from app.main import app
 from app.models import Patient, SessionStatus, UserPreferences
 from app.models.session import TherapySession, Transcript
 from app.notes import get_note_type_authorizer
+from app.problems.schemas import AddProblemRequest
+from app.problems.service import ProblemService
 from app.repositories.external_calendar_event import (
     ExternalCalendarEvent,
     InMemoryExternalCalendarEventRepository,
@@ -57,7 +59,7 @@ from fastapi import HTTPException, status
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from app.repositories import InMemoryUserRepository
+    from app.repositories import InMemoryPatientProblemRepository, InMemoryUserRepository
     from fastapi.testclient import TestClient
 
 
@@ -182,6 +184,100 @@ def test_start_session_default_authorizer_allows_explicit_note_type(
     assert response.status_code == 201, response.text
     session_svc.schedule_session.assert_called_once()
     scheduling_svc.update_appointment.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("label", "platform"),
+    [("google_meet", "meet"), ("doxy", None), ("other", None)],
+)
+def test_start_session_reads_any_video_platform_label(
+    client: TestClient, label: str, platform: str | None
+) -> None:
+    """Starting a session from an appointment whose platform label is not a
+    session platform value (Google Meet, Doxy, Other) succeeds."""
+    appointment = _appointment()
+    appointment.video_link = "https://meet.example/abc"
+    appointment.video_platform = label
+    appointment.note_type = None
+    appointment.note_inputs = None
+    appointment.diagnosis_codes = ["F41.1"]
+    scheduling_svc = MagicMock()
+    scheduling_svc.get_appointment.return_value = appointment
+    session_svc = MagicMock()
+    session_svc.schedule_session.return_value = (_session(), _patient())
+    _wire_scheduling_overrides(scheduling_svc=scheduling_svc, session_svc=session_svc)
+
+    response = client.post(
+        "/api/appointments/appt-1/start-session",
+        json={"recording": False},
+    )
+
+    assert response.status_code == 201, response.text
+    request = session_svc.schedule_session.call_args.args[1]
+    assert request.video_platform == platform
+
+
+@pytest.mark.parametrize(
+    ("label", "session_type"),
+    [("group", "group"), ("couples", "couples"), ("Intake (60 min)", "individual")],
+)
+def test_start_session_reads_any_session_type_label(
+    client: TestClient, label: str, session_type: str
+) -> None:
+    """Starting a session from a Group appointment, or one booked under a
+    type with its own name, succeeds."""
+    appointment = _appointment()
+    appointment.session_type = label
+    appointment.note_type = None
+    appointment.note_inputs = None
+    appointment.diagnosis_codes = ["F41.1"]
+    scheduling_svc = MagicMock()
+    scheduling_svc.get_appointment.return_value = appointment
+    session_svc = MagicMock()
+    session_svc.schedule_session.return_value = (_session(), _patient())
+    _wire_scheduling_overrides(scheduling_svc=scheduling_svc, session_svc=session_svc)
+
+    response = client.post(
+        "/api/appointments/appt-1/start-session",
+        json={"recording": False},
+    )
+
+    assert response.status_code == 201, response.text
+    request = session_svc.schedule_session.call_args.args[1]
+    assert request.session_type == session_type
+
+
+@pytest.mark.parametrize(
+    ("visit_codes", "written"),
+    [(None, {"diagnosis_codes": ["F41.1"]}), (["F32.9"], {})],
+)
+def test_start_session_prefills_an_uncoded_visit_from_the_problem_list(
+    client: TestClient,
+    mock_problem_repo: InMemoryPatientProblemRepository,
+    visit_codes: list[str] | None,
+    written: dict[str, Any],
+) -> None:
+    """Starting the visit starts its diagnosis codes from the active problems,
+    unless the visit already has codes of its own."""
+    ProblemService(mock_problem_repo).add(
+        "patient-1", "test-user-123", AddProblemRequest(label="GAD", icd10_code="F41.1")
+    )
+    appointment = _appointment()
+    appointment.diagnosis_codes = visit_codes
+    appointment.note_type = None
+    appointment.note_inputs = None
+    scheduling_svc = MagicMock()
+    scheduling_svc.get_appointment.return_value = appointment
+    session_svc = MagicMock()
+    session_svc.schedule_session.return_value = (_session(), _patient())
+    _wire_scheduling_overrides(scheduling_svc=scheduling_svc, session_svc=session_svc)
+
+    response = client.post("/api/appointments/appt-1/start-session", json={})
+
+    assert response.status_code == 201, response.text
+    scheduling_svc.update_appointment.assert_called_once_with(
+        "appt-1", "test-user-123", session_id="session-1", **written
+    )
 
 
 def test_start_session_overridden_authorizer_returns_403(client: TestClient) -> None:
@@ -2451,3 +2547,57 @@ def test_parse_passes_both_readings_through(write_client: TestClient) -> None:
     assert [r["label"] for r in body["readings"]] == ["Just a weekly cap", "No Tuesdays at all"]
     assert body["readings"][1]["proposals"][0]["params"] == {"day_of_week": 1}
     assert body["unknown_appointment_type"] is None
+
+
+# --- Skipping one occurrence of a series ---
+
+
+def test_skip_marks_a_series_occurrence_and_the_rest_stay_booked(
+    write_client: TestClient,
+) -> None:
+    """Skipping cancels that one occurrence, says so on the row, and leaves
+    every other occurrence of the series booked."""
+    created = write_client.post("/api/appointments/recurring", json=_weekly_series_payload())
+    assert created.status_code == 201, created.text
+    occurrences = created.json()["data"]
+    target = occurrences[1]["id"]
+
+    response = write_client.delete(f"/api/appointments/{target}", params={"skip": "true"})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "cancelled"
+    assert body["skipped"] is True
+    others = [o["id"] for o in occurrences if o["id"] != target]
+    fetched = [write_client.get(f"/api/appointments/{other}").json() for other in others]
+    assert [(f["status"], f["skipped"]) for f in fetched] == [("confirmed", False)] * 3
+
+
+def test_plain_cancel_of_a_series_occurrence_is_not_a_skip(write_client: TestClient) -> None:
+    created = write_client.post("/api/appointments/recurring", json=_weekly_series_payload())
+    target = created.json()["data"][0]["id"]
+
+    response = write_client.delete(f"/api/appointments/{target}")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["skipped"] is False
+
+
+def test_skip_refused_on_an_appointment_outside_a_series(write_client: TestClient) -> None:
+    """A one-off appointment has no series to carry on, so it can be
+    cancelled but not skipped — and a refused skip leaves it booked."""
+    created = write_client.post("/api/appointments", json=_create_payload())
+    appt_id = created.json()["id"]
+
+    response = write_client.delete(f"/api/appointments/{appt_id}", params={"skip": "true"})
+
+    assert response.status_code == 400, response.text
+    assert write_client.get(f"/api/appointments/{appt_id}").json()["status"] == "confirmed"
+
+
+def test_confirmed_booking_carries_no_hold_expiry(write_client: TestClient) -> None:
+    created = write_client.post("/api/appointments", json=_create_payload())
+
+    assert created.status_code == 201, created.text
+    assert created.json()["pending_expires_at"] is None
+    assert created.json()["skipped"] is False

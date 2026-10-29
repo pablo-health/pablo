@@ -8,10 +8,15 @@
  */
 
 import type {
+  CreateNoteAddendumRequest,
   CreateStandaloneNoteRequest,
   FinalizeNoteRequest,
   Note,
+  NoteAddendum,
+  NoteSigningRecord,
   PatientNotesListResponse,
+  SignNoteRequest,
+  UnlockNoteRequest,
   UpdateNoteEditsRequest,
 } from "@/types/notes"
 import { get, patch, post } from "./client"
@@ -34,6 +39,37 @@ export async function finalizeNote(
   token?: string,
 ): Promise<Note> {
   return post<Note>(`/api/notes/${noteId}/finalize`, data, token)
+}
+
+export async function fetchNoteSigning(
+  noteId: string,
+  token?: string,
+): Promise<NoteSigningRecord> {
+  return get<NoteSigningRecord>(`/api/notes/${noteId}/signing`, token)
+}
+
+export async function signNote(
+  noteId: string,
+  data: SignNoteRequest,
+  token?: string,
+): Promise<Note> {
+  return post<Note>(`/api/notes/${noteId}/sign`, data, token)
+}
+
+export async function unlockNote(
+  noteId: string,
+  data: UnlockNoteRequest,
+  token?: string,
+): Promise<Note> {
+  return post<Note>(`/api/notes/${noteId}/unlock`, data, token)
+}
+
+export async function addNoteAddendum(
+  noteId: string,
+  data: CreateNoteAddendumRequest,
+  token?: string,
+): Promise<NoteAddendum> {
+  return post<NoteAddendum>(`/api/notes/${noteId}/addenda`, data, token)
 }
 
 export async function createStandaloneNote(

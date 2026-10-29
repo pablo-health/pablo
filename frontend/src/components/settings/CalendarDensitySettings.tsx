@@ -2,12 +2,12 @@
 
 "use client"
 
-import type { UserPreferences } from "@/lib/api/users"
+import type { PreferenceChanges, UserPreferences } from "@/lib/api/users"
 import { cn } from "@/lib/utils"
 
 interface CalendarDensitySettingsProps {
   preferences: UserPreferences
-  onSave: (prefs: UserPreferences) => void
+  onSave: (changes: PreferenceChanges) => void
   isSaving: boolean
 }
 
@@ -33,7 +33,7 @@ export function CalendarDensitySettings({ preferences, onSave, isSaving }: Calen
             role="radio"
             aria-checked={active}
             disabled={isSaving}
-            onClick={() => onSave({ ...preferences, calendar_density: d.value })}
+            onClick={() => onSave({ calendar_density: d.value })}
             className={cn(
               "rounded-lg border p-3 text-left transition-colors",
               active

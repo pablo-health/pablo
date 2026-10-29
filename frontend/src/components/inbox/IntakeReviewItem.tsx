@@ -5,11 +5,11 @@
 import type { InboxItemRendererProps } from "./itemRenderers"
 import { ItemPanel, OpenLink } from "./ItemPanel"
 
-/** A form a client handed in. Accepting it on the chart takes it off the list. */
+/** A packet a client handed in. Accepting it on the chart takes it off the list. */
 export function IntakeReviewItem({ item }: InboxItemRendererProps) {
   return (
     <ItemPanel item={item}>
-      <OpenLink href={item.href} label="Review the form" />
+      <OpenLink href={item.href} label="Review their answers" />
     </ItemPanel>
   )
 }

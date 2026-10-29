@@ -110,6 +110,14 @@ class PatientMessageRepository(ABC):
         marked their thread read. At most ``limit`` rows.
         """
 
+    def practice_schema(self) -> str | None:
+        """The practice whose messages this repository reads, when it is a real one.
+
+        ``None`` where there is no practice behind it (an in-memory store), in
+        which case nothing is dated by the practice's own targets.
+        """
+        return None
+
     @abstractmethod
     def list_awaiting_messages(
         self,

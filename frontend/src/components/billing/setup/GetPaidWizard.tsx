@@ -6,7 +6,9 @@ import { useCallback, useMemo } from "react"
 import { SetupNav, StepSaveProvider, SetupWizardShell, useStepSave } from "@/components/setup"
 import { Skeleton } from "@/components/ui/skeleton"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
-import { usePreferences, useSavePreferences } from "@/hooks/usePreferences"
+import { usePreferences, useUpdatePreferences } from "@/hooks/usePreferences"
+import { CREDENTIALING_FEATURE } from "@/components/settings/paths"
+import { useFeature } from "@/lib/featureGates"
 import { type CurrentStateId, stepsForState } from "./routes"
 import { STEP_BODIES } from "./stepBodies"
 import { useBillingSetupDraft } from "./useBillingSetupDraft"
@@ -57,7 +59,7 @@ export function GetPaidWizard({ onSettled }: GetPaidWizardProps) {
 
 function GetPaidWizardBody({ onSettled }: GetPaidWizardProps) {
   const { data: preferences } = usePreferences()
-  const savePreferences = useSavePreferences()
+  const updatePreferences = useUpdatePreferences()
   // Commits whatever form is standing on the current step. The steps that
   // collect facts mount the settings card for those facts, and that card saves
   // on its own button — so without this, Continue walked past everything just
@@ -70,15 +72,16 @@ function GetPaidWizardBody({ onSettled }: GetPaidWizardProps) {
   // the one default it applies live in `resolveAnswers`, which is pure.
   const { answers, apply, settle: persistSettled } = useBillingSetupDraft(
     preferences,
-    savePreferences.mutate,
+    updatePreferences.mutateAsync,
   )
 
-  const steps = stepsForState(
-    people,
-    answers.state,
-    answers.wantsCredentialing,
-    answers.wantsCardPayments,
-  )
+  // A choice saved while credentialing was offered counts only while it still
+  // is: without the feature there are no screens for it to add, and the done
+  // step must not promise applications nobody will prepare.
+  const credentialingOffered = useFeature(CREDENTIALING_FEATURE)
+  const wantsCredentialing = credentialingOffered && answers.wantsCredentialing
+
+  const steps = stepsForState(people, answers.state, wantsCredentialing, answers.wantsCardPayments)
 
   // An unknown id — a step renamed, or one she no longer walks because she
   // unticked what added it — falls back to the start rather than a blank
@@ -232,7 +235,7 @@ function GetPaidWizardBody({ onSettled }: GetPaidWizardProps) {
     >
       <Body
         selected={answers.state ?? []}
-        wantsCredentialing={answers.wantsCredentialing}
+        wantsCredentialing={wantsCredentialing}
         wantsCardPayments={answers.wantsCardPayments}
         onToggle={toggle}
         onToggleCredentialing={toggleCredentialing}

@@ -131,6 +131,8 @@ class TestBuiltinDefinitions:
             "medications",
             "meeting_summary",
             "narrative",
+            "psychiatric_evaluation",
+            "psychiatric_follow_up",
             "psychotherapy",
             "safety_plan",
             "soap",
@@ -149,7 +151,7 @@ class TestBuiltinDefinitions:
         register_builtin_note_types(registry)
         register_builtin_note_types(registry)
 
-        assert len(registry.keys()) == 11
+        assert len(registry.keys()) == 13
 
     def test_alias_keys_are_not_registered(self) -> None:
         """The bundler's alternate keys are recognised on read, not registered

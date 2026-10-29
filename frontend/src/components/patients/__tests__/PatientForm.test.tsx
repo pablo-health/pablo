@@ -260,7 +260,8 @@ describe("PatientForm", () => {
       expect(screen.getByLabelText(/email/i)).toHaveValue("jane.doe@example.com")
       expect(screen.getByLabelText(/phone/i)).toHaveValue("(555) 123-4567")
       expect(screen.getByLabelText(/date of birth/i)).toHaveValue("1985-03-15")
-      expect(screen.getByLabelText(/diagnosis/i)).toHaveValue("Anxiety")
+      // Diagnoses are kept on the problem list once the chart exists.
+      expect(screen.queryByLabelText(/diagnosis/i)).not.toBeInTheDocument()
     })
 
     it("updates patient successfully", async () => {
@@ -303,7 +304,6 @@ describe("PatientForm", () => {
             phone: "(555) 123-4567",
             status: "active",
             date_of_birth: "1985-03-15",
-            diagnosis: "Anxiety",
           },
           undefined
         )
@@ -338,7 +338,7 @@ describe("PatientForm", () => {
       expect(screen.getByLabelText(/email/i)).toHaveValue("")
       expect(screen.getByLabelText(/phone/i)).toHaveValue("")
       expect(screen.getByLabelText(/date of birth/i)).toHaveValue("")
-      expect(screen.getByLabelText(/diagnosis/i)).toHaveValue("")
+      expect(screen.queryByLabelText(/diagnosis/i)).not.toBeInTheDocument()
     })
   })
 
@@ -556,7 +556,7 @@ describe("PatientForm", () => {
         modules: { intake: true, messaging: true, appointments: false, refills: true },
       })
       const next = await screen.findByTestId("new-client-next-step")
-      expect(next).toHaveTextContent("Choose forms to send and whether to invite them to the portal.")
+      expect(next).toHaveTextContent("Choose packets to send and whether to invite them to the portal.")
     })
 
     it("does not ask where the deployment serves no part a practice can choose", async () => {

@@ -14,7 +14,10 @@ Audit posture: appointment data is scheduling metadata (consistent with
 last-visit dates are joined for the patients already disclosed by today's
 appointments — so no blind patient-list read and none of its spurious
 ``patient_viewed`` rows. The awaiting-review rows are an actual session
-disclosure, so each one shown is audited ``session_viewed``.
+disclosure, so each one shown is audited ``session_viewed``. The chart-update
+counts are numbers only, per patient already on today's schedule plus one
+total across the clinician's clients, so they disclose nothing new and are not
+audited; the chart audits the proposals when it is opened.
 """
 
 from datetime import datetime, tzinfo
@@ -23,13 +26,24 @@ from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 
 from ..auth.service import require_baa_acceptance
+from ..chart_proposals.dependencies import get_chart_proposal_repository
 from ..models import AuditAction, User
 from ..models.enums import SessionStatus
 from ..models.scheduling import AppointmentResponse
-from ..repositories import NotesRepository, PatientRepository, TherapySessionRepository
+from ..repositories import (
+    ChartProposalRepository,
+    NotesRepository,
+    PatientRepository,
+    TherapySessionRepository,
+)
 from ..scheduling_engine.services.scheduling import SchedulingService
 from ..services import AuditService, get_audit_service
-from .scheduling import _to_response, get_owner_timezone, get_scheduling_service
+from .scheduling import (
+    _session_status_map,
+    _to_response,
+    get_owner_timezone,
+    get_scheduling_service,
+)
 from .sessions import (
     get_notes_repository,
     get_patient_repository,
@@ -63,6 +77,11 @@ class DashboardSummaryResponse(BaseModel):
     transcription_pending_count: int
     awaiting_review_total: int
     awaiting_review: list[AwaitingReviewItem]
+    # patient_id -> pending chart updates, for today's appointment patients
+    # that have any; a patient with none is absent.
+    pending_chart_updates_by_patient: dict[str, int]
+    # Clients, across the clinician's whole list, with any update waiting.
+    pending_chart_updates_total: int
 
 
 @router.get("/api/dashboard/summary", response_model=DashboardSummaryResponse)
@@ -77,6 +96,7 @@ def get_dashboard_summary(
     session_repo: TherapySessionRepository = Depends(get_session_repository),
     patient_repo: PatientRepository = Depends(get_patient_repository),
     notes_repo: NotesRepository = Depends(get_notes_repository),
+    proposals: ChartProposalRepository = Depends(get_chart_proposal_repository),
     audit: AuditService = Depends(get_audit_service),
     tz: tzinfo = Depends(get_owner_timezone),
 ) -> DashboardSummaryResponse:
@@ -88,12 +108,21 @@ def get_dashboard_summary(
     # Today's appointments + last-visit dates for exactly those patients —
     # no blind patient-list page (and so none of its patient_viewed rows).
     today_appts = scheduling.list_appointments(user.id, today_start, today_end, tz=tz)
+    # A started visit's appointment stays confirmed; its session says where it is.
+    statuses = _session_status_map(session_repo, user.id, today_appts)
     today_patient_ids = list({a.patient_id for a in today_appts})
     today_patients = patient_repo.get_multiple(today_patient_ids, user.id)
     last_visit_by_patient = {
         pid: (p.last_session_date if (p := today_patients.get(pid)) else None)
         for pid in today_patient_ids
     }
+
+    # Chart updates a note proposed and nobody has decided yet: a count per
+    # client on today's schedule, and how many clients have any at all.
+    pending_chart_updates_by_patient = proposals.count_pending_by_patient(
+        user.id, today_patient_ids
+    )
+    pending_chart_updates_total = proposals.count_patients_with_pending(user.id)
 
     # Rest-of-week: only the confirmed count is shown.
     week_appts = scheduling.list_appointments(user.id, week_start, week_end, tz=tz)
@@ -127,14 +156,23 @@ def get_dashboard_summary(
                 note_finalized_at=note.finalized_at if note else None,
             )
         )
-        audit.log_session_action(AuditAction.SESSION_VIEWED, user, request, s, patient)
+    with audit.batched():
+        for s in recent:
+            audit.log_session_action(
+                AuditAction.SESSION_VIEWED, user, request, s, review_patients.get(s.patient_id)
+            )
 
     return DashboardSummaryResponse(
-        today_appointments=[_to_response(a) for a in today_appts],
+        today_appointments=[
+            _to_response(a, session_status=statuses.get(a.session_id) if a.session_id else None)
+            for a in today_appts
+        ],
         last_visit_by_patient=last_visit_by_patient,
         week_confirmed_count=week_confirmed_count,
         notes_pending_count=notes_pending_count,
         transcription_pending_count=transcription_pending_count,
         awaiting_review_total=awaiting_review_total,
         awaiting_review=awaiting_review,
+        pending_chart_updates_by_patient=pending_chart_updates_by_patient,
+        pending_chart_updates_total=pending_chart_updates_total,
     )

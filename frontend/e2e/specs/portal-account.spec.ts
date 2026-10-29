@@ -200,9 +200,11 @@ test("the profile carries the patient's own details and no staff notes @portal",
   request,
 }) => {
   const { email, phone } = contactDetails()
-  const patient = await givePatient(api, { email, phone })
-  const diagnosis = "F41.1 seeded for the portal profile e2e"
-  await api.patch(`/api/patients/${patient.id}`, { diagnosis, sliding_scale_note: "60 a session" })
+  // The diagnosis starts the chart's problem list; the line the chart shows
+  // is derived from it, so the check below looks for the label itself.
+  const diagnosis = "seeded for the portal profile e2e"
+  const patient = await givePatient(api, { email, phone, diagnosis: `F41.1 ${diagnosis}` })
+  await api.patch(`/api/patients/${patient.id}`, { sliding_scale_note: "60 a session" })
 
   const { slug } = await api.post<{ slug: string }>("/api/portal/practice-slug")
   expect(slug).toBeTruthy()
@@ -253,12 +255,12 @@ test("the portal works at a phone's width, by keyboard @portal", async ({ api, p
 
   // The landing is the sign-in: ask for a link the way somebody without a
   // mouse does.
-  const field = page.getByTestId("portal-recover-email")
+  const field = page.getByRole("textbox", { name: "Email" })
   await expect(field).toBeVisible()
   await field.focus()
   await page.keyboard.type("nobody@example.com")
   await page.keyboard.press("Tab")
-  await expect(page.getByTestId("portal-recover-submit")).toBeFocused()
+  await expect(page.getByRole("button", { name: "Email me a sign-in link" })).toBeFocused()
   await page.keyboard.press("Enter")
 
   // One conditional sentence, announced, for every address.

@@ -400,6 +400,28 @@ class TestSubmitDualChannel:
         assert body["speech_model"] == "nano"
 
     @pytest.mark.anyio
+    async def test_medical_profile_uses_universal_35_pro_and_medical_mode(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[httpx.Request] = []
+        _install_mock_transport(monkeypatch, _channel_handler(calls))
+        service = AssemblyAiTranscriptionService(_settings())
+
+        await service.submit_dual_channel(
+            therapist_audio=_SILENCE_PCM,
+            client_audio=_SILENCE_PCM,
+            transcription_profile="medical",
+        )
+
+        submit_calls = [c for c in calls if c.url.path.endswith("/transcript")]
+        assert len(submit_calls) == 2
+        for call in submit_calls:
+            body: dict[str, Any] = json.loads(call.content)
+            assert body["speech_models"] == ["universal-3-5-pro"]
+            assert body["domain"] == "medical-v1"
+            assert "speech_model" not in body
+
+    @pytest.mark.anyio
     async def test_default_submit_body_has_no_speaker_labels(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -439,6 +461,29 @@ class TestSubmitDualChannel:
         assert "speaker_labels" not in therapist_body
         assert client_body["speaker_labels"] is True
         assert [job["diarized"] for job in jobs] == [False, True]
+
+    @pytest.mark.anyio
+    async def test_the_session_vocabulary_goes_on_both_channels_only_when_given(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[httpx.Request] = []
+        _install_mock_transport(monkeypatch, _channel_handler(calls))
+        service = AssemblyAiTranscriptionService(_settings())
+
+        await service.submit_dual_channel(
+            therapist_audio=_SILENCE_PCM,
+            client_audio=_SILENCE_PCM,
+            keyterms=["sertraline", "Zoloft"],
+        )
+        await service.submit_dual_channel(therapist_audio=_SILENCE_PCM, client_audio=_SILENCE_PCM)
+
+        bodies = [json.loads(c.content) for c in calls if c.url.path.endswith("/transcript")]
+        assert [b.get("keyterms_prompt") for b in bodies] == [
+            ["sertraline", "Zoloft"],
+            ["sertraline", "Zoloft"],
+            None,
+            None,
+        ]
 
     @pytest.mark.anyio
     async def test_audio_url_factory_bypasses_provider_upload(

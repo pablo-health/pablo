@@ -214,3 +214,87 @@ class TestHowSheIsPaid:
         )
 
         assert response.status_code == 422
+
+
+class TestPatchPreferences:
+    """PATCH /api/users/me/preferences changes only the keys it is sent.
+
+    The failure this replaces: a full-replace save built from a cached copy
+    erases whatever another save wrote since that copy was read. The overlap
+    itself is proven against Postgres in
+    ``tests_integration/database/test_user_preferences_concurrent_db.py``;
+    these pin the contract the frontend writers rely on.
+    """
+
+    def test_keys_left_out_are_untouched(self, client: Any) -> None:
+        client.patch("/api/users/me/preferences", json={"timezone": "Asia/Tokyo"})
+
+        response = client.patch("/api/users/me/preferences", json={"theme": "dark"})
+
+        assert response.status_code == 200
+        assert response.json()["timezone"] == "Asia/Tokyo"
+        assert response.json()["theme"] == "dark"
+        assert client.get("/api/users/me/preferences").json()["timezone"] == "Asia/Tokyo"
+
+    def test_null_removes_the_key_so_it_reads_back_as_its_default(self, client: Any) -> None:
+        client.patch(
+            "/api/users/me/preferences",
+            json={"default_duration_minutes": 90, "people_term": "patients"},
+        )
+
+        response = client.patch(
+            "/api/users/me/preferences", json={"default_duration_minutes": None}
+        )
+
+        assert response.status_code == 200
+        assert response.json()["default_duration_minutes"] == 50
+        assert response.json()["people_term"] == "patients"
+
+    def test_null_is_accepted_for_a_field_that_cannot_hold_null(self, client: Any) -> None:
+        # Null means "remove", not "store null", so a non-nullable field
+        # takes it too rather than failing validation.
+        response = client.patch("/api/users/me/preferences", json={"auto_transcribe": None})
+
+        assert response.status_code == 200
+        assert response.json()["auto_transcribe"] is True
+
+    def test_an_unknown_key_is_refused_and_nothing_is_written(self, client: Any) -> None:
+        # A misspelt key that silently saved nothing would look like a save
+        # that worked.
+        response = client.patch(
+            "/api/users/me/preferences", json={"theme": "dark", "timezon": "Asia/Tokyo"}
+        )
+
+        assert response.status_code == 422
+        assert response.json()["detail"][0]["loc"] == ["body", "timezon"]
+        assert client.get("/api/users/me/preferences").json()["theme"] == "warm-paper"
+
+    def test_an_unknown_key_sent_as_null_is_refused_too(self, client: Any) -> None:
+        response = client.patch("/api/users/me/preferences", json={"timezon": None})
+
+        assert response.status_code == 422
+
+    def test_values_are_validated_as_a_full_save_validates_them(self, client: Any) -> None:
+        out_of_range = client.patch(
+            "/api/users/me/preferences", json={"default_duration_minutes": 481}
+        )
+        unknown_density = client.patch(
+            "/api/users/me/preferences", json={"calendar_density": "dense"}
+        )
+
+        assert out_of_range.status_code == 422
+        assert out_of_range.json()["detail"][0]["loc"] == ["body", "default_duration_minutes"]
+        assert unknown_density.status_code == 422
+
+    def test_a_body_that_is_not_an_object_is_refused(self, client: Any) -> None:
+        response = client.patch("/api/users/me/preferences", json=["theme"])
+
+        assert response.status_code == 422
+
+    def test_the_theme_route_keeps_other_keys(self, client: Any) -> None:
+        client.patch("/api/users/me/preferences", json={"timezone": "Asia/Tokyo"})
+
+        response = client.put("/api/users/me/preferences/theme", json={"theme": "dark"})
+
+        assert response.json()["theme"] == "dark"
+        assert response.json()["timezone"] == "Asia/Tokyo"

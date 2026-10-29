@@ -50,6 +50,7 @@ from ..scheduling_engine.services.date_intent import (
     resolve_date_intent,
 )
 from ..settings import get_settings
+from .ai_features import AIFeature
 from .hedged_structured_llm_gateway import HedgedStructuredLLMGateway
 from .structured_llm_gateway import StructuredLLMGateway, StructuredOutputTruncatedError
 
@@ -459,8 +460,9 @@ _RESPONSE_SCHEMA["properties"]["readings"] = {
 #: readings of a whole week, takes 6-8 s and now and then 12, so this
 #: leaves it room. It is not how long a stall is waited out: the routing
 #: policy starts the retry (or a configured fallback) beside an attempt
-#: still running at 4 s, and at once after a failure, and the first answer
-#: wins. Nothing outlasts the 25 s budget.
+#: still running at the stall threshold (4 s unless configured), and at
+#: once after a failure, and the first answer wins. Nothing outlasts the
+#: 25 s budget.
 _ATTEMPT_TIMEOUT_SECONDS = 15.0
 
 
@@ -738,7 +740,9 @@ class AvailabilityRuleParseService:
         # Mapping a sentence onto a fixed schema is mechanical, not
         # generative -- same flash-tier default as note import.
         settings = get_settings()
-        return self._model or settings.ai_model_flash or settings.ai_model
+        return self._model or settings.model_for(
+            AIFeature.AVAILABILITY_PARSE, settings.ai_model_flash or settings.ai_model
+        )
 
     def parse(
         self,

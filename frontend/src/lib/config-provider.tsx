@@ -19,9 +19,26 @@ export interface RuntimeConfig {
   showVerificationBadges: boolean
   introVideoUrl: string
   passkeysEnabled: boolean
+  /**
+   * False when the deployment has no Google OAuth client: no Google button.
+   * Optional, and absent counts as on, so a config built before this field
+   * existed keeps the button it always had.
+   */
+  googleSignInEnabled?: boolean
   resubscribeUrl: string
   publicBookingEnabled: boolean
   googleCalendarEnabled: boolean
+  /**
+   * Where a clinician can write to reach a person about this deployment.
+   * Empty when the deployment has not set one; read it through
+   * `useSupportEmail`, which also screens out a malformed value.
+   */
+  supportEmail: string
+  /**
+   * A page of help articles for this deployment. Empty when it has none;
+   * read it through `useHelpUrl`, which also screens out a malformed value.
+   */
+  helpUrl: string
   /** The edition this deployment runs. */
   pabloEdition: string
   /**
@@ -108,6 +125,16 @@ export function ConfigProvider({
       {children}
     </ConfigContext.Provider>
   )
+}
+
+/**
+ * The runtime config once it has loaded, otherwise undefined. Never throws.
+ *
+ * For components that may render outside ConfigProvider, such as an error
+ * fallback, which must not fail while reporting that something else did.
+ */
+export function useOptionalConfig(): RuntimeConfig | undefined {
+  return useContext(ConfigContext)?.config
 }
 
 export function useConfig(): RuntimeConfig {

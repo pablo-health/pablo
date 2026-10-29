@@ -51,8 +51,12 @@ from typing import TYPE_CHECKING, Annotated, Protocol
 from fastapi import APIRouter, Depends, Request, status
 from pydantic import BaseModel
 
-from ..api_errors import BadRequestError, ForbiddenError, NotFoundError
-from ..auth.patient_context import AuthStrength, PatientContext, get_patient_context
+from ..api_errors import BadRequestError, NotFoundError
+from ..auth.patient_context import (
+    PatientContext,
+    get_patient_context,
+    require_stepped_up,
+)
 from ..auth.route_access import subscription_exempt
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
 from ..models import User  # noqa: TC001 — fastapi resolves the annotation at runtime
@@ -84,6 +88,7 @@ if TYPE_CHECKING:
     from ..repositories.outcome_measure import OutcomeMeasureRepository
     from ..repositories.patient import PatientRepository
     from ..repositories.patient_intake_submission import PatientIntakeSubmissionRepository
+    from ..repositories.row import Row
 
 router = APIRouter(prefix="/api/patient/intake", tags=["patient-intake"])
 
@@ -118,16 +123,6 @@ def get_intake_outcome_measure_service(
     cannot satisfy and should not.
     """
     return OutcomeMeasureService(repo)
-
-
-def _require_stepped_up(patient: PatientContext) -> None:
-    """Refuse a single-factor principal on every route here.
-
-    Same bar as the patient chat surface, for the same reason: one factor
-    reaching the wrong person should not open a chart.
-    """
-    if patient.auth_strength is not AuthStrength.STEPPED_UP:
-        raise ForbiddenError("Confirm it is you to continue.", code="STEP_UP_REQUIRED")
 
 
 def _instrument_form(code: str) -> IntakeInstrumentResponse:
@@ -202,7 +197,7 @@ def get_intake_form(
     subscription, and a form they were asked to fill in should not fail for a
     billing state they cannot see.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
 
     own = patients.get_for_patient_principal(patient.patient_id)
     if own is None:
@@ -242,7 +237,7 @@ def submit_intake(
     that produced them. Scoring runs before any write, so a form that fails
     validation leaves nothing behind.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
     get_intake_submit_limiter().check(patient.patient_id)
 
     answers = {"phq9": body.phq9, "gad7": body.gad7}
@@ -353,7 +348,7 @@ class ClinicianIntakeSubmissionResponse(BaseModel):
     reason_text: str
 
 
-def _submission_response(row: dict[str, object]) -> ClinicianIntakeSubmissionResponse:
+def _submission_response(row: Row) -> ClinicianIntakeSubmissionResponse:
     """Project a stored row onto the fields the chart shows.
 
     Reads defensively out of the JSON payload rather than indexing it: the
@@ -361,12 +356,12 @@ def _submission_response(row: dict[str, object]) -> ClinicianIntakeSubmissionRes
     version of that form is a normal thing to find, not an error.
     """
     payload = row.get("payload")
-    body: dict[str, object] = payload if isinstance(payload, dict) else {}
+    body: Row = payload if isinstance(payload, dict) else {}
     corrections = body.get("corrections")
     reason_text = body.get("reason_text")
     return ClinicianIntakeSubmissionResponse(
         id=str(row["id"]),
-        submitted_at=row["submitted_at"],  # type: ignore[arg-type]
+        submitted_at=row["submitted_at"],
         name_confirmed=bool(body.get("name_confirmed", True)),
         dob_confirmed=bool(body.get("dob_confirmed", True)),
         corrections=str(corrections) if corrections else None,

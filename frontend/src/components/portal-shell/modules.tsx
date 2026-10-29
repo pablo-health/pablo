@@ -3,7 +3,7 @@
 /**
  * What the engine mounts in the portal, in the order a patient meets it:
  * the forms they were asked for first, then messaging, then appointments,
- * then refills.
+ * then homework, then refills.
  *
  * Imported for its side effect by the shell, which is a client component.
  * That is the whole reason this file exists rather than the registrations
@@ -24,6 +24,8 @@ import { AppointmentsSummary, PortalAppointments } from "@/components/portal/app
 import { FormsSummary, PortalForms } from "@/components/portal/forms"
 import { MessagingSummary } from "@/components/portal/messaging/MessagingSummary"
 import { PortalMessaging } from "@/components/portal/messaging/PortalMessaging"
+import { HomeworkSummary } from "@/components/portal/homework/HomeworkSummary"
+import { PortalHomework } from "@/components/portal/homework/PortalHomework"
 import { PortalRefills } from "@/components/portal/refills/PortalRefills"
 import { RefillsSummary } from "@/components/portal/refills/RefillsSummary"
 import { registerPortalSlot, type PortalSlotProps } from "./slots"
@@ -38,6 +40,10 @@ function MessagingSlot({ sessionToken }: PortalSlotProps) {
 
 function AppointmentsSlot({ sessionToken }: PortalSlotProps) {
   return <PortalAppointments sessionToken={sessionToken} />
+}
+
+function HomeworkSlot({ sessionToken }: PortalSlotProps) {
+  return <PortalHomework sessionToken={sessionToken} />
 }
 
 function RefillsSlot({ sessionToken }: PortalSlotProps) {
@@ -83,6 +89,15 @@ registerPortalSlot({
   Summary: AppointmentsSummary,
   module: "appointments",
   label: "Appointments",
+})
+// Homework comes after appointments: it is what a client comes back to
+// between visits, more often than an errand like a refill.
+registerPortalSlot({
+  id: "homework",
+  Component: HomeworkSlot,
+  Summary: HomeworkSummary,
+  module: "homework",
+  label: "Homework",
 })
 // Refills comes after appointments: it is an occasional errand between
 // visits rather than something a patient meets on the way in. The slot id,

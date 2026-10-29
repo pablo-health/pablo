@@ -4,6 +4,8 @@
 
 import { useCallback, useState, type ReactNode } from "react"
 import { useRouter } from "next/navigation"
+import { useQueryClient } from "@tanstack/react-query"
+import { refreshDashboard } from "@/hooks/dashboardFreshness"
 import { useAnswerOutsideSessions, useOutsideQuestions } from "@/hooks/useOutsideSessions"
 import {
   startSessionFromAppointment,
@@ -52,6 +54,7 @@ function SingleOutsideReview({
   onSubmit: SubmitOutsideAnswers
 }) {
   const router = useRouter()
+  const queryClient = useQueryClient()
   const startNote = async (answers: OutsideAnswer[]) => {
     const result = await onSubmit(answers)
     const created = result.appointments.find((a) => a.outside_session_id === session.id)
@@ -59,6 +62,8 @@ function SingleOutsideReview({
     if (!created && result.not_added.length > 0) return result
     if (!created) throw new Error("No appointment was made for this session")
     const started = await startSessionFromAppointment(created.appointment_id)
+    // Today's list on the dashboard shows the visit as started.
+    void refreshDashboard(queryClient)
     router.push(`/dashboard/sessions/${started.id}`)
   }
   return (

@@ -27,13 +27,10 @@ import base64
 import os
 import uuid
 from datetime import UTC, date, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import select, text
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -97,17 +94,6 @@ def _encryption_key() -> Iterator[None]:
     else:
         os.environ["GOOGLE_CALENDAR_ENCRYPTION_KEY"] = previous
     get_settings.cache_clear()
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_db_url, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 @pytest.fixture(scope="module")
@@ -781,7 +767,7 @@ class TestClocksArePropsedNotWritten:
 
     def test_propose_changes_nothing(self, engine: Engine, tenant_schema: str) -> None:
         from app.credentialing import clocks  # noqa: PLC0415
-        from app.db.models import ComplianceItemRow  # noqa: PLC0415
+        from app.db.models import TaskRow  # noqa: PLC0415
         from app.db.platform_models import CredentialLicenseRow  # noqa: PLC0415
 
         now = datetime.now(UTC)
@@ -803,7 +789,7 @@ class TestClocksArePropsedNotWritten:
                     updated_at=now,
                 )
             )
-            item = ComplianceItemRow(
+            item = TaskRow(
                 id=str(uuid.uuid4()),
                 user_id=_CLINICIAN_B,
                 item_type="license",
@@ -825,14 +811,14 @@ class TestClocksArePropsedNotWritten:
 
             # The whole point: nothing moved until she said so.
             scoped.session.expire_all()
-            unchanged = scoped.session.get(ComplianceItemRow, item.id)
+            unchanged = scoped.session.get(TaskRow, item.id)
             assert unchanged is not None
             assert unchanged.due_date == date(2026, 12, 31)
 
             clocks.apply_proposal(scoped.session, _CLINICIAN_B, proposals[0])
             scoped.session.commit()
             scoped.session.expire_all()
-            applied = scoped.session.get(ComplianceItemRow, item.id)
+            applied = scoped.session.get(TaskRow, item.id)
             assert applied is not None
             assert applied.due_date == date(2027, 9, 30)
 

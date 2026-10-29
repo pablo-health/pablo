@@ -550,6 +550,7 @@ class TestGetCurrentUser:
         mock_verify.return_value = {
             "uid": "self-serve-user",
             "email": "owner@newpractice.com",
+            "email_verified": True,
             "firebase": {},
         }
 
@@ -575,6 +576,43 @@ class TestGetCurrentUser:
         assert user.email == "owner@newpractice.com"
         assert user.status == "approved"
         mock_tenant_lookup.assert_called_once_with("owner@newpractice.com")
+
+    @patch("app.auth.service.verify_firebase_token")
+    def test_provisioned_tenant_does_not_vouch_for_an_unverified_email(
+        self, mock_verify: MagicMock
+    ) -> None:
+        """The mapping row exists before the invitee has an account, so it can
+        only stand in for an allowlist entry once the issuer has confirmed the
+        person controls the address. Until then the mapping is not consulted
+        and the sign-in is refused like any other non-allowlisted one."""
+        mock_verify.return_value = {
+            "uid": "squatter",
+            "email": "owner@newpractice.com",
+            "email_verified": False,
+            "firebase": {},
+        }
+        identity_repo = _identity_repo_for()
+
+        with (
+            patch("app.auth.service.get_settings") as mock_settings,
+            patch("app.auth.service._email_has_tenant_mapping") as mock_tenant_lookup,
+        ):
+            mock_settings.return_value.is_development = False
+            mock_settings.return_value.require_mfa = False
+            mock_settings.return_value.restrict_signups = True
+            mock_settings.return_value.is_prod_project = True
+            with pytest.raises(HTTPException) as exc_info:
+                get_current_user(
+                    _mock_request(),
+                    mock_verify.return_value,
+                    InMemoryUserRepository(),
+                    InMemoryAllowlistRepository(),
+                    identity_repo,
+                )
+
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+        mock_tenant_lookup.assert_not_called()
+        assert identity_repo.get_user_id("firebase", "squatter") is None
 
     @patch("app.auth.service.verify_firebase_token")
     def test_allows_e2e_prefixed_user_without_allowlist(self, mock_verify: MagicMock) -> None:
@@ -880,7 +918,12 @@ class TestGetTenantContext:
 
     def test_resolves_practice_from_email(self) -> None:
         """Email resolved to practice via Postgres lookup."""
-        decoded = {"uid": "user123", "email": "dr@example.com", "firebase": {}}
+        decoded = {
+            "uid": "user123",
+            "email": "dr@example.com",
+            "email_verified": True,
+            "firebase": {},
+        }
 
         with (
             patch("app.auth.service.get_settings"),
@@ -950,7 +993,12 @@ class TestGetTenantContext:
         why the wiring is asserted here rather than left to the integration
         suite that proves the write itself.
         """
-        decoded = {"uid": "user123", "email": "Dr@Example.com", "firebase": {}}
+        decoded = {
+            "uid": "user123",
+            "email": "Dr@Example.com",
+            "email_verified": True,
+            "firebase": {},
+        }
 
         with (
             patch("app.auth.service.get_settings"),
@@ -980,7 +1028,12 @@ class TestGetTenantContext:
 
     def test_does_not_record_an_owner_without_a_practice(self) -> None:
         """No practice resolved, nothing to own."""
-        decoded = {"uid": "admin-uid", "email": "admin@pablo.health", "firebase": {}}
+        decoded = {
+            "uid": "admin-uid",
+            "email": "admin@pablo.health",
+            "email_verified": True,
+            "firebase": {},
+        }
         user_repo = InMemoryUserRepository()
         user_repo.update(
             User(
@@ -1003,7 +1056,12 @@ class TestGetTenantContext:
 
     def test_admin_without_practice_gets_default_context(self) -> None:
         """Platform admin with no practice mapping gets admin-only access."""
-        decoded = {"uid": "admin-uid", "email": "admin@pablo.health", "firebase": {}}
+        decoded = {
+            "uid": "admin-uid",
+            "email": "admin@pablo.health",
+            "email_verified": True,
+            "firebase": {},
+        }
         user_repo = InMemoryUserRepository()
         admin_user = User(
             id="admin-uid",
@@ -1028,7 +1086,12 @@ class TestGetTenantContext:
 
     def test_rejects_non_admin_without_practice(self) -> None:
         """Non-admin user with no practice mapping is rejected."""
-        decoded = {"uid": "user123", "email": "user@example.com", "firebase": {}}
+        decoded = {
+            "uid": "user123",
+            "email": "user@example.com",
+            "email_verified": True,
+            "firebase": {},
+        }
         user_repo = InMemoryUserRepository()
         regular_user = User(
             id="user123",
@@ -1054,7 +1117,12 @@ class TestGetTenantContext:
 
     def test_rejects_unknown_user_without_practice(self) -> None:
         """Unknown user (not in repo) with no practice mapping is rejected."""
-        decoded = {"uid": "unknown", "email": "unknown@example.com", "firebase": {}}
+        decoded = {
+            "uid": "unknown",
+            "email": "unknown@example.com",
+            "email_verified": True,
+            "firebase": {},
+        }
 
         with (
             patch("app.auth.service.get_settings"),
@@ -1072,6 +1140,50 @@ class TestGetTenantContext:
 
         assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
         assert exc_info.value.detail["error"]["code"] == "NO_PRACTICE"  # type: ignore[index]
+
+    def test_rejects_an_unverified_email_before_looking_it_up(self) -> None:
+        """An invited address is mapped to its practice before the invitee has
+        an account, and anyone can register a password account for it. Until
+        the issuer confirms the person controls the address, the token gets a
+        403 and the mapping is never consulted."""
+        decoded = {
+            "uid": "squatter",
+            "email": "invited@example.com",
+            "email_verified": False,
+            "firebase": {},
+        }
+
+        with (
+            patch("app.auth.service.get_settings"),
+            patch("app.auth.service._resolve_practice_from_email") as resolve,
+            patch("app.db.practice_owner.record_owner_on_sign_in") as record,
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            get_tenant_context(
+                _mock_request(), decoded, InMemoryUserRepository(), _identity_repo_for("squatter")
+            )
+
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+        assert exc_info.value.detail["error"]["code"] == "EMAIL_NOT_VERIFIED"  # type: ignore[index]
+        resolve.assert_not_called()
+        record.assert_not_called()
+
+    def test_treats_a_missing_email_verified_claim_as_unverified(self) -> None:
+        """An issuer that makes no assertion about the address has not verified
+        it: a token without the claim is refused the same way."""
+        decoded = {"uid": "user123", "email": "dr@example.com", "firebase": {}}
+
+        with (
+            patch("app.auth.service.get_settings"),
+            patch("app.auth.service._resolve_practice_from_email") as resolve,
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            get_tenant_context(
+                _mock_request(), decoded, InMemoryUserRepository(), _identity_repo_for("user123")
+            )
+
+        assert exc_info.value.detail["error"]["code"] == "EMAIL_NOT_VERIFIED"  # type: ignore[index]
+        resolve.assert_not_called()
 
     def test_rejects_missing_uid(self) -> None:
         """Token without uid is rejected."""

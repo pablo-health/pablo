@@ -37,3 +37,13 @@ export function parseNarrativeBlocks(text: string): NarrativeBlock[] {
 
   return blocks
 }
+
+/**
+ * True for a label with no text of its own that heads the labeled lines
+ * after it, as "Clinician Observations" heads the observations. Any other
+ * label with no text is an empty field.
+ */
+export function headsNextBlock(blocks: NarrativeBlock[], index: number): boolean {
+  const block = blocks[index]
+  return !!block.label && !block.content && !!blocks[index + 1]?.content
+}

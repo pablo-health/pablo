@@ -7,6 +7,7 @@ import type {
   CreatePatientRequest,
   PatientListParams,
   PatientResponse,
+  UpdateAllergiesRequest,
   UpdatePatientRequest,
 } from "@/types/patients"
 import {
@@ -15,16 +16,28 @@ import {
   getPatient,
   listPatients,
   restorePatient,
+  updateAllergies,
   updatePatient,
 } from "@/lib/api/patients"
 import { queryKeys } from "@/lib/api/queryKeys"
+import { withDashboard } from "./dashboardFreshness"
 import { useAuthQuery, useAuthMutation } from "./useAuthQuery"
 
-export function usePatientList(params?: PatientListParams, token?: string) {
+/**
+ * A page of the roster. Reading it records a view of every client on the
+ * page, so a picker that may go unused passes `enabled: false` until someone
+ * starts looking.
+ */
+export function usePatientList(
+  params?: PatientListParams,
+  token?: string,
+  options?: { enabled?: boolean },
+) {
   return useAuthQuery({
     queryKey: queryKeys.patients.list(params),
     queryFn: () => listPatients(params, token),
     staleTime: 60 * 1000,
+    enabled: options?.enabled ?? true,
   })
 }
 
@@ -66,6 +79,13 @@ export function useUpdatePatient(token?: string) {
   })
 }
 
+export function useUpdateAllergies() {
+  return useAuthMutation<PatientResponse, { patientId: string; data: UpdateAllergiesRequest }>({
+    mutationFn: ({ patientId, data }) => updateAllergies(patientId, data),
+    invalidateKeys: ({ patientId }) => [queryKeys.patients.detail(patientId)],
+  })
+}
+
 export interface DeletePatientVariables {
   patientId: string
   acknowledgedRetentionObligation: boolean
@@ -75,7 +95,7 @@ export function useDeletePatient(token?: string) {
   return useAuthMutation({
     mutationFn: ({ patientId, acknowledgedRetentionObligation }: DeletePatientVariables) =>
       deletePatient(patientId, acknowledgedRetentionObligation, token),
-    invalidateKeys: [queryKeys.patients.lists(), queryKeys.sessions.all],
+    invalidateKeys: withDashboard([queryKeys.patients.lists(), queryKeys.sessions.all]),
     onSuccess: (_data, { patientId }, queryClient) => {
       queryClient.removeQueries({
         queryKey: queryKeys.patients.detail(patientId),
@@ -93,6 +113,6 @@ export function useDeletePatient(token?: string) {
 export function useRestorePatient(token?: string) {
   return useAuthMutation({
     mutationFn: (patientId: string) => restorePatient(patientId, token),
-    invalidateKeys: [queryKeys.patients.lists(), queryKeys.sessions.all],
+    invalidateKeys: withDashboard([queryKeys.patients.lists(), queryKeys.sessions.all]),
   })
 }

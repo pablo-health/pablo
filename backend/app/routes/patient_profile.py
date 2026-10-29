@@ -57,8 +57,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from ..api_errors import ForbiddenError, NotFoundError
-from ..auth.patient_context import AuthStrength, PatientContext, get_patient_context
+from ..api_errors import NotFoundError
+from ..auth.patient_context import (
+    PatientContext,
+    get_patient_context,
+    require_stepped_up,
+)
 from ..auth.route_access import subscription_exempt
 from ..models.audit import AuditAction, ResourceType
 from ..models.patient_facing import PATIENT_CONTACT_CHANNEL_COLUMNS, PatientFacingPatient
@@ -126,16 +130,11 @@ class UpdatePatientProfileRequest(BaseModel):
         return validate_phone(v)
 
 
-def _require_stepped_up(patient: PatientContext) -> None:
-    """Refuse a single-factor principal on the WRITE.
-
-    The read is stepped up too (demographics are the chart), but the write
-    is the one this exists to argue about: changing the email address is
-    changing where the next sign-in link goes, so a link that reached the
-    wrong inbox must not be enough to redirect the one after it.
-    """
-    if patient.auth_strength is not AuthStrength.STEPPED_UP:
-        raise ForbiddenError("Confirm it is you to continue.", code="STEP_UP_REQUIRED")
+# A single-factor principal is refused on the WRITE (require_stepped_up).
+# The read is stepped up too (demographics are the chart), but the write
+# is the one this exists to argue about: changing the email address is
+# changing where the next sign-in link goes, so a link that reached the
+# wrong inbox must not be enough to redirect the one after it.
 
 
 def _contact_handle(value: str | None) -> str | None:
@@ -175,7 +174,7 @@ def get_profile(
     which for a principal resolved off a live session means the chart was
     deleted underneath them.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
 
     own = patients.get_for_patient_principal(patient.patient_id)
     if own is None:
@@ -215,7 +214,7 @@ def update_profile(
     ``PATIENT_PROFILE_CONTACT_CHANGED`` says a delivery channel moved and
     lets one value be tested against the record afterwards.
     """
-    _require_stepped_up(patient)
+    require_stepped_up(patient)
 
     before = patients.get_for_patient_principal(patient.patient_id)
     if before is None:

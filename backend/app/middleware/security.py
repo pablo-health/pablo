@@ -14,6 +14,16 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 from ..settings import Settings
+from ..trusted_proxy import TrustedProxies
+
+# Paths a platform health probe calls. Matched exactly, never by prefix.
+#
+# The health endpoint carries no client data: it reports status, the server
+# version and the deployed commit. A platform health probe speaks plain HTTP
+# to the container and cannot add forwarded headers, so HTTPS enforcement
+# would answer every probe with 400 and no new instance would ever be marked
+# ready. The same paths skip the no-store caching headers below.
+PLATFORM_PROBE_PATHS: frozenset[str] = frozenset({"/api/health"})
 
 
 class HTTPSEnforcementMiddleware(BaseHTTPMiddleware):
@@ -27,12 +37,7 @@ class HTTPSEnforcementMiddleware(BaseHTTPMiddleware):
     def __init__(self, app: ASGIApp, settings: Settings) -> None:
         super().__init__(app)
         self.settings = settings
-        self._trust_all = settings.trusted_proxy_ips == "*"
-        self._trusted_ips: set[str] = set()
-        if not self._trust_all and settings.trusted_proxy_ips:
-            self._trusted_ips = {
-                ip.strip() for ip in settings.trusted_proxy_ips.split(",") if ip.strip()
-            }
+        self._trusted_proxies = TrustedProxies.from_settings(settings)
 
     async def dispatch(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
@@ -47,6 +52,10 @@ class HTTPSEnforcementMiddleware(BaseHTTPMiddleware):
         if self.settings.is_development:
             return await call_next(request)
 
+        # A platform health probe reaches the container over plain HTTP.
+        if request.url.path in PLATFORM_PROBE_PATHS:
+            return await call_next(request)
+
         # In production/staging, enforce HTTPS for HIPAA compliance
         if not self._is_secure(request):
             return JSONResponse(
@@ -59,19 +68,7 @@ class HTTPSEnforcementMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
     def _is_from_trusted_proxy(self, request: Request) -> bool:
-        """Check if the request originates from a trusted proxy IP.
-
-        - TRUSTED_PROXY_IPS="" (default): trust no proxies (secure default)
-        - TRUSTED_PROXY_IPS="*": trust all proxies (Cloud Run / GKE)
-        - TRUSTED_PROXY_IPS="10.0.0.1,10.0.0.2": trust specific IPs
-        """
-        if self._trust_all:
-            return True
-        if not self._trusted_ips:
-            return False
-        if not request.client:
-            return False
-        return request.client.host in self._trusted_ips
+        return self._trusted_proxies.trusts(request)
 
     def _is_secure(self, request: Request) -> bool:
         """
@@ -147,7 +144,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Cache-Control — prevent caching of PHI responses (HIPAA §164.312)
         # Applied to all authenticated API responses; public assets (health
         # check, static files) are excluded so CDNs can still cache them.
-        if request.url.path.startswith("/api/") and request.url.path != "/api/health":
+        if request.url.path.startswith("/api/") and request.url.path not in PLATFORM_PROBE_PATHS:
             response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
             response.headers["Pragma"] = "no-cache"
 

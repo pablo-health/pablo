@@ -16,7 +16,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 
 import { IntakeDocumentsCard } from "../IntakeDocumentsCard"
@@ -25,7 +25,9 @@ import {
   DOCUMENT_PUBLISHED_NOTICE,
   DRAFT_BADGE,
   NEW_DOCUMENT_NAME,
+  NOT_IN_A_PACKET,
   PUBLISHED_BADGE,
+  USED_IN,
 } from "../intakeCopy"
 import type { IntakeDocument } from "@/types/intakeDocuments"
 
@@ -35,8 +37,14 @@ const mockSave = vi.fn()
 const mockPublish = vi.fn()
 const mockNewVersion = vi.fn()
 
+const mockUseUsage = vi.fn()
+
 /** What the publish mutation last failed with, so a test can set it. */
 let publishError: Error | null = null
+
+vi.mock("@/hooks/useIntakePackets", () => ({
+  useDocumentUsage: () => mockUseUsage(),
+}))
 
 vi.mock("@/hooks/useIntakeDocuments", () => ({
   useIntakeDocuments: () => mockUseDocuments(),
@@ -68,23 +76,93 @@ const PUBLISHED: IntakeDocument = {
   published_at: "2026-09-01T12:00:00Z",
 }
 
+/** The list starts closed; every test below is about what is in it. */
+function renderOpen() {
+  const view = render(<IntakeDocumentsCard />)
+  fireEvent.click(screen.getByRole("button", { name: /^Show / }))
+  return view
+}
+
 describe("IntakeDocumentsCard", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     publishError = null
     mockUseDocuments.mockReturnValue({ data: [DRAFT] })
+    mockUseUsage.mockReturnValue({ data: [] })
+  })
+
+  describe("where each document is used", () => {
+    it("names each packet that asks for it, linking to that packet", () => {
+      mockUseUsage.mockReturnValue({
+        data: [
+          {
+            document_key: "key-1",
+            packets: [
+              { id: "packet-a", name: "New client intake" },
+              { id: "packet-b", name: "Couples intake" },
+            ],
+          },
+        ],
+      })
+      renderOpen()
+
+      expect(screen.getByText(USED_IN, { exact: false })).toBeInTheDocument()
+      expect(screen.getByRole("link", { name: "New client intake" })).toHaveAttribute(
+        "href",
+        "/dashboard/settings/portal?packet=packet-a",
+      )
+      expect(screen.getByRole("link", { name: "Couples intake" })).toHaveAttribute(
+        "href",
+        "/dashboard/settings/portal?packet=packet-b",
+      )
+    })
+
+    it("says so when no packet asks for it", () => {
+      renderOpen()
+      expect(screen.getByText(NOT_IN_A_PACKET)).toBeInTheDocument()
+    })
+
+    it("says nothing while the answer is loading", () => {
+      // "Not in a packet yet" before the answer arrives would be untrue for
+      // every document that is in one.
+      mockUseUsage.mockReturnValue({ data: undefined })
+      renderOpen()
+      expect(screen.queryByText(NOT_IN_A_PACKET)).not.toBeInTheDocument()
+    })
+  })
+
+  it("starts closed, saying how many documents there are", () => {
+    render(<IntakeDocumentsCard />)
+
+    const toggle = screen.getByRole("button", { name: "Show 1 document" })
+    expect(toggle).toHaveAttribute("aria-expanded", "false")
+    expect(screen.queryByText("Consent for treatment")).not.toBeInTheDocument()
+
+    fireEvent.click(toggle)
+    expect(screen.getByText("Consent for treatment")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Hide documents" })).toHaveAttribute("aria-expanded", "true")
+  })
+
+  it("gives no count while the list is still loading", () => {
+    // "Show 0 documents" flashed on dev before the list arrived.
+    mockUseDocuments.mockReturnValue({ data: undefined })
+
+    render(<IntakeDocumentsCard />)
+
+    expect(screen.getByRole("button", { name: "Show documents" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /^Show 0 / })).not.toBeInTheDocument()
   })
 
   it("says so when the practice has no documents", () => {
     mockUseDocuments.mockReturnValue({ data: [] })
 
-    render(<IntakeDocumentsCard />)
+    renderOpen()
 
     expect(screen.getByText(DOCUMENTS_EMPTY)).toBeInTheDocument()
   })
 
   it("lists each document with its version and state", () => {
-    render(<IntakeDocumentsCard />)
+    renderOpen()
 
     expect(screen.getByText("Consent for treatment")).toBeInTheDocument()
     expect(screen.getByText("Version 2")).toBeInTheDocument()
@@ -94,14 +172,14 @@ describe("IntakeDocumentsCard", () => {
   it("shows the published state when the newest version is frozen", () => {
     mockUseDocuments.mockReturnValue({ data: [PUBLISHED] })
 
-    render(<IntakeDocumentsCard />)
+    renderOpen()
 
     expect(screen.getByText(PUBLISHED_BADGE)).toBeInTheDocument()
   })
 
   it("a draft opens into an editor holding its own text", async () => {
     const user = userEvent.setup()
-    render(<IntakeDocumentsCard />)
+    renderOpen()
 
     await user.click(screen.getByRole("button", { name: /Consent for treatment/ }))
 
@@ -111,7 +189,7 @@ describe("IntakeDocumentsCard", () => {
 
   it("the preview is the rendering the server sent", async () => {
     const user = userEvent.setup()
-    render(<IntakeDocumentsCard />)
+    renderOpen()
 
     await user.click(screen.getByRole("button", { name: /Consent for treatment/ }))
 
@@ -120,7 +198,7 @@ describe("IntakeDocumentsCard", () => {
 
   it("saving sends the title and the text together", async () => {
     const user = userEvent.setup()
-    render(<IntakeDocumentsCard />)
+    renderOpen()
 
     await user.click(screen.getByRole("button", { name: /Consent for treatment/ }))
     await user.type(screen.getByLabelText("Name"), "!")
@@ -137,7 +215,7 @@ describe("IntakeDocumentsCard", () => {
 
   it("publishing names the open document", async () => {
     const user = userEvent.setup()
-    render(<IntakeDocumentsCard />)
+    renderOpen()
 
     await user.click(screen.getByRole("button", { name: /Consent for treatment/ }))
     await user.click(screen.getByRole("button", { name: "Publish" }))
@@ -148,7 +226,7 @@ describe("IntakeDocumentsCard", () => {
   it("a published version offers a new one instead of an editor", async () => {
     const user = userEvent.setup()
     mockUseDocuments.mockReturnValue({ data: [PUBLISHED] })
-    render(<IntakeDocumentsCard />)
+    renderOpen()
 
     await user.click(screen.getByRole("button", { name: /Consent for treatment/ }))
 
@@ -162,7 +240,7 @@ describe("IntakeDocumentsCard", () => {
   it("a published version still shows the words it froze", async () => {
     const user = userEvent.setup()
     mockUseDocuments.mockReturnValue({ data: [PUBLISHED] })
-    render(<IntakeDocumentsCard />)
+    renderOpen()
 
     await user.click(screen.getByRole("button", { name: /Consent for treatment/ }))
 
@@ -171,7 +249,7 @@ describe("IntakeDocumentsCard", () => {
 
   it("adding a document asks for one", async () => {
     const user = userEvent.setup()
-    render(<IntakeDocumentsCard />)
+    renderOpen()
 
     await user.click(screen.getByRole("button", { name: "Add a document" }))
 
@@ -184,7 +262,7 @@ describe("IntakeDocumentsCard", () => {
   it("what the server said about a refused publish is shown as it said it", async () => {
     const user = userEvent.setup()
     publishError = new Error("This version is already published.")
-    render(<IntakeDocumentsCard />)
+    renderOpen()
 
     await user.click(screen.getByRole("button", { name: /Consent for treatment/ }))
 

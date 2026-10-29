@@ -19,6 +19,7 @@ matter again.
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 import uuid
 import zipfile
@@ -26,7 +27,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from sqlalchemy import select
 
@@ -47,7 +48,22 @@ MAX_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024
 
 
 class ArchiveError(ValueError):
-    """The uploaded archive could not be used as an export."""
+    """The uploaded archive could not be used as an export.
+
+    ``code`` tells the screen what to do about it: ``ARCHIVE_PASSWORD_REQUIRED``
+    and ``ARCHIVE_PASSWORD_WRONG`` point at the password field; anything else
+    is ``INVALID_ARCHIVE``, a different file.
+    """
+
+    def __init__(self, message: str, *, code: str = "INVALID_ARCHIVE") -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class ArchiveRemover(Protocol):
+    """What the sweep needs of an archive store: removal by practice and reference."""
+
+    def delete(self, practice_key: str, ref: str | None) -> bool: ...
 
 
 @dataclass(frozen=True)
@@ -127,6 +143,81 @@ def records_for_run(session: Session, run_id: str) -> list[ImportRecordRow]:
     )
 
 
+#: How a standing ledger row reads on a screen. ``undone`` is not one: a row
+#: that was undone is filtered out before anything shows it.
+RecordState = Literal["landed", "updated", "merged"]
+
+
+def record_state(row: ImportRecordRow) -> RecordState:
+    """How a ledger row reads on a screen: ``landed``, ``updated`` or ``merged``.
+
+    A merge is marked in ``previous_payload`` rather than ``state`` (the state
+    column is what undo keys on, and a merged patient is never removed), so
+    the two are folded together here for anything that shows the row.
+    """
+    if row.state == "undone":
+        raise ValueError("an undone record is not shown")
+    if (row.previous_payload or {}).get("merged"):
+        return "merged"
+    return "updated" if row.state == "updated" else "landed"
+
+
+def client_records_for_run(session: Session, run_id: str) -> list[ImportRecordRow]:
+    """The run's contact records that still stand: each names a patient it landed on.
+
+    An undone record is left out; whether its patient still exists is for the
+    caller's patient lookup to say, under the clinician's own grant.
+    """
+    stmt = select(ImportRecordRow).where(
+        ImportRecordRow.run_id == run_id,
+        ImportRecordRow.record_type == "contact",
+        ImportRecordRow.target_table == "patients",
+        ImportRecordRow.state != "undone",
+    )
+    return list(session.execute(stmt).scalars())
+
+
+@dataclass(frozen=True)
+class ImportOrigin:
+    """The import that put (or merged) a record here, as the chart shows it."""
+
+    run_id: str
+    source_system: str
+    started_at: datetime
+    finished_at: datetime | None
+    state: RecordState
+
+
+def origin_of(session: Session, target_table: str, target_id: str) -> ImportOrigin | None:
+    """The latest standing import that landed on ``target_id``, or ``None``.
+
+    ``None`` for a row added by hand, and for one whose import was undone:
+    an undone run no longer accounts for anything in the chart.
+    """
+    stmt = (
+        select(ImportRecordRow, ImportRunRow)
+        .join(ImportRunRow, ImportRunRow.id == ImportRecordRow.run_id)
+        .where(
+            ImportRecordRow.target_table == target_table,
+            ImportRecordRow.target_id == target_id,
+            ImportRecordRow.state != "undone",
+        )
+        .order_by(ImportRecordRow.imported_at.desc())
+        .limit(1)
+    )
+    found = session.execute(stmt).first()
+    if found is None:
+        return None
+    record, run = found._tuple()
+    return ImportOrigin(
+        run_id=run.id,
+        source_system=run.source_system,
+        started_at=run.started_at,
+        finished_at=run.finished_at,
+        state=record_state(record),
+    )
+
+
 def new_run(
     session: Session, *, source_system: str, scope: str, started_by: str, archive_ref: str | None
 ) -> ImportRunRow:
@@ -158,19 +249,33 @@ def list_runs(session: Session, *, limit: int = 50) -> list[ImportRunRow]:
 # --------------------------------------------------------------------------- archives
 
 
+def practice_archive_key(practice_key: str) -> str:
+    """The name a practice's archives are filed under, on disk and in the object
+    store: a hash of the tenant identifier, never the practice's name or schema."""
+    return hashlib.sha256(practice_key.encode()).hexdigest()[:24]
+
+
 def practice_archive_dir(base: Path, practice_key: str) -> Path:
-    """Where this practice's uploaded archives live. The key is a hash of the
-    tenant identifier, never the practice's name or schema."""
-    digest = hashlib.sha256(practice_key.encode()).hexdigest()[:24]
-    return base / digest
+    """Where this practice's uploaded archives live on this instance."""
+    return base / practice_archive_key(practice_key)
 
 
-def store_archive(base: Path, practice_key: str, data: bytes) -> str:
+def store_archive(
+    base: Path, practice_key: str, data: Path | bytes, password: str | None = None
+) -> str:
     """Unpack an uploaded zip into a fresh directory and return its reference.
+
+    The local half of :class:`app.migration.archive_store.ArchiveStore`, which
+    is what the routes and jobs use; kept for a deployment that reads the
+    unpacked directory directly.
 
     The reference is the directory name, not a path: it is stored on the run
     row and resolved again through :func:`archive_path`, so a row never
     carries a filesystem location.
+
+    ``password`` opens an export the source system protected (SimplePractice
+    protects every one, with the traditional zip cipher). It is used here
+    once and kept nowhere: what lands on disk is the plain tree.
     """
     root = practice_archive_dir(base, practice_key)
     root.mkdir(parents=True, exist_ok=True)
@@ -178,7 +283,7 @@ def store_archive(base: Path, practice_key: str, data: bytes) -> str:
     target = root / ref
     target.mkdir()
     try:
-        _extract_zip(data, target)
+        extract_zip(data, target, password)
     except Exception:
         shutil.rmtree(target, ignore_errors=True)
         raise
@@ -192,6 +297,22 @@ def archive_path(base: Path, practice_key: str, ref: str) -> Path | None:
     return path if path.is_dir() else None
 
 
+def archive_file(root: Path, relative: str) -> Path | None:
+    """The file ``relative`` names inside an unpacked archive, or ``None``.
+
+    ``relative`` arrives from a request, so it is joined and fully resolved
+    (symlinks included) before anything touches the disk, and anything that
+    lands outside ``root`` is refused: a ``..`` segment, an absolute path, or
+    a link that points elsewhere.
+    """
+    base = os.path.realpath(root)
+    full = os.path.realpath(Path(base) / relative)
+    if not full.startswith(base + os.sep):
+        return None
+    target = Path(full)
+    return target if target.is_file() else None
+
+
 def delete_archive(base: Path, practice_key: str, ref: str | None) -> bool:
     if not ref:
         return False
@@ -202,23 +323,70 @@ def delete_archive(base: Path, practice_key: str, ref: str | None) -> bool:
     return True
 
 
-def sweep_expired_archives(session: Session, base: Path, practice_key: str, now: datetime) -> int:
-    """Delete every archive whose run has passed ``archive_expires_at``."""
+def sweep_expired_archives(
+    session: Session, store: ArchiveRemover, practice_key: str, now: datetime
+) -> int:
+    """Delete every archive whose run has passed ``archive_expires_at``.
+
+    ``store`` is anything with ``delete(practice_key, ref)``: the configured
+    :class:`~app.migration.archive_store.ArchiveStore`, which clears the
+    object-store copy as well as this instance's.
+    """
     stmt = select(ImportRunRow).where(
         ImportRunRow.archive_ref.is_not(None), ImportRunRow.archive_expires_at < now
     )
     swept = 0
     for run in session.execute(stmt).scalars():
-        delete_archive(base, practice_key, run.archive_ref)
+        store.delete(practice_key, run.archive_ref)
         run.archive_ref = None
         run.archive_expires_at = None
         swept += 1
     return swept
 
 
-def _extract_zip(data: bytes, target: Path) -> None:
+#: WinZip AES marks a member with this compression method; the standard library
+#: reads only the traditional cipher, which is the one SimplePractice uses.
+_AES_COMPRESSION = 99
+
+
+def _unlock(zf: zipfile.ZipFile, members: list[zipfile.ZipInfo], password: str | None) -> None:
+    """Set the archive's password when its members need one, and prove it opens them.
+
+    A protected export with no password, or the wrong one, is said plainly so
+    the screen can point at the password field rather than call the file bad.
+    """
+    encrypted = [m for m in members if m.flag_bits & 0x1]
+    if any(m.compress_type == _AES_COMPRESSION for m in encrypted):
+        raise ArchiveError(
+            "This zip is protected in a way Pablo can't open. Unzip it, then zip the "
+            "folder again without a password.",
+        )
+    if encrypted and not password:
+        raise ArchiveError(
+            "This export is protected with a password. Enter the one shown with the export.",
+            code="ARCHIVE_PASSWORD_REQUIRED",
+        )
+    if not password:
+        return
+    zf.setpassword(password.encode("utf-8"))
     try:
-        zf = zipfile.ZipFile(BytesIO(data))
+        with zf.open(encrypted[0] if encrypted else members[0]) as probe:
+            probe.read(1)
+    except RuntimeError as exc:  # the standard library's "Bad password" signal
+        raise ArchiveError(
+            "That password doesn't open this export. Check it and try again.",
+            code="ARCHIVE_PASSWORD_WRONG",
+        ) from exc
+
+
+def extract_zip(source: Path | bytes, target: Path, password: str | None = None) -> None:
+    """Unpack ``source``, a zip on disk or in memory, into ``target``.
+
+    An upload is spooled to disk by the route and read from there, so a large
+    export never has to fit in memory twice.
+    """
+    try:
+        zf = zipfile.ZipFile(BytesIO(source) if isinstance(source, bytes) else source)
     except zipfile.BadZipFile as exc:
         raise ArchiveError("That file is not a zip archive.") from exc
     with zf:
@@ -226,6 +394,7 @@ def _extract_zip(data: bytes, target: Path) -> None:
         members = [m for m in zf.infolist() if not m.is_dir()]
         if not members:
             raise ArchiveError("The zip archive is empty.")
+        _unlock(zf, members, password)
         for member in members:
             name = member.filename
             if name.startswith("/") or ".." in Path(name).parts or "__MACOSX" in name:
@@ -255,15 +424,20 @@ def _extract_zip(data: bytes, target: Path) -> None:
 __all__ = [
     "ARCHIVE_TTL",
     "ArchiveError",
+    "ImportOrigin",
     "Landed",
     "LedgerEntry",
+    "RecordState",
     "archive_path",
+    "client_records_for_run",
     "delete_archive",
     "get_run",
     "ledger_snapshot",
     "list_runs",
     "new_run",
+    "origin_of",
     "record_landed",
+    "record_state",
     "records_for_run",
     "store_archive",
     "sweep_expired_archives",

@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import String, Uuid, bindparam, func, or_, select, text, update
+from sqlalchemy import String, Uuid, bindparam, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 
 from ...db.models import AppointmentRow, PatientClinicianRow
@@ -17,6 +17,7 @@ from ...scheduling_engine.exceptions import OutsideEventAlreadyBookedError
 from ...scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from ...scheduling_engine.repositories.appointment import AppointmentRepository
 from ...utcnow import utc_now
+from ._grants import live_grant
 
 if TYPE_CHECKING:
     from collections.abc import Collection
@@ -65,16 +66,6 @@ PATIENT_FACING_COLUMNS = (
 )
 
 
-def _grant_filters(user_id: str) -> tuple:
-    return (
-        PatientClinicianRow.user_id == user_id,
-        or_(
-            PatientClinicianRow.expires_at.is_(None),
-            PatientClinicianRow.expires_at > utc_now(),
-        ),
-    )
-
-
 class PostgresAppointmentRepository(AppointmentRepository):
     """Appointment access model — hybrid of calendar-ownership and patient-access.
 
@@ -103,7 +94,7 @@ class PostgresAppointmentRepository(AppointmentRepository):
             )
             .where(
                 AppointmentRow.id == appointment_id,
-                *_grant_filters(user_id),
+                *live_grant(user_id),
             )
         ).scalar_one_or_none()
         return _row_to_appointment(row) if row else None
@@ -232,7 +223,7 @@ class PostgresAppointmentRepository(AppointmentRepository):
                 )
                 .where(
                     AppointmentRow.session_id.in_(session_ids),
-                    *_grant_filters(user_id),
+                    *live_grant(user_id),
                 )
             )
             .scalars()
@@ -538,6 +529,7 @@ def _row_to_appointment(row: AppointmentRow) -> Appointment:
         cancelled_by_id=row.cancelled_by_id,
         late_cancellation=row.late_cancellation,
         superseded_by_id=row.superseded_by_id,
+        skipped=row.skipped,
         late_change_acknowledged=row.late_change_acknowledged,
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -600,11 +592,23 @@ def _appointment_to_row(appt: Appointment, row: AppointmentRow) -> None:
     row.reminder_1h_sent = appt.reminder_1h_sent
     row.pending_expires_at = appt.pending_expires_at
     row.confirmation_token_hash = appt.confirmation_token_hash
-    row.cancelled_at = appt.cancelled_at
-    row.cancelled_by = appt.cancelled_by
-    row.cancelled_by_id = appt.cancelled_by_id
-    row.late_cancellation = appt.late_cancellation
-    row.superseded_by_id = appt.superseded_by_id
-    row.late_change_acknowledged = appt.late_change_acknowledged
+    # The cancellation record, together: set as one and cleared as one.
+    (
+        row.cancelled_at,
+        row.cancelled_by,
+        row.cancelled_by_id,
+        row.late_cancellation,
+        row.superseded_by_id,
+        row.skipped,
+        row.late_change_acknowledged,
+    ) = (
+        appt.cancelled_at,
+        appt.cancelled_by,
+        appt.cancelled_by_id,
+        appt.late_cancellation,
+        appt.superseded_by_id,
+        appt.skipped,
+        appt.late_change_acknowledged,
+    )
     row.created_at = appt.created_at
     row.updated_at = appt.updated_at

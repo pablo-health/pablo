@@ -83,7 +83,9 @@ PATIENT_COLUMNS = (
     "status",
     "deleted_at",
 )
-GRANT_COLUMNS = ("patient_id", "user_id", "expires_at")
+#: ``starts_at`` is not read by the directory itself: ``has_patient_access``
+#: reads it, under the ``patients`` policy the directory's read also meets.
+GRANT_COLUMNS = ("patient_id", "user_id", "starts_at", "expires_at")
 #: Everything the outside-appointment lookup reads: ids and a status, no
 #: time, no patient.
 APPOINTMENT_COLUMNS = (
@@ -292,8 +294,9 @@ def apply_practice_directory_access(db: Session | Connection, schema: str) -> No
     db.execute(text(f"GRANT USAGE ON SCHEMA {schema} TO {DIRECTORY_ROLE}"))
     for definer, owner in present:
         for table, columns in definer.reads:
+            granted = _existing_columns(db, schema, table, columns)
             db.execute(
-                text(f"GRANT SELECT ({', '.join(columns)}) ON {schema}.{table} TO {DIRECTORY_ROLE}")
+                text(f"GRANT SELECT ({', '.join(granted)}) ON {schema}.{table} TO {DIRECTORY_ROLE}")
             )
             # Permissive policies OR together, so these widen reads for the
             # directory role only. Every other role keeps exactly its own.
@@ -315,6 +318,28 @@ def apply_practice_directory_access(db: Session | Connection, schema: str) -> No
                 text(f"ALTER FUNCTION {definer.regprocedure(schema)} OWNER TO {DIRECTORY_ROLE}")
             )
             db.execute(text(f"REVOKE CREATE ON SCHEMA {schema} FROM {DIRECTORY_ROLE}"))
+
+
+def _existing_columns(
+    db: Session | Connection, schema: str, table: str, columns: tuple[str, ...]
+) -> list[str]:
+    """Those of *columns* the table has yet.
+
+    This pass runs mid-chain, from the revision that adds each function, and
+    a column the role reads may come from a later revision — ``starts_at``,
+    which ``has_patient_access`` reads under the ``patients`` policy, is one.
+    The pass at head grants it.
+    """
+    present = set(
+        db.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = :schema AND table_name = :table"
+            ),
+            {"schema": schema, "table": table},
+        ).scalars()
+    )
+    return [column for column in columns if column in present]
 
 
 def _pin_search_path(db: Session | Connection, schema: str, owner: str, definer: _Definer) -> None:

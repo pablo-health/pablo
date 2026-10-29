@@ -31,12 +31,14 @@ They should not be the same switch.
 from __future__ import annotations
 
 import pathlib
+import re
 
 import pytest
 import yaml
 
 WORKFLOWS = pathlib.Path(__file__).resolve().parents[2] / ".github" / "workflows"
 E2E = WORKFLOWS / "e2e.yml"
+E2E_BAKE = WORKFLOWS.parents[1] / "docker-bake.e2e.hcl"
 
 
 def _triggers(doc: dict) -> dict:
@@ -66,27 +68,38 @@ def test_e2e_still_runs_on_pull_requests(e2e: dict) -> None:
 
 
 def test_e2e_gates_its_work_on_the_classifier(e2e: dict) -> None:
-    steps = e2e["jobs"]["e2e"]["steps"]
+    classify = e2e["jobs"]["classify"]
+    steps = classify["steps"]
     assert any("ci_classify_diff.sh" in str(s.get("run", "")) for s in steps), (
         "no classify step — without it, dropping the paths filter just makes "
         "every docs-only PR pay for the full browser suite"
     )
-    gated = [s for s in steps if "substantive" in str(s.get("if", ""))]
-    assert len(gated) >= 4, f"only {len(gated)} steps gated; the expensive ones must be"
+
+    for name in (
+        "e2e-shards",
+        "hosted-address",
+        "portal-accessibility-webkit",
+    ):
+        job = e2e["jobs"][name]
+        assert job["needs"] == "classify"
+        assert "needs.classify.outputs.run == 'true'" in job["if"]
+
+    gate = e2e["jobs"]["e2e"]
+    assert gate["if"] == "always()"
+    assert set(gate["needs"]) == {
+        "classify",
+        "e2e-shards",
+        "hosted-address",
+        "portal-accessibility-webkit",
+    }
 
 
 def test_the_gate_fails_open(e2e: dict) -> None:
-    """``!= 'false'`` not ``== 'true'``.
-
-    The classify step only runs for a pull request, so on workflow_call
-    (release, deploy), schedule and dispatch the output is the empty string.
-    Fail-open means those all still run the full suite; fail-closed would
-    silently skip the suite on the paths that gate a release.
-    """
-    for step in e2e["jobs"]["e2e"]["steps"]:
-        cond = str(step.get("if", ""))
-        if "substantive" in cond and "== 'false'" not in cond:
-            assert "!= 'false'" in cond, f"fail-closed gate: {cond}"
+    """A skipped classifier step must still run release and scheduled suites."""
+    result = next(step for step in e2e["jobs"]["classify"]["steps"] if step.get("id") == "result")
+    script = str(result["run"])
+    assert 'if [[ "$SUBSTANTIVE" == "false" ]]' in script
+    assert 'echo "run=true"' in script
 
 
 def test_the_classifier_ignores_the_beads_export() -> None:
@@ -94,3 +107,18 @@ def test_the_classifier_ignores_the_beads_export() -> None:
     by tooling and cannot affect lint, types, migrations, the image or a test."""
     script = (WORKFLOWS.parents[1] / "scripts" / "ci_classify_diff.sh").read_text()
     assert r"^\.beads/" in script
+
+
+def test_e2e_builds_with_an_isolated_github_actions_cache(e2e: dict) -> None:
+    """Parallel lanes share per-image cache entries instead of one global scope."""
+    for job_name in ("e2e-shards", "hosted-address"):
+        steps = e2e["jobs"][job_name]["steps"]
+        assert any("docker/setup-buildx-action@" in step.get("uses", "") for step in steps)
+        assert any("docker/bake-action@" in step.get("uses", "") for step in steps)
+        start = next(step for step in steps if step.get("name", "").startswith("Start the"))
+        assert "--no-build" in start["run"]
+
+    bake = E2E_BAKE.read_text()
+    scopes = re.findall(r"cache-to = \[\"type=gha,mode=max,scope=([^\"]+)", bake)
+    assert len(scopes) == len(set(scopes))
+    assert len(scopes) >= 2

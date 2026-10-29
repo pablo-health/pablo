@@ -7,7 +7,9 @@ Both start paths — ``POST /api/appointments/{id}/start-session`` and
 
 * a client who declined is refused with ``CLIENT_DECLINED_AI_NOTES`` and the
   day they declined, nothing is created, and the refusal is audited;
-* a client nobody has asked yet, or who agreed, starts;
+* a client nobody has asked yet, or who agreed, starts — except for a
+  telehealth session with nothing on file, which is refused with
+  ``CLIENT_AI_CONSENT_NEEDED`` unless the clinician asks once recording starts;
 * "Client agreed today" — a clinician entry dated today, then the start —
   writes one entry and one audit row, and the session starts;
 * a session started to write its note by hand (``recording: false``) is not
@@ -28,6 +30,7 @@ import pytest
 from app.main import app
 from app.models import Patient, SessionStatus
 from app.models.audit import AuditAction
+from app.models.scheduling import is_telehealth
 from app.models.session import TherapySession, Transcript
 from app.repositories import get_client_ai_consent_repository, get_patient_repository
 from app.repositories.audit import InMemoryAuditRepository
@@ -40,6 +43,7 @@ from app.routes.scheduling import (
 from app.services import AuditService, get_audit_service
 from app.services.client_ai_consent import record_ai_consent
 from app.services.recording_consent import (
+    CLIENT_AI_CONSENT_NEEDED,
     CLIENT_DECLINED_AI_NOTES,
     RecordingConsentGate,
     get_recording_consent_gate,
@@ -112,14 +116,22 @@ def _assert_declined(response: Any) -> None:
 # --- POST /api/appointments/{id}/start-session --------------------------------
 
 
-def _appointment(patient_id: str) -> MagicMock:
+def _appointment(
+    patient_id: str,
+    *,
+    video_link: str | None = None,
+    provider: str | None = None,
+    place_of_service: str | None = None,
+) -> MagicMock:
     appt = MagicMock()
     appt.session_id = None
     appt.patient_id = patient_id
     appt.start_at = datetime(2026, 10, 5, 14, 0, tzinfo=UTC)
     appt.duration_minutes = 50
-    appt.video_link = None
+    appt.video_link = video_link
     appt.video_platform = None
+    appt.provider = provider
+    appt.place_of_service = place_of_service
     appt.session_type = "individual"
     appt.notes = None
     appt.note_type = None
@@ -146,10 +158,10 @@ def _session(patient_id: str, user_id: str) -> TherapySession:
 
 
 def _wire_start_session(
-    patient: Patient | None, patient_id: str, user_id: str
+    patient: Patient | None, patient_id: str, user_id: str, **where: str | None
 ) -> tuple[MagicMock, MagicMock]:
     scheduling_svc = MagicMock()
-    scheduling_svc.get_appointment.return_value = _appointment(patient_id)
+    scheduling_svc.get_appointment.return_value = _appointment(patient_id, **where)
     session_svc = MagicMock()
     session_svc.patient_repo.get.return_value = patient
     session_svc.schedule_session.return_value = (_session(patient_id, user_id), patient)
@@ -266,16 +278,163 @@ class TestStartSessionFromAppointment:
         session_svc.schedule_session.assert_not_called()
 
 
+_TELEHEALTH = {
+    "video link": {"video_link": "https://video.example/room"},
+    "video service": {"provider": "doxy_me"},
+    "telehealth in home": {"place_of_service": "10"},
+    "telehealth elsewhere": {"place_of_service": "02"},
+}
+
+
+def _assert_consent_needed(response: Any) -> None:
+    assert response.status_code == 403, response.text
+    assert response.json()["error"]["code"] == CLIENT_AI_CONSENT_NEEDED
+
+
+class TestTelehealthWithNothingOnFile:
+    """No recording before asking, when the client may be anywhere."""
+
+    _URL = "/api/appointments/appt-1/start-session"
+
+    @pytest.mark.parametrize("where", _TELEHEALTH.values(), ids=_TELEHEALTH.keys())
+    def test_recording_anyway_is_refused_audited_and_creates_nothing(
+        self,
+        client: TestClient,
+        patient: Patient,
+        consents: InMemoryClientAiConsentRepository,
+        audit: AuditService,
+        mock_user_id: str,
+        where: dict[str, str],
+    ) -> None:
+        _ask_clients(consents, audit)
+        scheduling_svc, session_svc = _wire_start_session(
+            patient, patient.id, mock_user_id, **where
+        )
+
+        _assert_consent_needed(client.post(self._URL, json={}))
+        _assert_consent_needed(client.post(self._URL))
+
+        session_svc.schedule_session.assert_not_called()
+        scheduling_svc.update_appointment.assert_not_called()
+        refusals = _audited(audit, mock_user_id, AuditAction.PATIENT_AI_CONSENT_VIEWED)
+        assert [r.changes for r in refusals] == [{"recording_refused": True}] * 2
+
+    def test_asking_once_recording_starts_is_allowed(
+        self,
+        client: TestClient,
+        patient: Patient,
+        consents: InMemoryClientAiConsentRepository,
+        audit: AuditService,
+        mock_user_id: str,
+    ) -> None:
+        _ask_clients(consents, audit)
+        _, session_svc = _wire_start_session(
+            patient, patient.id, mock_user_id, video_link="https://video.example/room"
+        )
+
+        response = client.post(self._URL, json={"asking_consent_on_recording": True})
+
+        assert response.status_code == 201, response.text
+        session_svc.schedule_session.assert_called_once()
+        assert consents.events == []
+
+    def test_not_recording_is_allowed(
+        self,
+        client: TestClient,
+        patient: Patient,
+        consents: InMemoryClientAiConsentRepository,
+        audit: AuditService,
+        mock_user_id: str,
+    ) -> None:
+        _ask_clients(consents, audit)
+        _wire_start_session(patient, patient.id, mock_user_id, provider="doxy_me")
+
+        assert client.post(self._URL, json={"recording": False}).status_code == 201
+
+    def test_a_client_who_agreed_records_over_video(
+        self,
+        client: TestClient,
+        patient: Patient,
+        consents: InMemoryClientAiConsentRepository,
+        audit: AuditService,
+        mock_user_id: str,
+    ) -> None:
+        _ask_clients(consents, audit)
+        record_ai_consent(
+            patient.id, "consented", _DECLINED_ON, "clinician", mock_user_id, repo=consents
+        )
+        _wire_start_session(patient, patient.id, mock_user_id, provider="doxy_me")
+
+        assert client.post(self._URL, json={}).status_code == 201
+
+    def test_a_decline_still_wins_over_asking_on_the_recording(
+        self,
+        client: TestClient,
+        patient: Patient,
+        consents: InMemoryClientAiConsentRepository,
+        audit: AuditService,
+        mock_user_id: str,
+    ) -> None:
+        _ask_clients(consents, audit)
+        _decline(consents, patient.id, mock_user_id)
+        _wire_start_session(patient, patient.id, mock_user_id, provider="doxy_me")
+
+        _assert_declined(client.post(self._URL, json={"asking_consent_on_recording": True}))
+
+    def test_in_person_with_nothing_on_file_is_unchanged(
+        self,
+        client: TestClient,
+        patient: Patient,
+        consents: InMemoryClientAiConsentRepository,
+        audit: AuditService,
+        mock_user_id: str,
+    ) -> None:
+        _ask_clients(consents, audit)
+        _wire_start_session(patient, patient.id, mock_user_id, place_of_service="11")
+
+        assert client.post(self._URL, json={}).status_code == 201
+
+    def test_a_practice_not_asking_checks_nothing(
+        self,
+        client: TestClient,
+        patient: Patient,
+        consents: InMemoryClientAiConsentRepository,
+        audit: AuditService,
+        mock_user_id: str,
+    ) -> None:
+        _ask_clients(consents, audit, asks=False)
+        _wire_start_session(patient, patient.id, mock_user_id, provider="doxy_me")
+
+        assert client.post(self._URL, json={}).status_code == 201
+
+
+class TestIsTelehealth:
+    @pytest.mark.parametrize("where", _TELEHEALTH.values(), ids=_TELEHEALTH.keys())
+    def test_any_one_sign_is_enough(self, where: dict[str, str]) -> None:
+        fields: dict[str, str | None] = {
+            "provider": None,
+            "video_link": None,
+            "place_of_service": None,
+        }
+        fields.update(where)
+        assert is_telehealth(**fields)
+
+    @pytest.mark.parametrize("place", [None, "11"])
+    def test_in_the_office_is_not(self, place: str | None) -> None:
+        assert not is_telehealth(provider=None, video_link=None, place_of_service=place)
+
+
 # --- POST /api/sessions/schedule ----------------------------------------------
 
 
-def _schedule(client: TestClient, patient_id: str) -> Any:
+def _schedule(client: TestClient, patient_id: str, **extra: Any) -> Any:
     return client.post(
         "/api/sessions/schedule",
         json={
             "patient_id": patient_id,
             "scheduled_at": "2026-10-05T14:00:00Z",
             "source": "companion",
+            **extra,
         },
     )
 
@@ -356,6 +515,21 @@ class TestScheduleSession:
         _decline(consents, patient.id, mock_user_id)
 
         assert _schedule(client, patient.id).status_code == 201
+
+    def test_a_video_session_with_nothing_on_file_is_refused_unless_asking(
+        self,
+        client: TestClient,
+        patient: Patient,
+        consents: InMemoryClientAiConsentRepository,
+        audit: AuditService,
+    ) -> None:
+        _ask_clients(consents, audit)
+        link = "https://video.example/room"
+
+        _assert_consent_needed(_schedule(client, patient.id, video_link=link))
+        asking = _schedule(client, patient.id, video_link=link, asking_consent_on_recording=True)
+
+        assert asking.status_code == 201, asking.text
 
     def test_unseen_client_is_404_before_the_consent_record_is_read(
         self, client: TestClient, audit: AuditService

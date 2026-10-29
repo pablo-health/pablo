@@ -41,6 +41,7 @@ from ..utcnow import utc_now
 if TYPE_CHECKING:
     from ..intake.starters import Starter
     from ..repositories.intake_document import IntakeDocumentRepository
+    from ..repositories.row import Row
 
 #: Who a document can require a signature from. A guardian signs alongside
 #: the patient rather than instead of them, so this is a set of roles that
@@ -64,11 +65,11 @@ class IntakeDocumentService:
 
     # --- reads ---
 
-    def list_documents(self) -> list[dict[str, object]]:
+    def list_documents(self) -> list[Row]:
         """The newest version of every document the practice has written."""
         return self._repo.latest_per_key()
 
-    def list_published(self) -> list[dict[str, object]]:
+    def list_published(self) -> list[Row]:
         """The newest published version of every document.
 
         What the form editor offers: a document nobody can sign yet is not
@@ -80,13 +81,13 @@ class IntakeDocumentService:
             if (published := self._repo.published_for_key(str(row["document_key"]))) is not None
         ]
 
-    def get(self, document_id: str) -> dict[str, object] | None:
+    def get(self, document_id: str) -> Row | None:
         return self._repo.get(document_id)
 
-    def versions(self, document_key: str) -> list[dict[str, object]]:
+    def versions(self, document_key: str) -> list[Row]:
         return self._repo.versions_for_key(document_key)
 
-    def published_for_key(self, document_key: str) -> dict[str, object] | None:
+    def published_for_key(self, document_key: str) -> Row | None:
         return self._repo.published_for_key(document_key)
 
     # --- writes ---
@@ -98,7 +99,7 @@ class IntakeDocumentService:
         body_markdown: str,
         requires_signature: bool = True,
         signer_roles: list[str] | None = None,
-    ) -> dict[str, object]:
+    ) -> Row:
         """A new document, as an unpublished version 1."""
         roles = _checked_roles(signer_roles)
         return self._repo.add(
@@ -119,7 +120,7 @@ class IntakeDocumentService:
 
     def update_draft(
         self, document_id: str, *, title: str | None = None, body_markdown: str | None = None
-    ) -> dict[str, object]:
+    ) -> Row:
         """Rewrite a draft's title or text.
 
         Raises :class:`PublishedDocumentError` on a published version. This
@@ -140,7 +141,7 @@ class IntakeDocumentService:
             raise LookupError(document_id)
         return updated
 
-    def publish(self, document_id: str, published_by: str) -> dict[str, object]:
+    def publish(self, document_id: str, published_by: str) -> Row:
         """Freeze this version and let forms start pointing at it.
 
         Raises :class:`PublishedDocumentError` if it is already frozen. The
@@ -157,7 +158,7 @@ class IntakeDocumentService:
             raise LookupError(document_id)
         return published
 
-    def new_version(self, document_id: str) -> dict[str, object]:
+    def new_version(self, document_id: str) -> Row:
         """Start a draft carrying the published text forward.
 
         This is how a published document is changed: the old version stays
@@ -182,7 +183,7 @@ class IntakeDocumentService:
                 "document_key": key,
                 "title": latest["title"],
                 "body_markdown": latest["body_markdown"],
-                "version": int(latest["version"]) + 1,  # type: ignore[call-overload]
+                "version": int(latest["version"]) + 1,
                 "digest": latest["digest"],
                 "published_at": None,
                 "published_by": None,
@@ -192,7 +193,7 @@ class IntakeDocumentService:
             }
         )
 
-    def adopt_starter(self, starter: Starter, published_by: str) -> tuple[dict[str, object], bool]:
+    def adopt_starter(self, starter: Starter, published_by: str) -> tuple[Row, bool]:
         """The practice's published copy of a starter, made now if it has none.
 
         Returns the version and whether it was created now. A practice that
@@ -202,7 +203,12 @@ class IntakeDocumentService:
         published in one go: a form cannot go live naming an unpublished
         document, and the copy is edited afterwards like any other — a new
         version, then publish.
+
+        Raises :class:`ValueError` for a starter that is questions alone:
+        there is no document to copy.
         """
+        if starter.body_markdown is None:
+            raise ValueError(f"{starter.key} has no document")
         for row in self._repo.latest_per_key():
             if row["title"] != starter.title:
                 continue
@@ -213,7 +219,7 @@ class IntakeDocumentService:
         created = self.create(title=starter.title, body_markdown=starter.body_markdown)
         return self.publish(str(created["id"]), published_by), True
 
-    def _require(self, document_id: str) -> dict[str, object]:
+    def _require(self, document_id: str) -> Row:
         row = self._repo.get(document_id)
         if row is None:
             raise LookupError(document_id)

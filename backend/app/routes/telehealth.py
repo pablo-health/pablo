@@ -185,9 +185,7 @@ def set_room_url(
     room_url = (request.room_url or "").strip() or None
     if room_url is not None and not room_url.startswith("https://"):
         raise BadRequestError("A room address must start with https://")
-    preferences = user_repo.get_preferences(ctx.user_id)
-    preferences.telehealth_room_url = room_url
-    user_repo.save_preferences(ctx.user_id, preferences)
+    user_repo.update_preferences(ctx.user_id, {"telehealth_room_url": room_url})
     return SetRoomUrlRequest(room_url=room_url)
 
 

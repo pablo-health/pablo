@@ -29,10 +29,11 @@ if TYPE_CHECKING:
     from .patient_payment import PatientPaymentRepository
     from .patient_source_mapping import PatientSourceMappingRepository
     from .postgres.compliance_document import PostgresComplianceDocumentRepository
-    from .postgres.compliance_item import PostgresComplianceItemRepository
     from .postgres.supervision import PostgresSupervisionRepository
+    from .postgres.task import PostgresComplianceItemRepository, PostgresTaskRepository
     from .postgres.telehealth_connection import PostgresZoomConnectionStore
     from .remittance_hold import RemittanceHoldRepository
+    from .session_dictation import SessionDictationRepository
 
 from .allowlist import (
     AllowlistRepository,
@@ -41,6 +42,14 @@ from .allowlist import (
 from .booking_link import (
     BookingLinkRepository,
     InMemoryBookingLinkRepository,
+)
+from .chart_history import (
+    ChartHistoryRepository,
+    InMemoryChartHistoryRepository,
+)
+from .chart_proposals import (
+    ChartProposalRepository,
+    InMemoryChartProposalRepository,
 )
 from .chat import (
     ChatRepository,
@@ -126,6 +135,15 @@ from .patient_message import (
     PatientMessageAccessDeniedError,
     PatientMessageRepository,
 )
+from .patient_preference import (
+    InMemoryPatientPreferenceRepository,
+    PatientPreferenceRepository,
+)
+from .patient_problem import (
+    InMemoryPatientProblemRepository,
+    PatientProblemRepository,
+)
+from .practice_admin import PracticeAdminRepository
 from .practice_note_type import (
     InMemoryPracticeNoteTypeRepository,
     PracticeNoteTypeRepository,
@@ -333,9 +351,16 @@ def get_clinician_profile_repository() -> ClinicianProfileRepository:
     return PostgresClinicianProfileRepository(_get_pg_session())
 
 
+def get_task_repository() -> PostgresTaskRepository:
+    """Get task repository instance (postgres only)."""
+    from .postgres.task import PostgresTaskRepository
+
+    return PostgresTaskRepository(_get_pg_session())
+
+
 def get_compliance_item_repository() -> PostgresComplianceItemRepository:
-    """Get compliance-item repository instance (postgres only)."""
-    from .postgres.compliance_item import PostgresComplianceItemRepository
+    """The compliance view of the task table: its list is compliance tasks only."""
+    from .postgres.task import PostgresComplianceItemRepository
 
     return PostgresComplianceItemRepository(_get_pg_session())
 
@@ -359,6 +384,13 @@ def get_instrument_license_repository() -> InstrumentLicenseRepository:
     from .postgres.instrument_license import PostgresInstrumentLicenseRepository
 
     return PostgresInstrumentLicenseRepository(_get_pg_session())
+
+
+def get_practice_admin_repository() -> PracticeAdminRepository:
+    """Get practice admin grant repository instance."""
+    from .postgres.practice_admin import PostgresPracticeAdminRepository
+
+    return PostgresPracticeAdminRepository(_get_pg_session())
 
 
 def get_practice_note_type_repository() -> PracticeNoteTypeRepository:
@@ -474,10 +506,41 @@ def get_client_ai_consent_repository() -> ClientAiConsentRepository:
     return PostgresClientAiConsentRepository(_get_pg_session())
 
 
+def get_session_dictation_repository() -> SessionDictationRepository:
+    """Get the session dictation repository instance."""
+    from .postgres.session_dictation import PostgresSessionDictationRepository
+
+    return PostgresSessionDictationRepository(_get_pg_session())
+
+
 def get_medication_repository() -> MedicationRepository:
     from .postgres.medication import PostgresMedicationRepository
 
     return PostgresMedicationRepository(_get_pg_session())
+
+
+def get_chart_history_repository() -> ChartHistoryRepository:
+    from .postgres.chart_history import PostgresChartHistoryRepository
+
+    return PostgresChartHistoryRepository(_get_pg_session())
+
+
+def get_chart_proposal_repository() -> ChartProposalRepository:
+    from .postgres.chart_proposals import PostgresChartProposalRepository
+
+    return PostgresChartProposalRepository(_get_pg_session())
+
+
+def get_patient_preference_repository() -> PatientPreferenceRepository:
+    from .postgres.patient_preference import PostgresPatientPreferenceRepository
+
+    return PostgresPatientPreferenceRepository(_get_pg_session())
+
+
+def get_patient_problem_repository() -> PatientProblemRepository:
+    from .postgres.patient_problem import PostgresPatientProblemRepository
+
+    return PostgresPatientProblemRepository(_get_pg_session())
 
 
 def get_inbox_item_state_repository() -> InboxItemStateRepository:
@@ -498,6 +561,8 @@ __all__ = [
     "AllowlistRepository",
     "ArtifactSlotTakenError",
     "BookingLinkRepository",
+    "ChartHistoryRepository",
+    "ChartProposalRepository",
     "ChatRepository",
     "ClinicianProfile",
     "ClinicianProfileRepository",
@@ -507,6 +572,8 @@ __all__ = [
     "IdentityRepository",
     "InMemoryAllowlistRepository",
     "InMemoryBookingLinkRepository",
+    "InMemoryChartHistoryRepository",
+    "InMemoryChartProposalRepository",
     "InMemoryChatRepository",
     "InMemoryClinicianProfileRepository",
     "InMemoryEhrPromptRepository",
@@ -526,6 +593,8 @@ __all__ = [
     "InMemoryPatientIntakeSignatureRepository",
     "InMemoryPatientIntakeSubmissionRepository",
     "InMemoryPatientMessageRepository",
+    "InMemoryPatientPreferenceRepository",
+    "InMemoryPatientProblemRepository",
     "InMemoryPatientRepository",
     "InMemoryPracticeNoteTypeRepository",
     "InMemoryRefillRequestRepository",
@@ -546,7 +615,10 @@ __all__ = [
     "PatientIntakeSubmissionRepository",
     "PatientMessageAccessDeniedError",
     "PatientMessageRepository",
+    "PatientPreferenceRepository",
+    "PatientProblemRepository",
     "PatientRepository",
+    "PracticeAdminRepository",
     "PracticeNoteTypeRepository",
     "RefillRequestRepository",
     "StoredNoteType",
@@ -557,6 +629,8 @@ __all__ = [
     "get_appointment_type_repository",
     "get_availability_rule_repository",
     "get_booking_link_repository",
+    "get_chart_history_repository",
+    "get_chart_proposal_repository",
     "get_chat_repository",
     "get_claim_receipt_repository",
     "get_claim_repository",
@@ -590,13 +664,17 @@ __all__ = [
     "get_patient_intake_submission_repository",
     "get_patient_message_repository",
     "get_patient_payment_repository",
+    "get_patient_preference_repository",
+    "get_patient_problem_repository",
     "get_patient_repository",
     "get_patient_source_mapping_repository",
     "get_payer_repository",
     "get_practice_note_type_repository",
     "get_refill_request_repository",
+    "get_session_dictation_repository",
     "get_session_repository",
     "get_supervision_repository",
+    "get_task_repository",
     "get_user_repository",
     "get_zoom_connection_store",
 ]

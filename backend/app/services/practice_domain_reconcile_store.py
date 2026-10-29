@@ -19,19 +19,28 @@ import logging
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import exists, select
+from sqlalchemy import exists, or_, select, update
 
 from ..db import create_standalone_session
-from ..db.platform_models import PracticeDomainRow, PracticeRow
+from ..db.platform_models import (
+    PracticeDomainRow,
+    PracticeRow,
+    PracticeSiteRow,
+    PracticeSiteVersionRow,
+)
 from ..db.tenant_session import tenant_db_session
 from ..models.audit import ResourceType
 from ..models.practice_domain import IN_PROGRESS_STATUSES
+from ..portal.hosted import hosted_addresses_ready, hosted_site_host, practice_slug
 from ..repositories.postgres.audit import PostgresAuditRepository
 from ..repositories.postgres.practice_domain import PostgresPracticeDomainRepository
 from .audit_service import AuditService
+from .practice_domain_reconciler import SiteServing
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterator
+
+    from sqlalchemy.orm import Session
 
     from ..models.audit import AuditAction
     from ..models.practice_domain import PracticeDomain
@@ -80,6 +89,14 @@ class _Scope:
         )
 
 
+def _hosted_host(session: Session, practice_id: str) -> str | None:
+    """The practice's hosted website address, where the deployment serves one."""
+    if not hosted_addresses_ready():
+        return None
+    slug = practice_slug(session, practice_id)
+    return hosted_site_host(slug) if slug else None
+
+
 class PostgresReconcileStore:
     def all_hosts(self) -> list[PracticeDomain]:
         session = create_standalone_session()
@@ -95,6 +112,127 @@ class PostgresReconcileStore:
                 session.execute(
                     select(exists().where(PracticeDomainRow.status.in_(IN_PROGRESS_STATUSES)))
                 ).scalar()
+            )
+        finally:
+            session.close()
+
+    def site(self, practice_id: str) -> SiteServing | None:
+        session = create_standalone_session()
+        try:
+            row = session.get(PracticeSiteRow, practice_id)
+            if row is None:
+                return None
+            retained = session.execute(
+                select(PracticeSiteVersionRow.version).where(
+                    PracticeSiteVersionRow.practice_id == practice_id
+                )
+            ).scalars()
+            return SiteServing(
+                live_version=row.live_version,
+                served_version=row.served_version,
+                hide_from_search=row.hide_from_search,
+                served_hide_from_search=row.served_hide_from_search,
+                retained=tuple(sorted(retained)),
+                hosted_host=_hosted_host(session, practice_id),
+                served_hosted_host=row.served_hosted_host,
+            )
+        finally:
+            session.close()
+
+    def record_served(
+        self,
+        practice_id: str,
+        version: int,
+        *,
+        hide_from_search: bool,
+        hosted_host: str | None,
+    ) -> None:
+        session = create_standalone_session()
+        try:
+            session.execute(
+                update(PracticeSiteRow)
+                .where(
+                    PracticeSiteRow.practice_id == practice_id,
+                    PracticeSiteRow.live_version == version,
+                    PracticeSiteRow.hide_from_search.is_(hide_from_search),
+                )
+                .values(
+                    served_version=version,
+                    served_hide_from_search=hide_from_search,
+                    served_hosted_host=hosted_host,
+                )
+            )
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def clear_served_hosted_host(self, practice_id: str) -> None:
+        session = create_standalone_session()
+        try:
+            session.execute(
+                update(PracticeSiteRow)
+                .where(PracticeSiteRow.practice_id == practice_id)
+                .values(served_hosted_host=None)
+            )
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def any_site_behind(self) -> bool:
+        session = create_standalone_session()
+        try:
+            served = select(PracticeDomainRow.practice_id).where(
+                PracticeDomainRow.practice_id == PracticeSiteRow.practice_id,
+                PracticeDomainRow.purpose == "site",
+                PracticeDomainRow.status == "active",
+            )
+            behind = select(
+                exists().where(
+                    PracticeSiteRow.live_version.is_not(None),
+                    or_(
+                        PracticeSiteRow.live_version.is_distinct_from(
+                            PracticeSiteRow.served_version
+                        ),
+                        PracticeSiteRow.hide_from_search.is_distinct_from(
+                            PracticeSiteRow.served_hide_from_search
+                        ),
+                    ),
+                    or_(exists(served), PracticeSiteRow.served_hosted_host.is_not(None)),
+                )
+            )
+            if session.execute(behind).scalar():
+                return True
+            if not hosted_addresses_ready():
+                # No hosted address can be routed; one still recorded is behind.
+                return bool(
+                    session.execute(
+                        select(exists().where(PracticeSiteRow.served_hosted_host.is_not(None)))
+                    ).scalar()
+                )
+            rows = session.execute(
+                select(PracticeSiteRow.practice_id, PracticeSiteRow.served_hosted_host).where(
+                    PracticeSiteRow.live_version.is_not(None)
+                )
+            ).all()
+            return any(_hosted_host(session, pid) != served for pid, served in rows)
+        finally:
+            session.close()
+
+    def practices_with_sites(self) -> list[str]:
+        session = create_standalone_session()
+        try:
+            return list(
+                session.execute(
+                    select(PracticeSiteRow.practice_id).where(
+                        PracticeSiteRow.live_version.is_not(None)
+                    )
+                ).scalars()
             )
         finally:
             session.close()

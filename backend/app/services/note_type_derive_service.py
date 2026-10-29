@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import ValidationError
@@ -37,11 +37,19 @@ from pydantic import ValidationError
 from ..notes.practice_types import PracticeNoteTypeSpec, to_definition
 from ..notes.references import missing_elements
 from ..settings import get_settings
-from .note_type_derive_checks import SampleText, copied_paths, passages, unplaced_passages
+from .ai_features import AIFeature
+from .hedged_structured_llm_gateway import generation_gateway
+from .note_type_derive_checks import (
+    SampleText,
+    copied_paths,
+    split_passages,
+    unplaced_passages,
+    words,
+)
+from .note_type_derive_shape import drop_rationale_sections, ensure_encounter, strip_non_note
 from .structured_llm_gateway import (
     StructuredLLMGateway,
     StructuredOutputTruncatedError,
-    get_default_structured_llm_gateway,
 )
 
 if TYPE_CHECKING:
@@ -66,6 +74,10 @@ the samples use them. Each section has one or more fields.
 - Fields: a short label, kind "list" when the samples write that part as \
 items and "text" otherwise, and an ai_hint saying what goes in the field \
 for any visit — the kind of content, not this visit's content.
+- Each distinct labelled item or sub-heading in a sample section ("Treatment \
+approach:", "Goal/plan:", "Medication changes:", "Follow-up:") is its own \
+field. Never merge distinct items into one broad field such as "Plan" or \
+"Notes"; a section is as many fields as the samples have items in it.
 - Keys are lowercase snake_case, starting with a letter.
 - system_prompt: instructions for drafting a note in this practice's \
 style — prose or bullets, how quotes are used, register, tense and person. \
@@ -73,6 +85,14 @@ Describe the style; do not restate content.
 - inputs: only facts the clinician knows before the visit starts (such as \
 the visit type or place of service). Never a fact that comes from the \
 conversation. Usually there are none.
+- Visit facts in a note's header — date of service, start and end times, \
+codes, place of service, where the client and the clinician were, telehealth \
+consent — belong in a first section, Encounter, with a field for each, and a \
+telehealth attestation field when the samples are telehealth visits. Place of \
+service and the two locations are also inputs.
+- Leave out anything a sample marks as not part of the note: explanations of \
+how codes were chosen, rationale, teaching or reference material. Never \
+propose a section whose purpose is justifying codes.
 - Never copy a sample's wording into any label, hint, description or \
 prompt. No names, dates, places, medications, quotes or events from a \
 sample. A sample shows what kind of thing goes where; the template must \
@@ -110,6 +130,10 @@ class SampleCoverage:
     passages: int
     unplaced: list[str]
     checked: bool = True
+    excluded: int = 0
+    """Lines set aside as not note content: blocks the sample marks so (code
+    rationale, teaching asides), signature lines, and facts that only identify
+    the client or clinician. Reported apart from ``unplaced``."""
 
 
 @dataclass(frozen=True)
@@ -288,49 +312,76 @@ def _set(spec: dict[str, Any], path: str, value: str) -> None:
     container[slot] = value
 
 
-def _position(path: str) -> int:
-    """The index of the part a ``...[n].key`` path belongs to, from one."""
-    return int(path.rsplit("[", 1)[1].split("]", 1)[0]) + 1
+_GENERIC_FIELD_LABEL = "Details"
+_GENERIC_SECTION_LABEL = "Notes"
+_LABEL_WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9'&/+-]*")
 
 
-def _part_kind(path: str) -> str:
-    if ".fields[" in path:
-        return "field"
-    return "input" if path.startswith("inputs[") else "section"
+def _owner(path: str) -> str:
+    return path.rsplit(".", 1)[0]
 
 
-def _neutral(spec: dict[str, Any], path: str) -> str:
-    """Wording for ``path`` that carries nothing from a sample."""
-    if path.endswith(".key"):
-        return f"{_part_kind(path)}_{_position(path)}"
+def _is_section(path: str) -> bool:
+    return path.startswith("sections[") and ".fields[" not in path
+
+
+def _without(text: str, copied: set[str]) -> str:
+    """``text`` with the words that made it a copy taken out."""
+    kept = [w for w in _LABEL_WORD.findall(text) if not set(words(w)) & copied]
+    cleaned = " ".join(kept).strip(" -/&")
+    return cleaned[:1].upper() + cleaned[1:]
+
+
+def _replacement_label(body: dict[str, Any], path: str, index: SampleText) -> str:
+    """A label with the copied words removed, or a plain one when nothing is left.
+
+    Never a positional name: a clinician reads these.
+    """
+    cleaned = _without(_get(body, path), index.copied_words(_get(body, path)))
+    if cleaned and not index.copied(cleaned):
+        return cleaned
     if path == "label":
         return NEUTRAL_LABEL
-    if path in ("description", "system_prompt"):
-        return ""
-    owner = path.rsplit(".", 1)[0]
-    if path.endswith(".label"):
-        return _get(spec, f"{owner}.key").replace("_", " ").capitalize()
-    return f"What the visit covered for {_get(spec, f'{owner}.label')}."
+    if _is_section(path):
+        section, slot = _walk(body, _owner(path))
+        clean = [f["label"] for f in section[slot]["fields"] if not index.copied(f["label"])]
+        return clean[0] if clean else _GENERIC_SECTION_LABEL
+    return _GENERIC_FIELD_LABEL
 
 
-def _order(path: str) -> tuple[int, str]:
-    # Keys, then labels, then hints: each neutral value is built from the
-    # one before it, which must already be clean.
-    rank = 0 if path.endswith(".key") else 1 if path.endswith("label") else 2
-    return rank, path
+def _rank(path: str) -> tuple[int, str]:
+    # Field and input labels first, then section labels (which may borrow a
+    # field's), then everything built from a label, then keys from labels.
+    if path.endswith(".label") and not _is_section(path):
+        return 0, path
+    if path.endswith("label"):
+        return 1, path
+    if path.endswith(".key"):
+        return 3, path
+    return 2, path
 
 
-def _neutralize(spec: dict[str, Any], paths: list[str]) -> None:
-    """Replace each path's text with neutral wording.
+def _settle(body: dict[str, Any], paths: list[str], index: SampleText) -> None:
+    """Replace text at ``paths`` that still repeats a sample.
 
-    A choice input with a copied option is dropped instead: an option cannot
-    be described in general terms.
+    Labels lose their copied words (or fall back to a plain label), hints
+    describe their field in general terms, the description and prompt are
+    cleared, and a key is rebuilt from its part's clean label. A choice
+    input with a copied option is dropped: an option cannot be described in
+    general terms.
     """
     dropped = {_input_of_option(p) for p in paths if ".options[" in p}
-    for path in sorted((p for p in paths if ".options[" not in p), key=_order):
-        _set(spec, path, _neutral(spec, path))
+    for path in sorted((p for p in paths if ".options[" not in p), key=_rank):
+        if path.endswith("label"):
+            _set(body, path, _replacement_label(body, path, index))
+        elif path.endswith(".key"):
+            _set(body, path, _slug(_get(body, f"{_owner(path)}.label"), "part"))
+        elif path in ("description", "system_prompt"):
+            _set(body, path, "")
+        else:
+            _set(body, path, f"What the visit covered for {_get(body, f'{_owner(path)}.label')}.")
     if dropped:
-        spec["inputs"] = [item for n, item in enumerate(spec["inputs"]) if n not in dropped]
+        body["inputs"] = [item for n, item in enumerate(body["inputs"]) if n not in dropped]
 
 
 def _input_of_option(path: str) -> int:
@@ -352,7 +403,7 @@ class NoteTypeDeriveService:
         model: str | None = None,
     ) -> None:
         self._import = import_service
-        self._llm_gateway = llm_gateway or get_default_structured_llm_gateway()
+        self._llm_gateway = llm_gateway or generation_gateway(AIFeature.NOTE_TYPE_DERIVE)
         self._model = model
 
     def derive(
@@ -363,11 +414,19 @@ class NoteTypeDeriveService:
     ) -> DerivedNoteType:
         if not samples and not (description and description.strip()):
             raise ValueError("send at least one sample or a description")
-        spec, repaired = self._propose(samples, description)
+        stripped = [strip_non_note(sample) for sample in samples]
+        notes = [s.text for s in stripped]
+        proposed, repaired = self._propose(notes, description)
+        spec = _reshape(proposed, notes)
         result = DerivedNoteType(spec=spec, repaired=repaired)
         if samples:
+            # The guard reads the samples whole: text copied from a block that
+            # is not note content is still copied.
             result.spec, result.guard = self._guard(spec, samples)
-            result.coverage = self.check_coverage(result.spec, samples)
+            result.coverage = [
+                replace(c, excluded=c.excluded + s.removed_lines)
+                for c, s in zip(self.check_coverage(result.spec, notes), stripped, strict=True)
+            ]
         if reference is not None:
             result.suggestions = missing_elements(reference, result.spec)
         # Counts only: the samples, and anything taken from them, stay out of logs.
@@ -388,7 +447,8 @@ class NoteTypeDeriveService:
         for budget in (base, base * 2):
             try:
                 return self._llm_gateway.complete_structured(
-                    model=self._model or settings.ai_model,
+                    model=self._model
+                    or settings.model_for(AIFeature.NOTE_TYPE_DERIVE, settings.ai_model),
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
                     response_schema=schema,
@@ -423,34 +483,33 @@ class NoteTypeDeriveService:
     def _guard(
         self, spec: PracticeNoteTypeSpec, samples: list[str]
     ) -> tuple[PracticeNoteTypeSpec, list[GuardFinding]]:
-        """Rewrite copied text once; neutralize whatever still repeats a sample."""
+        """Rewrite sample-specific text once; replace whatever still repeats a sample."""
         index = SampleText(samples)
         flagged = copied_paths(spec, index)
         if not flagged:
             return spec, []
         body = spec.model_dump(mode="json")
-        # Keys and options are structure: they are replaced, not rewritten.
+        # Keys and options are structure: they are rebuilt or dropped, not rewritten.
         rewritable = [p for p in flagged if not p.endswith(".key") and ".options[" not in p]
         if rewritable:
             self._rewrite(body, rewritable)
-        neutralized = [p for p in flagged if p not in rewritable]
-        neutralized += [
+        replaced = [p for p in flagged if p not in rewritable]
+        replaced += [
             p
             for p in rewritable
             if index.copied(_get(body, p), heading_allowed=p.endswith("label"))
         ]
-        _neutralize(body, neutralized)
+        _settle(body, replaced, index)
         guarded = PracticeNoteTypeSpec.model_validate(normalize_proposal(body))
-        # A rewrite can only change the text at its own path, but neutral
-        # wording built from a label could, in principle, match a sample too.
-        leftover = [p for p in copied_paths(guarded, index) if p not in neutralized]
+        # Plain wording built from a label could, in principle, match a sample too.
+        leftover = [p for p in copied_paths(guarded, index) if p not in replaced]
         if leftover:
             body = guarded.model_dump(mode="json")
-            _neutralize(body, leftover)
+            _settle(body, leftover, index)
             guarded = PracticeNoteTypeSpec.model_validate(normalize_proposal(body))
-            neutralized += leftover
-        findings = [GuardFinding(p, "neutralized") for p in neutralized]
-        findings += [GuardFinding(p, "rewritten") for p in rewritable if p not in neutralized]
+            replaced += leftover
+        findings = [GuardFinding(p, "neutralized") for p in replaced]
+        findings += [GuardFinding(p, "rewritten") for p in rewritable if p not in replaced]
         return guarded, sorted(findings, key=lambda f: f.path)
 
     def _rewrite(self, body: dict[str, Any], paths: list[str]) -> None:
@@ -480,16 +539,33 @@ class NoteTypeDeriveService:
         definition = to_definition(DERIVED_KEY, 0, spec)
         coverage: list[SampleCoverage] = []
         for n, sample in enumerate(samples):
+            found, set_aside = split_passages(sample)
             try:
                 extracted = self._import.extract_into(definition, sample)
             except ValueError:
                 logger.warning("Note type derive: sample %d could not be extracted", n)
-                coverage.append(SampleCoverage(n, len(passages(sample)), [], checked=False))
+                coverage.append(
+                    SampleCoverage(n, len(found), [], checked=False, excluded=set_aside)
+                )
                 continue
             coverage.append(
-                SampleCoverage(n, len(passages(sample)), unplaced_passages(sample, extracted))
+                SampleCoverage(
+                    n, len(found), unplaced_passages(sample, extracted), excluded=set_aside
+                )
             )
         return coverage
+
+
+def _reshape(spec: PracticeNoteTypeSpec, notes: list[str]) -> PracticeNoteTypeSpec:
+    """Drop code-justification sections; give the samples' visit facts a home."""
+    body = spec.model_dump(mode="json")
+    kept = list(body["sections"])
+    drop_rationale_sections(body)
+    if not body["sections"]:
+        body["sections"] = kept
+    if notes:
+        ensure_encounter(body, notes)
+    return PracticeNoteTypeSpec.model_validate(normalize_proposal(body))
 
 
 def _derive_prompt(samples: list[str], description: str | None) -> str:

@@ -35,9 +35,15 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from ..reliability import LLM_REQUEST, Idempotency, acall_with_retry
+from ..reliability import (
+    LLM_REQUEST,
+    Idempotency,
+    RetryExhaustedError,
+    acall_with_retry,
+    is_transient,
+)
 from .llm_provider import strip_provider_prefix
-from .llm_telemetry import LLMSpanRequest, llm_span
+from .llm_telemetry import LLMSpanRequest, llm_span, usage_detail_tokens, usage_tokens
 from .vertex_client import vertex_genai_client
 
 if TYPE_CHECKING:
@@ -85,6 +91,28 @@ class StreamEvent:
     output_tokens: int | None = None
     error_code: str | None = None
     error_message: str | None = None
+    transient: bool = False
+    """On an error event: whether another attempt, on this model or another,
+    could plausibly succeed (a rate limit, 5xx, timeout or dropped
+    connection) rather than meeting the same refusal."""
+
+
+def is_transient_failure(exc: BaseException) -> bool:
+    """Whether ``exc`` or anything it chains is a failure worth another attempt.
+
+    A retry the gateway gave up on counts: it was retrying because the
+    failure was transient.
+    """
+    seen: set[int] = set()
+    cause: BaseException | None = exc
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        if isinstance(cause, RetryExhaustedError) or is_transient(
+            cause, retry_status=LLM_REQUEST.retry_status
+        ):
+            return True
+        cause = cause.__cause__
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -92,8 +120,19 @@ class StreamEvent:
 # ---------------------------------------------------------------------------
 
 
+#: Separates the stable part of a chat system prompt from the part composed
+#: per conversation (the patient's chart context). A gateway that caches
+#: prompt prefixes may cache what comes before this and must not cache what
+#: comes after it: the text after it is one patient's chart.
+PATIENT_CONTEXT_DELIMITER = "\n\n--- PATIENT CONTEXT ---\n"
+
+
 class ChatLLMGateway(ABC):
-    """Abstract streaming completion gateway used by the chat service."""
+    """Abstract streaming completion gateway used by the chat service.
+
+    ``system_prompt`` may contain :data:`PATIENT_CONTEXT_DELIMITER`; see it
+    for what an implementation may do with the two halves.
+    """
 
     # Declared without ``async`` so subclasses can ship ``async def`` generator
     # bodies — mypy treats ``async def`` + ``yield`` as ``AsyncIterator``, but
@@ -196,11 +235,11 @@ class GeminiChatLLMGateway(ChatLLMGateway):
         max_output_tokens: int,
         temperature: float = 0.4,
     ) -> AsyncIterator[StreamEvent]:
-        # Never hold a pooled DB connection across the model round-trip — the
-        # caller must release_db_connection() first (raises in dev/test).
-        from ..db import assert_no_held_db_connection
+        # Never hold a pooled DB connection across the model round-trip:
+        # release it here, at the one seam every call passes through.
+        from ..db import release_db_connection_before_external_call
 
-        assert_no_held_db_connection("chat-llm")
+        release_db_connection_before_external_call("chat-llm")
         try:
             from google.genai import types
         except ImportError as exc:
@@ -230,6 +269,7 @@ class GeminiChatLLMGateway(ChatLLMGateway):
         # recorded — never the delta text, which is the response content.
         with llm_span(LLMSpanRequest(operation="chat", model=model)) as span:
             output_token_total = 0
+            last_usage: object = None
             final_reason: FinishReason | None = None
             try:
                 # ``generate_content_stream`` itself only parses the config and
@@ -262,6 +302,7 @@ class GeminiChatLLMGateway(ChatLLMGateway):
                         final_reason = reason
                     usage = getattr(chunk, "usage_metadata", None)
                     if usage is not None:
+                        last_usage = usage
                         ct = getattr(usage, "candidates_token_count", None)
                         if ct:
                             output_token_total = ct
@@ -273,13 +314,22 @@ class GeminiChatLLMGateway(ChatLLMGateway):
                     finish_reason="error",
                     error_code=error_code,
                     error_message=type(exc).__name__,
+                    transient=is_transient_failure(exc),
                 )
                 return
 
             if final_reason is None:
                 final_reason = "stop"
-            if output_token_total:
-                span.set_token_usage(completion_tokens=output_token_total)
+            if output_token_total or last_usage is not None:
+                prompt_tokens, _, total_tokens = usage_tokens(last_usage)
+                cached_tokens, thoughts_tokens = usage_detail_tokens(last_usage)
+                span.set_token_usage(
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=output_token_total or None,
+                    total_tokens=total_tokens,
+                    cached_tokens=cached_tokens,
+                    thoughts_tokens=thoughts_tokens,
+                )
             yield StreamEvent(
                 finish_reason=final_reason,
                 output_tokens=output_token_total or None,
@@ -405,4 +455,5 @@ __all__ = [
     "GeminiChatLLMGateway",
     "StreamEvent",
     "UserAssistantTurn",
+    "is_transient_failure",
 ]

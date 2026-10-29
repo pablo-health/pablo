@@ -39,6 +39,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
 
+from ..chart_history.fields import HISTORY_KEYS
 from ..outcome_measures.instruments import INSTRUMENT_REGISTRY
 from ..outcome_measures.item_text import ITEM_TEXT
 from .rules import DISPLAY_ONLY_TARGETS, ReferencedItem, RuleError, VisibleWhen, check_rule
@@ -128,12 +129,28 @@ ITEM_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 _MAX_OPTIONS = 40
 
+#: The chart fields a written-answer question can fill, besides the history
+#: fields. An answer to such a question is proposed to that field when the
+#: form is accepted, for the clinician to accept, edit or discard; nothing
+#: reaches the chart without that. ``medications`` is read a line per
+#: medication. An emergency-contact question fills the chart's emergency
+#: contact by its type and needs no field named.
+PROFILE_CHART_FIELDS: tuple[str, ...] = ("preferred_name", "pronouns", "medications")
+
+#: Every value ``chart_field`` may take.
+CHART_FIELDS: tuple[str, ...] = (*PROFILE_CHART_FIELDS, *HISTORY_KEYS)
+
 #: Given a document key, the id of its newest published version — or
 #: ``None`` if that document has never been published. A callable rather
 #: than a repository so that this module keeps knowing nothing about
 #: storage: the question a form asks about a document is "can somebody sign
 #: it", and this is that question with nothing else attached.
 type PublishedDocumentLookup = Callable[[str], str | None]
+
+#: Given a document key, the ids of every published version of it, newest
+#: first. Asked only when a consent item names a version the practice chose,
+#: to check the choice is one of that document's own published versions.
+type PublishedVersionsLookup = Callable[[str], list[str]]
 
 #: Given an instrument code, whether this practice has recorded that it holds
 #: the permission that instrument's rights require. A callable for the same
@@ -193,8 +210,24 @@ class InstructionsConfig(_BaseConfig):
 
 
 class FreeTextConfig(_BaseConfig):
+    """A written answer.
+
+    ``chart_field`` names the chart field the answer fills (one of
+    :data:`CHART_FIELDS`), so an accepted form proposes it there. ``None``
+    for an answer that stays on the form; such an answer can still suggest
+    chart updates when the client has agreed to AI tools, read like any
+    other written answer.
+    """
+
     item_type: Literal["free_text"]
     max_len: int = Field(default=2000, ge=1, le=10000)
+    chart_field: str | None = None
+
+    @model_validator(mode="after")
+    def _check(self) -> FreeTextConfig:
+        if self.chart_field is not None and self.chart_field not in CHART_FIELDS:
+            raise ValueError(f"{self.chart_field!r} is not a chart field an answer can fill")
+        return self
 
 
 class ChoiceOption(BaseModel):
@@ -333,11 +366,21 @@ class ConsentDocumentConfig(_BaseConfig):
     present on every published version. That is why it is optional here
     rather than required — the same model has to parse an item mid-edit and
     an item that has gone live.
+
+    ``chosen_version_id`` is the one a practice may set: a published
+    version of this document to ask for instead of the newest. It is kept
+    apart from the pin on purpose. A new version of a form starts as a copy
+    of the last, pin included, and re-pins at publish; if the choice and
+    the pin were one field, every copy would keep asking for the wording
+    that was newest the first time, and a revised document would never
+    reach anybody. Left empty, publishing takes the newest, as it always
+    has.
     """
 
     item_type: Literal["consent_document"]
     document_key: str
     document_version_id: str | None = None
+    chosen_version_id: str | None = None
 
 
 #: What a file-backed question will accept, and the only types anything on
@@ -474,6 +517,7 @@ def validate_item_list(
     *,
     published_document: PublishedDocumentLookup | None = None,
     instrument_attested: InstrumentAttested | None = None,
+    published_versions: PublishedVersionsLookup | None = None,
 ) -> list[ItemConfig]:
     """Check a whole version's items the way publishing does.
 
@@ -508,6 +552,7 @@ def validate_item_list(
 
     seen: dict[str, ReferencedItem] = {}
     parsed: list[ItemConfig] = []
+    filled: dict[str, str] = {}
 
     for item in items:
         if not ITEM_KEY_PATTERN.match(item.key):
@@ -532,10 +577,29 @@ def validate_item_list(
                 f"{item.key}: publish this document before you ask anybody to sign it."
             )
 
+        if (
+            isinstance(config, ConsentDocumentConfig)
+            and config.chosen_version_id is not None
+            and published_versions is not None
+            and config.chosen_version_id not in published_versions(config.document_key)
+        ):
+            raise ItemConfigError(
+                f"{item.key}: that version of the document isn't published. "
+                "Choose a published one, or the newest."
+            )
+
         if isinstance(config, InstrumentConfig) and instrument_attested is not None:
             _check_instrument_rights(item.key, config.code, instrument_attested)
 
         _check_label(item)
+
+        if isinstance(config, FreeTextConfig) and config.chart_field is not None:
+            earlier = filled.setdefault(config.chart_field, item.key)
+            if earlier != item.key:
+                raise ItemConfigError(
+                    f"{item.key}: {earlier!r} already fills this chart field. "
+                    "One question per chart field."
+                )
 
         if config.visible_when is not None:
             _check_visibility(item.key, config.visible_when, seen)
@@ -636,6 +700,7 @@ __all__ = [
     "ItemConfigError",
     "ItemDraft",
     "PublishedDocumentLookup",
+    "PublishedVersionsLookup",
     "VisibleWhen",
     "instrument_item_count",
     "validate_item_config",

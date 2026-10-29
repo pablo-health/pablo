@@ -17,12 +17,15 @@ from typing import TYPE_CHECKING, Literal, Protocol
 
 if TYPE_CHECKING:
     from ..models import Patient, Transcript
+    from .practice_spec import PracticeNoteTypeSpec
 
-NoteFieldKind = Literal["text", "list", "structured"]
+NoteFieldKind = Literal["text", "list", "diagnoses", "structured"]
 """Shape of a single field within a section.
 
 - ``text``: free-form paragraph (e.g. SOAP's ``chief_complaint``)
 - ``list``: ordered list of short items (e.g. SOAP's ``interventions_used``)
+- ``diagnoses``: diagnoses as the clinician stated them, each
+  ``{label, code, status}`` (see :mod:`.diagnoses`)
 - ``structured``: nested schema (reserved for richer future fields)
 """
 
@@ -62,6 +65,9 @@ class NoteFieldDef:
     label: str
     kind: NoteFieldKind
     ai_hint: str = ""
+    source: str | None = None
+    """What code prints this field from, when the model does not draft it:
+    the chart, or the values entered for the visit (:mod:`.field_sources`)."""
 
 
 NoteInputKind = Literal["text", "choice"]
@@ -82,6 +88,8 @@ class NoteInputDef:
     kind: NoteInputKind = "text"
     options: tuple[str, ...] = ()
     required: bool = False
+    default: str | None = None
+    """The value a note takes when the clinician has not chosen one."""
 
 
 @dataclass(frozen=True)
@@ -91,6 +99,10 @@ class NoteSectionDef:
     key: str
     label: str
     fields: tuple[NoteFieldDef, ...]
+    review_only: bool = False
+    """Drafted for the clinician to review beside the note (the evidence for
+    the medical decision making, say), and never shown, printed or exported as
+    part of the note."""
 
     def field_keys(self) -> list[str]:
         return [f.key for f in self.fields]
@@ -151,9 +163,50 @@ class NoteTypeDefinition:
     """
     version: int | None = None
     """Definition version. ``None`` for built-in types, which change only by deploy."""
+    reads_chart: bool = field(default=True, compare=False)
+    """Whether a draft is written against the client's chart (problem list, allergies).
+
+    Off for a format with no client in it, such as meeting minutes, so a
+    chart is never handed to a draft that has no business reading it.
+    """
+    full_chart: bool = field(default=False, compare=False)
+    """Whether a draft also gets the allergies, the current medications and the
+    chart history, and proposes updates to them at sign.
+
+    On for every type written as a spec: the prescriber notes registered from
+    ``notes/templates`` and every type a practice saves, a based one taking its
+    base's value. Off for the built-in formats written in code (SOAP and the
+    other therapy formats, the psychotherapy note), which have no place for them.
+    """
+
+    required_fields: tuple[str, ...] = ()
+    """Fields (``section.field``) a type based on this one cannot hide.
+
+    Set on a type whose note is incomplete without them — the risk fields of
+    a prescriber's note, say. Empty for every type with nothing to protect.
+    """
+    source_spec: PracticeNoteTypeSpec | None = field(default=None, compare=False)
+    """The spec this definition was built from, when it was built from one.
+
+    Only a spec-shaped type can be a base for a practice's own: a patch is
+    applied to a spec. Built-in types written in code (SOAP and the like)
+    have none.
+    """
+    based_on: BasedOn | None = field(default=None, compare=False)
+    """Set when this is a practice type built from a base and a patch."""
 
     def section_keys(self) -> list[str]:
         return [s.key for s in self.sections]
+
+
+@dataclass(frozen=True)
+class BasedOn:
+    """The base a practice type was built on, and how much its patch changes."""
+
+    key: str
+    label: str
+    additions: int
+    hidden: int
 
 
 class PracticeNoteTypeSource(Protocol):
@@ -237,6 +290,20 @@ class NoteTypeRegistry:
             return self._types[key]
         except KeyError as exc:
             raise KeyError(f"Note type {key!r} is not registered") from exc
+
+    def base_for(self, key: str) -> NoteTypeDefinition | None:
+        """The definition ``key`` names, when a practice type can be based on it.
+
+        A base is spec-shaped and is not itself based on another type, so a
+        patch always applies to one fixed spec.
+        """
+        try:
+            definition = self.get(key)
+        except KeyError:
+            return None
+        if definition.source_spec is None or definition.based_on is not None:
+            return None
+        return definition
 
     def has(self, key: str) -> bool:
         """Whether a new note may be created with ``key`` — retired types may not."""

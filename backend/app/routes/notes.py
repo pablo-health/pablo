@@ -15,7 +15,7 @@ authors without an associated recorded session.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
@@ -27,6 +27,8 @@ from ..auth.service import (
     require_baa_acceptance,
     require_cloud_tasks_invoker,
 )
+from ..chart_proposals.dependencies import get_chart_proposal_step
+from ..chart_proposals.step import ChartProposalStep, refreshes_on_edit
 from ..db import arm_current_user_id, get_db_session, release_db_connection, set_tenant_schema
 from ..jobs.task_queue import enqueue
 from ..models import (
@@ -41,6 +43,15 @@ from ..models import (
     UpdateNoteEditsRequest,
     User,
 )
+from ..models.note_signing import NoteAddendum, NoteSignature  # noqa: TC001 — runtime annotation
+from ..models.notes import (
+    CreateNoteAddendumRequest,
+    NoteAddendumResponse,
+    NoteSignatureResponse,
+    NoteSigningRecordResponse,
+    SignNoteRequest,
+    UnlockNoteRequest,
+)
 from ..notes import (
     NoteTypeAuthorizer,
     NoteTypeDefinition,
@@ -48,13 +59,40 @@ from ..notes import (
     get_default_registry,
     get_note_type_authorizer,
 )
+from ..notes.chart_context import chart_context_for
+from ..notes.chart_fields import compose_from_chart, rendered_fields
 from ..notes.practice_types import validate_note_inputs
-from ..repositories import NotesRepository, PatientRepository, UserRepository, get_user_repository
+from ..people_term_lookup import worker_people_term_lookup
+from ..problems.dependencies import get_problem_service
+from ..repositories import (
+    ChartHistoryRepository,
+    MedicationRepository,
+    NotesRepository,
+    PatientProblemRepository,
+    PatientRepository,
+    TherapySessionRepository,
+    UserRepository,
+    get_session_dictation_repository,
+    get_session_repository,
+    get_user_repository,
+)
 from ..repositories import (
     get_appointment_repository as _appt_repo_factory,
 )
 from ..repositories import (
+    get_chart_history_repository as _history_repo_factory,
+)
+from ..repositories import (
+    get_chart_proposal_repository as _proposal_repo_factory,
+)
+from ..repositories import (
+    get_medication_repository as _medication_repo_factory,
+)
+from ..repositories import (
     get_notes_repository as _notes_repo_factory,
+)
+from ..repositories import (
+    get_patient_problem_repository as _problem_repo_factory,
 )
 from ..repositories import (
     get_patient_repository as _patient_repo_factory,
@@ -67,16 +105,26 @@ from ..services import (
     NoteGenerationService,
     NoteNotFoundError,
     NoteService,
-    RegistryNoteGenerationService,
     get_audit_service,
 )
-from ..services.http_structured_llm_gateway import HttpStructuredLLMGateway
+from ..services.audio_retention import AudioOnSigning
+from ..services.file_storage import file_storage_from_settings
+from ..services.imported_notes import imported_note_ids, refuse_imported_note
+from ..services.note_generation_factory import note_generation_service
 from ..services.note_generation_service import TransientNoteGenerationError
+from ..services.note_redraft import as_shown
+from ..services.note_signing import current_signature
+from ..services.session_dictation_service import awaiting_addendum
 from ..services.session_generation_worker import resolve_tenant_schema_for_user
 from ..settings import get_settings
 from ..utcnow import utc_now
+from .patients import get_therapy_session_repository
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from ..models import Patient
+    from ..problems.service import ProblemService
     from ..scheduling_engine.models.appointment import Appointment
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
 
@@ -113,12 +161,11 @@ def get_note_generation_service() -> NoteGenerationService:
 
     Also drafts note-type previews. Under the end-to-end stack the drafts
     come from its stand-in (the setting refuses to load outside
-    development), so a spec sees the same draft every run.
+    development), so a spec sees the same draft every run. The stand-in
+    answers every model, fallbacks included, so the fallback order runs
+    there as it does against real providers.
     """
-    base_url = get_settings().note_generation_base_url
-    if base_url:
-        return RegistryNoteGenerationService(llm_gateway=HttpStructuredLLMGateway(base_url))
-    return RegistryNoteGenerationService()
+    return note_generation_service()
 
 
 def get_appointment_repository(
@@ -139,6 +186,21 @@ def get_scheduling_service(
     return SchedulingService(repo)
 
 
+def get_audio_on_signing(ctx: TenantContext = Depends(get_tenant_context)) -> AudioOnSigning:
+    """What signing does with the session's audio, by the practice's retention setting."""
+    from ..db.platform_models import PracticeRow
+
+    settings = get_settings()
+    practice = get_db_session().get(PracticeRow, ctx.practice_id) if ctx.practice_id else None
+    return AudioOnSigning(
+        retention_days=practice.audio_retention_days if practice else None,
+        session_repo=get_session_repository(),
+        dictation_repo=get_session_dictation_repository(),
+        storage=file_storage_from_settings(settings),
+        bucket=settings.transcription_audio_bucket,
+    )
+
+
 def get_registry() -> NoteTypeRegistry:
     """Indirection so tests can swap the registry per-request."""
     return get_default_registry()
@@ -151,6 +213,13 @@ def _restricted_change(note: Note) -> dict[str, bool]:
     of the log tell an author-only read from an ordinary one.
     """
     return {"restricted": True} if note.restricted else {}
+
+
+def _refuse_imported(
+    note_id: str, user: User, note_service: NoteService, sessions: TherapySessionRepository
+) -> None:
+    """409 for an imported note: it is never signed, unlocked or added to here."""
+    refuse_imported_note(note_service.get_note(note_id, user.id), sessions, user.id)
 
 
 def get_worker_note_service() -> NoteService:
@@ -172,12 +241,38 @@ def get_worker_patient_repository() -> PatientRepository:
     return _patient_repo_factory()
 
 
+def get_worker_problem_repository() -> PatientProblemRepository:
+    """The problem list, for the same worker: the chart a draft is written against."""
+    return _problem_repo_factory()
+
+
+def get_worker_medication_repository() -> MedicationRepository:
+    """The medication list, for the same worker."""
+    return _medication_repo_factory()
+
+
+def get_worker_proposal_step() -> ChartProposalStep:
+    """The chart-proposal step after a draft, for the worker (it arms its own tenant)."""
+    return ChartProposalStep(
+        _proposal_repo_factory(),
+        _history_repo_factory(),
+        _medication_repo_factory(),
+        worker_people_term_lookup(),
+    )
+
+
+def get_worker_history_repository() -> ChartHistoryRepository:
+    """Chart history, for the same worker."""
+    return _history_repo_factory()
+
+
 @router.get("/{note_id}")
 def get_note(
     note_id: str,
     http_request: Request,
     user: User = Depends(require_baa_acceptance),
     note_service: NoteService = Depends(get_note_service),
+    sessions: TherapySessionRepository = Depends(get_therapy_session_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> NoteResponse:
     """Fetch a single note by id."""
@@ -185,6 +280,7 @@ def get_note(
         note = note_service.get_note(note_id, user.id)
     except NoteNotFoundError as exc:
         raise NotFoundError("Note not found", {"note_id": note_id}) from exc
+    imported = note.id in imported_note_ids([note], sessions, user.id)
 
     audit.log_note_action(
         action=AuditAction.SESSION_VIEWED,
@@ -195,7 +291,7 @@ def get_note(
         session_id=note.session_id,
         changes=_restricted_change(note) or None,
     )
-    return NoteResponse.from_note(note)
+    return NoteResponse.from_note(note, imported=imported)
 
 
 @router.patch("/{note_id}")
@@ -205,13 +301,17 @@ def update_note(
     request: UpdateNoteEditsRequest,
     user: User = Depends(require_baa_acceptance),
     note_service: NoteService = Depends(get_note_service),
+    patients: PatientRepository = Depends(get_patient_repository),
+    proposal_step: ChartProposalStep = Depends(get_chart_proposal_step),
+    registry: NoteTypeRegistry = Depends(get_registry),
     audit: AuditService = Depends(get_audit_service),
 ) -> NoteResponse:
-    """Persist clinician edits to a note's content."""
+    """Persist clinician edits to a note's content, and what they now propose for the chart."""
     try:
         note = note_service.update_note_edits(note_id, request.content_edited, user.id)
     except NoteNotFoundError as exc:
         raise NotFoundError("Note not found", {"note_id": note_id}) from exc
+    _refresh_chart_proposals(note, user, patients, proposal_step, registry)
 
     audit.log_note_action(
         action=AuditAction.SESSION_UPDATED,
@@ -225,6 +325,25 @@ def update_note(
     return NoteResponse.from_note(note)
 
 
+def _refresh_chart_proposals(
+    note: Note,
+    user: User,
+    patients: PatientRepository,
+    step: ChartProposalStep,
+    registry: NoteTypeRegistry,
+) -> None:
+    """What the note's own text proposes for the chart, after an edit to it is saved."""
+    try:
+        definition: NoteTypeDefinition | None = registry.get(note.note_type, note.note_type_version)
+    except KeyError:
+        definition = None
+    patient = patients.get(note.patient_id, user.id)
+    if patient is not None and refreshes_on_edit(definition):
+        step.edited(
+            note, definition, patient, as_shown(note.note_type, note.content, note.content_edited)
+        )
+
+
 @router.post("/{note_id}/finalize")
 def finalize_note(
     note_id: str,
@@ -232,10 +351,13 @@ def finalize_note(
     request: FinalizeNoteRequest,
     user: User = Depends(require_baa_acceptance),
     note_service: NoteService = Depends(get_note_service),
+    sessions: TherapySessionRepository = Depends(get_therapy_session_repository),
     audit: AuditService = Depends(get_audit_service),
+    audio_on_signing: AudioOnSigning = Depends(get_audio_on_signing),
 ) -> NoteResponse:
     """Finalize a note — record quality rating + finalized_at."""
     try:
+        _refuse_imported(note_id, user, note_service, sessions)
         note = note_service.finalize_note(
             note_id,
             quality_rating=request.quality_rating,
@@ -265,7 +387,166 @@ def finalize_note(
         session_id=note.session_id,
         changes={"quality_rating": request.quality_rating},
     )
+    audio_on_signing.after_signing(note, user, http_request, audit)
     return NoteResponse.from_note(note)
+
+
+def _signing_record(
+    note: Note, versions: list[NoteSignature], addenda: list[NoteAddendum]
+) -> NoteSigningRecordResponse:
+    current = current_signature(note, versions)
+    return NoteSigningRecordResponse(
+        note_id=note.id,
+        finalized_at=note.finalized_at,
+        signature=NoteSignatureResponse.from_signature(current) if current else None,
+        versions=[NoteSignatureResponse.from_signature(v) for v in versions],
+        addenda=[NoteAddendumResponse.from_addendum(a) for a in addenda],
+    )
+
+
+@router.get("/{note_id}/signing")
+def get_note_signing(
+    note_id: str,
+    http_request: Request,
+    user: User = Depends(require_baa_acceptance),
+    note_service: NoteService = Depends(get_note_service),
+    audit: AuditService = Depends(get_audit_service),
+) -> NoteSigningRecordResponse:
+    """The note's signature, its signed versions and its addenda."""
+    note, versions, addenda = note_service.get_signing_record(note_id, user.id)
+    audit.log_note_action(
+        action=AuditAction.SESSION_VIEWED,
+        user=user,
+        request=http_request,
+        note_id=note.id,
+        patient_id=note.patient_id,
+        session_id=note.session_id,
+        changes=_restricted_change(note) or None,
+    )
+    return _signing_record(note, versions, addenda)
+
+
+@router.post("/{note_id}/sign")
+def sign_note(
+    note_id: str,
+    http_request: Request,
+    request: SignNoteRequest,
+    user: User = Depends(require_baa_acceptance),
+    note_service: NoteService = Depends(get_note_service),
+    sessions: TherapySessionRepository = Depends(get_therapy_session_repository),
+    audit: AuditService = Depends(get_audit_service),
+    audio_on_signing: AudioOnSigning = Depends(get_audio_on_signing),
+) -> NoteResponse:
+    """Sign and lock a note with the name and credentials entered."""
+    _refuse_imported(note_id, user, note_service, sessions)
+    note, signature = note_service.sign_note(
+        note_id,
+        signer_name=request.signer_name,
+        signer_credentials=request.signer_credentials,
+        quality_rating=request.quality_rating,
+        quality_rating_reason=request.quality_rating_reason,
+        quality_rating_sections=(
+            [s.value for s in request.quality_rating_sections]
+            if request.quality_rating_sections
+            else None
+        ),
+        user_id=user.id,
+    )
+    audit.log_note_action(
+        action=AuditAction.NOTE_SIGNED,
+        user=user,
+        request=http_request,
+        note_id=note.id,
+        patient_id=note.patient_id,
+        session_id=note.session_id,
+        changes={
+            "signature_id": signature.id,
+            "version": signature.version,
+            **_restricted_change(note),
+        },
+    )
+    audio_on_signing.after_signing(note, user, http_request, audit)
+    return NoteResponse.from_note(note)
+
+
+@router.post("/{note_id}/unlock")
+def unlock_note(
+    note_id: str,
+    http_request: Request,
+    request: UnlockNoteRequest,
+    user: User = Depends(require_baa_acceptance),
+    note_service: NoteService = Depends(get_note_service),
+    sessions: TherapySessionRepository = Depends(get_therapy_session_repository),
+    audit: AuditService = Depends(get_audit_service),
+) -> NoteResponse:
+    """Unlock a signed note to correct an error; the reason is required.
+
+    The audit row names the superseded version; the reason itself is kept
+    on that version, not in the log.
+    """
+    _refuse_imported(note_id, user, note_service, sessions)
+    note, superseded = note_service.unlock_note(note_id, reason=request.reason, user_id=user.id)
+    audit.log_note_action(
+        action=AuditAction.NOTE_UNLOCKED,
+        user=user,
+        request=http_request,
+        note_id=note.id,
+        patient_id=note.patient_id,
+        session_id=note.session_id,
+        changes={
+            "signature_id": superseded.id,
+            "version": superseded.version,
+            **_restricted_change(note),
+        },
+    )
+    return NoteResponse.from_note(note)
+
+
+@router.post("/{note_id}/addenda", status_code=status.HTTP_201_CREATED)
+def add_note_addendum(
+    note_id: str,
+    http_request: Request,
+    request: CreateNoteAddendumRequest,
+    user: User = Depends(require_baa_acceptance),
+    note_service: NoteService = Depends(get_note_service),
+    sessions: TherapySessionRepository = Depends(get_therapy_session_repository),
+    audit: AuditService = Depends(get_audit_service),
+    audio_on_signing: AudioOnSigning = Depends(get_audio_on_signing),
+) -> NoteAddendumResponse:
+    """Add a signed addendum to a locked note.
+
+    ``dictation_id`` names the dictation the addendum was drafted from; the
+    dictation then stops offering its draft.
+    """
+    _refuse_imported(note_id, user, note_service, sessions)
+    dictation_repo = get_session_dictation_repository() if request.dictation_id else None
+    if dictation_repo is not None and request.dictation_id is not None:
+        awaiting_addendum(dictation_repo, request.dictation_id, note_id)
+    note, addendum = note_service.add_addendum(
+        note_id,
+        text=request.text,
+        signer_name=request.signer_name,
+        signer_credentials=request.signer_credentials,
+        user_id=user.id,
+    )
+    if dictation_repo is not None and request.dictation_id is not None:
+        dictation_repo.link_addendum(request.dictation_id, addendum.id)
+    audit.log_note_action(
+        action=AuditAction.NOTE_ADDENDUM_ADDED,
+        user=user,
+        request=http_request,
+        note_id=note.id,
+        patient_id=note.patient_id,
+        session_id=note.session_id,
+        changes={
+            "addendum_id": addendum.id,
+            **({"dictation_id": request.dictation_id} if request.dictation_id else {}),
+            **_restricted_change(note),
+        },
+    )
+    # A clip dictated after signing became this addendum; it goes now too.
+    audio_on_signing.after_signing(note, user, http_request, audit)
+    return NoteAddendumResponse.from_addendum(addendum)
 
 
 @patient_notes_router.get(
@@ -278,6 +559,7 @@ def list_patient_notes(
     user: User = Depends(require_baa_acceptance),
     note_service: NoteService = Depends(get_note_service),
     patient_repo: PatientRepository = Depends(get_patient_repository),
+    sessions: TherapySessionRepository = Depends(get_therapy_session_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> PatientNotesListResponse:
     """List all notes (session-bound + standalone) for a patient."""
@@ -294,19 +576,22 @@ def list_patient_notes(
     # so it is a bulk per-record content read. Emit one note-scoped viewed
     # event per note (resource_type=session, the clinical-artifact family) so
     # the audit-of-record is consistent with how single notes are surfaced via
-    # the session detail view. The read-coalescing gate keeps repeats cheap.
-    for n in notes:
-        audit.log_note_action(
-            action=AuditAction.SESSION_VIEWED,
-            user=user,
-            request=http_request,
-            note_id=n.id,
-            patient_id=patient.id,
-            session_id=n.session_id,
-            changes=_restricted_change(n) or None,
-        )
+    # the session detail view. The read-coalescing gate keeps repeats cheap;
+    # the batch writes the patient's rows in one trip.
+    with audit.batched():
+        for n in notes:
+            audit.log_note_action(
+                action=AuditAction.SESSION_VIEWED,
+                user=user,
+                request=http_request,
+                note_id=n.id,
+                patient_id=patient.id,
+                session_id=n.session_id,
+                changes=_restricted_change(n) or None,
+            )
+    imported = imported_note_ids(notes, sessions, user.id)
     return PatientNotesListResponse(
-        data=[NoteResponse.from_note(n) for n in notes],
+        data=[NoteResponse.from_note(n, imported=n.id in imported) for n in notes],
         total=len(notes),
     )
 
@@ -327,6 +612,8 @@ def create_standalone_note(
     registry: NoteTypeRegistry = Depends(get_registry),
     authorizer: NoteTypeAuthorizer = Depends(get_note_type_authorizer),
     scheduling_service: SchedulingService = Depends(get_scheduling_service),
+    problems: ProblemService = Depends(get_problem_service),
+    proposal_step: ChartProposalStep = Depends(get_chart_proposal_step),
     audit: AuditService = Depends(get_audit_service),
 ) -> NoteResponse:
     """Create a patient-owned note with no associated recording session.
@@ -338,13 +625,16 @@ def create_standalone_note(
     pipeline used by the session-upload path runs off-request on a Cloud
     Tasks worker (``/api/internal/jobs/generate-standalone-note``); poll
     ``GET /api/notes/{id}`` for ``status``. With no dictation, the note is
-    stored empty (``201``) for the clinician to fill via PATCH.
+    stored (``201``) for the clinician to fill via PATCH: it has no draft, and
+    starts as the clinician's copy with the fields a draft prints from the
+    chart and the entered values already in them (``_from_chart``).
 
     If ``appointment_id`` and any billing-code field are supplied, this is
     also where a clinician codes the visit — the primary coding surface,
     since the session duration and clinical picture are both on screen
     here. The codes are written to the appointment, not the note; omitting
-    them leaves the visit's codes exactly as they were.
+    them leaves the visit's codes exactly as they were, except that a visit
+    with no diagnosis codes yet takes the active problems' codes.
     """
     if not registry.has(request.note_type):
         raise BadRequestError(
@@ -405,11 +695,17 @@ def create_standalone_note(
             str(exc), {"note_type": request.note_type}, code="INVALID_NOTE_INPUTS"
         ) from exc
 
+    content_edited = (
+        _from_chart(definition, patient, user.id, note_inputs, problems, proposal_step)
+        if request.dictation_transcript is None and request.content_edited is None
+        else request.content_edited
+    )
+
     note = note_service.create_standalone_note(
         patient_id=patient.id,
         note_type=request.note_type,
         content=None,
-        content_edited=request.content_edited,
+        content_edited=content_edited,
         status="processing" if request.dictation_transcript is not None else "complete",
         user_id=user.id,
         note_type_version=definition.version,
@@ -444,16 +740,7 @@ def create_standalone_note(
         http_response.status_code = status.HTTP_202_ACCEPTED
 
     if appointment is not None:
-        visit_codes = request.model_dump(
-            include={
-                "service_code",
-                "modifiers",
-                "unit_count",
-                "place_of_service",
-                "diagnosis_codes",
-            },
-            exclude_none=True,
-        )
+        visit_codes = _visit_codes(request, appointment, problems)
         if visit_codes:
             scheduling_service.update_appointment(appointment.id, user.id, **visit_codes)
             audit.log_appointment_action(
@@ -466,6 +753,51 @@ def create_standalone_note(
             )
 
     return NoteResponse.from_note(note)
+
+
+def _from_chart(
+    definition: NoteTypeDefinition,
+    patient: Patient,
+    user_id: str,
+    inputs: Mapping[str, str],
+    problems: ProblemService,
+    proposal_step: ChartProposalStep,
+) -> dict[str, Any] | None:
+    """What a note written by hand opens with: the fields code writes in a draft.
+
+    Kept as the clinician's copy, not as content, because no draft was written:
+    the note still reads as written by hand, and every field stays editable. No
+    model is asked. ``None`` when the type prints nothing, or nothing is there.
+    """
+    if not rendered_fields(definition):
+        return None
+    chart = proposal_step.chart(patient, user_id, problems.problems(patient.id))
+    return compose_from_chart(definition, chart, inputs) or None
+
+
+def _visit_codes(
+    request: CreateStandaloneNoteRequest, appointment: Appointment, problems: ProblemService
+) -> dict[str, Any]:
+    """The billing-code fields to write to the visit this note documents.
+
+    A visit with no diagnosis codes yet starts from the active problems;
+    codes already on the visit, or sent with the note, are the visit's own.
+    """
+    visit_codes = request.model_dump(
+        include={
+            "service_code",
+            "modifiers",
+            "unit_count",
+            "place_of_service",
+            "diagnosis_codes",
+        },
+        exclude_none=True,
+    )
+    if "diagnosis_codes" not in visit_codes and not appointment.diagnosis_codes:
+        prefill = problems.visit_codes(appointment.patient_id or "")
+        if prefill:
+            visit_codes["diagnosis_codes"] = prefill
+    return visit_codes
 
 
 class GenerateStandaloneNoteJob(BaseModel):
@@ -506,6 +838,10 @@ def generate_standalone_note_job(
     _invoker: None = Depends(require_cloud_tasks_invoker),
     note_service: NoteService = Depends(get_worker_note_service),
     patient_repo: PatientRepository = Depends(get_worker_patient_repository),
+    problem_repo: PatientProblemRepository = Depends(get_worker_problem_repository),
+    medication_repo: MedicationRepository = Depends(get_worker_medication_repository),
+    history_repo: ChartHistoryRepository = Depends(get_worker_history_repository),
+    proposal_step: ChartProposalStep = Depends(get_worker_proposal_step),
     note_generation_service: NoteGenerationService = Depends(get_note_generation_service),
     user_repo: UserRepository = Depends(get_user_repository),
     audit: AuditService = Depends(get_audit_service),
@@ -566,6 +902,13 @@ def generate_standalone_note_job(
         definition: NoteTypeDefinition | None = registry.get(payload.note_type)
     except KeyError:
         definition = None
+    chart = chart_context_for(
+        patient,
+        problem_repo.list_by_patient(patient.id),
+        medication_repo.list_by_patient(patient.id, payload.user_id),
+        history_repo.entries(patient.id),
+        person=proposal_step.person(payload.user_id),
+    )
     # Release the pooled connection before the multi-second LLM call — same
     # seam ``upload_session`` and the old inline dictation path used.
     release_db_connection()
@@ -577,6 +920,7 @@ def generate_standalone_note_job(
             utc_now(),
             inputs=note.note_inputs,
             definition=definition,
+            chart=chart,
         )
     except TransientNoteGenerationError:
         if not _is_final_note_generation_attempt(http_request):
@@ -602,12 +946,14 @@ def generate_standalone_note_job(
         note_service.fail_generation(payload.note_id, payload.user_id)
         return {"status": "failed"}
 
+    drafted = proposal_step.draft(note_generation_service, definition, chart, transcript, generated)
     note = note_service.complete_generation(
         payload.note_id,
         generated.content,
         payload.user_id,
         note_type_version=generated.note_type_version,
     )
+    proposal_step.store(note, definition, chart, drafted, generated.content)
 
     owner = user_repo.get(payload.user_id)
     if owner is not None:

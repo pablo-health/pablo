@@ -17,6 +17,8 @@ from app.utcnow import utc_now
 from fastapi import status
 from fastapi.testclient import TestClient
 
+from .conftest import audited_entries
+
 # Priority 1: CRUD Happy Path Tests
 
 
@@ -87,9 +89,9 @@ def test_list_patients_audits_view_per_returned_patient(
     assert response.status_code == status.HTTP_200_OK
 
     viewed = {
-        call.args[0].resource_id
-        for call in mock_audit_service._repo.append.call_args_list
-        if call.args[0].action == AuditAction.PATIENT_VIEWED.value
+        entry.resource_id
+        for entry in audited_entries(mock_audit_service)
+        if entry.action == AuditAction.PATIENT_VIEWED.value
     }
     assert viewed == {first, second}
 
@@ -118,14 +120,14 @@ def test_update_patient_success(client: TestClient, sample_patient_data: dict[st
     original_updated_at = create_response.json()["updated_at"]
 
     # Update patient
-    update_data = {"first_name": "Jonathan", "diagnosis": "Generalized anxiety disorder"}
+    update_data = {"first_name": "Jonathan", "city": "Faketown"}
     response = client.patch(f"/api/patients/{patient_id}", json=update_data)
 
     assert response.status_code == status.HTTP_200_OK
     data = response.json()
     assert data["first_name"] == "Jonathan"
     assert data["last_name"] == "Doe"  # Unchanged
-    assert data["diagnosis"] == "Generalized anxiety disorder"
+    assert data["city"] == "Faketown"
     assert data["updated_at"] != original_updated_at  # Should be updated
 
 
@@ -700,6 +702,28 @@ def test_update_patient_status(client: TestClient, sample_patient_data: dict[str
     assert response.status_code == status.HTTP_200_OK
     data = response.json()
     assert data["status"] == "inactive"
+
+
+def test_superbill_diagnosis_is_off_until_turned_on_and_stays_set(
+    client: TestClient, sample_patient_data: dict[str, Any]
+) -> None:
+    """A client's superbill leaves the diagnosis off until the clinician says otherwise.
+
+    An unrelated edit must not turn it back off, which a ``bool`` that
+    defaults to ``False`` on the update request would do.
+    """
+    created = client.post("/api/patients", json=sample_patient_data).json()
+    assert created["superbill_includes_diagnosis"] is False
+
+    patient_id = created["id"]
+    on = client.patch(f"/api/patients/{patient_id}", json={"superbill_includes_diagnosis": True})
+    assert on.json()["superbill_includes_diagnosis"] is True
+
+    renamed = client.patch(f"/api/patients/{patient_id}", json={"first_name": "Robin"})
+    assert renamed.json()["superbill_includes_diagnosis"] is True
+
+    off = client.patch(f"/api/patients/{patient_id}", json={"superbill_includes_diagnosis": False})
+    assert off.json()["superbill_includes_diagnosis"] is False
 
 
 def test_update_patient_email_and_phone(

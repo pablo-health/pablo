@@ -140,6 +140,8 @@ class DiagnosticAssessmentResponse(BaseModel):
     meets_criteria: bool | None
     determined_icd10: str | None
     diagnosis_label: str | None
+    #: The problem-list entry this worksheet supports, once one is linked.
+    problem_id: str | None = None
     source: str
     confirmed_at: datetime | None
     assessed_at: datetime

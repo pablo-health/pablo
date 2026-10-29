@@ -23,11 +23,12 @@ import { SettingsCard } from "../ui"
  * stay open either way — a practice can build them before it offers the
  * portal.
  *
- * Documents come after forms because that is the order a practice meets
- * them: the form is the thing being built, and a document is something a
- * question on it points at. Licensed instruments come last for the same
- * reason: a practice arrives at it from a measure the form builder would
- * not let it add.
+ * The page is in two groups: what the practice sends (packets, then the
+ * documents and licensed measures a packet points at, in the order a
+ * practice meets them) and how people hear from it (the welcome, the
+ * invitation, who email is from). Documents sit right under packets because
+ * a document is a part of a packet; a consent question can also write one
+ * in place.
  */
 export function PatientPortalPage() {
   const { data: settings } = usePortalSettings()
@@ -39,7 +40,17 @@ export function PatientPortalPage() {
   return (
     <>
       <PortalOfferingCard />
+
+      <h2 className="mb-2 mt-6 text-[13px] font-semibold uppercase tracking-wide text-muted-foreground">
+        What you send
+      </h2>
       <IntakeFormsCard />
+      <IntakeDocumentsCard />
+      <LicensedInstrumentsCard />
+
+      <h2 className="mb-2 mt-6 text-[13px] font-semibold uppercase tracking-wide text-muted-foreground">
+        How {people.many} hear from you
+      </h2>
       {off && (
         <p className="mb-3 text-sm text-muted-foreground" data-testid="portal-off-note">
           Turn on the {people.one} portal to invite {people.many}.
@@ -55,8 +66,6 @@ export function PatientPortalPage() {
         <InviteEmailCard />
         <ClientEmailSenderCard />
       </div>
-      <IntakeDocumentsCard />
-      <LicensedInstrumentsCard />
       <SettingsCard title={`${people.One} sign-in`}>
         <p className="text-sm text-muted-foreground">
           How people get into the portal will be configured here.

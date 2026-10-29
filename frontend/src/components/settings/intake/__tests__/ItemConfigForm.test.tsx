@@ -138,6 +138,26 @@ describe("ItemConfigForm", () => {
     expect(lastConfig()).toEqual({ max_len: 5 })
   })
 
+  it("a written answer can name the chart field it fills", async () => {
+    const user = userEvent.setup()
+    form("free_text")
+
+    await user.click(screen.getByRole("combobox", { name: "Goes on the chart as" }))
+    await user.click(screen.getByRole("option", { name: "Pronouns" }))
+
+    expect(lastConfig()).toEqual({ chart_field: "pronouns" })
+  })
+
+  it("a written answer that names a chart field can go back to staying on the form", async () => {
+    const user = userEvent.setup()
+    form("free_text", { chart_field: "pronouns" })
+
+    await user.click(screen.getByRole("combobox", { name: "Goes on the chart as" }))
+    await user.click(screen.getByRole("option", { name: "Stays on the form" }))
+
+    expect(lastConfig()).toEqual({ chart_field: undefined })
+  })
+
   it("a pick-one question builds its list of answers", async () => {
     const user = userEvent.setup()
     form("single_choice")
@@ -331,7 +351,7 @@ describe("ItemConfigForm", () => {
     expect(onChange).toHaveBeenCalledWith({ sides: "front" })
   })
 
-  it("a document request says to upload a blank form before it can offer one", () => {
+  it("a document request with no blank copies on file offers nothing to pick", () => {
     render(
       <ItemConfigForm
         itemType="document_request"
@@ -341,9 +361,8 @@ describe("ItemConfigForm", () => {
       />,
     )
 
-    expect(
-      screen.getByText("Upload a blank form first, then you can offer it here."),
-    ).toBeInTheDocument()
+    expect(screen.queryByRole("combobox", { name: /Offer a blank copy/i })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Upload a blank/i)).not.toBeInTheDocument()
   })
 
   it("and offers the practice's own forms when it has some", async () => {
@@ -359,7 +378,7 @@ describe("ItemConfigForm", () => {
       />,
     )
 
-    await user.click(screen.getByRole("combobox", { name: /Offer a form to download/i }))
+    await user.click(screen.getByRole("combobox", { name: /Offer a blank copy to download/i }))
     await user.click(screen.getByRole("option", { name: "Release of records" }))
 
     expect(onChange).toHaveBeenCalledWith({ blank_form_id: "form-1" })
@@ -378,7 +397,7 @@ describe("ItemConfigForm", () => {
       />,
     )
 
-    await user.click(screen.getByRole("combobox", { name: /Offer a form to download/i }))
+    await user.click(screen.getByRole("combobox", { name: /Offer a blank copy to download/i }))
     await user.click(screen.getByRole("option", { name: "Don't offer one" }))
 
     // Absent rather than empty: an empty string is not a form id, and the
@@ -432,5 +451,45 @@ describe("ItemConfigForm: the consent document picker", () => {
 
     expect(screen.getByText(NO_PUBLISHED_DOCUMENTS)).toBeInTheDocument()
     expect(screen.queryByLabelText(DOCUMENT_PICKER_LABEL)).not.toBeInTheDocument()
+  })
+
+  it("picking another document drops a wording chosen for the last one", async () => {
+    // Left behind, the old document's version would be checked against the
+    // new document at publish and refused.
+    const user = userEvent.setup()
+    consentForm({ document_key: "key-1", chosen_version_id: "rev-of-key-1" })
+
+    await user.click(screen.getByLabelText(DOCUMENT_PICKER_LABEL))
+    await user.click(screen.getByRole("option", { name: "Telehealth agreement" }))
+
+    expect(lastConfig()).toEqual({ document_key: "key-2" })
+    expect(lastConfig()).not.toHaveProperty("chosen_version_id", "rev-of-key-1")
+  })
+
+  it("writes a new document in place and points the question at it", async () => {
+    const user = userEvent.setup()
+    render(
+      <ItemConfigForm
+        itemType="consent_document"
+        config={{}}
+        onChange={onChange}
+        idPrefix="test"
+        documents={[]}
+        renderNewDocument={(choose) => (
+          <button type="button" onClick={() => choose("key-new")}>
+            Publish the stand-in
+          </button>
+        )}
+      />
+    )
+
+    // Nothing published, and no dead end: the way forward is right here.
+    expect(screen.queryByText(NO_PUBLISHED_DOCUMENTS)).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Write a new one" }))
+    await user.click(screen.getByRole("button", { name: "Publish the stand-in" }))
+
+    expect(lastConfig()).toEqual({ document_key: "key-new" })
+    // Done writing: the button is back for the next one.
+    expect(screen.getByRole("button", { name: "Write a new one" })).toBeInTheDocument()
   })
 })

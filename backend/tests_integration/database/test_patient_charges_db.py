@@ -48,12 +48,9 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from alembic import command
-from alembic.config import Config
 
 # Imported at module scope, not inside the app builder, on purpose: this module
 # runs under ``from __future__ import annotations``, so FastAPI resolves a
@@ -64,7 +61,7 @@ from alembic.config import Config
 # which is the rule this directory's conftest actually cares about.
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -106,13 +103,6 @@ _TENANT_EMAIL = _CLINICIAN_A_EMAIL
 #: anything under test.
 _PRINCIPAL_HEADER = "X-Test-Clinician"
 
-# Deliberately not shaped like real credentials, the same posture as
-# ``tests/test_patient_payments.py``: nothing here ever parses these, no Stripe
-# call is made, and a fixture imitating a credential would be indistinguishable
-# from a leaked one to a secret scanner.
-_SECRET_KEY = "secret-key-for-tests"  # noqa: S105 - a placeholder, not a credential
-_PUBLISHABLE_KEY = "publishable-key-for-tests"
-
 # A local copy of ``app.db.models.CHARGE_KINDS``, because parametrisation is
 # evaluated at import time and this directory's conftest forbids importing
 # ``app.*`` at module scope. ``test_the_kind_list_here_matches_the_models``
@@ -142,17 +132,6 @@ _INSERT_CHARGE = text(
     " :write_off_reason, NULL, :method, :payment_reference, "
     " NULL, :amount_cents, 'usd', :status, :user_id, now())"
 )
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_db_url, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 @pytest.fixture(scope="module")
@@ -739,21 +718,6 @@ def _user(user_id: str, email: str) -> Any:
     )
 
 
-class _AlwaysConfigured:
-    """A payment credential provider, so the ledger route is not gated on 503.
-
-    ``GET /charges`` refuses with 503 when the deployment has no card
-    processing configured, and that check runs before the client is looked up
-    — so without this the isolation assertions below would be asserting on the
-    wrong refusal.
-    """
-
-    def credentials_for_practice(self, practice_id: str | None) -> Any:  # noqa: ARG002
-        from app.payments.provider import PaymentCredentials  # noqa: PLC0415
-
-        return PaymentCredentials(secret_key=_SECRET_KEY, publishable_key=_PUBLISHABLE_KEY)
-
-
 def _build_app(tenant_schema: str) -> FastAPI:
     """The real payments router, real middleware, two real credentials."""
     from app.auth.service import (  # noqa: PLC0415
@@ -803,27 +767,29 @@ def _build_app(tenant_schema: str) -> FastAPI:
 
 
 @pytest.fixture
-def client(tenant_schema: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+def client(tenant_schema: str, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
-    from app.payments.provider import register_payment_credential_provider  # noqa: PLC0415
 
     # There's no Firebase token to decode in tests, so stand in for the one
     # thing it would have produced — a verified identity — and let the
     # middleware's own resolver look ``_TENANT_EMAIL`` up against the rows
     # ``tenant_schema`` seeded, rather than handing it a fixed schema.
     identity = VerifiedIdentity(
-        provider="test", subject_id=_CLINICIAN_A, email=_TENANT_EMAIL, mfa_satisfied=True, claims={}
+        provider="test",
+        subject_id=_CLINICIAN_A,
+        email=_TENANT_EMAIL,
+        email_verified=True,
+        mfa_satisfied=True,
+        claims={},
     )
 
     def _stash_identity(request: Request) -> None:
         request.state.verified_identity = identity
 
     monkeypatch.setattr("app.db.middleware._verify_and_stash_clinician_identity", _stash_identity)
-    register_payment_credential_provider(_AlwaysConfigured())
-    try:
-        yield TestClient(_build_app(tenant_schema))
-    finally:
-        register_payment_credential_provider(None)
+    # No payment credential provider is registered: neither route here touches
+    # a card processor, so these run as a practice that takes no cards.
+    return TestClient(_build_app(tenant_schema))
 
 
 def _as(clinician_id: str) -> dict[str, str]:
@@ -1074,7 +1040,7 @@ class TestCrossClinicianIsolation:
         """Below the route: B's own session counts zero of A's ledger rows.
 
         The routes refuse first, so without this the 404s above would only
-        prove the route's ``_require_patient`` check works — not that the
+        prove the route's ``visible_patient`` check works — not that the
         table would hold if a future route forgot it.
         """
         conn = _armed(engine, tenant_schema, _CLINICIAN_A)

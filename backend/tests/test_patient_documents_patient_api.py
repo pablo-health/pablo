@@ -38,7 +38,6 @@ from app.models import DocumentCategory, PatientDocument
 from app.models.audit import ACTOR_TYPE_PATIENT, AuditAction, ResourceType
 from app.rate_limit import get_patient_document_init_limiter
 from app.repositories import InMemoryPatientDocumentRepository
-from app.repositories.audit import InMemoryAuditRepository
 from app.routes import patient_documents
 from app.routes.patient_documents import get_patient_documents_service_for_patient
 from app.services import PatientDocumentsService
@@ -53,6 +52,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from app.models.audit import AuditLogEntry
+    from app.repositories.audit import InMemoryAuditRepository
 
 _PATIENT_A = "11111111-1111-4111-8111-111111111111"
 _PATIENT_B = "22222222-2222-4222-8222-222222222222"
@@ -180,11 +180,6 @@ def doc_repo() -> InMemoryPatientDocumentRepository:
 @pytest.fixture
 def fake_gcs() -> _FakeStorageClient:
     return _FakeStorageClient()
-
-
-@pytest.fixture
-def audit_repo() -> InMemoryAuditRepository:
-    return InMemoryAuditRepository()
 
 
 @pytest.fixture

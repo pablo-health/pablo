@@ -36,15 +36,12 @@ from __future__ import annotations
 import os
 import time
 import uuid
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from app.portal.db_store import DbPortalAuthStore, DbPortalSessionStore
 from app.portal.store import InviteChallenge, PortalSessionRecord
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
@@ -71,17 +68,6 @@ _NOW = int(time.time())
 # The revision this one follows. Rolling a schema back to it and forward
 # again replays exactly the revision under test.
 _PARENT_REVISION = "d3b71f0c85a4"
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_DB_URL, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 def _new_schema(engine: Engine, label: str) -> str:

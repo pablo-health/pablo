@@ -14,7 +14,9 @@ Proven here on committed rows, through the code's own sessions:
 * which website a host serves, behind the minute-long cache (the clock is
   injected), and which file each request path gets: ``/``, a folder, a folder
   without its slash, a missing file and a traversal attempt;
-* the draft's preview address, while its token works and not after.
+* the draft's preview address, while its token works and not after;
+* the setting that asks search engines not to list the website: kept, audited
+  once per change, and carried on the host answer.
 
 Zip reading, path rules and the routes' permission checks are unit-tested in
 ``tests/test_site_files.py``, ``tests/test_site_paths.py`` and
@@ -47,6 +49,7 @@ from app.utcnow import utc_now
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
+from tests.audit_fakes import RecordingAudit
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -78,14 +81,6 @@ class _Clock:
 
     def __call__(self) -> float:
         return self.now
-
-
-class _RecordingAudit:
-    def __init__(self) -> None:
-        self.entries: list[dict[str, Any]] = []
-
-    def log(self, action: Any, *_args: Any, **kwargs: Any) -> None:
-        self.entries.append({"action": action, **kwargs})
 
 
 @dataclass
@@ -156,11 +151,6 @@ def bucket(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
 
 
 @pytest.fixture
-def audit() -> _RecordingAudit:
-    return _RecordingAudit()
-
-
-@pytest.fixture
 def session(rows: _Rows) -> Iterator[Session]:
     """A session of the code's own, closed before ``rows`` cleans up, so a
     lock a refused change still holds never blocks the clean-up."""
@@ -172,9 +162,11 @@ def session(rows: _Rows) -> Iterator[Session]:
 
 
 def _service(
-    session: Session, bucket: str, audit: _RecordingAudit | None = None
+    session: Session, bucket: str, recording_audit: RecordingAudit | None = None
 ) -> PracticeSiteService:
-    return PracticeSiteService(PracticeSiteStore(session), LocalFileStorage(), bucket, audit)
+    return PracticeSiteService(
+        PracticeSiteStore(session), LocalFileStorage(), bucket, recording_audit
+    )
 
 
 def _publish(
@@ -203,10 +195,10 @@ def _folders(bucket: str, practice_id: str, under: str = "") -> set[str]:
 
 
 def test_publishing_copies_the_draft_and_makes_it_live(
-    session: Session, bucket: str, rows: _Rows, audit: _RecordingAudit
+    session: Session, bucket: str, rows: _Rows, recording_audit: RecordingAudit
 ) -> None:
     practice_id = rows.practice()
-    service = _service(session, bucket, audit)
+    service = _service(session, bucket, recording_audit)
 
     service.save_draft_files(practice_id, SITE, PUBLISHER)
     version = service.publish_draft(practice_id, PUBLISHER)
@@ -220,11 +212,11 @@ def test_publishing_copies_the_draft_and_makes_it_live(
     assert status.draft is None
     stored = Path(bucket) / "sites" / practice_id / "v1"
     assert (stored / "about" / "index.html").read_bytes() == b"<h1>About</h1>"
-    assert [e["action"] for e in audit.entries] == [
+    assert [e["action"] for e in recording_audit.entries] == [
         AuditAction.PRACTICE_SITE_DRAFT_SAVED,
         AuditAction.PRACTICE_SITE_PUBLISHED,
     ]
-    assert audit.entries[1]["changes"] == {
+    assert recording_audit.entries[1]["changes"] == {
         "practice_id": practice_id,
         "version": 1,
         "file_count": len(SITE),
@@ -233,17 +225,17 @@ def test_publishing_copies_the_draft_and_makes_it_live(
 
 
 def test_rolling_back_makes_a_kept_version_live_and_is_audited(
-    session: Session, bucket: str, rows: _Rows, audit: _RecordingAudit
+    session: Session, bucket: str, rows: _Rows, recording_audit: RecordingAudit
 ) -> None:
     practice_id = rows.practice()
     _publish(session, bucket, practice_id)
     _publish(session, bucket, practice_id, {"index.html": b"two"})
 
-    _service(session, bucket, audit).roll_back(practice_id, 1, PUBLISHER)
+    _service(session, bucket, recording_audit).roll_back(practice_id, 1, PUBLISHER)
     session.commit()
 
     assert _service(session, bucket).status(practice_id).live_version == 1
-    (entry,) = audit.entries
+    (entry,) = recording_audit.entries
     assert entry["action"] == AuditAction.PRACTICE_SITE_ROLLED_BACK
     assert entry["changes"]["version"] == 1
     assert entry["changes"]["previous_version"] == 2
@@ -545,11 +537,47 @@ def test_a_published_site_answers_on_its_hosts(
     assert client.get(f"/api/sites/hosts/{primary}").json() == {
         "primary_host": primary,
         "portal_host": None,
+        "hide_from_search": False,
     }
     assert client.get(f"/api/sites/hosts/{alias.upper()}:443").json() == {
         "primary_host": primary,
         "portal_host": None,
+        "hide_from_search": False,
     }
+
+
+def test_a_site_hidden_from_search_says_so_to_the_web_app_and_is_audited(
+    client: TestClient, clock: _Clock, session: Session, bucket: str, rows: _Rows
+) -> None:
+    """Set before anything is published, kept through a publish, recorded once
+    per change, and carried on the host answer visitors are served by."""
+    recording_audit = RecordingAudit()
+    practice_id = rows.practice()
+    host = rows.host(practice_id, primary=True)
+    service = _service(session, bucket, recording_audit)
+
+    service.set_hide_from_search(practice_id, True, PUBLISHER)
+    service.set_hide_from_search(practice_id, True, PUBLISHER)
+    session.commit()
+    _publish(session, bucket, practice_id)
+
+    assert _service(session, bucket).status(practice_id).hide_from_search is True
+    assert client.get(f"/api/sites/hosts/{host}").json()["hide_from_search"] is True
+    (entry,) = recording_audit.entries
+    assert entry["action"] == AuditAction.PRACTICE_SITE_SEARCH_VISIBILITY_CHANGED
+    assert entry["changes"] == {"practice_id": practice_id, "hide_from_search": True}
+
+    service.set_hide_from_search(practice_id, False, PUBLISHER)
+    session.commit()
+    clock.now += 61
+    assert client.get(f"/api/sites/hosts/{host}").json()["hide_from_search"] is False
+    assert len(recording_audit.entries) == 2
+
+
+def test_a_practice_with_no_website_is_not_hidden_from_search(
+    session: Session, bucket: str, rows: _Rows
+) -> None:
+    assert _service(session, bucket).status(rows.practice()).hide_from_search is False
 
 
 def test_a_host_that_serves_no_site_is_one_404(

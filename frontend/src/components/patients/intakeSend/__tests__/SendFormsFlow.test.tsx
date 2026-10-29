@@ -76,6 +76,7 @@ function template(overrides: Partial<IntakeTemplate> = {}): IntakeTemplate {
   return {
     id: "template-1",
     name: "Before we meet",
+    client_title: null,
     created_at: "2026-03-01T12:00:00Z",
     archived_at: null,
     versions: [version("version-1", 1, "2026-03-02T12:00:00Z")],
@@ -201,7 +202,7 @@ describe("SendFormsFlow", () => {
       mockInvite.mock.invocationCallOrder[0],
     )
     expect(await screen.findByTestId("send-forms-heading")).toHaveTextContent(
-      "Forms and invitation sent",
+      "Packet and invitation sent",
     )
     expect(screen.getByTestId("send-forms-outcome")).toHaveTextContent(
       "They'll get a link by email at robin@example.test and a code by text at +15005550006.",
@@ -265,7 +266,7 @@ describe("SendFormsFlow", () => {
     await send()
 
     // Forms went; the client cannot open them, and the screen says so.
-    expect(await screen.findByTestId("send-forms-heading")).toHaveTextContent("Forms sent")
+    expect(await screen.findByTestId("send-forms-heading")).toHaveTextContent("Packet sent")
     expect(screen.getByTestId("send-forms-outcome")).toHaveTextContent(
       "They'll need an invitation to the portal to open them.",
     )
@@ -308,7 +309,7 @@ describe("SendFormsFlow", () => {
     await send()
     await waitFor(() => expect(mockAssign).toHaveBeenCalled())
     expect(mockInvite).not.toHaveBeenCalled()
-    expect(await screen.findByTestId("send-forms-heading")).toHaveTextContent("Forms sent")
+    expect(await screen.findByTestId("send-forms-heading")).toHaveTextContent("Packet sent")
     expect(screen.getByTestId("send-forms-outcome")).toHaveTextContent(
       "They're waiting in their portal.",
     )
@@ -330,7 +331,7 @@ describe("SendFormsFlow", () => {
     await waitFor(() => expect(mockAssign).toHaveBeenCalled())
     expect(mockInvite).not.toHaveBeenCalled()
     // No portal here, so nothing is missing: no call for an invitation.
-    expect(await screen.findByTestId("send-forms-heading")).toHaveTextContent("Forms sent")
+    expect(await screen.findByTestId("send-forms-heading")).toHaveTextContent("Packet sent")
     expect(screen.queryByTestId("send-forms-outcome")).not.toBeInTheDocument()
   })
 
@@ -338,8 +339,8 @@ describe("SendFormsFlow", () => {
     mockTemplates.mockResolvedValue([template({ versions: [version("draft", 1, null)] })])
     renderFlow()
     const none = await screen.findByTestId("send-forms-none-published")
-    expect(none).toHaveTextContent("No forms are published yet.")
-    expect(screen.getByRole("link", { name: "Set up forms" })).toHaveAttribute(
+    expect(none).toHaveTextContent("No packets are published yet.")
+    expect(screen.getByRole("link", { name: "Set up a packet" })).toHaveAttribute(
       "href",
       "/dashboard/settings/portal",
     )
@@ -368,7 +369,7 @@ describe("SendFormsFlow", () => {
     await send()
     // The heading names the failure; it never claims an invitation went.
     expect(await screen.findByTestId("send-forms-heading")).toHaveTextContent(
-      "Forms sent. The invitation didn't go out.",
+      "Packet sent. The invitation didn't go out.",
     )
     expect(screen.getByTestId("send-forms-outcome")).toHaveTextContent(
       /email address and a mobile number on file/i,

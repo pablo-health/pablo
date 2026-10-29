@@ -15,6 +15,7 @@ import {
 import { downloadPatientExport } from "@/lib/api/patients"
 import type { PatientExportFormat } from "@/lib/api/patients"
 import { saveFile } from "@/lib/saveFile"
+import { Button } from "@/components/ui/button"
 
 interface PatientExportProps {
   patientId: string
@@ -131,13 +132,10 @@ export function PatientExport({ patientId, patientName }: PatientExportProps) {
 
   return (
     <>
-      <button
-        onClick={handleOpen}
-        className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary-600 px-3 text-sm font-medium text-white transition-colors hover:bg-primary-700"
-      >
+      <Button size="sm" onClick={handleOpen}>
         <Download className="w-4 h-4" />
         Export
-      </button>
+      </Button>
 
       {isOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -265,36 +263,30 @@ export function PatientExport({ patientId, patientName }: PatientExportProps) {
             <div className="flex items-center justify-end gap-3 p-6 border-t border-neutral-200">
               {step === "format" && (
                 <>
-                  <button onClick={handleClose} className="btn-secondary">
+                  <Button variant="outline" onClick={handleClose}>
                     Cancel
-                  </button>
-                  <button
-                    onClick={() => setStep("confirm")}
-                    className="btn-primary"
-                  >
+                  </Button>
+                  <Button onClick={() => setStep("confirm")}>
                     Continue
-                  </button>
+                  </Button>
                 </>
               )}
 
               {step === "confirm" && (
                 <>
-                  <button
-                    onClick={() => setStep("format")}
-                    className="btn-secondary"
-                  >
+                  <Button variant="outline" onClick={() => setStep("format")}>
                     Back
-                  </button>
-                  <button onClick={handleExport} className="btn-primary">
+                  </Button>
+                  <Button onClick={handleExport}>
                     Download
-                  </button>
+                  </Button>
                 </>
               )}
 
               {step === "complete" && (
-                <button onClick={handleClose} className="btn-primary">
+                <Button onClick={handleClose}>
                   Close
-                </button>
+                </Button>
               )}
             </div>
           </div>

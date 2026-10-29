@@ -33,11 +33,13 @@ import { AuthFeedback, AuthInput, AuthPrimaryButton } from "@/components/auth"
 import type { MfaEnrollmentFormProps } from "@/lib/auth/types"
 import { safeReturnTo } from "@/lib/auth/returnTo"
 import { errorCode } from "@/lib/errors/errorCode"
+import { supportMailto, useSupportEmail } from "@/lib/support"
 
 export function FirebaseMfaEnrollmentForm({ returnTo: returnToProp }: MfaEnrollmentFormProps = {}) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const returnTo = returnToProp ?? searchParams.get("returnTo")
+  const supportEmail = useSupportEmail()
   const { loading: authLoading } = useAuth()
   // Firebase-specific surface: read the raw SDK user for ``providerData``
   // (sign-in method) and ``multiFactor`` — details the neutral AuthUser omits.
@@ -255,7 +257,6 @@ export function FirebaseMfaEnrollmentForm({ returnTo: returnToProp }: MfaEnrollm
                 }
               }}
               disabled={verificationEmailSent}
-              className="w-full bg-primary-600 text-white px-4 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200 disabled:opacity-50"
             >
               {verificationEmailSent ? "Email Sent" : "Resend Verification Email"}
             </AuthPrimaryButton>
@@ -301,7 +302,6 @@ export function FirebaseMfaEnrollmentForm({ returnTo: returnToProp }: MfaEnrollm
                 <AuthPrimaryButton
                   type="submit"
                   disabled={generating || !reauthPassword}
-                  className="w-full bg-primary-600 text-white px-4 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200 disabled:opacity-50"
                 >
                   {generating ? "Verifying..." : "Verify Identity"}
                 </AuthPrimaryButton>
@@ -310,7 +310,6 @@ export function FirebaseMfaEnrollmentForm({ returnTo: returnToProp }: MfaEnrollm
               <AuthPrimaryButton
                 onClick={() => handleReauthenticate()}
                 disabled={generating}
-                className="w-full bg-primary-600 text-white px-4 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200 disabled:opacity-50"
               >
                 {generating ? "Verifying..." : "Verify Identity with Google"}
               </AuthPrimaryButton>
@@ -325,7 +324,7 @@ export function FirebaseMfaEnrollmentForm({ returnTo: returnToProp }: MfaEnrollm
             </div>
             <button
               onClick={() => window.location.reload()}
-              className="w-full bg-primary-600 text-white px-4 py-2 rounded-lg hover:bg-primary-700"
+              className="auth-primary"
             >
               Retry
             </button>
@@ -353,7 +352,7 @@ export function FirebaseMfaEnrollmentForm({ returnTo: returnToProp }: MfaEnrollm
         {/* Step 1: Scan QR Code */}
         <div>
           <div className="flex items-center gap-2 mb-4">
-            <div className="w-8 h-8 bg-primary-600 rounded-full flex items-center justify-center text-white font-bold text-sm">
+            <div className="w-8 h-8 bg-primary-600 rounded-full flex items-center justify-center text-on-honey font-bold text-sm">
               1
             </div>
             <h2 className="text-lg font-semibold text-neutral-900">
@@ -401,7 +400,7 @@ export function FirebaseMfaEnrollmentForm({ returnTo: returnToProp }: MfaEnrollm
         {/* Step 2: Enter Verification Code */}
         <div>
           <div className="flex items-center gap-2 mb-4">
-            <div className="w-8 h-8 bg-primary-600 rounded-full flex items-center justify-center text-white font-bold text-sm">
+            <div className="w-8 h-8 bg-primary-600 rounded-full flex items-center justify-center text-on-honey font-bold text-sm">
               2
             </div>
             <h2 className="text-lg font-semibold text-neutral-900">
@@ -440,16 +439,18 @@ export function FirebaseMfaEnrollmentForm({ returnTo: returnToProp }: MfaEnrollm
           </form>
         </div>
 
-        <p className="text-xs text-neutral-500 leading-relaxed">
-          Lose access to your authenticator later? Email{" "}
-          <a
-            href="mailto:support@pablo.health"
-            className="text-primary-600 hover:text-primary-700 underline"
-          >
-            support@pablo.health
-          </a>{" "}
-          and we&apos;ll help you regain access.
-        </p>
+        {supportEmail && (
+          <p className="text-xs text-neutral-500 leading-relaxed">
+            Lose access to your authenticator later? Email{" "}
+            <a
+              href={supportMailto(supportEmail)}
+              className="text-primary-600 hover:text-primary-700 underline"
+            >
+              {supportEmail}
+            </a>{" "}
+            and we&apos;ll help you regain access.
+          </p>
+        )}
       </div>
     </div>
   )

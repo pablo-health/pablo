@@ -11,7 +11,13 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from app.chart_history.dependencies import get_chart_history_repository
+from app.chart_history.service import ChartHistoryService
+from app.chart_proposals.dependencies import get_proposal_medication_repository
+from app.chart_proposals.step import ChartProposalStep
 from app.main import app
+from app.medications.schemas import CreateMedicationRequest
+from app.medications.service import MedicationService
 from app.models import Note, Patient, Transcript, TranscriptModel, User
 from app.models.audit import AuditAction
 from app.models.enums import TranscriptFormat
@@ -21,8 +27,15 @@ from app.notes import (
     get_default_registry,
     get_note_type_authorizer,
 )
+from app.notes.chart_context import ChartMedication
+from app.problems.schemas import AddProblemRequest
+from app.problems.service import ProblemService
 from app.repositories import (
+    InMemoryChartHistoryRepository,
+    InMemoryChartProposalRepository,
+    InMemoryMedicationRepository,
     InMemoryNotesRepository,
+    InMemoryPatientProblemRepository,
     InMemoryPatientRepository,
 )
 from app.routes import notes as notes_routes
@@ -45,14 +58,24 @@ from app.routes.sessions import (
 from app.scheduling_engine.models.appointment import Appointment
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.scheduling_engine.services.scheduling import SchedulingService
-from app.services import GeneratedNote, NoteGenerationService, NoteService
+from app.services import (
+    GeneratedNote,
+    NoteGenerationService,
+    NoteService,
+    RegistryNoteGenerationService,
+)
 from app.services.note_generation_service import TransientNoteGenerationError
 from fastapi import HTTPException
 from fastapi.testclient import TestClient  # noqa: TC002 — runtime fixture type
 
-if TYPE_CHECKING:
-    from collections.abc import Mapping
+from tests.patient_seeds import seed_patient
 
+from .conftest import audited_entries
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Mapping
+
+    from app.notes.chart_context import ChartContext
     from app.services import AuditService
 
 _SOAP: dict[str, Any] = {
@@ -159,21 +182,8 @@ class TestFinalizeNote:
         assert body["finalized_at"] is not None
 
 
-def _seed_patient(
-    patient_repo: InMemoryPatientRepository,
-    *,
-    user_id: str,
-    patient_id: str = "patient-1",
-) -> Patient:
-    now = datetime.now(UTC)
-    patient = Patient(
-        id=patient_id,
-        first_name="Jane",
-        last_name="Doe",
-        created_at=now,
-        updated_at=now,
-    )
-    return patient_repo.create(patient, user_id)
+def _proposal_step() -> ChartProposalStep:
+    return ChartProposalStep(InMemoryChartProposalRepository(), InMemoryChartHistoryRepository())
 
 
 class _StubGenerator(NoteGenerationService):
@@ -191,6 +201,8 @@ class _StubGenerator(NoteGenerationService):
         session_date: datetime,
         inputs: Mapping[str, str] | None = None,
         definition: NoteTypeDefinition | None = None,
+        client_present_end_seconds: float | None = None,
+        chart: ChartContext | None = None,
     ) -> GeneratedNote:
         self.last_call = {
             "note_type": note_type,
@@ -198,6 +210,7 @@ class _StubGenerator(NoteGenerationService):
             "patient": patient,
             "session_date": session_date,
             "inputs": inputs,
+            "chart": chart,
         }
         return GeneratedNote(note_type=note_type, content=self.content)
 
@@ -210,7 +223,7 @@ class TestCreateStandaloneNote:
         mock_notes_repo: InMemoryNotesRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
 
         response = client.post(
             f"/api/patients/{patient.id}/notes",
@@ -237,7 +250,7 @@ class TestCreateStandaloneNote:
         mock_notes_repo: InMemoryNotesRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
 
         with patch("app.routes.notes.enqueue") as mock_enqueue:
             response = client.post(
@@ -280,7 +293,7 @@ class TestCreateStandaloneNote:
         mock_repo: InMemoryPatientRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
 
         with patch("app.routes.notes.enqueue") as mock_enqueue:
             response = client.post(
@@ -299,7 +312,7 @@ class TestCreateStandaloneNote:
         mock_notes_repo: InMemoryNotesRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
 
         response = client.post(
             f"/api/patients/{patient.id}/notes",
@@ -322,7 +335,7 @@ class TestCreateStandaloneNote:
     ) -> None:
         """A restricted note is written by hand: no row, no queue entry, and
         nothing for a model to be asked."""
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         gateway = MagicMock()
 
         with (
@@ -352,7 +365,7 @@ class TestCreateStandaloneNote:
         mock_repo: InMemoryPatientRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
 
         response = client.post(
             f"/api/patients/{patient.id}/notes",
@@ -368,7 +381,7 @@ class TestCreateStandaloneNote:
         mock_repo: InMemoryPatientRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
 
         class _Deny(NoteTypeAuthorizer):
             def is_allowed(self, user, note_type):  # type: ignore[no-untyped-def]
@@ -399,7 +412,7 @@ class TestCreateStandaloneNote:
         mock_repo: InMemoryPatientRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         edited = {"narrative": {"body": "Clinician started here"}}
 
         response = client.post(
@@ -454,7 +467,7 @@ class TestGenerateStandaloneNoteJob:
     ) -> None:
         self._patch_tenant(monkeypatch, schema="practice_x")
         mock_user_repo.update(mock_user)
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         note_service = NoteService(mock_notes_repo)
         note = note_service.create_standalone_note(
             patient_id=patient.id,
@@ -465,6 +478,31 @@ class TestGenerateStandaloneNoteJob:
         generated_content = {"subjective": {"chief_complaint": "Generated content"}}
         stub = _StubGenerator(generated_content)
         audit = MagicMock()
+        problems = InMemoryPatientProblemRepository()
+        ProblemService(problems).add(
+            patient.id,
+            mock_user_id,
+            AddProblemRequest(label="Generalized anxiety disorder", icd10_code="F41.1"),
+        )
+        history = InMemoryChartHistoryRepository()
+        ChartHistoryService(history).set(
+            patient.id, "trauma_history", mock_user_id, "Denies a history of trauma."
+        )
+        medications = InMemoryMedicationRepository()
+        medications.grant_access(patient.id, mock_user_id)
+        medication_service = MedicationService(medications)
+        medication_service.create(
+            patient.id,
+            mock_user_id,
+            CreateMedicationRequest(
+                drug_name="Sertraline", dose="100 mg", frequency="every morning"
+            ),
+        )
+        medication_service.create(
+            patient.id,
+            mock_user_id,
+            CreateMedicationRequest(drug_name="Hydroxyzine", dose="25 mg", status="discontinued"),
+        )
 
         result = generate_standalone_note_job(
             GenerateStandaloneNoteJob(
@@ -478,6 +516,10 @@ class TestGenerateStandaloneNoteJob:
             _job_request(),
             note_service=note_service,
             patient_repo=mock_repo,
+            problem_repo=problems,
+            medication_repo=medications,
+            history_repo=history,
+            proposal_step=_proposal_step(),
             note_generation_service=stub,
             user_repo=mock_user_repo,
             audit=audit,
@@ -491,6 +533,19 @@ class TestGenerateStandaloneNoteJob:
         assert stub.last_call is not None
         assert stub.last_call["note_type"] == "narrative"
         assert stub.last_call["transcript"].content == "Client reported..."
+        # The draft is written against the chart, read before generation.
+        chart = stub.last_call["chart"]
+        assert [(p.label, p.icd10_code) for p in chart.problems] == [
+            ("Generalized anxiety disorder", "F41.1")
+        ]
+        assert chart.allergy_status == "not_recorded"
+        # Only what the client takes now: a stopped medication is not current.
+        assert chart.medications == (
+            ChartMedication(name="Sertraline", dose="100 mg", frequency="every morning"),
+        )
+        assert [(h.key, h.text) for h in chart.history] == [
+            ("trauma_history", "Denies a history of trauma.")
+        ]
         audit.log_note_action.assert_called_once()
         assert audit.log_note_action.call_args.kwargs["note_id"] == note.id
 
@@ -503,7 +558,7 @@ class TestGenerateStandaloneNoteJob:
         mock_user_id: str,
     ) -> None:
         self._patch_tenant(monkeypatch, schema="practice_x")
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         note_service = NoteService(mock_notes_repo)
         note = note_service.create_standalone_note(
             patient_id=patient.id,
@@ -526,6 +581,10 @@ class TestGenerateStandaloneNoteJob:
             _job_request(),
             note_service=note_service,
             patient_repo=mock_repo,
+            problem_repo=InMemoryPatientProblemRepository(),
+            medication_repo=InMemoryMedicationRepository(),
+            history_repo=InMemoryChartHistoryRepository(),
+            proposal_step=_proposal_step(),
             note_generation_service=_FailingGenerator(),
             user_repo=mock_user_repo,
             audit=MagicMock(),
@@ -546,7 +605,7 @@ class TestGenerateStandaloneNoteJob:
         mock_user_id: str,
     ) -> None:
         self._patch_tenant(monkeypatch, schema="practice_x")
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         note_service = NoteService(mock_notes_repo)
         note = note_service.create_standalone_note(
             patient_id=patient.id,
@@ -572,6 +631,10 @@ class TestGenerateStandaloneNoteJob:
                 _job_request(retry_count=0),
                 note_service=note_service,
                 patient_repo=mock_repo,
+                problem_repo=InMemoryPatientProblemRepository(),
+                medication_repo=InMemoryMedicationRepository(),
+                history_repo=InMemoryChartHistoryRepository(),
+                proposal_step=_proposal_step(),
                 note_generation_service=_TransientGenerator(),
                 user_repo=mock_user_repo,
                 audit=MagicMock(),
@@ -585,6 +648,10 @@ class TestGenerateStandaloneNoteJob:
             _job_request(retry_count=99),
             note_service=note_service,
             patient_repo=mock_repo,
+            problem_repo=InMemoryPatientProblemRepository(),
+            medication_repo=InMemoryMedicationRepository(),
+            history_repo=InMemoryChartHistoryRepository(),
+            proposal_step=_proposal_step(),
             note_generation_service=_TransientGenerator(),
             user_repo=mock_user_repo,
             audit=MagicMock(),
@@ -747,7 +814,7 @@ class TestListPatientNotesAudit:
         mock_audit_service: AuditService,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id, patient_id="patient-1")
         first = _seed_note(mock_notes_repo)
         second = _seed_note(mock_notes_repo)
 
@@ -756,9 +823,9 @@ class TestListPatientNotesAudit:
         assert response.json()["total"] == 2
 
         viewed = {
-            call.args[0].resource_id
-            for call in mock_audit_service._repo.append.call_args_list
-            if call.args[0].action == AuditAction.SESSION_VIEWED.value
+            entry.resource_id
+            for entry in audited_entries(mock_audit_service)
+            if entry.action == AuditAction.SESSION_VIEWED.value
         }
         assert viewed == {first.id, second.id}
 
@@ -800,7 +867,7 @@ class TestVisitCodingAtNoteCreation:
         mock_repo: InMemoryPatientRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         appt_repo = InMemoryAppointmentRepository()
         _seed_appointment(appt_repo, user_id=mock_user_id, patient_id=patient.id)
         app.dependency_overrides[get_notes_scheduling_service] = lambda: SchedulingService(
@@ -837,7 +904,7 @@ class TestVisitCodingAtNoteCreation:
     ) -> None:
         """Creating a note on a visit never infers a billing code — omitting
         the fields leaves the appointment exactly as it was."""
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         appt_repo = InMemoryAppointmentRepository()
         _seed_appointment(appt_repo, user_id=mock_user_id, patient_id=patient.id)
         app.dependency_overrides[get_notes_scheduling_service] = lambda: SchedulingService(
@@ -863,7 +930,7 @@ class TestVisitCodingAtNoteCreation:
     ) -> None:
         """Codes set at note creation are visible through the standalone
         appointment-edit surface, and vice versa — one store, not two."""
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         appt_repo = InMemoryAppointmentRepository()
         _seed_appointment(appt_repo, user_id=mock_user_id, patient_id=patient.id)
         shared_service = SchedulingService(appt_repo)
@@ -896,6 +963,257 @@ class TestVisitCodingAtNoteCreation:
 
         # ...and the change is visible back through the same record.
         assert appt_repo.get("appt-1", mock_user_id).service_code == "90834"
+
+
+def _list_problems(repo: InMemoryPatientProblemRepository, patient_id: str, user_id: str) -> None:
+    """Active F41.1 then F33.1, a resolved F43.10, and an uncoded active problem."""
+    service = ProblemService(repo)
+    service.add(
+        patient_id,
+        user_id,
+        AddProblemRequest(label="Generalized anxiety disorder", icd10_code="F41.1"),
+    )
+    service.add(
+        patient_id,
+        user_id,
+        AddProblemRequest(label="Major depressive disorder, recurrent", icd10_code="F33.1"),
+    )
+    service.add(
+        patient_id,
+        user_id,
+        AddProblemRequest(label="PTSD", icd10_code="F43.10", status="resolved"),
+    )
+    service.add(patient_id, user_id, AddProblemRequest(label="Insomnia"))
+
+
+def _stored_codes(appt_repo: InMemoryAppointmentRepository, user_id: str) -> list[str] | None:
+    stored = appt_repo.get("appt-1", user_id)
+    assert stored is not None
+    return stored.diagnosis_codes
+
+
+class TestVisitCodesPrefillFromProblemList:
+    """A visit's diagnosis codes start from the active problems and stay the visit's own."""
+
+    def test_note_on_an_uncoded_visit_prefills_active_codes_in_list_order(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_problem_repo: InMemoryPatientProblemRepository,
+        mock_user_id: str,
+    ) -> None:
+        patient = seed_patient(mock_repo, mock_user_id)
+        _list_problems(mock_problem_repo, patient.id, mock_user_id)
+        appt_repo = InMemoryAppointmentRepository()
+        _seed_appointment(appt_repo, user_id=mock_user_id, patient_id=patient.id)
+        app.dependency_overrides[get_notes_scheduling_service] = lambda: SchedulingService(
+            appt_repo
+        )
+
+        response = client.post(
+            f"/api/patients/{patient.id}/notes",
+            json={"note_type": "soap", "appointment_id": "appt-1"},
+        )
+
+        assert response.status_code == 201, response.text
+        # Resolved and uncoded problems contribute nothing.
+        assert _stored_codes(appt_repo, mock_user_id) == ["F41.1", "F33.1"]
+
+    def test_codes_sent_with_the_note_win_and_stay_editable(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_problem_repo: InMemoryPatientProblemRepository,
+        mock_user_id: str,
+    ) -> None:
+        patient = seed_patient(mock_repo, mock_user_id)
+        _list_problems(mock_problem_repo, patient.id, mock_user_id)
+        appt_repo = InMemoryAppointmentRepository()
+        _seed_appointment(appt_repo, user_id=mock_user_id, patient_id=patient.id)
+        shared_service = SchedulingService(appt_repo)
+        app.dependency_overrides[get_notes_scheduling_service] = lambda: shared_service
+        app.dependency_overrides[get_appointments_scheduling_service] = lambda: shared_service
+
+        response = client.post(
+            f"/api/patients/{patient.id}/notes",
+            json={"note_type": "soap", "appointment_id": "appt-1", "diagnosis_codes": ["F32.9"]},
+        )
+        assert response.status_code == 201, response.text
+        assert _stored_codes(appt_repo, mock_user_id) == ["F32.9"]
+
+        patch_response = client.patch(
+            "/api/appointments/appt-1", json={"diagnosis_codes": ["F33.1", "F41.1"]}
+        )
+        assert patch_response.status_code == 200, patch_response.text
+        assert _stored_codes(appt_repo, mock_user_id) == ["F33.1", "F41.1"]
+
+    def test_a_visit_already_coded_is_left_alone(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_problem_repo: InMemoryPatientProblemRepository,
+        mock_user_id: str,
+    ) -> None:
+        patient = seed_patient(mock_repo, mock_user_id)
+        _list_problems(mock_problem_repo, patient.id, mock_user_id)
+        appt_repo = InMemoryAppointmentRepository()
+        appt = _seed_appointment(appt_repo, user_id=mock_user_id, patient_id=patient.id)
+        appt.diagnosis_codes = ["F43.10"]
+        appt_repo.update(appt)
+        app.dependency_overrides[get_notes_scheduling_service] = lambda: SchedulingService(
+            appt_repo
+        )
+
+        response = client.post(
+            f"/api/patients/{patient.id}/notes",
+            json={"note_type": "soap", "appointment_id": "appt-1"},
+        )
+
+        assert response.status_code == 201, response.text
+        assert _stored_codes(appt_repo, mock_user_id) == ["F43.10"]
+
+
+FOLLOW_UP = "psychiatric_follow_up"
+_DRAFTED_BY_THE_VISIT = ("subjective", "risk", "mse", "measures", "mdm", "plan", "psychotherapy")
+
+
+@pytest.fixture
+def chart_repos() -> Iterator[tuple[InMemoryChartHistoryRepository, InMemoryMedicationRepository]]:
+    history = InMemoryChartHistoryRepository()
+    medications = InMemoryMedicationRepository()
+    app.dependency_overrides[get_chart_history_repository] = lambda: history
+    app.dependency_overrides[get_proposal_medication_repository] = lambda: medications
+    yield history, medications
+    app.dependency_overrides.pop(get_chart_history_repository, None)
+    app.dependency_overrides.pop(get_proposal_medication_repository, None)
+
+
+@pytest.fixture
+def no_model() -> Iterator[dict[str, MagicMock]]:
+    """Every way the create path could reach a model, each one failing the test if asked."""
+    with (
+        patch("app.routes.notes.enqueue") as enqueue,
+        patch.object(RegistryNoteGenerationService, "generate_note") as generate,
+        patch("app.services.note_generation_service.extract_statements") as extract,
+    ):
+        yield {"enqueue": enqueue, "generate": generate, "extract": extract}
+    enqueue.assert_not_called()
+    generate.assert_not_called()
+    extract.assert_not_called()
+
+
+class TestBlankNoteStartsFromTheChart:
+    """A note written by hand opens with what a draft prints from the chart, and no more."""
+
+    def test_chart_and_place_of_service_fill_their_fields_and_nothing_else(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_problem_repo: InMemoryPatientProblemRepository,
+        mock_notes_repo: InMemoryNotesRepository,
+        mock_user_id: str,
+        chart_repos: tuple[InMemoryChartHistoryRepository, InMemoryMedicationRepository],
+        no_model: dict[str, MagicMock],
+    ) -> None:
+        history, medications = chart_repos
+        patient = seed_patient(mock_repo, mock_user_id)
+        patient.allergy_status = "recorded"
+        patient.allergies = [{"substance": "Penicillin", "reaction": "Hives"}]
+        mock_repo.update(patient)
+        ProblemService(mock_problem_repo).add(
+            patient.id,
+            mock_user_id,
+            AddProblemRequest(label="Generalized anxiety disorder", icd10_code="F41.1"),
+        )
+        chart_history = ChartHistoryService(history)
+        chart_history.set(patient.id, "prior_diagnoses", mock_user_id, "ADHD diagnosed at 12.")
+        chart_history.set(patient.id, "alcohol", mock_user_id, "Two drinks on weekends.")
+        medications.grant_access(patient.id, mock_user_id)
+        MedicationService(medications).create(
+            patient.id,
+            mock_user_id,
+            CreateMedicationRequest(
+                drug_name="Sertraline",
+                dose="100 mg",
+                frequency="every morning",
+                category="psychiatric",
+            ),
+        )
+
+        response = client.post(
+            f"/api/patients/{patient.id}/notes",
+            json={"note_type": FOLLOW_UP, "note_inputs": {"place_of_service": "Telehealth"}},
+        )
+
+        assert response.status_code == 201, response.text
+        body = response.json()
+        # No draft was written: the chart's part is the clinician's copy.
+        assert body["content"] is None
+        edited = body["content_edited"]
+        assert edited["encounter"] == {
+            "place_of_service": (
+                "Visit conducted by synchronous audio and video telehealth on a "
+                "HIPAA-compliant platform. The client's location was not entered; the "
+                "provider's location was not entered. The client consented to receive "
+                "care by telehealth."
+            )
+        }
+        assert edited["medications"] == {
+            "current_medications": ["Psychiatric: Sertraline 100 mg, every morning"],
+            "allergies": "Penicillin (Hives)",
+        }
+        assert edited["psychiatric_history"] == {"prior_diagnoses": "ADHD diagnosed at 12."}
+        # The baseline alone: nothing was heard, so no screen mark about this visit.
+        assert edited["substance_use"] == {"alcohol": "Two drinks on weekends."}
+        assert edited["assessment"] == {
+            "diagnoses": [
+                {"label": "Generalized anxiety disorder", "code": "F41.1", "status": None}
+            ]
+        }
+        for section in _DRAFTED_BY_THE_VISIT:
+            assert section not in edited
+        [stored] = mock_notes_repo.list_by_patient(patient.id)
+        assert stored.content_edited == edited
+
+    def test_an_empty_chart_leaves_its_fields_empty(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+        chart_repos: tuple[InMemoryChartHistoryRepository, InMemoryMedicationRepository],
+        no_model: dict[str, MagicMock],
+    ) -> None:
+        patient = seed_patient(mock_repo, mock_user_id)
+
+        response = client.post(
+            f"/api/patients/{patient.id}/notes",
+            json={"note_type": FOLLOW_UP, "note_inputs": {"place_of_service": "In office"}},
+        )
+
+        assert response.status_code == 201, response.text
+        body = response.json()
+        assert body["content"] is None
+        # Never "Not recorded", "None recorded" or "(not asked this visit)".
+        assert body["content_edited"] == {"encounter": {"place_of_service": "In-office visit."}}
+
+    def test_a_soap_note_still_starts_empty(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+        chart_repos: tuple[InMemoryChartHistoryRepository, InMemoryMedicationRepository],
+        no_model: dict[str, MagicMock],
+    ) -> None:
+        history, _ = chart_repos
+        patient = seed_patient(mock_repo, mock_user_id)
+        ChartHistoryService(history).set(
+            patient.id, "prior_diagnoses", mock_user_id, "ADHD diagnosed at 12."
+        )
+
+        response = client.post(f"/api/patients/{patient.id}/notes", json={"note_type": "soap"})
+
+        assert response.status_code == 201, response.text
+        assert response.json()["content_edited"] is None
 
 
 # Avoid unused-fixture warnings.

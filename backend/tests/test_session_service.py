@@ -18,6 +18,7 @@ from app.models import (
     UpdateSessionRatingRequest,
     UploadSessionRequest,
 )
+from app.models.notes import NoteSignerFields
 from app.models.session import SOAPNote
 from app.models.soap_note import SOAPNoteModel
 from app.models.transcript import TranscriptModel
@@ -299,6 +300,32 @@ class TestFinalizeSession:
         assert result_note.quality_rating is None
         assert result_note.finalized_at is not None
 
+    def test_finalizing_with_a_signature_signs_and_locks_the_note(
+        self,
+        service: SessionService,
+        patient: Patient,
+        user_id: str,
+        session_repo: InMemoryTherapySessionRepository,
+        note_service: NoteService,
+    ) -> None:
+        session = _make_pending_session(session_repo, note_service, user_id, patient.id)
+
+        request = FinalizeSessionRequest(
+            quality_rating=4,
+            signature=NoteSignerFields(signer_name="Sam Ortiz", signer_credentials="LMFT"),
+        )
+        result_session, _result_patient, result_note = service.finalize_session(
+            session.id, user_id, request
+        )
+
+        assert result_session.status == SessionStatus.FINALIZED
+        assert result_note.quality_rating == 4
+        _, versions, _ = note_service.get_signing_record(result_note.id, user_id)
+        assert len(versions) == 1
+        assert versions[0].signer_name == "Sam Ortiz"
+        assert versions[0].signer_credentials == "LMFT"
+        assert versions[0].signed_at == result_note.finalized_at
+
     def test_session_not_found(
         self,
         service: SessionService,
@@ -385,10 +412,10 @@ class TestUpdateRating:
             quality_rating=3,
             quality_rating_reason="Reassessed quality",
         )
-        _, _, note, old_rating = service.update_rating(session.id, user_id, request)
+        updated = service.update_rating(session.id, user_id, request)
 
-        assert note.quality_rating == 3
-        assert old_rating == 5
+        assert updated.note.quality_rating == 3
+        assert updated.old_rating == 5
 
     def test_session_not_found(
         self,
@@ -429,10 +456,10 @@ class TestUpdateRating:
             quality_rating=1,
             quality_rating_reason="Reconsidered quality",
         )
-        _, _, note, old_rating = service.update_rating(session.id, user_id, request)
+        updated = service.update_rating(session.id, user_id, request)
 
-        assert note.quality_rating == 1
-        assert old_rating == 5
+        assert updated.note.quality_rating == 1
+        assert updated.old_rating == 5
 
 
 _IMPORTED_CONTENT = {
@@ -446,7 +473,7 @@ _IMPORTED_CONTENT = {
 class TestImportSession:
     """Importing an already-written note as a pending-review session."""
 
-    def test_creates_pending_review_session_with_parsed_content(
+    def test_creates_imported_session_with_parsed_content(
         self,
         service: SessionService,
         patient: Patient,
@@ -462,8 +489,9 @@ class TestImportSession:
             note_content=_IMPORTED_CONTENT,
         )
 
-        # Lands ready for review, no LLM generation involved.
-        assert session.status == SessionStatus.PENDING_REVIEW
+        # A reference copy of a note signed elsewhere, never one to sign; no
+        # LLM generation involved.
+        assert session.status == SessionStatus.IMPORTED
         assert session.session_date == session_date
         # Original text is preserved as the transcript for side-by-side review.
         assert session.transcript is not None

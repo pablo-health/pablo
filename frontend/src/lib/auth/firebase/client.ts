@@ -20,7 +20,7 @@ import {
 } from "firebase/auth"
 
 import { getFirebaseAuth, initFirebase } from "@/lib/firebase"
-import { useConfig } from "@/lib/config"
+import { useConfig, type RuntimeConfig } from "@/lib/config"
 import { clearFirebaseAuthStorage } from "@/lib/firebaseAuthRecovery"
 import type { AuthState, AuthUser, ClientAuthProvider } from "@/lib/auth/types"
 
@@ -32,6 +32,15 @@ import type { AuthState, AuthUser, ClientAuthProvider } from "@/lib/auth/types"
  * without it (genuinely signed-out callers don't reach the API client).
  */
 const AUTH_RESTORE_WAIT_MS = 1500
+
+function initFirebaseFromConfig(config: RuntimeConfig): Auth {
+  return initFirebase({
+    apiKey: config.firebaseApiKey,
+    authDomain: config.firebaseAuthDomain,
+    projectId: config.firebaseProjectId,
+    appId: config.firebaseAppId,
+  })
+}
 
 function toAuthUser(user: User): AuthUser {
   return {
@@ -117,14 +126,22 @@ export async function clearStaleSession(auth: Auth): Promise<void> {
   } catch {
     // SDK may already be wedged; we wipe its storage below regardless.
   }
-  // Cookie first: the wipe below can stall indefinitely in Safari while
-  // another tab holds the database open, and must not hold the cookie with it.
+  // Cookie first: the wipe below is IndexedDB work that can be slow to
+  // settle, and must not hold the cookie with it.
   try {
     await fetch("/api/logout")
   } catch {
     // Best-effort cookie clear.
   }
   await clearFirebaseAuthStorage()
+}
+
+/** Headers for the ``/api/login`` cookie sync: the ID token, plus the
+ * refresh token when the SDK has one. */
+export function sessionSyncHeaders(idToken: string, refreshToken: string | undefined): Record<string, string> {
+  const headers: Record<string, string> = { Authorization: `Bearer ${idToken}` }
+  if (refreshToken) headers["X-Refresh-Token"] = refreshToken
+  return headers
 }
 
 /**
@@ -170,7 +187,13 @@ export async function syncAuthTick(
     await withTimeout(
       fetch("/api/login", {
         method: "POST",
-        headers: { Authorization: `Bearer ${idToken}` },
+        // The refresh token as well, as the login screen and passkey step-up
+        // send it: on a host without the GCP metadata server the server
+        // seeds the session from it instead of minting a service-account
+        // custom token (NFAE_ALLOW_CLIENT_REFRESH_TOKEN). Ignored otherwise.
+        // Without it this sync, which fires first, fails there and the user
+        // is sent to /dashboard before any session cookie exists.
+        headers: sessionSyncHeaders(idToken, firebaseUser.refreshToken),
       }),
       AUTH_SYNC_TIMEOUT_MS,
       "/api/login",
@@ -212,15 +235,18 @@ export function useFirebaseAuthState(): AuthState {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [loading, setLoading] = useState(!config.devMode)
 
+  // Initialize during render, not in the effect below. React runs a parent's
+  // effects after its children's, so a page's first requests — the idle
+  // controller's session check, every query on the page — would otherwise
+  // ask for a token before Firebase exists, get none, and go out
+  // unauthenticated. Idempotent, so a repeat render is harmless; client-only,
+  // since the SDK has nothing to do during server rendering.
+  if (!config.devMode && typeof window !== "undefined") initFirebaseFromConfig(config)
+
   useEffect(() => {
     if (config.devMode) return
 
-    const auth = initFirebase({
-      apiKey: config.firebaseApiKey,
-      authDomain: config.firebaseAuthDomain,
-      projectId: config.firebaseProjectId,
-      appId: config.firebaseAppId,
-    })
+    const auth = initFirebaseFromConfig(config)
 
     return onIdTokenChanged(auth, async (firebaseUser) => {
       try {
@@ -249,13 +275,7 @@ export function useFirebaseUser(): User | null {
     if (config.devMode) return
     // initFirebase is idempotent — safe even though useFirebaseAuthState
     // (mounted above in the tree) has typically already initialized it.
-    const auth = initFirebase({
-      apiKey: config.firebaseApiKey,
-      authDomain: config.firebaseAuthDomain,
-      projectId: config.firebaseProjectId,
-      appId: config.firebaseAppId,
-    })
-    return onIdTokenChanged(auth, setUser)
+    return onIdTokenChanged(initFirebaseFromConfig(config), setUser)
   }, [config])
 
   return user
@@ -273,11 +293,12 @@ export async function getFirebaseIdToken(forceRefresh = false): Promise<string |
 }
 
 /**
- * Upper bound on the fallback database wipe in {@link firebaseSignOut}. A
- * delete waits for every open connection to `firebaseLocalStorageDb` to close,
- * and the SDK in any other tab on this site keeps one open for that page's
- * lifetime. Chrome reports `blocked`; Safari has been seen never to settle at
- * all, which once left an expired session stuck on its dialog.
+ * Upper bound on the fallback database wipe in {@link firebaseSignOut}. The
+ * wipe used to delete `firebaseLocalStorageDb`, which waits on every open
+ * connection to it, and Safari was seen never to settle — once leaving an
+ * expired session stuck on its dialog. It now clears the records in place,
+ * which waits on no one, but IndexedDB is still not something a sign-out
+ * should wait on unbounded.
  */
 const PERSISTED_WIPE_TIMEOUT_MS = 1500
 

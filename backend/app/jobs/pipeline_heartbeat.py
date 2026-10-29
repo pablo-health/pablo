@@ -24,12 +24,14 @@ import os
 import sys
 from datetime import UTC, datetime
 
+from ..logging_config import configure_job_logging
+
 logger = logging.getLogger("pipeline_heartbeat")
 
 
 def run() -> int:
     """Entry point. Always exits 0 unless something fundamental is broken."""
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    configure_job_logging()
 
     now_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     logger.info("Pablo compliance pipeline heartbeat — %s", now_iso)
@@ -52,6 +54,7 @@ def run() -> int:
 def _write_heartbeat_marker(gcs_bucket: str, now_iso: str) -> None:
     """Write a small timestamp file to GCS to confirm the upload path works."""
     try:
+        # google.cloud is a namespace package that mypy cannot resolve
         from google.cloud import storage  # type: ignore[attr-defined]  # noqa: PLC0415
     except ImportError:
         logger.warning("google-cloud-storage not installed; skipping heartbeat marker")

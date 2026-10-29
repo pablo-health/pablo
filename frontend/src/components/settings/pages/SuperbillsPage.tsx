@@ -21,10 +21,11 @@ import { SettingsCard, StatusBlock } from "../ui"
 /**
  * Billing > Superbills.
  *
- * Pick a client and a date range, generate, download. The document is
- * rendered from the client's claims for the period — every code and fee on
- * it was already put on a claim built from the session — so there is
- * nothing to configure here. When something an insurer needs is missing,
+ * Pick a client and a date range, generate, download. The same document
+ * the client's chart offers from its Balance tab: each visit prints from its
+ * claim when one was built and from the appointment when not, and the
+ * diagnosis only when the client's setting includes it. When something is
+ * missing,
  * the route refuses and lists it; the list is shown as it came, with the
  * field each item lives in, so the person can go fix it.
  */
@@ -69,7 +70,7 @@ export function SuperbillsPage() {
     <>
       <SettingsCard
         title="Superbills"
-        description={`An itemised receipt a ${people.one} submits to their own insurer for out-of-network reimbursement. Rendered from the ${people.one}'s claims for the period; build a claim from each session first.`}
+        description={`An itemized receipt of a ${people.one}'s visits and payments. You can also download one from the ${people.one}'s chart.`}
       >
         <form onSubmit={handleSubmit} className="space-y-4" aria-label="Generate a superbill">
           <div className="space-y-2">
@@ -137,15 +138,12 @@ export function SuperbillsPage() {
             icon={AlertCircle}
             tone="honey"
             title="The superbill was not generated"
-            description="Everything below has to be on file before the document can be issued. Nothing is filled in or guessed on your behalf."
+            description="Complete the items below, then generate the superbill again."
           >
             <ul className="mt-3 space-y-2" aria-label="What is missing">
               {findings.map((finding, index) => (
                 <li key={`${finding.field ?? finding.code}-${index}`} className="text-sm text-foreground">
                   {finding.message}
-                  {finding.field && (
-                    <span className="ml-2 font-mono text-xs text-muted-foreground">{finding.field}</span>
-                  )}
                 </li>
               ))}
             </ul>

@@ -28,6 +28,7 @@ from app.models import User
 from app.models.coverage import PatientCoverage, Payer
 from app.models.patient import Patient
 from app.models.payments import PatientCharge
+from app.payments.balance import patient_balance
 from app.repositories import (
     get_patient_coverage_repository,
     get_patient_payment_repository,
@@ -35,6 +36,7 @@ from app.repositories import (
     get_payer_repository,
 )
 from app.repositories.audit import InMemoryAuditRepository
+from app.repositories.patient_payment import WriteOffExceedsBalanceError
 from app.routes import patient_write_offs
 from app.routes.patient_write_offs import WriteOffPolicy, get_write_off_policy
 from app.services import AuditService, get_audit_service
@@ -108,6 +110,30 @@ class _FakePayments:
         )
         self.charges.append(charge)
         return charge
+
+    def add_write_off(
+        self, *, patient_id: str, amount_cents: int, user_id: str, reason: str, note: str | None
+    ) -> PatientCharge:
+        balance_cents = patient_balance(self.list_charges(patient_id)).balance_cents
+        if amount_cents > balance_cents:
+            raise WriteOffExceedsBalanceError(
+                patient_id, amount_cents=amount_cents, balance_cents=balance_cents
+            )
+        return self.add_ledger_row(
+            patient_id=patient_id,
+            kind="write_off",
+            amount_cents=amount_cents,
+            currency="usd",
+            user_id=user_id,
+            write_off_reason=reason,
+            note=note,
+        )
+
+    def balance_cents(self, patient_id: str) -> int:
+        return patient_balance(self.list_charges(patient_id)).balance_cents
+
+    def write_offs(self, patient_id: str) -> list[PatientCharge]:
+        return [c for c in self.list_charges(patient_id) if c.kind == "write_off"]
 
 
 def _user() -> User:
@@ -190,6 +216,25 @@ def _write_off(
     return client.post(f"/api/patients/{_PATIENT_ID}/write-offs", json=body)
 
 
+def _assert_written_off(
+    payments: _FakePayments, response: Any, *, amount_cents: int, reason: str, remaining: int
+) -> None:
+    """A 200 that landed exactly one ``write_off`` row and moved the balance by it."""
+    assert response.status_code == 200, response.json()
+    assert response.json()["amount_cents"] == amount_cents
+    assert response.json()["write_off_reason"] == reason
+    rows = payments.write_offs(_PATIENT_ID)
+    assert [(r.amount_cents, r.write_off_reason) for r in rows] == [(amount_cents, reason)]
+    assert payments.balance_cents(_PATIENT_ID) == remaining
+
+
+def _assert_refused(payments: _FakePayments, response: Any, *, status: int, balance: int) -> None:
+    """A refusal that wrote nothing: no ``write_off`` row, balance untouched."""
+    assert response.status_code == status, response.json()
+    assert payments.write_offs(_PATIENT_ID) == []
+    assert payments.balance_cents(_PATIENT_ID) == balance
+
+
 class TestAccess:
     def test_foreign_client_is_404_not_403(self) -> None:
         client, _ = _client(_FakePayments([_owed_row(1000)]), _FakePatients(visible=False))
@@ -213,50 +258,48 @@ class TestReasonSet:
 
     @pytest.mark.parametrize("reason", ["hardship", "error"])
     def test_ungated_reasons_are_allowed(self, reason: str) -> None:
-        client, _ = _client(_FakePayments([_owed_row(1000)]), _FakePatients())
+        payments = _FakePayments([_owed_row(1000)])
+        client, _ = _client(payments, _FakePatients())
         response = _write_off(client, amount_cents=500, reason=reason)
-        assert response.status_code == 200
-        assert response.json()["write_off_reason"] == reason
+        _assert_written_off(payments, response, amount_cents=500, reason=reason, remaining=500)
 
 
 class TestCourtesyPolicy:
     def test_refused_when_policy_disallows(self) -> None:
+        payments = _FakePayments([_owed_row(1000)])
         client, _ = _client(
-            _FakePayments([_owed_row(1000)]),
-            _FakePatients(),
-            policy=WriteOffPolicy(allow_courtesy_writeoffs=False),
+            payments, _FakePatients(), policy=WriteOffPolicy(allow_courtesy_writeoffs=False)
         )
         response = _write_off(client, amount_cents=500, reason="courtesy")
-        assert response.status_code == 403
+        _assert_refused(payments, response, status=403, balance=1000)
 
     def test_allowed_when_policy_permits(self) -> None:
+        payments = _FakePayments([_owed_row(1000)])
         client, _ = _client(
-            _FakePayments([_owed_row(1000)]),
-            _FakePatients(),
-            policy=WriteOffPolicy(allow_courtesy_writeoffs=True),
+            payments, _FakePatients(), policy=WriteOffPolicy(allow_courtesy_writeoffs=True)
         )
         response = _write_off(client, amount_cents=500, reason="courtesy")
-        assert response.status_code == 200
+        _assert_written_off(payments, response, amount_cents=500, reason="courtesy", remaining=500)
 
 
 class TestSmallBalancePolicy:
     def test_refused_above_threshold(self) -> None:
+        payments = _FakePayments([_owed_row(10_000)])
         client, _ = _client(
-            _FakePayments([_owed_row(10_000)]),
-            _FakePatients(),
-            policy=WriteOffPolicy(small_balance_cents=500),
+            payments, _FakePatients(), policy=WriteOffPolicy(small_balance_cents=500)
         )
         response = _write_off(client, amount_cents=500, reason="small_balance")
-        assert response.status_code == 403
+        _assert_refused(payments, response, status=403, balance=10_000)
 
     def test_allowed_at_or_under_threshold(self) -> None:
+        payments = _FakePayments([_owed_row(500)])
         client, _ = _client(
-            _FakePayments([_owed_row(500)]),
-            _FakePatients(),
-            policy=WriteOffPolicy(small_balance_cents=500),
+            payments, _FakePatients(), policy=WriteOffPolicy(small_balance_cents=500)
         )
         response = _write_off(client, amount_cents=500, reason="small_balance")
-        assert response.status_code == 200
+        _assert_written_off(
+            payments, response, amount_cents=500, reason="small_balance", remaining=0
+        )
 
 
 class TestSmallBalanceNeedsAKnownBalance:
@@ -295,8 +338,9 @@ class TestSmallBalanceNeedsAKnownBalance:
         }
 
     def test_refused_when_the_remittances_go_elsewhere(self) -> None:
+        payments = _FakePayments([_owed_row(400)])
         client, _ = _client(
-            _FakePayments([_owed_row(400)]),
+            payments,
             _FakePatients(),
             policy=WriteOffPolicy(small_balance_cents=500),
             **self._insured(enroll_remittance=False),
@@ -304,12 +348,13 @@ class TestSmallBalanceNeedsAKnownBalance:
 
         response = _write_off(client, amount_cents=400, reason="small_balance")
 
-        assert response.status_code == 403
+        _assert_refused(payments, response, status=403, balance=400)
         assert "isn't known here" in response.json()["detail"]
 
     def test_allowed_when_the_remittances_come_to_us(self) -> None:
+        payments = _FakePayments([_owed_row(400)])
         client, _ = _client(
-            _FakePayments([_owed_row(400)]),
+            payments,
             _FakePatients(),
             policy=WriteOffPolicy(small_balance_cents=500),
             **self._insured(enroll_remittance=True),
@@ -317,7 +362,9 @@ class TestSmallBalanceNeedsAKnownBalance:
 
         response = _write_off(client, amount_cents=400, reason="small_balance")
 
-        assert response.status_code == 200
+        _assert_written_off(
+            payments, response, amount_cents=400, reason="small_balance", remaining=0
+        )
 
     def test_the_other_reasons_are_untouched(self) -> None:
         """Hardship and error judge the write-off, not the size of the debt.
@@ -325,25 +372,37 @@ class TestSmallBalanceNeedsAKnownBalance:
         And the amount-versus-balance cap needs no guard either: a short
         balance only ever makes it too strict, which is the safe direction.
         """
-        client, _ = _client(
-            _FakePayments([_owed_row(400)]),
-            _FakePatients(),
-            **self._insured(enroll_remittance=False),
-        )
+        payments = _FakePayments([_owed_row(400)])
+        client, _ = _client(payments, _FakePatients(), **self._insured(enroll_remittance=False))
 
-        assert _write_off(client, amount_cents=400, reason="hardship").status_code == 200
+        response = _write_off(client, amount_cents=400, reason="hardship")
+
+        _assert_written_off(payments, response, amount_cents=400, reason="hardship", remaining=0)
 
 
 class TestAmountVsBalance:
     def test_amount_over_balance_is_422(self) -> None:
-        client, _ = _client(_FakePayments([_owed_row(1000)]), _FakePatients())
+        payments = _FakePayments([_owed_row(1000)])
+        client, _ = _client(payments, _FakePatients())
         response = _write_off(client, amount_cents=1001, reason="hardship")
-        assert response.status_code == 422
+        _assert_refused(payments, response, status=422, balance=1000)
+        assert response.json()["detail"] == "A write-off cannot exceed the client's balance."
 
     def test_amount_equal_to_balance_is_allowed(self) -> None:
-        client, _ = _client(_FakePayments([_owed_row(1000)]), _FakePatients())
+        payments = _FakePayments([_owed_row(1000)])
+        client, _ = _client(payments, _FakePatients())
         response = _write_off(client, amount_cents=1000, reason="hardship")
-        assert response.status_code == 200
+        _assert_written_off(payments, response, amount_cents=1000, reason="hardship", remaining=0)
+
+    def test_a_second_write_off_is_held_to_the_balance_the_first_left(self) -> None:
+        """What the lock buys on Postgres, stated against the in-memory ledger."""
+        payments = _FakePayments([_owed_row(1000)])
+        client, _ = _client(payments, _FakePatients())
+        assert _write_off(client, amount_cents=700, reason="hardship").status_code == 200
+        response = _write_off(client, amount_cents=700, reason="hardship")
+        assert response.status_code == 422
+        assert sum(r.amount_cents for r in payments.write_offs(_PATIENT_ID)) == 700
+        assert payments.balance_cents(_PATIENT_ID) == 300
 
 
 class TestSuccess:

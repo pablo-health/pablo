@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..people_term import PeopleTerm  # noqa: TC001 — Pydantic needs this at runtime
 from .inbox import EarlierMessagesOnReply  # noqa: TC001 — Pydantic needs this at runtime
@@ -226,6 +226,31 @@ class UserPreferences(BaseModel):
         return self
 
 
+class _StrictPreferences(UserPreferences):
+    model_config = ConfigDict(extra="forbid")
+
+
+def preference_changes(body: dict[str, Any]) -> dict[str, Any]:
+    """Validate a partial preferences update, returning the keys to write.
+
+    Each value is checked and normalised exactly as a full save checks it. A
+    key sent as ``null`` comes back as ``None``, which means "remove this
+    key": the stored blob then falls back to the field's default. A key that
+    was not sent is not returned and stays as it is. An unknown key is
+    refused rather than dropped, because a misspelt key that silently saves
+    nothing looks like a save that worked.
+
+    Raises ``pydantic.ValidationError`` with each problem located at its key.
+    """
+    fields = UserPreferences.model_fields
+    removed = {key for key, value in body.items() if value is None and key in fields}
+    written = {key: value for key, value in body.items() if key not in removed}
+    validated = _StrictPreferences.model_validate(written)
+    changes: dict[str, Any] = validated.model_dump(mode="json", include=set(written))
+    changes.update(dict.fromkeys(removed))
+    return changes
+
+
 class UpdateThemeRequest(BaseModel):
     """Targeted update of just the UI theme preference."""
 
@@ -265,9 +290,10 @@ class UpdateProfessionalInfoRequest(BaseModel):
     taxonomy_code: str | None = Field(None, min_length=1, max_length=10)
 
 
-# Keep in sync with the DB CHECK constraint added by
-# d7a3f1c8e2b4_practices_retention_offboard_columns.py.
-AUDIO_RETENTION_MIN_DAYS = 30
+# Keep in sync with the DB CHECK constraint ``ck_practices_audio_retention_days_range``
+# (platform revision b8e3f5a1c724). 0 means "delete when the note is signed";
+# see app.services.audio_retention.
+AUDIO_RETENTION_MIN_DAYS = 0
 AUDIO_RETENTION_MAX_DAYS = 2555
 
 

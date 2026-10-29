@@ -2,9 +2,27 @@
 
 "use client"
 
-import { getNoteType, listNoteTypes } from "@/lib/api/noteTypes"
+import {
+  deriveNoteType,
+  getNoteType,
+  listDeriveReferences,
+  listNoteTypeBases,
+  listNoteTypes,
+  previewNoteDraft,
+  resolveNoteTypeSpec,
+  retirePracticeNoteType,
+  savePracticeNoteType,
+} from "@/lib/api/noteTypes"
 import { queryKeys } from "@/lib/api/queryKeys"
-import { useAuthQuery } from "./useAuthQuery"
+import type {
+  DeriveNoteTypeRequest,
+  DeriveNoteTypeResponse,
+  NoteDraftPreviewRequest,
+  NoteDraftPreviewResponse,
+  NoteTypeSchema,
+  PracticeNoteTypeSpec,
+} from "@/types/noteTypes"
+import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
 
 const CATALOG_STALE_MS = 5 * 60 * 1000
 
@@ -44,4 +62,59 @@ export function useNoteTypeLabel(): (key: string) => string {
   const { data } = useNoteTypes()
   const labels = new Map((data?.note_types ?? []).map((t) => [t.key, t.label]))
   return (key) => labels.get(key) ?? key
+}
+
+/** Built-ins a practice can base its own type on; fixed at server startup. */
+export function useNoteTypeBases(token?: string) {
+  return useAuthQuery({
+    queryKey: queryKeys.noteTypes.bases(),
+    queryFn: () => listNoteTypeBases(token),
+    staleTime: Infinity,
+  })
+}
+
+/** Resolve a based type to a full spec, for detaching it. Saves nothing, so invalidates nothing. */
+export function useResolveNoteTypeSpec(token?: string) {
+  return useAuthMutation<{ spec: PracticeNoteTypeSpec }, PracticeNoteTypeSpec>({
+    mutationFn: (spec) => resolveNoteTypeSpec(spec, token),
+  })
+}
+
+/** Save the next version of one of the practice's own types. */
+export function useSavePracticeNoteType(token?: string) {
+  return useAuthMutation<NoteTypeSchema, { slug: string; spec: PracticeNoteTypeSpec }>({
+    mutationFn: ({ slug, spec }) => savePracticeNoteType(slug, spec, token),
+    invalidateKeys: [queryKeys.noteTypes.all],
+  })
+}
+
+/** Retire one of the practice's own types. */
+export function useRetirePracticeNoteType(token?: string) {
+  return useAuthMutation<NoteTypeSchema, string>({
+    mutationFn: (slug) => retirePracticeNoteType(slug, token),
+    invalidateKeys: [queryKeys.noteTypes.all],
+  })
+}
+
+/** Draft a note from a transcript without saving it. Writes nothing, so invalidates nothing. */
+export function usePreviewNoteDraft(token?: string) {
+  return useAuthMutation<NoteDraftPreviewResponse, NoteDraftPreviewRequest>({
+    mutationFn: (body) => previewNoteDraft(body, token),
+  })
+}
+
+/** Propose a note type from the clinician's notes. Saves nothing, so invalidates nothing. */
+export function useDeriveNoteType(token?: string) {
+  return useAuthMutation<DeriveNoteTypeResponse, DeriveNoteTypeRequest>({
+    mutationFn: (request) => deriveNoteType(request, token),
+  })
+}
+
+/** References registered with this deployment; fixed at server startup. */
+export function useDeriveReferences(token?: string) {
+  return useAuthQuery({
+    queryKey: queryKeys.noteTypes.deriveReferences(),
+    queryFn: () => listDeriveReferences(token),
+    staleTime: Infinity,
+  })
 }

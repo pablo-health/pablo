@@ -3,7 +3,8 @@
 /**
  * useImportNotes
  *
- * Orchestrates a bulk import of existing SOAP-note documents for one patient.
+ * Orchestrates a bulk import of existing note documents for one patient, each
+ * read into the note type the clinician picked.
  * Each file is imported independently via the single-file import endpoint, so
  * one unreadable file never sinks the batch. Files run a few at a time and the
  * hook exposes per-file progress for the dialog to render. When the run
@@ -17,6 +18,7 @@ import { useCallback, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { importNote } from "@/lib/api/sessions"
 import { queryKeys } from "@/lib/api/queryKeys"
+import { refreshDashboard } from "./dashboardFreshness"
 import type { SessionResponse } from "@/types/sessions"
 
 export type ImportItemStatus = "queued" | "parsing" | "done" | "error"
@@ -42,8 +44,8 @@ export interface UseImportNotesResult {
   isComplete: boolean
   doneCount: number
   errorCount: number
-  /** Import the given files (replaces any prior run). */
-  start: (files: File[]) => Promise<void>
+  /** Import the given files as `noteType`, SOAP when omitted (replaces any prior run). */
+  start: (files: File[], noteType?: string) => Promise<void>
   /** Clear all state back to empty (e.g. when the dialog closes). */
   reset: () => void
 }
@@ -67,7 +69,7 @@ export function useImportNotes(
   )
 
   const start = useCallback(
-    async (files: File[]) => {
+    async (files: File[], noteType?: string) => {
       if (files.length === 0) return
 
       const batch: ImportItem[] = files.map((file) => ({
@@ -87,7 +89,7 @@ export function useImportNotes(
           const item = batch[cursor++]
           patchItem(item.id, { status: "parsing" })
           try {
-            const session = await importNote(patientId, item.file, { token })
+            const session = await importNote(patientId, item.file, { token, noteType })
             patchItem(item.id, { status: "done", session })
           } catch (err) {
             patchItem(item.id, {
@@ -110,6 +112,7 @@ export function useImportNotes(
       // patient's session count / last-session date.
       void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all })
       void queryClient.invalidateQueries({ queryKey: queryKeys.patients.all })
+      void refreshDashboard(queryClient)
     },
     [patientId, token, patchItem, queryClient],
   )

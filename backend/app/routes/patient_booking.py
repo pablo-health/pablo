@@ -63,6 +63,7 @@ from ..models.scheduling import (
 )
 from ..repositories.postgres.appointment import PostgresAppointmentRepository
 from ..repositories.postgres.appointment_type import PostgresAppointmentTypeRepository
+from ..repositories.postgres.audit import PostgresAuditRepository
 from ..repositories.postgres.availability_rule import PostgresAvailabilityRuleRepository
 from ..repositories.postgres.external_calendar_event import (
     PostgresExternalCalendarEventRepository,
@@ -81,6 +82,8 @@ from ..scheduling_engine.models.appointment import (
     ChangeRecord,
 )
 from ..scheduling_engine.services.availability import AvailabilityEngine
+from ..scheduling_engine.services.open_slots import open_slot_for
+from ..scheduling_engine.services.open_slots import publish as publish_open_slot
 from ..scheduling_engine.services.scheduling import SchedulingService
 from ..scheduling_engine.services.scheduling_policy import (
     DEFAULTS as POLICY_DEFAULTS,
@@ -97,8 +100,10 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session
 
+    from ..repositories.row import Row
     from ..scheduling_engine.models.appointment import Appointment
     from ..scheduling_engine.models.appointment_type import AppointmentType
+    from ..scheduling_engine.services.open_slots import OpenSlot
 
 logger = logging.getLogger(__name__)
 
@@ -261,7 +266,7 @@ def _require_stepped_up(patient: PatientContext) -> None:
         )
 
 
-def _require_self_booking(policy: dict[str, object]) -> None:
+def _require_self_booking(policy: Row) -> None:
     """Refuse unless the practice lets an existing patient self-book.
 
     Keyed on ``self_book_existing``: everyone reaching these routes is an
@@ -367,14 +372,14 @@ def _late_change(
     return True
 
 
-def _window(policy: dict[str, object], *, now: datetime) -> tuple[datetime, datetime]:
+def _window(policy: Row, *, now: datetime) -> tuple[datetime, datetime]:
     """The earliest and latest instants this practice will take a booking for."""
-    min_notice = int(policy["min_notice_hours"])  # type: ignore[call-overload]
-    max_horizon = int(policy["max_horizon_days"])  # type: ignore[call-overload]
+    min_notice = int(policy["min_notice_hours"])
+    max_horizon = int(policy["max_horizon_days"])
     return now + timedelta(hours=min_notice), now + timedelta(days=max_horizon)
 
 
-def _require_inside_window(policy: dict[str, object], start_at: datetime, *, now: datetime) -> None:
+def _require_inside_window(policy: Row, start_at: datetime, *, now: datetime) -> None:
     """Refuse a time outside the practice's notice and horizon windows.
 
     Shared by booking and rescheduling rather than written twice. Moving an
@@ -535,10 +540,10 @@ def get_booking_options(
         # Withheld when the practice does not take online bookings: a list of
         # types nobody may book is machinery the reader did not ask about.
         session_types=types if self_booking else [],
-        min_notice_hours=int(policy["min_notice_hours"]),  # type: ignore[call-overload]
-        max_horizon_days=int(policy["max_horizon_days"]),  # type: ignore[call-overload]
-        cancel_cutoff_hours=int(policy["cancel_cutoff_hours"]),  # type: ignore[call-overload]
-        reschedule_cutoff_hours=int(policy["reschedule_cutoff_hours"]),  # type: ignore[call-overload]
+        min_notice_hours=int(policy["min_notice_hours"]),
+        max_horizon_days=int(policy["max_horizon_days"]),
+        cancel_cutoff_hours=int(policy["cancel_cutoff_hours"]),
+        reschedule_cutoff_hours=int(policy["reschedule_cutoff_hours"]),
         practice_timezone=timezone,
         join_window_before_minutes=get_settings().telehealth_join_window_before_minutes,
         practice_phone=phone,
@@ -656,7 +661,7 @@ def book_appointment(
             # A held slot has to stop being held. The practice's own
             # pending_hold_hours decides when, capped at the appointment itself
             # — holding past the start time would be holding nothing.
-            hold_hours = int(policy["pending_hold_hours"])  # type: ignore[call-overload]
+            hold_hours = int(policy["pending_hold_hours"])
             data["status"] = "pending"
             data["pending_expires_at"] = min(
                 datetime.now(UTC) + timedelta(hours=hold_hours), start_at
@@ -771,7 +776,7 @@ def reschedule_appointment(
         _require_changeable(appointment)
         late = _late_change(
             appointment,
-            cutoff_hours=int(policy["reschedule_cutoff_hours"]),  # type: ignore[call-overload]
+            cutoff_hours=int(policy["reschedule_cutoff_hours"]),
             now=now,
             acknowledged=payload.acknowledge_late_change,
         )
@@ -883,7 +888,7 @@ def cancel_appointment(
 
         late = _late_change(
             appointment,
-            cutoff_hours=int(policy["cancel_cutoff_hours"]),  # type: ignore[call-overload]
+            cutoff_hours=int(policy["cancel_cutoff_hours"]),
             now=now,
             acknowledged=payload.acknowledge_late_change,
         )
@@ -897,6 +902,9 @@ def cancel_appointment(
                 acknowledged=payload.acknowledge_late_change if late else None,
             ),
         )
+        opened = open_slot_for(cancelled)
+        if opened is not None:
+            _record_open_slot(session, opened)
         session.commit()
 
     audit.log_patient_principal_action(
@@ -906,4 +914,25 @@ def cancel_appointment(
         resource_type=ResourceType.APPOINTMENT,
         resource_id=cancelled.id,
     )
+    if opened is not None:
+        publish_open_slot(opened)
     return _to_patient_view(cancelled)
+
+
+def _record_open_slot(session: Session, slot: OpenSlot) -> None:
+    """Note in the clinician's trail that this cancellation opened a slot.
+
+    Written on the owner-armed session, inside the cancellation's own
+    transaction, so the row exists exactly when the cancellation does. It is
+    scoped to the clinician — the slot is in their diary — and written as the
+    system, because nobody chose to raise the event. Ids only: the type and
+    the derived modality, nothing about the client who gave the time back.
+    """
+    AuditService(PostgresAuditRepository(session)).log_system_action(
+        AuditAction.APPOINTMENT_SLOT_OPENED,
+        scope_user_id=slot.clinician_id,
+        resource_type=ResourceType.APPOINTMENT,
+        resource_id=slot.appointment_id,
+        actor_component="open_slots",
+        changes={"appointment_type_id": slot.appointment_type_id, "modality": slot.modality},
+    )

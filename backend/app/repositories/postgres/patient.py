@@ -28,6 +28,8 @@ from ...models.enums import ClinicianRole
 from ...models.patient_facing import PATIENT_SELF_WRITABLE_COLUMNS, PatientFacingPatient
 from ...utcnow import utc_now
 from ..patient import PatientRepository, PracticeClient
+from ._grants import grant_in_force, live_grant
+from .patient_problem import seed_problem_from_free_text
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -72,23 +74,6 @@ def _is_uuid(value: str) -> bool:
     return True
 
 
-def _live_grant_filter(user_id: str) -> tuple:
-    """SQL predicates for "user has a non-expired patient_clinicians grant".
-
-    Returns a tuple usable in ``.filter(*predicates)`` calls. Used by
-    every method that joins through ``PatientClinicianRow``; keeping it
-    in one place ensures expiration semantics never drift between
-    methods.
-    """
-    return (
-        PatientClinicianRow.user_id == user_id,
-        or_(
-            PatientClinicianRow.expires_at.is_(None),
-            PatientClinicianRow.expires_at > utc_now(),
-        ),
-    )
-
-
 class PostgresPatientRepository(PatientRepository):
     def __init__(self, session: Session) -> None:
         self._session = session
@@ -120,7 +105,7 @@ class PostgresPatientRepository(PatientRepository):
                 .where(
                     PatientRow.id == patient_id,
                     PatientRow.deleted_at.is_(None),
-                    *_live_grant_filter(user_id),
+                    *live_grant(user_id),
                 )
             )
             .scalars()
@@ -209,7 +194,7 @@ class PostgresPatientRepository(PatientRepository):
                     func.lower(PatientRow.email) == email.lower(),
                     PatientRow.deleted_at.is_(None),
                     PatientRow.status != "pending",
-                    *_live_grant_filter(user_id),
+                    *live_grant(user_id),
                 )
                 .order_by(PatientRow.created_at)
                 .limit(1)
@@ -228,7 +213,7 @@ class PostgresPatientRepository(PatientRepository):
             .where(
                 PatientRow.id == patient_id,
                 PatientRow.deleted_at.is_(None),
-                *_live_grant_filter(user_id),
+                *live_grant(user_id),
             )
         )
         return last_name
@@ -246,7 +231,7 @@ class PostgresPatientRepository(PatientRepository):
             self._session.execute(
                 select(PatientClinicianRow.patient_id).where(
                     PatientClinicianRow.patient_id == patient_id,
-                    *_live_grant_filter(user_id),
+                    *live_grant(user_id),
                 )
             ).first()
         )
@@ -254,18 +239,15 @@ class PostgresPatientRepository(PatientRepository):
     def live_grant_pairs(self, pairs: set[tuple[str, str]]) -> set[tuple[str, str]]:
         if not pairs:
             return set()
-        # One query for all (user_id, patient_id) pairs. The expiry predicate
-        # can't reuse _live_grant_filter (that pins a single user_id), so the
-        # not-expired clause is inlined; the tuple IN matches each pair exactly.
+        # One query for all (user_id, patient_id) pairs. live_grant pins a
+        # single user_id, so only its not-expired half applies here; the tuple
+        # IN matches each pair exactly.
         rows = self._session.execute(
             select(PatientClinicianRow.user_id, PatientClinicianRow.patient_id).where(
                 tuple_(PatientClinicianRow.user_id, PatientClinicianRow.patient_id).in_(
                     [(uid, pid) for (uid, pid) in pairs]
                 ),
-                or_(
-                    PatientClinicianRow.expires_at.is_(None),
-                    PatientClinicianRow.expires_at > utc_now(),
-                ),
+                grant_in_force(),
             )
         ).all()
         return {(row.user_id, row.patient_id) for row in rows}
@@ -280,7 +262,7 @@ class PostgresPatientRepository(PatientRepository):
                 .where(
                     PatientRow.id.in_(patient_ids),
                     PatientRow.deleted_at.is_(None),
-                    *_live_grant_filter(user_id),
+                    *live_grant(user_id),
                 )
             )
             .scalars()
@@ -313,7 +295,7 @@ class PostgresPatientRepository(PatientRepository):
             .where(
                 PatientRow.deleted_at.is_(None),
                 PatientRow.status != "pending",
-                *_live_grant_filter(user_id),
+                *live_grant(user_id),
             )
         )
 
@@ -381,6 +363,17 @@ class PostgresPatientRepository(PatientRepository):
         )
         self._session.add(grant)
         self._session.flush([grant])
+
+        # A client added while a colleague's coverage of this clinician is
+        # booked or under way is covered like the rest.
+        from ...away.coverage import extend_coverage_to_new_client  # noqa: PLC0415 — cycle
+
+        extend_coverage_to_new_client(self._session, user_id, patient.id, utc_now())
+
+        # A diagnosis that arrives with a new chart starts its problem list;
+        # the diagnosis line is then whatever the list derives.
+        seed_problem_from_free_text(self._session, patient.id, patient.diagnosis, user_id)
+        patient.diagnosis = row.diagnosis
         return patient
         return patient
 
@@ -460,7 +453,7 @@ class PostgresPatientRepository(PatientRepository):
                     PatientRow.deleted_at.isnot(None),
                     PatientRow.deleted_at > cutoff,
                     PatientRow.status != "pending",
-                    *_live_grant_filter(user_id),
+                    *live_grant(user_id),
                 )
                 .order_by(PatientRow.last_name_lower, PatientRow.first_name_lower)
             )
@@ -584,12 +577,15 @@ def _row_to_patient(row: PatientRow) -> Patient:
         # DB column is native DATE; the API model carries an ISO string.
         date_of_birth=row.date_of_birth.isoformat() if row.date_of_birth else None,
         diagnosis=row.diagnosis,
+        allergy_status=row.allergy_status,
+        allergies=list(row.allergies or []),
         last_session_date=row.last_session_date,
         next_session_date=row.next_session_date,
         chart_closed_at=row.chart_closed_at,
         chart_closure_reason=row.chart_closure_reason,
         rate_cents=row.rate_cents,
         sliding_scale_note=row.sliding_scale_note,
+        superbill_includes_diagnosis=row.superbill_includes_diagnosis,
         origin=row.origin,
         address_line1=row.address_line1,
         address_line2=row.address_line2,
@@ -597,6 +593,9 @@ def _row_to_patient(row: PatientRow) -> Patient:
         state=row.state,
         postal_code=row.postal_code,
         sex=row.sex,
+        preferred_name=row.preferred_name,
+        pronouns=row.pronouns,
+        emergency_contact=row.emergency_contact,
     )
 
 
@@ -611,7 +610,10 @@ def _patient_to_row(patient: Patient, row: PatientRow) -> None:
     row.status = patient.status
     # ISO string (or "" / None) from the API -> native DATE (or NULL).
     row.date_of_birth = date.fromisoformat(patient.date_of_birth) if patient.date_of_birth else None
-    row.diagnosis = patient.diagnosis
+    # ``diagnosis`` is not written here: it is derived from the problem list
+    # (``PatientProblemRepository.sync_patient_diagnosis``).
+    row.allergy_status = patient.allergy_status
+    row.allergies = patient.allergies
     row.session_count = patient.session_count
     row.last_session_date = patient.last_session_date
     row.next_session_date = patient.next_session_date
@@ -619,6 +621,7 @@ def _patient_to_row(patient: Patient, row: PatientRow) -> None:
     row.chart_closure_reason = patient.chart_closure_reason
     row.rate_cents = patient.rate_cents
     row.sliding_scale_note = patient.sliding_scale_note
+    row.superbill_includes_diagnosis = patient.superbill_includes_diagnosis
     row.origin = patient.origin
     row.address_line1 = patient.address_line1
     row.address_line2 = patient.address_line2
@@ -626,5 +629,8 @@ def _patient_to_row(patient: Patient, row: PatientRow) -> None:
     row.state = patient.state
     row.postal_code = patient.postal_code
     row.sex = patient.sex
+    row.preferred_name = patient.preferred_name
+    row.pronouns = patient.pronouns
+    row.emergency_contact = patient.emergency_contact
     row.created_at = patient.created_at
     row.updated_at = patient.updated_at

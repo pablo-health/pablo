@@ -16,13 +16,17 @@ The patient methods reach their own rows through the
 principal; the clinician method reaches the same rows through the
 ``has_patient_access`` grant the rest of the chart uses.
 
-Rows are plain ``dict[str, object]`` matching the column layout, the same
+Rows are plain ``Row`` matching the column layout, the same
 shape the other repositories in this package hand back.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .row import Row
 
 
 class PatientIntakeArtifactRepository(ABC):
@@ -31,7 +35,7 @@ class PatientIntakeArtifactRepository(ABC):
     # --- patient side ---
 
     @abstractmethod
-    def add(self, row: dict[str, object]) -> dict[str, object]:
+    def add(self, row: Row) -> Row:
         """Attach one document to one question.
 
         The caller has already checked everything it can: that the form is
@@ -43,7 +47,7 @@ class PatientIntakeArtifactRepository(ABC):
         """
 
     @abstractmethod
-    def list_for_assignment(self, assignment_id: str, patient_id: str) -> list[dict[str, object]]:
+    def list_for_assignment(self, assignment_id: str, patient_id: str) -> list[Row]:
         """The calling patient's artifacts on one of their own forms.
 
         Oldest first, so the front of a card reads before the back when both
@@ -51,7 +55,7 @@ class PatientIntakeArtifactRepository(ABC):
         """
 
     @abstractmethod
-    def get(self, artifact_id: str, patient_id: str) -> dict[str, object] | None:
+    def get(self, artifact_id: str, patient_id: str) -> Row | None:
         """One of the calling patient's own artifacts, or ``None``.
 
         Another patient's id and an id that never existed answer the same
@@ -70,7 +74,7 @@ class PatientIntakeArtifactRepository(ABC):
     # --- clinician side ---
 
     @abstractmethod
-    def list_for_clinician(self, assignment_id: str, user_id: str) -> list[dict[str, object]]:
+    def list_for_clinician(self, assignment_id: str, user_id: str) -> list[Row]:
         """The same artifacts, reached through the clinician's grant instead."""
 
 
@@ -85,7 +89,7 @@ class InMemoryPatientIntakeArtifactRepository(PatientIntakeArtifactRepository):
     """
 
     def __init__(self) -> None:
-        self.rows: dict[str, dict[str, object]] = {}
+        self.rows: dict[str, Row] = {}
         #: Which patients a clinician holds a grant on, for the clinician
         #: read. Mirrors ``patient_clinicians`` without the table.
         self.grants: dict[str, set[str]] = {}
@@ -95,7 +99,7 @@ class InMemoryPatientIntakeArtifactRepository(PatientIntakeArtifactRepository):
 
     # --- patient side ---
 
-    def add(self, row: dict[str, object]) -> dict[str, object]:
+    def add(self, row: Row) -> Row:
         document_id = str(row["document_id"])
         if any(str(r["document_id"]) == document_id for r in self.rows.values()):
             raise DocumentAlreadyAttachedError(document_id)
@@ -107,16 +111,16 @@ class InMemoryPatientIntakeArtifactRepository(PatientIntakeArtifactRepository):
         self.rows[str(row["id"])] = dict(row)
         return dict(row)
 
-    def list_for_assignment(self, assignment_id: str, patient_id: str) -> list[dict[str, object]]:
+    def list_for_assignment(self, assignment_id: str, patient_id: str) -> list[Row]:
         rows = [
             dict(row)
             for row in self.rows.values()
             if str(row["assignment_id"]) == assignment_id and str(row["patient_id"]) == patient_id
         ]
-        rows.sort(key=lambda row: (row["created_at"], str(row["id"])))  # type: ignore[index]
+        rows.sort(key=lambda row: (row["created_at"], str(row["id"])))
         return rows
 
-    def get(self, artifact_id: str, patient_id: str) -> dict[str, object] | None:
+    def get(self, artifact_id: str, patient_id: str) -> Row | None:
         row = self.rows.get(artifact_id)
         if row is None or str(row["patient_id"]) != patient_id:
             return None
@@ -130,14 +134,14 @@ class InMemoryPatientIntakeArtifactRepository(PatientIntakeArtifactRepository):
 
     # --- clinician side ---
 
-    def list_for_clinician(self, assignment_id: str, user_id: str) -> list[dict[str, object]]:
+    def list_for_clinician(self, assignment_id: str, user_id: str) -> list[Row]:
         allowed = self.grants.get(user_id, set())
         rows = [
             dict(row)
             for row in self.rows.values()
             if str(row["assignment_id"]) == assignment_id and str(row["patient_id"]) in allowed
         ]
-        rows.sort(key=lambda row: (row["created_at"], str(row["id"])))  # type: ignore[index]
+        rows.sort(key=lambda row: (row["created_at"], str(row["id"])))
         return rows
 
     # --- helpers ---

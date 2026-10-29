@@ -9,17 +9,36 @@ join the chat repository uses for its lists. The patient arm matches on the
 principal's ``patient_id``. Row security tests both independently
 underneath, so a query that forgot its filter still sees nothing it should
 not.
+
+The clinician arm also attaches each request's risk (when the client runs
+out, whether it is controlled, whether it is harmful to interrupt): two
+batched reads per list, the medication rows and the signed prescriptions of
+the patients on it, decided by :func:`app.models.refill_risk.assess`. The
+prescriptions are read here, on the clinician's session, and never on the
+patient's: a client cannot read them, and the estimate is the practice's.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import String, Uuid, bindparam, or_, select, text, update
+from sqlalchemy import String, Uuid, bindparam, select, text, update
 
-from ...db.models import PatientClinicianRow, PatientMedicationRow, PatientRow, RefillRequestRow
-from ...models.refill_request import REFILL_STATUS_REQUESTED, RefillQueueEntry, RefillRequest
-from ...utcnow import utc_now
+from ...db.models import (
+    PatientClinicianRow,
+    PatientMedicationRow,
+    PatientRow,
+    PrescribingEncounterRow,
+    PrescriptionRow,
+    RefillRequestRow,
+)
+from ...models.refill_request import (
+    REFILL_STATUS_REQUESTED,
+    RefillQueueEntry,
+    RefillRequest,
+    RefillRisk,
+)
+from ...models.refill_risk import PrescriptionOnFile, assess, same_drug
 from ..refill_request import (
     RECENT_DECISIONS_LIMIT,
     RefillQueueView,
@@ -27,11 +46,13 @@ from ..refill_request import (
     RefillRequestAlreadyDecidedError,
     RefillRequestRepository,
 )
+from ._grants import live_grant
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from datetime import datetime
 
-    from sqlalchemy import Select
+    from sqlalchemy import Row, Select
     from sqlalchemy.orm import Session
 
 _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindparams(
@@ -59,10 +80,12 @@ def _request(row: RefillRequestRow) -> RefillRequest:
         decided_by_user_id=row.decided_by_user_id,
         decided_at=row.decided_at,
         prescriber_note=row.prescriber_note,
+        due_at=row.due_at,
+        run_out_date=row.run_out_date,
     )
 
 
-def _entry_query(user_id: str) -> Select[tuple[RefillRequestRow, str, str, str | None]]:
+def _entry_query(user_id: str) -> Select[Any]:
     """Requests joined to their patient's name, through a live grant for *user_id*."""
     return (
         select(
@@ -74,11 +97,7 @@ def _entry_query(user_id: str) -> Select[tuple[RefillRequestRow, str, str, str |
         .join(PatientRow, PatientRow.id == RefillRequestRow.patient_id)
         .join(PatientClinicianRow, PatientClinicianRow.patient_id == RefillRequestRow.patient_id)
         .where(
-            PatientClinicianRow.user_id == user_id,
-            or_(
-                PatientClinicianRow.expires_at.is_(None),
-                PatientClinicianRow.expires_at > utc_now(),
-            ),
+            *live_grant(user_id),
         )
     )
 
@@ -129,6 +148,8 @@ class PostgresRefillRequestRepository(RefillRequestRepository):
             pharmacy_text=request.pharmacy_text,
             patient_note=request.patient_note,
             status=request.status,
+            due_at=request.due_at,
+            run_out_date=request.run_out_date,
             created_at=request.created_at,
             updated_at=request.updated_at,
         )
@@ -153,8 +174,9 @@ class PostgresRefillRequestRepository(RefillRequestRepository):
     def list_queue(self, user_id: str, view: RefillQueueView) -> list[RefillQueueEntry]:
         query = _entry_query(user_id)
         if view == "pending":
+            # Mirrors :func:`~app.models.refill_request.queue_order_key`.
             query = query.where(RefillRequestRow.status == REFILL_STATUS_REQUESTED).order_by(
-                RefillRequestRow.created_at.asc()
+                RefillRequestRow.due_at.asc().nulls_last(), RefillRequestRow.created_at.asc()
             )
         else:
             query = (
@@ -162,29 +184,97 @@ class PostgresRefillRequestRepository(RefillRequestRepository):
                 .order_by(RefillRequestRow.decided_at.desc())
                 .limit(RECENT_DECISIONS_LIMIT)
             )
-        return [
-            RefillQueueEntry(
-                request=_request(row),
-                patient_first_name=first,
-                patient_last_name=last,
-                patient_preferred_name=preferred,
-            )
-            for row, first, last, preferred in self._session.execute(query).all()
-        ]
+        return self._entries(self._session.execute(query).all())
 
     def get_entry(self, request_id: str, user_id: str) -> RefillQueueEntry | None:
         found = self._session.execute(
             _entry_query(user_id).where(RefillRequestRow.id == request_id)
-        ).first()
-        if found is None:
-            return None
-        row, first, last, preferred = found
-        return RefillQueueEntry(
-            request=_request(row),
-            patient_first_name=first,
-            patient_last_name=last,
-            patient_preferred_name=preferred,
-        )
+        ).all()
+        entries = self._entries(found)
+        return entries[0] if entries else None
+
+    def _entries(self, found: Sequence[Row[Any]]) -> list[RefillQueueEntry]:
+        risks = self._risks([r.RefillRequestRow for r in found])
+        return [
+            RefillQueueEntry(
+                request=_request(r.RefillRequestRow),
+                patient_first_name=r.first_name,
+                patient_last_name=r.last_name,
+                patient_preferred_name=r.preferred_name,
+                risk=risks[r.RefillRequestRow.id],
+            )
+            for r in found
+        ]
+
+    def _risks(self, rows: list[RefillRequestRow]) -> dict[str, RefillRisk]:
+        """Each request's risk, from its medication row and its patient's prescriptions."""
+        if not rows:
+            return {}
+        medication_ids = {r.medication_id for r in rows if r.medication_id is not None}
+        medications = {
+            med_id: (drug, controlled, interruption)
+            for med_id, drug, controlled, interruption in self._session.execute(
+                select(
+                    PatientMedicationRow.id,
+                    PatientMedicationRow.drug_name,
+                    PatientMedicationRow.controlled,
+                    PatientMedicationRow.interruption_risk,
+                ).where(PatientMedicationRow.id.in_(medication_ids))
+            ).all()
+        }
+        # Newest first, so the first match for a drug is the one on file now.
+        prescriptions = self._session.execute(
+            select(
+                PrescriptionRow.patient_id,
+                PrescriptionRow.drug_name,
+                PrescriptionRow.schedule,
+                PrescriptionRow.days_supply,
+                PrescriptionRow.refills,
+                PrescribingEncounterRow.finalized_at,
+            )
+            .join(
+                PrescribingEncounterRow,
+                PrescribingEncounterRow.id == PrescriptionRow.encounter_id,
+            )
+            .where(
+                PrescriptionRow.patient_id.in_({r.patient_id for r in rows}),
+                PrescriptionRow.deleted_at.is_(None),
+                PrescriptionRow.drug_name.is_not(None),
+                PrescribingEncounterRow.status == "finalized",
+                PrescribingEncounterRow.finalized_at.is_not(None),
+                PrescribingEncounterRow.deleted_at.is_(None),
+            )
+            .order_by(PrescribingEncounterRow.finalized_at.desc())
+        ).all()
+        risks: dict[str, RefillRisk] = {}
+        for row in rows:
+            drug, controlled, interruption = medications.get(
+                row.medication_id or "", (None, None, None)
+            )
+            name = drug or row.medication_text
+            on_file = next(
+                (
+                    PrescriptionOnFile(
+                        written_on=finalized_at.date(),
+                        schedule=schedule,
+                        days_supply=days_supply,
+                        refills=refills,
+                    )
+                    for patient_id, rx_drug, schedule, days_supply, refills, finalized_at in (
+                        prescriptions
+                    )
+                    if patient_id == row.patient_id and same_drug(rx_drug, name)
+                ),
+                None,
+            )
+            risks[row.id] = assess(
+                medication=name,
+                client_run_out=row.run_out_date,
+                prescription=on_file,
+                clinician_controlled=controlled,
+                clinician_interruption_risk=interruption,
+            )
+        return risks
 
     def decide(
         self,

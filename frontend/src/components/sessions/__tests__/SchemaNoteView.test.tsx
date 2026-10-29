@@ -7,11 +7,12 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { fireEvent, render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, within } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { ReactNode } from "react"
 import { NoteViewer } from "../NoteViewer"
 import { getNoteType } from "@/lib/api/noteTypes"
+import { exportNoteToPDF, type PDFExportMetadata } from "@/lib/utils/pdfExport"
 import { ApiError } from "@/lib/api/client"
 import { createMockNote } from "@/test/factories"
 import { noteContentToJson, type NoteContent } from "@/types/sessions"
@@ -22,7 +23,7 @@ vi.mock("@/lib/api/noteTypes", () => ({
   listNoteTypes: vi.fn(),
 }))
 
-vi.mock("@/lib/utils/pdfExport", () => ({ exportSOAPToPDF: vi.fn() }))
+vi.mock("@/lib/utils/pdfExport", () => ({ exportSOAPToPDF: vi.fn(), exportNoteToPDF: vi.fn() }))
 
 vi.mock("@/lib/config", () => ({
   useConfig: () => ({ showVerificationBadges: true }),
@@ -101,6 +102,39 @@ describe("catalog-driven note view", () => {
     expect(screen.queryByText("Subjective")).not.toBeInTheDocument()
   })
 
+  it("flags a field of an imported note that the document does not contain", async () => {
+    vi.mocked(getNoteType).mockResolvedValue(DAP)
+    // Everything but the impression and the second observation is in the document.
+    const document = "Client report: Reports sleeping better.\nObserved: Calm.\nPlan: Continue CBT."
+    render(
+      <NoteViewer
+        note={createMockNote({ note_type: "dap", content: DAP_CONTENT })}
+        groundingSource={document}
+      />,
+      { wrapper },
+    )
+
+    const field = async (label: string) =>
+      (await screen.findByRole("heading", { name: new RegExp(`^${label}`) })).textContent
+    expect(await field("Client report")).toContain("from your note")
+    expect(await field("Next steps")).toContain("from your note")
+    expect(await field("Clinical impression")).toContain("review")
+    // A list is found only when every item is.
+    expect(await field("Observations")).toContain("review")
+    // Shown read-only; nothing to check against the document.
+    expect(await field("Measures")).not.toMatch(/review|from your note/)
+  })
+
+  it("shows no document check on a note that was not imported", async () => {
+    vi.mocked(getNoteType).mockResolvedValue(DAP)
+    render(<NoteViewer note={createMockNote({ note_type: "dap", content: DAP_CONTENT })} />, {
+      wrapper,
+    })
+    await screen.findByRole("heading", { name: "DAP" })
+    expect(screen.queryByText("review")).not.toBeInTheDocument()
+    expect(screen.queryByText("from your note")).not.toBeInTheDocument()
+  })
+
   it("asks for the definition at the version the note records", async () => {
     vi.mocked(getNoteType).mockResolvedValue({ ...DAP, key: "custom.coach", version: 3 })
     render(
@@ -115,6 +149,36 @@ describe("catalog-driven note view", () => {
     )
     await screen.findByRole("heading", { name: "DAP" })
     expect(getNoteType).toHaveBeenCalledWith("custom.coach", 3, undefined)
+  })
+
+  it("marks an empty section and field quietly, as no part of the note, and edits them as empty boxes", async () => {
+    vi.mocked(getNoteType).mockResolvedValue(DAP)
+    render(
+      <NoteViewer
+        note={createMockNote({
+          note_type: "dap",
+          content: {
+            data: { subjective: "Not stated.", observations: [] },
+            assessment: { impression: "  " },
+            plan: { next_steps: ["(not asked this visit)"], measures: { phq9: 7 } },
+          },
+        })}
+        onSave={vi.fn()}
+      />,
+      { wrapper },
+    )
+
+    const assessment = (await screen.findByRole("heading", { name: "Assessment" })).parentElement!
+    const cue = within(assessment).getByText("Nothing entered")
+    expect(cue).toHaveClass("select-none")
+    expect(screen.getAllByText("Nothing entered")).toHaveLength(1)
+    expect(screen.queryByText("No content")).not.toBeInTheDocument()
+    expect(screen.getByText("Not stated.")).toBeInTheDocument()
+    expect(screen.getByText("(not asked this visit)")).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }))
+    expect(screen.queryByText("Nothing entered")).not.toBeInTheDocument()
+    expect(within(assessment).getByRole("textbox")).toBeInTheDocument()
   })
 
   it("shows clinician edits over the generated content", async () => {
@@ -166,6 +230,38 @@ describe("catalog-driven note view", () => {
     })
   })
 
+  it("leaves a review-only section out of the note and keeps it through an edit", async () => {
+    const withReview: NoteTypeSchema = {
+      ...DAP,
+      sections: [
+        ...DAP.sections,
+        {
+          key: "mdm",
+          label: "Medical decision making",
+          review_only: true,
+          fields: [{ key: "problems_addressed", label: "Problems addressed", kind: "text", ai_hint: "" }],
+        },
+      ],
+    }
+    vi.mocked(getNoteType).mockResolvedValue(withReview)
+    const onSave = vi.fn<(content: NoteContent) => void>()
+    const content = { ...DAP_CONTENT, mdm: { problems_addressed: "Anxiety, worse." } }
+    render(<NoteViewer note={createMockNote({ note_type: "dap", content })} onSave={onSave} />, {
+      wrapper,
+    })
+
+    expect(await screen.findByRole("heading", { name: "Plan" })).toBeInTheDocument()
+    expect(screen.queryByRole("heading", { name: "Medical decision making" })).not.toBeInTheDocument()
+    expect(screen.queryByText("Anxiety, worse.")).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: /edit/i }))
+    expect(screen.queryByLabelText("Problems addressed")).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }))
+    expect(noteContentToJson(onSave.mock.calls[0][0]).mdm).toEqual({
+      problems_addressed: "Anxiety, worse.",
+    })
+  })
+
   it("opens a blank note straight in the editor", async () => {
     vi.mocked(getNoteType).mockResolvedValue(DAP)
     const onSave = vi.fn<(content: NoteContent) => void>()
@@ -183,6 +279,60 @@ describe("catalog-driven note view", () => {
       assessment: { impression: "" },
       plan: { next_steps: [] },
     })
+  })
+
+  it("opens a new note written by hand in the editor, with the chart's fields filled in", async () => {
+    vi.mocked(getNoteType).mockResolvedValue(DAP)
+    const onSave = vi.fn<(content: NoteContent) => void>()
+    render(
+      <NoteViewer
+        note={createMockNote({
+          note_type: "dap",
+          session_id: null,
+          content_edited: { data: { observations: ["Sertraline 100 mg"] } },
+        })}
+        onSave={onSave}
+      />,
+      { wrapper },
+    )
+
+    const observations = await screen.findByLabelText("Observations")
+    expect(observations).toHaveValue("Sertraline 100 mg")
+    expect(screen.getByLabelText("Client report")).toHaveValue("")
+    // Written by hand: nothing marks it as drafted or edited, and nothing to cancel back to.
+    expect(screen.queryByText("AI Generated")).not.toBeInTheDocument()
+    expect(screen.queryByText("Edited")).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /cancel/i })).not.toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText("Client report"), {
+      target: { value: "First session" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }))
+    expect(noteContentToJson(onSave.mock.calls[0][0])).toEqual({
+      data: { subjective: "First session", observations: ["Sertraline 100 mg"] },
+      assessment: { impression: "" },
+      plan: { next_steps: [] },
+    })
+  })
+
+  it("shows a note written by hand as saved once it has been saved", async () => {
+    vi.mocked(getNoteType).mockResolvedValue(DAP)
+    render(
+      <NoteViewer
+        note={createMockNote({
+          note_type: "dap",
+          session_id: null,
+          content_edited: { data: { observations: ["Sertraline 100 mg"] } },
+          updated_at: "2024-01-15T14:45:00Z",
+        })}
+        onSave={vi.fn()}
+      />,
+      { wrapper },
+    )
+
+    expect(await screen.findByText("Sertraline 100 mg")).toBeInTheDocument()
+    expect(screen.queryByLabelText("Observations")).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /edit/i })).toBeInTheDocument()
   })
 
   it("offers no editing when the note is read-only", async () => {
@@ -233,5 +383,80 @@ describe("catalog-driven note view", () => {
     expect(screen.getByText("Narrative Note")).toBeInTheDocument()
     expect(screen.getByText("Hello")).toBeInTheDocument()
     expect(getNoteType).not.toHaveBeenCalled()
+  })
+})
+
+describe("a note's PDF", () => {
+  const META: PDFExportMetadata = {
+    patient_name: "Rivera, Ana",
+    session_date: "2026-10-06T15:00:00Z",
+    visit: ["Started 11:00 AM · Ended 11:55 AM · 55 min"],
+    signature: { lines: ["Electronically signed by Sam Ortiz, LMFT"], amendments: [], addenda: [] },
+  }
+
+  it("exports what the note shows, edits included, in the type's order", async () => {
+    vi.mocked(getNoteType).mockResolvedValue(DAP)
+    render(
+      <NoteViewer
+        readonly
+        pdfMetadata={META}
+        note={createMockNote({
+          note_type: "dap",
+          content: DAP_CONTENT,
+          content_edited: { ...DAP_CONTENT, assessment: { impression: "Stable" } },
+        })}
+      />,
+      { wrapper },
+    )
+
+    fireEvent.click(await screen.findByRole("button", { name: "Export PDF" }))
+
+    expect(exportNoteToPDF).toHaveBeenCalledTimes(1)
+    const [meta, pdf] = vi.mocked(exportNoteToPDF).mock.calls[0]
+    expect(meta).toBe(META)
+    expect(pdf).toEqual({
+      title: "DAP",
+      sections: [
+        {
+          title: "Data",
+          blocks: [
+            { label: "Client report", content: "Reports sleeping better" },
+            { label: "Observations", content: "- Calm\n- Engaged" },
+          ],
+        },
+        { title: "Assessment", blocks: [{ label: "Clinical impression", content: "Stable" }] },
+        {
+          title: "Plan",
+          blocks: [
+            { label: "Next steps", content: "- Continue CBT" },
+            { label: "Measures", content: JSON.stringify({ phq9: 7 }, null, 2) },
+          ],
+        },
+      ],
+    })
+  })
+
+  it("offers no PDF where the page gives the note no header", async () => {
+    vi.mocked(getNoteType).mockResolvedValue(DAP)
+    render(<NoteViewer note={createMockNote({ note_type: "dap", content: DAP_CONTENT })} />, {
+      wrapper,
+    })
+    await screen.findByRole("heading", { name: "DAP" })
+    expect(screen.queryByRole("button", { name: "Export PDF" })).not.toBeInTheDocument()
+  })
+
+  it("exports a narrative note's body", () => {
+    render(
+      <NoteViewer
+        pdfMetadata={META}
+        note={createMockNote({ note_type: "narrative", content: { body: "Hello" } })}
+      />,
+      { wrapper },
+    )
+    fireEvent.click(screen.getByRole("button", { name: "Export PDF" }))
+    expect(vi.mocked(exportNoteToPDF).mock.calls[0][1]).toEqual({
+      title: "Narrative Note",
+      sections: [{ title: "", blocks: [{ label: null, content: "Hello" }] }],
+    })
   })
 })

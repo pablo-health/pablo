@@ -30,9 +30,31 @@ describe("settings registry merge", () => {
       "profile",
       "appearance",
       "inbox",
+      "away",
       "security",
       "activity",
     ])
+  })
+
+  it("lists note types beside the other session settings in the practice group", async () => {
+    const { settingsGroups, findSettingsItem } = await load()
+
+    const practice = settingsGroups.find((group) => group.id === "practice")
+    expect(practice?.items.map((item) => item.id)).toEqual([
+      "availability",
+      "scheduling",
+      "waitlist",
+      "calendars",
+      "sessions",
+      "note-types",
+      "portal",
+      "domains",
+      "website",
+      "import",
+      "export",
+      "tasks",
+    ])
+    expect(findSettingsItem("note-types")?.label).toBe("Note types")
   })
 
   it("applies per-id overrides to base items without touching the rest", async () => {
@@ -94,6 +116,7 @@ describe("settings registry merge", () => {
       "profile",
       "appearance",
       "inbox",
+      "away",
       "security",
       "activity",
       "notifications",

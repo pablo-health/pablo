@@ -62,6 +62,16 @@ class BookingLinkRepository(ABC):
     def delete(self, link_id: str, user_id: str) -> bool:
         """Tombstone a link, scoped to its owner. Returns whether a live row existed."""
 
+    @abstractmethod
+    def claim_slot(self, link_id: str) -> bool:
+        """Mark a live single-slot link used. Returns whether this call claimed it.
+
+        At most one caller ever gets True for a link. On Postgres the claim
+        holds the row until the caller's transaction ends, so a concurrent
+        claim waits and then answers False — the booking it belongs to has to
+        be written in that same transaction for the pair to mean anything.
+        """
+
 
 class InMemoryBookingLinkRepository(BookingLinkRepository):
     """In-memory implementation for tests and development."""
@@ -121,4 +131,17 @@ class InMemoryBookingLinkRepository(BookingLinkRepository):
             link.deleted_at = now
             link.is_active = False
             link.updated_at = now
+            return True
+
+    def claim_slot(self, link_id: str) -> bool:
+        with self._lock:
+            link = self._links.get(link_id)
+            if (
+                link is None
+                or link.deleted_at is not None
+                or not link.is_single_slot
+                or link.slot_claimed_at is not None
+            ):
+                return False
+            link.slot_claimed_at = utc_now()
             return True

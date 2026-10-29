@@ -12,9 +12,10 @@ import type {
   PatientListParams,
   PatientListResponse,
   PatientResponse,
+  UpdateAllergiesRequest,
   UpdatePatientRequest,
 } from "@/types/patients"
-import { del, get, getFile, patch, post } from "./client"
+import { del, get, getFile, patch, post, put } from "./client"
 
 /**
  * Create a new patient
@@ -106,7 +107,7 @@ export async function getPatient(
  *
  * @example
  * const updated = await updatePatient("123...", {
- *   diagnosis: "Generalized Anxiety Disorder"
+ *   phone: "555-0100"
  * })
  */
 export async function updatePatient(
@@ -115,6 +116,17 @@ export async function updatePatient(
   token?: string
 ): Promise<PatientResponse> {
   return patch<PatientResponse>(`/api/patients/${patientId}`, data, token)
+}
+
+/**
+ * Replace a patient's allergy record: a list, NKDA, or not recorded.
+ */
+export async function updateAllergies(
+  patientId: string,
+  data: UpdateAllergiesRequest,
+  token?: string
+): Promise<PatientResponse> {
+  return put<PatientResponse>(`/api/patients/${patientId}/allergies`, data, token)
 }
 
 /**

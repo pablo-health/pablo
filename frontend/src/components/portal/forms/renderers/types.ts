@@ -112,6 +112,17 @@ export interface ReadOnlyItemProps extends SharedItemProps {
 
 export type ItemRendererProps = LiveItemProps | ReadOnlyItemProps
 
+/** What a review-screen label is drawn with: the question, and the patient's session. */
+export interface ReviewLabelProps {
+  item: IntakeAssignmentItem
+  sessionToken: string
+  /**
+   * The part heading the row sits under, when the row is that part's only
+   * document. A label that would only repeat it is left out.
+   */
+  heading?: string | null
+}
+
 export interface ItemRenderer {
   Component: ComponentType<ItemRendererProps>
   /**
@@ -130,6 +141,15 @@ export interface ItemRenderer {
    * renderer, which is why the display ones return an empty string.
    */
   label: (item: IntakeAssignmentItem, form: IntakeForm | null) => string
+  /**
+   * The review screen's name for this question, for a type whose name is
+   * read from the server rather than carried on the item.
+   *
+   * A consent document is named by its own title, which arrives with the
+   * document and not with the form. When this is set the review screen
+   * draws it in place of `label`.
+   */
+  ReviewLabel?: ComponentType<ReviewLabelProps>
   /**
    * One line for the review screen, or null when there is nothing to show.
    *

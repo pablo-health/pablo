@@ -4,17 +4,22 @@
 
 What these pin down:
 
-* the document is a render of the client's claims — one line per claim
-  line in the period, with the date, code, pointed diagnoses, fee and what
-  the ledger says was paid — and its totals are the sum of those lines;
+* the document is a render of the client's visits — a visit a claim was
+  built for prints from its claim lines, and a visit with no claim prints
+  from the appointment, priced the way the statement prices it — with the
+  date, code, fee and what the ledger says was paid, and its totals are the
+  sum of those lines;
+* the diagnosis is printed only when the client's superbill includes it, and
+  then a service without one refuses the document; otherwise the column is
+  not on the page and a missing diagnosis is not a gap;
 * narrowing the period drops lines and the totals move with them;
 * voids and corrected parents are left out, and a visit with two standing
   claims appears once;
 * only a succeeded charge counts as paid, and a visit's payment is spread
   over its lines in line order;
-* anything an insurer needs that is missing refuses the whole document,
-  naming the field: the rendering NPI, a line's service code, its diagnosis,
-  its fee, and a visit in the period with no claim at all;
+* anything missing refuses the whole document, naming the field: the
+  rendering NPI, a line's service code, its fee, and (when printed) its
+  diagnosis;
 * the same inputs give byte-identical PDFs, and nothing on the path loads a
   model client.
 """
@@ -50,7 +55,6 @@ from tests.claims_fixtures import (
     claim,
     line,
     person,
-    subscriber_snapshot,
 )
 
 _TZ = ZoneInfo("America/New_York")
@@ -133,9 +137,13 @@ def _build(**overrides: Any) -> Any:
         "patient_id": PATIENT_ID,
         "period_start": date(2026, 9, 1),
         "period_end": date(2026, 9, 30),
+        "patient": person(),
+        "billing": billing_snapshot(),
         "claims": [claim(), _second_claim()],
         "charges": [_charge()],
         "appointments": [],
+        "rate_for": lambda _appointment: None,
+        "includes_diagnosis": True,
         "timezone": _TZ,
         "tax_id": _TAX_ID,
         "license_for": _license_for,
@@ -280,7 +288,7 @@ class TestPayments:
 
 class TestRefusal:
     def test_missing_rendering_npi_refuses_and_names_the_field(self) -> None:
-        findings = _refusal(claims=[claim(billing_snapshot=billing_snapshot(npi=None))])
+        findings = _refusal(billing=billing_snapshot(npi=None))
         assert [(f.code, f.field) for f in findings] == [
             ("missing_field", "rendering_provider.npi"),
         ]
@@ -290,17 +298,13 @@ class TestRefusal:
         assert [f.field for f in findings] == ["billing_provider.tax_id"]
 
     def test_missing_patient_date_of_birth_refuses(self) -> None:
-        findings = _refusal(
-            claims=[
-                claim(subscriber_snapshot=subscriber_snapshot(patient=person(date_of_birth=None)))
-            ]
-        )
+        findings = _refusal(patient=person(date_of_birth=None))
         assert [f.field for f in findings] == ["patient.date_of_birth"]
 
     def test_line_without_a_service_code_is_reported_not_dropped(self) -> None:
         findings = _refusal(claims=[claim(), _second_claim(lines=[_second_line(cpt="  ")])])
         assert [f.field for f in findings] == ["lines[1].cpt"]
-        assert "2026-09-08" in findings[0].message
+        assert "09/08/2026" in findings[0].message
 
     def test_line_whose_pointers_name_no_diagnosis_is_reported(self) -> None:
         findings = _refusal(claims=[claim(diagnosis_codes=[]), _second_claim()])
@@ -313,7 +317,8 @@ class TestRefusal:
     def test_every_gap_is_listed_at_once(self) -> None:
         findings = _refusal(
             tax_id=None,
-            claims=[claim(billing_snapshot=billing_snapshot(npi=None), diagnosis_codes=[])],
+            billing=billing_snapshot(npi=None),
+            claims=[claim(diagnosis_codes=[])],
         )
         assert [f.field for f in findings] == [
             "rendering_provider.npi",
@@ -321,28 +326,41 @@ class TestRefusal:
             "lines[0].diagnosis_codes",
         ]
 
-    def test_visit_in_the_period_with_no_claim_is_reported(self) -> None:
-        unclaimed = _appointment(
-            id="99999999-9999-4999-8999-999999999999",
-            start_at=datetime(2026, 9, 3, 19, 0, tzinfo=UTC),
-            end_at=datetime(2026, 9, 3, 20, 0, tzinfo=UTC),
-        )
-        findings = _refusal(appointments=[_appointment(), unclaimed])
-        assert [(f.code, f.field) for f in findings] == [
-            ("visit_without_claim", f"appointments[{unclaimed.id}]"),
+    def test_a_practice_gap_says_where_in_settings_to_fill_it(self) -> None:
+        findings = _refusal(billing=billing_snapshot(npi=None), tax_id=None)
+        assert [f.message for f in findings] == [
+            "Add your NPI in Settings, under Practice identity.",
+            "Add your tax ID in Settings, under Practice identity.",
         ]
-        assert "2026-09-03" in findings[0].message
 
-    def test_visit_date_is_the_practice_local_date(self) -> None:
-        # 03:00 UTC on the 4th is the evening of the 3rd in New York; a period
-        # ending on the 3rd still covers it, so it is a visit with no claim.
-        late = _appointment(
-            id="99999999-9999-4999-8999-999999999999",
-            start_at=datetime(2026, 9, 4, 3, 0, tzinfo=UTC),
-            end_at=datetime(2026, 9, 4, 4, 0, tzinfo=UTC),
+    def test_a_partial_address_is_one_gap_not_one_per_part(self) -> None:
+        findings = _refusal(billing=billing_snapshot(city=None, postal_code=None))
+        assert [(f.field, f.message) for f in findings] == [
+            (
+                "billing_provider.city",
+                "Add your practice's billing address in Settings, under Practice identity.",
+            ),
+        ]
+
+    def test_a_chart_gap_uses_the_practice_word_for_the_person(self) -> None:
+        findings = _refusal(patient=person(date_of_birth=None))
+        assert [f.message for f in findings] == [
+            "Add this client's date of birth to their chart.",
+        ]
+
+    def test_a_visit_with_no_code_says_to_fix_the_appointment(self) -> None:
+        findings = _refusal(
+            claims=[], appointments=[_unclaimed(service_code=None)], rate_for=lambda _a: 1
         )
-        findings = _refusal(period_end=date(2026, 9, 3), appointments=[late])
-        assert [f.code for f in findings] == ["visit_without_claim"]
+        assert [f.field for f in findings] == ["lines[0].cpt"]
+        assert findings[0].message == (
+            "The service on 09/03/2026 has no service code. Add it to the appointment."
+        )
+
+    def test_a_visit_with_no_fee_says_where_the_rate_is_set(self) -> None:
+        findings = _refusal(claims=[], charges=[], appointments=[_unclaimed()])
+        assert [(f.code, f.field) for f in findings] == [("charge_zero", "lines[0].charge_cents")]
+        assert "rebuild the claim" not in findings[0].message
 
     @pytest.mark.parametrize("status", ["pending", "cancelled"])
     def test_a_cancelled_or_requested_slot_is_not_a_visit(self, status: str) -> None:
@@ -354,7 +372,7 @@ class TestRefusal:
         )
         assert _build(appointments=[not_a_visit]).total_charge_cents == 31000
 
-    def test_a_future_visit_is_not_reported(self) -> None:
+    def test_a_future_visit_is_not_printed(self) -> None:
         upcoming = _appointment(
             id="99999999-9999-4999-8999-999999999999",
             start_at=datetime(2026, 9, 20, 19, 0, tzinfo=UTC),
@@ -369,6 +387,152 @@ class TestRefusal:
 
 def _second_line(**overrides: Any) -> Any:
     return _second_claim().lines[0].model_copy(update=overrides)
+
+
+_UNCLAIMED_ID = "99999999-9999-4999-8999-999999999999"
+
+
+def _unclaimed(**overrides: Any) -> Appointment:
+    """A self-pay visit on the 3rd that no claim was built for."""
+    fields: dict[str, Any] = {
+        "id": _UNCLAIMED_ID,
+        "start_at": datetime(2026, 9, 3, 19, 0, tzinfo=UTC),
+        "end_at": datetime(2026, 9, 3, 20, 0, tzinfo=UTC),
+        "service_code": "90837",
+        "modifiers": ["95"],
+        "unit_count": 1,
+        "diagnosis_codes": ["F41.1"],
+    }
+    fields.update(overrides)
+    return _appointment(**fields)
+
+
+# ---------------------------------------------------------------------------
+# A visit no claim was built for
+# ---------------------------------------------------------------------------
+
+
+class TestVisitWithoutAClaim:
+    def test_prints_from_the_appointment(self) -> None:
+        superbill = _build(
+            claims=[],
+            charges=[_charge(appointment_id=_UNCLAIMED_ID, amount_cents=11500)],
+            appointments=[_unclaimed()],
+        )
+        (entry,) = superbill.lines
+        assert (entry.service_date, entry.cpt, entry.modifiers, entry.units) == (
+            date(2026, 9, 3),
+            "90837",
+            ("95",),
+            1,
+        )
+        assert (entry.charge_cents, entry.paid_cents) == (11500, 11500)
+        assert (entry.claim_id, entry.line_id, entry.appointment_id) == (None, None, _UNCLAIMED_ID)
+
+    def test_fee_is_the_session_charge_the_statement_shows(self) -> None:
+        # A sliding-scale visit charged at $90 prints $90, not the list rate.
+        superbill = _build(
+            claims=[],
+            charges=[_charge(appointment_id=_UNCLAIMED_ID, amount_cents=9000)],
+            appointments=[_unclaimed()],
+            rate_for=lambda _appointment: 15000,
+        )
+        assert superbill.lines[0].charge_cents == 9000
+
+    def test_fee_falls_back_to_the_rate_before_the_visit_is_charged(self) -> None:
+        superbill = _build(
+            claims=[], charges=[], appointments=[_unclaimed()], rate_for=lambda _a: 15000
+        )
+        assert (superbill.lines[0].charge_cents, superbill.lines[0].paid_cents) == (15000, 0)
+
+    def test_a_copay_is_not_the_visit_fee(self) -> None:
+        superbill = _build(
+            claims=[],
+            charges=[_charge(appointment_id=_UNCLAIMED_ID, amount_cents=2500, kind="copay")],
+            appointments=[_unclaimed()],
+            rate_for=lambda _a: 15000,
+        )
+        assert (superbill.lines[0].charge_cents, superbill.lines[0].paid_cents) == (15000, 2500)
+
+    def test_a_visit_a_claim_covers_prints_once_from_the_claim(self) -> None:
+        superbill = _build(appointments=[_appointment(service_code="90834")])
+        assert [(entry.claim_id, entry.cpt) for entry in superbill.lines] == [
+            (claim().id, "90837"),
+            (_SECOND_CLAIM_ID, "90837"),
+        ]
+
+    def test_claimed_and_unclaimed_visits_print_in_date_order(self) -> None:
+        superbill = _build(appointments=[_unclaimed()], rate_for=lambda _a: 15000)
+        assert [entry.service_date for entry in superbill.lines] == [
+            date(2026, 9, 1),
+            date(2026, 9, 3),
+            date(2026, 9, 8),
+        ]
+        assert superbill.appointment_ids == (
+            APPOINTMENT_ID,
+            _UNCLAIMED_ID,
+            _SECOND_APPOINTMENT_ID,
+        )
+        assert superbill.claim_ids == (claim().id, _SECOND_CLAIM_ID)
+
+    def test_visit_date_is_the_practice_local_date(self) -> None:
+        # 03:00 UTC on the 4th is the evening of the 3rd in New York; a period
+        # ending on the 3rd still covers it.
+        late = _unclaimed(
+            start_at=datetime(2026, 9, 4, 3, 0, tzinfo=UTC),
+            end_at=datetime(2026, 9, 4, 4, 0, tzinfo=UTC),
+        )
+        superbill = _build(
+            claims=[], period_end=date(2026, 9, 3), appointments=[late], rate_for=lambda _a: 1
+        )
+        assert [entry.service_date for entry in superbill.lines] == [date(2026, 9, 3)]
+
+
+# ---------------------------------------------------------------------------
+# Whether the diagnosis is printed
+# ---------------------------------------------------------------------------
+
+
+class TestDiagnosisChoice:
+    def test_left_off_the_lines_carry_no_diagnosis(self) -> None:
+        superbill = _build(
+            includes_diagnosis=False, appointments=[_unclaimed()], rate_for=lambda _a: 1
+        )
+        assert [entry.diagnosis_codes for entry in superbill.lines] == [(), (), ()]
+
+    def test_left_off_a_missing_diagnosis_is_not_a_gap(self) -> None:
+        superbill = _build(
+            includes_diagnosis=False,
+            claims=[claim(diagnosis_codes=[])],
+            appointments=[_unclaimed(diagnosis_codes=None)],
+            rate_for=lambda _a: 15000,
+        )
+        assert len(superbill.lines) == 2
+
+    def test_printed_a_visit_carries_the_appointment_diagnoses(self) -> None:
+        superbill = _build(
+            claims=[],
+            appointments=[_unclaimed(diagnosis_codes=["F41.1", "F33.1"])],
+            rate_for=lambda _a: 15000,
+        )
+        assert superbill.lines[0].diagnosis_codes == ("F41.1", "F33.1")
+
+    def test_printed_a_visit_with_none_refuses_and_offers_leaving_it_off(self) -> None:
+        findings = _refusal(
+            claims=[], appointments=[_unclaimed(diagnosis_codes=None)], rate_for=lambda _a: 1
+        )
+        assert [f.field for f in findings] == ["lines[0].diagnosis_codes"]
+        assert 'turn off "Include the diagnosis" for this client' in findings[0].message
+
+    def test_left_off_the_page_has_no_diagnosis_column(self) -> None:
+        text = render_superbill_pdf(_build(includes_diagnosis=False), _CLIENTS).decode("latin-1")
+        assert "Diagnosis" not in text
+        assert "F41.1" not in text
+
+    def test_printed_the_page_has_the_column(self) -> None:
+        text = render_superbill_pdf(_build(), _CLIENTS).decode("latin-1")
+        assert "Diagnosis" in text
+        assert "F41.1, F33.1" in text
 
 
 # ---------------------------------------------------------------------------
@@ -397,7 +561,8 @@ class TestRender:
             "$150.00",
             "$160.00",
             "$310.00",
-            "Generated 09/06/2026 12:00 UTC",
+            "Therapy session",
+            "Issued 09/06/2026 12:00 UTC",
         ):
             assert expected in text, expected
 

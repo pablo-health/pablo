@@ -44,7 +44,6 @@ from app.repositories import (
     InMemoryPatientIntakeAssignmentRepository,
     InMemoryPatientIntakeSignatureRepository,
 )
-from app.repositories.audit import InMemoryAuditRepository
 from app.repositories.coverage import (
     InMemoryPatientCoverageRepository,
     InMemoryPayerRepository,
@@ -68,6 +67,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from app.models.audit import AuditLogEntry
+    from app.repositories.audit import InMemoryAuditRepository
 
 _PATIENT_A = "11111111-1111-4111-8111-111111111111"
 _PATIENT_B = "22222222-2222-4222-8222-222222222222"
@@ -123,11 +123,6 @@ def document_service(documents: InMemoryIntakeDocumentRepository) -> IntakeDocum
 
 
 @pytest.fixture
-def packets() -> InMemoryIntakePacketRepository:
-    return InMemoryIntakePacketRepository()
-
-
-@pytest.fixture
 def packet_service(
     packets: InMemoryIntakePacketRepository, documents: InMemoryIntakeDocumentRepository
 ) -> IntakePacketService:
@@ -166,11 +161,6 @@ def signature_service(
     assignments: InMemoryPatientIntakeAssignmentRepository,
 ) -> IntakeSignatureService:
     return IntakeSignatureService(signature_repo, packets, documents, assignments)
-
-
-@pytest.fixture
-def audit_repo() -> InMemoryAuditRepository:
-    return InMemoryAuditRepository()
 
 
 @pytest.fixture

@@ -8,7 +8,9 @@
  * note types the user can pick when starting a session.
  */
 
-export type NoteFieldKind = "text" | "list" | "structured"
+import type { TranscriptModel } from "./sessions"
+
+export type NoteFieldKind = "text" | "list" | "diagnoses" | "structured"
 
 export type NoteTier = "core" | "extension"
 
@@ -25,12 +27,19 @@ export interface NoteFieldSchema {
   label: string
   kind: NoteFieldKind
   ai_hint: string
+  /** What code prints the field from instead of drafting it; absent when drafted. */
+  source?: string
 }
 
 export interface NoteSectionSchema {
   key: string
   label: string
   fields: NoteFieldSchema[]
+  /**
+   * Drafted for review beside the note (the evidence for the medical
+   * decision making), never shown or printed as part of the note.
+   */
+  review_only?: boolean
 }
 
 export type NoteInputKind = "text" | "choice"
@@ -45,6 +54,8 @@ export interface NoteInputSchema {
   kind: NoteInputKind
   options: string[]
   required: boolean
+  /** The value a note takes when none was chosen. */
+  default?: string | null
 }
 
 export interface NoteTypeSchema {
@@ -71,10 +82,190 @@ export interface NoteTypeSchema {
    * options.
    */
   is_locked?: boolean
+  /**
+   * The stored definition of a practice-defined type, prompts included.
+   * Only the single-type read returns it; null for built-in types.
+   */
+  spec?: PracticeNoteTypeSpec | null
+  /** For a practice type built on a base: the base and how much it changes. */
+  based_on?: BasedOn | null
 }
 
 export interface NoteTypeListResponse {
   note_types: NoteTypeSchema[]
+}
+
+/** Key prefix of a practice's own note types (`custom.<slug>`). */
+export const PRACTICE_KEY_PREFIX = "custom."
+
+export function isPracticeKey(key: string): boolean {
+  return key.startsWith(PRACTICE_KEY_PREFIX)
+}
+
+/** What a picker says when someone chooses a type their subscription doesn't include. */
+export function lockedNoteTypeMessage(label: string): string {
+  return `${label} is a Practice tier note format. Upgrade your subscription to enable it.`
+}
+
+/** The field shapes a practice can give its own types. */
+export type PracticeFieldKind = "text" | "list" | "diagnoses"
+
+export interface PracticeFieldSpec {
+  key: string
+  label: string
+  kind: PracticeFieldKind
+  ai_hint: string
+  /**
+   * What code prints the field from (the chart, or the values entered for the
+   * visit) instead of the model drafting it. Set by the built-ins; the editor
+   * keeps it and never offers it, so a copy prints those fields the same way.
+   */
+  source?: string
+}
+
+export interface PracticeSectionSpec {
+  key: string
+  label: string
+  fields: PracticeFieldSpec[]
+  review_only?: boolean
+}
+
+export interface PracticeInputSpec {
+  key: string
+  label: string
+  kind: NoteInputKind
+  options: string[]
+  required: boolean
+  default?: string | null
+}
+
+/**
+ * The body `PUT /api/note-types/custom/{slug}` takes: a practice's own note type.
+ *
+ * Either full (its own sections, inputs and prompts) or based on a built-in:
+ * then `base` and `patch` are set, and the sections, inputs and prompts are
+ * empty because the server takes them from the base each time it reads the type.
+ */
+export interface PracticeNoteTypeSpec {
+  label: string
+  description: string
+  system_prompt: string
+  user_template: string | null
+  sections: PracticeSectionSpec[]
+  inputs: PracticeInputSpec[]
+  base?: string
+  patch?: NoteTypePatch
+}
+
+/** What a based type changes about its base. Paths are `section` or `section.field`. */
+export interface NoteTypePatch {
+  add_sections: { section: PracticeSectionSpec; after: string | null }[]
+  add_fields: { section: string; field: PracticeFieldSpec; after: string | null }[]
+  hide_fields: string[]
+  hide_sections: string[]
+  override: { path: string; label?: string | null; ai_hint?: string | null }[]
+  add_inputs: PracticeInputSpec[]
+  system_prompt_append: string | null
+}
+
+/** A practice type's base, and how much it changes. */
+export interface BasedOn {
+  key: string
+  label: string
+  additions: number
+  hidden: number
+}
+
+/** A synthetic visit transcript to try a draft on. */
+export interface SampleVisit {
+  id: string
+  label: string
+  transcript: string
+}
+
+/** A built-in a practice can base its own type on (`GET /api/note-types/bases`). */
+export interface NoteTypeBase {
+  key: string
+  label: string
+  description: string
+  /** The slug a type based on this one saves under, when it is free. */
+  slug: string
+  spec: PracticeNoteTypeSpec
+  /** Fields (`section.field`) a based type cannot hide. */
+  required_fields: string[]
+  samples: SampleVisit[]
+}
+
+export interface NoteTypeBaseListResponse {
+  bases: NoteTypeBase[]
+}
+
+export interface NoteDraftPreviewRequest {
+  key?: string
+  version?: number
+  spec?: PracticeNoteTypeSpec
+  transcript: TranscriptModel
+  inputs?: Record<string, string>
+}
+
+/** A draft shaped like a generated note's content. Nothing is saved. */
+export interface NoteDraftPreviewResponse {
+  key: string
+  version: number | null
+  sections: Record<string, Record<string, unknown>>
+}
+
+/** What `POST /api/note-types/derive` proposes from: send at least one sample or a description. */
+export interface DeriveNoteTypeRequest {
+  /** Pasted note text, one per sample. */
+  samples: string[]
+  /** PDF, Word or text files, one note each. */
+  files: File[]
+  description: string
+  /** A note type or reference key to compare the proposal against. */
+  reference: string | null
+}
+
+/** One sample's check against the proposal. */
+export interface DeriveCoverage {
+  /** Index of the sample: pasted samples first, then files. */
+  sample: number
+  passages: number
+  /** Passages no proposed field took, verbatim. */
+  unplaced: string[]
+  /** How many lines were left out as not note content (signatures, header facts); absent from older servers. */
+  excluded?: number
+  /** False when the sample could not be checked; `unplaced` is then empty. */
+  checked: boolean
+}
+
+export interface DeriveGuardFinding {
+  path: string
+  outcome: string
+}
+
+export interface NoteTypeReference {
+  key: string
+  label: string
+}
+
+export interface DeriveSuggestion {
+  label: string
+  description: string
+}
+
+/** A proposed note type and the checks run on it. Nothing is saved. */
+export interface DeriveNoteTypeResponse {
+  spec: PracticeNoteTypeSpec
+  coverage: DeriveCoverage[]
+  guard: DeriveGuardFinding[]
+  reference: NoteTypeReference | null
+  /** Elements of the reference the proposal has no section or field for. */
+  suggestions: DeriveSuggestion[]
+}
+
+export interface NoteTypeReferenceListResponse {
+  references: NoteTypeReference[]
 }
 
 export const DEFAULT_NOTE_TYPE = "soap"

@@ -23,6 +23,8 @@ export interface InboxItem {
   title: string
   detail: string | null
   occurred_at: string
+  /** When the practice means to have it done by, for a kind with a target (a refill). */
+  due_at?: string | null
   severity: "normal" | "urgent"
   href: string
   /** What a kind's renderer needs beyond the fields above, e.g. `thread_id`. */

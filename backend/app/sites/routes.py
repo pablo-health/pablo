@@ -15,16 +15,19 @@
   and make it live.
 * ``POST /api/practice/website/versions/{version}/live`` — make a kept version
   live again (roll back).
+* ``PUT /api/practice/website/search`` — ask search engines not to list the
+  website, or stop asking (``{hide_from_search}``).
 
-The changes are for whoever may change the practice's domains — the owner
-today (:func:`app.routes.practice_domains._manageable_practice_id`), so
-widening one widens both. The practice is always the caller's own. Uploads,
+The changes are for whoever may change the practice's domains — the owner or
+a practice admin (:func:`app.routes.practice_domains._manageable_practice_id`),
+so the two always agree. The practice is always the caller's own. Uploads,
 publishes and roll backs are audited by the service, with the version, file
-count and bytes. Old versions and replaced drafts are tidied away after the
-change commits, as a background task. A publish or roll back also forgets this
-process's answers about website and portal hosts once it has committed, so the
-site and the theme the portal takes from it are served here at once; another
-process notices within the minute it keeps answers.
+count and bytes, and so is a change to the search setting. Old versions and
+replaced drafts are tidied away after the change commits, as a background task.
+A publish or roll back also forgets this process's answers about website and
+portal hosts once it has committed, so the site and the theme the portal takes
+from it are served here at once, and a change to the search setting forgets the
+website host answers; another process notices within the minute it keeps answers.
 """
 
 from __future__ import annotations
@@ -47,7 +50,9 @@ from ..models import User  # noqa: TC001 — fastapi resolves the annotation at 
 from ..portal.hosted import hosted_domain
 from ..portal.practice_hosts import get_portal_host_cache
 from ..portal.practice_routes import ensure_practice_slug
-from ..routes.practice_domains import _manageable_practice_id, _practice_id
+from ..routes._deps import practice_id_or_404
+from ..routes.practice_domains import _manageable_practice_id
+from ..services.practice_domain_trigger import request_reconcile
 from .files import MAX_ARCHIVE_BYTES, SiteFilesError, SiteTooLargeError, read_zip
 from .hosts import get_site_host_cache
 from .service import (
@@ -105,6 +110,12 @@ class PracticeSiteResponse(BaseModel):
     draft: SiteDraftResponse | None
     #: Kept versions, newest first.
     versions: list[SiteVersionResponse]
+    #: The practice asks search engines not to list its website.
+    hide_from_search: bool
+
+
+class SiteSearchRequest(BaseModel):
+    hide_from_search: bool
 
 
 class DraftHeaderLink(BaseModel):
@@ -157,6 +168,7 @@ def _response(service: PracticeSiteService, practice_id: str) -> PracticeSiteRes
             )
             for v in status.versions
         ],
+        hide_from_search=status.hide_from_search,
     )
 
 
@@ -187,7 +199,7 @@ def get_practice_site(
     service: PracticeSiteService = Depends(get_practice_site_service),
 ) -> PracticeSiteResponse:
     """The practice's website: what is live, where, the draft and the kept versions."""
-    return _response(service, _practice_id(user))
+    return _response(service, practice_id_or_404(user))
 
 
 @router.post("/draft", response_model=PracticeSiteResponse)
@@ -278,6 +290,9 @@ def publish_practice_site(
         ensure_practice_slug(practice_id)
     background.add_task(_forget_host_answers)
     background.add_task(tidy_practice_site, practice_id)
+    # A deployment serving websites from object storage copies and routes
+    # the new version in the domain reconciler; this asks for a run.
+    background.add_task(request_reconcile)
     return _response(service, practice_id)
 
 
@@ -293,4 +308,22 @@ def roll_back_practice_site(
     practice_id = _manageable_practice_id(user)
     _translated(lambda: service.roll_back(practice_id, version, user, http_request))
     background.add_task(_forget_host_answers)
+    background.add_task(request_reconcile)
+    return _response(service, practice_id)
+
+
+@router.put("/search", response_model=PracticeSiteResponse)
+def set_practice_site_search(
+    body: SiteSearchRequest,
+    http_request: Request,
+    background: BackgroundTasks,
+    user: User = Depends(require_active_subscription),
+    service: PracticeSiteService = Depends(get_practice_site_service),
+) -> PracticeSiteResponse:
+    """Ask search engines not to list the website, or stop asking. Visitors'
+    answers carry the change once this process forgets its website host answers."""
+    practice_id = _manageable_practice_id(user)
+    service.set_hide_from_search(practice_id, body.hide_from_search, user, http_request)
+    background.add_task(get_site_host_cache().clear)
+    background.add_task(request_reconcile)
     return _response(service, practice_id)

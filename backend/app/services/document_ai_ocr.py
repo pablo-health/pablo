@@ -1,9 +1,10 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Document AI OCR fallback for scanned patient PDFs (THERAPY-ak6m.2.3).
+"""Document AI OCR fallback for scanned PDFs (THERAPY-ak6m.2.3).
 
-Called from ``PatientDocumentsService.finalize_upload`` when PyMuPDF
-returns below the scanned-doc threshold. Every failure mode (no
+Called from ``PatientDocumentsService.finalize_upload`` and from the
+shared upload reader (``note_import_service.extract_document_text``)
+when PyMuPDF returns below the scanned-doc threshold. Every failure mode (no
 config, oversized doc, API error) maps to ``None`` so a flaky OCR
 call never 500s the upload — the doc just lands without
 ``extracted_text`` and the chat bundler skips it as it would any
@@ -52,7 +53,7 @@ _retry_sleep = time.sleep
 # lets auth and quota failures surface in seconds.
 _PROCESS_TIMEOUT_SECONDS = 60.0
 
-_LOW_CONFIDENCE_MARKER = "[extraction had low confidence — verify before relying on details]\n\n"
+LOW_CONFIDENCE_MARKER = "[extraction had low confidence — verify before relying on details]\n\n"
 
 
 class OcrUnavailableError(RuntimeError):
@@ -108,6 +109,11 @@ class DocumentAiOcrClient:
         """
         return bool(self._settings.allow_document_ai_ocr)
 
+    @property
+    def max_pages(self) -> int:
+        """Most pages one call reads; :meth:`extract` returns ``None`` above it."""
+        return self._settings.document_ai_max_pages
+
     def extract(self, *, pdf_bytes: bytes, mime_type: str) -> OcrResult | None:
         """OCR a PDF. Returns ``None`` on any soft failure."""
         if not self.is_configured or mime_type != "application/pdf":
@@ -161,6 +167,8 @@ class DocumentAiOcrClient:
             return self._client
         try:
             from google.api_core.client_options import ClientOptions
+
+            # google.cloud is a namespace package that mypy cannot resolve
             from google.cloud import documentai  # type: ignore[attr-defined]
         except ImportError as exc:
             raise OcrUnavailableError("google-cloud-documentai not installed") from exc
@@ -172,6 +180,7 @@ class DocumentAiOcrClient:
         return self._client
 
     def _build_request(self, pdf_bytes: bytes, *, project: str, processor_id: str) -> Any:
+        # google.cloud is a namespace package that mypy cannot resolve
         from google.cloud import documentai  # type: ignore[attr-defined]
 
         processor_name = (
@@ -270,6 +279,13 @@ class DocumentAiOcrClient:
         return None, "discovered"
 
 
+def get_document_ocr_client() -> DocumentAiOcrClient:
+    """FastAPI dependency: the OCR client for scanned uploads, from settings."""
+    from ..settings import get_settings
+
+    return DocumentAiOcrClient(settings=get_settings())
+
+
 # --- module-level helpers --------------------------------------------
 
 
@@ -344,7 +360,7 @@ def _parse_response(response: Any, *, latency_ms: int) -> OcrResult:
         and len(low_confidence_pages) / page_count > _LOW_CONFIDENCE_PAGE_FRACTION_THRESHOLD
     )
     if flagged_overall and text:
-        text = _LOW_CONFIDENCE_MARKER + text
+        text = LOW_CONFIDENCE_MARKER + text
 
     return OcrResult(
         text=text,

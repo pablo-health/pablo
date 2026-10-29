@@ -55,9 +55,7 @@ describe("TranscriptionSettings", () => {
     )
 
     await user.click(screen.getByLabelText("Automatically transcribe uploaded recordings"))
-    expect(onSave).toHaveBeenCalledWith(
-      expect.objectContaining({ auto_transcribe: false })
-    )
+    expect(onSave).toHaveBeenCalledWith({ auto_transcribe: false })
   })
 
   it("calls onSave when quality preset changes", async () => {
@@ -71,9 +69,7 @@ describe("TranscriptionSettings", () => {
     await user.click(screen.getByRole("combobox", { name: /quality preset/i }))
     await user.click(screen.getByRole("option", { name: "Accurate" }))
 
-    expect(onSave).toHaveBeenCalledWith(
-      expect.objectContaining({ quality_preset: "accurate" })
-    )
+    expect(onSave).toHaveBeenCalledWith({ quality_preset: "accurate" })
   })
 
   it("disables controls when saving", () => {

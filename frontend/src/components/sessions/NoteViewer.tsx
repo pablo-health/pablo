@@ -8,15 +8,16 @@
  * four-section document; Narrative renders a single free-form body; every
  * other type renders from its catalog definition (SchemaNoteView).
  *
- * Operates on a Note record from /api/notes (pa-0nx.4); the embedded
- * structured SOAP tree (with source references) is derived from
- * ``note.content`` when present.
+ * Operates on a Note record from /api/notes (pa-0nx.4). What a SOAP note
+ * shows, on screen and in its PDF, comes from ``displayedNote``: the
+ * clinician's edit when there is one, otherwise the draft. Every type
+ * exports its PDF through the one renderer in ``lib/utils/pdfExport``.
  */
 
 "use client"
 
 import { useState } from "react"
-import { AlertTriangle, Check, Download, Edit, X, Save } from "lucide-react"
+import { Download, Edit, X, Save } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
@@ -31,9 +32,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import {
+  exportNoteToPDF,
   exportSOAPToPDF,
   type PDFExportMetadata,
 } from "@/lib/utils/pdfExport"
+import { narrativeNotePdf } from "@/lib/notePdf"
 import type {
   NarrativeNoteContent,
   NoteContent,
@@ -47,8 +50,8 @@ import type {
 import {
   noteContentFromNote,
   noteEditedContentFromNote,
-  structuredSoapFromNote,
 } from "@/types/sessions"
+import { displayedNote, type DisplayedNote } from "@/lib/displayedNote"
 import type { Note } from "@/types/notes"
 import {
   SubFieldEditor,
@@ -62,23 +65,26 @@ import {
   EMPTY_CLINICAL_OBSERVATION,
   formatClinicalObservation,
 } from "./ClinicalObservationForm"
-import { parseNarrativeBlocks } from "@/lib/utils/narrativeParser"
+import { headsNextBlock, parseNarrativeBlocks } from "@/lib/utils/narrativeParser"
+import { GroundingBadge } from "./GroundingBadge"
+import { NothingEntered } from "./NothingEntered"
 import { SourceBadge, SourceHighlight } from "./SourceBadge"
 import { SchemaNoteView } from "./SchemaNoteView"
+import { addToProblemListAction } from "./AddToProblemList"
 
 export interface NoteViewerProps {
   note: Note
   /** Local override for unsaved edits — takes priority over note.content_edited. */
   pendingEdited?: NoteContent | null
   readonly?: boolean
-  /** Metadata used for the SOAP PDF export header. PDF button hidden when omitted. */
+  /** Metadata used for the PDF export header. PDF button hidden when omitted. */
   pdfMetadata?: PDFExportMetadata
   onSave?: (editedNote: NoteContent) => void
   onClaimClick?: (sourceSegmentIds: number[]) => void
   /**
-   * Original document text for an imported note. When set, each SOAP field
-   * shows whether its text was found verbatim in the source ("from your
-   * note" vs "review"). Omit for recorded/generated notes.
+   * Original document text for an imported note. When set, each field, of
+   * whatever note type, shows whether its text was found verbatim in the
+   * source ("from your note" vs "review"). Omit for recorded/generated notes.
    */
   groundingSource?: string
   className?: string
@@ -109,7 +115,9 @@ export function NoteViewer({
       <NarrativeNoteView
         note={asNarrative(baseContent)}
         noteEdited={asNarrative(editedContent)}
+        imported={!!note.imported}
         readonly={viewOnly}
+        pdfMetadata={pdfMetadata}
         onSave={onSave}
         className={className}
       />
@@ -123,8 +131,15 @@ export function NoteViewer({
         version={note.note_type_version}
         note={asSchema(baseContent)}
         noteEdited={asSchema(editedContent)}
+        newByHand={isNewByHand(note) && !pendingEdited}
+        imported={!!note.imported}
         readonly={viewOnly}
+        pdfMetadata={pdfMetadata}
         onSave={onSave}
+        // A signed note still offers it: the chart changes, not the note. An
+        // account in read-only mode changes nothing.
+        diagnosisAction={readOnly ? undefined : addToProblemListAction(note.patient_id, note.id)}
+        groundingSource={groundingSource}
         className={className}
       />
     )
@@ -132,9 +147,7 @@ export function NoteViewer({
 
   return (
     <SOAPNoteView
-      note={asSOAP(baseContent)}
-      noteEdited={asSOAP(editedContent)}
-      structured={structuredSoapFromNote(note)}
+      displayed={displayedNote(note, pendingEdited)}
       readonly={viewOnly}
       pdfMetadata={pdfMetadata}
       onSave={onSave}
@@ -143,6 +156,15 @@ export function NoteViewer({
       className={className}
     />
   )
+}
+
+/**
+ * A note written by hand that nobody has saved since it was created. It has
+ * no draft, only the clinician's copy, which may start with what Pablo filled
+ * in from the chart; any save moves `updated_at` on.
+ */
+function isNewByHand(note: Note): boolean {
+  return note.session_id === null && !note.content && note.updated_at === note.created_at
 }
 
 function asSOAP(n: NoteContent | null): SOAPNoteContent | null {
@@ -167,9 +189,7 @@ const SOAP_SECTIONS = [
 ] as const
 
 interface SOAPViewProps {
-  note: SOAPNoteContent | null
-  noteEdited: SOAPNoteContent | null
-  structured: StructuredSOAPNoteModel | null
+  displayed: DisplayedNote
   readonly?: boolean
   pdfMetadata?: PDFExportMetadata
   onSave?: (editedNote: NoteContent) => void
@@ -186,9 +206,7 @@ const EMPTY_SOAP_NARRATIVE: SOAPNoteModel = {
 }
 
 function SOAPNoteView({
-  note,
-  noteEdited,
-  structured,
+  displayed,
   readonly = false,
   pdfMetadata,
   onSave,
@@ -200,7 +218,8 @@ function SOAPNoteView({
   // (the standalone "New note" path creates an empty row), open directly
   // in edit mode so the clinician can type — otherwise we'd render a
   // dead-end "not yet generated" card with no way into the editor.
-  const isBlank = !noteEdited && !note
+  const shown = asSOAP(displayed.content)
+  const isBlank = !shown
   const canEdit = !readonly && !!onSave
   const startEmptyEditing = isBlank && canEdit
 
@@ -220,8 +239,11 @@ function SOAPNoteView({
   const people = usePeopleTerm()
 
   const displayNote: SOAPNoteModel | null =
-    noteEdited ?? note ?? (startEmptyEditing ? EMPTY_SOAP_NARRATIVE : null)
-  const isEdited = !!noteEdited
+    shown ?? (startEmptyEditing ? EMPTY_SOAP_NARRATIVE : null)
+  const isEdited = displayed.edited
+  // Source references point at the draft's sentences, so they show only
+  // while the draft is what shows.
+  const structured = displayed.draft
   const isManual = isBlank
 
   const hasUnsavedChanges = () => {
@@ -426,26 +448,6 @@ function SOAPNoteView({
  * Renders structured SOAP sub-fields with source verification indicators.
  * Uses the structured data model to show verified/unverified badges per claim.
  */
-function GroundingBadge({ grounded }: { grounded: boolean }) {
-  return grounded ? (
-    <span
-      className="ml-2 inline-flex items-center gap-1 rounded px-1.5 py-0.5 align-middle text-[11px] font-medium text-green-700 bg-green-50"
-      title="Found in the original document"
-    >
-      <Check className="h-3 w-3" />
-      from your note
-    </span>
-  ) : (
-    <span
-      className="ml-2 inline-flex items-center gap-1 rounded px-1.5 py-0.5 align-middle text-[11px] font-medium text-amber-700 bg-amber-50"
-      title="Not found verbatim in the original document — please review"
-    >
-      <AlertTriangle className="h-3 w-3" />
-      review
-    </span>
-  )
-}
-
 function StructuredContent({
   sectionKey,
   structured,
@@ -463,7 +465,12 @@ function StructuredContent({
   const sectionData = structured[sectionKey as keyof StructuredSOAPNoteModel]
   if (!sectionData || typeof sectionData === "string") return null
 
-  const record = sectionData as unknown as Record<string, SOAPSentence | SOAPSentence[] | null>
+  const record = sectionData as unknown as Record<string, SOAPSentence | SOAPSentence[] | null>  // SectionData is a union of sub-field shapes; the viewer indexes it by a runtime field key
+  const hasAny = fields.some((field) => {
+    const value = record[field.key]
+    return Array.isArray(value) ? value.length > 0 : !!value
+  })
+  if (!hasAny) return <NothingEntered />
 
   return (
     <div className="space-y-3">
@@ -580,11 +587,7 @@ function StructuredContent({
 function NarrativeContent({ text }: { text: string }) {
   const blocks = parseNarrativeBlocks(text)
 
-  if (blocks.length === 0) {
-    return (
-      <p className="text-sm text-neutral-500 italic">No content</p>
-    )
-  }
+  if (blocks.length === 0) return <NothingEntered />
 
   return (
     <div className="space-y-3">
@@ -595,9 +598,13 @@ function NarrativeContent({ text }: { text: string }) {
               {block.label}
             </h5>
           )}
-          <p className="text-sm text-neutral-900 whitespace-pre-wrap leading-relaxed">
-            {block.content}
-          </p>
+          {block.content ? (
+            <p className="text-sm text-neutral-900 whitespace-pre-wrap leading-relaxed">
+              {block.content}
+            </p>
+          ) : (
+            !headsNextBlock(blocks, i) && <NothingEntered />
+          )}
         </div>
       ))}
     </div>
@@ -609,7 +616,10 @@ function NarrativeContent({ text }: { text: string }) {
 interface NarrativeViewProps {
   note: NarrativeNoteContent | null
   noteEdited: NarrativeNoteContent | null
+  /** A reference copy from another system: nothing here drafted or edited it. */
+  imported?: boolean
   readonly?: boolean
+  pdfMetadata?: PDFExportMetadata
   onSave?: (editedNote: NoteContent) => void
   className?: string
 }
@@ -617,10 +627,13 @@ interface NarrativeViewProps {
 function NarrativeNoteView({
   note,
   noteEdited,
+  imported = false,
   readonly = false,
+  pdfMetadata,
   onSave,
   className,
 }: NarrativeViewProps) {
+  const people = usePeopleTerm()
   // Mirror the SOAP empty-blank-editing behavior so manually-created
   // narrative notes open straight in the editor (see SOAPNoteView).
   const isBlank = !noteEdited && !note
@@ -664,6 +677,12 @@ function NarrativeNoteView({
     setShowConfirmDialog(false)
   }
 
+  const handlePDFExport = () => {
+    if (displayNote && pdfMetadata) {
+      exportNoteToPDF(pdfMetadata, narrativeNotePdf(displayNote.body), people)
+    }
+  }
+
   if (!displayNote) {
     return (
       <div className={cn("card text-center py-12", className)}>
@@ -677,7 +696,8 @@ function NarrativeNoteView({
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-2">
           <h3 className="text-lg font-semibold text-neutral-900">Narrative Note</h3>
-          {isManual ? null : isEdited ? (
+          {/* Neither badge fits a note written by hand or brought in from elsewhere. */}
+          {isManual || imported ? null : isEdited ? (
             <span className="px-2 py-1 bg-secondary-100 text-secondary-700 text-xs font-medium rounded">
               Edited
             </span>
@@ -689,6 +709,12 @@ function NarrativeNoteView({
         </div>
 
         <div className="flex gap-2">
+          {pdfMetadata && !isBlank && (
+            <Button variant="outline" size="sm" onClick={handlePDFExport}>
+              <Download className="w-4 h-4 mr-2" />
+              Export PDF
+            </Button>
+          )}
           {canEdit && !editMode && (
             <Button size="sm" onClick={enterEditMode}>
               <Edit className="w-4 h-4 mr-2" />
@@ -712,7 +738,7 @@ function NarrativeNoteView({
             {displayNote.body}
           </p>
         ) : (
-          <p className="text-sm text-neutral-500 italic">No content</p>
+          <NothingEntered />
         )}
       </div>
 

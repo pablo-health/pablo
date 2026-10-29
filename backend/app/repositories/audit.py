@@ -42,6 +42,16 @@ class AuditRepository(ABC):
     def append(self, entry: AuditLogEntry) -> None:
         """Persist a new audit log entry. Never updates existing entries."""
 
+    def append_many(self, entries: list[AuditLogEntry]) -> None:
+        """Persist several new entries in one write where the store allows it.
+
+        The default is one :meth:`append` per entry; a store with a cheaper
+        bulk path overrides it. Same contract otherwise: all or nothing is
+        NOT promised, and a failure still raises.
+        """
+        for entry in entries:
+            self.append(entry)
+
     @abstractmethod
     def list_for_user(
         self,
@@ -55,6 +65,19 @@ class AuditRepository(ABC):
         ``since`` bounds the window from below (rows strictly newer).
         ``before`` is a keyset position for paging further back — rows
         strictly older than that (timestamp, id) pair.
+        """
+
+    @abstractmethod
+    def list_for_patient(
+        self,
+        patient_id: str,
+        limit: int = 100,
+        before: AuditCursor | None = None,
+    ) -> list[AuditLogEntry]:
+        """Return the rows about this patient the caller may read, newest first.
+
+        Whoever acted. Which rows that is belongs to the row policy, not
+        to this query. ``before`` pages back as in :meth:`list_for_user`.
         """
 
     @abstractmethod
@@ -110,14 +133,16 @@ class InMemoryAuditRepository(AuditRepository):
         rows = [e for e in self._entries if e.user_id == user_id]
         if since is not None:
             rows = [e for e in rows if datetime.fromisoformat(e.timestamp) > since]
-        if before is not None:
-            rows = [
-                e
-                for e in rows
-                if (datetime.fromisoformat(e.timestamp), e.id) < (before.timestamp, before.entry_id)
-            ]
-        rows.sort(key=lambda e: (e.timestamp, e.id), reverse=True)
-        return rows[:limit]
+        return _newest_first(rows, limit, before)
+
+    def list_for_patient(
+        self,
+        patient_id: str,
+        limit: int = 100,
+        before: AuditCursor | None = None,
+    ) -> list[AuditLogEntry]:
+        rows = [e for e in self._entries if e.patient_id == patient_id]
+        return _newest_first(rows, limit, before)
 
     def earliest_create_for_patients(self, patient_ids: set[str]) -> dict[str, datetime | None]:
         out: dict[str, datetime | None] = dict.fromkeys(patient_ids)
@@ -189,6 +214,19 @@ class InMemoryAuditRepository(AuditRepository):
     # Test helpers — not part of the interface
     def all(self) -> list[AuditLogEntry]:
         return list(self._entries)
+
+
+def _newest_first(
+    rows: list[AuditLogEntry], limit: int, before: AuditCursor | None
+) -> list[AuditLogEntry]:
+    if before is not None:
+        rows = [
+            e
+            for e in rows
+            if (datetime.fromisoformat(e.timestamp), e.id) < (before.timestamp, before.entry_id)
+        ]
+    rows.sort(key=lambda e: (e.timestamp, e.id), reverse=True)
+    return rows[:limit]
 
 
 def _assert_phi_free(rows: list[dict]) -> None:

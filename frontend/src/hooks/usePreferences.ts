@@ -4,17 +4,17 @@
 
 import {
   getPreferences,
-  savePreferences,
-  type UserPreferences,
+  updatePreferences,
+  type PreferenceChanges,
 } from "@/lib/api/users"
+import { queryKeys } from "@/lib/api/queryKeys"
+import { browserTimeZone } from "@/lib/dates"
+import { useAuthQuery, useAuthMutation } from "./useAuthQuery"
 
 /** Detect browser timezone for auto-populating user preferences. */
 export function detectBrowserTimezone(): string {
-  if (typeof window === "undefined") return "America/New_York"
-  return Intl.DateTimeFormat().resolvedOptions().timeZone || "America/New_York"
+  return typeof window === "undefined" ? "America/New_York" : browserTimeZone()
 }
-import { queryKeys } from "@/lib/api/queryKeys"
-import { useAuthQuery, useAuthMutation } from "./useAuthQuery"
 
 export function usePreferences(token?: string) {
   return useAuthQuery({
@@ -24,9 +24,13 @@ export function usePreferences(token?: string) {
   })
 }
 
-export function useSavePreferences(token?: string) {
+/**
+ * Save some preferences. Pass only the keys being changed — see
+ * `updatePreferences` for why a full copy must never be sent.
+ */
+export function useUpdatePreferences(token?: string) {
   return useAuthMutation({
-    mutationFn: (prefs: UserPreferences) => savePreferences(prefs, token),
+    mutationFn: (changes: PreferenceChanges) => updatePreferences(changes, token),
     onSuccess: (data, _variables, queryClient) => {
       queryClient.setQueryData(queryKeys.user.preferences(), data)
     },

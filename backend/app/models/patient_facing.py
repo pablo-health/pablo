@@ -195,6 +195,8 @@ PATIENT_COLUMN_DECISIONS: Final[Mapping[str, str | None]] = {
     "status": "Chart workflow state, an operational label rather than a fact about the person.",
     "date_of_birth": SHOWN,
     "diagnosis": "The clinician's working impression, written for the record and not as news.",
+    "allergy_status": "The allergy record as the clinician entered it; intake asks the patient.",
+    "allergies": "The allergy record as the clinician entered it; intake asks the patient.",
     "session_count": "Caseload bookkeeping.",
     "last_session_date": "A denormalised scheduling summary; the calendar routes answer this.",
     "next_session_date": "A denormalised scheduling summary; the calendar routes answer this.",
@@ -209,6 +211,7 @@ PATIENT_COLUMN_DECISIONS: Final[Mapping[str, str | None]] = {
     "phi_email_consent_by": "Which staff member attested to it.",
     "rate_cents": "What this person is charged is a billing conversation, not a chart field.",
     "sliding_scale_note": "A staff note about this person's ability to pay.",
+    "superbill_includes_diagnosis": "A billing setting the clinician keeps for this person.",
     "origin": "Flags a row created through an unverified intake surface, for a human to review.",
     # The mailing address a claim carries. Shown for the same reason as the
     # contact fields above: it is the patient's own address, and they are the
@@ -219,6 +222,8 @@ PATIENT_COLUMN_DECISIONS: Final[Mapping[str, str | None]] = {
     "state": SHOWN,
     "postal_code": SHOWN,
     "sex": "The administrative sex code a claim's demographic segment expects.",
+    "pronouns": "Recorded by the practice from what the client told it; no portal screen shows it.",
+    "emergency_contact": "Another person's contact details, recorded by the practice.",
 }
 
 #: Every column of ``appointments``, and what a patient-facing route does with
@@ -240,6 +245,7 @@ APPOINTMENT_COLUMN_DECISIONS: Final[Mapping[str, str | None]] = {
     "cancelled_by_id": "An internal identifier for whoever cancelled.",
     "late_cancellation": SHOWN,
     "superseded_by_id": "An internal link to the replacement row after a reschedule.",
+    "skipped": "How the practice files a cancelled week; to the patient it is cancelled.",
     "late_change_acknowledged": "The attestation the API already required from the caller.",
     "appointment_type_id": "Internal scheduling bookkeeping with no meaning to a patient.",
     "session_type": SHOWN,

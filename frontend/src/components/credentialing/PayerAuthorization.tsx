@@ -10,6 +10,7 @@ import {
   useRevokePayerAuthorization,
   useSignPayerAuthorization,
 } from "@/hooks/useCredentialingChecklist"
+import { LONG_DATE, formatDate } from "@/lib/dates"
 
 /**
  * The permission slip: may Pablo sign her name to a payer's form and ring the
@@ -157,7 +158,7 @@ function SignedState({ version, signedAt, signedName, onRead }: SignedStateProps
     <div className="rounded-lg border border-border p-5 space-y-3">
       <p className="text-sm text-neutral-700">
         You authorised Pablo to apply to panels on your behalf
-        {signedAt ? ` on ${formatDate(signedAt)}` : ""}
+        {signedAt ? ` on ${formatDate(signedAt, LONG_DATE)}` : ""}
         {signedName ? `, signed ${signedName}` : ""}
         {version ? ` (version ${version})` : ""}.
       </p>
@@ -227,12 +228,4 @@ function DocumentText({ version }: { version?: string }) {
       </pre>
     </div>
   )
-}
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  })
 }

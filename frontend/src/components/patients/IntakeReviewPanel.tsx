@@ -2,9 +2,10 @@
 
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 
 import { ApiError } from "@/lib/api/client"
+import { Button } from "@/components/ui/button"
 import type { PeopleWords } from "@/lib/peopleTerm"
 import { saveFile } from "@/lib/saveFile"
 import {
@@ -50,8 +51,8 @@ export function intakeStatusText(people: PeopleWords) {
  * is finished, so nothing here computes that.
  */
 const COPY = {
-  loading: "Loading this form…",
-  loadError: "We couldn't load this form. Try again in a moment.",
+  loading: "Loading their answers…",
+  loadError: "We couldn't load their answers. Try again in a moment.",
   actionError: "That didn't go through. Try again.",
   progressComplete: "Every question has an answer.",
   outstanding: (n: number) => (n === 1 ? "1 question has no answer." : `${n} questions have no answer.`),
@@ -176,9 +177,21 @@ function FormHeading({ review }: { review: IntakeReview }) {
  * practice's timezone, which is what a release of information or a referral
  * needs and a copy of a screen is not.
  */
-export function IntakeReviewPanel(props: { patientId: string; assignmentId: string }) {
-  const { patientId, assignmentId } = props
+export function IntakeReviewPanel(props: {
+  patientId: string
+  assignmentId: string
+  /** A question to open the form at, marked: the answer a chart update cites. */
+  focusItemId?: string
+}) {
+  const { patientId, assignmentId, focusItemId } = props
   const { data, error, isLoading } = useIntakeReview(patientId, assignmentId)
+  const loaded = !!data
+  useEffect(() => {
+    if (!loaded || !focusItemId) return
+    document
+      .querySelector(`[data-testid="intake-review-item-${CSS.escape(focusItemId)}"]`)
+      ?.scrollIntoView({ block: "center" })
+  }, [loaded, focusItemId])
   const correction = useRequestIntakeCorrection(patientId, assignmentId)
   const accept = useAcceptIntakeAssignment(patientId, assignmentId)
   const entry = useEnterIntakeAnswer(patientId, assignmentId)
@@ -260,6 +273,7 @@ export function IntakeReviewPanel(props: { patientId: string; assignmentId: stri
       <ul className="mt-2" data-testid="intake-review-items">
         {items.map((item) => (
           <IntakeReviewItemRow key={item.id} item={item} form={data.form} readOnly={source}
+            focused={item.id === focusItemId}
             artifacts={artifactsFor(item.id, assignmentId, files ?? [])} shown={shown[item.key] !== false}
             selectable={isSubmitted} selected={selected.includes(item.id)} onSelect={onSelect}
             saving={entry.isPending} canEnter={canEnter}
@@ -278,15 +292,15 @@ export function IntakeReviewPanel(props: { patientId: string; assignmentId: stri
             maxLength={MAX_CORRECTION_NOTE_LENGTH} onChange={(e) => setNote(e.target.value)}
             data-testid="intake-review-note" />
           <div className="mt-3 flex gap-2">
-            <button type="button" className="btn-primary" onClick={submitCorrection}
+            <Button type="button" onClick={submitCorrection}
               disabled={pending || selected.length === 0 || note.trim() === ""}
               data-testid="intake-review-request">
               {COPY.send}
-            </button>
-            <button type="button" className="btn-secondary" disabled={pending}
+            </Button>
+            <Button type="button" variant="secondary" disabled={pending}
               onClick={() => accept.mutate()} data-testid="intake-review-accept">
               {COPY.accept}
-            </button>
+            </Button>
           </div>
         </section>
       )}

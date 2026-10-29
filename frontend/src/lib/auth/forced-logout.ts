@@ -13,7 +13,7 @@
  * Values match what the login screen and the api client's forced-logout
  * flow use.
  */
-const FORCED_LOGOUT_REASONS = new Set(["idle_timeout", "session_expired"])
+const FORCED_LOGOUT_REASONS = new Set(["idle_timeout", "session_expired", "account_conflict"])
 
 export function isForcedLogoutArrival(searchParams: URLSearchParams): boolean {
   return FORCED_LOGOUT_REASONS.has(searchParams.get("reason") ?? "")

@@ -49,6 +49,7 @@ def _request_with_passkey(passkey_claim: object) -> SimpleNamespace:
         provider="firebase",
         subject_id="s",
         email="a@b.c",
+        email_verified=True,
         mfa_satisfied=True,
         claims=claims,
     )

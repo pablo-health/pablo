@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import and_, select
 
-from ..db.models import ComplianceItemRow
+from ..db.models import TaskRow
 from ..db.platform_models import CredentialLiabilityPolicyRow, CredentialLicenseRow
 
 if TYPE_CHECKING:
@@ -70,7 +70,7 @@ def propose(session: Session, user_id: str) -> list[ClockProposal]:
     "the clocks agree with the facts" and a caller can say so.
 
     Where a clock is single-instance but the record is not — a clinician holds
-    four licences and ``compliance_items`` tracks one ``license`` clock — the
+    four licences and ``tasks`` tracks one ``license`` clock — the
     proposal takes the SOONEST expiry among the live licences. That is the date
     that matters: the first lapse is the one that stops her practising, and
     warning about the latest would warn after the fact.
@@ -130,7 +130,7 @@ def propose(session: Session, user_id: str) -> list[ClockProposal]:
     return [p for p in proposals if p.is_change]
 
 
-def apply_proposal(session: Session, user_id: str, proposal: ClockProposal) -> ComplianceItemRow:
+def apply_proposal(session: Session, user_id: str, proposal: ClockProposal) -> TaskRow:
     """Write one proposal the clinician accepted. Does not commit.
 
     Takes the proposal rather than an item id and a date so that what gets
@@ -144,7 +144,7 @@ def apply_proposal(session: Session, user_id: str, proposal: ClockProposal) -> C
     """
     now = datetime.now(UTC)
     if proposal.item_id is None:
-        row = ComplianceItemRow(
+        row = TaskRow(
             id=str(uuid.uuid4()),
             user_id=user_id,
             item_type=proposal.item_type,
@@ -157,7 +157,7 @@ def apply_proposal(session: Session, user_id: str, proposal: ClockProposal) -> C
         session.flush()
         return row
 
-    existing = session.get(ComplianceItemRow, proposal.item_id)
+    existing = session.get(TaskRow, proposal.item_id)
     if existing is None or existing.user_id != user_id:
         msg = f"No compliance item {proposal.item_id!r} for this clinician"
         raise ValueError(msg)
@@ -179,15 +179,15 @@ def _proposal_for(  # noqa: PLR0913 — keyword-only proposal fields, not a call
 ) -> ClockProposal:
     """Pair a derived date with the existing item of that type, if any."""
     item = session.execute(
-        select(ComplianceItemRow)
+        select(TaskRow)
         .where(
             and_(
-                ComplianceItemRow.user_id == user_id,
-                ComplianceItemRow.item_type == item_type,
-                ComplianceItemRow.completed_at.is_(None),
+                TaskRow.user_id == user_id,
+                TaskRow.item_type == item_type,
+                TaskRow.completed_at.is_(None),
             )
         )
-        .order_by(ComplianceItemRow.created_at, ComplianceItemRow.id)
+        .order_by(TaskRow.created_at, TaskRow.id)
         .limit(1)
     ).scalar_one_or_none()
     return ClockProposal(

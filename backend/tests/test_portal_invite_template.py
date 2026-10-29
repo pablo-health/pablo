@@ -47,6 +47,7 @@ from app.portal.practice_routes import PracticeAddress
 from app.portal.store import InMemoryPortalAuthStore, InMemoryPortalSessionStore
 from app.portal.tenant_gateway import PortalStores, get_portal_stores
 from app.repositories import get_patient_repository
+from app.routes import _deps
 from app.services.audit_service import get_audit_service
 from app.settings import get_settings
 from fastapi import FastAPI
@@ -56,6 +57,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from app.models import User
+
+    from tests.audit_fakes import RecordingAudit
 
 TENANT = "practice_abc123"
 PRACTICE_ID = "practice-1"
@@ -84,14 +87,6 @@ class _FakePatient:
 class _FakePatientRepository:
     def get(self, patient_id: str, user_id: str) -> Any:
         return _FakePatient() if patient_id == PATIENT_ID else None
-
-
-class _RecordingAudit:
-    def __init__(self) -> None:
-        self.actions: list[str] = []
-
-    def log(self, action: Any, *_args: Any, **_kwargs: Any) -> None:
-        self.actions.append(str(action))
 
 
 def _forms(_patient_id: str, _user_id: str, upcoming: Any) -> list[str]:
@@ -295,10 +290,11 @@ def _portal_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 @pytest.fixture(autouse=True)
 def _practice(monkeypatch: pytest.MonkeyPatch) -> None:
     address = PracticeAddress(slug="example-therapy", display_name=PRACTICE_NAME, enabled=True)
-    for module in (routes, invite_template_routes):
+    for module in (routes, _deps):
         monkeypatch.setattr(
             module, "_resolve_practice_from_email", lambda _email: (PRACTICE_ID, TENANT)
         )
+    for module in (routes, invite_template_routes):
         monkeypatch.setattr(module, "ensure_practice_slug", lambda _practice_id: address)
 
 
@@ -307,16 +303,11 @@ def templates() -> InMemoryInviteTemplateStore:
     return InMemoryInviteTemplateStore()
 
 
-@pytest.fixture
-def audit() -> _RecordingAudit:
-    return _RecordingAudit()
-
-
 def _app(
     user: User,
     delivery: CapturingInviteDelivery,
     templates: InMemoryInviteTemplateStore,
-    audit: _RecordingAudit,
+    recording_audit: RecordingAudit,
 ) -> TestClient:
     application = FastAPI()
     register_exception_handlers(application)
@@ -330,7 +321,7 @@ def _app(
     overrides[require_active_subscription] = lambda: user
     overrides[get_patient_repository] = _FakePatientRepository
     overrides[get_portal_stores] = lambda: stores
-    overrides[get_audit_service] = lambda: audit
+    overrides[get_audit_service] = lambda: recording_audit
     overrides[get_invite_delivery] = lambda: delivery
     overrides[get_sms_gateway] = FakeSmsGateway
     overrides[get_invite_template_store] = lambda: templates
@@ -364,16 +355,16 @@ def client(
     mock_user: User,
     rendered_delivery: CapturingRenderedInviteDelivery,
     templates: InMemoryInviteTemplateStore,
-    audit: _RecordingAudit,
+    recording_audit: RecordingAudit,
 ) -> TestClient:
-    return _app(mock_user, rendered_delivery, templates, audit)
+    return _app(mock_user, rendered_delivery, templates, recording_audit)
 
 
 @pytest.fixture
 def fixed_client(
-    mock_user: User, templates: InMemoryInviteTemplateStore, audit: _RecordingAudit
+    mock_user: User, templates: InMemoryInviteTemplateStore, recording_audit: RecordingAudit
 ) -> TestClient:
-    return _app(mock_user, CapturingInviteDelivery(), templates, audit)
+    return _app(mock_user, CapturingInviteDelivery(), templates, recording_audit)
 
 
 def test_a_practice_starts_on_the_default_wording(client: TestClient) -> None:
@@ -496,7 +487,7 @@ def test_a_saved_custom_template_is_sent_as_the_practice_wrote_it(
 def test_the_client_preview_is_the_email_that_is_sent_with_the_link_withheld(
     client: TestClient,
     rendered_delivery: CapturingRenderedInviteDelivery,
-    audit: _RecordingAudit,
+    recording_audit: RecordingAudit,
 ) -> None:
     client.put("/api/portal/invite-template", json={"subject": CUSTOM.subject, "body": CUSTOM.body})
 
@@ -509,7 +500,7 @@ def test_the_client_preview_is_the_email_that_is_sent_with_the_link_withheld(
     assert preview["to_email"] == "robin@example.test"
     assert "Hi Robin," in preview["text"]
     assert "- Intake questionnaire" in preview["text"]
-    assert str(AuditAction.PATIENT_PORTAL_INVITE_PREVIEWED) in audit.actions
+    assert str(AuditAction.PATIENT_PORTAL_INVITE_PREVIEWED) in recording_audit.actions
 
     sent = client.post(f"/api/patients/{PATIENT_ID}/portal-invite")
     assert sent.status_code == 202
@@ -528,13 +519,13 @@ def test_the_client_preview_is_the_email_that_is_sent_with_the_link_withheld(
 
 
 def test_fixed_wording_deployments_offer_no_client_preview(
-    fixed_client: TestClient, audit: _RecordingAudit
+    fixed_client: TestClient, recording_audit: RecordingAudit
 ) -> None:
     body = fixed_client.post(
         f"/api/patients/{PATIENT_ID}/portal-invite/preview", json={"version_ids": []}
     ).json()
     assert body == {"available": False, "to_email": None, "subject": None, "text": None}
-    assert audit.actions == []
+    assert recording_audit.actions == []
 
 
 def test_a_client_preview_for_an_unknown_chart_is_a_404(client: TestClient) -> None:

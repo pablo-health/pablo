@@ -10,14 +10,15 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated, Any
 
 import google.auth
 import google.auth.transport.requests
 import httpx
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Body, Depends, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import update
 
 from ..api_errors import BadRequestError, ForbiddenError, NotFoundError, ServerError
@@ -46,6 +47,7 @@ from ..models import (
     UserPreferences,
 )
 from ..models.audit import AuditAction, AuditCursor, ResourceType
+from ..models.user import preference_changes
 from ..repositories import (
     ClinicianProfile,
     ClinicianProfileRepository,
@@ -226,6 +228,16 @@ def get_user_status(
             # Who may rename the practice or sign its BAA again. Same rule
             # the write routes enforce (_is_practice_owner).
             result["is_practice_owner"] = _is_practice_owner(practice_row, user)
+            # Who may change practice-wide settings: the owner, or a
+            # clinician the owner made a practice admin (_is_practice_admin).
+            result["is_practice_admin"] = _is_practice_admin(practice_row, user)
+            # Who may read the activity on a client's record. The recorded
+            # owner only — the same test the route and the row policy make,
+            # which is narrower than the one above when a practice was
+            # registered under no email.
+            from ..db.practice_owner import is_recorded_owner
+
+            result["can_view_record_activity"] = is_recorded_owner(practice_row, user.id)
             result["practice_phone"] = practice_row.phone
             # Free text as the professional-info step captured it: one
             # line, unparsed. A practice that never filled it in reads
@@ -248,6 +260,7 @@ def get_user_status(
     # Include subscription/trial info when subscription enforcement is enabled.
     settings = get_settings()
     if settings.is_saas:
+        # The subscription routes exist only in the SaaS overlay.
         from .subscription import _get_subscription_info  # type: ignore[import-not-found]
 
         sub_info = _get_subscription_info(user.email, settings)
@@ -625,9 +638,9 @@ def update_professional_info(
     )
     if practice_fields_sent and _resolve_practice_id_for(user) is not None:
         # Name, address and phone belong to the practice, so only its owner
-        # may change them. Refuse before writing anything else, so a
-        # non-owner's request fails whole rather than half-applied.
-        _get_own_practice_as_owner(user)
+        # or a practice admin may change them. Refuse before writing anything
+        # else, so anyone else's request fails whole rather than half-applied.
+        _get_own_practice_as_admin(user)
 
     if request.legal_name is not None:
         user.legal_name = request.legal_name
@@ -741,6 +754,56 @@ def _get_own_practice_as_owner(user: User) -> "PracticeRow":
     return practice
 
 
+def _is_practice_admin(practice: "PracticeRow", user: User) -> bool:
+    """Whether ``user`` may change ``practice``'s practice-wide settings.
+
+    The owner always may. Anyone else may when the owner has made them a
+    practice admin (``practice_admins`` in the practice's own schema, which
+    the request session is already pointed at).
+    """
+    if _is_practice_owner(practice, user):
+        return True
+    from ..repositories import get_practice_admin_repository
+
+    return get_practice_admin_repository().is_admin(user.id)
+
+
+def _get_own_practice_as_admin(user: User) -> "PracticeRow":
+    """Resolve the caller's own practice row, gated to its owner or an admin.
+
+    The owner-or-admin counterpart to ``_get_own_practice_as_owner``, which
+    stays the gate for what only the owner may do: granting and revoking
+    admins, and signing the BAA for the covered entity.
+    """
+    from ..db import get_db_session
+    from ..db.platform_models import PracticeRow
+
+    practice_id = _resolve_practice_id_for(user)
+    if practice_id is None:
+        raise NotFoundError("No practice mapping for this account", code="NO_PRACTICE")
+
+    practice = get_db_session().get(PracticeRow, practice_id)
+    if practice is None:
+        raise NotFoundError("Practice not found", {"practice_id": practice_id})
+
+    if not _is_practice_admin(practice, user):
+        raise ForbiddenError(
+            "Only the practice owner or a practice admin can change this setting",
+            code="NOT_PRACTICE_ADMIN",
+        )
+
+    return practice
+
+
+def require_practice_admin(user: User = Depends(get_current_user)) -> "PracticeRow":
+    """FastAPI dependency: the caller's practice, if they own it or are its admin.
+
+    For routes that change practice-wide settings. 403 for any other
+    clinician; MFA is required, as for every settings write.
+    """
+    return _get_own_practice_as_admin(user)
+
+
 @router.get("/me/practice/audio-retention")
 def get_practice_audio_retention(
     user: User = Depends(get_current_user_no_mfa),
@@ -767,7 +830,8 @@ def update_practice_audio_retention(
     """Set the caller's own practice's audio retention window (days).
 
     422 on an out-of-range value (Pydantic — mirrors the DB CHECK of
-    30..2555 days so a bad value never reaches the database). 403 if the
+    0..2555 days so a bad value never reaches the database; 0 deletes a
+    session's audio once its note is signed). 403 if the
     caller isn't the practice owner.
     """
     from ..db import get_db_session
@@ -1098,8 +1162,34 @@ def save_preferences(
     user_repo: UserRepository = Depends(get_user_repository),
     _: None = Depends(subscription_exempt),
 ) -> UserPreferences:
-    """Save user preferences (full replace)."""
+    """Save user preferences (full replace).
+
+    Kept for older clients. A body built from a cached copy erases whatever
+    another save wrote since that copy was read, so the app uses PATCH.
+    """
     return user_repo.save_preferences(user.id, prefs)
+
+
+@router.patch("/me/preferences")
+def update_preferences(
+    changes: Annotated[dict[str, Any], Body()],
+    user: User = Depends(get_current_user),
+    user_repo: UserRepository = Depends(get_user_repository),
+    _: None = Depends(subscription_exempt),
+) -> UserPreferences:
+    """Change only the preferences named in the body; returns all of them.
+
+    Keys left out are untouched. A key sent as ``null`` is removed and reads
+    back as its default. Values are validated as PUT validates them, and an
+    unknown key is refused with 422.
+    """
+    try:
+        validated = preference_changes(changes)
+    except ValidationError as exc:
+        raise RequestValidationError(
+            [{**error, "loc": ("body", *error["loc"])} for error in exc.errors(include_url=False)]
+        ) from exc
+    return user_repo.update_preferences(user.id, validated)
 
 
 @router.put("/me/preferences/theme")
@@ -1110,9 +1200,7 @@ def save_theme_preference(
     _: None = Depends(subscription_exempt),
 ) -> UserPreferences:
     """Update just the UI theme without round-tripping the full prefs blob."""
-    prefs = user_repo.get_preferences(user.id)
-    prefs.theme = request.theme
-    return user_repo.save_preferences(user.id, prefs)
+    return user_repo.update_preferences(user.id, {"theme": request.theme})
 
 
 class AuditLogItem(BaseModel):

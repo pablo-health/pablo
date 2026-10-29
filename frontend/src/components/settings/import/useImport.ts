@@ -13,6 +13,7 @@ import { useAuthQuery } from "@/hooks/useAuthQuery"
 import {
   IMPORT_BUSY_STATES,
   getImportRun,
+  getPatientImportOrigin,
   listImportRuns,
   type ImportRunDetail,
 } from "@/lib/api/migration"
@@ -21,6 +22,7 @@ export const importKeys = {
   all: ["migration"] as const,
   runs: () => ["migration", "runs"] as const,
   run: (id: string) => ["migration", "run", id] as const,
+  origin: (patientId: string) => ["migration", "origin", patientId] as const,
 }
 
 /** How often a working run is re-read, and for how long before giving up. */
@@ -40,8 +42,14 @@ export function useImportRun(runId: string | null) {
     },
     enabled: runId !== null,
     refetchInterval: (query) => {
-      const state = query.state.data?.state
-      if (!state || !IMPORT_BUSY_STATES.has(state)) return false
+      const run = query.state.data
+      const state = run?.state
+      if (!state) return false
+      // Being read or landed; or landed, with the chart check that follows
+      // the import (client by client, after it applied) not yet reported.
+      const waiting =
+        IMPORT_BUSY_STATES.has(state) || (state === "applied" && !run?.report?.chart_updates)
+      if (!waiting) return false
       if (query.state.dataUpdateCount > POLL_LIMIT) return false
       return POLL_MS
     },
@@ -50,4 +58,13 @@ export function useImportRun(runId: string | null) {
 
 export function useImportHistory() {
   return useAuthQuery({ queryKey: importKeys.runs(), queryFn: listImportRuns })
+}
+
+/** The import that brought a client in, for the chart header; `origin` is null for one added by hand. */
+export function useImportOrigin(patientId: string) {
+  return useAuthQuery({
+    queryKey: importKeys.origin(patientId),
+    queryFn: () => getPatientImportOrigin(patientId),
+    staleTime: 5 * 60 * 1000,
+  })
 }

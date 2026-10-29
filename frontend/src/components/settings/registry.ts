@@ -9,11 +9,15 @@ import {
   Clock,
   FileArchive,
   FileInput,
+  FileText,
   Globe,
   Inbox,
   LayoutTemplate,
+  ListOrdered,
   Mic,
   Palette,
+  Plane,
+  ListChecks,
   Receipt,
   ScrollText,
   ShieldCheck,
@@ -26,6 +30,7 @@ import type { ComponentType } from "react"
 import { ActivityPage } from "./pages/ActivityPage"
 import { AppearancePage } from "./pages/AppearancePage"
 import { AvailabilityPage } from "./pages/AvailabilityPage"
+import { AwayPage } from "./pages/AwayPage"
 import { BillingContactPage } from "./pages/BillingContactPage"
 import { BillingProfilePage } from "./pages/BillingProfilePage"
 import { CalendarsPage } from "./pages/CalendarsPage"
@@ -35,6 +40,7 @@ import { DomainsPage } from "./pages/DomainsPage"
 import { ImportPage } from "./pages/ImportPage"
 import { InboxPage } from "./pages/InboxPage"
 import { InsurancePage } from "./pages/InsurancePage"
+import { NoteTypesPage } from "./pages/NoteTypesPage"
 import { PatientPortalPage } from "./pages/PatientPortalPage"
 import { PracticeExportPage } from "./pages/PracticeExportPage"
 import { ProfilePage } from "./pages/ProfilePage"
@@ -42,15 +48,20 @@ import { SchedulingPage } from "./pages/SchedulingPage"
 import { SecurityPage } from "./pages/SecurityPage"
 import { SessionsPage } from "./pages/SessionsPage"
 import { SuperbillsPage } from "./pages/SuperbillsPage"
+import { TasksPage } from "./pages/TasksPage"
+import { WaitlistPage } from "./pages/WaitlistPage"
 import { WebsitePage } from "./pages/WebsitePage"
 import {
   BILLING_CONTACT_SETTINGS_ID,
   BILLING_PROFILE_SETTINGS_ID,
+  CREDENTIALING_FEATURE,
+  CREDENTIALING_LEGACY_FEATURE,
   CREDENTIALING_LEGACY_SETTINGS_ID,
   CREDENTIALING_SETTINGS_ID,
   DOMAINS_SETTINGS_ID,
   INSURANCE_PAYERS_SETTINGS_ID,
   PATIENT_PORTAL_SETTINGS_ID,
+  WAITLIST_SETTINGS_ID,
 } from "./paths"
 import { settingsExtensions } from "./registry.extensions"
 
@@ -86,6 +97,12 @@ export interface SettingsItem {
    * absent from the nav *and* its route 404s — a hidden nav link is not a gate.
    */
   feature?: string
+  /**
+   * False for a page reached from another page rather than from the nav: a
+   * step that belongs to one card should be found on that card. Its route
+   * still resolves. Defaults to true.
+   */
+  inNav?: boolean
 }
 
 export interface SettingsGroup {
@@ -131,6 +148,7 @@ const baseGroups: SettingsGroup[] = [
       { id: "profile", label: "Profile", icon: User, page: ProfilePage, desc: "Your name, timezone and clinician type." },
       { id: "appearance", label: "Appearance", icon: Palette, page: AppearancePage, desc: "How your workspace looks." },
       { id: "inbox", label: "Inbox", icon: Inbox, page: InboxPage, desc: "What happens to earlier messages when you reply." },
+      { id: "away", label: "Away", icon: Plane, page: AwayPage, desc: "Dates you're away and the reply {people} get meanwhile." },
       { id: "security", label: "Sign-in & security", icon: ShieldCheck, page: SecurityPage, desc: "Passkeys and second factors." },
       {
         id: "activity",
@@ -160,6 +178,13 @@ const baseGroups: SettingsGroup[] = [
         desc: "Which appointments exist, how new {people} start, and what Pablo may offer versus what {people} may book.",
       },
       {
+        id: WAITLIST_SETTINGS_ID,
+        label: "Waitlist",
+        icon: ListOrdered,
+        page: WaitlistPage,
+        desc: "{People} waiting for a better or more regular time.",
+      },
+      {
         id: "calendars",
         label: "Calendars",
         icon: Calendar,
@@ -174,12 +199,19 @@ const baseGroups: SettingsGroup[] = [
         desc: "Defaults for new appointments and how recordings are handled.",
       },
       {
+        id: "note-types",
+        label: "Note types",
+        icon: FileText,
+        page: NoteTypesPage,
+        desc: "Note types of your own: the sections and fields a draft fills in.",
+      },
+      {
         id: PATIENT_PORTAL_SETTINGS_ID,
         label: "{Person} portal",
         icon: Users,
         page: PatientPortalPage,
         feature: "patient_portal",
-        desc: "Intake forms, self-report measures and {person} sign-in.",
+        desc: "Intake packets, self-report measures and {person} sign-in.",
       },
       {
         id: DOMAINS_SETTINGS_ID,
@@ -209,6 +241,13 @@ const baseGroups: SettingsGroup[] = [
         page: PracticeExportPage,
         desc: "Everything in this practice, as one file.",
       },
+      {
+        id: "tasks",
+        label: "Tasks",
+        icon: ListChecks,
+        page: TasksPage,
+        desc: "Licenses, renewals and anything else with a date.",
+      },
     ],
   },
   {
@@ -220,8 +259,7 @@ const baseGroups: SettingsGroup[] = [
         label: "Superbills & rates",
         icon: Receipt,
         page: SuperbillsPage,
-        feature: "superbills",
-        desc: "Out-of-network receipts generated from the chart.",
+        desc: "Itemized receipts of visits and payments.",
       },
       {
         id: BILLING_PROFILE_SETTINGS_ID,
@@ -250,17 +288,18 @@ const baseGroups: SettingsGroup[] = [
         icon: ClipboardCheck,
         page: CredentialingStartPage,
         desc: "Start with your NPI. We look up what the registry already knows, so an application asks you for less.",
+        feature: CREDENTIALING_FEATURE,
       },
       {
-        // Kept reachable on purpose: the tiered checklist is still the only
-        // surface that reaches Tier 1 and Tier 2, and removing it would take
-        // working screens away before their replacements exist. It goes when
-        // the new flow covers what it covers.
+        // Hidden behind a feature no deployment turns on (see
+        // CREDENTIALING_LEGACY_FEATURE): still the only surface that reaches
+        // Tier 1 and Tier 2, so the code stays until the new flow covers them.
         id: CREDENTIALING_LEGACY_SETTINGS_ID,
         label: "Credentialing (deprecated)",
         icon: ClipboardCheck,
         page: CredentialingPage,
         desc: "The older full checklist. Being replaced by the screens above; still here because nothing else reaches the later tiers yet.",
+        feature: CREDENTIALING_LEGACY_FEATURE,
       },
     ],
   },
@@ -333,3 +372,31 @@ export function findSettingsItem(id: string): ResolvedSettingsItem | undefined {
 
 /** Where `/dashboard/settings` sends you. */
 export const DEFAULT_SETTINGS_ITEM = "profile"
+
+/**
+ * Sections that moved, by their old id: where each lives now, and the query
+ * the old address implied. People bookmark these URLs and other screens
+ * linked them, so an old one lands on the right page instead of a 404.
+ */
+const MOVED_SECTIONS: Record<string, { to: string; query: Record<string, string> }> = {
+  // Compliance items became tasks; the old page showed only compliance.
+  compliance: { to: "tasks", query: { category: "compliance" } },
+}
+
+/**
+ * Where an old section URL now points, keeping any query it carried (an
+ * `?item=` deep link, say). Null for a section that has not moved.
+ */
+export function movedSettingsHref(
+  section: string,
+  search: URLSearchParams | null | undefined,
+): string | null {
+  const moved = MOVED_SECTIONS[section]
+  if (!moved) return null
+  const query = new URLSearchParams(search ?? undefined)
+  for (const [key, value] of Object.entries(moved.query)) {
+    if (!query.has(key)) query.set(key, value)
+  }
+  const qs = query.toString()
+  return `/dashboard/settings/${moved.to}${qs ? `?${qs}` : ""}`
+}

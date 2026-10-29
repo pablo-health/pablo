@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen } from "@testing-library/react"
 
 const routeParams = vi.hoisted(() => ({ section: "appearance" }))
-const gate = vi.hoisted(() => ({ allow: true }))
+const gate = vi.hoisted(() => ({ allow: true as boolean | null }))
 
 const notFound = vi.hoisted(() =>
   vi.fn(() => {
@@ -12,14 +12,24 @@ const notFound = vi.hoisted(() =>
   })
 )
 
+const redirect = vi.hoisted(() =>
+  vi.fn((href: string) => {
+    throw new Error(`NEXT_REDIRECT ${href}`)
+  })
+)
+const search = vi.hoisted(() => ({ current: new URLSearchParams() }))
+
 vi.mock("next/navigation", () => ({
   notFound,
+  redirect,
   useParams: () => routeParams,
+  useSearchParams: () => search.current,
 }))
 
 vi.mock("@/lib/featureGates", () => ({
-  useFeature: () => gate.allow,
-  useFeaturePredicate: () => () => gate.allow,
+  useFeature: () => gate.allow === true,
+  useSettledFeature: (name: string | undefined) => (name ? gate.allow : true),
+  useFeaturePredicate: () => () => gate.allow === true,
 }))
 
 vi.mock("@/components/settings/registry", () => ({
@@ -28,6 +38,8 @@ vi.mock("@/components/settings/registry", () => ({
       appearance: { id: "appearance", page: () => <div data-testid="appearance-page" /> },
       portal: { id: "portal", feature: "patient_portal", page: () => <div data-testid="portal-page" /> },
     })[id],
+  movedSettingsHref: (section: string, params: URLSearchParams) =>
+    section === "compliance" ? `/dashboard/settings/tasks?${params.toString()}` : null,
 }))
 
 import SettingsSectionPage from "../page"
@@ -41,7 +53,9 @@ describe("SettingsSectionPage", () => {
   beforeEach(() => {
     routeParams.section = "appearance"
     gate.allow = true
+    search.current = new URLSearchParams()
     notFound.mockClear()
+    redirect.mockClear()
   })
 
   it("renders the page for a known, allowed item", () => {
@@ -66,4 +80,26 @@ describe("SettingsSectionPage", () => {
     expect(notFound).toHaveBeenCalled()
   })
 
+  it("waits for the account's answer before refusing a gated item", () => {
+    // A direct load of a page this account was given: the deployment says no
+    // until the per-account answer lands, and a 404 there is final.
+    routeParams.section = "portal"
+    gate.allow = null
+
+    const { container } = render(<SettingsSectionPage />)
+
+    expect(notFound).not.toHaveBeenCalled()
+    expect(container).toBeEmptyDOMElement()
+  })
+
+  it("sends a section that moved on to its new address, query and all", () => {
+    routeParams.section = "compliance"
+    search.current = new URLSearchParams("item=abc")
+
+    expect(() => render(<SettingsSectionPage />)).toThrow(
+      "NEXT_REDIRECT /dashboard/settings/tasks?item=abc",
+    )
+    expect(redirect).toHaveBeenCalled()
+    expect(notFound).not.toHaveBeenCalled()
+  })
 })

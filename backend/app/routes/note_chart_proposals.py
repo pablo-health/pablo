@@ -1,0 +1,279 @@
+# Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+
+"""A note's chart proposals: what the visit would change on the chart.
+
+* ``GET  /api/notes/{note_id}/chart-proposals`` — every proposal on the note,
+  pending and decided, each with what the chart says now and the transcript
+  lines it cites. Reading changes nothing: proposals are recomputed where the
+  note's content changes (``app.chart_proposals.step``).
+* ``POST /api/notes/{note_id}/chart-proposals/retry`` — run the proposal call
+  again, for a note whose last call failed. Only a note drafted from a
+  session's transcript can be: a dictated note's transcript is not kept.
+* ``POST /api/notes/{note_id}/chart-proposals/{proposal_id}/decision`` —
+  accept, edit or discard one. Accept and edit write the chart with this note
+  as the source; the note is not changed, signed or not. A medication change
+  is accepted or discarded, not edited (409), and one the list can no longer
+  take (the medication was stopped since) is a 409 that leaves it pending.
+
+Every route loads the note, then its patient, which is the access check (an
+inaccessible one is a 404). Whoever may open the note may decide its
+proposals. Audits name the field key, never the text.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from fastapi import APIRouter, Depends, Request
+
+from ..api_errors import ConflictError, NotFoundError, UnprocessableEntityError
+from ..auth.service import require_baa_acceptance
+from ..chart_history.dependencies import get_chart_history_repository
+from ..chart_history.service import ChartHistoryService
+from ..chart_proposals.dependencies import (
+    get_chart_proposal_repository,
+    get_chart_proposal_step,
+    get_proposal_medication_repository,
+)
+from ..chart_proposals.families import ChartChangedError, ChartWriters, is_session_task
+from ..chart_proposals.schemas import (
+    ChartProposalResponse,
+    ChartProposalsResponse,
+    DecideProposalRequest,
+    proposal_response,
+    run_response,
+)
+from ..chart_proposals.service import (
+    ChartProposalService,
+    Choice,
+    ProposalDecidedError,
+    ProposalNotEditableError,
+    ProposalNotFoundError,
+)
+from ..chart_proposals.step import ChartProposalStep, proposes_chart_updates
+from ..db import get_db_session, release_db_connection
+from ..homework.repository import HomeworkRepository
+from ..medications.repository import (  # noqa: TC001 — FastAPI resolves at runtime
+    MedicationRepository,
+)
+from ..medications.service import MedicationService
+from ..models import AuditAction, Note, Patient, User
+from ..models.enums import SessionSource
+from ..notes import (  # noqa: TC001 — FastAPI resolves at runtime
+    NoteTypeDefinition,
+    NoteTypeRegistry,
+)
+from ..repositories import (
+    ChartHistoryRepository,
+    ChartProposalRepository,
+    PatientRepository,
+    TherapySessionRepository,
+    get_task_repository,
+)
+from ..repositories.postgres.task import (  # noqa: TC001 — FastAPI resolves at runtime
+    PostgresTaskRepository,
+)
+from ..repositories.session_dictation import (  # noqa: TC001 — FastAPI resolves at runtime
+    SessionDictationRepository,
+)
+from ..services import AuditService, NoteService, get_audit_service
+from ..services.note_generation_service import (  # noqa: TC001 — FastAPI resolves at runtime
+    NoteGenerationService,
+)
+from ..services.note_redraft import as_shown, source_transcript
+from ..services.note_service import NoteNotFoundError
+from .notes import get_note_generation_service, get_note_service, get_registry
+from .patients import get_patient_repository
+from .session_dictations import get_dictation_repository
+from .sessions import get_session_repository
+
+if TYPE_CHECKING:
+    from datetime import date
+
+    from ..notes.chart_context import ChartContext
+
+router = APIRouter(prefix="/api/notes", tags=["chart-proposals"])
+
+
+def _note_and_patient(
+    notes: NoteService, patients: PatientRepository, note_id: str, user: User
+) -> tuple[Note, Patient]:
+    try:
+        note = notes.get_note(note_id, user.id)
+    except NoteNotFoundError as exc:
+        raise NotFoundError("Note not found", {"note_id": note_id}) from exc
+    patient = patients.get(note.patient_id, user.id)
+    if patient is None:
+        raise NotFoundError("Note not found", {"note_id": note_id})
+    return note, patient
+
+
+def _visit_date(note: Note, sessions: TherapySessionRepository, user: User) -> date:
+    """The day of the visit: the session's, or the day a standalone note was written."""
+    session = sessions.get(note.session_id, user.id) if note.session_id else None
+    return (session.session_date if session is not None else note.created_at).date()
+
+
+def _listing(
+    note: Note, chart: ChartContext, proposals: ChartProposalRepository
+) -> ChartProposalsResponse:
+    listed = ChartProposalService(proposals).proposals(note.id)
+    return ChartProposalsResponse(
+        data=[proposal_response(p, chart) for p in listed],
+        run=run_response(proposals.run(note.id), note),
+    )
+
+
+@router.get("/{note_id}/chart-proposals", response_model=ChartProposalsResponse)
+def list_chart_proposals(
+    note_id: str,
+    http_request: Request,
+    user: User = Depends(require_baa_acceptance),
+    notes: NoteService = Depends(get_note_service),
+    patients: PatientRepository = Depends(get_patient_repository),
+    proposals: ChartProposalRepository = Depends(get_chart_proposal_repository),
+    step: ChartProposalStep = Depends(get_chart_proposal_step),
+    audit: AuditService = Depends(get_audit_service),
+) -> ChartProposalsResponse:
+    note, patient = _note_and_patient(notes, patients, note_id, user)
+    chart = step.chart(patient, user.id)
+    response = _listing(note, chart, proposals)
+    audit.log_note_action(
+        action=AuditAction.SESSION_VIEWED,
+        user=user,
+        request=http_request,
+        note_id=note.id,
+        patient_id=note.patient_id,
+        session_id=note.session_id,
+        changes={"viewed": "chart_proposals"},
+    )
+    return response
+
+
+@router.post(
+    "/{note_id}/chart-proposals/{proposal_id}/decision", response_model=ChartProposalResponse
+)
+def decide_chart_proposal(
+    note_id: str,
+    proposal_id: str,
+    body: DecideProposalRequest,
+    http_request: Request,
+    user: User = Depends(require_baa_acceptance),
+    notes: NoteService = Depends(get_note_service),
+    patients: PatientRepository = Depends(get_patient_repository),
+    history: ChartHistoryRepository = Depends(get_chart_history_repository),
+    medications: MedicationRepository = Depends(get_proposal_medication_repository),
+    sessions: TherapySessionRepository = Depends(get_session_repository),
+    proposals: ChartProposalRepository = Depends(get_chart_proposal_repository),
+    tasks: PostgresTaskRepository = Depends(get_task_repository),
+    step: ChartProposalStep = Depends(get_chart_proposal_step),
+    audit: AuditService = Depends(get_audit_service),
+) -> ChartProposalResponse:
+    note, patient = _note_and_patient(notes, patients, note_id, user)
+    writers = ChartWriters(
+        history=ChartHistoryService(history),
+        patients=patients,
+        medications=MedicationService(medications),
+        tasks=tasks,
+        # An accepted homework suggestion becomes the client's assignment.
+        homework=HomeworkRepository(get_db_session()),
+    )
+    service = ChartProposalService(proposals, writers, visit_date=_visit_date(note, sessions, user))
+    choice = Choice(
+        body.decision,
+        body.text,
+        **({"due_date": body.due_date} if "due_date" in body.model_fields_set else {}),
+    )
+    try:
+        decided = service.decide(note, patient, proposal_id, choice, user.id)
+    except ProposalNotFoundError as exc:
+        raise NotFoundError("No such proposal on this note", {"proposal_id": proposal_id}) from exc
+    except ProposalDecidedError as exc:
+        raise ConflictError(
+            "This proposal was already decided", {"proposal_id": proposal_id}
+        ) from exc
+    except ProposalNotEditableError as exc:
+        raise ConflictError(
+            "Accept or discard this change; edit the list on the client's page",
+            {"proposal_id": proposal_id},
+        ) from exc
+    except ChartChangedError as exc:
+        raise ConflictError(
+            "The chart has changed since this was proposed", {"proposal_id": proposal_id}
+        ) from exc
+    except ValueError as exc:
+        # What the clinician wrote is more than the record keeps (a task title).
+        raise UnprocessableEntityError(str(exc), {"proposal_id": proposal_id}) from exc
+    change = {"chart_proposal": decided.decision, "field_key": decided.field_key}
+    audit.log_note_action(
+        action=AuditAction.SESSION_UPDATED,
+        user=user,
+        request=http_request,
+        note_id=note.id,
+        patient_id=note.patient_id,
+        session_id=note.session_id,
+        changes=change,
+    )
+    # An accepted task goes to the clinician's own tasks; the chart is not changed.
+    if decided.decision != "discarded" and not is_session_task(decided.field_key):
+        audit.log_patient_action(
+            AuditAction.PATIENT_UPDATED,
+            user,
+            http_request,
+            patient,
+            changes={"changed_fields": [decided.field_key], **change},
+        )
+    return proposal_response(decided, step.chart(patient, user.id))
+
+
+@router.post("/{note_id}/chart-proposals/retry", response_model=ChartProposalsResponse)
+def retry_chart_proposals(
+    note_id: str,
+    http_request: Request,
+    user: User = Depends(require_baa_acceptance),
+    notes: NoteService = Depends(get_note_service),
+    patients: PatientRepository = Depends(get_patient_repository),
+    sessions: TherapySessionRepository = Depends(get_session_repository),
+    dictations: SessionDictationRepository = Depends(get_dictation_repository),
+    proposals: ChartProposalRepository = Depends(get_chart_proposal_repository),
+    step: ChartProposalStep = Depends(get_chart_proposal_step),
+    registry: NoteTypeRegistry = Depends(get_registry),
+    generator: NoteGenerationService = Depends(get_note_generation_service),
+    audit: AuditService = Depends(get_audit_service),
+) -> ChartProposalsResponse:
+    note, patient = _note_and_patient(notes, patients, note_id, user)
+    try:
+        definition: NoteTypeDefinition | None = registry.get(note.note_type, note.note_type_version)
+    except KeyError:
+        definition = None
+    session = sessions.get(note.session_id, user.id) if note.session_id else None
+    if session is None or not proposes_chart_updates(definition):
+        raise ConflictError("This note can't be checked again", {"note_id": note_id})
+    transcript = source_transcript(session, dictations)
+    chart = step.chart(patient, user.id)
+    shown = as_shown(note.note_type, note.content, note.content_edited)
+    # Nothing is held open across the model call, as in the draft worker.
+    release_db_connection()
+    # An imported note's document is kept as its session's transcript.
+    drafted = (
+        step.draft_from_document(generator, definition, chart, transcript.content)
+        if session.source == SessionSource.IMPORTED
+        else step.draft(
+            generator, definition, chart, transcript, shown, visit_date=session.session_date.date()
+        )
+    )
+    step.store(note, definition, chart, drafted, shown)
+    response = _listing(note, chart, proposals)
+    audit.log_note_action(
+        action=AuditAction.SESSION_UPDATED,
+        user=user,
+        request=http_request,
+        note_id=note.id,
+        patient_id=note.patient_id,
+        session_id=note.session_id,
+        changes={
+            "chart_proposals": "retried",
+            "status": response.run.status if response.run else None,
+        },
+    )
+    return response

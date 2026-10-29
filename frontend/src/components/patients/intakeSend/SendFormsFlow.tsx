@@ -176,7 +176,7 @@ export function SendFormsFlow({
         )}
         {sentForms.length > 0 && (
           <section className="space-y-1">
-            <h3 className="text-sm font-semibold text-neutral-900">Forms sent</h3>
+            <h3 className="text-sm font-semibold text-neutral-900">Sent</h3>
             <ul className="list-disc pl-5 text-sm text-neutral-800" data-testid="send-forms-sent-list">
               {sentForms.map((name) => (
                 <li key={name}>{name}</li>
@@ -201,7 +201,7 @@ export function SendFormsFlow({
       <div className="space-y-4" data-testid="send-forms-review">
         {header}
         <section className="space-y-1">
-          <h3 className="text-sm font-semibold text-neutral-900">Forms</h3>
+          <h3 className="text-sm font-semibold text-neutral-900">Packets</h3>
           {chosen.length > 0 ? (
             <ul className="list-disc pl-5 text-sm text-neutral-800" data-testid="send-forms-review-list">
               {chosen.map((form) => (
@@ -209,7 +209,7 @@ export function SendFormsFlow({
               ))}
             </ul>
           ) : (
-            <p className="text-sm text-neutral-600">No forms.</p>
+            <p className="text-sm text-neutral-600">No packets.</p>
           )}
         </section>
 
@@ -263,7 +263,7 @@ export function SendFormsFlow({
     <div className="space-y-4" data-testid="send-forms-choose">
       {header}
       <section className="space-y-2">
-        <h3 className="text-sm font-semibold text-neutral-900">Forms to fill in</h3>
+        <h3 className="text-sm font-semibold text-neutral-900">Packets to send</h3>
         {formsOff ? (
           <p className="text-sm text-neutral-600" data-testid="send-forms-forms-off">
             Forms are turned off in your {people.one} portal.{" "}
@@ -272,7 +272,7 @@ export function SendFormsFlow({
             </Link>
           </p>
         ) : templatesLoading ? (
-          <p className="text-sm text-neutral-500">Loading forms…</p>
+          <p className="text-sm text-neutral-500">Loading packets…</p>
         ) : forms.length > 0 ? (
           <ul className="space-y-2">
             {forms.map((form) => {
@@ -293,9 +293,9 @@ export function SendFormsFlow({
           </ul>
         ) : (
           <p className="text-sm text-neutral-600" data-testid="send-forms-none-published">
-            No forms are published yet.{" "}
+            No packets are published yet.{" "}
             <Link href="/dashboard/settings/portal" className="font-medium underline">
-              Set up forms
+              Set up a packet
             </Link>
           </p>
         )}

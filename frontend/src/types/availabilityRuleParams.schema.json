@@ -362,6 +362,146 @@
       "title": "EnforcementLevel",
       "type": "string"
     },
+    "FloatingBlockException": {
+      "additionalProperties": false,
+      "description": "One date's override of a floating block: pinned to a start, or skipped.",
+      "properties": {
+        "skip": {
+          "anyOf": [
+            {
+              "const": true,
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Skip"
+        },
+        "start": {
+          "anyOf": [
+            {
+              "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Start"
+        }
+      },
+      "title": "FloatingBlockException",
+      "type": "object"
+    },
+    "FloatingBlockParams": {
+      "additionalProperties": false,
+      "description": "Keep ``duration_minutes`` free somewhere inside a window, on these days.\n\n\"An hour for lunch, somewhere between 11:30 and 2\": unlike a\n``block_time_range`` the time is not fixed. Each day the block settles\ninto the earliest free stretch of the window, and a slot is not offered\nwhen booking it would leave no free stretch of that length. ``label`` is\nwhat the calendar and the booking warning call it. ``exceptions`` pins\nor skips the block on single dates.",
+      "properties": {
+        "days_of_week": {
+          "items": {
+            "description": "0=Monday through 6=Sunday",
+            "maximum": 6,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxItems": 7,
+          "minItems": 1,
+          "title": "Days Of Week",
+          "type": "array"
+        },
+        "duration_minutes": {
+          "maximum": 1440,
+          "minimum": 5,
+          "title": "Duration Minutes",
+          "type": "integer"
+        },
+        "exceptions": {
+          "anyOf": [
+            {
+              "patternProperties": {
+                "^\\d{4}-\\d{2}-\\d{2}$": {
+                  "$ref": "#/$defs/FloatingBlockException"
+                }
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Exceptions"
+        },
+        "label": {
+          "maxLength": 60,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "window_end": {
+          "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+          "title": "Window End",
+          "type": "string"
+        },
+        "window_start": {
+          "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+          "title": "Window Start",
+          "type": "string"
+        }
+      },
+      "required": [
+        "duration_minutes",
+        "window_start",
+        "window_end",
+        "days_of_week",
+        "label"
+      ],
+      "title": "FloatingBlockParams",
+      "type": "object"
+    },
+    "FloatingBlockRule": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_other_types": {
+          "default": true,
+          "title": "Allow Other Types",
+          "type": "boolean"
+        },
+        "appointment_type_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Appointment Type Id"
+        },
+        "enforcement": {
+          "$ref": "#/$defs/EnforcementLevel",
+          "default": "hard"
+        },
+        "params": {
+          "$ref": "#/$defs/FloatingBlockParams"
+        },
+        "rule_type": {
+          "const": "floating_block",
+          "title": "Rule Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule_type",
+        "params"
+      ],
+      "title": "FloatingBlockRule",
+      "type": "object"
+    },
     "MaxPerDayParams": {
       "additionalProperties": false,
       "description": "At most this many appointments in a day.",
@@ -630,6 +770,7 @@
       "block_time_range": "#/$defs/BlockTimeRangeRule",
       "buffer_after": "#/$defs/BufferAfterRule",
       "buffer_before": "#/$defs/BufferBeforeRule",
+      "floating_block": "#/$defs/FloatingBlockRule",
       "max_per_day": "#/$defs/MaxPerDayRule",
       "max_per_week": "#/$defs/MaxPerWeekRule",
       "session_defaults": "#/$defs/SessionDefaultsRule",
@@ -667,6 +808,9 @@
     },
     {
       "$ref": "#/$defs/SessionDefaultsRule"
+    },
+    {
+      "$ref": "#/$defs/FloatingBlockRule"
     }
   ]
 }

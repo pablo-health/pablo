@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ..models.audit import (
@@ -22,6 +24,7 @@ from ..repositories.audit import AuditRepository, InMemoryAuditRepository
 from ..request_context import extract_request_context
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
     from datetime import datetime
 
     from fastapi import Request
@@ -72,6 +75,50 @@ _COALESCED_READ_ACTIONS: frozenset[AuditAction] = frozenset(
 )
 _COALESCED_READ_ACTION_VALUES: frozenset[str] = frozenset(a.value for a in _COALESCED_READ_ACTIONS)
 
+# A per-day key is dated, so it only has to outlive its own day.
+_CALENDAR_DAY_KEY_TTL_SECONDS = 2 * 24 * 60 * 60
+
+
+@dataclass(frozen=True)
+class CoalesceWindow:
+    """How long repeat reads of one record by one user collapse to one audit row.
+
+    Exactly one of the two: ``seconds`` is a fixed window from the first read
+    (the same rule as ``audit_read_coalesce_seconds``); ``calendar_day`` is
+    one row per record per user per UTC day, whatever the time of the read.
+    """
+
+    seconds: int = 0
+    calendar_day: bool = False
+
+    def __post_init__(self) -> None:
+        if (self.seconds > 0) == self.calendar_day:
+            msg = "CoalesceWindow needs exactly one of seconds > 0 or calendar_day"
+            raise ValueError(msg)
+
+
+# Read actions registered with their own window (``register_coalesced_read``).
+# Independent of ``audit_read_coalesce_seconds``: registering one action never
+# changes how any other action is recorded.
+_REGISTERED_WINDOWS: dict[str, CoalesceWindow] = {}
+
+
+def register_coalesced_read(action: AuditAction | str, window: CoalesceWindow) -> None:
+    """Coalesce repeat reads recorded as ``action`` within ``window``.
+
+    For a read that discloses identifiers or short facts, not record content,
+    and repeats on every page load: a screen listing who needs attention
+    today, say, which would otherwise record the same disclosure each time it
+    refreshes. Never register an action that discloses record content; those
+    keep one row per read. Applies only where Redis is configured, and fails
+    open like the built-in gate: a Redis problem writes every row.
+    """
+    value = _action_value(action)
+    if value in _COALESCED_READ_ACTION_VALUES:
+        msg = f"{value} is already coalesced by audit_read_coalesce_seconds"
+        raise ValueError(msg)
+    _REGISTERED_WINDOWS[value] = window
+
 
 def _action_value(action: AuditAction | str) -> str:
     """The stored string for an action.
@@ -94,6 +141,66 @@ class AuditService:
 
     def __init__(self, repo: AuditRepository) -> None:
         self._repo = repo
+        # Entries collected by :meth:`batched`; None outside a batch.
+        self._batch: list[AuditLogEntry] | None = None
+
+    @contextmanager
+    def batched(self) -> Iterator[None]:
+        """Persist every entry logged inside the block together, on exit.
+
+        For a list view that audits one read per row this turns N Redis
+        round-trips, N INSERT flushes and N mirror writes into one of each.
+        The rows are the same rows: one per record, same coalescing window,
+        and a failed write still fails the request. Only the trip count
+        changes. Nested blocks join the outermost one.
+
+        If the block raises, nothing collected is written. The response
+        that would have disclosed those records was never sent, so there is
+        no access to record; the exception is the record of what happened.
+        """
+        if self._batch is not None:
+            yield
+            return
+        self._batch = []
+        try:
+            yield
+        except BaseException:
+            self._batch = None
+            raise
+        entries, self._batch = self._batch, None
+        self._persist_many(entries)
+
+    @staticmethod
+    def _coalesce_ttl() -> int:
+        from ..settings import get_settings
+
+        return get_settings().audit_read_coalesce_seconds
+
+    @staticmethod
+    def _coalesce_key(entry: AuditLogEntry) -> str:
+        return f"audit:seen:{entry.user_id}:{entry.action}:{entry.resource_id}"
+
+    def _coalesce_gate(self, entry: AuditLogEntry) -> tuple[str, int] | None:
+        """The Redis key and expiry that gate ``entry``, or ``None`` if it is never coalesced.
+
+        A registered action (``register_coalesced_read``) uses its own window
+        whatever ``audit_read_coalesce_seconds`` says. A built-in coalesced
+        read uses that setting, and is not coalesced when it is 0. A
+        calendar-day window dates its key by the entry's own UTC timestamp,
+        so the first read of each day writes its row.
+        """
+        window = _REGISTERED_WINDOWS.get(entry.action)
+        if window is not None:
+            if window.calendar_day:
+                day = entry.timestamp[:10]
+                return f"{self._coalesce_key(entry)}:{day}", _CALENDAR_DAY_KEY_TTL_SECONDS
+            return self._coalesce_key(entry), window.seconds
+        if entry.action not in _COALESCED_READ_ACTION_VALUES:
+            return None
+        ttl = self._coalesce_ttl()
+        if ttl <= 0:
+            return None
+        return self._coalesce_key(entry), ttl
 
     def _should_skip_duplicate(self, entry: AuditLogEntry) -> bool:
         """True if this exact read was already recorded in the active window.
@@ -112,18 +219,16 @@ class AuditService:
         posture. Redis only decides WHETHER to write; Postgres remains the
         synchronous system-of-record and never stores the event itself.
         """
-        from ..settings import get_settings
-
-        ttl = get_settings().audit_read_coalesce_seconds
-        if ttl <= 0 or entry.action not in _COALESCED_READ_ACTION_VALUES:
+        gate = self._coalesce_gate(entry)
+        if gate is None:
             return False
+        key, ttl = gate
         try:
             from ..redis_client import get_redis_client
 
             redis = get_redis_client()
             if redis is None:
                 return False
-            key = f"audit:seen:{entry.user_id}:{entry.action}:{entry.resource_id}"
             # True when the key was set (first access), None when it already
             # existed (already logged this window) -> skip the duplicate.
             first_time = redis.set(key, "1", nx=True, ex=ttl)
@@ -132,18 +237,59 @@ class AuditService:
             logger.warning("Audit coalesce check failed; writing row (fail-open)", exc_info=True)
             return False
 
-    def _persist(self, entry: AuditLogEntry) -> None:
-        if self._should_skip_duplicate(entry):
-            return
+    def _duplicates_in(self, entries: list[AuditLogEntry]) -> list[bool]:
+        """The batch form of :meth:`_should_skip_duplicate`: one flag per entry.
+
+        Every coalescable entry's ``SET NX`` goes to Redis in one pipeline,
+        so a hundred-row page costs one round-trip. Two reads of the same
+        record in one batch collapse the same way two requests would: the
+        second ``SET NX`` finds the first one's key. Fails open as a whole;
+        a Redis problem writes every row.
+        """
+        skip = [False] * len(entries)
+        gated = [
+            (i, gate)
+            for i, entry in enumerate(entries)
+            if (gate := self._coalesce_gate(entry)) is not None
+        ]
+        if not gated:
+            return skip
+        try:
+            from ..redis_client import get_redis_client
+
+            redis = get_redis_client()
+            if redis is None:
+                return skip
+            pipe = redis.pipeline()
+            for _i, (key, ttl) in gated:
+                pipe.set(key, "1", nx=True, ex=ttl)
+            for (i, _gate), first_time in zip(gated, pipe.execute(), strict=True):
+                skip[i] = first_time is None
+        except Exception:
+            logger.warning("Audit coalesce check failed; writing rows (fail-open)", exc_info=True)
+            return [False] * len(entries)
+        return skip
+
+    @staticmethod
+    def _prepare(entry: AuditLogEntry) -> None:
         if entry.changes is not None:
             _assert_changes_phi_free(entry.changes)
         if entry.actor_component is not None:
             # A component label is a developer-supplied constant, so a value
             # too long for the column is a bug in the caller, not user input.
             # Truncate rather than raise: losing the tail of a label is a far
-            # better outcome than losing the audit row (see the re-raise
-            # below — a failed audit write fails the request).
+            # better outcome than losing the audit row (a failed audit write
+            # fails the request).
             entry.actor_component = entry.actor_component[:ACTOR_COMPONENT_MAX_LENGTH]
+
+    def _persist(self, entry: AuditLogEntry) -> None:
+        if self._batch is not None:
+            self._prepare(entry)
+            self._batch.append(entry)
+            return
+        if self._should_skip_duplicate(entry):
+            return
+        self._prepare(entry)
         try:
             self._repo.append(entry)
         except Exception:
@@ -154,27 +300,55 @@ class AuditService:
                 "Failed to persist audit log entry id=%s action=%s", entry.id, entry.action
             )
             raise
-        # Postgres write succeeded (system of record). Best-effort dual-write
-        # to Cloud Logging for tamper-evident retention. Import is inside the
-        # conditional so environments without google-cloud-logging installed
-        # (tests, local dev with the flag off) never load it. The outer
-        # try/except is belt-and-suspenders defense: the inner function
-        # already swallows, but we never want a refactor in that module to
-        # turn a mirror-write failure into a request failure.
+        self._mirror([entry])
+
+    def _persist_many(self, entries: list[AuditLogEntry]) -> None:
+        skip = self._duplicates_in(entries)
+        kept = [e for e, s in zip(entries, skip, strict=True) if not s]
+        if not kept:
+            return
+        try:
+            self._repo.append_many(kept)
+        except Exception:
+            logger.exception(
+                "Failed to persist %d audit log entries (first id=%s action=%s)",
+                len(kept),
+                kept[0].id,
+                kept[0].action,
+            )
+            raise
+        self._mirror(kept)
+
+    @staticmethod
+    def _mirror(entries: list[AuditLogEntry]) -> None:
+        """Best-effort dual-write to Cloud Logging, after Postgres succeeded.
+
+        Postgres is the system of record; Cloud Logging is the tamper-evident
+        mirror. The import sits inside the flag check so environments without
+        google-cloud-logging installed (tests, local dev with the flag off)
+        never load it. The try/except is belt-and-suspenders: the writer
+        already swallows, but a refactor there must never turn a mirror-write
+        failure into a request failure.
+        """
         from ..settings import get_settings
 
-        if get_settings().audit_dual_write_enabled:
-            try:
-                from .audit_cloud_logging import write_to_cloud_logging
+        if not get_settings().audit_dual_write_enabled:
+            return
+        try:
+            from .audit_cloud_logging import write_many_to_cloud_logging, write_to_cloud_logging
 
-                write_to_cloud_logging(entry)
-            except Exception:
-                logger.warning(
-                    "Audit dual-write to Cloud Logging failed for entry id=%s "
-                    "(Postgres row already persisted)",
-                    entry.id,
-                    exc_info=True,
-                )
+            if len(entries) == 1:
+                write_to_cloud_logging(entries[0])
+            else:
+                write_many_to_cloud_logging(entries)
+        except Exception:
+            logger.warning(
+                "Audit dual-write to Cloud Logging failed for %d entries (first id=%s); "
+                "Postgres rows already persisted",
+                len(entries),
+                entries[0].id,
+                exc_info=True,
+            )
 
     def log(
         self,
@@ -559,6 +733,36 @@ class AuditService:
         self._persist(entry)
         return entry
 
+    def log_waitlist_action(
+        self,
+        action: AuditAction | str,
+        user: User,
+        request: Request | None,
+        entry_id: str,
+        patient_id: str,
+        changes: dict[str, Any] | None = None,
+    ) -> AuditLogEntry:
+        """Record a CLINICIAN reading or changing a waitlist entry.
+
+        Recorded against the entry's client. ``changes`` names the operation
+        and the fields or place that moved — never the days, times or
+        anything else the entry says.
+        """
+        ip_address, user_agent = extract_request_context(request)
+        entry = AuditLogEntry(
+            user_id=user.id,
+            actor_type=ACTOR_TYPE_CLINICIAN,
+            action=_action_value(action),
+            resource_type=ResourceType.WAITLIST_ENTRY.value,
+            resource_id=entry_id,
+            patient_id=patient_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            changes=changes,
+        )
+        self._persist(entry)
+        return entry
+
     def log_appointment_action(
         self,
         action: AuditAction | str,
@@ -596,6 +800,14 @@ class AuditService:
     ) -> list[AuditLogEntry]:
         return self._repo.list_for_user(user_id=user_id, since=since, limit=limit, before=before)
 
+    def list_for_patient(
+        self,
+        patient_id: str,
+        limit: int = 100,
+        before: AuditCursor | None = None,
+    ) -> list[AuditLogEntry]:
+        return self._repo.list_for_patient(patient_id=patient_id, limit=limit, before=before)
+
     def log_onboarding_milestone(
         self,
         action: AuditAction | str,
@@ -626,14 +838,18 @@ class AuditService:
         self,
         action: AuditAction | str,
         user_id: str,
-        request: Request,
+        request: Request | None,
+        changes: dict[str, Any] | None = None,
     ) -> AuditLogEntry:
         """Record an account-security event keyed by ``user_id`` alone.
 
         For auth surfaces that mint a session without loading a full ``User``
         — notably the usernameless passkey login, where the caller is only
         known after the assertion verifies. Resource is SELF; the payload
-        carries no PHI.
+        carries no PHI. ``request`` is ``None`` when the request did not come
+        from the user's own device, so no address or agent is recorded.
+        ``changes`` holds facts about the account or device (an enrollment
+        outcome, a platform), never anything about a client.
         """
         ip_address, user_agent = extract_request_context(request)
         entry = AuditLogEntry(
@@ -643,6 +859,7 @@ class AuditService:
             resource_id=user_id,
             ip_address=ip_address,
             user_agent=user_agent,
+            changes=changes,
         )
         self._persist(entry)
         return entry
@@ -694,6 +911,51 @@ class AuditService:
         )
         self._persist(entry)
         return entry
+
+    def log_coverage_action(
+        self,
+        action: AuditAction | str,
+        *,
+        actor_id: str,
+        request: Request | None,
+        away_period_id: str,
+        patient_ids: Iterable[str] = (),
+        changes: dict[str, Any] | None = None,
+        only_with_patients: bool = False,
+    ) -> None:
+        """Record a step in the coverage of an away period (``app.away.coverage``).
+
+        With *patient_ids*, one row per client, about that client — a grant
+        made or cut short is a change to who may read their chart. Without,
+        one row on the period itself, unless *only_with_patients*, when
+        nothing happened to anybody's access and nothing is written. Every
+        row names the period. ``actor_id`` is whoever acted, which is also
+        who the session is armed as.
+        """
+        ids = list(patient_ids)
+        if only_with_patients and not ids:
+            return
+        ip_address, user_agent = extract_request_context(request)
+        payload = {**(changes or {}), "away_period_id": away_period_id}
+        targets: list[tuple[ResourceType, str, str | None]] = (
+            [(ResourceType.PATIENT, pid, pid) for pid in ids]
+            if ids
+            else [(ResourceType.AWAY_PERIOD, away_period_id, None)]
+        )
+        with self.batched():
+            for resource_type, resource_id, patient_id in targets:
+                self._persist(
+                    AuditLogEntry(
+                        user_id=actor_id,
+                        action=_action_value(action),
+                        resource_type=resource_type.value,
+                        resource_id=resource_id,
+                        patient_id=patient_id,
+                        ip_address=ip_address,
+                        user_agent=user_agent,
+                        changes=dict(payload),
+                    )
+                )
 
     def log_admin_action(
         self,

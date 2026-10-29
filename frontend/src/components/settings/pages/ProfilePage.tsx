@@ -4,6 +4,7 @@
 
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { PeopleTermSettings } from "../PeopleTermSettings"
+import { PracticeAdminsCard } from "../PracticeAdminsCard"
 import { PracticeNameSettings } from "../PracticeNameSettings"
 import { ProfileSettings } from "../ProfileSettings"
 import { ProviderTypeSettings } from "../ProviderTypeSettings"
@@ -14,8 +15,9 @@ import { useSettingsPreferences, useSettingsUserStatus } from "../useSettingsPre
  * You > Profile.
  *
  * Edits a display name, the clinician type, whether the app says clients or
- * patients, and — for the practice owner — the practice name and the practice's
- * default word. The rest of the profile (licence, NPI, address, phone,
+ * patients, and — for the practice owner or a practice admin — the practice
+ * name. The owner also sets the practice's default word and chooses the
+ * practice admins. The rest of the profile (licence, NPI, address, phone,
  * timezone) lives on the billing pages or arrives with the fields behind it.
  */
 export function ProfilePage() {
@@ -53,10 +55,12 @@ export function ProfilePage() {
         >
           <PracticeNameSettings
             currentName={userStatus.practice_name}
-            canEdit={userStatus.is_practice_owner === true}
+            canEdit={userStatus.is_practice_admin === true}
           />
         </SettingsCard>
       )}
+
+      {userStatus?.is_practice_owner === true && <PracticeAdminsCard />}
     </>
   )
 }

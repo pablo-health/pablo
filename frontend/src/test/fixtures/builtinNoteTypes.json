@@ -1,0 +1,2684 @@
+[
+  {
+    "key": "birp",
+    "label": "BIRP",
+    "description": "Behavior / Intervention / Response / Plan — standard for group therapy, residential treatment, and substance-use disorder programs. Emphasizes the therapeutic process over diagnosis.",
+    "tier": "core",
+    "context": "session",
+    "sections": [
+      {
+        "key": "behavior",
+        "label": "Behavior",
+        "fields": [
+          {
+            "key": "presenting_behavior",
+            "label": "Presenting Behavior",
+            "kind": "text",
+            "ai_hint": "What the client did and said during the session."
+          },
+          {
+            "key": "mood_affect",
+            "label": "Mood/Affect",
+            "kind": "text",
+            "ai_hint": "Client's self-reported mood and observed affective tone."
+          },
+          {
+            "key": "reported_symptoms",
+            "label": "Reported Symptoms",
+            "kind": "list",
+            "ai_hint": "Discrete symptoms the client reported in this session."
+          }
+        ]
+      },
+      {
+        "key": "intervention",
+        "label": "Intervention",
+        "fields": [
+          {
+            "key": "interventions_used",
+            "label": "Interventions Used",
+            "kind": "list",
+            "ai_hint": "Therapeutic techniques the clinician applied during the session."
+          },
+          {
+            "key": "rationale",
+            "label": "Rationale",
+            "kind": "text",
+            "ai_hint": "Why these interventions were chosen for this client at this time."
+          }
+        ]
+      },
+      {
+        "key": "response",
+        "label": "Response",
+        "fields": [
+          {
+            "key": "client_response",
+            "label": "Client Response",
+            "kind": "text",
+            "ai_hint": "How the client responded to the interventions used."
+          },
+          {
+            "key": "engagement_level",
+            "label": "Engagement Level",
+            "kind": "text",
+            "ai_hint": "Observed engagement during the session (resistant, ambivalent, engaged, etc.)."
+          },
+          {
+            "key": "progress_observed",
+            "label": "Progress Observed",
+            "kind": "text",
+            "ai_hint": "Within-session shifts the clinician noted in the client's presentation."
+          }
+        ]
+      },
+      {
+        "key": "plan",
+        "label": "Plan",
+        "fields": [
+          {
+            "key": "homework_assignments",
+            "label": "Homework Assignments",
+            "kind": "list",
+            "ai_hint": "Tasks or practices assigned to the client between sessions."
+          },
+          {
+            "key": "next_steps",
+            "label": "Next Steps",
+            "kind": "list",
+            "ai_hint": "Planned clinical focus for upcoming sessions."
+          },
+          {
+            "key": "next_session",
+            "label": "Next Session",
+            "kind": "text",
+            "ai_hint": "Scheduled date/time or cadence for the next appointment."
+          }
+        ]
+      }
+    ],
+    "inputs": [],
+    "version": null,
+    "restricted": false,
+    "is_locked": false,
+    "spec": null,
+    "based_on": null
+  },
+  {
+    "key": "dap",
+    "label": "DAP",
+    "description": "Data / Assessment / Plan — the most common SOAP alternative for individual therapy. Collapses the Subjective/Objective split into a single Data section.",
+    "tier": "core",
+    "context": "session",
+    "sections": [
+      {
+        "key": "data",
+        "label": "Data",
+        "fields": [
+          {
+            "key": "presenting_concern",
+            "label": "Presenting Concern",
+            "kind": "text",
+            "ai_hint": "The primary issue the client raised in this session."
+          },
+          {
+            "key": "mood_affect",
+            "label": "Mood/Affect",
+            "kind": "text",
+            "ai_hint": "Client's self-reported mood and observed affective tone."
+          },
+          {
+            "key": "symptoms",
+            "label": "Symptoms",
+            "kind": "list",
+            "ai_hint": "Discrete symptoms the client reported in this session."
+          },
+          {
+            "key": "session_content",
+            "label": "Session Content",
+            "kind": "text",
+            "ai_hint": "A concise narrative of what the client discussed in session."
+          },
+          {
+            "key": "observations",
+            "label": "Observations",
+            "kind": "text",
+            "ai_hint": "Clinician-observed presentation, behavior, and speech."
+          }
+        ]
+      },
+      {
+        "key": "assessment",
+        "label": "Assessment",
+        "fields": [
+          {
+            "key": "clinical_impression",
+            "label": "Clinical Impression",
+            "kind": "text",
+            "ai_hint": "Clinician's overall impression of the client's current state."
+          },
+          {
+            "key": "progress",
+            "label": "Progress",
+            "kind": "text",
+            "ai_hint": "Movement relative to treatment goals since the last session."
+          },
+          {
+            "key": "risk_assessment",
+            "label": "Risk Assessment",
+            "kind": "text",
+            "ai_hint": "Any observed or reported risk to self or others."
+          }
+        ]
+      },
+      {
+        "key": "plan",
+        "label": "Plan",
+        "fields": [
+          {
+            "key": "interventions_used",
+            "label": "Interventions Used",
+            "kind": "list",
+            "ai_hint": "Therapeutic interventions applied during this session."
+          },
+          {
+            "key": "homework_assignments",
+            "label": "Homework Assignments",
+            "kind": "list",
+            "ai_hint": "Tasks or practices assigned to the client between sessions."
+          },
+          {
+            "key": "next_steps",
+            "label": "Next Steps",
+            "kind": "list",
+            "ai_hint": "Planned clinical focus for upcoming sessions."
+          },
+          {
+            "key": "next_session",
+            "label": "Next Session",
+            "kind": "text",
+            "ai_hint": "Scheduled date/time or cadence for the next appointment."
+          }
+        ]
+      }
+    ],
+    "inputs": [],
+    "version": null,
+    "restricted": false,
+    "is_locked": false,
+    "spec": null,
+    "based_on": null
+  },
+  {
+    "key": "girp",
+    "label": "GIRP",
+    "description": "Goal / Intervention / Response / Plan — outcome-driven format common where insurers require goal and outcome tracking aligned to a treatment plan.",
+    "tier": "core",
+    "context": "session",
+    "sections": [
+      {
+        "key": "goal",
+        "label": "Goal",
+        "fields": [
+          {
+            "key": "session_goal",
+            "label": "Session Goal",
+            "kind": "text",
+            "ai_hint": "The specific goal or focus area being worked on this session."
+          },
+          {
+            "key": "treatment_plan_objective",
+            "label": "Treatment Plan Objective",
+            "kind": "text",
+            "ai_hint": "The overarching objective from the treatment plan this session targets."
+          }
+        ]
+      },
+      {
+        "key": "intervention",
+        "label": "Intervention",
+        "fields": [
+          {
+            "key": "interventions_used",
+            "label": "Interventions Used",
+            "kind": "list",
+            "ai_hint": "Therapeutic techniques the clinician applied this session."
+          },
+          {
+            "key": "rationale",
+            "label": "Rationale",
+            "kind": "text",
+            "ai_hint": "Why these interventions match the stated goal."
+          }
+        ]
+      },
+      {
+        "key": "response",
+        "label": "Response",
+        "fields": [
+          {
+            "key": "client_response",
+            "label": "Client Response",
+            "kind": "text",
+            "ai_hint": "How the client responded to the interventions used."
+          },
+          {
+            "key": "progress_toward_goal",
+            "label": "Progress Toward Goal",
+            "kind": "text",
+            "ai_hint": "Observed movement toward the session goal."
+          },
+          {
+            "key": "measurable_outcome",
+            "label": "Measurable Outcome",
+            "kind": "text",
+            "ai_hint": "Observable change during or after the session."
+          }
+        ]
+      },
+      {
+        "key": "plan",
+        "label": "Plan",
+        "fields": [
+          {
+            "key": "homework_assignments",
+            "label": "Homework Assignments",
+            "kind": "list",
+            "ai_hint": "Tasks aligned to the session goal, assigned between sessions."
+          },
+          {
+            "key": "next_steps",
+            "label": "Next Steps",
+            "kind": "list",
+            "ai_hint": "Planned focus for the next session."
+          },
+          {
+            "key": "goal_status",
+            "label": "Goal Status",
+            "kind": "text",
+            "ai_hint": "Status of the session goal: achieved, partial, no progress, or modified."
+          }
+        ]
+      }
+    ],
+    "inputs": [],
+    "version": null,
+    "restricted": false,
+    "is_locked": false,
+    "spec": null,
+    "based_on": null
+  },
+  {
+    "key": "intake",
+    "label": "Intake",
+    "description": "First-session biopsychosocial assessment, billed as CPT 90791. Patient-context document supporting medical necessity for the course of treatment. Required by CMS MBPM Ch. 15 §160, Joint Commission EC/PC standards, and CARF 1.H. before ongoing therapy is reimbursable.",
+    "tier": "core",
+    "context": "patient",
+    "sections": [
+      {
+        "key": "identification",
+        "label": "Identification",
+        "fields": [
+          {
+            "key": "datetime_of_service",
+            "label": "Date/Time of Service",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "duration_minutes",
+            "label": "Duration (minutes)",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "modality",
+            "label": "Modality",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "referral_source",
+            "label": "Referral Source",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "referral_reason",
+            "label": "Referral Reason",
+            "kind": "text",
+            "ai_hint": "Why the patient was referred or sought care, in their own words where possible. Usually surfaces in the opening minutes of the session."
+          }
+        ]
+      },
+      {
+        "key": "presenting",
+        "label": "Presenting",
+        "fields": [
+          {
+            "key": "chief_complaint",
+            "label": "Chief Complaint",
+            "kind": "text",
+            "ai_hint": "The primary problem that brought the patient in today. Use the patient's own words in quotes when they're clear."
+          },
+          {
+            "key": "history_of_present_illness",
+            "label": "History of Present Illness",
+            "kind": "text",
+            "ai_hint": "Onset, duration, severity, triggers, course, and prior episodes of the chief complaint as the patient describes them."
+          }
+        ]
+      },
+      {
+        "key": "history",
+        "label": "History",
+        "fields": [
+          {
+            "key": "psychiatric_history",
+            "label": "Psychiatric History",
+            "kind": "text",
+            "ai_hint": "Prior mental-health diagnoses, treatments, hospitalizations, and medications as the patient reports them. Leave empty if not discussed."
+          },
+          {
+            "key": "medical_history",
+            "label": "Medical History",
+            "kind": "text",
+            "ai_hint": "Relevant medical conditions, surgeries, and chronic illnesses the patient mentions. Leave empty if not discussed."
+          },
+          {
+            "key": "current_medications",
+            "label": "Current Medications",
+            "kind": "list",
+            "ai_hint": "Each medication the patient reports, with dose and prescriber when stated. One item per medication."
+          },
+          {
+            "key": "substance_use_history",
+            "label": "Substance Use History",
+            "kind": "text",
+            "ai_hint": "Alcohol, tobacco, cannabis, and other substance use as the patient describes it. Populate only when explicitly discussed."
+          },
+          {
+            "key": "family_history",
+            "label": "Family History",
+            "kind": "text",
+            "ai_hint": "Family history of mental-health or substance-use conditions as the patient reports it. Populate only when explicitly discussed."
+          },
+          {
+            "key": "developmental_history",
+            "label": "Developmental History",
+            "kind": "text",
+            "ai_hint": "Developmental milestones, early childhood, and educational history the patient describes. Populate only when discussed."
+          },
+          {
+            "key": "trauma_history",
+            "label": "Trauma History",
+            "kind": "text",
+            "ai_hint": "Traumatic experiences the patient discloses. Use the patient's own framing; do not infer trauma from absence. Often deferred from intake."
+          }
+        ]
+      },
+      {
+        "key": "social",
+        "label": "Social",
+        "fields": [
+          {
+            "key": "social_history",
+            "label": "Social History",
+            "kind": "text",
+            "ai_hint": "Housing, employment, education, finances, legal involvement, military service, and cultural or spiritual identity as discussed."
+          },
+          {
+            "key": "relationships_supports",
+            "label": "Relationships & Supports",
+            "kind": "text",
+            "ai_hint": "Family system, partners, friends, and other support network as the patient describes them."
+          }
+        ]
+      },
+      {
+        "key": "mse",
+        "label": "Mental Status Exam",
+        "fields": [
+          {
+            "key": "appearance_behavior",
+            "label": "Appearance & Behavior",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "speech",
+            "label": "Speech",
+            "kind": "text",
+            "ai_hint": "Audible features only: rate, rhythm, volume, fluency. Do not infer; report what is heard."
+          },
+          {
+            "key": "mood_affect",
+            "label": "Mood & Affect",
+            "kind": "text",
+            "ai_hint": "Self-reported mood in quotes where possible; affect inferred from prosody and content (e.g. congruent, blunted, labile)."
+          },
+          {
+            "key": "thought_process_content",
+            "label": "Thought Process & Content",
+            "kind": "text",
+            "ai_hint": "Linear vs. tangential is audible. Suicidal or homicidal ideation, delusions, or obsessions only when the patient explicitly reports them."
+          },
+          {
+            "key": "perception",
+            "label": "Perception",
+            "kind": "text",
+            "ai_hint": "Hallucinations, derealization, or depersonalization only when the patient explicitly reports them."
+          },
+          {
+            "key": "cognition",
+            "label": "Cognition",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "insight_judgment",
+            "label": "Insight & Judgment",
+            "kind": "text",
+            "ai_hint": ""
+          }
+        ]
+      },
+      {
+        "key": "risk",
+        "label": "Risk",
+        "fields": [
+          {
+            "key": "suicide_risk",
+            "label": "Suicide Risk",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "homicide_risk",
+            "label": "Homicide Risk",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "self_harm_risk",
+            "label": "Self-Harm Risk",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "abuse_neglect",
+            "label": "Abuse / Neglect",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "protective_factors",
+            "label": "Protective Factors",
+            "kind": "text",
+            "ai_hint": ""
+          }
+        ]
+      },
+      {
+        "key": "strengths",
+        "label": "Strengths",
+        "fields": [
+          {
+            "key": "strengths",
+            "label": "Strengths",
+            "kind": "list",
+            "ai_hint": "Personal strengths, resources, and protective qualities the patient names or demonstrates. One item per strength."
+          }
+        ]
+      },
+      {
+        "key": "assessment",
+        "label": "Assessment",
+        "fields": [
+          {
+            "key": "dsm5_diagnosis",
+            "label": "DSM-5 Diagnosis",
+            "kind": "list",
+            "ai_hint": ""
+          },
+          {
+            "key": "case_formulation",
+            "label": "Case Formulation",
+            "kind": "text",
+            "ai_hint": ""
+          }
+        ]
+      },
+      {
+        "key": "plan",
+        "label": "Plan",
+        "fields": [
+          {
+            "key": "initial_recommendations",
+            "label": "Initial Recommendations",
+            "kind": "text",
+            "ai_hint": "Recommended level of care, modality, frequency, and any referrals as discussed in session."
+          }
+        ]
+      },
+      {
+        "key": "consents",
+        "label": "Consents",
+        "fields": [
+          {
+            "key": "consent_to_treatment_signed",
+            "label": "Consent to Treatment Signed",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "roi_signed",
+            "label": "Releases of Information Signed",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "telehealth_consent_signed",
+            "label": "Telehealth Consent Signed",
+            "kind": "text",
+            "ai_hint": ""
+          }
+        ]
+      },
+      {
+        "key": "signature",
+        "label": "Signature",
+        "fields": [
+          {
+            "key": "clinician_signature",
+            "label": "Clinician Signature",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "signed_at",
+            "label": "Signed At",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "supervisor_cosignature_required",
+            "label": "Supervisor Co-signature Required",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "supervisor_signature",
+            "label": "Supervisor Signature",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "supervisor_signed_at",
+            "label": "Supervisor Signed At",
+            "kind": "text",
+            "ai_hint": ""
+          }
+        ]
+      }
+    ],
+    "inputs": [],
+    "version": null,
+    "restricted": false,
+    "is_locked": false,
+    "spec": null,
+    "based_on": null
+  },
+  {
+    "key": "medications",
+    "label": "Medications",
+    "description": "The client's current and past medications.",
+    "tier": "core",
+    "context": "patient",
+    "sections": [
+      {
+        "key": "medication_list",
+        "label": "Medications",
+        "fields": [
+          {
+            "key": "drug",
+            "label": "Drug",
+            "kind": "list",
+            "ai_hint": "Medication names, current and past."
+          },
+          {
+            "key": "dose",
+            "label": "Dose",
+            "kind": "list",
+            "ai_hint": "Dosage for each medication."
+          },
+          {
+            "key": "route",
+            "label": "Route",
+            "kind": "list",
+            "ai_hint": "Route of administration for each medication."
+          },
+          {
+            "key": "frequency",
+            "label": "Frequency",
+            "kind": "list",
+            "ai_hint": "How often each medication is taken."
+          },
+          {
+            "key": "prescriber",
+            "label": "Prescriber",
+            "kind": "list",
+            "ai_hint": "Prescribing clinician for each medication."
+          },
+          {
+            "key": "start_stop_dates",
+            "label": "Start/Stop Dates",
+            "kind": "list",
+            "ai_hint": "Start date, and stop date if discontinued, for each medication."
+          },
+          {
+            "key": "notes",
+            "label": "Notes",
+            "kind": "text",
+            "ai_hint": "Additional notes on efficacy, side effects, or adherence."
+          }
+        ]
+      }
+    ],
+    "inputs": [],
+    "version": null,
+    "restricted": false,
+    "is_locked": false,
+    "spec": null,
+    "based_on": null
+  },
+  {
+    "key": "meeting_summary",
+    "label": "Meeting Summary",
+    "description": "Professional minutes for a recorded business meeting — attendees, discussion, decisions, and action items. For calls that are not clinical sessions, e.g. vendors, referral partners, or consultants.",
+    "tier": "core",
+    "context": "session",
+    "sections": [
+      {
+        "key": "overview",
+        "label": "Overview",
+        "fields": [
+          {
+            "key": "attendees",
+            "label": "Attendees",
+            "kind": "list",
+            "ai_hint": "People present in the meeting, with role or affiliation when stated in the transcript. Never invent names."
+          },
+          {
+            "key": "purpose",
+            "label": "Purpose",
+            "kind": "text",
+            "ai_hint": "Why the meeting happened — the stated objective or agenda, in one or two sentences."
+          },
+          {
+            "key": "summary",
+            "label": "Summary",
+            "kind": "text",
+            "ai_hint": "A concise narrative of the discussion: the main topics, each party's position, and how the conversation concluded."
+          }
+        ]
+      },
+      {
+        "key": "outcomes",
+        "label": "Outcomes",
+        "fields": [
+          {
+            "key": "key_points",
+            "label": "Key Points",
+            "kind": "list",
+            "ai_hint": "The most important takeaways from the discussion."
+          },
+          {
+            "key": "decisions",
+            "label": "Decisions",
+            "kind": "list",
+            "ai_hint": "Decisions actually made in the meeting, each with who made or agreed to it. Exclude options merely discussed."
+          },
+          {
+            "key": "action_items",
+            "label": "Action Items",
+            "kind": "list",
+            "ai_hint": "Concrete commitments, each with its owner and due date when the transcript states them."
+          },
+          {
+            "key": "open_questions",
+            "label": "Open Questions",
+            "kind": "list",
+            "ai_hint": "Questions raised but not resolved, or topics explicitly deferred to a later conversation."
+          }
+        ]
+      },
+      {
+        "key": "follow_up",
+        "label": "Follow-up",
+        "fields": [
+          {
+            "key": "next_meeting",
+            "label": "Next Meeting",
+            "kind": "text",
+            "ai_hint": "Agreed date, time, or cadence for the next touchpoint, if one was discussed."
+          }
+        ]
+      }
+    ],
+    "inputs": [],
+    "version": null,
+    "restricted": false,
+    "is_locked": false,
+    "spec": null,
+    "based_on": null
+  },
+  {
+    "key": "narrative",
+    "label": "Narrative",
+    "description": "A single free-form narrative note for sessions that do not fit a structured format.",
+    "tier": "core",
+    "context": "session",
+    "sections": [
+      {
+        "key": "note",
+        "label": "Note",
+        "fields": [
+          {
+            "key": "body",
+            "label": "Note",
+            "kind": "text",
+            "ai_hint": "A clinically-appropriate narrative summary of the session."
+          }
+        ]
+      }
+    ],
+    "inputs": [],
+    "version": null,
+    "restricted": false,
+    "is_locked": false,
+    "spec": null,
+    "based_on": null
+  },
+  {
+    "key": "psychiatric_evaluation",
+    "label": "Psychiatric initial evaluation",
+    "description": "First visit with a new client: a psychiatric diagnostic evaluation or a new-patient E/M visit, with a psychotherapy section for visits that include therapy.",
+    "tier": "core",
+    "context": "session",
+    "sections": [
+      {
+        "key": "encounter",
+        "label": "Encounter",
+        "fields": [
+          {
+            "key": "visit_details",
+            "label": "Visit details",
+            "kind": "text",
+            "ai_hint": "One line each: date of service; visit start and end time exactly as the clinician stated them; the visit code as entered, and any code (with a psychotherapy add-on code) exactly as the clinician stated it. \"Not stated.\" for any the clinician did not say. Leave psychotherapy times and minutes out: the Psychotherapy section states them."
+          },
+          {
+            "key": "place_of_service",
+            "label": "Place of service",
+            "kind": "text",
+            "ai_hint": "If the place of service is telehealth, write: \"Visit conducted by synchronous audio and video telehealth on a HIPAA-compliant platform. The client was in <client location>; the provider was in <provider location>. The client consented to receive care by telehealth.\" copying each entered location exactly as written (write \"location not entered\" for a missing one). When the client said they were at home and the entered location does not say so, write \"at home in <client location>\". If in office, write \"In-office visit.\" If not provided, write \"Not stated.\"",
+            "source": "place_of_service"
+          }
+        ]
+      },
+      {
+        "key": "chief_complaint",
+        "label": "Chief complaint",
+        "fields": [
+          {
+            "key": "chief_complaint",
+            "label": "Chief complaint",
+            "kind": "text",
+            "ai_hint": "One or two sentences, ideally a short quotation of the client's own words about why they came."
+          }
+        ]
+      },
+      {
+        "key": "hpi",
+        "label": "History of present illness",
+        "fields": [
+          {
+            "key": "symptoms",
+            "label": "Current symptoms",
+            "kind": "list",
+            "ai_hint": "Each current symptom the client described, in the client's terms where possible."
+          },
+          {
+            "key": "onset_course",
+            "label": "Onset, duration and frequency",
+            "kind": "text",
+            "ai_hint": "For each symptom: when it began, how long it has lasted, how often it happens and in what settings, as reported."
+          },
+          {
+            "key": "modifying_factors",
+            "label": "Modifying factors",
+            "kind": "text",
+            "ai_hint": "What makes the symptoms better or worse, as reported."
+          },
+          {
+            "key": "severity_impairment",
+            "label": "Severity and functional impact",
+            "kind": "text",
+            "ai_hint": "How severe the symptoms are and how they affect work, school, relationships and daily life, with the client's concrete examples."
+          },
+          {
+            "key": "context",
+            "label": "Context",
+            "kind": "text",
+            "ai_hint": "The circumstances around the symptoms: stressors, life events and timing, as reported."
+          },
+          {
+            "key": "prior_episodes",
+            "label": "Earlier episodes and diagnoses",
+            "kind": "text",
+            "ai_hint": "Earlier episodes of the same symptoms and any diagnoses given before, as reported."
+          }
+        ]
+      },
+      {
+        "key": "psychiatric_ros",
+        "label": "Psychiatric review of systems",
+        "fields": [
+          {
+            "key": "depression",
+            "label": "Depression",
+            "kind": "text",
+            "ai_hint": "What the clinician asked about depressed mood, interest, energy and guilt and the client's answers: pertinent positives and negatives, denials recorded as denials. \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "mania_hypomania",
+            "label": "Mania or hypomania",
+            "kind": "text",
+            "ai_hint": "What the clinician asked about elevated mood, decreased need for sleep, racing thoughts and impulsive spending or risk-taking and the client's answers: pertinent positives and negatives, denials recorded as denials. \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "anxiety",
+            "label": "Anxiety",
+            "kind": "text",
+            "ai_hint": "What the clinician asked about worry, panic and avoidance and the client's answers: pertinent positives and negatives, denials recorded as denials. \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "obsessions_compulsions",
+            "label": "Obsessions and compulsions",
+            "kind": "text",
+            "ai_hint": "What the clinician asked about obsessions and compulsions and the client's answers: pertinent positives and negatives, denials recorded as denials. \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "trauma_responses",
+            "label": "Trauma responses",
+            "kind": "text",
+            "ai_hint": "What the clinician asked about nightmares, flashbacks, avoidance and hypervigilance and the client's answers: pertinent positives and negatives, denials recorded as denials. \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "psychosis",
+            "label": "Psychosis",
+            "kind": "text",
+            "ai_hint": "What the clinician asked about hallucinations, paranoia and unusual beliefs and the client's answers: pertinent positives and negatives, denials recorded as denials. \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "attention",
+            "label": "Attention",
+            "kind": "text",
+            "ai_hint": "What the clinician asked about attention, distractibility and hyperactivity and the client's answers: pertinent positives and negatives, denials recorded as denials. \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "sleep",
+            "label": "Sleep",
+            "kind": "text",
+            "ai_hint": "What the clinician asked about sleep onset, maintenance and total hours and the client's answers: pertinent positives and negatives, denials recorded as denials. \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "eating",
+            "label": "Eating",
+            "kind": "text",
+            "ai_hint": "What the clinician asked about appetite, weight change, restriction, bingeing and purging and the client's answers: pertinent positives and negatives, denials recorded as denials. \"Not asked.\" if it did not come up."
+          }
+        ]
+      },
+      {
+        "key": "substance_use",
+        "label": "Substance use",
+        "fields": [
+          {
+            "key": "alcohol",
+            "label": "Alcohol",
+            "kind": "text",
+            "ai_hint": "Alcohol, drafted from the visit, not the chart: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported; a denial as \"Denies.\", or \"Denies\" followed by what was denied; \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "cannabis",
+            "label": "Cannabis",
+            "kind": "text",
+            "ai_hint": "Cannabis, drafted from the visit, not the chart: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported; a denial as \"Denies.\", or \"Denies\" followed by what was denied; \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "stimulants",
+            "label": "Stimulants",
+            "kind": "text",
+            "ai_hint": "Stimulants not prescribed to the client, including methamphetamine, drafted from the visit, not the chart: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported; a denial as \"Denies.\", or \"Denies\" followed by what was denied; \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "cocaine",
+            "label": "Cocaine",
+            "kind": "text",
+            "ai_hint": "Cocaine, drafted from the visit, not the chart: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported; a denial as \"Denies.\", or \"Denies\" followed by what was denied; \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "opioids",
+            "label": "Opioids",
+            "kind": "text",
+            "ai_hint": "Opioids, prescribed or not, drafted from the visit, not the chart: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported; a denial as \"Denies.\", or \"Denies\" followed by what was denied; \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "benzodiazepines",
+            "label": "Benzodiazepines",
+            "kind": "text",
+            "ai_hint": "Benzodiazepines and other sedatives, prescribed or not, drafted from the visit, not the chart: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported; a denial as \"Denies.\", or \"Denies\" followed by what was denied; \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "tobacco_nicotine",
+            "label": "Tobacco / nicotine",
+            "kind": "text",
+            "ai_hint": "Tobacco, vaping or other nicotine, drafted from the visit, not the chart: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported; a denial as \"Denies.\", or \"Denies\" followed by what was denied; \"Not asked.\" if it did not come up."
+          },
+          {
+            "key": "other_substances",
+            "label": "Other substances",
+            "kind": "text",
+            "ai_hint": "Any other substance, drafted from the visit, not the chart: current and past use, age at first use, amount and frequency, periods of sobriety or treatment, tolerance or withdrawal, as reported; a denial as \"Denies.\", or \"Denies\" followed by what was denied; \"Not asked.\" if it did not come up. A catch-all question (\"anything else?\", \"any other drugs?\") counts as asking: record the answer to it."
+          }
+        ]
+      },
+      {
+        "key": "psychiatric_history",
+        "label": "Psychiatric history",
+        "fields": [
+          {
+            "key": "prior_diagnoses",
+            "label": "Earlier diagnoses",
+            "kind": "text",
+            "ai_hint": "Psychiatric diagnoses given before, with when and by whom, as reported."
+          },
+          {
+            "key": "psychotherapy_history",
+            "label": "Psychotherapy",
+            "kind": "text",
+            "ai_hint": "Past and current psychotherapy: type, when, and how it went, as reported."
+          },
+          {
+            "key": "medication_trials",
+            "label": "Psychiatric medications tried",
+            "kind": "list",
+            "ai_hint": "Each psychiatric medication tried before: name, dose, how long, effect and side effects, as reported. One per item."
+          },
+          {
+            "key": "hospitalizations",
+            "label": "Hospitalizations and programs",
+            "kind": "text",
+            "ai_hint": "Psychiatric hospitalizations, partial hospitalization and day programs, with when and why, as reported. Record a denial as a denial."
+          },
+          {
+            "key": "past_self_harm",
+            "label": "Past suicide attempts, self-harm or harm to others",
+            "kind": "text",
+            "ai_hint": "Quote what was said about past suicide attempts, self-harm or harm to others, and what followed. Record a denial as a denial. Do not assess."
+          },
+          {
+            "key": "legal_custody",
+            "label": "Legal or custody involvement",
+            "kind": "text",
+            "ai_hint": "Legal or custody involvement as reported, or the denial. \"Not asked.\" if it did not come up."
+          }
+        ]
+      },
+      {
+        "key": "trauma_history",
+        "label": "Trauma history",
+        "fields": [
+          {
+            "key": "trauma_history",
+            "label": "Trauma history",
+            "kind": "text",
+            "ai_hint": "Whether the client reported a history of trauma and in what period of life, without detail the client did not give. Record a denial as a denial."
+          }
+        ]
+      },
+      {
+        "key": "social_history",
+        "label": "Social history and supports",
+        "fields": [
+          {
+            "key": "living_situation",
+            "label": "Living situation",
+            "kind": "text",
+            "ai_hint": "Where and with whom the client lives."
+          },
+          {
+            "key": "relationships",
+            "label": "Relationships",
+            "kind": "text",
+            "ai_hint": "Partner, family and friendships, as reported."
+          },
+          {
+            "key": "work_school",
+            "label": "Work or school",
+            "kind": "text",
+            "ai_hint": "Occupation or schooling and how it is going."
+          },
+          {
+            "key": "supports",
+            "label": "Supports",
+            "kind": "text",
+            "ai_hint": "Who supports the client, as named."
+          },
+          {
+            "key": "cultural_considerations",
+            "label": "Cultural considerations",
+            "kind": "text",
+            "ai_hint": "Cultural, religious, language or identity considerations relevant to care, as the client or clinician described them. \"Not asked.\" if it did not come up."
+          }
+        ]
+      },
+      {
+        "key": "medical_history",
+        "label": "Medical history",
+        "fields": [
+          {
+            "key": "medical_history",
+            "label": "Medical history",
+            "kind": "text",
+            "ai_hint": "Medical conditions, surgeries and medical hospitalizations as reported. If the client reported none, write that these were asked about and denied."
+          }
+        ]
+      },
+      {
+        "key": "family_history",
+        "label": "Family history",
+        "fields": [
+          {
+            "key": "family_psychiatric",
+            "label": "Psychiatric",
+            "kind": "text",
+            "ai_hint": "Psychiatric conditions and suicide in the family, with the relative, as reported."
+          },
+          {
+            "key": "family_medical",
+            "label": "Medical",
+            "kind": "text",
+            "ai_hint": "Medical conditions in the family, as reported."
+          },
+          {
+            "key": "family_treatment_response",
+            "label": "Medications that helped relatives",
+            "kind": "text",
+            "ai_hint": "Medications that helped a relative with a psychiatric condition, as reported."
+          }
+        ]
+      },
+      {
+        "key": "medications",
+        "label": "Medications and allergies",
+        "fields": [
+          {
+            "key": "current_medications",
+            "label": "Current medications",
+            "kind": "list",
+            "ai_hint": "From the chart, exactly as given, or 'None recorded'. Then each medication the client reports currently taking that the chart lacks, with the dose as stated, appended as (stated this visit: \"...\"). A medication started, stopped or changed in this visit goes in the plan, not here.",
+            "source": "medications"
+          },
+          {
+            "key": "allergies",
+            "label": "Allergies",
+            "kind": "text",
+            "ai_hint": "From the chart, exactly as given (a list, NKDA, or 'Not recorded'). Then any allergy, or denial of allergies, the client or clinician states in this visit, appended as (stated this visit: \"...\"). Never write NKDA unless the chart says it.",
+            "source": "allergies"
+          }
+        ]
+      },
+      {
+        "key": "other_providers",
+        "label": "Other providers",
+        "fields": [
+          {
+            "key": "outside_providers",
+            "label": "Outside providers",
+            "kind": "text",
+            "ai_hint": "Other clinicians involved in the client's care (by role, e.g. primary care, therapist), as named."
+          },
+          {
+            "key": "coordination",
+            "label": "Coordination",
+            "kind": "text",
+            "ai_hint": "Coordination agreed or done with those providers, including releases of information, as stated."
+          }
+        ]
+      },
+      {
+        "key": "mse",
+        "label": "Mental status exam",
+        "fields": [
+          {
+            "key": "appearance_behavior",
+            "label": "Appearance and behavior",
+            "kind": "text",
+            "ai_hint": "As observed or dictated by the clinician (grooming, eye contact, psychomotor activity)."
+          },
+          {
+            "key": "orientation",
+            "label": "Orientation",
+            "kind": "text",
+            "ai_hint": "As stated by the clinician (e.g. alert and oriented x4)."
+          },
+          {
+            "key": "speech",
+            "label": "Speech",
+            "kind": "text",
+            "ai_hint": "Rate, rhythm, volume and tone, as stated by the clinician."
+          },
+          {
+            "key": "mood_affect",
+            "label": "Mood and affect",
+            "kind": "text",
+            "ai_hint": "Mood and affect as the clinician described them. Only if the clinician gave no mood, the client's own word for it, quoted."
+          },
+          {
+            "key": "thought_process",
+            "label": "Thought process",
+            "kind": "text",
+            "ai_hint": "As described by the clinician (e.g. linear, goal-directed, tangential)."
+          },
+          {
+            "key": "thought_content",
+            "label": "Thought content and perception",
+            "kind": "text",
+            "ai_hint": "Hallucinations, delusions, preoccupations, and suicidal or homicidal thoughts as stated, from the clinician."
+          },
+          {
+            "key": "cognition",
+            "label": "Cognition",
+            "kind": "text",
+            "ai_hint": "Attention, memory and concentration as stated by the clinician."
+          },
+          {
+            "key": "insight_judgment",
+            "label": "Insight and judgment",
+            "kind": "text",
+            "ai_hint": "As stated by the clinician."
+          }
+        ]
+      },
+      {
+        "key": "risk",
+        "label": "Risk assessment",
+        "fields": [
+          {
+            "key": "suicidal_homicidal_ideation",
+            "label": "Suicidal / homicidal ideation",
+            "kind": "text",
+            "ai_hint": "What was asked and answered about current suicidal or homicidal thoughts, intent, plan or means: the client's own words quoted verbatim and framed as theirs, and the clinician's finding as dictated, unquoted (e.g. Denies SI and HI. Asked about thoughts of harming self or others, the client said: \"...\"). Never a paraphrase of the client, never a level the clinician did not say. \"Not assessed this visit.\" if it was not asked; never a denial nobody gave."
+          },
+          {
+            "key": "risk_protective_factors",
+            "label": "Risk and protective factors",
+            "kind": "text",
+            "ai_hint": "Risk factors and protective factors as the clinician or client named them, written as findings (e.g. Protective factors: employed, engaged in treatment.). Never one nobody named. \"None discussed.\" if none were named."
+          },
+          {
+            "key": "overall_risk",
+            "label": "Overall risk",
+            "kind": "text",
+            "ai_hint": "Only the clinician's own stated judgment of overall risk, written as a finding (e.g. Overall risk is low.). Never a level the clinician did not say. \"Overall risk level not stated.\" if the clinician did not state one."
+          },
+          {
+            "key": "safety_plan",
+            "label": "Safety plan",
+            "kind": "text",
+            "ai_hint": "Only if any ideation, self-harm or high risk was reported: the safety planning the clinician described (warning signs, coping, supports, crisis contacts, making the environment safer), in the clinician's own words, unquoted; never a summary that drops a step. If one was reported and no safety planning was described, \"Safety plan not discussed this visit.\" Otherwise leave empty."
+          }
+        ]
+      },
+      {
+        "key": "measures",
+        "label": "Measures",
+        "fields": [
+          {
+            "key": "measures_completed",
+            "label": "Measures completed",
+            "kind": "text",
+            "ai_hint": "Screening instruments mentioned in the visit (e.g. PHQ-9, GAD-7) with the score and when completed in the words used; never convert a weekday or relative time into a calendar date. Leave empty if none were mentioned."
+          }
+        ]
+      },
+      {
+        "key": "assessment",
+        "label": "Assessment and diagnoses",
+        "fields": [
+          {
+            "key": "diagnoses",
+            "label": "Diagnoses",
+            "kind": "diagnoses",
+            "ai_hint": "Each diagnosis the clinician stated, with its code exactly as the clinician said it and its status (working, provisional, rule out) only when the clinician said so. Never add a diagnosis or a code."
+          },
+          {
+            "key": "rationale",
+            "label": "Diagnostic rationale",
+            "kind": "text",
+            "ai_hint": "For each diagnosis, the clinician's own rationale tying the history and examination to the diagnostic criteria, with severity and functional impairment, as the clinician expressed it. Do not form a judgment the clinician did not express."
+          }
+        ]
+      },
+      {
+        "key": "mdm",
+        "label": "Medical decision making",
+        "fields": [
+          {
+            "key": "problems_addressed",
+            "label": "Problems addressed",
+            "kind": "text",
+            "ai_hint": "One sentence: the conditions addressed at this visit and the status of each as the clinician described it (e.g. \"ADHD, stable on the current dose; anxiety, worse over the last two weeks\"). State facts; do not name a level."
+          },
+          {
+            "key": "data_reviewed",
+            "label": "Data reviewed",
+            "kind": "text",
+            "ai_hint": "One sentence: what was reviewed or ordered (measures, labs, outside records, the PDMP report, history from someone other than the client). \"None\" if nothing was. Do not name a level."
+          },
+          {
+            "key": "management_risk",
+            "label": "Management",
+            "kind": "text",
+            "ai_hint": "One sentence: what the management involved, factually (e.g. prescription drug management with which medications were continued, changed, started or stopped; a controlled substance; a decision about a higher level of care). Do not name a level."
+          }
+        ],
+        "review_only": true
+      },
+      {
+        "key": "treatment_plan",
+        "label": "Treatment plan",
+        "fields": [
+          {
+            "key": "plan_items",
+            "label": "Plan",
+            "kind": "list",
+            "ai_hint": "Each thing started or recommended (medication, therapy, other services) with the clinician's stated reason. Record only decisions the clinician stated; never suggest one."
+          },
+          {
+            "key": "off_label",
+            "label": "Off-label justification",
+            "kind": "text",
+            "ai_hint": "The clinician's stated justification for any off-label choice. Leave empty if none."
+          },
+          {
+            "key": "informed_consent",
+            "label": "Informed consent",
+            "kind": "text",
+            "ai_hint": "For each medication started or recommended: which elements the clinician said were covered (risks, benefits, side effects, alternatives, pregnancy-related risk where relevant) and the client's agreement. Only what was said."
+          }
+        ]
+      },
+      {
+        "key": "prescriptions",
+        "label": "Prescriptions and labs",
+        "fields": [
+          {
+            "key": "prescriptions",
+            "label": "Prescriptions",
+            "kind": "list",
+            "ai_hint": "Each prescription written: medication, dose, frequency and quantity, as the clinician stated them. One per item."
+          },
+          {
+            "key": "pdmp",
+            "label": "PDMP",
+            "kind": "text",
+            "ai_hint": "If the clinician said the state prescription monitoring program (PDMP) was checked, write \"State prescription monitoring program (PDMP) reviewed on <date>: <finding as stated>.\" where <date> is the calendar date the clinician gave, or the date of service when the clinician said \"today\" or gave no date (never the word \"today\"). If a controlled substance was prescribed and the clinician did not mention the check, write \"PDMP review not documented this visit.\" If no controlled substance was involved and no check was mentioned, leave empty."
+          },
+          {
+            "key": "labs",
+            "label": "Labs",
+            "kind": "text",
+            "ai_hint": "Labs and home measurements (such as blood pressure readings) ordered, requested from another clinician or the client, or reviewed, with the values as stated. Leave empty if none."
+          }
+        ]
+      },
+      {
+        "key": "follow_up",
+        "label": "Follow-up",
+        "fields": [
+          {
+            "key": "follow_up",
+            "label": "Return visit",
+            "kind": "text",
+            "ai_hint": "When the client returns, as the clinician stated it."
+          },
+          {
+            "key": "between_visits",
+            "label": "Between visits and emergencies",
+            "kind": "text",
+            "ai_hint": "What the clinician told the client to do between visits, for side effects or in an emergency (e.g. call the office, 988, 911, nearest emergency room), as stated."
+          }
+        ]
+      },
+      {
+        "key": "psychotherapy",
+        "label": "Psychotherapy",
+        "fields": [
+          {
+            "key": "psychotherapy_time",
+            "label": "Psychotherapy time",
+            "kind": "text",
+            "ai_hint": "Start time, end time and minutes of the psychotherapy portion, exactly as the clinician stated them, and only the ones they stated (e.g. \"18 minutes\"). Never compute or estimate from the transcript timestamps. \"Not stated.\" if the clinician stated none of them."
+          },
+          {
+            "key": "modality_interventions",
+            "label": "Modality and interventions",
+            "kind": "text",
+            "ai_hint": "The approach and interventions as the transcript shows them. Name a technique only when the clinician named it or did its steps (weighing evidence for and against a thought is Socratic questioning). Where the clinician listened, reflected or asked open questions and named nothing, say that in plain words, with no technique name (not \"supportive therapy\")."
+          },
+          {
+            "key": "response",
+            "label": "Response",
+            "kind": "text",
+            "ai_hint": "What the client said or did in response, the client's words quoted as theirs. A rating or count only as the client gave it."
+          },
+          {
+            "key": "goal_plan",
+            "label": "Goal and plan",
+            "kind": "text",
+            "ai_hint": "The goal as the clinician or client stated it, and any assignment agreed for before the next visit. Never write a goal nobody stated: if only an assignment was given, write only the assignment. \"Not stated.\" if neither was said."
+          }
+        ]
+      }
+    ],
+    "inputs": [
+      {
+        "key": "place_of_service",
+        "label": "Place of service",
+        "kind": "choice",
+        "options": [
+          "Telehealth",
+          "In office"
+        ],
+        "required": true
+      },
+      {
+        "key": "client_location",
+        "label": "Client location (telehealth)",
+        "kind": "text",
+        "options": [],
+        "required": false
+      },
+      {
+        "key": "provider_location",
+        "label": "Your location (telehealth)",
+        "kind": "text",
+        "options": [],
+        "required": false
+      },
+      {
+        "key": "visit_code",
+        "label": "Visit code",
+        "kind": "choice",
+        "options": [
+          "Psychiatric diagnostic evaluation (90792)",
+          "New-patient E/M (99202-99205)",
+          "New-patient E/M (99202-99205) with psychotherapy add-on"
+        ],
+        "required": false
+      },
+      {
+        "key": "allergies",
+        "label": "Allergies (or NKDA)",
+        "kind": "text",
+        "options": [],
+        "required": false
+      },
+      {
+        "key": "mdm_problems",
+        "label": "Problems addressed",
+        "kind": "choice",
+        "options": [
+          "minimal",
+          "low",
+          "moderate",
+          "high"
+        ],
+        "required": false
+      },
+      {
+        "key": "mdm_data",
+        "label": "Data reviewed",
+        "kind": "choice",
+        "options": [
+          "none",
+          "limited",
+          "moderate",
+          "extensive"
+        ],
+        "required": false
+      },
+      {
+        "key": "mdm_risk",
+        "label": "Risk",
+        "kind": "choice",
+        "options": [
+          "minimal",
+          "low",
+          "moderate",
+          "high"
+        ],
+        "required": false
+      },
+      {
+        "key": "new_patient",
+        "label": "New or established patient",
+        "kind": "choice",
+        "options": [
+          "new",
+          "established"
+        ],
+        "required": false,
+        "default": "new"
+      }
+    ],
+    "version": null,
+    "restricted": false,
+    "is_locked": false,
+    "spec": null,
+    "based_on": null
+  },
+  {
+    "key": "psychiatric_follow_up",
+    "label": "Psychiatric follow-up (E/M + psychotherapy)",
+    "description": "Medication-management follow-up, with a psychotherapy section for visits that include therapy.",
+    "tier": "core",
+    "context": "session",
+    "sections": [
+      {
+        "key": "encounter",
+        "label": "Encounter",
+        "fields": [
+          {
+            "key": "visit_details",
+            "label": "Visit details",
+            "kind": "text",
+            "ai_hint": "One line each: date of service; E/M code and psychotherapy add-on code exactly as the clinician stated them. \"Not stated.\" for any the clinician did not say. Leave psychotherapy times and minutes out: the Psychotherapy section states them."
+          },
+          {
+            "key": "place_of_service",
+            "label": "Place of service",
+            "kind": "text",
+            "ai_hint": "If the place of service is telehealth, write: \"Visit conducted by synchronous audio and video telehealth on a HIPAA-compliant platform. The client was in <client location>; the provider was in <provider location>. The client consented to receive care by telehealth.\" copying each entered location exactly as written (write \"location not entered\" for a missing one). When the client said they were at home and the entered location does not say so, write \"at home in <client location>\". If in office, write \"In-office visit.\" If not provided, write \"Not stated.\"",
+            "source": "place_of_service"
+          }
+        ]
+      },
+      {
+        "key": "subjective",
+        "label": "Subjective",
+        "fields": [
+          {
+            "key": "chief_complaint",
+            "label": "Chief complaint",
+            "kind": "text",
+            "ai_hint": "One or two sentences, ideally a short quotation of the client's own words about why they are here today."
+          },
+          {
+            "key": "depression",
+            "label": "Depression",
+            "kind": "text",
+            "ai_hint": "What changed since the last visit in depressed mood, interest, energy, guilt and hopelessness: pertinent positives and negatives as stated, denials recorded as denials. \"Not discussed.\" if it did not come up."
+          },
+          {
+            "key": "anxiety",
+            "label": "Anxiety",
+            "kind": "text",
+            "ai_hint": "What changed since the last visit in worry, panic and avoidance: pertinent positives and negatives as stated, denials recorded as denials. \"Not discussed.\" if it did not come up."
+          },
+          {
+            "key": "insomnia_sleep",
+            "label": "Insomnia and sleep",
+            "kind": "text",
+            "ai_hint": "What changed since the last visit in falling asleep, staying asleep, hours slept and daytime tiredness: pertinent positives and negatives as stated, denials recorded as denials. \"Not discussed.\" if it did not come up."
+          },
+          {
+            "key": "inattention_hyperactivity",
+            "label": "Inattention and hyperactivity",
+            "kind": "text",
+            "ai_hint": "What changed since the last visit in focus, distractibility, finishing tasks and restlessness: pertinent positives and negatives as stated, denials recorded as denials. \"Not discussed.\" if it did not come up."
+          },
+          {
+            "key": "mania",
+            "label": "Mania",
+            "kind": "text",
+            "ai_hint": "What changed since the last visit in elevated or irritable mood, less need for sleep, racing thoughts and impulsive spending or risk-taking: pertinent positives and negatives as stated, denials recorded as denials. \"Not discussed.\" if it did not come up."
+          },
+          {
+            "key": "appetite_eating",
+            "label": "Appetite and eating",
+            "kind": "text",
+            "ai_hint": "What changed since the last visit in appetite, weight, restriction, bingeing and purging: pertinent positives and negatives as stated, denials recorded as denials. \"Not discussed.\" if it did not come up."
+          },
+          {
+            "key": "onset_duration_course",
+            "label": "Onset, duration and course",
+            "kind": "text",
+            "ai_hint": "When the current symptoms or this change began, how long it has lasted, and its course since the last visit (better, worse, unchanged), as stated. \"Not discussed.\" if it did not come up."
+          },
+          {
+            "key": "recent_stressors",
+            "label": "Recent stressors",
+            "kind": "text",
+            "ai_hint": "Stressors and life events since the last visit, as stated. \"Not discussed.\" if none came up."
+          },
+          {
+            "key": "functioning",
+            "label": "Functioning",
+            "kind": "text",
+            "ai_hint": "What changed since the last visit at work or school, in relationships and in daily activities, with the client's concrete examples. \"Not discussed.\" if it did not come up."
+          },
+          {
+            "key": "adherence",
+            "label": "Medication adherence",
+            "kind": "text",
+            "ai_hint": "Whether the client is taking medications as prescribed, missed doses, and reasons, as reported."
+          },
+          {
+            "key": "side_effects",
+            "label": "Side effects",
+            "kind": "text",
+            "ai_hint": "Side effects the client was asked about and the answers, by name (e.g. sleep, appetite, palpitations, sexual side effects). Record denials as denials."
+          }
+        ]
+      },
+      {
+        "key": "substance_use",
+        "label": "Substance use",
+        "fields": [
+          {
+            "key": "alcohol",
+            "label": "Alcohol",
+            "kind": "text",
+            "ai_hint": "The chart's substance use baseline for alcohol, exactly as given, or 'Not recorded'. Then this visit's screen: (stated this visit: denied) if the client denied it, (stated this visit: \"...\") with what the client said about it, \"(asked this visit: no change)\" only if the client said nothing had changed, or \"(not asked this visit)\" if it was not named.",
+            "source": "alcohol"
+          },
+          {
+            "key": "cannabis",
+            "label": "Cannabis",
+            "kind": "text",
+            "ai_hint": "The chart's substance use baseline for cannabis, exactly as given, or 'Not recorded'. Then this visit's screen: (stated this visit: denied) if the client denied it, (stated this visit: \"...\") with what the client said about it, \"(asked this visit: no change)\" only if the client said nothing had changed, or \"(not asked this visit)\" if it was not named.",
+            "source": "cannabis"
+          },
+          {
+            "key": "stimulants",
+            "label": "Stimulants",
+            "kind": "text",
+            "ai_hint": "The chart's substance use baseline for stimulants not prescribed to the client, exactly as given, or 'Not recorded'. Then this visit's screen: (stated this visit: denied) if the client denied it, (stated this visit: \"...\") with what the client said about it, \"(asked this visit: no change)\" only if the client said nothing had changed, or \"(not asked this visit)\" if it was not named.",
+            "source": "stimulants"
+          },
+          {
+            "key": "cocaine",
+            "label": "Cocaine",
+            "kind": "text",
+            "ai_hint": "The chart's substance use baseline for cocaine, exactly as given, or 'Not recorded'. Then this visit's screen: (stated this visit: denied) if the client denied it, (stated this visit: \"...\") with what the client said about it, \"(asked this visit: no change)\" only if the client said nothing had changed, or \"(not asked this visit)\" if it was not named.",
+            "source": "cocaine"
+          },
+          {
+            "key": "opioids",
+            "label": "Opioids",
+            "kind": "text",
+            "ai_hint": "The chart's substance use baseline for opioids, prescribed or not, exactly as given, or 'Not recorded'. Then this visit's screen: (stated this visit: denied) if the client denied it, (stated this visit: \"...\") with what the client said about it, \"(asked this visit: no change)\" only if the client said nothing had changed, or \"(not asked this visit)\" if it was not named.",
+            "source": "opioids"
+          },
+          {
+            "key": "benzodiazepines",
+            "label": "Benzodiazepines",
+            "kind": "text",
+            "ai_hint": "The chart's substance use baseline for benzodiazepines or other sedatives, prescribed or not, exactly as given, or 'Not recorded'. Then this visit's screen: (stated this visit: denied) if the client denied it, (stated this visit: \"...\") with what the client said about it, \"(asked this visit: no change)\" only if the client said nothing had changed, or \"(not asked this visit)\" if it was not named.",
+            "source": "benzodiazepines"
+          },
+          {
+            "key": "tobacco_nicotine",
+            "label": "Tobacco / nicotine",
+            "kind": "text",
+            "ai_hint": "The chart's substance use baseline for tobacco, vaping or other nicotine, exactly as given, or 'Not recorded'. Then this visit's screen: (stated this visit: denied) if the client denied it, (stated this visit: \"...\") with what the client said about it, \"(asked this visit: no change)\" only if the client said nothing had changed, or \"(not asked this visit)\" if it was not named.",
+            "source": "tobacco_nicotine"
+          },
+          {
+            "key": "other_substances",
+            "label": "Other substances",
+            "kind": "text",
+            "ai_hint": "The chart's substance use baseline for any other substance, exactly as given, or 'Not recorded'. Then this visit's screen: (stated this visit: denied) if the client denied it, (stated this visit: \"...\") with what the client said about it, \"(asked this visit: no change)\" only if the client said nothing had changed, or \"(not asked this visit)\" if it was not named. A catch-all question (\"anything else?\", \"any other drugs?\") counts as asking about other substances only: record the answer here, and leave every substance it did not name \"(not asked this visit)\".",
+            "source": "other_substances"
+          }
+        ]
+      },
+      {
+        "key": "medications",
+        "label": "Medications and allergies",
+        "fields": [
+          {
+            "key": "current_medications",
+            "label": "Current medications",
+            "kind": "list",
+            "ai_hint": "From the chart, exactly as given, or 'None recorded'. Then each medication the client reports currently taking that the chart lacks, with the dose as stated, appended as (stated this visit: \"...\"). A medication started, stopped or changed in this visit goes in the plan, not here.",
+            "source": "medications"
+          },
+          {
+            "key": "allergies",
+            "label": "Allergies",
+            "kind": "text",
+            "ai_hint": "From the chart, exactly as given (a list, NKDA, or 'Not recorded'). Then any allergy, or denial of allergies, the client or clinician states in this visit, appended as (stated this visit: \"...\"). Never write NKDA unless the chart says it.",
+            "source": "allergies"
+          }
+        ]
+      },
+      {
+        "key": "psychiatric_history",
+        "label": "Psychiatric history",
+        "fields": [
+          {
+            "key": "prior_diagnoses",
+            "label": "Earlier diagnoses",
+            "kind": "text",
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\").",
+            "source": "prior_diagnoses"
+          },
+          {
+            "key": "psychotherapy_history",
+            "label": "Psychotherapy",
+            "kind": "text",
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\").",
+            "source": "psychotherapy_history"
+          },
+          {
+            "key": "medication_trials",
+            "label": "Psychiatric medications tried",
+            "kind": "text",
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\").",
+            "source": "medication_trials"
+          },
+          {
+            "key": "hospitalizations",
+            "label": "Hospitalizations and programs",
+            "kind": "text",
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\").",
+            "source": "hospitalizations"
+          },
+          {
+            "key": "past_self_harm",
+            "label": "Past suicide attempts, self-harm or harm to others",
+            "kind": "text",
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\").",
+            "source": "past_self_harm"
+          },
+          {
+            "key": "legal_custody",
+            "label": "Legal or custody involvement",
+            "kind": "text",
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\").",
+            "source": "legal_custody"
+          }
+        ]
+      },
+      {
+        "key": "trauma_history",
+        "label": "Trauma history",
+        "fields": [
+          {
+            "key": "trauma_history",
+            "label": "Trauma history",
+            "kind": "text",
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\").",
+            "source": "trauma_history"
+          }
+        ]
+      },
+      {
+        "key": "social_history",
+        "label": "Social history and supports",
+        "fields": [
+          {
+            "key": "living_situation",
+            "label": "Living situation",
+            "kind": "text",
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\"). The client's location during a telehealth visit belongs to the place-of-service attestation: it is not where they live and never changes this field.",
+            "source": "living_situation"
+          },
+          {
+            "key": "relationships",
+            "label": "Relationships",
+            "kind": "text",
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\").",
+            "source": "relationships"
+          },
+          {
+            "key": "work_school",
+            "label": "Work or school",
+            "kind": "text",
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\").",
+            "source": "work_school"
+          },
+          {
+            "key": "supports",
+            "label": "Supports",
+            "kind": "text",
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\").",
+            "source": "supports"
+          },
+          {
+            "key": "cultural_considerations",
+            "label": "Cultural considerations",
+            "kind": "text",
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\").",
+            "source": "cultural_considerations"
+          }
+        ]
+      },
+      {
+        "key": "medical_history",
+        "label": "Medical history",
+        "fields": [
+          {
+            "key": "medical_history",
+            "label": "Medical history",
+            "kind": "text",
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\").",
+            "source": "medical_history"
+          }
+        ]
+      },
+      {
+        "key": "family_history",
+        "label": "Family history",
+        "fields": [
+          {
+            "key": "family_psychiatric",
+            "label": "Psychiatric",
+            "kind": "text",
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\").",
+            "source": "family_psychiatric"
+          },
+          {
+            "key": "family_medical",
+            "label": "Medical",
+            "kind": "text",
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\").",
+            "source": "family_medical"
+          },
+          {
+            "key": "family_treatment_response",
+            "label": "Medications that helped relatives",
+            "kind": "text",
+            "ai_hint": "From the chart, exactly as given, or 'Not recorded'. Then anything the client or clinician states in this visit that changes or adds to it, appended as (stated this visit: \"...\").",
+            "source": "family_treatment_response"
+          }
+        ]
+      },
+      {
+        "key": "risk",
+        "label": "Risk assessment",
+        "fields": [
+          {
+            "key": "suicidal_homicidal_ideation",
+            "label": "Suicidal / homicidal ideation",
+            "kind": "text",
+            "ai_hint": "What was asked and answered about suicidal or homicidal thoughts, intent, plan or means: the client's own words quoted verbatim and framed as theirs, and the clinician's finding as dictated, unquoted (e.g. Denies SI and HI. Asked about thoughts of harming self or others, the client said: \"...\"). Never a paraphrase of the client, never a level the clinician did not say. \"Not assessed this visit.\" if it was not asked; never a denial nobody gave."
+          },
+          {
+            "key": "self_harm_violence",
+            "label": "Self-harm / violent behavior",
+            "kind": "text",
+            "ai_hint": "What was reported or observed about self-harm or violence: the client's own words quoted verbatim and framed as theirs, and the clinician's finding as dictated, unquoted. Advice or instructions given to the client belong in Emergency instructions, not here. Never a paraphrase of the client, never a level the clinician did not say. \"No self-harm or violence discussed.\" if nothing was said about it; never a denial nobody gave."
+          },
+          {
+            "key": "risk_protective_factors",
+            "label": "Risk and protective factors",
+            "kind": "text",
+            "ai_hint": "Risk factors and protective factors as the clinician or client named them, written as findings (e.g. Protective factors: employed, engaged in treatment.). Never one nobody named. \"None discussed.\" if none were named."
+          },
+          {
+            "key": "overall_risk",
+            "label": "Overall acute risk",
+            "kind": "text",
+            "ai_hint": "Only the clinician's own stated judgment of overall acute risk, written as a finding (e.g. Overall acute risk is low.). Never a level the clinician did not say. \"Overall risk level not stated.\" if the clinician did not state one."
+          },
+          {
+            "key": "safety_plan",
+            "label": "Safety plan",
+            "kind": "text",
+            "ai_hint": "Only if any ideation, self-harm or violence was reported: the safety planning the clinician described (warning signs, coping, supports, crisis contacts, means safety), in the clinician's own words, unquoted; never a summary that drops a step. If one was reported and no safety planning was described, \"Safety plan not discussed this visit.\" Otherwise leave empty."
+          }
+        ]
+      },
+      {
+        "key": "mse",
+        "label": "Mental status exam",
+        "fields": [
+          {
+            "key": "appearance_behavior",
+            "label": "Appearance and behavior",
+            "kind": "text",
+            "ai_hint": "As observed or dictated by the clinician (grooming, eye contact, psychomotor activity)."
+          },
+          {
+            "key": "orientation",
+            "label": "Orientation",
+            "kind": "text",
+            "ai_hint": "As stated by the clinician (e.g. alert and oriented x4)."
+          },
+          {
+            "key": "speech",
+            "label": "Speech",
+            "kind": "text",
+            "ai_hint": "Rate, rhythm, volume and tone, as stated by the clinician."
+          },
+          {
+            "key": "mood_affect",
+            "label": "Mood and affect",
+            "kind": "text",
+            "ai_hint": "Mood and affect as the clinician described them. Only if the clinician gave no mood, the client's own word for it, quoted."
+          },
+          {
+            "key": "thought_process",
+            "label": "Thought process",
+            "kind": "text",
+            "ai_hint": "As described by the clinician (e.g. linear, goal-directed, tangential)."
+          },
+          {
+            "key": "thought_content",
+            "label": "Thought content and perception",
+            "kind": "text",
+            "ai_hint": "Hallucinations, delusions, preoccupations, and SI/HI as stated, from the clinician."
+          },
+          {
+            "key": "cognition",
+            "label": "Cognition",
+            "kind": "text",
+            "ai_hint": "Attention, memory and concentration as stated by the clinician."
+          },
+          {
+            "key": "insight_judgment",
+            "label": "Insight and judgment",
+            "kind": "text",
+            "ai_hint": "As stated by the clinician."
+          }
+        ]
+      },
+      {
+        "key": "measures",
+        "label": "Measures",
+        "fields": [
+          {
+            "key": "measures_reviewed",
+            "label": "Measures reviewed",
+            "kind": "text",
+            "ai_hint": "Instruments mentioned in the visit (e.g. PHQ-9, GAD-7) with the score, any prior score, and when it was completed in the words used (e.g. \"on Friday\"); never convert a weekday or relative time into a calendar date. Leave empty if none were mentioned."
+          }
+        ]
+      },
+      {
+        "key": "assessment",
+        "label": "Assessment",
+        "fields": [
+          {
+            "key": "diagnoses",
+            "label": "Diagnoses",
+            "kind": "diagnoses",
+            "ai_hint": "The chart's active problems, each with its code exactly as listed. Add a diagnosis the clinician named in the visit that is not on the list, with the status \"stated this visit\" and a code only when the clinician gave one. If the list is empty and none was named, leave this empty.",
+            "source": "problems"
+          },
+          {
+            "key": "formulation",
+            "label": "Clinical formulation",
+            "kind": "text",
+            "ai_hint": "The clinician's own synthesis of how today's history and observations relate to each diagnosis, including severity, course (stable, improving, worsening) and functional impact, as the clinician expressed it. Do not form a judgment the clinician did not express."
+          },
+          {
+            "key": "medical_necessity",
+            "label": "Medical necessity",
+            "kind": "text",
+            "ai_hint": "One sentence on why continued treatment is needed, drawn from what the clinician said about the condition and plan."
+          }
+        ]
+      },
+      {
+        "key": "mdm",
+        "label": "Medical decision making",
+        "fields": [
+          {
+            "key": "problems_addressed",
+            "label": "Problems addressed",
+            "kind": "text",
+            "ai_hint": "One sentence: the conditions addressed at this visit and the status of each as the clinician described it (e.g. \"ADHD, stable on the current dose; anxiety, worse over the last two weeks\"). State facts; do not name a level."
+          },
+          {
+            "key": "data_reviewed",
+            "label": "Data reviewed",
+            "kind": "text",
+            "ai_hint": "One sentence: what was reviewed or ordered (measures, labs, outside records, the PDMP report, history from someone other than the client). \"None\" if nothing was. Do not name a level."
+          },
+          {
+            "key": "management_risk",
+            "label": "Management",
+            "kind": "text",
+            "ai_hint": "One sentence: what the management involved, factually (e.g. prescription drug management with which medications were continued, changed, started or stopped; a controlled substance; a decision about a higher level of care). Do not name a level."
+          }
+        ],
+        "review_only": true
+      },
+      {
+        "key": "plan",
+        "label": "Plan",
+        "fields": [
+          {
+            "key": "medication_plan",
+            "label": "Medications",
+            "kind": "list",
+            "ai_hint": "For each medication: continue, change, start or stop, with dose and frequency, and the clinician's stated reason. For a medication continued at the same dose, the reason the clinician gave for continuing it (e.g. stable, still improving, side effects tolerable). Record only decisions the clinician stated; never suggest one."
+          },
+          {
+            "key": "pdmp",
+            "label": "PDMP",
+            "kind": "text",
+            "ai_hint": "If the clinician said the state prescription monitoring program (PDMP) was checked, write \"State prescription monitoring program (PDMP) reviewed on <date>: <finding as stated>.\" where <date> is the calendar date the clinician gave, or the date of service when the clinician said \"today\" or gave no date (never the word \"today\"). If a controlled substance was prescribed or continued and the clinician did not mention the check, write \"PDMP review not documented this visit.\" If no controlled substance was involved, leave empty."
+          },
+          {
+            "key": "informed_consent",
+            "label": "Informed consent",
+            "kind": "text",
+            "ai_hint": "For any medication started, changed or continued where consent was discussed: which medication, and which elements the clinician said were covered (benefits, risks and side effects, alternatives, risk of misuse or dependence for controlled substances), and the client's agreement. Only what was said."
+          },
+          {
+            "key": "education_provided",
+            "label": "Education",
+            "kind": "list",
+            "ai_hint": "Each thing the clinician taught or explained about a medication, a diagnosis or a risk (what a medication does, its side effects, how long it takes to work), as stated. One per item. Leave empty if the clinician explained nothing."
+          },
+          {
+            "key": "lifestyle_counseling",
+            "label": "Lifestyle counseling",
+            "kind": "list",
+            "ai_hint": "Each piece of advice the clinician gave about behavior, sleep, diet, exercise or substance use, as stated. One per item. Leave empty if the clinician gave none."
+          },
+          {
+            "key": "labs",
+            "label": "Labs",
+            "kind": "text",
+            "ai_hint": "Labs and home measurements (such as blood pressure readings) ordered, requested from another provider or the client, or reviewed, with the values as stated. Leave empty if none."
+          },
+          {
+            "key": "referrals_coordination",
+            "label": "Referrals and coordination",
+            "kind": "text",
+            "ai_hint": "Referrals made and coordination with other providers, as stated. Leave empty if none."
+          },
+          {
+            "key": "follow_up",
+            "label": "Follow-up",
+            "kind": "text",
+            "ai_hint": "Return interval as the clinician stated it."
+          },
+          {
+            "key": "emergency_instructions",
+            "label": "Emergency instructions",
+            "kind": "text",
+            "ai_hint": "Instructions the clinician gave for side effects or emergencies (e.g. call the office, 988, 911, nearest emergency room), as stated."
+          }
+        ]
+      },
+      {
+        "key": "psychotherapy",
+        "label": "Psychotherapy",
+        "fields": [
+          {
+            "key": "psychotherapy_time",
+            "label": "Psychotherapy time",
+            "kind": "text",
+            "ai_hint": "Start time, end time and minutes of the psychotherapy portion, exactly as the clinician stated them, and only the ones they stated (e.g. \"18 minutes\"). Never compute or estimate from the transcript timestamps. \"Not stated.\" if the clinician stated none of them."
+          },
+          {
+            "key": "issues_addressed",
+            "label": "Issues addressed",
+            "kind": "text",
+            "ai_hint": "The behaviors, symptoms or problems worked on during the therapy portion."
+          },
+          {
+            "key": "modality_interventions",
+            "label": "Modality and interventions",
+            "kind": "text",
+            "ai_hint": "The approach and interventions as the transcript shows them. Name a technique only when the clinician named it or did its steps (weighing evidence for and against a thought is Socratic questioning). Where the clinician listened, reflected or asked open questions and named nothing, say that in plain words, with no technique name (not \"supportive therapy\")."
+          },
+          {
+            "key": "response",
+            "label": "Response",
+            "kind": "text",
+            "ai_hint": "What the client said or did in response, the client's words quoted as theirs. A rating or count only as the client gave it."
+          },
+          {
+            "key": "goal_plan",
+            "label": "Goal and plan",
+            "kind": "text",
+            "ai_hint": "The goal as the clinician or client stated it, and any assignment agreed for before the next visit. Never write a goal nobody stated: if only an assignment was given, write only the assignment. \"Not stated.\" if neither was said."
+          },
+          {
+            "key": "progress",
+            "label": "Progress toward goal",
+            "kind": "text",
+            "ai_hint": "What the client reported doing on an earlier goal or assignment, and any rating that changed this visit, with the numbers as given. No judgment of it (\"meaningful\", \"demonstrated\", \"improved\"). \"Not stated.\" if nothing was reported."
+          },
+          {
+            "key": "therapy_cadence",
+            "label": "Therapy plan and cadence",
+            "kind": "text",
+            "ai_hint": "How often therapy continues, only as the clinician said it (e.g. \"at each visit\"). When the next visit is booked is not a therapy plan. \"Not stated.\" if the clinician said nothing about it."
+          }
+        ]
+      }
+    ],
+    "inputs": [
+      {
+        "key": "place_of_service",
+        "label": "Place of service",
+        "kind": "choice",
+        "options": [
+          "Telehealth",
+          "In office"
+        ],
+        "required": true
+      },
+      {
+        "key": "client_location",
+        "label": "Client location (telehealth)",
+        "kind": "text",
+        "options": [],
+        "required": false
+      },
+      {
+        "key": "provider_location",
+        "label": "Your location (telehealth)",
+        "kind": "text",
+        "options": [],
+        "required": false
+      },
+      {
+        "key": "mdm_problems",
+        "label": "Problems addressed",
+        "kind": "choice",
+        "options": [
+          "minimal",
+          "low",
+          "moderate",
+          "high"
+        ],
+        "required": false
+      },
+      {
+        "key": "mdm_data",
+        "label": "Data reviewed",
+        "kind": "choice",
+        "options": [
+          "none",
+          "limited",
+          "moderate",
+          "extensive"
+        ],
+        "required": false
+      },
+      {
+        "key": "mdm_risk",
+        "label": "Risk",
+        "kind": "choice",
+        "options": [
+          "minimal",
+          "low",
+          "moderate",
+          "high"
+        ],
+        "required": false
+      },
+      {
+        "key": "new_patient",
+        "label": "New or established patient",
+        "kind": "choice",
+        "options": [
+          "new",
+          "established"
+        ],
+        "required": false,
+        "default": "established"
+      }
+    ],
+    "version": null,
+    "restricted": false,
+    "is_locked": false,
+    "spec": null,
+    "based_on": null
+  },
+  {
+    "key": "psychotherapy",
+    "label": "Psychotherapy note",
+    "description": "Your own notes on a session, kept apart from the progress note.",
+    "tier": "core",
+    "context": "session",
+    "sections": [
+      {
+        "key": "note",
+        "label": "Note",
+        "fields": [
+          {
+            "key": "body",
+            "label": "Note",
+            "kind": "text",
+            "ai_hint": ""
+          }
+        ]
+      }
+    ],
+    "inputs": [],
+    "version": null,
+    "restricted": true,
+    "is_locked": false,
+    "spec": null,
+    "based_on": null
+  },
+  {
+    "key": "safety_plan",
+    "label": "Safety Plan",
+    "description": "Stanley-Brown Safety Planning Intervention (Stanley & Brown 2012). Endorsed by VA/DoD CPG, SAMHSA, Zero Suicide Institute, and Joint Commission NPSG 15.01.01. Six strict steps — surveyors check the Step 3 (distractions) vs. Step 4 (help-seeking) distinction, and require means-restriction to be specific, not the word 'discussed.' Replaces the contraindicated 'no-suicide contract' (Rudd et al. 2006); do not add one. Transcript-mode rule applies: the LLM only populates a step's field when the recording explicitly supports it — warning signs and coping strategies must come from the patient, never invented from absence.",
+    "tier": "core",
+    "context": "patient",
+    "sections": [
+      {
+        "key": "warning_signs",
+        "label": "Step 1 — Warning Signs",
+        "fields": [
+          {
+            "key": "warning_signs",
+            "label": "Warning Signs",
+            "kind": "list",
+            "ai_hint": "Personal warning signs the patient identifies — thoughts, images, mood states, situations, or behaviors that signal a developing crisis. Use the patient's own language. One item per sign. Populate only when the patient names them."
+          }
+        ]
+      },
+      {
+        "key": "internal_coping",
+        "label": "Step 2 — Internal Coping Strategies",
+        "fields": [
+          {
+            "key": "internal_coping_strategies",
+            "label": "Internal Coping Strategies",
+            "kind": "list",
+            "ai_hint": "Things the patient can do alone — without contacting another person — to take their mind off the crisis (e.g. exercise, music, prayer, a specific routine). One strategy per item. Populate only what the patient names."
+          }
+        ]
+      },
+      {
+        "key": "distractions",
+        "label": "Step 3 — People & Settings for Distraction",
+        "fields": [
+          {
+            "key": "distracting_people_settings",
+            "label": "People & Settings for Distraction",
+            "kind": "list",
+            "ai_hint": "People or social settings the patient can use as a distraction from suicidal thoughts. NOT for help-seeking — that is Step 4. Do not include phone numbers here; names of people or places only. Populate only what the patient names."
+          }
+        ]
+      },
+      {
+        "key": "help_contacts",
+        "label": "Step 4 — People to Ask for Help",
+        "fields": [
+          {
+            "key": "help_people",
+            "label": "People to Ask for Help",
+            "kind": "list",
+            "ai_hint": "People the patient will contact for help during a crisis — distinct from Step 3 distractions. Each item should capture the person's name and phone number as the patient gives them. Populate only what the patient names."
+          }
+        ]
+      },
+      {
+        "key": "professionals",
+        "label": "Step 5 — Professionals & Agencies",
+        "fields": [
+          {
+            "key": "professional_contacts",
+            "label": "Professional & Agency Contacts",
+            "kind": "list",
+            "ai_hint": "Clinicians, urgent-care lines, and crisis services the patient will contact. Each item should capture name, role, and phone number. The 988 Suicide & Crisis Lifeline must be present; add it if the patient did not name it."
+          }
+        ]
+      },
+      {
+        "key": "means_restriction",
+        "label": "Step 6 — Means Restriction",
+        "fields": [
+          {
+            "key": "firearms_present",
+            "label": "Firearms Present",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "firearms_plan",
+            "label": "Firearms Restriction Plan",
+            "kind": "text",
+            "ai_hint": "The specific plan for restricting access to firearms — who will store them, where, by when. Surveyors reject the word 'discussed'; the plan must be concrete. Populate only what the patient and clinician agreed to in the recording."
+          },
+          {
+            "key": "medications_secured",
+            "label": "Medications Secured",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "medications_plan",
+            "label": "Medications Restriction Plan",
+            "kind": "text",
+            "ai_hint": "The specific plan for securing medications — lockbox, supply limits, who holds the key. Concrete, not 'discussed.' Populate only what was explicitly agreed."
+          },
+          {
+            "key": "other_means_plan",
+            "label": "Other Means Restriction Plan",
+            "kind": "text",
+            "ai_hint": "Any other lethal means addressed (sharps, ligatures, vehicles, location access) and the specific restriction plan. Populate only what was explicitly discussed."
+          }
+        ]
+      },
+      {
+        "key": "reasons_for_living",
+        "label": "Reasons for Living (optional)",
+        "fields": [
+          {
+            "key": "reasons_for_living",
+            "label": "Reasons for Living",
+            "kind": "list",
+            "ai_hint": "Patient-named reasons for living (Linehan adjunct used by many SPI programs). One reason per item, in the patient's own framing. Populate only what the patient names."
+          }
+        ]
+      },
+      {
+        "key": "status",
+        "label": "Status",
+        "fields": [
+          {
+            "key": "risk_level",
+            "label": "Risk Level",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "follow_up_at",
+            "label": "Follow-up At",
+            "kind": "text",
+            "ai_hint": ""
+          }
+        ]
+      },
+      {
+        "key": "acknowledgment",
+        "label": "Acknowledgment",
+        "fields": [
+          {
+            "key": "patient_collaboration_acknowledged",
+            "label": "Patient Collaboration Acknowledged",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "patient_signature_acknowledged",
+            "label": "Patient Signature Acknowledged",
+            "kind": "text",
+            "ai_hint": ""
+          }
+        ]
+      },
+      {
+        "key": "signature",
+        "label": "Signature",
+        "fields": [
+          {
+            "key": "clinician_signature",
+            "label": "Clinician Signature",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "signed_at",
+            "label": "Signed At",
+            "kind": "text",
+            "ai_hint": ""
+          }
+        ]
+      }
+    ],
+    "inputs": [],
+    "version": null,
+    "restricted": false,
+    "is_locked": false,
+    "spec": null,
+    "based_on": null
+  },
+  {
+    "key": "soap",
+    "label": "SOAP",
+    "description": "Subjective / Objective / Assessment / Plan — the default clinical format used for individual therapy sessions.",
+    "tier": "core",
+    "context": "session",
+    "sections": [
+      {
+        "key": "subjective",
+        "label": "Subjective",
+        "fields": [
+          {
+            "key": "chief_complaint",
+            "label": "Chief Complaint",
+            "kind": "text",
+            "ai_hint": "The primary reason the client stated for attending this session."
+          },
+          {
+            "key": "mood_affect",
+            "label": "Mood/Affect",
+            "kind": "text",
+            "ai_hint": "Client's self-reported mood and observed affective tone."
+          },
+          {
+            "key": "symptoms",
+            "label": "Symptoms",
+            "kind": "list",
+            "ai_hint": "Discrete symptoms the client reported in this session."
+          },
+          {
+            "key": "client_narrative",
+            "label": "Client Narrative",
+            "kind": "text",
+            "ai_hint": "A concise narrative of what the client discussed."
+          }
+        ]
+      },
+      {
+        "key": "objective",
+        "label": "Objective",
+        "fields": [
+          {
+            "key": "appearance",
+            "label": "Appearance",
+            "kind": "text",
+            "ai_hint": "Observed physical presentation of the client."
+          },
+          {
+            "key": "behavior",
+            "label": "Behavior",
+            "kind": "text",
+            "ai_hint": "Observed behavioral patterns during the session."
+          },
+          {
+            "key": "speech",
+            "label": "Speech",
+            "kind": "text",
+            "ai_hint": "Rate, rhythm, volume, and coherence of speech."
+          },
+          {
+            "key": "thought_process",
+            "label": "Thought Process",
+            "kind": "text",
+            "ai_hint": "Organization and logic of the client's thinking."
+          },
+          {
+            "key": "affect_observed",
+            "label": "Affect Observed",
+            "kind": "text",
+            "ai_hint": "Clinician-observed affective presentation."
+          }
+        ]
+      },
+      {
+        "key": "assessment",
+        "label": "Assessment",
+        "fields": [
+          {
+            "key": "clinical_impression",
+            "label": "Clinical Impression",
+            "kind": "text",
+            "ai_hint": "Clinician's overall impression of the client's current state."
+          },
+          {
+            "key": "progress",
+            "label": "Progress",
+            "kind": "text",
+            "ai_hint": "Movement relative to treatment goals since the last session."
+          },
+          {
+            "key": "risk_assessment",
+            "label": "Risk Assessment",
+            "kind": "text",
+            "ai_hint": "Any observed or reported risk to self or others."
+          },
+          {
+            "key": "functioning_level",
+            "label": "Functioning Level",
+            "kind": "text",
+            "ai_hint": "Client's current functional status."
+          }
+        ]
+      },
+      {
+        "key": "plan",
+        "label": "Plan",
+        "fields": [
+          {
+            "key": "interventions_used",
+            "label": "Interventions Used",
+            "kind": "list",
+            "ai_hint": "Therapeutic interventions applied during this session."
+          },
+          {
+            "key": "homework_assignments",
+            "label": "Homework Assignments",
+            "kind": "list",
+            "ai_hint": "Tasks or practices assigned to the client between sessions."
+          },
+          {
+            "key": "next_steps",
+            "label": "Next Steps",
+            "kind": "list",
+            "ai_hint": "Planned clinical focus for upcoming sessions."
+          },
+          {
+            "key": "next_session",
+            "label": "Next Session",
+            "kind": "text",
+            "ai_hint": "Scheduled date/time or cadence for the next appointment."
+          }
+        ]
+      }
+    ],
+    "inputs": [],
+    "version": null,
+    "restricted": false,
+    "is_locked": false,
+    "spec": null,
+    "based_on": null
+  },
+  {
+    "key": "treatment_plan",
+    "label": "Treatment Plan",
+    "description": "Written treatment plan, signed by clinician — required by CMS (42 CFR 410.43), state Medicaid plans, CARF 1.J., Joint Commission PC.01.03.01, and all major MCOs for continued authorization. Not separately billable, but a missing or stale plan voids reimbursement for the underlying therapy sessions. Drafted by cross-note synthesis from the patient's intake and recent session notes — not from a live transcript — then reviewed and signed between sessions. Goals must be measurable; objectives must be SMART and link back to a goal; interventions must link back to an objective; review_due_date is the single most common audit failure.",
+    "tier": "core",
+    "context": "patient",
+    "sections": [
+      {
+        "key": "identification",
+        "label": "Identification",
+        "fields": [
+          {
+            "key": "plan_date",
+            "label": "Plan Date",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "plan_type",
+            "label": "Plan Type",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "review_due_date",
+            "label": "Review Due Date",
+            "kind": "text",
+            "ai_hint": ""
+          }
+        ]
+      },
+      {
+        "key": "clinical",
+        "label": "Clinical",
+        "fields": [
+          {
+            "key": "dsm5_diagnosis",
+            "label": "DSM-5 Diagnosis",
+            "kind": "list",
+            "ai_hint": ""
+          },
+          {
+            "key": "problem_list",
+            "label": "Problem List",
+            "kind": "list",
+            "ai_hint": "Draft the patient's clinical problems from the intake note's presenting concern, history of present illness, and DSM-5 impressions. One concise problem per item, in clinical language the clinician will refine. Do not invent problems not supported by the source notes."
+          },
+          {
+            "key": "strengths_supports",
+            "label": "Strengths & Supports",
+            "kind": "list",
+            "ai_hint": "Draft from the intake's strengths section and any supports the patient described (relationships, employment, recovery capital). One item per strength or support; mirror the patient's framing where it is in the source notes."
+          }
+        ]
+      },
+      {
+        "key": "goals",
+        "label": "Goals",
+        "fields": [
+          {
+            "key": "goals",
+            "label": "Long-Term Goals",
+            "kind": "list",
+            "ai_hint": "Draft long-term goals from intake themes plus recent session progress. One goal per item; prefer the patient's own words where they appear in the source notes. Goals are aspirational outcomes — the clinician will decompose them into SMART objectives separately, so do not pre-write objectives here."
+          }
+        ]
+      },
+      {
+        "key": "objectives",
+        "label": "Objectives",
+        "fields": [
+          {
+            "key": "objectives",
+            "label": "SMART Objectives",
+            "kind": "list",
+            "ai_hint": ""
+          }
+        ]
+      },
+      {
+        "key": "interventions",
+        "label": "Interventions",
+        "fields": [
+          {
+            "key": "interventions",
+            "label": "Interventions",
+            "kind": "list",
+            "ai_hint": ""
+          }
+        ]
+      },
+      {
+        "key": "coordination",
+        "label": "Coordination",
+        "fields": [
+          {
+            "key": "care_coordination",
+            "label": "Care Coordination",
+            "kind": "list",
+            "ai_hint": ""
+          }
+        ]
+      },
+      {
+        "key": "discharge",
+        "label": "Discharge",
+        "fields": [
+          {
+            "key": "discharge_termination_criteria",
+            "label": "Discharge / Termination Criteria",
+            "kind": "text",
+            "ai_hint": ""
+          }
+        ]
+      },
+      {
+        "key": "participation",
+        "label": "Participation",
+        "fields": [
+          {
+            "key": "patient_participated_in_plan",
+            "label": "Patient Participated in Plan",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "patient_signature_present",
+            "label": "Patient Signature Present",
+            "kind": "text",
+            "ai_hint": ""
+          }
+        ]
+      },
+      {
+        "key": "signature",
+        "label": "Signature",
+        "fields": [
+          {
+            "key": "clinician_signature",
+            "label": "Clinician Signature",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "signed_at",
+            "label": "Signed At",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "supervisor_signature",
+            "label": "Supervisor Signature",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "supervisor_signed_at",
+            "label": "Supervisor Signed At",
+            "kind": "text",
+            "ai_hint": ""
+          },
+          {
+            "key": "review_history",
+            "label": "Review History",
+            "kind": "list",
+            "ai_hint": ""
+          }
+        ]
+      }
+    ],
+    "inputs": [],
+    "version": null,
+    "restricted": false,
+    "is_locked": false,
+    "spec": null,
+    "based_on": null
+  }
+]

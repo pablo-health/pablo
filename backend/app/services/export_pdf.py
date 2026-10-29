@@ -12,6 +12,9 @@ from __future__ import annotations
 
 from io import BytesIO
 from typing import TYPE_CHECKING, Any
+
+# escape() quotes text going into Paragraph markup; nothing here parses XML.
+# nosemgrep
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
@@ -29,6 +32,7 @@ from reportlab.platypus import (
 )
 
 from ..models.session import SOAPNote
+from ..notes.diagnoses import diagnosis_text
 from .export_pdf_billing import billing_flowables
 from .export_pdf_clinical import clinical_flowables
 
@@ -53,7 +57,7 @@ def _key_label(key: str) -> str:
 
 def _field_text(value: Any) -> str:
     if isinstance(value, list):
-        return "; ".join(str(item) for item in value if item not in (None, ""))
+        return "; ".join(diagnosis_text(item) for item in value if item not in (None, ""))
     return "" if value is None else str(value)
 
 
@@ -72,7 +76,8 @@ def note_paragraphs(
     describe (written under an earlier version, or a type no longer
     registered) still prints, labelled from its key, so nothing in the note
     is dropped. A section with a single field (narrative's ``note.body``)
-    prints under the section label alone.
+    prints under the section label alone. A section drafted only for review
+    beside the note is not part of it, so it is left out.
     """
     if not content:
         return []
@@ -81,6 +86,8 @@ def note_paragraphs(
     for section_key in _in_definition_order(list(content), list(sections)):
         section = content[section_key]
         section_def = sections.get(section_key)
+        if section_def is not None and section_def.review_only:
+            continue
         section_label = section_def.label if section_def else _key_label(section_key)
         if not isinstance(section, dict):
             text = _field_text(section)

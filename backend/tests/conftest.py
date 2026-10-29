@@ -49,16 +49,16 @@ from unittest.mock import MagicMock, patch
 # which reads settings, which validates DATABASE_URL.
 plant_placeholder_database_url()
 
-# Patch database engine/session before importing app (which triggers ensure_schemas at import)
+# Patch database engine/session before importing app
 _mock_session_instance = MagicMock()
 _mock_session_factory = MagicMock(return_value=_mock_session_instance)
 _mock_engine = MagicMock()
 
 patch("app.db.get_engine", return_value=_mock_engine).start()
 patch("app.db.get_session_factory", return_value=_mock_session_factory).start()
-patch("app.db.provisioning.ensure_schemas", return_value=None).start()
 
 import pytest  # noqa: E402
+from app import repositories as app_repositories  # noqa: E402
 from app.auth.firebase_init import initialize_firebase_app  # noqa: E402
 from app.auth.service import (  # noqa: E402
     TenantContext,
@@ -71,12 +71,15 @@ from app.auth.service import (  # noqa: E402
     require_baa_acceptance,
     require_mfa,
 )
+from app.away.service import NoAwayAcknowledgment, get_away_acknowledger  # noqa: E402
 from app.calendar_providers import pkce_store  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import User  # noqa: E402
+from app.models.audit import AuditLogEntry  # noqa: E402
 from app.portal import module_gate as portal_module_gate  # noqa: E402
 from app.portal import practice_hosts as portal_practice_hosts  # noqa: E402
 from app.portal.portal_settings import NOT_OFFERED  # noqa: E402
+from app.problems.dependencies import get_problem_repository  # noqa: E402
 from app.repositories import (  # noqa: E402
     InMemoryAllowlistRepository,
     InMemoryChatRepository,
@@ -84,8 +87,10 @@ from app.repositories import (  # noqa: E402
     InMemoryEhrPromptRepository,
     InMemoryEhrRouteRepository,
     InMemoryIdentityRepository,
+    InMemoryIntakePacketRepository,
     InMemoryLlmUsageRepository,
     InMemoryNotesRepository,
+    InMemoryPatientProblemRepository,
     InMemoryPatientRepository,
     InMemoryTherapySessionRepository,
     InMemoryUserRepository,
@@ -94,11 +99,16 @@ from app.repositories import (  # noqa: E402
     get_identity_repository,
     get_user_repository,
 )
+from app.repositories.audit import InMemoryAuditRepository  # noqa: E402
 from app.repositories.external_calendar_event import (  # noqa: E402
     InMemoryExternalCalendarEventRepository,
 )
 from app.repositories.patient_source_mapping import (  # noqa: E402
     InMemoryPatientSourceMappingRepository,
+)
+from app.repositories.practice_admin import InMemoryPracticeAdminRepository  # noqa: E402
+from app.repositories.session_dictation import (  # noqa: E402
+    InMemorySessionDictationRepository,
 )
 from app.routes.calendar_import import (  # noqa: E402
     get_patient_source_mapping_repository,
@@ -137,6 +147,7 @@ from app.routes.scheduling import (  # noqa: E402
     get_google_calendar_service,
     get_outside_session_repository,
 )
+from app.routes.session_dictations import get_dictation_repository  # noqa: E402
 from app.routes.sessions import (  # noqa: E402
     get_notes_repository as get_sessions_notes_repository,
 )
@@ -153,6 +164,7 @@ from app.services.recording_consent import (  # noqa: E402
 )
 from fastapi.testclient import TestClient  # noqa: E402
 
+from tests.audit_fakes import RecordingAudit  # noqa: E402
 from tests.calendar_oauth_fakes import FakePkceRedis  # noqa: E402
 
 
@@ -197,6 +209,21 @@ def no_practice_portal_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def practice_admins(monkeypatch: pytest.MonkeyPatch) -> InMemoryPracticeAdminRepository:
+    """A practice whose owner has made nobody an admin, unless a test grants it.
+
+    Autouse because the owner-or-admin check (``app.routes.users``) asks the
+    practice's own schema, and this suite stands a mock in for the session,
+    whose every answer would read as a grant. A test that needs an admin takes
+    this fixture and grants one. The table itself is proven against Postgres
+    in ``tests_integration/api/test_practice_admin_routes.py``.
+    """
+    repo = InMemoryPracticeAdminRepository()
+    monkeypatch.setattr(app_repositories, "get_practice_admin_repository", lambda: repo)
+    return repo
+
+
+@pytest.fixture(autouse=True)
 def mock_firebase_init() -> Any:
     """Prevent Firebase Admin SDK from making real network calls in tests.
 
@@ -233,7 +260,13 @@ def mock_mapping_repo() -> InMemoryPatientSourceMappingRepository:
 
 
 @pytest.fixture
-def mock_notes_repo() -> InMemoryNotesRepository:
+def mock_problem_repo() -> InMemoryPatientProblemRepository:
+    """Fresh in-memory problem list for each test."""
+    return InMemoryPatientProblemRepository()
+
+
+@pytest.fixture
+def mock_notes_repo(mock_session_repo: InMemoryTherapySessionRepository) -> InMemoryNotesRepository:
     """Create a fresh in-memory notes repository for each test.
 
     Pre-grants universal access so legacy tests that pre-date the
@@ -244,9 +277,15 @@ def mock_notes_repo() -> InMemoryNotesRepository:
     ``(patient_id, user_id)`` pairs) — the IDOR regression test in
     ``test_routes_notes.py`` does this.
     """
-    repo = InMemoryNotesRepository()
+    repo = InMemoryNotesRepository(session_repo=mock_session_repo)
     repo.grant_all_access()
     return repo
+
+
+@pytest.fixture
+def mock_dictation_repo() -> InMemorySessionDictationRepository:
+    """A fresh in-memory session dictation repository for each test."""
+    return InMemorySessionDictationRepository()
 
 
 @pytest.fixture
@@ -342,11 +381,42 @@ def mock_ehr_navigation_service() -> MockEhrNavigationService:
 
 
 @pytest.fixture
+def recording_audit() -> RecordingAudit:
+    """An audit service that keeps what it was asked to record."""
+    return RecordingAudit()
+
+
+@pytest.fixture
 def mock_audit_service() -> AuditService:
     """Create a mock audit service for testing."""
     mock_db = MagicMock()
     mock_db.collection.return_value.document.return_value.set = MagicMock()
     return AuditService(mock_db)
+
+
+def audited_entries(service: AuditService) -> list[AuditLogEntry]:
+    """Every entry ``mock_audit_service`` persisted, in order.
+
+    A list view writes its rows through ``append_many`` (one trip per page);
+    everything else goes through ``append``. A test asserting on what was
+    audited should not care which, so read both.
+    """
+    repo = service._repo
+    entries: list[AuditLogEntry] = [call.args[0] for call in repo.append.call_args_list]
+    for call in repo.append_many.call_args_list:
+        entries.extend(call.args[0])
+    return entries
+
+
+@pytest.fixture
+def audit_repo() -> InMemoryAuditRepository:
+    """In-memory audit storage, for a test that reads back what was audited."""
+    return InMemoryAuditRepository()
+
+
+@pytest.fixture
+def packets() -> InMemoryIntakePacketRepository:
+    return InMemoryIntakePacketRepository()
 
 
 @pytest.fixture
@@ -405,14 +475,18 @@ def client(
     mock_ehr_prompt_repo: InMemoryEhrPromptRepository,
     mock_ehr_navigation_service: MockEhrNavigationService,
     mock_mapping_repo: InMemoryPatientSourceMappingRepository,
+    mock_problem_repo: InMemoryPatientProblemRepository,
+    mock_dictation_repo: InMemorySessionDictationRepository,
 ) -> Any:
     """Create a TestClient with mocked dependencies."""
     # Override dependencies
     app.dependency_overrides[get_patient_repository] = lambda: mock_repo
+    app.dependency_overrides[get_problem_repository] = lambda: mock_problem_repo
     app.dependency_overrides[get_sessions_patient_repository] = lambda: mock_repo
     app.dependency_overrides[get_therapy_session_repository] = lambda: mock_session_repo
     app.dependency_overrides[get_session_repository] = lambda: mock_session_repo
     app.dependency_overrides[get_sessions_notes_repository] = lambda: mock_notes_repo
+    app.dependency_overrides[get_dictation_repository] = lambda: mock_dictation_repo
     app.dependency_overrides[get_patients_notes_repository] = lambda: mock_notes_repo
     app.dependency_overrides[get_notes_route_notes_repository] = lambda: mock_notes_repo
     app.dependency_overrides[get_notes_route_patient_repository] = lambda: mock_repo
@@ -442,6 +516,9 @@ def client(
     app.dependency_overrides[get_allowlist_repository] = lambda: mock_allowlist_repo
     app.dependency_overrides[get_identity_repository] = lambda: mock_identity_repo
     app.dependency_overrides[get_audit_service] = lambda: mock_audit_service
+    # Nobody is away unless a test says so: the real acknowledger reads the
+    # database, which these tests do not have.
+    app.dependency_overrides[get_away_acknowledger] = NoAwayAcknowledgment
     app.dependency_overrides[get_ehr_route_repository] = lambda: mock_ehr_route_repo
     app.dependency_overrides[get_ehr_prompt_repository] = lambda: mock_ehr_prompt_repo
     app.dependency_overrides[get_ehr_navigation_service] = lambda: mock_ehr_navigation_service

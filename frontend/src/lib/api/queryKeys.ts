@@ -114,6 +114,10 @@ const baseQueryKeys = {
       [...baseQueryKeys.patients.details(), patientId] as const,
   },
 
+  // Who acted on a client's record. Outside `patients` on purpose: reading it
+  // writes an audit row, so invalidating a patient must not refetch it.
+  recordActivity: (patientId: string) => ["record-activity", patientId] as const,
+
   // Session query keys
   sessions: {
     all: ["sessions"] as const,
@@ -125,6 +129,9 @@ const baseQueryKeys = {
     // Patient-specific sessions (for future use)
     byPatient: (patientId: string) =>
       [...baseQueryKeys.sessions.all, "byPatient", patientId] as const,
+    allDictations: () => [...baseQueryKeys.sessions.all, "dictations"] as const,
+    dictations: (sessionId: string) =>
+      [...baseQueryKeys.sessions.allDictations(), sessionId] as const,
   },
 
   // Appointment query keys
@@ -155,6 +162,11 @@ const baseQueryKeys = {
     rules: () => [...baseQueryKeys.availability.all, "rules"] as const,
     slots: (date: string, duration?: number) =>
       [...baseQueryKeys.availability.all, "slots", date, duration ?? null] as const,
+    // Under `availability.all`, so a rule edit moves the bands too. Appointment
+    // writes invalidate the prefix as well: a booking can push a block along.
+    floatingBlocksAll: () => [...baseQueryKeys.availability.all, "floating-blocks"] as const,
+    floatingBlocks: (date: string) =>
+      [...baseQueryKeys.availability.all, "floating-blocks", date] as const,
   },
 
   // User query keys
@@ -175,6 +187,9 @@ const baseQueryKeys = {
       [...baseQueryKeys.notes.all, "detail", noteId] as const,
     byPatient: (patientId: string) =>
       [...baseQueryKeys.notes.all, "byPatient", patientId] as const,
+    // The note's signature, signed versions and addenda.
+    signing: (noteId: string) =>
+      [...baseQueryKeys.notes.all, "signing", noteId] as const,
   },
 
   // Outcome measure (scored instrument) query keys (PABLO-cwj)
@@ -235,6 +250,8 @@ const baseQueryKeys = {
   intakeTemplates: {
     all: ["intake-templates"] as const,
     list: () => [...baseQueryKeys.intakeTemplates.all, "list"] as const,
+    // Under the packets' key, so saving or archiving a packet refreshes it.
+    documentUsage: () => [...baseQueryKeys.intakeTemplates.all, "document-usage"] as const,
     version: (templateId: string, versionId: string) =>
       [...baseQueryKeys.intakeTemplates.all, "version", templateId, versionId] as const,
   },
@@ -245,6 +262,8 @@ const baseQueryKeys = {
     list: () => [...baseQueryKeys.intakeDocuments.all, "list"] as const,
     published: () => [...baseQueryKeys.intakeDocuments.all, "published"] as const,
     starters: () => [...baseQueryKeys.intakeDocuments.all, "starters"] as const,
+    publishedVersions: (documentKey: string) =>
+      [...baseQueryKeys.intakeDocuments.all, "published-versions", documentKey] as const,
   },
 
   // The instrument catalogue and what this practice is licensed to ask.
@@ -268,6 +287,8 @@ const baseQueryKeys = {
     list: () => [...baseQueryKeys.noteTypes.all, "list"] as const,
     detail: (key: string, version?: number | null) =>
       [...baseQueryKeys.noteTypes.all, "detail", key, version ?? null] as const,
+    deriveReferences: () => [...baseQueryKeys.noteTypes.all, "derive-references"] as const,
+    bases: () => [...baseQueryKeys.noteTypes.all, "bases"] as const,
   },
 
   // Compliance query keys (therapist-owned reminders)
@@ -277,6 +298,16 @@ const baseQueryKeys = {
     items: () => [...baseQueryKeys.compliance.all, "items"] as const,
     documents: (itemId: string) =>
       [...baseQueryKeys.compliance.all, "documents", itemId] as const,
+  },
+
+  // Task query keys. Compliance items are tasks too, so a write to either
+  // invalidates both families.
+  tasks: {
+    all: ["tasks"] as const,
+    templates: () => [...baseQueryKeys.tasks.all, "templates"] as const,
+    list: (filters: Record<string, string | boolean | undefined> = {}) =>
+      [...baseQueryKeys.tasks.all, "list", filters] as const,
+    documents: (taskId: string) => [...baseQueryKeys.tasks.all, "documents", taskId] as const,
   },
 
   // Supervision / delegation query keys
@@ -334,6 +365,16 @@ const baseQueryKeys = {
     practiceSetting: () => [...baseQueryKeys.aiConsent.all, "practice-setting"] as const,
   },
 
+  // When the practice deletes session audio
+  audioRetention: {
+    all: ["audioRetention"] as const,
+  },
+
+  // Who besides the owner may change practice-wide settings
+  practiceAdmins: {
+    all: ["practiceAdmins"] as const,
+  },
+
   // Medication list query keys
   medications: {
     all: ["medications"] as const,
@@ -344,6 +385,36 @@ const baseQueryKeys = {
         ...baseQueryKeys.medications.byPatientAll(patientId),
         status ?? null,
       ] as const,
+  },
+
+  // A client's problem list (diagnoses)
+  problems: {
+    all: ["problems"] as const,
+    byPatient: (patientId: string) =>
+      [...baseQueryKeys.problems.all, "byPatient", patientId] as const,
+  },
+
+  // How to work with a client: their preferences on the chart
+  patientPreferences: {
+    all: ["patientPreferences"] as const,
+    byPatient: (patientId: string) =>
+      [...baseQueryKeys.patientPreferences.all, "byPatient", patientId] as const,
+  },
+
+  // A client's history fields on the chart
+  chartHistory: {
+    all: ["chartHistory"] as const,
+    byPatient: (patientId: string) =>
+      [...baseQueryKeys.chartHistory.all, "byPatient", patientId] as const,
+  },
+
+  // The chart updates a note proposes
+  chartProposals: {
+    all: ["chartProposals"] as const,
+    byNote: (noteId: string) =>
+      [...baseQueryKeys.chartProposals.all, "byNote", noteId] as const,
+    byPatient: (patientId: string) =>
+      [...baseQueryKeys.chartProposals.all, "byPatient", patientId] as const,
   },
 
   // Availability rule query keys
@@ -391,6 +462,33 @@ const baseQueryKeys = {
     all: ["coverage"] as const,
     byPatient: (patientId: string) =>
       [...baseQueryKeys.coverage.all, "byPatient", patientId] as const,
+  },
+
+  // A client's homework, on their chart
+  homework: {
+    all: ["homework"] as const,
+    byPatient: (patientId: string) =>
+      [...baseQueryKeys.homework.all, "byPatient", patientId] as const,
+  },
+
+  // The clinician's away dates
+  away: {
+    all: ["away"] as const,
+    coverageActivity: (periodId: string) =>
+      [...baseQueryKeys.away.all, "coverageActivity", periodId] as const,
+  },
+
+  // Away dates a colleague asked the clinician to cover
+  covering: {
+    all: ["covering"] as const,
+  },
+
+  // The clinician's waitlist, and one client's place on it
+  waitlist: {
+    all: ["waitlist"] as const,
+    list: () => [...baseQueryKeys.waitlist.all, "list"] as const,
+    byPatient: (patientId: string) =>
+      [...baseQueryKeys.waitlist.all, "byPatient", patientId] as const,
   },
 
   // Refill requests (the prescriber's queue) query keys

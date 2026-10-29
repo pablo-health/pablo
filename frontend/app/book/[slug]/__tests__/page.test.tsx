@@ -286,3 +286,92 @@ describe("PublicBookingPage — CAPTCHA", () => {
     expect(resetMock).toHaveBeenCalledWith("widget-1")
   })
 })
+
+describe("PublicBookingPage — single-slot link", () => {
+  const SLOT = { start: "2026-09-02T09:30:00Z", end: "2026-09-02T10:00:00Z" }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  function mockSingleSlot(opts: { taken?: boolean; postStatus?: number; postBody?: unknown }) {
+    const calls: string[] = []
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString()
+      calls.push(url)
+      if (url.includes("/bookings") && init?.method === "POST") {
+        return jsonResponse(opts.postBody ?? {}, opts.postStatus ?? 201)
+      }
+      return jsonResponse({
+        ...CARD,
+        captcha_site_key: null,
+        slot: { ...SLOT, taken: opts.taken ?? false },
+      })
+    })
+    return { fetchMock, calls }
+  }
+
+  async function fillDetails() {
+    await userEvent.type(await screen.findByLabelText(/first name/i), "Jane")
+    await userEvent.type(screen.getByLabelText(/last name/i), "Roe")
+    await userEvent.type(screen.getByLabelText(/email/i), "jane@example.com")
+  }
+
+  it("shows its one time with no day picker and never asks for slots", async () => {
+    const { fetchMock, calls } = mockSingleSlot({})
+    vi.stubGlobal("fetch", fetchMock)
+
+    renderPage()
+
+    expect(await screen.findByTestId("single-slot-time")).toHaveTextContent("9:30 AM")
+    expect(screen.queryByText("Pick a day")).not.toBeInTheDocument()
+    expect(calls.some((url) => url.includes("/slots"))).toBe(false)
+  })
+
+  it("tells a later visitor the time has been taken", async () => {
+    const { fetchMock } = mockSingleSlot({ taken: true })
+    vi.stubGlobal("fetch", fetchMock)
+
+    renderPage()
+
+    expect(
+      await screen.findByRole("heading", { name: "This time has been taken" }),
+    ).toBeInTheDocument()
+    expect(screen.queryByLabelText(/first name/i)).not.toBeInTheDocument()
+  })
+
+  it("says the time is taken when it goes while the form is open", async () => {
+    const { fetchMock } = mockSingleSlot({ postStatus: 409 })
+    vi.stubGlobal("fetch", fetchMock)
+
+    renderPage()
+    await fillDetails()
+    await userEvent.click(screen.getByRole("button", { name: /confirm booking/i }))
+
+    expect(
+      await screen.findByRole("heading", { name: "This time has been taken" }),
+    ).toBeInTheDocument()
+  })
+
+  it("shows a held request when the practice reviews self-bookings", async () => {
+    const { fetchMock } = mockSingleSlot({
+      postBody: {
+        host_name: CARD.host_name,
+        title: CARD.title,
+        start_at: SLOT.start,
+        end_at: SLOT.end,
+        duration_minutes: CARD.duration_minutes,
+        status: "requested",
+      },
+    })
+    vi.stubGlobal("fetch", fetchMock)
+
+    renderPage()
+    await fillDetails()
+    await userEvent.click(screen.getByRole("button", { name: /confirm booking/i }))
+
+    expect(await screen.findByRole("heading", { name: "Request sent" })).toBeInTheDocument()
+    expect(screen.getByText(/held for you while Test Therapist reviews/)).toBeInTheDocument()
+  })
+})

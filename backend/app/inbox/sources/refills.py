@@ -4,6 +4,11 @@
 
 Answered on the Refills page, which is where the item opens; once answered
 the request is no longer ``requested`` and leaves the Inbox on its own.
+Each item carries the request's due time, the practice's own target, and in
+its ``context`` what the practice's read knows about time and risk (see
+:mod:`app.models.refill_risk`): ``run_out_date`` (ISO date) and
+``run_out_source`` when known, and ``controlled`` / ``interruption_risk`` as
+``"true"`` or ``"false"``.
 """
 
 from __future__ import annotations
@@ -22,6 +27,18 @@ if TYPE_CHECKING:
     from ..registry import InboxContext
 
 
+def _context(entry: RefillQueueEntry) -> dict[str, str]:
+    risk = entry.risk
+    context = {
+        "controlled": "true" if risk.controlled else "false",
+        "interruption_risk": "true" if risk.interruption_risk else "false",
+    }
+    if risk.run_out_date is not None and risk.run_out_source is not None:
+        context["run_out_date"] = risk.run_out_date.isoformat()
+        context["run_out_source"] = risk.run_out_source
+    return context
+
+
 def _item(entry: RefillQueueEntry) -> InboxItem:
     request = entry.request
     first = entry.patient_preferred_name or entry.patient_first_name
@@ -33,7 +50,9 @@ def _item(entry: RefillQueueEntry) -> InboxItem:
         title=f"Refill request: {request.medication_text}",
         detail=request.patient_note,
         occurred_at=request.created_at,
+        due_at=request.due_at,
         href="/dashboard/refills",
+        context=_context(entry),
     )
 
 

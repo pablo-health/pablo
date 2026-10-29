@@ -2,7 +2,7 @@
 
 "use client"
 
-import { useCallback, useState } from "react"
+import { useCallback } from "react"
 import Link from "next/link"
 import { useQueryClient } from "@tanstack/react-query"
 import {
@@ -15,7 +15,6 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { formatConsentDate } from "@/components/patients/AiConsentLine"
-import { useRecordAiConsent } from "@/hooks/useAiConsent"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { fetchAiConsent, fetchAiNotesConsentSetting } from "@/lib/api/aiConsent"
 import { queryKeys } from "@/lib/api/queryKeys"
@@ -23,12 +22,19 @@ import type { AiConsentRecord, AiNotesConsentSetting } from "@/types/aiConsent"
 
 /**
  * What the client's answer about AI-assisted notes means for starting a
- * recording: go ahead, ask first (nobody has asked yet), or stop (declined).
- * Only a practice that asks its clients is ever anything but `clear`.
+ * recording: go ahead, ask once recording starts (nobody has asked yet), or
+ * stop (declined). Only a practice that asks its clients is ever anything but
+ * `clear`.
+ *
+ * With nothing on file, in the room or over telehealth, the only way to record
+ * is to ask once recording starts, so the answer is on the recording
+ * (`ask_on_recording`). The desktop app shows the read-aloud script only then,
+ * because its first line says recording has started. The server refuses a
+ * telehealth start with nothing on file unless the start says it is asking.
  */
 export type RecordingConsent =
   | { kind: "clear" }
-  | { kind: "not_asked" }
+  | { kind: "ask_on_recording" }
   | { kind: "declined"; declinedOn: string }
 
 export function recordingConsent(
@@ -37,7 +43,7 @@ export function recordingConsent(
 ): RecordingConsent {
   if (!setting.ask_clients_about_ai_notes) return { kind: "clear" }
   const current = record.current
-  if (!current) return { kind: "not_asked" }
+  if (!current) return { kind: "ask_on_recording" }
   if (current.decision === "declined") return { kind: "declined", declinedOn: current.effective_on }
   return { kind: "clear" }
 }
@@ -72,48 +78,26 @@ interface RecordingConsentDialogProps {
   /** What to ask about; `null` or `clear` keeps the dialog closed. */
   consent: RecordingConsent | null
   onCancel: () => void
-  /** Go ahead and record, after "agreed today" is saved. */
-  onStart: () => void
-  /** Go ahead and record with nothing on file. */
-  onRecordAnyway: () => void
+  /** Start recording and ask then. */
+  onAskOnRecording: () => void
 }
 
 /**
  * Shown before a recording starts. A declined client: say so, with the way to
- * the chart where the answer can be changed. Nobody has asked yet: one click
- * records a verbal OK for today and starts, or the clinician records anyway.
+ * the chart where the answer can be changed. Nobody has asked yet: start
+ * recording and ask then, or don't record.
  */
 export function RecordingConsentDialog({
   patientId,
   consent,
   onCancel,
-  onStart,
-  onRecordAnyway,
+  onAskOnRecording,
 }: RecordingConsentDialogProps) {
   const people = usePeopleTerm()
-  const record = useRecordAiConsent()
-  const [error, setError] = useState<string | null>(null)
   const open = consent !== null && consent.kind !== "clear"
 
-  function close() {
-    setError(null)
-    onCancel()
-  }
-
-  async function agreedToday() {
-    setError(null)
-    try {
-      // No date: the server records the clinician's own today.
-      await record.mutateAsync({ patientId, data: { decision: "consented" } })
-    } catch {
-      setError("Could not save. Please try again.")
-      return
-    }
-    onStart()
-  }
-
   return (
-    <Dialog open={open} onOpenChange={(next) => (next ? undefined : close())}>
+    <Dialog open={open} onOpenChange={(next) => (next ? undefined : onCancel())}>
       <DialogContent>
         {consent?.kind === "declined" ? (
           <>
@@ -128,27 +112,25 @@ export function RecordingConsentDialog({
               <Button variant="outline" asChild>
                 <Link href={`/dashboard/patients/${patientId}`}>Open chart</Link>
               </Button>
-              <Button onClick={close}>Close</Button>
+              <Button onClick={onCancel}>Close</Button>
             </DialogFooter>
           </>
         ) : (
           <>
             <DialogHeader>
-              <DialogTitle>No consent on file</DialogTitle>
+              <DialogTitle>No consent for AI-assisted notes</DialogTitle>
+              {/* The same words as the desktop app's sheet. The script is shown
+                  there once recording is running, never before. */}
               <DialogDescription>
-                Ask whether the {people.one} agrees to AI-assisted notes before you record.
+                You&apos;ll see what to read aloud once recording starts.
               </DialogDescription>
             </DialogHeader>
-            {error && <p className="text-sm text-red-500">{error}</p>}
             <DialogFooter>
-              <Button variant="ghost" onClick={close}>
-                Cancel
+              <Button variant="ghost" onClick={onCancel}>
+                Don&apos;t record
               </Button>
-              <Button variant="outline" onClick={onRecordAnyway} disabled={record.isPending}>
-                Record anyway
-              </Button>
-              <Button onClick={() => void agreedToday()} disabled={record.isPending}>
-                {record.isPending ? "Saving…" : `${people.One} agreed today`}
+              <Button className="h-auto min-h-9 whitespace-normal" onClick={onAskOnRecording}>
+                Start recording and ask
               </Button>
             </DialogFooter>
           </>

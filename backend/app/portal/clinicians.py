@@ -20,13 +20,13 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import Depends
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 
 from ..auth.service import TenantContext, get_tenant_context
 from ..db import get_db_session, read_once_as
 from ..db.models import PatientClinicianRow
 from ..db.platform_models import EmailTenantMappingRow, PlatformUserRow, PracticeRow
-from ..utcnow import utc_now
+from ..repositories.postgres._grants import grant_in_force
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -60,12 +60,26 @@ def practice_clinicians(session: Session, schema: str) -> list[str]:
     return sorted(ids)
 
 
+def clinician_name(session: Session, user_id: str) -> str | None:
+    """A clinician's name as they entered it, or ``None`` when there is none on file."""
+    name = session.execute(
+        select(PlatformUserRow.name).where(PlatformUserRow.id == user_id)
+    ).scalar_one_or_none()
+    return name.strip() if name and name.strip() else None
+
+
 def primary_clinician_name(session: Session, schema: str, patient_id: str) -> str | None:
     """The name of this patient's primary clinician, as they entered it.
 
     ``None`` when the chart has no live primary grant, or the clinician has
     no name on file — the caller decides what stands in.
     """
+    clinician_id = primary_clinician_id(session, schema, patient_id)
+    return None if clinician_id is None else clinician_name(session, clinician_id)
+
+
+def primary_clinician_id(session: Session, schema: str, patient_id: str) -> str | None:
+    """The user id holding this patient's live primary grant, or ``None``."""
     for clinician_id in practice_clinicians(session, schema):
         # Each clinician can see only their own grants, so the question is put
         # to each in turn: "is this patient yours, as primary?"
@@ -77,17 +91,11 @@ def primary_clinician_name(session: Session, schema: str, patient_id: str) -> st
                 PatientClinicianRow.patient_id == patient_id,
                 PatientClinicianRow.user_id == clinician_id,
                 PatientClinicianRow.role == "primary",
-                or_(
-                    PatientClinicianRow.expires_at.is_(None),
-                    PatientClinicianRow.expires_at > utc_now(),
-                ),
+                grant_in_force(),
             ),
         )
         if rows:
-            name = session.execute(
-                select(PlatformUserRow.name).where(PlatformUserRow.id == clinician_id)
-            ).scalar_one_or_none()
-            return name.strip() if name and name.strip() else None
+            return clinician_id
     return None
 
 

@@ -97,7 +97,7 @@ def decrypt_tokens(encrypted_b64: str) -> dict[str, str]:
             "Token decryption failed — key mismatch or data corrupted"
         ) from exc
 
-    return json.loads(plaintext.decode("utf-8"))  # type: ignore[no-any-return]
+    return json.loads(plaintext.decode("utf-8"))  # type: ignore[no-any-return]  # json.loads returns Any
 
 
 def generate_encryption_key() -> str:

@@ -4,13 +4,50 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal, Self, cast
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .validators import validate_email, validate_iso_date, validate_phone, validate_status
+
+AllergyStatus = Literal["not_recorded", "nkda", "recorded"]
+
+
+class AllergyEntry(BaseModel):
+    """One recorded allergy."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    substance: str = Field(min_length=1, max_length=120)
+    reaction: str | None = Field(None, max_length=500)
+    severity: Literal["mild", "moderate", "severe"] | None = None
+    note: str | None = Field(None, max_length=2000)
+    """What has been said about the allergy since, kept with it (a client
+    reporting having taken the drug without a reaction, say). The entry
+    itself is unchanged by it."""
+    source_note_id: str | None = None
+    """The note this entry, or its note, was accepted from."""
+
+
+class UpdateAllergiesRequest(BaseModel):
+    """Body for ``PUT /api/patients/{id}/allergies``: the whole allergy record.
+
+    ``recorded`` needs at least one entry; ``nkda`` and ``not_recorded`` take
+    none, so an empty list never stands in for "no known drug allergies".
+    """
+
+    status: AllergyStatus
+    allergies: list[AllergyEntry] = Field(default_factory=list, max_length=50)
+
+    @model_validator(mode="after")
+    def _entries_match_status(self) -> Self:
+        if self.status == "recorded" and not self.allergies:
+            raise ValueError("recorded allergies need at least one entry")
+        if self.status != "recorded" and self.allergies:
+            raise ValueError(f"{self.status} takes no allergy entries")
+        return self
 
 
 class CreatePatientRequest(BaseModel):
@@ -25,6 +62,7 @@ class CreatePatientRequest(BaseModel):
     diagnosis: str | None = None
     rate_cents: int | None = Field(None, ge=0)
     sliding_scale_note: str | None = Field(None, max_length=2000)
+    superbill_includes_diagnosis: bool | None = None
     address_line1: str | None = Field(None, max_length=255)
     address_line2: str | None = Field(None, max_length=255)
     city: str | None = Field(None, max_length=100)
@@ -71,6 +109,7 @@ class UpdatePatientRequest(BaseModel):
     diagnosis: str | None = None
     rate_cents: int | None = Field(None, ge=0)
     sliding_scale_note: str | None = Field(None, max_length=2000)
+    superbill_includes_diagnosis: bool | None = None
     address_line1: str | None = Field(None, max_length=255)
     address_line2: str | None = Field(None, max_length=255)
     city: str | None = Field(None, max_length=100)
@@ -121,9 +160,14 @@ class PatientResponse(BaseModel):
     phone: str | None = None
     status: str
     date_of_birth: str | None = None
-    diagnosis: str | None = None
+    diagnosis: str | None = Field(
+        default=None, description="The active problems as one line, derived from the problem list"
+    )
+    allergy_status: AllergyStatus = "not_recorded"
+    allergies: list[AllergyEntry] = Field(default_factory=list)
     rate_cents: int | None = None
     sliding_scale_note: str | None = None
+    superbill_includes_diagnosis: bool = False
     session_count: int
     last_session_date: datetime | None = None
     next_session_date: datetime | None = None
@@ -141,6 +185,9 @@ class PatientResponse(BaseModel):
     state: str | None = None
     postal_code: str | None = None
     sex: str | None = None
+    preferred_name: str | None = None
+    pronouns: str | None = None
+    emergency_contact: str | None = None
     needs_name: bool = Field(
         default=False, description="The chart has no first or no last name yet"
     )
@@ -168,8 +215,11 @@ class PatientResponse(BaseModel):
             status=patient.status,
             date_of_birth=patient.date_of_birth,
             diagnosis=patient.diagnosis,
+            allergy_status=cast("AllergyStatus", patient.allergy_status),
+            allergies=[AllergyEntry.model_validate(a) for a in patient.allergies],
             rate_cents=patient.rate_cents,
             sliding_scale_note=patient.sliding_scale_note,
+            superbill_includes_diagnosis=patient.superbill_includes_diagnosis,
             session_count=patient.session_count,
             last_session_date=patient.last_session_date,
             next_session_date=patient.next_session_date,
@@ -185,6 +235,9 @@ class PatientResponse(BaseModel):
             state=patient.state,
             postal_code=patient.postal_code,
             sex=patient.sex,
+            preferred_name=patient.preferred_name,
+            pronouns=patient.pronouns,
+            emergency_contact=patient.emergency_contact,
             needs_name=patient.needs_name,
         )
 
@@ -260,13 +313,17 @@ class Patient:
     phone: str | None = None
     status: str = "active"
     date_of_birth: str | None = None
+    #: Derived from the problem list; see ``PatientRow.diagnosis``.
     diagnosis: str | None = None
+    allergy_status: str = "not_recorded"
+    allergies: list[dict[str, str]] = field(default_factory=list)
     last_session_date: datetime | None = None
     next_session_date: datetime | None = None
     chart_closed_at: datetime | None = None
     chart_closure_reason: str | None = None
     rate_cents: int | None = None
     sliding_scale_note: str | None = None
+    superbill_includes_diagnosis: bool = False
     origin: str | None = None
     address_line1: str | None = None
     address_line2: str | None = None
@@ -274,6 +331,13 @@ class Patient:
     state: str | None = None
     postal_code: str | None = None
     sex: str | None = None
+    #: What the person is called, when it is not their first name; see
+    #: ``PatientRow.preferred_name``.
+    preferred_name: str | None = None
+    #: The pronouns the person uses, in their own words.
+    pronouns: str | None = None
+    #: Who to call in an emergency, as written; ``None`` when none is recorded.
+    emergency_contact: str | None = None
 
     def __post_init__(self) -> None:
         """Auto-generate search fields if not provided."""
@@ -321,12 +385,15 @@ class Patient:
             status=data.get("status", "active"),
             date_of_birth=data.get("date_of_birth"),
             diagnosis=data.get("diagnosis"),
+            allergy_status=data.get("allergy_status", "not_recorded"),
+            allergies=list(data.get("allergies") or []),
             last_session_date=data.get("last_session_date"),
             next_session_date=data.get("next_session_date"),
             chart_closed_at=data.get("chart_closed_at"),
             chart_closure_reason=data.get("chart_closure_reason"),
             rate_cents=data.get("rate_cents"),
             sliding_scale_note=data.get("sliding_scale_note"),
+            superbill_includes_diagnosis=bool(data.get("superbill_includes_diagnosis", False)),
             address_line1=data.get("address_line1"),
             address_line2=data.get("address_line2"),
             city=data.get("city"),

@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 from dataclasses import asdict
 from functools import lru_cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ..models.audit import AuditLogEntry
@@ -35,7 +35,7 @@ CLOUD_LOG_NAME = "pablo.audit_events"
 
 
 @lru_cache(maxsize=1)
-def _gcp_logger():  # type: ignore[no-untyped-def]
+def _gcp_logger() -> Any:
     # Imported lazily so test/dev environments without google-cloud-logging
     # installed (or without Application Default Credentials) never trigger
     # initialization when the dual-write flag is off.
@@ -63,3 +63,26 @@ def write_to_cloud_logging(entry: AuditLogEntry) -> None:
             entry.action,
             exc_info=True,
         )
+
+
+def write_many_to_cloud_logging(entries: list[AuditLogEntry]) -> None:
+    """Best-effort dual-write of several entries in one Cloud Logging call.
+
+    Same contract as :func:`write_to_cloud_logging`; the batch is one
+    ``entries.write`` instead of one per row. If the batch fails, each
+    entry is retried on its own so a single bad payload cannot take the
+    rest of the page's mirror rows with it.
+    """
+    try:
+        with _gcp_logger().batch() as batch:
+            for entry in entries:
+                batch.log_struct(asdict(entry), severity="NOTICE")
+    except Exception:
+        logger.warning(
+            "Cloud Logging dual-write failed for a batch of %d audit entries; "
+            "retrying one at a time (Postgres rows already persisted)",
+            len(entries),
+            exc_info=True,
+        )
+        for entry in entries:
+            write_to_cloud_logging(entry)

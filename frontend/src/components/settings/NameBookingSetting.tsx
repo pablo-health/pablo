@@ -42,7 +42,7 @@ export function NameBookingSetting() {
         disabled={isSaving}
         aria-label={label}
         onCheckedChange={(checked) =>
-          save({ ...preferences, book_sessions_named_in_title: checked === true })
+          save({ book_sessions_named_in_title: checked === true })
         }
       />
       <span className="space-y-0.5">

@@ -31,9 +31,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -57,17 +55,6 @@ LULU, PABLO_A, PABLO = "112092152", "112092194", "112093920"
 
 
 # --------------------------------------------------------------------------- fixtures
-
-
-@pytest.fixture(scope="module")
-def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
-    eng = create_engine(_db_url, pool_pre_ping=True)
-    yield eng
-    eng.dispose()
 
 
 @pytest.fixture
@@ -368,8 +355,11 @@ def test_same_name_without_birthdays_lands_only_where_assigned(
     viewed = client.get(f"/api/migration/runs/{run['id']}/files", params={"path": note_path})
     assert viewed.status_code == 200
     assert viewed.content.startswith(b"%PDF")
-    outside = client.get(f"/api/migration/runs/{run['id']}/files", params={"path": "../x"})
-    assert outside.status_code == 404
+    for escape in ("../x", "/etc/passwd", f"../{note_path}"):
+        outside = client.get(f"/api/migration/runs/{run['id']}/files", params={"path": escape})
+        assert outside.status_code == 404
+    encoded = client.get(f"/api/migration/runs/{run['id']}/files?path=..%2F..%2Fetc%2Fpasswd")
+    assert encoded.status_code == 404
 
     notes = [r for r in group["records"] if r["record_type"] == "note"]
     answers = {f"note:{notes[0]['source_id']}": PABLO, f"note:{notes[1]['source_id']}": PABLO}
@@ -397,3 +387,82 @@ def test_same_name_without_birthdays_lands_only_where_assigned(
     on_pablo = _notes_for(engine, schema, done["report"]["patients"][PABLO])
     on_other = _notes_for(engine, schema, done["report"]["patients"][PABLO_A])
     assert (on_pablo, on_other) == (2, 0)
+
+
+def _origin(client: TestClient, patient_id: str) -> dict[str, Any] | None:
+    resp = client.get(f"/api/patients/{patient_id}/import-origin")
+    assert resp.status_code == 200, resp.text
+    origin: dict[str, Any] | None = resp.json()["origin"]
+    return origin
+
+
+def _run_clients(client: TestClient, run_id: str) -> dict[str, str]:
+    """Who the run lists as brought in, by patient id, with how each came."""
+    resp = client.get(f"/api/migration/runs/{run_id}")
+    assert resp.status_code == 200, resp.text
+    return {c["patient_id"]: c["state"] for c in resp.json()["clients"]}
+
+
+def test_the_chart_and_the_run_say_which_import_brought_each_client_in(
+    client: TestClient, engine: Engine, schema: str
+) -> None:
+    """The same ledger read from both ends: a client's origin, and a run's clients.
+
+    A client added by hand has no origin; one the import created has the run
+    that created them; one who was here first and had the import merged into
+    them is marked so. A client deleted since is left out of the run's list,
+    without error, and an undone run accounts for nobody.
+    """
+    made = client.post("/api/patients", json={"first_name": "Lulu", "last_name": "Llama"})
+    assert made.status_code == 201, made.text
+    existing_id = made.json()["id"]
+    assert _origin(client, existing_id) is None
+    # An id this clinician cannot open is not found, not an empty origin.
+    assert client.get(f"/api/patients/{uuid.uuid4()}/import-origin").status_code == 404
+
+    run = _upload(client, MAIN)
+    done = _apply(
+        client,
+        run["id"],
+        {
+            "providers": {"Avery Provider": "me"},
+            "assignments": _upload_answers(run, PABLO_A),
+            "duplicates": {LULU: f"merge:{existing_id}"},
+        },
+    )
+    bear_a, bear = done["report"]["patients"][PABLO_A], done["report"]["patients"][PABLO]
+
+    merged = _origin(client, existing_id)
+    assert merged is not None
+    assert merged["run_id"] == run["id"]
+    assert merged["source_system"] == "simplepractice"
+    assert merged["state"] == "merged"
+    assert merged["finished_at"] is not None
+    for created in (bear_a, bear):
+        origin = _origin(client, created)
+        assert origin is not None
+        assert (origin["run_id"], origin["state"]) == (run["id"], "landed")
+
+    assert _run_clients(client, run["id"]) == {
+        existing_id: "merged",
+        bear_a: "landed",
+        bear: "landed",
+    }
+    listed = client.get(f"/api/migration/runs/{run['id']}").json()["clients"]
+    assert [c["last_name"] for c in listed] == ["Bear", "Bear", "Llama"]
+    assert all(c["first_name"] for c in listed)
+
+    # A client deleted since is left out of the run's list, and has no chart to ask.
+    gone = client.request(
+        "DELETE", f"/api/patients/{bear}", json={"acknowledged_retention_obligation": True}
+    )
+    assert gone.status_code == 200, gone.text
+    assert _run_clients(client, run["id"]) == {existing_id: "merged", bear_a: "landed"}
+    assert client.get(f"/api/patients/{bear}/import-origin").status_code == 404
+    assert _chart(engine, schema)["patients"] == 2
+
+    # Undone, the run accounts for nobody: Lulu stays, with no origin again.
+    undone = client.post(f"/api/migration/runs/{run['id']}/undo", json={})
+    assert undone.status_code == 200, undone.text
+    assert _origin(client, existing_id) is None
+    assert _run_clients(client, run["id"]) == {}

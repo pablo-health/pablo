@@ -19,12 +19,14 @@ URL map's read-modify-write.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 from app.services.practice_domain_cloud import (
     DomainServingError,
+    HostRoute,
     ServingConfig,
     resource_id,
 )
@@ -150,6 +152,7 @@ class StubUrlMaps:
         self.interleaved = list(interleaved or [])
         self.gets = 0
         self.writes: list[Any] = []
+        self.invalidated: list[tuple[str, str]] = []
         self._version = 1
 
     def get(self, *, project: str, url_map: str) -> Any:
@@ -169,6 +172,15 @@ class StubUrlMaps:
         self.stored = _copy(url_map_resource)
         self._bump()
         self.writes.append(_copy(self.stored))
+        return _Done()
+
+    def invalidate_cache(
+        self, *, project: str, url_map: str, cache_invalidation_rule_resource: Any
+    ) -> _Done:
+        assert (project, url_map) == (CONFIG.project, CONFIG.url_map)
+        self.invalidated.append(
+            (cache_invalidation_rule_resource.host, cache_invalidation_rule_resource.path)
+        )
         return _Done()
 
     def _bump(self) -> None:
@@ -503,3 +515,151 @@ def test_a_host_that_cannot_start_an_id_still_gets_one() -> None:
     name = resource_id("", "1st.example.org")
     assert name[0].isalpha()
     assert len(name) <= 63
+
+
+# --- serving a website from the backend bucket --------------------------------
+
+STATIC = replace(CONFIG, site_backend="sites-live")
+PRACTICE = "practice-7f3a"
+SITE = "www.example.net"
+BARE = "example.net"
+BUCKET = "https://www.googleapis.com/compute/v1/projects/example-project/global/backendBuckets/sites-live"
+
+
+@pytest.fixture
+def static(certificates: StubCertificates, url_maps: StubUrlMaps) -> GoogleDomainServing:
+    return GoogleDomainServing(STATIC, certificates=certificates, url_maps=url_maps)
+
+
+def _matchers(url_map: Any) -> dict[str, Any]:
+    return {m.name: m for m in url_map.path_matchers}
+
+
+def _rewrite(matcher: Any) -> str:
+    (rule,) = matcher.route_rules
+    assert rule.service == BUCKET
+    assert [m.prefix_match for m in rule.match_rules] == ["/"]
+    return rule.route_action.url_rewrite.path_prefix_rewrite
+
+
+def test_a_website_host_gets_a_matcher_on_the_bucket_and_its_rule_in_one_write(
+    static: GoogleDomainServing, url_maps: StubUrlMaps
+) -> None:
+    static.ensure_host_rule(SITE, HostRoute.site(PRACTICE, 3))
+
+    assert len(url_maps.writes) == 1
+    after = url_maps.stored
+    assert _hosts(after) == {HOST: "sites-paths", SITE: "site-practice-7f3a"}
+    matcher = _matchers(after)["site-practice-7f3a"]
+    assert matcher.default_service == BUCKET
+    assert _rewrite(matcher) == "/sites/practice-7f3a/v3/"
+    # The deployment's own matcher is untouched.
+    assert (
+        _matchers(after)["sites-paths"]
+        == _matchers(_load(compute_v1.UrlMap, "url_map"))["sites-paths"]
+    )
+
+
+def test_a_new_version_rewrites_the_matcher_in_place(
+    static: GoogleDomainServing, url_maps: StubUrlMaps
+) -> None:
+    static.ensure_host_rule(SITE, HostRoute.site(PRACTICE, 3))
+    static.ensure_host_rule(SITE, HostRoute.site(PRACTICE, 4))
+
+    after = url_maps.stored
+    assert len(url_maps.writes) == 2
+    assert _rewrite(_matchers(after)["site-practice-7f3a"]) == "/sites/practice-7f3a/v4/"
+    assert len(after.path_matchers) == 2
+    assert _hosts(after)[SITE] == "site-practice-7f3a"
+
+
+def test_a_host_on_the_version_already_served_writes_nothing(
+    static: GoogleDomainServing, url_maps: StubUrlMaps
+) -> None:
+    static.ensure_host_rule(SITE, HostRoute.site(PRACTICE, 3))
+    static.ensure_host_rule(SITE, HostRoute.site(PRACTICE, 3))
+    assert len(url_maps.writes) == 1
+
+
+def test_an_alias_host_is_redirected_to_the_primary(
+    static: GoogleDomainServing, url_maps: StubUrlMaps
+) -> None:
+    static.ensure_host_rule(SITE, HostRoute.site(PRACTICE, 3))
+    static.ensure_host_rule(BARE, HostRoute.alias(SITE))
+
+    after = url_maps.stored
+    assert _hosts(after)[BARE] == "alias-www-example-net"
+    redirect = _matchers(after)["alias-www-example-net"].default_url_redirect
+    assert redirect.host_redirect == SITE
+    assert redirect.https_redirect is True
+    assert redirect.redirect_response_code == "MOVED_PERMANENTLY_DEFAULT"
+    assert redirect.strip_query is False
+
+
+def test_moving_a_host_back_to_the_deployment_drops_the_matcher_it_leaves_behind(
+    static: GoogleDomainServing, url_maps: StubUrlMaps
+) -> None:
+    static.ensure_host_rule(SITE, HostRoute.site(PRACTICE, 3))
+    static.ensure_host_rule(BARE, HostRoute.alias(SITE))
+
+    static.ensure_host_rule(BARE, HostRoute.site(PRACTICE, 3))
+    assert set(_matchers(url_maps.stored)) == {"sites-paths", "site-practice-7f3a"}
+    assert _hosts(url_maps.stored)[BARE] == "site-practice-7f3a"
+
+    static.ensure_host_rule(SITE, HostRoute.default())
+    static.ensure_host_rule(BARE, HostRoute.default())
+    assert set(_matchers(url_maps.stored)) == {"sites-paths"}
+    assert _hosts(url_maps.stored) == {
+        HOST: "sites-paths",
+        SITE: "sites-paths",
+        BARE: "sites-paths",
+    }
+
+
+def test_removing_the_last_host_on_a_matcher_drops_the_matcher(
+    static: GoogleDomainServing, url_maps: StubUrlMaps
+) -> None:
+    static.ensure_host_rule(SITE, HostRoute.site(PRACTICE, 3))
+    static.ensure_host_rule(BARE, HostRoute.alias(SITE))
+
+    static.remove_host_rule(BARE)
+    assert set(_matchers(url_maps.stored)) == {"sites-paths", "site-practice-7f3a"}
+
+    static.remove_host_rule(SITE)
+    assert set(_matchers(url_maps.stored)) == {"sites-paths"}
+    assert _hosts(url_maps.stored) == {HOST: "sites-paths"}
+
+
+def test_a_website_route_without_a_backend_bucket_is_refused(
+    serving: GoogleDomainServing, url_maps: StubUrlMaps
+) -> None:
+    with pytest.raises(DomainServingError, match="practice_domain_site_backend") as raised:
+        serving.ensure_host_rule(SITE, HostRoute.site(PRACTICE, 3))
+    assert raised.value.transient is False
+    assert url_maps.writes == []
+
+
+def test_invalidating_a_host_empties_every_path_of_it(
+    static: GoogleDomainServing, url_maps: StubUrlMaps
+) -> None:
+    static.invalidate_host(SITE)
+    assert url_maps.invalidated == [(SITE, "/*")]
+
+
+def test_a_backend_bucket_in_another_project_is_named_by_its_path(
+    certificates: StubCertificates, url_maps: StubUrlMaps
+) -> None:
+    """A backend bucket lives with its storage bucket; a deployment keeping
+    its public buckets in a project of their own names it by path."""
+    config = replace(CONFIG, site_backend="projects/sites-project/global/backendBuckets/live-bb")
+    serving = GoogleDomainServing(config, certificates=certificates, url_maps=url_maps)
+
+    serving.ensure_host_rule(SITE, HostRoute.site(PRACTICE, 3))
+
+    matcher = _matchers(url_maps.stored)["site-practice-7f3a"]
+    expected = (
+        "https://www.googleapis.com/compute/v1/projects/sites-project/global/backendBuckets/live-bb"
+    )
+    assert matcher.default_service == expected
+    (rule,) = matcher.route_rules
+    assert rule.service == expected

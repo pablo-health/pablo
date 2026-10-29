@@ -2,8 +2,13 @@
 
 """Tests for goal-based EHR navigation prompt construction and response parsing."""
 
+import asyncio
 import json
+import threading
+from datetime import UTC, datetime
+from types import SimpleNamespace
 
+from app.models.ehr_prompt import EhrPrompt
 from app.models.ehr_route import GoalNavigationRequest, PreviousAction
 from app.repositories import InMemoryEhrPromptRepository
 from app.services.ehr_navigation_service import (
@@ -118,3 +123,42 @@ def test_user_prompt_wraps_untrusted_fields_in_delimiters() -> None:
     assert UNTRUSTED_DATA_START in prompt
     assert UNTRUSTED_DATA_END in prompt
     assert prompt.count(UNTRUSTED_DATA_START) == 3
+
+
+def test_model_call_runs_off_the_event_loop_thread() -> None:
+    # The client is blocking; on the event loop it would stall every request.
+    prompts = InMemoryEhrPromptRepository()
+    prompts.seed(
+        EhrPrompt(
+            ehr_system="sessions_health",
+            system_prompt="Navigate.",
+            version=1,
+            updated_at=datetime.now(UTC),
+            updated_by="test",
+            notes="",
+        )
+    )
+    service = GeminiEhrNavigationService(model="test-model", prompt_repo=prompts)
+    reply = {
+        "action": "none",
+        "selector": "",
+        "reasoning": "already there",
+        "confidence": 1.0,
+        "is_on_target_page": True,
+    }
+    call_threads: list[threading.Thread] = []
+
+    def generate_content(**_: object) -> SimpleNamespace:
+        call_threads.append(threading.current_thread())
+        return SimpleNamespace(text=json.dumps(reply), usage_metadata=None)
+
+    service._client = SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+
+    async def navigate() -> threading.Thread:
+        await service.navigate(_request())
+        return threading.current_thread()
+
+    loop_thread = asyncio.run(navigate())
+
+    assert call_threads
+    assert call_threads[0] is not loop_thread

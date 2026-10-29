@@ -1,0 +1,362 @@
+# Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+
+"""Draft each template's sample visit with the real model and grade the draft.
+
+The draft goes through the same generation path a "Try it" preview uses: the
+template's spec becomes a definition, and the generator fills it from the
+sample transcript and the case's inputs. Hard failures, any of which fails
+the run:
+
+  - a field the visit covered came back empty;
+  - a field the visit did not cover says something other than "Not stated."
+    or "Not asked.";
+  - a field that must stay empty (the psychotherapy portion of a visit that
+    had none) was filled;
+  - a diagnosis lacks a code, carries a code the clinician never said, or a
+    stated code is missing; a rule-out was not marked as one;
+  - any value contains a forbidden string (a code or level never stated);
+  - a turn of the medication portion is labeled therapy;
+  - once the case's therapy start is confirmed, the psychotherapy time field
+    does not read the confirmed window;
+  - drafted again with a line dictated afterwards, the note lost a fact the
+    first draft had, or the dictated line is missing.
+
+Exit code: 0 when there are no hard failures, 1 when there are, 2 on a
+setup problem.
+
+    scripts/run-note-type-template-eval.sh
+    scripts/run-note-type-template-eval.sh --case psychiatric-evaluation-new-client
+    scripts/run-note-type-template-eval.sh --json --out /tmp/template-eval
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
+from zoneinfo import ZoneInfo
+
+from app.models import Patient, Transcript
+from app.notes.client_present import (
+    DICTATED_HEADING,
+    client_present_end,
+    segments_from_transcript,
+)
+from app.notes.diagnoses import diagnosis_text
+from app.notes.practice_types import PracticeNoteTypeSpec, to_definition
+from app.notes.visit_gaps import is_visit_gap
+from app.notes.visit_times import (
+    PSYCHOTHERAPY_SECTION_KEY,
+    PSYCHOTHERAPY_TIME_FIELD,
+    THERAPY,
+    apply_confirmed_window,
+    labels_from_stored,
+    window_minutes,
+    window_text,
+)
+from app.services.note_generation_service import GeneratedNote, RegistryNoteGenerationService
+from app.services.note_redraft import as_shown
+from app.services.structured_llm_gateway import (
+    StructuredLLMGateway,
+    get_default_structured_llm_gateway,
+    resolve_structured_llm_gateway,
+)
+
+from evals.note_type_templates.cases import (
+    NOT_COVERED,
+    TemplateCase,
+    all_cases,
+    load_template,
+    sample_transcript,
+)
+
+# When a case's visit began, and the clinician's zone, for the window's clock times.
+VISIT_STARTED = datetime(2026, 10, 6, 15, 0, tzinfo=UTC)
+CLINICIAN_ZONE = ZoneInfo("America/New_York")
+
+
+def _is_empty(value: Any) -> bool:
+    if isinstance(value, list):
+        return not value
+    return not str(value or "").strip()
+
+
+def _says_not_covered(value: Any) -> bool:
+    text = str(value or "").strip()
+    return text.rstrip(".").lower() in NOT_COVERED or is_visit_gap(text)
+
+
+def _text(value: Any) -> str:
+    if isinstance(value, list):
+        return "; ".join(diagnosis_text(item) for item in value)
+    return str(value or "")
+
+
+def grade(
+    case: TemplateCase, content: dict[str, Any], proposal: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Every hard failure in ``content``, a draft of ``case``'s sample.
+
+    ``proposal`` is the draft's proposed psychotherapy time: the dictated
+    time and the turn labels.
+    """
+    failures: list[str] = []
+    for section, fields in content.items():
+        for key, value in fields.items():
+            path = f"{section}.{key}"
+            text = _text(value)
+            failures.extend(
+                f"{path} contains {bad!r}, which was never stated"
+                for bad in case.forbidden
+                if bad in text
+            )
+            if path in case.empty:
+                if not _is_empty(value):
+                    failures.append(f"{path} should be empty")
+            elif path in case.not_covered:
+                if not _says_not_covered(value):
+                    failures.append(f"{path} was not covered but reads {text[:80]!r}")
+            elif case.fill_unnamed and path not in case.may_be_empty and _is_empty(value):
+                failures.append(f"{path} is empty")
+    failures.extend(_grade_quoted(case, content))
+    failures.extend(_grade_start(case, proposal))
+    failures.extend(_grade_confirmed_window(case, content, proposal))
+    if case.diagnoses_field:
+        failures.extend(_grade_diagnoses(case, content))
+    return {"case": case.name, "passed": not failures, "failures": failures}
+
+
+def _grade_start(case: TemplateCase, proposal: dict[str, Any] | None) -> list[str]:
+    """No turn of the medication portion is labeled therapy; the therapy starts at the turn."""
+    if case.therapy_starts_between is None:
+        return []
+    low, high = case.therapy_starts_between
+    labels = labels_from_stored((proposal or {}).get("labels"))
+    therapy = sorted(seconds for seconds, label in labels.items() if label == THERAPY)
+    if not therapy:
+        return ["no turn was labeled therapy"]
+    failures = []
+    if therapy[0] < low:
+        failures.append(f"the turn at {therapy[0]:.0f}s, before {low:.0f}s, is labeled therapy")
+    if therapy[0] > high:
+        failures.append(f"the first therapy turn {therapy[0]:.0f}s is after {high:.0f}s")
+    return failures
+
+
+def boundary(case: TemplateCase) -> float | None:
+    """Where the client left a case drafted as a recorded call; ``None`` otherwise."""
+    if not case.recorded_call:
+        return None
+    transcript = Transcript(
+        format="txt", content=case.transcript or sample_transcript(case.template, case.sample)
+    )
+    return client_present_end(segments_from_transcript(transcript), client_channel_expected=True)
+
+
+def confirmed_window(case: TemplateCase) -> dict[str, Any] | None:
+    """The window the clinician confirms for ``case``, as the visit-times panel records it."""
+    end = boundary(case)
+    if case.confirmed_start_seconds is None or end is None:
+        return None
+    minutes = window_minutes(case.confirmed_start_seconds, end)
+    text = window_text(
+        minutes,
+        start_at=VISIT_STARTED + timedelta(seconds=case.confirmed_start_seconds),
+        end_at=VISIT_STARTED + timedelta(seconds=end),
+        zone=CLINICIAN_ZONE,
+    )
+    return {"start_seconds": case.confirmed_start_seconds, "minutes": minutes, "window_text": text}
+
+
+def _grade_confirmed_window(
+    case: TemplateCase, content: dict[str, Any], proposal: dict[str, Any] | None
+) -> list[str]:
+    """Once the clinician confirms the start, the time field reads the window.
+
+    And nothing else in the note still calls a psychotherapy time "Not stated."
+    """
+    confirmed = confirmed_window(case)
+    if confirmed is None:
+        return []
+    window = {"proposal": proposal, "confirmed": confirmed}
+    filled = apply_confirmed_window(content, window) or {}
+    field = f"{PSYCHOTHERAPY_SECTION_KEY}.{PSYCHOTHERAPY_TIME_FIELD}"
+    stated = _text(filled.get(PSYCHOTHERAPY_SECTION_KEY, {}).get(PSYCHOTHERAPY_TIME_FIELD))
+    failures = []
+    if stated != confirmed["window_text"]:
+        failures.append(f"{field} reads {stated!r} after confirming {confirmed['window_text']!r}")
+    failures += [
+        f"{section}.{key} still says {line.strip()!r} after the window was confirmed"
+        for section, fields in filled.items()
+        if isinstance(fields, dict)
+        for key, value in fields.items()
+        for line in _text(value).splitlines()
+        if _UNSTATED_THERAPY_TIME.search(line)
+    ]
+    return failures
+
+
+# "Psychotherapy start time: Not stated." and the like.
+_UNSTATED_THERAPY_TIME = re.compile(
+    r"psychotherapy[^\n:]*\b(?:time|minutes)\b[^\n]*not stated", re.IGNORECASE
+)
+
+
+_QUOTE_MARKS = ('"', "\u201c", "\u201d")
+
+
+def _grade_quoted(case: TemplateCase, content: dict[str, Any]) -> list[str]:
+    """Each ``quoted`` field holds its phrase inside quotation marks."""
+    failures: list[str] = []
+    for path, phrase in case.quoted:
+        section, key = path.split(".")
+        text = _text(content.get(section, {}).get(key))
+        at = text.lower().find(phrase.lower())
+        opened = at >= 0 and any(mark in text[:at] for mark in _QUOTE_MARKS)
+        closed = at >= 0 and any(mark in text[at + len(phrase) :] for mark in _QUOTE_MARKS)
+        if not (opened and closed):
+            failures.append(f"{path} does not quote {phrase!r}: {text[:80]!r}")
+    return failures
+
+
+def _grade_diagnoses(case: TemplateCase, content: dict[str, Any]) -> list[str]:
+    assert case.diagnoses_field is not None
+    section, key = case.diagnoses_field.split(".")
+    items = content.get(section, {}).get(key) or []
+    failures: list[str] = []
+    codes: set[str] = set()
+    for item in items:
+        code = (item.get("code") or "").strip() if isinstance(item, dict) else ""
+        if not code:
+            failures.append(f"diagnosis {diagnosis_text(item)!r} has no code")
+            continue
+        codes.add(code)
+        if code not in case.stated_codes:
+            failures.append(f"diagnosis code {code!r} was never stated")
+        status = str(item.get("status") or "").lower().replace("-", " ")
+        if code in case.rule_out and "rule out" not in status:
+            failures.append(f"{code} is a rule-out but its status is {status!r}")
+    missing = case.stated_codes - codes
+    if missing:
+        failures.append(f"stated diagnoses missing: {sorted(missing)}")
+    return failures
+
+
+def _mentions(content: dict[str, Any], spellings: tuple[str, ...]) -> bool:
+    text = json.dumps(content, ensure_ascii=False).lower()
+    return any(spelling.lower() in text for spelling in spellings)
+
+
+def grade_redraft(
+    case: TemplateCase, first: dict[str, Any], redrafted: dict[str, Any]
+) -> list[str]:
+    """Facts the redraft lost, and dictated facts it left out."""
+    failures = [
+        f"the first draft lacks {spellings[0]!r}, so keeping it proves nothing"
+        for spellings in case.kept_facts
+        if not _mentions(first, spellings)
+    ]
+    failures += [
+        f"the redraft dropped {spellings[0]!r}"
+        for spellings in case.kept_facts
+        if _mentions(first, spellings) and not _mentions(redrafted, spellings)
+    ]
+    failures += [
+        f"the redraft lacks the dictated {spellings[0]!r}"
+        for spellings in case.added_facts
+        if not _mentions(redrafted, spellings)
+    ]
+    return failures
+
+
+def draft(
+    gateway: StructuredLLMGateway,
+    case: TemplateCase,
+    model: str | None = None,
+    *,
+    redraft_of: dict[str, Any] | None = None,
+) -> GeneratedNote:
+    """The case's sample drafted; with ``redraft_of``, drafted again from that note.
+
+    A redraft is drafted as "Dictate more" drafts one: the case's dictation
+    follows the transcript under the dictated heading, and the model is given
+    the note the clinician already has.
+    """
+    spec = PracticeNoteTypeSpec.model_validate(load_template(case.template)["spec"])
+    definition = to_definition("custom.preview", 0, spec)
+    now = datetime.now(UTC)
+    # The preview's stand-in client: practice types never read the patient.
+    patient = Patient(id="preview", first_name="", last_name="", created_at=now, updated_at=now)
+    content = case.transcript or sample_transcript(case.template, case.sample)
+    if redraft_of is not None and case.redraft_dictation:
+        content = "\n\n".join([content, DICTATED_HEADING, case.redraft_dictation])
+    transcript = Transcript(format="txt", content=content)
+    # The model is named here too: without it the generator asks the gateway
+    # for the configured default, which a Bedrock gateway cannot serve.
+    generated = RegistryNoteGenerationService(llm_gateway=gateway, model=model).generate_note(
+        definition.key,
+        transcript,
+        patient,
+        now,
+        inputs=case.inputs,
+        definition=definition,
+        client_present_end_seconds=boundary(case),
+        current_note=as_shown(definition.key, redraft_of, None) if redraft_of else None,
+    )
+    return generated
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(description="Grade note-type templates on their sample visits")
+    p.add_argument("--case", default=None, help="run only this case")
+    p.add_argument("--model", default=None, help="model id, e.g. bedrock:<id>")
+    p.add_argument("--out", default=None, help="write each draft here as <case>.json")
+    p.add_argument("--json", action="store_true", help="print results as JSON")
+    args = p.parse_args(argv)
+
+    cases = [c for c in all_cases() if args.case in (None, c.name)]
+    if not cases:
+        print(f"no case named {args.case!r}", file=sys.stderr)
+        return 2
+    gateway = (
+        resolve_structured_llm_gateway(args.model)
+        if args.model
+        else get_default_structured_llm_gateway()
+    )
+    results = []
+    for case in cases:
+        generated = draft(gateway, case, args.model)
+        if args.out:
+            out = Path(args.out)
+            out.mkdir(parents=True, exist_ok=True)
+            kept = {**generated.content, "psychotherapy_proposal": generated.psychotherapy_proposal}
+            (out / f"{case.name}.json").write_text(json.dumps(kept, indent=2) + "\n")
+        result = grade(case, generated.content, generated.psychotherapy_proposal)
+        if case.redraft_dictation:
+            redrafted = draft(gateway, case, args.model, redraft_of=generated.content)
+            if args.out:
+                (Path(args.out) / f"{case.name}.redraft.json").write_text(
+                    json.dumps(redrafted.content, indent=2) + "\n"
+                )
+            again = grade(case, redrafted.content, redrafted.psychotherapy_proposal)
+            result["failures"] += [f"redraft: {f}" for f in again["failures"]]
+            result["failures"] += grade_redraft(case, generated.content, redrafted.content)
+            result["passed"] = not result["failures"]
+        results.append(result)
+
+    if args.json:
+        print(json.dumps(results, indent=2))
+    else:
+        for r in results:
+            print(f"{'PASS' if r['passed'] else 'FAIL'} {r['case']}")
+            for failure in r["failures"]:
+                print(f"  - {failure}")
+    return 0 if all(r["passed"] for r in results) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

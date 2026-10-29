@@ -5,10 +5,13 @@
 import { Users, Calendar, Phone, Mail } from "lucide-react"
 import { EligibilityBadge } from "@/components/insurance/EligibilityBadge"
 import { AiConsentLine } from "@/components/patients/AiConsentLine"
+import { ChartFacts } from "@/components/patients/ChartFacts"
+import { ImportOriginLine } from "@/components/patients/ImportOriginLine"
 import { usePatientCoverage } from "@/hooks/useCoverage"
 import { usePatientBalance } from "@/hooks/usePayments"
 import { formatBalanceLine } from "@/lib/paymentDisplay"
 import type { PatientResponse } from "@/types/patients"
+import { NUMERIC_DATE, formatDate } from "@/lib/dates"
 
 interface PatientSummaryProps {
   patient: PatientResponse
@@ -20,13 +23,8 @@ const STATUS_BADGE_STYLES: Record<string, string> = {
   on_hold: "bg-yellow-100 text-yellow-700",
 }
 
-function formatDate(dateString: string | null): string {
-  if (!dateString) return "N/A"
-  try {
-    return new Date(dateString).toLocaleDateString()
-  } catch {
-    return "N/A"
-  }
+function formatSummaryDate(dateString: string | null): string {
+  return dateString ? formatDate(dateString, NUMERIC_DATE) : "N/A"
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -98,6 +96,16 @@ export function PatientSummary({ patient }: PatientSummaryProps) {
             {balanceLine && <BalanceBadge line={balanceLine} />}
             <AiConsentLine patientId={patient.id} />
           </div>
+          {(patient.preferred_name || patient.pronouns) && (
+            <p className="-mt-2 mb-4 text-neutral-700" data-testid="chart-name-and-pronouns">
+              {[
+                patient.preferred_name ? `Goes by ${patient.preferred_name}` : null,
+                patient.pronouns,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-neutral-600">
             <div className="flex items-center gap-2">
@@ -110,28 +118,32 @@ export function PatientSummary({ patient }: PatientSummaryProps) {
             </div>
             <div className="flex items-center gap-2">
               <Calendar className="w-4 h-4" />
-              <span>DOB: {formatDate(patient.date_of_birth)}</span>
+              <span>DOB: {formatSummaryDate(patient.date_of_birth)}</span>
             </div>
             <div className="flex items-center gap-2">
               <Calendar className="w-4 h-4" />
               <span>Total Sessions: {patient.session_count}</span>
             </div>
-            {patient.diagnosis && (
-              <div className="flex items-center gap-2 col-span-2">
-                <span className="font-semibold">Diagnosis:</span>
-                <span>{patient.diagnosis}</span>
+            <ChartFacts patient={patient} />
+            {patient.emergency_contact && (
+              <div className="flex items-center gap-2 md:col-span-2" data-testid="chart-emergency-contact">
+                <Phone className="w-4 h-4" />
+                <span>
+                  <span className="font-semibold">Emergency contact:</span> {patient.emergency_contact}
+                </span>
               </div>
             )}
             {patient.last_session_date && (
               <div className="flex items-center gap-2">
                 <Calendar className="w-4 h-4" />
-                <span>Last Session: {formatDate(patient.last_session_date)}</span>
+                <span>Last Session: {formatSummaryDate(patient.last_session_date)}</span>
               </div>
             )}
+            <ImportOriginLine patientId={patient.id} />
             {patient.next_session_date && (
               <div className="flex items-center gap-2">
                 <Calendar className="w-4 h-4" />
-                <span>Next Session: {formatDate(patient.next_session_date)}</span>
+                <span>Next Session: {formatSummaryDate(patient.next_session_date)}</span>
               </div>
             )}
           </div>

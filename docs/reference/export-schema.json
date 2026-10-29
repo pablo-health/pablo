@@ -1403,6 +1403,22 @@
     "MedicationStatement": {
       "description": "One medication on the client's medication list.",
       "properties": {
+        "category": {
+          "anyOf": [
+            {
+              "enum": [
+                "psychiatric",
+                "other"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Whether it is a psychiatric medication; null when not recorded.",
+          "title": "Category"
+        },
         "dose": {
           "title": "Dose",
           "type": "string"
@@ -1410,6 +1426,18 @@
         "drug_name": {
           "title": "Drug Name",
           "type": "string"
+        },
+        "frequency": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How often and when it is taken, as written.",
+          "title": "Frequency"
         },
         "id": {
           "title": "Id",
@@ -1475,6 +1503,8 @@
         "id",
         "drug_name",
         "dose",
+        "frequency",
+        "category",
         "status",
         "started_on",
         "stopped_on",

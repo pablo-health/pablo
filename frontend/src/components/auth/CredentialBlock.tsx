@@ -85,7 +85,7 @@ function rememberAuthMethod(method: AuthMethod): void {
 
 function LastUsedPill() {
   return (
-    <span className="pointer-events-none absolute -top-2 right-3 rounded-full bg-primary-600 px-2 py-0.5 text-[11px] font-semibold text-white shadow-sm ring-2 ring-card">
+    <span className="pointer-events-none absolute -top-2 right-3 rounded-full bg-primary-600 px-2 py-0.5 text-[11px] font-semibold text-on-honey shadow-sm ring-2 ring-card">
       Last used
     </span>
   )
@@ -134,7 +134,7 @@ export function CredentialBlock({
   onSignUpChange,
   renderShell,
 }: CredentialBlockProps) {
-  const { passkeysEnabled } = useConfig()
+  const { passkeysEnabled, googleSignInEnabled = true } = useConfig()
 
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
@@ -445,10 +445,12 @@ export function CredentialBlock({
 
   return renderShell(
     <div className="mt-8 space-y-4">
-      <div className="relative">
-        <AuthGoogleButton onClick={handleGoogleLogin} />
-        {!isSignUp && lastMethod === "google" && <LastUsedPill />}
-      </div>
+      {googleSignInEnabled && (
+        <div className="relative">
+          <AuthGoogleButton onClick={handleGoogleLogin} />
+          {!isSignUp && lastMethod === "google" && <LastUsedPill />}
+        </div>
+      )}
 
       {!isSignUp && passkeySupported && (
         <div className="space-y-2">
@@ -478,7 +480,7 @@ export function CredentialBlock({
         </div>
       )}
 
-      <AuthDivider />
+      {(googleSignInEnabled || (!isSignUp && passkeySupported)) && <AuthDivider />}
 
       <form
         onSubmit={isSignUp ? handleEmailSignUp : handleEmailLogin}

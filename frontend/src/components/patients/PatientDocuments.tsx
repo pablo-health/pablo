@@ -20,7 +20,9 @@ import { ApiError } from "@/lib/api/client"
 import { getPatientDocumentDownloadUrl } from "@/lib/api/patientDocuments"
 import { queryKeys } from "@/lib/api/queryKeys"
 import type { PeopleWords } from "@/lib/peopleTerm"
+import { formatCompactFileSize } from "@/lib/utils/fileValidation"
 import { DocumentViewerSheet } from "@/components/patients/DocumentViewerSheet"
+import { Button } from "@/components/ui/button"
 import {
   EXTRACTION_POLL_TIMEOUT_TICKS,
   useDeletePatientDocument,
@@ -97,12 +99,6 @@ interface PatientDocumentsProps {
 }
 
 const ACCEPT = ALLOWED_DOCUMENT_MIME_TYPES.join(",")
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
 
 function formatDate(iso: string): string {
   try {
@@ -279,9 +275,8 @@ export function PatientDocuments({ patientId }: PatientDocumentsProps) {
               className="hidden"
               data-testid="patient-document-file-input"
             />
-            <button
+            <Button
               type="button"
-              className="btn-primary inline-flex items-center gap-2"
               onClick={() => fileInputRef.current?.click()}
               disabled={upload.isPending}
             >
@@ -291,7 +286,7 @@ export function PatientDocuments({ patientId }: PatientDocumentsProps) {
                 <Upload className="w-4 h-4" />
               )}
               <span>Upload document</span>
-            </button>
+            </Button>
           </div>
         )}
       </div>
@@ -344,7 +339,7 @@ export function PatientDocuments({ patientId }: PatientDocumentsProps) {
                     )}
                   </p>
                   <p className="text-xs text-neutral-500">
-                    {formatBytes(doc.size_bytes)} · uploaded{" "}
+                    {formatCompactFileSize(doc.size_bytes)} · uploaded{" "}
                     {formatDate(doc.created_at)}
                     {categoryBadge(doc.category) && ` · ${categoryBadge(doc.category)}`}
                   </p>

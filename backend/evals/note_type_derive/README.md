@@ -82,6 +82,28 @@ meaning fits best". That rule is right for import (keep every word) and
 wrong here (it hides every gap); the first DAP run caught it, and the
 coverage extraction now leaves such text out.
 
+### 2026-10-06: what the first real-sample run changed
+
+The first run of the local runner on two real sample notes (kept outside
+the repository) found four problems; each one now has a test on a synthetic
+note of the same shape (`backend/tests/test_note_type_derive_shape.py`):
+
+- The guard flagged ordinary headings such as "Mental Status Exam" as
+  copied text and renamed those parts `field_1` or `section_6`. It now flags
+  only sample-specific text (names, quotations, and shared runs of words
+  that include words outside a clinical vocabulary list), and it never gives
+  a part a positional name.
+- A block explaining how the codes were chosen, which the sample itself
+  said was not part of the note, became a "Billing Justification" section.
+  Blocks marked that way are now set aside, and a section that justifies
+  codes is dropped.
+- Header facts (date, times, codes, place of service, locations, telehealth
+  consent) were left unplaced. They now get an Encounter section and, for
+  the facts known before a visit, inputs.
+- Coverage counted a line carrying several labelled facts as one passage.
+  Each labelled fact is now its own passage, and signature lines and
+  client-identity facts are set aside instead of counted as unplaced.
+
 ## Private samples: the local runner
 
 Notes that must not be committed (a clinician's own, or samples shared
@@ -95,8 +117,12 @@ scripts/run-derive-local.sh --samples ~/notes/a.pdf ~/notes/b.docx \
 
 It runs the same service the route does and writes to `--out` only (a new
 temporary directory by default): the proposal, a report scoring its
-structure against the reference spec (sections and fields matched by label,
-order agreement, missing and extra), the coverage report, the copied-text
+structure against the reference spec twice — by label (sections and fields
+matched by name, order agreement, missing and extra) and by meaning (a judge
+model maps each reference field to the proposed fields that would hold the
+same content, so content filed under a different heading still counts) —
+the coverage report (unplaced passages, and separately the lines set aside
+as not note content: code rationale, signatures, client identity), the copied-text
 check on the final proposal (expected empty), and, with `--transcript`, the
 transcript drafted with the proposal and with the reference side by side.
 The console shows scores and counts, never sample text. Nothing is copied

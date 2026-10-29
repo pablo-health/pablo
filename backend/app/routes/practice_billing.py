@@ -34,7 +34,7 @@ def get_billing_profile(
     A practice that has never saved one gets an all-``None`` response
     rather than a 404 — reading never creates a row.
     """
-    return BillingProfileResponse(**load_billing_profile(get_db_session()))  # type: ignore[arg-type]
+    return BillingProfileResponse(**load_billing_profile(get_db_session()))
 
 
 @router.patch("", response_model=BillingProfileResponse)
@@ -59,4 +59,4 @@ def update_billing_profile_route(
     if provider_id is not None:
         merged["clearinghouse_provider_id"] = provider_id
     session.commit()
-    return BillingProfileResponse(**merged)  # type: ignore[arg-type]
+    return BillingProfileResponse(**merged)

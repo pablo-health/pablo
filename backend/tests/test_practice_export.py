@@ -12,6 +12,7 @@ import csv
 import hashlib
 import io
 import json
+import time
 import zipfile
 from datetime import UTC, datetime
 from typing import Any
@@ -79,7 +80,11 @@ def _archive_for(patient: Patient) -> dict[str, Any]:
     """What the chart export returns for ``zip``: a small real ZIP and the document."""
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
-        archive.writestr("patient.json", json.dumps({"identifier": patient.id}))
+        # Stamped the way the chart export stamps its own, not with the wall clock.
+        archive.writestr(
+            zipfile.ZipInfo("patient.json", date_time=_T0.timetuple()[:6]),
+            json.dumps({"identifier": patient.id}),
+        )
     return {
         "content": buffer.getvalue(),
         "content_type": "application/zip",
@@ -166,7 +171,7 @@ class TestStream:
         assert state.summary.size_bytes == len(b"".join(chunks))
         assert [p.id for p, _ in state.exported] == ["p-1", "p-2"]
 
-    def test_the_same_inputs_give_the_same_bytes(self) -> None:
+    def test_the_same_inputs_give_the_same_bytes(self, monkeypatch: pytest.MonkeyPatch) -> None:
         def once() -> bytes:
             return b"".join(
                 stream_practice_archive(
@@ -178,7 +183,13 @@ class TestStream:
                 )
             )
 
-        assert once() == once()
+        first = once()
+        # A day later by the wall clock. ZIP times are only good to two seconds,
+        # so two builds a moment apart agree almost always even when something
+        # reads the clock; a day apart they never do.
+        a_day_later = time.time() + 86_400
+        monkeypatch.setattr(time, "time", lambda: a_day_later)
+        assert once() == first
 
     def test_a_practice_with_no_charts_still_has_its_files(self) -> None:
         state = PracticeExportState()
