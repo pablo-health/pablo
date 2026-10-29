@@ -67,6 +67,7 @@ from ..settings import Settings, get_settings
 
 if TYPE_CHECKING:
     from ..repositories.intake_blank_form import IntakeBlankFormRepository
+    from ..repositories.row import Row
 
 router = APIRouter(prefix="/api/intake/blank-forms", tags=["intake-blank-forms"])
 
@@ -164,10 +165,10 @@ class DeleteBlankFormResponse(BaseModel):
     message: str
 
 
-def _response(row: dict[str, object]) -> BlankFormResponse:
+def _response(row: Row) -> BlankFormResponse:
     """A stored row as both surfaces show it.
 
-    The repositories hand rows back as ``dict[str, object]``, so every
+    The repositories hand rows back as ``Row``, so every
     column arrives untyped and is narrowed here rather than trusted — the
     same shape the other route modules in this package use.
     """
@@ -177,7 +178,7 @@ def _response(row: dict[str, object]) -> BlankFormResponse:
         title=str(row["title"]),
         filename=str(row["filename"]),
         mime_type=str(row["mime_type"]),
-        size_bytes=int(row["size_bytes"]),  # type: ignore[call-overload]
+        size_bytes=int(row["size_bytes"]),
         created_at=created_at.isoformat() if isinstance(created_at, datetime) else str(created_at),
     )
 

@@ -1879,7 +1879,7 @@ def get_scheduling_policy(
     # context dependency above has already pointed the search path at this
     # practice, and every other read in this module resolves its session the
     # same way.
-    return SchedulingPolicyResponse(**load_policy(get_db_session()))  # type: ignore[arg-type]
+    return SchedulingPolicyResponse(**load_policy(get_db_session()))
 
 
 @router.patch("/api/scheduling/policy", response_model=SchedulingPolicyResponse)
@@ -1895,7 +1895,7 @@ def update_scheduling_policy(
     session = get_db_session()
     merged = update_policy(session, request.model_dump(exclude_unset=True))
     session.commit()
-    return SchedulingPolicyResponse(**merged)  # type: ignore[arg-type]
+    return SchedulingPolicyResponse(**merged)
 
 
 @router.get("/api/appointment-types", response_model=AppointmentTypeListResponse)

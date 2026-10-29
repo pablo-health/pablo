@@ -201,7 +201,7 @@ def get_patient_waitlist(
     return PatientWaitlistResponse(
         entry=None if entry is None else WaitlistEntryResponse.from_entry(entry),
         usual_session_type=service.usual_session_type(patient.id),
-        past_modalities=sorted(service.past_modalities(patient.id)),  # type: ignore[arg-type]
+        past_modalities=sorted(service.past_modalities(patient.id)),  # type: ignore[arg-type]  # the repository stores modalities as plain strings; the write path validates them against the Literal
     )
 
 

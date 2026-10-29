@@ -260,6 +260,7 @@ def get_user_status(
     # Include subscription/trial info when subscription enforcement is enabled.
     settings = get_settings()
     if settings.is_saas:
+        # The subscription routes exist only in the SaaS overlay.
         from .subscription import _get_subscription_info  # type: ignore[import-not-found]
 
         sub_info = _get_subscription_info(user.email, settings)

@@ -238,6 +238,7 @@ class GcsFileStorage(FileStorageProvider):
     def _client(self) -> Any:
         if self._client_factory is not None:
             return self._client_factory()
+        # google.cloud is a namespace package that mypy cannot resolve
         from google.cloud import storage  # type: ignore[attr-defined]
 
         if self._api_endpoint is None:

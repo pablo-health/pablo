@@ -317,7 +317,7 @@ class AssemblyAiTranscriptionService:
             timeout=300,
         )
         response.raise_for_status()
-        return response.json()["upload_url"]  # type: ignore[no-any-return]
+        return response.json()["upload_url"]  # type: ignore[no-any-return]  # response.json() returns Any
 
     async def _submit_transcription(
         self,
@@ -350,7 +350,7 @@ class AssemblyAiTranscriptionService:
         response.raise_for_status()
         data = response.json()
         logger.info("Submitted AssemblyAI job: id=%s", data["id"])
-        return data["id"]  # type: ignore[no-any-return]
+        return data["id"]  # type: ignore[no-any-return]  # response.json() returns Any
 
     async def submit_dual_channel(
         self,

@@ -28,6 +28,7 @@ from ..models.availability import EnforcementLevel
 from .recurrence import RecurrenceGenerator
 
 if TYPE_CHECKING:
+    from ...repositories.row import Row
     from ..models.conflict import Conflict
     from ..repositories.appointment import AppointmentRepository
     from .availability import AvailabilityEngine
@@ -218,7 +219,7 @@ class SchedulingService:
         self,
         user_id: str,
         *,
-        data: dict[str, str | int | datetime | None],
+        data: Row,
         tz: tzinfo = UTC,
         rule_override: bool = False,
     ) -> Appointment:
@@ -271,12 +272,12 @@ class SchedulingService:
             duration_minutes=duration_minutes,
             status=status,
             pending_expires_at=pending_expires_at,
-            confirmation_token_hash=data.get("confirmation_token_hash"),  # type: ignore[arg-type]
+            confirmation_token_hash=data.get("confirmation_token_hash"),
             session_type=str(data.get("session_type", "individual")),
-            appointment_type_id=data.get("appointment_type_id"),  # type: ignore[arg-type]
-            video_link=data.get("video_link"),  # type: ignore[arg-type]
-            video_platform=data.get("video_platform"),  # type: ignore[arg-type]
-            notes=data.get("notes"),  # type: ignore[arg-type]
+            appointment_type_id=data.get("appointment_type_id"),
+            video_link=data.get("video_link"),
+            video_platform=data.get("video_platform"),
+            notes=data.get("notes"),
             note_type=str(data.get("note_type") or "soap"),
             note_inputs=_note_inputs(data.get("note_inputs")),
             created_at=now,
@@ -715,7 +716,7 @@ class SchedulingService:
         self,
         user_id: str,
         *,
-        data: dict[str, str | int | datetime | None],
+        data: Row,
         recurrence: dict[str, str | int | None],
         tz: tzinfo = UTC,
         rule_override: bool = False,
@@ -812,9 +813,9 @@ class SchedulingService:
                 duration_minutes=duration_minutes,
                 status=AppointmentStatus.CONFIRMED,
                 session_type=str(data.get("session_type", "individual")),
-                video_link=data.get("video_link"),  # type: ignore[arg-type]
-                video_platform=data.get("video_platform"),  # type: ignore[arg-type]
-                notes=data.get("notes"),  # type: ignore[arg-type]
+                video_link=data.get("video_link"),
+                video_platform=data.get("video_platform"),
+                notes=data.get("notes"),
                 note_type=str(data.get("note_type") or "soap"),
                 recurrence_rule=rrule_str,
                 recurring_appointment_id=master_id,

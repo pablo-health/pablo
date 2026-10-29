@@ -23,18 +23,22 @@ Submissions are immutable once recorded, so there is no update and no delete.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .row import Row
 
 
 class PatientIntakeSubmissionRepository(ABC):
     """Abstract base class for patient intake submission data access.
 
-    Rows are plain ``dict[str, object]`` matching the
+    Rows are plain ``Row`` matching the
     ``PatientIntakeSubmissionRow`` column layout (uuid columns as ``str``,
     JSONB as ``dict``).
     """
 
     @abstractmethod
-    def add_for_patient_principal(self, row: dict[str, object]) -> dict[str, object]:
+    def add_for_patient_principal(self, row: Row) -> Row:
         """Insert a submission written by the patient it belongs to.
 
         The caller passes a ``patient_id`` that came from the authenticated
@@ -42,9 +46,7 @@ class PatientIntakeSubmissionRepository(ABC):
         """
 
     @abstractmethod
-    def get_for_patient_principal(
-        self, submission_id: str, patient_id: str
-    ) -> dict[str, object] | None:
+    def get_for_patient_principal(self, submission_id: str, patient_id: str) -> Row | None:
         """One of the calling patient's own submissions, or ``None``.
 
         The ``patient_id`` predicate is the primary isolation. Naming another
@@ -52,7 +54,7 @@ class PatientIntakeSubmissionRepository(ABC):
         """
 
     @abstractmethod
-    def list_for_clinician(self, patient_id: str, user_id: str) -> list[dict[str, object]]:
+    def list_for_clinician(self, patient_id: str, user_id: str) -> list[Row]:
         """A patient's submissions, newest first, read by a clinician.
 
         Returns an empty list when ``user_id`` holds no grant on the
@@ -71,7 +73,7 @@ class InMemoryPatientIntakeSubmissionRepository(PatientIntakeSubmissionRepositor
     """
 
     def __init__(self) -> None:
-        self.rows: dict[str, dict[str, object]] = {}
+        self.rows: dict[str, Row] = {}
         self._access: set[tuple[str, str]] = set()
         self._allow_all = False
 
@@ -86,21 +88,19 @@ class InMemoryPatientIntakeSubmissionRepository(PatientIntakeSubmissionRepositor
     def _can_access(self, patient_id: str, user_id: str) -> bool:
         return self._allow_all or (patient_id, user_id) in self._access
 
-    def add_for_patient_principal(self, row: dict[str, object]) -> dict[str, object]:
+    def add_for_patient_principal(self, row: Row) -> Row:
         self.rows[str(row["id"])] = dict(row)
         return dict(row)
 
-    def get_for_patient_principal(
-        self, submission_id: str, patient_id: str
-    ) -> dict[str, object] | None:
+    def get_for_patient_principal(self, submission_id: str, patient_id: str) -> Row | None:
         row = self.rows.get(submission_id)
         if row is None or str(row["patient_id"]) != patient_id:
             return None
         return dict(row)
 
-    def list_for_clinician(self, patient_id: str, user_id: str) -> list[dict[str, object]]:
+    def list_for_clinician(self, patient_id: str, user_id: str) -> list[Row]:
         if not self._can_access(patient_id, user_id):
             return []
         rows = [dict(r) for r in self.rows.values() if str(r["patient_id"]) == patient_id]
-        rows.sort(key=lambda r: r["submitted_at"], reverse=True)  # type: ignore[arg-type,return-value]
+        rows.sort(key=lambda r: r["submitted_at"], reverse=True)
         return rows

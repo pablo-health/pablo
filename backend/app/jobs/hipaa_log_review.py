@@ -251,6 +251,7 @@ def _write_run_record(record: dict[str, Any], *, gcs_bucket: str | None) -> str 
         logger.info("COMPLIANCE_REPORT_BUCKET unset — run record not written")
         return None
 
+    # google.cloud is a namespace package that mypy cannot resolve
     from google.cloud import storage  # type: ignore[attr-defined]  # noqa: PLC0415
 
     client = storage.Client()
@@ -690,6 +691,7 @@ def _write_report(
         return f"stdout://{filename}"
 
     try:
+        # google.cloud is a namespace package that mypy cannot resolve
         from google.cloud import storage  # type: ignore[attr-defined]  # noqa: PLC0415
     except ImportError:
         logger.exception("google-cloud-storage not installed; add to pyproject main deps.")

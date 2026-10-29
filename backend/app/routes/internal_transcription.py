@@ -50,11 +50,11 @@ from ..db.platform_models import PlatformUserRow, PracticeRow
 # ``app.routes.subscription``; otherwise the import fails and metering
 # becomes a no-op, so OSS runs with no billing behaviour at all.
 try:
-    from ..routes.subscription import (  # type: ignore[import-not-found]
+    from ..routes.subscription import (  # type: ignore[import-not-found]  # subscription routes exist only in the SaaS overlay
         record_recorded_session,
     )
 except ImportError:  # pragma: no cover -- no subscription overlay installed
-    record_recorded_session = None  # type: ignore[assignment]
+    record_recorded_session = None  # type: ignore[assignment]  # subscription routes exist only in the SaaS overlay
 from ..models import SessionStatus, UploadTranscriptToSessionRequest
 from ..models.audit import AuditAction
 from ..notes.client_present import client_present_end, is_call, segments_from_utterances

@@ -72,6 +72,7 @@ from ..services.intake_document_service import (
 
 if TYPE_CHECKING:
     from ..repositories.intake_document import IntakeDocumentRepository
+    from ..repositories.row import Row
 
 router = APIRouter(prefix="/api/intake/documents", tags=["intake-documents"])
 
@@ -162,7 +163,7 @@ PatientDocumentValues = Annotated[dict[str, str], Depends(get_patient_document_v
 def _signer_roles(value: object) -> list[str]:
     """A stored ``signer_roles`` column read back as a list of names.
 
-    The repositories hand rows back as ``dict[str, object]``, so the JSONB
+    The repositories hand rows back as ``Row``, so the JSONB
     column arrives as ``object``. Anything that is not a list reads as the
     patient alone rather than raising: the column is a record of what an
     editor sent, and the service is where a role has to be one the engine
@@ -171,7 +172,7 @@ def _signer_roles(value: object) -> list[str]:
     return [str(role) for role in value] if isinstance(value, list) else ["patient"]
 
 
-def _response(row: dict[str, object], values: dict[str, str]) -> IntakeDocumentResponse:
+def _response(row: Row, values: dict[str, str]) -> IntakeDocumentResponse:
     """The practice's view: its markdown as typed, rendered with its settings."""
     body = str(row["body_markdown"])
     return IntakeDocumentResponse(
@@ -180,16 +181,16 @@ def _response(row: dict[str, object], values: dict[str, str]) -> IntakeDocumentR
         title=str(row["title"]),
         body_markdown=body,
         rendered_html=render_html(fill_practice_values(body, values)),
-        version=int(row["version"]),  # type: ignore[call-overload]
+        version=int(row["version"]),
         digest=str(row["digest"]),
-        published_at=row["published_at"],  # type: ignore[arg-type]
+        published_at=row["published_at"],
         requires_signature=bool(row["requires_signature"]),
         signer_roles=_signer_roles(row["signer_roles"]),
-        created_at=row["created_at"],  # type: ignore[arg-type]
+        created_at=row["created_at"],
     )
 
 
-def _require(service: IntakeDocumentService, document_id: str) -> dict[str, object]:
+def _require(service: IntakeDocumentService, document_id: str) -> Row:
     row = service.get(document_id)
     if row is None:
         raise NotFoundError("Document not found", {"document_id": document_id})
@@ -321,7 +322,7 @@ def publish_document(
         resource_id=document_id,
         changes={
             "document_key": str(published["document_key"]),
-            "version": int(published["version"]),  # type: ignore[call-overload]
+            "version": int(published["version"]),
             "digest": str(published["digest"]),
         },
     )
@@ -384,7 +385,7 @@ def read_document(
         # The practice's settings as they are now, so a changed setting
         # reads correctly in the next document anybody opens.
         rendered_html=render_html(fill_practice_values(str(row["body_markdown"]), values)),
-        version=int(row["version"]),  # type: ignore[call-overload]
+        version=int(row["version"]),
         digest=str(row["digest"]),
         requires_signature=bool(row["requires_signature"]),
         signer_roles=_signer_roles(row["signer_roles"]),
@@ -439,7 +440,7 @@ def adopt_starter(
             resource_id=str(document["id"]),
             changes={
                 "document_key": str(document["document_key"]),
-                "version": int(document["version"]),  # type: ignore[call-overload]
+                "version": int(document["version"]),
                 "digest": str(document["digest"]),
             },
         )

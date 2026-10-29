@@ -320,7 +320,7 @@ export function structuredSoapFromNote(
     c.subjective !== null &&
     "chief_complaint" in (c.subjective as Record<string, unknown>)
   ) {
-    return note.content as unknown as StructuredSOAPNoteModel
+    return note.content as unknown as StructuredSOAPNoteModel  // the chief_complaint probe above identifies the structured shape
   }
   return null
 }

@@ -57,6 +57,13 @@ repos:
         files: ^backend/app/routes/.*\.py$
         pass_filenames: false
 
+      - id: suppression-reasons
+        name: "Type suppressions need a reason (guardrail #7)"
+        entry: python scripts/check_suppression_reasons.py
+        language: system
+        files: ^(backend/(app|bin|scripts)/.*\.py|backend/entrypoint\.py|frontend/(src|app)/.*\.tsx?)$
+        pass_filenames: false
+
       - id: migration-lint
         name: "Models ship with migrations (guardrail #4)"
         entry: python .claude/skills/migration-lint/check.py --staged

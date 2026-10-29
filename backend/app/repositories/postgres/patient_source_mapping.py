@@ -24,6 +24,8 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import CursorResult
     from sqlalchemy.orm import Session
 
+    from ..row import Row
+
 logger = logging.getLogger(__name__)
 
 _KEY = ("scope", "source", "source_identifier")
@@ -149,7 +151,7 @@ class PostgresPatientSourceMappingRepository(PatientSourceMappingRepository):
         return len(legacy)
 
 
-def _values(mapping: PatientSourceMapping) -> dict[str, object]:
+def _values(mapping: PatientSourceMapping) -> Row:
     return {
         "doc_id": mapping.doc_id,
         "scope": mapping.scope,

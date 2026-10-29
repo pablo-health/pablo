@@ -13,7 +13,7 @@ None of these rows belongs to a patient or to a clinician, so there is no
 tenant schema is the boundary — the session is already pointed at one
 practice, and every query below is scoped by being on that session.
 
-Rows are plain ``dict[str, object]`` matching the column layout, the same
+Rows are plain ``Row`` matching the column layout, the same
 shape the other repositories in this package hand back.
 """
 
@@ -25,6 +25,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from .row import Row
+
 
 class IntakePacketRepository(ABC):
     """Abstract base class for intake packet data access."""
@@ -32,15 +34,15 @@ class IntakePacketRepository(ABC):
     # --- templates ---
 
     @abstractmethod
-    def add_template(self, row: dict[str, object]) -> dict[str, object]:
+    def add_template(self, row: Row) -> Row:
         """Insert a template."""
 
     @abstractmethod
-    def list_templates(self, *, include_archived: bool = False) -> list[dict[str, object]]:
+    def list_templates(self, *, include_archived: bool = False) -> list[Row]:
         """Every template the practice has, oldest first."""
 
     @abstractmethod
-    def get_template(self, template_id: str) -> dict[str, object] | None:
+    def get_template(self, template_id: str) -> Row | None:
         """One template, or ``None`` if there is no such id."""
 
     @abstractmethod
@@ -51,7 +53,7 @@ class IntakePacketRepository(ABC):
         name: str | None = None,
         archived_at: datetime | None = None,
         unarchive: bool = False,
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         """Rename, archive or restore a template.
 
         ``archived_at`` archives; ``unarchive`` clears it. They are separate
@@ -60,9 +62,7 @@ class IntakePacketRepository(ABC):
         """
 
     @abstractmethod
-    def set_client_title(
-        self, template_id: str, client_title: str | None
-    ) -> dict[str, object] | None:
+    def set_client_title(self, template_id: str, client_title: str | None) -> Row | None:
         """Set the title a patient sees, or clear it with ``None``.
 
         Its own method rather than another ``update_template`` argument:
@@ -73,37 +73,35 @@ class IntakePacketRepository(ABC):
     # --- versions ---
 
     @abstractmethod
-    def add_version(self, row: dict[str, object]) -> dict[str, object]:
+    def add_version(self, row: Row) -> Row:
         """Insert a version."""
 
     @abstractmethod
-    def list_versions(self, template_id: str) -> list[dict[str, object]]:
+    def list_versions(self, template_id: str) -> list[Row]:
         """A template's versions, newest number first."""
 
     @abstractmethod
-    def get_version(self, version_id: str) -> dict[str, object] | None:
+    def get_version(self, version_id: str) -> Row | None:
         """One version, or ``None``."""
 
     @abstractmethod
-    def latest_version(self, template_id: str) -> dict[str, object] | None:
+    def latest_version(self, template_id: str) -> Row | None:
         """The highest-numbered version of a template, or ``None``."""
 
     @abstractmethod
     def mark_published(
         self, version_id: str, published_at: datetime, published_by: str
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         """Freeze a version. Returns ``None`` if there is no such version."""
 
     # --- items ---
 
     @abstractmethod
-    def list_items(self, version_id: str) -> list[dict[str, object]]:
+    def list_items(self, version_id: str) -> list[Row]:
         """A version's items, in the order the patient sees them."""
 
     @abstractmethod
-    def replace_items(
-        self, version_id: str, rows: list[dict[str, object]]
-    ) -> list[dict[str, object]]:
+    def replace_items(self, version_id: str, rows: list[Row]) -> list[Row]:
         """Swap a version's whole item list for a new one.
 
         Wholesale rather than per-item because the editor sends an ordered
@@ -117,7 +115,7 @@ class IntakePacketRepository(ABC):
         """
 
     @abstractmethod
-    def set_item_config(self, item_id: str, config: dict[str, object]) -> dict[str, object] | None:
+    def set_item_config(self, item_id: str, config: Row) -> Row | None:
         """Rewrite one item's configuration in place. ``None`` if no such id.
 
         Narrower than :meth:`replace_items` on purpose. The one caller is
@@ -131,26 +129,26 @@ class InMemoryIntakePacketRepository(IntakePacketRepository):
     """In-memory repository for unit tests."""
 
     def __init__(self) -> None:
-        self.templates: dict[str, dict[str, object]] = {}
-        self.versions: dict[str, dict[str, object]] = {}
-        self.items: dict[str, list[dict[str, object]]] = {}
+        self.templates: dict[str, Row] = {}
+        self.versions: dict[str, Row] = {}
+        self.items: dict[str, list[Row]] = {}
 
     # --- templates ---
 
-    def add_template(self, row: dict[str, object]) -> dict[str, object]:
+    def add_template(self, row: Row) -> Row:
         self.templates[str(row["id"])] = dict(row)
         return dict(row)
 
-    def list_templates(self, *, include_archived: bool = False) -> list[dict[str, object]]:
+    def list_templates(self, *, include_archived: bool = False) -> list[Row]:
         rows = [
             dict(r)
             for r in self.templates.values()
             if include_archived or r.get("archived_at") is None
         ]
-        rows.sort(key=lambda r: (r["created_at"], str(r["id"])))  # type: ignore[index]
+        rows.sort(key=lambda r: (r["created_at"], str(r["id"])))
         return rows
 
-    def get_template(self, template_id: str) -> dict[str, object] | None:
+    def get_template(self, template_id: str) -> Row | None:
         row = self.templates.get(template_id)
         return dict(row) if row else None
 
@@ -161,7 +159,7 @@ class InMemoryIntakePacketRepository(IntakePacketRepository):
         name: str | None = None,
         archived_at: datetime | None = None,
         unarchive: bool = False,
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         row = self.templates.get(template_id)
         if row is None:
             return None
@@ -173,9 +171,7 @@ class InMemoryIntakePacketRepository(IntakePacketRepository):
             row["archived_at"] = None
         return dict(row)
 
-    def set_client_title(
-        self, template_id: str, client_title: str | None
-    ) -> dict[str, object] | None:
+    def set_client_title(self, template_id: str, client_title: str | None) -> Row | None:
         row = self.templates.get(template_id)
         if row is None:
             return None
@@ -184,27 +180,27 @@ class InMemoryIntakePacketRepository(IntakePacketRepository):
 
     # --- versions ---
 
-    def add_version(self, row: dict[str, object]) -> dict[str, object]:
+    def add_version(self, row: Row) -> Row:
         self.versions[str(row["id"])] = dict(row)
         self.items.setdefault(str(row["id"]), [])
         return dict(row)
 
-    def list_versions(self, template_id: str) -> list[dict[str, object]]:
+    def list_versions(self, template_id: str) -> list[Row]:
         rows = [dict(r) for r in self.versions.values() if r["template_id"] == template_id]
-        rows.sort(key=lambda r: int(r["version"]), reverse=True)  # type: ignore[call-overload]
+        rows.sort(key=lambda r: int(r["version"]), reverse=True)
         return rows
 
-    def get_version(self, version_id: str) -> dict[str, object] | None:
+    def get_version(self, version_id: str) -> Row | None:
         row = self.versions.get(version_id)
         return dict(row) if row else None
 
-    def latest_version(self, template_id: str) -> dict[str, object] | None:
+    def latest_version(self, template_id: str) -> Row | None:
         rows = self.list_versions(template_id)
         return rows[0] if rows else None
 
     def mark_published(
         self, version_id: str, published_at: datetime, published_by: str
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         row = self.versions.get(version_id)
         if row is None:
             return None
@@ -214,18 +210,16 @@ class InMemoryIntakePacketRepository(IntakePacketRepository):
 
     # --- items ---
 
-    def list_items(self, version_id: str) -> list[dict[str, object]]:
+    def list_items(self, version_id: str) -> list[Row]:
         rows = [dict(r) for r in self.items.get(version_id, [])]
-        rows.sort(key=lambda r: int(r["position"]))  # type: ignore[call-overload]
+        rows.sort(key=lambda r: int(r["position"]))
         return rows
 
-    def replace_items(
-        self, version_id: str, rows: list[dict[str, object]]
-    ) -> list[dict[str, object]]:
+    def replace_items(self, version_id: str, rows: list[Row]) -> list[Row]:
         self.items[version_id] = [dict(r) for r in rows]
         return self.list_items(version_id)
 
-    def set_item_config(self, item_id: str, config: dict[str, object]) -> dict[str, object] | None:
+    def set_item_config(self, item_id: str, config: Row) -> Row | None:
         for rows in self.items.values():
             for row in rows:
                 if str(row["id"]) == item_id:

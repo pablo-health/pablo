@@ -143,7 +143,7 @@ class PracticeRow(PlatformBase):
     # DDL — the platform chain's baseline already carries them, captured — it
     # makes ``alembic -n platform check`` able to pass, which is what turns
     # "models and schema agree" into something CI can assert. See PABLO-k7it.
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         CheckConstraint(
             "edition IN ('therapist', 'personal')",
             name="ck_practices_edition",
@@ -496,7 +496,7 @@ class PracticeDomainRow(PlatformBase):
     __tablename__ = "practice_domains"
     # PlatformBase annotates __table_args__ as the dict-only shape; see
     # PracticeRow for why the tuple form needs the ignore.
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         CheckConstraint(
             "kind IN ('subdomain', 'vanity')",
             name="practice_domains_kind_check",
@@ -577,7 +577,7 @@ class PracticeDomainApexRow(PlatformBase):
 
     __tablename__ = "practice_domain_apexes"
     # See PracticeDomainRow for why the tuple form needs the ignore.
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         CheckConstraint(
             "email_identity_status IN ('pending', 'verified', 'failed')",
             name="practice_domain_apexes_email_identity_status_check",
@@ -620,7 +620,7 @@ class PracticeSiteRow(PlatformBase):
 
     __tablename__ = "practice_sites"
     # See PracticeDomainRow for why the tuple form needs the ignore.
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         Index(
             "uq_practice_sites_preview_token_hash",
             "preview_token_hash",
@@ -952,7 +952,7 @@ class PlatformPanelApplicationRow(PlatformBase):
     # PlatformBase annotates __table_args__ as the dict-only shape; the tuple
     # form (needed for the constraints and indexes) trips mypy here, same as
     # PracticeRow above.
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         CheckConstraint(
             f"status IN ({_sql_in_list(PANEL_APPLICATION_STATUSES)})",
             name="ck_panel_applications_status",
@@ -1163,7 +1163,7 @@ class DiagnosticDefinitionRow(PlatformBase):
     # SQLAlchemy allows __table_args__ to be either a dict or a tuple-of-
     # constraints-plus-dict; PlatformBase annotates the dict-only shape, so the
     # tuple form (needed for the UniqueConstraint + Index) trips mypy here.
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         UniqueConstraint("code", "version", name="uq_diagnostic_definitions_code_version"),
         Index("ix_diagnostic_definitions_code_active", "code", "active"),
         {"schema": PLATFORM_SCHEMA},
@@ -1458,7 +1458,7 @@ class CredentialEducationRow(PlatformBase):
     """
 
     __tablename__ = "credential_education"
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         Index("ix_credential_education_user_id", "user_id"),
         {"schema": PLATFORM_SCHEMA},
     )
@@ -1486,7 +1486,7 @@ class CredentialTrainingRow(PlatformBase):
     """
 
     __tablename__ = "credential_training"
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         Index("ix_credential_training_user_id", "user_id"),
         {"schema": PLATFORM_SCHEMA},
     )
@@ -1518,7 +1518,7 @@ class CredentialEmploymentRow(PlatformBase):
     """
 
     __tablename__ = "credential_employment"
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         Index("ix_credential_employment_user_id", "user_id"),
         {"schema": PLATFORM_SCHEMA},
     )
@@ -1548,7 +1548,7 @@ class CredentialReferenceRow(PlatformBase):
     """
 
     __tablename__ = "credential_references"
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         Index("ix_credential_references_user_id", "user_id"),
         {"schema": PLATFORM_SCHEMA},
     )
@@ -1583,7 +1583,7 @@ class CredentialDisclosureRow(PlatformBase):
     """
 
     __tablename__ = "credential_disclosures"
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         CheckConstraint(
             "answer IS NOT TRUE OR explanation IS NOT NULL",
             name="ck_credential_disclosures_explained",
@@ -1631,7 +1631,7 @@ class CredentialGovernmentIdRow(PlatformBase):
     """
 
     __tablename__ = "credential_government_ids"
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         CheckConstraint(
             f"tax_id_type IS NULL OR tax_id_type IN ({_sql_in_list(CREDENTIAL_TAX_ID_TYPES)})",
             name="ck_credential_government_ids_tax_id_type",
@@ -1686,7 +1686,7 @@ class CredentialLicenseRow(PlatformBase):
     """
 
     __tablename__ = "credential_licenses"
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         CheckConstraint(
             f"status IN ({_sql_in_list(CREDENTIAL_LICENSE_STATUSES)})",
             name="ck_credential_licenses_status",
@@ -1752,7 +1752,7 @@ class CredentialLiabilityPolicyRow(PlatformBase):
     """
 
     __tablename__ = "credential_liability_policies"
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         Index("ix_credential_liability_policies_user_id", "user_id"),
         Index(
             "ux_credential_liability_policies_one_current",
@@ -1818,7 +1818,7 @@ class CredentialConfirmationRow(PlatformBase):
     """
 
     __tablename__ = "credential_confirmations"
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         CheckConstraint(
             f"source IN ({_sql_in_list(CREDENTIAL_CONFIRMATION_SOURCES)})",
             name="ck_credential_confirmations_source",
@@ -1863,7 +1863,7 @@ class CredentialServiceLocationRow(PlatformBase):
     """
 
     __tablename__ = "credential_service_locations"
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         Index("ix_credential_service_locations_user_id", "user_id"),
         Index(
             "ux_credential_service_locations_one_primary",
@@ -1904,7 +1904,7 @@ class CredentialBankAccountRow(PlatformBase):
     """
 
     __tablename__ = "credential_bank_accounts"
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         CheckConstraint(
             f"account_type IN ({_sql_in_list(CREDENTIAL_BANK_ACCOUNT_TYPES)})",
             name="ck_credential_bank_accounts_account_type",
@@ -2004,7 +2004,7 @@ class PayerAuthorizationRow(PlatformBase):
     __tablename__ = "payer_authorizations"
     # PlatformBase annotates __table_args__ as the dict-only shape; the
     # tuple form trips mypy here, same as PracticeRow above.
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         # No unique constraint on (user_id, kind, version). Re-signing the same
         # version after a revocation is a real sequence, and the second
         # signature is a different event from the first.
@@ -2083,7 +2083,7 @@ class PayerParticipationRow(PlatformBase):
     __tablename__ = "payer_participations"
     # PlatformBase annotates __table_args__ as the dict-only shape; the
     # tuple form trips mypy here, same as PracticeRow above.
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         CheckConstraint(
             f"status IN ({_sql_in_list(PARTICIPATION_STATUSES)})",
             name="ck_payer_participations_status",
@@ -2148,7 +2148,7 @@ class PayerParticipationEventRow(PlatformBase):
     __tablename__ = "payer_participation_events"
     # PlatformBase annotates __table_args__ as the dict-only shape; the
     # tuple form trips mypy here, same as PracticeRow above.
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         CheckConstraint(
             f"to_status IN ({_sql_in_list(PARTICIPATION_STATUSES)})",
             name="ck_payer_participation_events_to_status",
@@ -2220,7 +2220,7 @@ class ContractedRateRow(PlatformBase):
     __tablename__ = "contracted_rates"
     # PlatformBase annotates __table_args__ as the dict-only shape; the
     # tuple form trips mypy here, same as PracticeRow above.
-    __table_args__ = (  # type: ignore[assignment]
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
         CheckConstraint(
             f"basis IN ({_sql_in_list(CONTRACTED_RATE_BASES)})",
             name="ck_contracted_rates_basis",

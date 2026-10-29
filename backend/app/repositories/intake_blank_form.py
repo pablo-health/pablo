@@ -14,20 +14,25 @@ reads: a document id that names a patient's chart is not in here, so it
 comes back ``None`` — the patient blank-form route cannot be pointed at a
 chart even in principle.
 
-Rows are plain ``dict[str, object]`` matching the column layout, the same
+Rows are plain ``Row`` matching the column layout, the same
 shape the other repositories in this package hand back.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from datetime import datetime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .row import Row
 
 
 class IntakeBlankFormRepository(ABC):
     """Abstract base class for blank-form data access."""
 
     @abstractmethod
-    def add(self, row: dict[str, object]) -> dict[str, object]:
+    def add(self, row: Row) -> Row:
         """Insert the placeholder row an upload starts with.
 
         ``finalized_at`` is NULL until the object is there, so an upload
@@ -36,16 +41,16 @@ class IntakeBlankFormRepository(ABC):
 
     @abstractmethod
     def mark_finalized(
-        self, form_id: str, *, size_bytes: int, finalized_at: object
-    ) -> dict[str, object] | None:
+        self, form_id: str, *, size_bytes: int, finalized_at: datetime
+    ) -> Row | None:
         """Stamp the real size and the finalize time. ``None`` if it is gone."""
 
     @abstractmethod
-    def get(self, form_id: str) -> dict[str, object] | None:
+    def get(self, form_id: str) -> Row | None:
         """One form whether or not its upload finished. ``None`` once deleted."""
 
     @abstractmethod
-    def get_finalized(self, form_id: str) -> dict[str, object] | None:
+    def get_finalized(self, form_id: str) -> Row | None:
         """One form whose upload finished, for anybody in the practice.
 
         What the portal's download route reads. ``None`` for a deleted row,
@@ -54,11 +59,11 @@ class IntakeBlankFormRepository(ABC):
         """
 
     @abstractmethod
-    def list_all(self) -> list[dict[str, object]]:
+    def list_all(self) -> list[Row]:
         """Every form still in use, newest first."""
 
     @abstractmethod
-    def soft_delete(self, form_id: str, deleted_at: object) -> bool:
+    def soft_delete(self, form_id: str, deleted_at: datetime) -> bool:
         """Tombstone a form the practice has stopped using.
 
         Never a hard delete: a published question may still name it, and an
@@ -71,15 +76,15 @@ class InMemoryIntakeBlankFormRepository(IntakeBlankFormRepository):
     """In-memory repository for unit tests."""
 
     def __init__(self) -> None:
-        self.rows: dict[str, dict[str, object]] = {}
+        self.rows: dict[str, Row] = {}
 
-    def add(self, row: dict[str, object]) -> dict[str, object]:
+    def add(self, row: Row) -> Row:
         self.rows[str(row["id"])] = dict(row)
         return dict(row)
 
     def mark_finalized(
-        self, form_id: str, *, size_bytes: int, finalized_at: object
-    ) -> dict[str, object] | None:
+        self, form_id: str, *, size_bytes: int, finalized_at: datetime
+    ) -> Row | None:
         row = self.rows.get(form_id)
         if row is None or row.get("deleted_at") is not None:
             return None
@@ -87,28 +92,28 @@ class InMemoryIntakeBlankFormRepository(IntakeBlankFormRepository):
         row["finalized_at"] = finalized_at
         return dict(row)
 
-    def get(self, form_id: str) -> dict[str, object] | None:
+    def get(self, form_id: str) -> Row | None:
         row = self.rows.get(form_id)
         if row is None or row.get("deleted_at") is not None:
             return None
         return dict(row)
 
-    def get_finalized(self, form_id: str) -> dict[str, object] | None:
+    def get_finalized(self, form_id: str) -> Row | None:
         row = self.get(form_id)
         if row is None or row.get("finalized_at") is None:
             return None
         return row
 
-    def list_all(self) -> list[dict[str, object]]:
+    def list_all(self) -> list[Row]:
         rows = [
             dict(row)
             for row in self.rows.values()
             if row.get("deleted_at") is None and row.get("finalized_at") is not None
         ]
-        rows.sort(key=lambda row: (row["created_at"], str(row["id"])), reverse=True)  # type: ignore[index]
+        rows.sort(key=lambda row: (row["created_at"], str(row["id"])), reverse=True)
         return rows
 
-    def soft_delete(self, form_id: str, deleted_at: object) -> bool:
+    def soft_delete(self, form_id: str, deleted_at: datetime) -> bool:
         row = self.rows.get(form_id)
         if row is None or row.get("deleted_at") is not None:
             return False

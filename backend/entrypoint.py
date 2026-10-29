@@ -40,7 +40,7 @@ def _init_new_relic() -> None:
     if not os.environ.get("NEW_RELIC_LICENSE_KEY"):
         return
     try:
-        import newrelic.agent  # type: ignore[import-not-found]  # noqa: PLC0415
+        import newrelic.agent  # type: ignore[import-not-found]  # optional monitoring dependency, not installed in every image  # noqa: PLC0415
     except ImportError:
         logger.warning(
             "NEW_RELIC_LICENSE_KEY is set but `newrelic` is not installed; "
@@ -58,11 +58,11 @@ def _init_sentry() -> None:
     if not os.environ.get("SENTRY_DSN"):
         return
     try:
-        import sentry_sdk  # type: ignore[import-not-found]  # noqa: PLC0415
-        from sentry_sdk.integrations.fastapi import (  # type: ignore[import-not-found]  # noqa: PLC0415
+        import sentry_sdk  # type: ignore[import-not-found]  # optional monitoring dependency, not installed in every image  # noqa: PLC0415
+        from sentry_sdk.integrations.fastapi import (  # type: ignore[import-not-found]  # optional monitoring dependency, not installed in every image  # noqa: PLC0415
             FastApiIntegration,
         )
-        from sentry_sdk.integrations.starlette import (  # type: ignore[import-not-found]  # noqa: PLC0415
+        from sentry_sdk.integrations.starlette import (  # type: ignore[import-not-found]  # optional monitoring dependency, not installed in every image  # noqa: PLC0415
             StarletteIntegration,
         )
     except ImportError:

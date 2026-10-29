@@ -208,9 +208,9 @@ function findErrorEnvelope(data: unknown): ApiErrorResponse | null {
   const top = data as Record<string, unknown>
   const detail = top.detail
   if (typeof detail === "object" && detail !== null && "error" in detail) {
-    return detail as unknown as ApiErrorResponse
+    return detail as unknown as ApiErrorResponse  // parsed JSON narrowed structurally; no runtime schema validates it
   }
-  return top as unknown as ApiErrorResponse
+  return top as unknown as ApiErrorResponse  // parsed JSON narrowed structurally; no runtime schema validates it
 }
 
 /**
@@ -447,7 +447,7 @@ export async function apiClient<T>(
         const text = await response.text()
         return (text ? JSON.parse(text) : undefined) as T
       }
-      return (await response.text()) as unknown as T
+      return (await response.text()) as unknown as T  // a non-JSON body is handed back as text for callers that ask for it
     }
 
     let errorData: ApiErrorResponse | null = null

@@ -53,6 +53,7 @@ from ..services.instrument_license_service import (
 
 if TYPE_CHECKING:
     from ..repositories.instrument_license import InstrumentLicenseRepository
+    from ..repositories.row import Row
 
 logger = logging.getLogger(__name__)
 
@@ -75,14 +76,14 @@ def get_instrument_license_service(
 LicenseService = Annotated[InstrumentLicenseService, Depends(get_instrument_license_service)]
 
 
-def _attestation_response(row: dict[str, object]) -> InstrumentAttestationResponse:
+def _attestation_response(row: Row) -> InstrumentAttestationResponse:
     return InstrumentAttestationResponse(
         id=str(row["id"]),
         instrument_code=str(row["instrument_code"]),
-        attested_at=row["attested_at"],  # type: ignore[arg-type]
+        attested_at=row["attested_at"],
         license_reference=_optional_str(row.get("license_reference")),
         notes=_optional_str(row.get("notes")),
-        revoked_at=row.get("revoked_at"),  # type: ignore[arg-type]
+        revoked_at=row.get("revoked_at"),
     )
 
 
@@ -113,7 +114,7 @@ def list_instruments(
             item_count=defn.item_count,
             can_ask_on_a_form=code in SELF_REPORT_INSTRUMENTS,
             attested=code in held,
-            attested_at=held[code]["attested_at"] if code in held else None,  # type: ignore[arg-type]
+            attested_at=held[code]["attested_at"] if code in held else None,  # type: ignore[arg-type]  # the attested_at column is a datetime or None
             license_reference=(
                 _optional_str(held[code].get("license_reference")) if code in held else None
             ),

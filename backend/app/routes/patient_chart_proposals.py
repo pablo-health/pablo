@@ -188,7 +188,7 @@ def _intake_groups(
             IntakeChartProposalGroup(
                 assignment_id=assignment_id,
                 packet_name=assignment_response(assignments, assignment, patient_id).packet_name,
-                date=handed_in if isinstance(handed_in, datetime) else assignment["assigned_at"],  # type: ignore[arg-type]
+                date=handed_in if isinstance(handed_in, datetime) else assignment["assigned_at"],  # type: ignore[arg-type]  # assigned_at is a datetime on every stored assignment
                 proposals=[
                     proposal_response(p, chart)
                     for p in pending

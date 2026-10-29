@@ -221,7 +221,10 @@ def _build_cloud_sql_engine(settings: Settings, option_parts: list[str]) -> Engi
     same way as the plain-DSN path.
     """
     try:
-        from google.cloud.sql.connector import Connector, IPTypes  # type: ignore[import-untyped]
+        from google.cloud.sql.connector import (  # type: ignore[import-untyped]  # cloud-sql-python-connector ships no type information
+            Connector,
+            IPTypes,
+        )
     except ImportError as exc:
         msg = (
             "db_use_cloud_sql_connector=true but the 'cloud-sql-python-connector' package "
@@ -775,8 +778,8 @@ def read_once_as(
 
 
 @event.listens_for(Session, "after_begin")
-def _rearm_rls_principal_gucs_on_txn_begin(  # type: ignore[no-untyped-def]
-    session, _transaction, connection
+def _rearm_rls_principal_gucs_on_txn_begin(
+    session: Session, _transaction: Any, connection: Any
 ) -> None:
     """Re-apply the RLS ``app.current_user_id`` GUC on every txn begin.
 
@@ -871,7 +874,7 @@ def _rearm_rls_principal_gucs_on_txn_begin(  # type: ignore[no-untyped-def]
 
 
 @event.listens_for(Engine, "checkout")
-def _reapply_search_path_on_checkout(dbapi_conn, _conn_record, _conn_proxy) -> None:  # type: ignore[no-untyped-def]
+def _reapply_search_path_on_checkout(dbapi_conn: Any, _conn_record: Any, _conn_proxy: Any) -> None:
     """Re-apply ``search_path`` from the request-scoped ContextVar on every
     pool checkout.
 
@@ -922,7 +925,7 @@ def _reapply_search_path_on_checkout(dbapi_conn, _conn_record, _conn_proxy) -> N
 
 
 @event.listens_for(Engine, "checkin")
-def _reset_search_path_on_checkin(dbapi_conn, _conn_record) -> None:  # type: ignore[no-untyped-def]
+def _reset_search_path_on_checkin(dbapi_conn: Any, _conn_record: Any) -> None:
     """Return the connection to a neutral ``search_path``, with no principal
     armed, on pool checkin.
 

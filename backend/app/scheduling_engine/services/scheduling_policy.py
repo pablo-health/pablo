@@ -31,6 +31,8 @@ from ...db.models import SchedulingPolicyRow
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
+    from ...repositories.row import Row
+
 #: The singleton row's fixed primary key.
 SINGLETON_ID = 1
 
@@ -39,7 +41,7 @@ SINGLETON_ID = 1
 #: Every gate is off and every window is conservative. A practice upgrading
 #: into this code must not discover that patients can suddenly book it, so the
 #: safe reading of "unconfigured" is "not allowed", never "allowed by default".
-DEFAULTS: dict[str, object] = {
+DEFAULTS: Row = {
     "min_notice_hours": 24,
     "max_horizon_days": 60,
     "cancel_cutoff_hours": 24,
@@ -58,11 +60,11 @@ DEFAULTS: dict[str, object] = {
 SETTABLE: frozenset[str] = frozenset(DEFAULTS)
 
 
-def _to_dict(row: SchedulingPolicyRow) -> dict[str, object]:
+def _to_dict(row: SchedulingPolicyRow) -> Row:
     return {name: getattr(row, name) for name in SETTABLE}
 
 
-def load_policy(session: Session) -> dict[str, object]:
+def load_policy(session: Session) -> Row:
     """The practice's stored policy, or the strict defaults when unset.
 
     Reads through the caller's already tenant-scoped session — this never
@@ -78,7 +80,7 @@ def load_policy(session: Session) -> dict[str, object]:
     return _to_dict(row) if row is not None else copy.deepcopy(DEFAULTS)
 
 
-def current_policy_or_defaults() -> dict[str, object]:
+def current_policy_or_defaults() -> Row:
     """The policy for the request's current practice, or the strict defaults.
 
     Reads through the request-scoped session, which the caller must already
@@ -93,7 +95,7 @@ def current_policy_or_defaults() -> dict[str, object]:
     return load_policy(session)
 
 
-def update_policy(session: Session, patch: dict[str, object]) -> dict[str, object]:
+def update_policy(session: Session, patch: Row) -> Row:
     """Merge ``patch`` over the current policy and upsert the singleton row.
 
     Partial by design: a field the caller did not mention keeps its current
@@ -116,7 +118,7 @@ def update_policy(session: Session, patch: dict[str, object]) -> dict[str, objec
     return merged
 
 
-def may_self_book(policy: dict[str, object], *, is_new_patient: bool) -> bool:
+def may_self_book(policy: Row, *, is_new_patient: bool) -> bool:
     """Whether the practice allows self-booking for this kind of patient.
 
     Only half the answer. The appointment type must ALSO be marked
