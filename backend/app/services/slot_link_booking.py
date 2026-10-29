@@ -32,8 +32,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy.exc import IntegrityError
-
 from ..scheduling_engine.exceptions import AppointmentConflictError
 
 if TYPE_CHECKING:
@@ -106,23 +104,9 @@ def book_slot_link(
         data["status"] = "pending"
         data["pending_expires_at"] = min(now + timedelta(hours=hold_hours), start)
 
+    # Whether the check saw the clash or the database's no-overlap constraint
+    # caught a racing insert, the repository raises the same error.
     try:
         return scheduling.create_appointment(link.user_id, data=data)
     except AppointmentConflictError as e:
         raise SlotTakenError from e
-    except IntegrityError as e:
-        # Only the active-slot index means "somebody else got here first".
-        # Any other constraint — a type or patient that does not exist — is a
-        # real fault, and reporting it as a taken time would hide it.
-        if _constraint_name(e) != _ACTIVE_SLOT_INDEX:
-            raise
-        raise SlotTakenError from e
-
-
-#: The unique index on ``(user_id, start_at)`` over non-cancelled appointments.
-_ACTIVE_SLOT_INDEX = "uq_appointments_user_start_active"
-
-
-def _constraint_name(exc: IntegrityError) -> str | None:
-    diag = getattr(exc.orig, "diag", None)
-    return getattr(diag, "constraint_name", None)

@@ -24,7 +24,8 @@ from app.repositories.patient_source_mapping import (
     InMemoryPatientSourceMappingRepository,
     PatientSourceMapping,
 )
-from app.scheduling_engine.models.appointment import AppointmentStatus
+from app.scheduling_engine.exceptions import AppointmentConflictError
+from app.scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.services.ical_sync_service import (
     FEED_URL_REFUSED,
@@ -532,6 +533,47 @@ class TestSyncDiff:
         assert moved.end_at == before.end_at + timedelta(hours=1, minutes=45)
         assert moved.duration_minutes == 75
         assert moved.updated_at is not None
+
+    @patch.object(ICalSyncService, "_fetch_feed")
+    def test_an_event_over_a_booking_is_not_booked_and_the_rest_of_the_feed_is(
+        self, mock_fetch: MagicMock, sync_service: ICalSyncService
+    ):
+        mock_fetch.return_value = SP_NAMES_ICAL_DATA
+        repo = sync_service._appt_repo
+        create = repo.create
+
+        def refuse_jane(appointment: Appointment) -> Appointment:
+            if appointment.ical_uid == "3415461692":
+                raise AppointmentConflictError("Conflicts with an existing appointment")
+            return create(appointment)
+
+        with patch.object(repo, "create", side_effect=refuse_jane):
+            [result] = sync_service.sync("user1", "simplepractice")
+
+        assert (result.created, result.errors) == (1, [])
+        assert set(_by_uid(sync_service)) == {"3426439378"}
+
+    @patch.object(ICalSyncService, "_fetch_feed")
+    def test_an_event_moved_onto_a_booking_stays_where_it_was(
+        self, mock_fetch: MagicMock, sync_service: ICalSyncService
+    ):
+        mock_fetch.return_value = SP_NAMES_ICAL_DATA
+        sync_service.sync("user1", "simplepractice")
+        before = _by_uid(sync_service)["3415461692"].start_at
+
+        mock_fetch.return_value = SP_NAMES_ICAL_DATA.replace(
+            "DTSTART;TZID=America/New_York:20260318T140000\n",
+            "DTSTART;TZID=America/New_York:20260318T133000\n",
+        )
+        with patch.object(
+            sync_service._appt_repo,
+            "update",
+            side_effect=AppointmentConflictError("Conflicts with an existing appointment"),
+        ):
+            [result] = sync_service.sync("user1", "simplepractice")
+
+        assert (result.updated, result.unchanged, result.errors) == (0, 2, [])
+        assert _by_uid(sync_service)["3415461692"].start_at == before
 
     @patch.object(ICalSyncService, "_fetch_feed")
     def test_an_event_that_comes_back_restores_its_appointment(

@@ -13,7 +13,10 @@ from sqlalchemy.exc import IntegrityError
 from ...db.models import AppointmentRow, PatientClinicianRow
 from ...db.practice_directory import OUTSIDE_APPOINTMENT_FUNCTION
 from ...models.patient_facing import PatientAppointmentResponse
-from ...scheduling_engine.exceptions import OutsideEventAlreadyBookedError
+from ...scheduling_engine.exceptions import (
+    AppointmentConflictError,
+    OutsideEventAlreadyBookedError,
+)
 from ...scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from ...scheduling_engine.repositories.appointment import AppointmentRepository
 from ...utcnow import utc_now
@@ -36,9 +39,43 @@ _OUTSIDE_EVENT_INDEXES = frozenset(
 )
 
 
+#: No two live appointments on one calendar overlap — the backstop behind
+#: ``SchedulingService._reject_if_overlapping``, which is a check-then-insert
+#: and cannot stop two racing requests on its own. The exclusion constraint
+#: covers every overlap; the older unique index covers the shared-start case
+#: and still fires first on some of them. The loser of the race gets the same
+#: error a slower loser gets from the check, whichever one Postgres reached.
+_NO_OVERLAP_CONSTRAINTS = frozenset(
+    {
+        "ex_appointments_user_time_active",
+        "uq_appointments_user_start_active",
+    }
+)
+
+
 def _constraint_name(exc: IntegrityError) -> str | None:
     diag = getattr(exc.orig, "diag", None)
     return getattr(diag, "constraint_name", None)
+
+
+def _translate_integrity_error(exc: IntegrityError, *, outside_event_taken: bool = False) -> None:
+    """Raise the domain error for a constraint the scheduling engine knows about.
+
+    Any other constraint — a type or patient that does not exist — is a real
+    fault, and reporting it as a booking conflict would hide it; it is left
+    for the caller to re-raise.
+
+    An outside event booked a second time on one calendar also overlaps its
+    first booking, and Postgres names whichever constraint it checked first.
+    ``outside_event_taken`` says the event already has a live booking; then
+    the outside-event error wins, because that is the one callers act on —
+    they link to the booking that is already there.
+    """
+    name = _constraint_name(exc)
+    if name in _OUTSIDE_EVENT_INDEXES or (name in _NO_OVERLAP_CONSTRAINTS and outside_event_taken):
+        raise OutsideEventAlreadyBookedError("That outside event is already booked") from exc
+    if name in _NO_OVERLAP_CONSTRAINTS:
+        raise AppointmentConflictError("Conflicts with an existing appointment") from exc
 
 
 _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindparams(
@@ -411,19 +448,37 @@ class PostgresAppointmentRepository(AppointmentRepository):
                 self._session.add(row)
                 self._session.flush()
         except IntegrityError as exc:
-            if _constraint_name(exc) in _OUTSIDE_EVENT_INDEXES:
-                raise OutsideEventAlreadyBookedError(
-                    "That outside event is already booked"
-                ) from exc
+            _translate_integrity_error(
+                exc, outside_event_taken=self._outside_event_taken(appointment)
+            )
             raise
         return appointment
 
+    def _outside_event_taken(self, appointment: Appointment) -> bool:
+        """Whether another live appointment already books this one's outside event."""
+        if appointment.outside_source is None or appointment.outside_event_id is None:
+            return False
+        booked = self.outside_appointment_id(
+            appointment.outside_source,
+            appointment.outside_calendar_id,
+            appointment.outside_event_id,
+            appointment.user_id,
+        )
+        return booked is not None and booked != appointment.id
+
     def create_batch(self, appointments: list[Appointment]) -> list[Appointment]:
-        for appt in appointments:
-            row = AppointmentRow()
-            _appointment_to_row(appt, row)
-            self._session.add(row)
-        self._session.flush()
+        # Same SAVEPOINT as ``create``: one occurrence of a series colliding
+        # undoes the whole batch and nothing else.
+        try:
+            with self._session.begin_nested():
+                for appt in appointments:
+                    row = AppointmentRow()
+                    _appointment_to_row(appt, row)
+                    self._session.add(row)
+                self._session.flush()
+        except IntegrityError as exc:
+            _translate_integrity_error(exc)
+            raise
         return appointments
 
     def update(self, appointment: Appointment) -> Appointment:
@@ -438,10 +493,9 @@ class PostgresAppointmentRepository(AppointmentRepository):
                 _appointment_to_row(appointment, row)
                 self._session.flush()
         except IntegrityError as exc:
-            if _constraint_name(exc) in _OUTSIDE_EVENT_INDEXES:
-                raise OutsideEventAlreadyBookedError(
-                    "That outside event is already booked"
-                ) from exc
+            _translate_integrity_error(
+                exc, outside_event_taken=self._outside_event_taken(appointment)
+            )
             raise
         return appointment
 

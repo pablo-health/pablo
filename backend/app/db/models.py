@@ -53,7 +53,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy import text as sql_text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, ExcludeConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from ..models.enums import ClinicianRole, OutcomeMeasureSource
@@ -2522,6 +2522,19 @@ class AppointmentRow(Base):
                 "status <> 'cancelled' AND outside_calendar_id IS NULL "
                 "AND outside_event_id IS NOT NULL"
             ),
+        ),
+        # No two live appointments on one calendar may overlap — the backstop
+        # behind ``SchedulingService._reject_if_overlapping``, which is a
+        # check-then-insert and cannot stop two racing requests on its own.
+        # Scoped exactly as ``list_overlapping`` is: same ``user_id``, not
+        # cancelled, half-open ``[start, end)`` so back-to-back is fine. Needs
+        # the ``btree_gist`` extension, installed by the platform chain.
+        ExcludeConstraint(
+            ("user_id", "="),
+            (text("tstzrange(start_at, end_at)"), "&&"),
+            name="ex_appointments_user_time_active",
+            using="gist",
+            where=text("status <> 'cancelled'"),
         ),
     )
 

@@ -1838,6 +1838,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.ehr_routes
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.appointments
+    ADD CONSTRAINT ex_appointments_user_time_active EXCLUDE USING gist (user_id WITH =, tstzrange(start_at, end_at) WITH &&) WHERE (((status)::text <> 'cancelled'::text));
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.external_calendar_events
     ADD CONSTRAINT external_calendar_events_pkey PRIMARY KEY (id);
 

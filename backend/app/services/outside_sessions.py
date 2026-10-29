@@ -43,7 +43,10 @@ from ..repositories.external_calendar_event import (
     ANSWER_OPEN,
     ExternalCalendarEvent,
 )
-from ..scheduling_engine.exceptions import OutsideEventAlreadyBookedError
+from ..scheduling_engine.exceptions import (
+    AppointmentConflictError,
+    OutsideEventAlreadyBookedError,
+)
 from ..scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from ..utcnow import utc_now
 from .google_calendar_service import parse_event_time
@@ -959,6 +962,10 @@ class OutsideSessions:
         except OutsideEventAlreadyBookedError:
             logger.info("An outside session was booked by another request first; linked to it")
             row.appointment_id = self._already_booked(row)
+            return None
+        except AppointmentConflictError:
+            # Something else was booked over it between the check and the insert.
+            logger.info("An answered outside session overlaps a booking; not booked twice")
             return None
         row.appointment_id = appointment.id
         return appointment
