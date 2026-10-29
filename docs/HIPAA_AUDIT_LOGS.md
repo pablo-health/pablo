@@ -19,10 +19,10 @@ Pablo uses a two-layer audit trail:
 
 | Layer | Source | What it captures | Retention |
 |---|---|---|---|
-| **Application audit log** | `AuditService` (`backend/app/services/audit_service.py`) | Structured records of every PHI-touching API request: who (user_id, email), what (action + resource), when, where (IP, user agent), change diff for mutations | 6 years (log sink) |
-| **Database audit log** | Cloud SQL `pgaudit` extension | Raw SQL statements against `patients`, `sessions`, `soap_notes`, etc. — defense-in-depth in case the application layer is bypassed | 6 years (log sink) |
+| **Application audit log** | `AuditService` (`backend/app/services/audit_service.py`) | Structured records of every PHI-touching API request: who (user_id, email), what (action + resource), when, where (IP, user agent), change diff for mutations. The Postgres `audit_logs` row is the record; each row is also mirrored to Cloud Logging as `pablo.audit_events` (`backend/app/services/audit_cloud_logging.py`) | Rows: 7-year `expires_at`, and no purge is scheduled on the VM. Mirror: 2255 days in the audit sink bucket (`scripts/setup-hipaa-audit-sink.sh`) |
+| **Database-level log** | `pgaudit` on the VM's Postgres | Role and DDL changes by database users other than the app. **Not** a record of PHI access: see below | The VM's Postgres log; not shipped off the VM |
 
-Both layers ship to **Cloud Logging** as structured JSON and are exported to a dedicated Log Sink (Cloud Storage or BigQuery) for long-term retention.
+The application layer is the audit trail. The hosted service's and the single-VM install's sink configuration differ only in who runs the script; both feed the `<project>-hipaa-audit-6y` bucket.
 
 ## Integrity (append-only)
 
@@ -31,7 +31,7 @@ The `audit_logs` table is **append-only** — the application role may `INSERT` 
 - **Self-host (trigger-based).** Every tenant schema carries a `BEFORE UPDATE OR DELETE` trigger (`audit_logs_append_only`) and a statement-level `BEFORE TRUNCATE` trigger (`audit_logs_no_truncate`) that raise on any attempt to edit, delete, or wipe audit rows. They fire even for the table owner — the app connects as that owner, so table privileges alone wouldn't stop it. A row-level UPDATE/DELETE trigger does **not** fire on `TRUNCATE`, which is why the separate TRUNCATE trigger exists (otherwise the trail could be wiped wholesale in one statement). The retention job is the sole exception: it arms a transaction-scoped `SET LOCAL app.allow_audit_purge = 'on'` before deleting rows past the 6-year window. Both triggers ship in `tenant_template.sql` (migrations `b33a493310b6`, `a7e3f1b9c204`).
 - **Managed build (privilege-based).** The managed deployment goes further: the application role is a non-owner with `UPDATE`, `DELETE`, **and `TRUNCATE` revoked** on `audit_logs` (role separation), and a separate maintenance role runs retention — so immutability holds by privilege, independent of any trigger.
 
-The weekly pentest verifies this on every run: it asserts the application role cannot effectively UPDATE, DELETE, or TRUNCATE `audit_logs` (privilege revoked, or a BEFORE trigger enforcing it).
+The weekly pentest of Pablo Health's hosted service verifies this on every run: it asserts the application role cannot effectively UPDATE, DELETE, or TRUNCATE `audit_logs` (privilege revoked, or a BEFORE trigger enforcing it). A self-hosted VM is not pentested by that job.
 
 ## Application audit log
 
@@ -60,46 +60,35 @@ The weekly pentest verifies this on every run: it asserts the application role c
 
 See `AuditAction` in `backend/app/models/audit.py`. Current coverage includes PATIENT_VIEWED / CREATED / UPDATED / DELETED / LISTED / EXPORTED, SESSION_VIEWED / CREATED / FINALIZED / RATED, SOAP_NOTE_VIEWED / GENERATED / EDITED, APPOINTMENT_SCHEDULED / CANCELLED, and admin actions (USER_ROLE_CHANGED, MFA_ENROLLED, BAA_ACCEPTED).
 
-## Database audit log (pgaudit)
+## Database-level log (pgaudit)
 
-Cloud SQL for PostgreSQL supports the `pgaudit` extension, enabled via database flags. Pablo's setup enables pgaudit at the `write, ddl` level by default:
+On the single-VM install `deploy/vm/bootstrap.sh` loads `pgaudit` and configures it as:
 
 ```
-pgaudit.log=write,ddl
-pgaudit.log_relation=on
+pgaudit.log = 'role, ddl'
+pgaudit.log_relation = off
+pgaudit.log_statement_once = on
+ALTER ROLE pablo SET pgaudit.log = 'none';
 ```
 
-This produces a `AUDIT:` prefix on INSERT/UPDATE/DELETE/DDL statements in `postgres.log`, which Cloud SQL forwards to Cloud Logging automatically. `read` logging is **intentionally disabled** by default — the application-level audit already records intent at the API layer, and pgaudit `read` logging is cost- and noise-prohibitive at query volume. Enable it case-by-case for forensic investigations.
+So it records role and schema changes made by other database users (an operator in `psql`, for example) and nothing the application's own role does: relation logging re-logged the whole tenant template on every provisioning. Its lines go to the VM's Postgres log under `/var/log/postgresql/` and are not shipped to Cloud Logging by the installer. `read` and `write` logging are off; the application audit log is the record of data access. Turn `write` on for the `pablo` role only during a forensic investigation, and off again afterwards.
 
 ## Querying
 
 ### Cloud Logging (recent entries)
 
 ```bash
-# Last hour of PHI access by a specific user
+# Last hour of PHI access by a specific user, from the Cloud Logging mirror
 gcloud logging read \
-  'jsonPayload.user_id="u_123" AND jsonPayload.resource_type="patient"' \
+  'logName="projects/<project>/logs/pablo.audit_events" AND jsonPayload.user_id="u_123" AND jsonPayload.resource_type="patient"' \
   --freshness=1h --limit=50
-
-# pgaudit writes to patient rows in the last 24h
-gcloud logging read \
-  'resource.type="cloudsql_database" AND textPayload:"AUDIT:" AND textPayload:"patients"' \
-  --freshness=24h --limit=50
 ```
 
-### BigQuery (long-range)
+On the VM, the `audit_logs` table itself is the record: `sudo -u postgres psql pablo` and query `<practice schema>.audit_logs`.
 
-If the Log Sink is configured to BigQuery (`audit_logs_bq` dataset), use standard SQL:
+### The six-year bucket (long-range)
 
-```sql
-SELECT timestamp, jsonPayload.user_id, jsonPayload.action, jsonPayload.resource_id
-FROM `project.audit_logs_bq.cloudaudit_googleapis_com_activity_*`
-WHERE jsonPayload.resource_type = 'patient'
-  AND jsonPayload.action IN ('PATIENT_EXPORTED', 'PATIENT_DELETED')
-  AND _TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY))
-                        AND FORMAT_DATE('%Y%m%d', CURRENT_DATE())
-ORDER BY timestamp DESC;
-```
+The sink copies each log entry as JSON into `gs://<project>-hipaa-audit-6y/`. For a range older than Cloud Logging keeps, download the objects you need with `gsutil cp` and query them locally, or load them into BigQuery yourself; the installer configures no BigQuery dataset.
 
 ## Incident investigation
 
@@ -107,17 +96,17 @@ Starting point for a suspected unauthorized access incident:
 
 1. Identify the user(s) and time window from the initial report.
 2. Pull all `AuditLogEntry` lines for that user in a wider window (±24h).
-3. Cross-reference with pgaudit for the same window — any DB access by that user's session that does **not** have a matching application audit entry is a red flag (direct DB access, or an unaudited code path).
+3. Cross-reference with Google's admin activity log (SSH through IAP, secret access) for the same window: direct access to the VM or the database bypasses the application audit log, and that log is where it would show.
 4. Preserve the logs (Cloud Logging → export to a hold bucket) before rotation.
 5. Follow the § 164.402 four-factor breach analysis and § 164.410 notification timelines if ePHI was accessed.
 
 ## What this document does **not** cover
 
-- **Authentication events** (login success/failure, MFA enrollment, token refresh) — these are captured by Firebase Authentication audit logs and should be read alongside the logs above.
-- **Infrastructure audit** — GCP Admin Activity logs are always-on and free; they capture project-level changes (IAM, SQL instance config). No Pablo-side configuration is required.
+- **Failed sign-ins and lockouts.** Successful sign-ins **are** in `audit_logs`: the backend writes one `signed_in` row per sign-in on its first authenticated request (`backend/app/auth/sign_in_audit.py`; MFA enrollment during onboarding is recorded as `onboarding_mfa_enrolled`). Failed password attempts never reach the backend; Identity Platform applies its lockout and keeps its own logs.
+- **Infrastructure audit** — Google's Admin Activity log is always on; it captures project-level changes (IAM, VM, Secret Manager access, SSH through IAP). The audit sink keeps it six years.
 
 ## Common mistakes
 
 - **Don't** log patient identifiers in `logger.info` — that's not an audit trail, and PHI in stdout outside `AuditService` violates the "No PHI in logs" principle. Use `AuditService` exclusively for PHI-associated events.
-- **Don't** rely on `pgaudit.log=read` to reconstruct who-saw-what; enable it only during forensic work and disable again when done.
+- **Don't** rely on `pgaudit` to reconstruct who-saw-what; it is off for the application's role. The `audit_logs` table is the record.
 - **Don't** swallow `AuditService.log()` exceptions — a failure to audit is a compliance event, not a soft error.
