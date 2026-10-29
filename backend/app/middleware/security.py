@@ -14,6 +14,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 from ..settings import Settings
+from ..trusted_proxy import TrustedProxies
 
 # Paths a platform health probe calls. Matched exactly, never by prefix.
 #
@@ -36,12 +37,7 @@ class HTTPSEnforcementMiddleware(BaseHTTPMiddleware):
     def __init__(self, app: ASGIApp, settings: Settings) -> None:
         super().__init__(app)
         self.settings = settings
-        self._trust_all = settings.trusted_proxy_ips == "*"
-        self._trusted_ips: set[str] = set()
-        if not self._trust_all and settings.trusted_proxy_ips:
-            self._trusted_ips = {
-                ip.strip() for ip in settings.trusted_proxy_ips.split(",") if ip.strip()
-            }
+        self._trusted_proxies = TrustedProxies.from_settings(settings)
 
     async def dispatch(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
@@ -72,19 +68,7 @@ class HTTPSEnforcementMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
     def _is_from_trusted_proxy(self, request: Request) -> bool:
-        """Check if the request originates from a trusted proxy IP.
-
-        - TRUSTED_PROXY_IPS="" (default): trust no proxies (secure default)
-        - TRUSTED_PROXY_IPS="*": trust all proxies (Cloud Run / GKE)
-        - TRUSTED_PROXY_IPS="10.0.0.1,10.0.0.2": trust specific IPs
-        """
-        if self._trust_all:
-            return True
-        if not self._trusted_ips:
-            return False
-        if not request.client:
-            return False
-        return request.client.host in self._trusted_ips
+        return self._trusted_proxies.trusts(request)
 
     def _is_secure(self, request: Request) -> bool:
         """
