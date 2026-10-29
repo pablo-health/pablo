@@ -23,6 +23,8 @@ from ._grants import live_grant
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
+    from ..row import Row
+
 
 _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindparams(
     bindparam("pid", type_=Uuid(as_uuid=False)),
@@ -30,7 +32,7 @@ _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindpara
 )
 
 
-def _row_to_dict(row: DiagnosticAssessmentRow) -> dict[str, object]:
+def _row_to_dict(row: DiagnosticAssessmentRow) -> Row:
     return {
         "id": row.id,
         "patient_id": row.patient_id,
@@ -66,7 +68,7 @@ class PostgresDiagnosticAssessmentRepository(DiagnosticAssessmentRepository):
         ).scalar()
         return bool(result)
 
-    def get(self, assessment_id: str, user_id: str) -> dict[str, object] | None:
+    def get(self, assessment_id: str, user_id: str) -> Row | None:
         row = self._session.execute(
             select(DiagnosticAssessmentRow)
             .join(
@@ -86,7 +88,7 @@ class PostgresDiagnosticAssessmentRepository(DiagnosticAssessmentRepository):
         user_id: str,
         *,
         instrument: str | None = None,
-    ) -> list[dict[str, object]]:
+    ) -> list[Row]:
         if not self._has_access(patient_id, user_id):
             return []
         query = select(DiagnosticAssessmentRow).where(
@@ -97,49 +99,49 @@ class PostgresDiagnosticAssessmentRepository(DiagnosticAssessmentRepository):
         query = query.order_by(DiagnosticAssessmentRow.assessed_at.asc())
         return [_row_to_dict(r) for r in self._session.execute(query).scalars().all()]
 
-    def add(self, row: dict[str, object], user_id: str) -> dict[str, object]:
+    def add(self, row: Row, user_id: str) -> Row:
         patient_id = str(row["patient_id"])
         if not self._has_access(patient_id, user_id):
             raise PatientDiagnosticAccessDeniedError(patient_id, user_id)
         orm_row = DiagnosticAssessmentRow(
             id=str(row["id"]),
             patient_id=patient_id,
-            session_id=row.get("session_id"),  # type: ignore[arg-type]
-            appointment_id=row.get("appointment_id"),  # type: ignore[arg-type]
+            session_id=row.get("session_id"),
+            appointment_id=row.get("appointment_id"),
             instrument=str(row["instrument"]),
-            definition_version=row["definition_version"],  # type: ignore[arg-type]
-            criterion_responses=row.get("criterion_responses"),  # type: ignore[arg-type]
-            gate_responses=row.get("gate_responses"),  # type: ignore[arg-type]
+            definition_version=row["definition_version"],
+            criterion_responses=row.get("criterion_responses"),
+            gate_responses=row.get("gate_responses"),
             # Preserve None: checklist rows have no verdict and must persist as
             # NULL, not be coerced to False (the column is nullable).
-            meets_criteria=row.get("meets_criteria"),  # type: ignore[arg-type]
-            determined_icd10=row.get("determined_icd10"),  # type: ignore[arg-type]
-            diagnosis_label=row.get("diagnosis_label"),  # type: ignore[arg-type]
-            criterion_citations=row.get("criterion_citations"),  # type: ignore[arg-type]
+            meets_criteria=row.get("meets_criteria"),
+            determined_icd10=row.get("determined_icd10"),
+            diagnosis_label=row.get("diagnosis_label"),
+            criterion_citations=row.get("criterion_citations"),
             source=str(row["source"]),
-            confirmed_at=row.get("confirmed_at"),  # type: ignore[arg-type]
-            assessed_at=row["assessed_at"],  # type: ignore[arg-type]
+            confirmed_at=row.get("confirmed_at"),
+            assessed_at=row["assessed_at"],
             created_by=str(row["created_by"]),
-            created_at=row["created_at"],  # type: ignore[arg-type]
-            updated_at=row["updated_at"],  # type: ignore[arg-type]
-            deleted_at=row.get("deleted_at"),  # type: ignore[arg-type]
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            deleted_at=row.get("deleted_at"),
         )
         self._session.add(orm_row)
         self._session.flush()
         return _row_to_dict(orm_row)
 
-    def update(self, row: dict[str, object], user_id: str) -> dict[str, object]:
+    def update(self, row: Row, user_id: str) -> Row:
         patient_id = str(row["patient_id"])
         if not self._has_access(patient_id, user_id):
             raise PatientDiagnosticAccessDeniedError(patient_id, user_id)
         orm_row = self._session.get(DiagnosticAssessmentRow, str(row["id"]))
         if orm_row is None:
             return self.add(row, user_id)
-        orm_row.determined_icd10 = row.get("determined_icd10")  # type: ignore[assignment]
-        orm_row.diagnosis_label = row.get("diagnosis_label")  # type: ignore[assignment]
-        orm_row.problem_id = row.get("problem_id")  # type: ignore[assignment]
-        orm_row.confirmed_at = row.get("confirmed_at")  # type: ignore[assignment]
-        orm_row.updated_at = row["updated_at"]  # type: ignore[assignment]
-        orm_row.deleted_at = row.get("deleted_at")  # type: ignore[assignment]
+        orm_row.determined_icd10 = row.get("determined_icd10")
+        orm_row.diagnosis_label = row.get("diagnosis_label")
+        orm_row.problem_id = row.get("problem_id")
+        orm_row.confirmed_at = row.get("confirmed_at")
+        orm_row.updated_at = row["updated_at"]
+        orm_row.deleted_at = row.get("deleted_at")
         self._session.flush()
         return _row_to_dict(orm_row)

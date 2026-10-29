@@ -46,13 +46,15 @@ if TYPE_CHECKING:
     from sqlalchemy import Select
     from sqlalchemy.orm import Session
 
+    from ..row import Row
+
 _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindparams(
     bindparam("pid", type_=Uuid(as_uuid=False)),
     bindparam("uid", type_=String()),
 )
 
 
-def _assignment_to_dict(row: PatientIntakeAssignmentRow) -> dict[str, object]:
+def _assignment_to_dict(row: PatientIntakeAssignmentRow) -> Row:
     return {
         "id": row.id,
         "patient_id": row.patient_id,
@@ -69,7 +71,7 @@ def _assignment_to_dict(row: PatientIntakeAssignmentRow) -> dict[str, object]:
     }
 
 
-def _response_to_dict(row: PatientIntakeResponseRow) -> dict[str, object]:
+def _response_to_dict(row: PatientIntakeResponseRow) -> Row:
     return {
         "id": row.id,
         "assignment_id": row.assignment_id,
@@ -84,7 +86,7 @@ def _response_to_dict(row: PatientIntakeResponseRow) -> dict[str, object]:
     }
 
 
-def _review_event_to_dict(row: PatientIntakeReviewEventRow) -> dict[str, object]:
+def _review_event_to_dict(row: PatientIntakeReviewEventRow) -> Row:
     return {
         "id": row.id,
         "assignment_id": row.assignment_id,
@@ -103,7 +105,7 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
 
     # --- clinician side ---
 
-    def add_assignment(self, row: dict[str, object], user_id: str) -> dict[str, object] | None:
+    def add_assignment(self, row: Row, user_id: str) -> Row | None:
         patient_id = str(row["patient_id"])
         if not self._has_access(patient_id, user_id):
             return None
@@ -113,21 +115,19 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
             version_id=str(row["version_id"]),
             status=str(row["status"]),
             assigned_by=str(row["assigned_by"]) if row.get("assigned_by") else None,
-            assigned_at=row["assigned_at"],  # type: ignore[arg-type]
+            assigned_at=row["assigned_at"],
             submitted_at=None,
             accepted_at=None,
             withdrawn_at=None,
             receipt_code=None,
             legacy_submission_id=None,
-            updated_at=row["updated_at"],  # type: ignore[arg-type]
+            updated_at=row["updated_at"],
         )
         self._session.add(orm_row)
         self._session.flush()
         return _assignment_to_dict(orm_row)
 
-    def list_assignments_for_clinician(
-        self, patient_id: str, user_id: str
-    ) -> list[dict[str, object]]:
+    def list_assignments_for_clinician(self, patient_id: str, user_id: str) -> list[Row]:
         if not self._has_access(patient_id, user_id):
             return []
         rows = (
@@ -144,9 +144,7 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
         )
         return [_assignment_to_dict(row) for row in rows]
 
-    def get_assignment_for_clinician(
-        self, assignment_id: str, user_id: str
-    ) -> dict[str, object] | None:
+    def get_assignment_for_clinician(self, assignment_id: str, user_id: str) -> Row | None:
         row = self._session.get(PatientIntakeAssignmentRow, assignment_id)
         if row is None or not self._has_access(row.patient_id, user_id):
             return None
@@ -182,7 +180,7 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
             )
         )
 
-    def _read_review_entries(self, statement: Select[tuple]) -> list[dict[str, object]]:
+    def _read_review_entries(self, statement: Select[tuple]) -> list[Row]:
         return [
             {
                 **_assignment_to_dict(row),
@@ -192,7 +190,7 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
             for row, first, last, preferred, form_name in self._session.execute(statement).all()
         ]
 
-    def list_awaiting_review(self, user_id: str, *, limit: int = 200) -> list[dict[str, object]]:
+    def list_awaiting_review(self, user_id: str, *, limit: int = 200) -> list[Row]:
         return self._read_review_entries(
             self._review_entries(user_id)
             .where(PatientIntakeAssignmentRow.status == "submitted")
@@ -200,18 +198,14 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
             .limit(limit)
         )
 
-    def get_review_entries(
-        self, user_id: str, assignment_ids: list[str]
-    ) -> list[dict[str, object]]:
+    def get_review_entries(self, user_id: str, assignment_ids: list[str]) -> list[Row]:
         if not assignment_ids:
             return []
         return self._read_review_entries(
             self._review_entries(user_id).where(PatientIntakeAssignmentRow.id.in_(assignment_ids))
         )
 
-    def find_active_assignment(
-        self, patient_id: str, version_id: str, user_id: str
-    ) -> dict[str, object] | None:
+    def find_active_assignment(self, patient_id: str, version_id: str, user_id: str) -> Row | None:
         if not self._has_access(patient_id, user_id):
             return None
         row = (
@@ -230,9 +224,7 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
         )
         return _assignment_to_dict(row) if row else None
 
-    def list_responses_for_clinician(
-        self, assignment_id: str, user_id: str
-    ) -> list[dict[str, object]]:
+    def list_responses_for_clinician(self, assignment_id: str, user_id: str) -> list[Row]:
         row = self._session.get(PatientIntakeAssignmentRow, assignment_id)
         if row is None or not self._has_access(row.patient_id, user_id):
             return []
@@ -240,7 +232,7 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
 
     def set_status_for_clinician(
         self, assignment_id: str, user_id: str, *, status: str, now: datetime
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         row = self._session.get(PatientIntakeAssignmentRow, assignment_id)
         if row is None or not self._has_access(row.patient_id, user_id):
             return None
@@ -254,35 +246,31 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
 
     def get_live_response_for_clinician(
         self, assignment_id: str, user_id: str, item_id: str
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         assignment = self._session.get(PatientIntakeAssignmentRow, assignment_id)
         if assignment is None or not self._has_access(assignment.patient_id, user_id):
             return None
         return self.get_live_response(assignment_id, assignment.patient_id, item_id)
 
     def add_clinician_response(
-        self, row: dict[str, object], user_id: str, *, supersedes: str | None
-    ) -> dict[str, object] | None:
+        self, row: Row, user_id: str, *, supersedes: str | None
+    ) -> Row | None:
         if not self._has_access(str(row["patient_id"]), user_id):
             return None
         return self._write_successor(row, supersedes)
 
-    def add_review_event(self, row: dict[str, object], user_id: str) -> dict[str, object] | None:
+    def add_review_event(self, row: Row, user_id: str) -> Row | None:
         if not self._has_access(str(row["patient_id"]), user_id):
             return None
         return self._write_review_event(row)
 
-    def list_review_events_for_clinician(
-        self, assignment_id: str, user_id: str
-    ) -> list[dict[str, object]]:
+    def list_review_events_for_clinician(self, assignment_id: str, user_id: str) -> list[Row]:
         assignment = self._session.get(PatientIntakeAssignmentRow, assignment_id)
         if assignment is None or not self._has_access(assignment.patient_id, user_id):
             return []
         return self._events(assignment_id, assignment.patient_id)
 
-    def list_all_responses_for_clinician(
-        self, assignment_id: str, user_id: str
-    ) -> list[dict[str, object]]:
+    def list_all_responses_for_clinician(self, assignment_id: str, user_id: str) -> list[Row]:
         assignment = self._session.get(PatientIntakeAssignmentRow, assignment_id)
         if assignment is None or not self._has_access(assignment.patient_id, user_id):
             return []
@@ -322,7 +310,7 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
 
     # --- patient side ---
 
-    def list_assignments_for_patient_principal(self, patient_id: str) -> list[dict[str, object]]:
+    def list_assignments_for_patient_principal(self, patient_id: str) -> list[Row]:
         rows = (
             self._session.execute(
                 select(PatientIntakeAssignmentRow)
@@ -339,7 +327,7 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
 
     def get_assignment_for_patient_principal(
         self, assignment_id: str, patient_id: str
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         row = self._session.execute(
             select(PatientIntakeAssignmentRow).where(
                 PatientIntakeAssignmentRow.id == assignment_id,
@@ -348,9 +336,7 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
         ).scalar_one_or_none()
         return _assignment_to_dict(row) if row else None
 
-    def record_save(
-        self, assignment_id: str, patient_id: str, now: datetime
-    ) -> dict[str, object] | None:
+    def record_save(self, assignment_id: str, patient_id: str, now: datetime) -> Row | None:
         row = self._session.execute(
             select(PatientIntakeAssignmentRow).where(
                 PatientIntakeAssignmentRow.id == assignment_id,
@@ -365,15 +351,13 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
         self._session.flush()
         return _assignment_to_dict(row)
 
-    def list_draft_responses(self, assignment_id: str, patient_id: str) -> list[dict[str, object]]:
+    def list_draft_responses(self, assignment_id: str, patient_id: str) -> list[Row]:
         return self._live_responses(assignment_id, patient_id, drafts_only=True)
 
-    def list_live_responses(self, assignment_id: str, patient_id: str) -> list[dict[str, object]]:
+    def list_live_responses(self, assignment_id: str, patient_id: str) -> list[Row]:
         return self._live_responses(assignment_id, patient_id, drafts_only=False)
 
-    def get_live_response(
-        self, assignment_id: str, patient_id: str, item_id: str
-    ) -> dict[str, object] | None:
+    def get_live_response(self, assignment_id: str, patient_id: str, item_id: str) -> Row | None:
         # A draft first when there is one: a live draft and a frozen answer
         # can coexist for the same question once a correction reopens it,
         # and the draft is the row a save would touch.
@@ -397,7 +381,7 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
         )
         return _response_to_dict(row) if row else None
 
-    def save_draft_response(self, row: dict[str, object]) -> dict[str, object]:
+    def save_draft_response(self, row: Row) -> Row:
         existing = self._session.execute(
             select(PatientIntakeResponseRow).where(
                 PatientIntakeResponseRow.assignment_id == str(row["assignment_id"]),
@@ -409,8 +393,8 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
         ).scalar_one_or_none()
 
         if existing is not None:
-            existing.value = row["value"]  # type: ignore[assignment]
-            existing.updated_at = row["updated_at"]  # type: ignore[assignment]
+            existing.value = row["value"]
+            existing.updated_at = row["updated_at"]
             self._session.flush()
             return _response_to_dict(existing)
 
@@ -419,28 +403,26 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
             assignment_id=str(row["assignment_id"]),
             patient_id=str(row["patient_id"]),
             item_id=str(row["item_id"]),
-            value=row["value"],  # type: ignore[arg-type]
+            value=row["value"],
             draft=True,
             provenance=str(row.get("provenance") or "patient"),
             superseded_by=None,
-            created_at=row["created_at"],  # type: ignore[arg-type]
-            updated_at=row["updated_at"],  # type: ignore[arg-type]
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
         )
         self._session.add(orm_row)
         self._session.flush()
         return _response_to_dict(orm_row)
 
-    def add_successor_response(
-        self, row: dict[str, object], *, supersedes: str
-    ) -> dict[str, object]:
+    def add_successor_response(self, row: Row, *, supersedes: str) -> Row:
         return self._write_successor(row, supersedes)
 
-    def add_patient_review_event(self, row: dict[str, object]) -> dict[str, object]:
+    def add_patient_review_event(self, row: Row) -> Row:
         return self._write_review_event(row)
 
     def list_review_events_for_patient_principal(
         self, assignment_id: str, patient_id: str
-    ) -> list[dict[str, object]]:
+    ) -> list[Row]:
         return self._events(assignment_id, patient_id)
 
     def retire_draft_responses(
@@ -492,7 +474,7 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
 
     def mark_submitted(
         self, assignment_id: str, patient_id: str, *, now: datetime, receipt_code: str
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         row = self._session.execute(
             select(PatientIntakeAssignmentRow).where(
                 PatientIntakeAssignmentRow.id == assignment_id,
@@ -522,7 +504,7 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
 
     # --- helpers ---
 
-    def _write_successor(self, row: dict[str, object], supersedes: str | None) -> dict[str, object]:
+    def _write_successor(self, row: Row, supersedes: str | None) -> Row:
         """Insert the new answer, then point the one it replaces at it.
 
         This order, not the other one: ``superseded_by`` names an id, so the
@@ -539,12 +521,12 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
             assignment_id=str(row["assignment_id"]),
             patient_id=str(row["patient_id"]),
             item_id=str(row["item_id"]),
-            value=row["value"],  # type: ignore[arg-type]
+            value=row["value"],
             draft=bool(row["draft"]),
             provenance=str(row["provenance"]),
             superseded_by=None,
-            created_at=row["created_at"],  # type: ignore[arg-type]
-            updated_at=row["updated_at"],  # type: ignore[arg-type]
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
         )
         self._session.add(orm_row)
         self._session.flush()
@@ -556,22 +538,22 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
                 self._session.flush()
         return _response_to_dict(orm_row)
 
-    def _write_review_event(self, row: dict[str, object]) -> dict[str, object]:
+    def _write_review_event(self, row: Row) -> Row:
         orm_row = PatientIntakeReviewEventRow(
             id=str(row["id"]),
             assignment_id=str(row["assignment_id"]),
             patient_id=str(row["patient_id"]),
             kind=str(row["kind"]),
-            item_ids=list(row["item_ids"]),  # type: ignore[call-overload]
-            note_to_patient=row["note_to_patient"],  # type: ignore[arg-type]
+            item_ids=list(row["item_ids"]),
+            note_to_patient=row["note_to_patient"],
             created_by=str(row["created_by"]) if row.get("created_by") else None,
-            created_at=row["created_at"],  # type: ignore[arg-type]
+            created_at=row["created_at"],
         )
         self._session.add(orm_row)
         self._session.flush()
         return _review_event_to_dict(orm_row)
 
-    def _events(self, assignment_id: str, patient_id: str) -> list[dict[str, object]]:
+    def _events(self, assignment_id: str, patient_id: str) -> list[Row]:
         rows = (
             self._session.execute(
                 select(PatientIntakeReviewEventRow)
@@ -591,7 +573,7 @@ class PostgresPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
 
     def _live_responses(
         self, assignment_id: str, patient_id: str, *, drafts_only: bool
-    ) -> list[dict[str, object]]:
+    ) -> list[Row]:
         statement = select(PatientIntakeResponseRow).where(
             PatientIntakeResponseRow.assignment_id == assignment_id,
             PatientIntakeResponseRow.patient_id == patient_id,

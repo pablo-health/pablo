@@ -25,6 +25,8 @@ from .token_encryption import decrypt_tokens, encrypt_tokens
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
+    from ..repositories.row import Row
+
 #: The singleton row's fixed primary key.
 SINGLETON_ID = 1
 
@@ -57,14 +59,14 @@ _READABLE_FIELDS: frozenset[str] = _WRITABLE_FIELDS | {"clearinghouse_provider_i
 #: billing settings still gets its clients' plans checked at intake, courtesy
 #: waivers off, and the small-balance threshold at the same default the
 #: column carries.
-_DEFAULTS: dict[str, object] = {
+_DEFAULTS: Row = {
     "eligibility_auto_check": True,
     "allow_courtesy_writeoffs": False,
     "small_balance_cents": 500,
 }
 
 
-def _empty_profile() -> dict[str, object]:
+def _empty_profile() -> Row:
     return {**dict.fromkeys(_READABLE_FIELDS), **_DEFAULTS}
 
 
@@ -73,7 +75,7 @@ def eligibility_auto_check_enabled(session: Session) -> bool:
     return bool(load_billing_profile(session)["eligibility_auto_check"])
 
 
-def load_billing_profile(session: Session) -> dict[str, object]:
+def load_billing_profile(session: Session) -> Row:
     """The practice's stored billing profile, or all-``None`` when unset."""
     row = session.get(PracticeBillingProfileRow, SINGLETON_ID)
     if row is None:
@@ -96,7 +98,7 @@ def load_billing_tax_id(session: Session) -> str | None:
     return decrypt_tokens(row.tax_id_encrypted).get("tax_id") or None
 
 
-def update_billing_profile(session: Session, patch: dict[str, object]) -> dict[str, object]:
+def update_billing_profile(session: Session, patch: Row) -> Row:
     """Merge ``patch`` over the current profile and upsert the singleton row.
 
     ``patch`` may carry a raw ``tax_id`` (from the API's write-only field)

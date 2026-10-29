@@ -167,6 +167,8 @@ class DocumentAiOcrClient:
             return self._client
         try:
             from google.api_core.client_options import ClientOptions
+
+            # google.cloud is a namespace package that mypy cannot resolve
             from google.cloud import documentai  # type: ignore[attr-defined]
         except ImportError as exc:
             raise OcrUnavailableError("google-cloud-documentai not installed") from exc
@@ -178,6 +180,7 @@ class DocumentAiOcrClient:
         return self._client
 
     def _build_request(self, pdf_bytes: bytes, *, project: str, processor_id: str) -> Any:
+        # google.cloud is a namespace package that mypy cannot resolve
         from google.cloud import documentai  # type: ignore[attr-defined]
 
         processor_name = (

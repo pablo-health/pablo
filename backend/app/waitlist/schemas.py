@@ -74,9 +74,9 @@ class WaitlistEntryResponse(BaseModel):
             id=e.id,
             patient_id=e.patient_id,
             patient_name=e.patient_name,
-            days=list(e.days),  # type: ignore[arg-type]
-            times=list(e.times),  # type: ignore[arg-type]
-            modality=e.modality,  # type: ignore[arg-type]
+            days=list(e.days),  # type: ignore[arg-type]  # the repository stores plain strings; the write path validates them against the Literal
+            times=list(e.times),  # type: ignore[arg-type]  # the repository stores plain strings; the write path validates them against the Literal
+            modality=e.modality,  # type: ignore[arg-type]  # the repository stores plain strings; the write path validates them against the Literal
             session_type=e.session_type,
             position=e.position,
             paused=e.paused,

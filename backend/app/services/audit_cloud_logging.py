@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 from dataclasses import asdict
 from functools import lru_cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ..models.audit import AuditLogEntry
@@ -35,7 +35,7 @@ CLOUD_LOG_NAME = "pablo.audit_events"
 
 
 @lru_cache(maxsize=1)
-def _gcp_logger():  # type: ignore[no-untyped-def]
+def _gcp_logger() -> Any:
     # Imported lazily so test/dev environments without google-cloud-logging
     # installed (or without Application Default Credentials) never trigger
     # initialization when the dual-write flag is off.

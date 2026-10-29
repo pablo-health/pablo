@@ -88,6 +88,7 @@ if TYPE_CHECKING:
     from ..outcome_measures.service import OutcomeMeasureService
     from ..repositories.intake_packet import IntakePacketRepository
     from ..repositories.patient_intake_assignment import PatientIntakeAssignmentRepository
+    from ..repositories.row import Row
 
 #: How long a burst of saves counts as one visit for the audit log. A
 #: patient works through a form a question at a time, and a row per
@@ -156,7 +157,7 @@ class Submission:
     code, and a caller unpacking two values would have dropped it silently.
     """
 
-    assignment: dict[str, object]
+    assignment: Row
     measures: list[OutcomeMeasureResponse]
     #: Sentences for the receipt screen, in the order they should be read.
     #: Empty on the ordinary submission, which has nothing to add.
@@ -186,9 +187,7 @@ class IntakeAssignmentService:
 
     # --- the clinician's side ---
 
-    def assign(
-        self, patient_id: str, version_id: str, assigned_by: str
-    ) -> tuple[dict[str, object], bool]:
+    def assign(self, patient_id: str, version_id: str, assigned_by: str) -> tuple[Row, bool]:
         """Ask *patient_id* to fill in *version_id*.
 
         Returns the assignment and whether it was created now. An existing
@@ -236,10 +235,10 @@ class IntakeAssignmentService:
             raise LookupError(patient_id)
         return created, True
 
-    def list_for_clinician(self, patient_id: str, user_id: str) -> list[dict[str, object]]:
+    def list_for_clinician(self, patient_id: str, user_id: str) -> list[Row]:
         return self._repo.list_assignments_for_clinician(patient_id, user_id)
 
-    def withdraw(self, assignment_id: str, user_id: str) -> dict[str, object] | None:
+    def withdraw(self, assignment_id: str, user_id: str) -> Row | None:
         """Take back a request. Returns ``None`` if there is no such assignment.
 
         Never a delete: what the patient already answered stays readable,
@@ -251,17 +250,17 @@ class IntakeAssignmentService:
 
     # --- the patient's side ---
 
-    def list_for_patient(self, patient_id: str) -> list[dict[str, object]]:
+    def list_for_patient(self, patient_id: str) -> list[Row]:
         return self._repo.list_assignments_for_patient_principal(patient_id)
 
-    def get_for_patient(self, assignment_id: str, patient_id: str) -> dict[str, object] | None:
+    def get_for_patient(self, assignment_id: str, patient_id: str) -> Row | None:
         return self._repo.get_assignment_for_patient_principal(assignment_id, patient_id)
 
-    def items(self, version_id: str) -> list[dict[str, object]]:
+    def items(self, version_id: str) -> list[Row]:
         """The questions on a version, in the order the patient reads them."""
         return self._packets.list_items(version_id)
 
-    def version(self, version_id: str) -> dict[str, object] | None:
+    def version(self, version_id: str) -> Row | None:
         """One version of a form, whoever is asking.
 
         Reading a version needs no grant of its own: a form is the
@@ -271,11 +270,11 @@ class IntakeAssignmentService:
         """
         return self._packets.get_version(version_id)
 
-    def template(self, template_id: str) -> dict[str, object] | None:
+    def template(self, template_id: str) -> Row | None:
         """The form a version belongs to, for its name."""
         return self._packets.get_template(template_id)
 
-    def answers(self, assignment_id: str, patient_id: str) -> dict[str, dict[str, object]]:
+    def answers(self, assignment_id: str, patient_id: str) -> dict[str, Row]:
         """The patient's answers so far, keyed by the item's id.
 
         Live rows, draft or handed in. Reading only the drafts would report
@@ -287,18 +286,14 @@ class IntakeAssignmentService:
             for row in self._repo.list_live_responses(assignment_id, patient_id)
         }
 
-    def answers_for_clinician(
-        self, assignment_id: str, user_id: str
-    ) -> dict[str, dict[str, object]]:
+    def answers_for_clinician(self, assignment_id: str, user_id: str) -> dict[str, Row]:
         """The same answers, reached through the clinician's grant instead."""
         return {
             str(row["item_id"]): _as_mapping(row["value"])
             for row in self._repo.list_responses_for_clinician(assignment_id, user_id)
         }
 
-    def all_responses_for_clinician(
-        self, assignment_id: str, user_id: str
-    ) -> list[dict[str, object]]:
+    def all_responses_for_clinician(self, assignment_id: str, user_id: str) -> list[Row]:
         """Every answer ever written on one form, oldest first.
 
         Replaced and retired rows as well as live ones. What the export
@@ -307,16 +302,16 @@ class IntakeAssignmentService:
         """
         return self._repo.list_all_responses_for_clinician(assignment_id, user_id)
 
-    def get_for_clinician(self, assignment_id: str, user_id: str) -> dict[str, object] | None:
+    def get_for_clinician(self, assignment_id: str, user_id: str) -> Row | None:
         return self._repo.get_assignment_for_clinician(assignment_id, user_id)
 
     def live_response_for_clinician(
         self, assignment_id: str, user_id: str, item_id: str
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         """One question's current answer, read through the clinician's grant."""
         return self._repo.get_live_response_for_clinician(assignment_id, user_id, item_id)
 
-    def config_for(self, row: dict[str, object]) -> ItemConfig | None:
+    def config_for(self, row: Row) -> ItemConfig | None:
         """One stored question's configuration, or ``None`` if it no longer parses.
 
         Public because the review surface validates a clinician's entry
@@ -325,7 +320,7 @@ class IntakeAssignmentService:
         """
         return _parse(row)
 
-    def progress(self, assignment: dict[str, object], patient_id: str) -> Completion:
+    def progress(self, assignment: Row, patient_id: str) -> Completion:
         """Whether this form can be handed in, and what is still missing.
 
         Computed from the version's items and the patient's saved answers
@@ -336,7 +331,7 @@ class IntakeAssignmentService:
         """
         saved = self.answers(str(assignment["id"]), patient_id)
         items: list[CompletionItem] = []
-        by_key: dict[str, object] = {}
+        by_key: Row = {}
 
         for row in self._packets.list_items(str(assignment["version_id"])):
             items.append(
@@ -355,11 +350,11 @@ class IntakeAssignmentService:
 
     def save_answer(
         self,
-        assignment: dict[str, object],
+        assignment: Row,
         patient_id: str,
         item_id: str,
         value: object,
-    ) -> tuple[dict[str, object], bool]:
+    ) -> tuple[Row, bool]:
         """Record one answer on one of the patient's own assignments.
 
         Returns the stored response and whether this save should be written
@@ -422,11 +417,11 @@ class IntakeAssignmentService:
         existing = self._repo.get_live_response(str(assignment["id"]), patient_id, item_id)
         frozen = existing is not None and not existing["draft"]
         if frozen and reopened is None:
-            raise FrozenResponseError(str(existing["id"]))  # type: ignore[index]
+            raise FrozenResponseError(str(existing["id"]))  # type: ignore[index]  # mypy cannot narrow existing to non-None through the frozen flag
 
         now = utc_now()
         worth_auditing = _starts_a_visit(assignment, now)
-        row_to_store: dict[str, object] = {
+        row_to_store: Row = {
             "id": str(uuid.uuid4()),
             "assignment_id": str(assignment["id"]),
             "patient_id": patient_id,
@@ -441,7 +436,7 @@ class IntakeAssignmentService:
         if frozen:
             stored = self._repo.add_successor_response(
                 row_to_store,
-                supersedes=str(existing["id"]),  # type: ignore[index]
+                supersedes=str(existing["id"]),  # type: ignore[index]  # mypy cannot narrow existing to non-None through the frozen flag
             )
         else:
             stored = self._repo.save_draft_response(row_to_store)
@@ -450,15 +445,11 @@ class IntakeAssignmentService:
 
     # --- the review cycle, from the patient's side ---
 
-    def review_events_for_patient(
-        self, assignment_id: str, patient_id: str
-    ) -> list[dict[str, object]]:
+    def review_events_for_patient(self, assignment_id: str, patient_id: str) -> list[Row]:
         """Everything done with one of this patient's own forms, oldest first."""
         return self._repo.list_review_events_for_patient_principal(assignment_id, patient_id)
 
-    def open_correction(
-        self, assignment: dict[str, object], patient_id: str
-    ) -> dict[str, object] | None:
+    def open_correction(self, assignment: Row, patient_id: str) -> Row | None:
         """The correction request this form is currently reopened for.
 
         ``None`` unless the form sits in ``needs_correction``, which is what
@@ -474,7 +465,7 @@ class IntakeAssignmentService:
         return requests[-1] if requests else None
 
     def outstanding_corrections(
-        self, assignment: dict[str, object], patient_id: str, correction: dict[str, object]
+        self, assignment: Row, patient_id: str, correction: Row
     ) -> list[str]:
         """Which named questions have not been answered again yet.
 
@@ -497,7 +488,7 @@ class IntakeAssignmentService:
 
     def submit(
         self,
-        assignment: dict[str, object],
+        assignment: Row,
         patient_id: str,
         measures: OutcomeMeasureService,
     ) -> Submission:
@@ -601,7 +592,7 @@ class IntakeAssignmentService:
 
     def _submit_with_receipt(
         self, assignment_id: str, patient_id: str, now: datetime
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         """Stamp the submission, trying another code if one is taken."""
         for _ in range(RECEIPT_ATTEMPTS):
             try:
@@ -613,7 +604,7 @@ class IntakeAssignmentService:
         raise ReceiptUnavailableError(assignment_id)
 
     def _instrument_answers(
-        self, assignment: dict[str, object], patient_id: str
+        self, assignment: Row, patient_id: str
     ) -> list[tuple[str, dict[str, int]]]:
         """Each measure on the form and the item scores answered against it.
 
@@ -633,7 +624,7 @@ class IntakeAssignmentService:
         return found
 
 
-def _starts_a_visit(assignment: dict[str, object], now: datetime) -> bool:
+def _starts_a_visit(assignment: Row, now: datetime) -> bool:
     """True when this save begins a new sitting rather than continuing one.
 
     Two ways it can. A form still at ``assigned`` has never been written
@@ -650,7 +641,7 @@ def _starts_a_visit(assignment: dict[str, object], now: datetime) -> bool:
     return (now - last).total_seconds() >= AUDIT_COALESCE_SECONDS
 
 
-def event_item_ids(event: dict[str, object]) -> list[str]:
+def event_item_ids(event: Row) -> list[str]:
     """The questions a review event names, read defensively.
 
     JSONB, so what comes back is whatever was stored. A row whose
@@ -666,7 +657,7 @@ def event_item_ids(event: dict[str, object]) -> list[str]:
     return [str(item) for item in raw] if isinstance(raw, list) else []
 
 
-def _written_after(row: dict[str, object], moment: object) -> bool:
+def _written_after(row: Row, moment: object) -> bool:
     """True when this answer was written at or after *moment*."""
     written = row.get("updated_at")
     if not isinstance(written, datetime) or not isinstance(moment, datetime):
@@ -674,7 +665,7 @@ def _written_after(row: dict[str, object], moment: object) -> bool:
     return written >= moment
 
 
-def _parse(row: dict[str, object]) -> ItemConfig | None:
+def _parse(row: Row) -> ItemConfig | None:
     """One stored item's configuration, or ``None`` if it no longer parses."""
     try:
         return validate_item_config(str(row["item_type"]), stored_config(row["config"]))
@@ -682,7 +673,7 @@ def _parse(row: dict[str, object]) -> ItemConfig | None:
         return None
 
 
-def _as_mapping(value: object) -> dict[str, object]:
+def _as_mapping(value: object) -> Row:
     return dict(value) if isinstance(value, dict) else {}
 
 

@@ -33,11 +33,13 @@ from ..patient_intake_signature import (
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
+    from ..row import Row
+
 #: The partial unique index that carries "one role signs one item once".
 _LIVE_INDEX = "uq_patient_intake_signatures_live"
 
 
-def _to_dict(row: PatientIntakeSignatureRow) -> dict[str, object]:
+def _to_dict(row: PatientIntakeSignatureRow) -> Row:
     return {
         "id": row.id,
         "assignment_id": row.assignment_id,
@@ -65,7 +67,7 @@ class PostgresPatientIntakeSignatureRepository(PatientIntakeSignatureRepository)
 
     # --- patient side ---
 
-    def add(self, row: dict[str, object]) -> dict[str, object]:
+    def add(self, row: Row) -> Row:
         """Record one signature, or raise on a second one for the same role.
 
         The caller has already looked for an existing signature and refused
@@ -90,14 +92,14 @@ class PostgresPatientIntakeSignatureRepository(PatientIntakeSignatureRepository)
             signer_role=str(row["signer_role"]),
             signer_typed_name=str(row["signer_typed_name"]),
             consent_statement_version=str(row["consent_statement_version"]),
-            signed_at=row["signed_at"],  # type: ignore[arg-type]
+            signed_at=row["signed_at"],
             auth_strength=str(row["auth_strength"]),
             session_id=_optional(row.get("session_id")),
             ip=_optional(row.get("ip")),
             user_agent=_optional(row.get("user_agent")),
             evidence_digest=str(row["evidence_digest"]),
             superseded_at=None,
-            created_at=row["created_at"],  # type: ignore[arg-type]
+            created_at=row["created_at"],
         )
         self._session.add(orm_row)
         try:
@@ -108,9 +110,7 @@ class PostgresPatientIntakeSignatureRepository(PatientIntakeSignatureRepository)
             raise
         return _to_dict(orm_row)
 
-    def list_live_for_assignment(
-        self, assignment_id: str, patient_id: str
-    ) -> list[dict[str, object]]:
+    def list_live_for_assignment(self, assignment_id: str, patient_id: str) -> list[Row]:
         rows = (
             self._session.execute(
                 select(PatientIntakeSignatureRow)
@@ -131,7 +131,7 @@ class PostgresPatientIntakeSignatureRepository(PatientIntakeSignatureRepository)
 
     def get_live(
         self, assignment_id: str, patient_id: str, item_id: str, signer_role: str
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         row = (
             self._session.execute(
                 select(PatientIntakeSignatureRow).where(

@@ -71,7 +71,7 @@ class UploadSessionRequest(BaseModel):
     @classmethod
     def validate_session_date(cls, v: str) -> str:
         """Validate session_date is ISO format."""
-        return validate_iso_date(v, "session_date")  # type: ignore
+        return validate_iso_date(v, "session_date")  # type: ignore  # validate_iso_date returns None only for a None input, which the str annotation rules out
 
 
 class FinalizeSessionRequest(BaseModel):

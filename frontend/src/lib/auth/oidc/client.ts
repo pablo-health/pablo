@@ -58,7 +58,7 @@ export function useOidcAuthState(): AuthState {
     return { user: null, loading: false }
   }
 
-  const oidcSession = session as unknown as OidcSession
+  const oidcSession = session as unknown as OidcSession  // next-auth's Session does not declare the fields our jwt callback adds
   const user = toAuthUser(oidcSession)
   return { user, loading: false }
 }
@@ -96,7 +96,7 @@ export async function getOidcIdToken(forceRefresh = false): Promise<string | nul
   }
 
   const session = await getSession()
-  const oidcSession = session as unknown as OidcSession | null
+  const oidcSession = session as unknown as OidcSession | null  // next-auth's Session does not declare the fields our jwt callback adds
   return oidcSession?.idToken ?? null
 }
 
@@ -119,7 +119,7 @@ export async function oidcSignOut(): Promise<void> {
   //    so the ordering here is load-bearing.
   let idToken: string | null = null
   try {
-    const session = (await getSession()) as unknown as OidcSession | null
+    const session = (await getSession()) as unknown as OidcSession | null  // next-auth's Session does not declare the fields our jwt callback adds
     idToken = session?.idToken ?? null
   } catch {
     // No session to read — proceed; logout falls back to a local redirect.

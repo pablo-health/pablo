@@ -100,6 +100,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session
 
+    from ..repositories.row import Row
     from ..scheduling_engine.models.appointment import Appointment
     from ..scheduling_engine.models.appointment_type import AppointmentType
     from ..scheduling_engine.services.open_slots import OpenSlot
@@ -265,7 +266,7 @@ def _require_stepped_up(patient: PatientContext) -> None:
         )
 
 
-def _require_self_booking(policy: dict[str, object]) -> None:
+def _require_self_booking(policy: Row) -> None:
     """Refuse unless the practice lets an existing patient self-book.
 
     Keyed on ``self_book_existing``: everyone reaching these routes is an
@@ -371,14 +372,14 @@ def _late_change(
     return True
 
 
-def _window(policy: dict[str, object], *, now: datetime) -> tuple[datetime, datetime]:
+def _window(policy: Row, *, now: datetime) -> tuple[datetime, datetime]:
     """The earliest and latest instants this practice will take a booking for."""
-    min_notice = int(policy["min_notice_hours"])  # type: ignore[call-overload]
-    max_horizon = int(policy["max_horizon_days"])  # type: ignore[call-overload]
+    min_notice = int(policy["min_notice_hours"])
+    max_horizon = int(policy["max_horizon_days"])
     return now + timedelta(hours=min_notice), now + timedelta(days=max_horizon)
 
 
-def _require_inside_window(policy: dict[str, object], start_at: datetime, *, now: datetime) -> None:
+def _require_inside_window(policy: Row, start_at: datetime, *, now: datetime) -> None:
     """Refuse a time outside the practice's notice and horizon windows.
 
     Shared by booking and rescheduling rather than written twice. Moving an
@@ -539,10 +540,10 @@ def get_booking_options(
         # Withheld when the practice does not take online bookings: a list of
         # types nobody may book is machinery the reader did not ask about.
         session_types=types if self_booking else [],
-        min_notice_hours=int(policy["min_notice_hours"]),  # type: ignore[call-overload]
-        max_horizon_days=int(policy["max_horizon_days"]),  # type: ignore[call-overload]
-        cancel_cutoff_hours=int(policy["cancel_cutoff_hours"]),  # type: ignore[call-overload]
-        reschedule_cutoff_hours=int(policy["reschedule_cutoff_hours"]),  # type: ignore[call-overload]
+        min_notice_hours=int(policy["min_notice_hours"]),
+        max_horizon_days=int(policy["max_horizon_days"]),
+        cancel_cutoff_hours=int(policy["cancel_cutoff_hours"]),
+        reschedule_cutoff_hours=int(policy["reschedule_cutoff_hours"]),
         practice_timezone=timezone,
         join_window_before_minutes=get_settings().telehealth_join_window_before_minutes,
         practice_phone=phone,
@@ -660,7 +661,7 @@ def book_appointment(
             # A held slot has to stop being held. The practice's own
             # pending_hold_hours decides when, capped at the appointment itself
             # — holding past the start time would be holding nothing.
-            hold_hours = int(policy["pending_hold_hours"])  # type: ignore[call-overload]
+            hold_hours = int(policy["pending_hold_hours"])
             data["status"] = "pending"
             data["pending_expires_at"] = min(
                 datetime.now(UTC) + timedelta(hours=hold_hours), start_at
@@ -775,7 +776,7 @@ def reschedule_appointment(
         _require_changeable(appointment)
         late = _late_change(
             appointment,
-            cutoff_hours=int(policy["reschedule_cutoff_hours"]),  # type: ignore[call-overload]
+            cutoff_hours=int(policy["reschedule_cutoff_hours"]),
             now=now,
             acknowledged=payload.acknowledge_late_change,
         )
@@ -887,7 +888,7 @@ def cancel_appointment(
 
         late = _late_change(
             appointment,
-            cutoff_hours=int(policy["cancel_cutoff_hours"]),  # type: ignore[call-overload]
+            cutoff_hours=int(policy["cancel_cutoff_hours"]),
             now=now,
             acknowledged=payload.acknowledge_late_change,
         )

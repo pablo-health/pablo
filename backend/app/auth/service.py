@@ -83,7 +83,7 @@ def _get_cached_token(request: Request | None, token: str) -> dict[str, Any] | N
         return None
     cached_raw = getattr(request.state, "verified_firebase_token_raw", None)
     if cached_raw is not None and cached_raw == token:
-        return request.state.decoded_firebase_token  # type: ignore[no-any-return]
+        return request.state.decoded_firebase_token  # type: ignore[no-any-return]  # request.state is untyped Starlette state
     return None
 
 
@@ -1052,6 +1052,7 @@ def require_active_subscription(
     if not settings.is_saas:
         return user
 
+    # The subscription routes exist only in the SaaS overlay.
     from ..routes.subscription import _fetch_subscription  # type: ignore[import-not-found]
 
     sub = _fetch_subscription(user.email, settings)

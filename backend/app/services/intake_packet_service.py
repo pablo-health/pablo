@@ -60,6 +60,7 @@ if TYPE_CHECKING:
         PublishedVersionsLookup,
     )
     from ..repositories.intake_packet import IntakePacketRepository
+    from ..repositories.row import Row
 
 
 class PublishedVersionError(RuntimeError):
@@ -93,7 +94,7 @@ class IntakePacketService:
 
     # --- templates ---
 
-    def create_template(self, name: str, created_by: str) -> dict[str, object]:
+    def create_template(self, name: str, created_by: str) -> Row:
         """A new, empty template with a draft first version.
 
         The version comes with it rather than on a second call: a template
@@ -123,13 +124,13 @@ class IntakePacketService:
         )
         return template
 
-    def list_templates(self, *, include_archived: bool = False) -> list[dict[str, object]]:
+    def list_templates(self, *, include_archived: bool = False) -> list[Row]:
         return self._repo.list_templates(include_archived=include_archived)
 
-    def get_template(self, template_id: str) -> dict[str, object] | None:
+    def get_template(self, template_id: str) -> Row | None:
         return self._repo.get_template(template_id)
 
-    def rename_template(self, template_id: str, name: str) -> dict[str, object] | None:
+    def rename_template(self, template_id: str, name: str) -> Row | None:
         """Rename a template, including a published one.
 
         The name is the practice's label for the form, not part of what a
@@ -137,7 +138,7 @@ class IntakePacketService:
         """
         return self._repo.update_template(template_id, name=name)
 
-    def set_client_title(self, template_id: str, title: str | None) -> dict[str, object] | None:
+    def set_client_title(self, template_id: str, title: str | None) -> Row | None:
         """Set or clear the title a patient sees in their portal.
 
         Separate from the name, which is the practice's own label: a name
@@ -149,7 +150,7 @@ class IntakePacketService:
         cleaned = (title or "").strip()
         return self._repo.set_client_title(template_id, cleaned or None)
 
-    def set_archived(self, template_id: str, archived: bool) -> dict[str, object] | None:
+    def set_archived(self, template_id: str, archived: bool) -> Row | None:
         """Take a template out of circulation, or put it back.
 
         Never a delete. A version somebody filled in has to stay readable
@@ -159,7 +160,7 @@ class IntakePacketService:
             return self._repo.update_template(template_id, archived_at=utc_now())
         return self._repo.update_template(template_id, unarchive=True)
 
-    def document_usage(self) -> dict[str, list[dict[str, object]]]:
+    def document_usage(self) -> dict[str, list[Row]]:
         """Which packets put each document in front of people.
 
         Keyed by ``document_key``, each a list of ``{"id", "name"}`` in the
@@ -168,7 +169,7 @@ class IntakePacketService:
         pointing at the document. An archived packet sends nothing, so it is
         left out.
         """
-        usage: dict[str, list[dict[str, object]]] = {}
+        usage: dict[str, list[Row]] = {}
         for template in self._repo.list_templates():
             latest = self._repo.latest_version(str(template["id"]))
             if latest is None:
@@ -186,16 +187,16 @@ class IntakePacketService:
 
     # --- versions ---
 
-    def list_versions(self, template_id: str) -> list[dict[str, object]]:
+    def list_versions(self, template_id: str) -> list[Row]:
         return self._repo.list_versions(template_id)
 
-    def get_version(self, version_id: str) -> dict[str, object] | None:
+    def get_version(self, version_id: str) -> Row | None:
         return self._repo.get_version(version_id)
 
-    def list_items(self, version_id: str) -> list[dict[str, object]]:
+    def list_items(self, version_id: str) -> list[Row]:
         return self._repo.list_items(version_id)
 
-    def create_version(self, template_id: str) -> dict[str, object] | None:
+    def create_version(self, template_id: str) -> Row | None:
         """Start a new draft, carrying the latest version's items forward.
 
         This is how a published form is changed: the old version stays
@@ -211,7 +212,7 @@ class IntakePacketService:
         if latest is not None and latest["published_at"] is None:
             return latest
 
-        number = int(latest["version"]) + 1 if latest else 1  # type: ignore[call-overload]
+        number = int(latest["version"]) + 1 if latest else 1
         draft = self._repo.add_version(
             {
                 "id": str(uuid.uuid4()),
@@ -232,7 +233,7 @@ class IntakePacketService:
 
     # --- items ---
 
-    def replace_items(self, version_id: str, items: list[ItemDraft]) -> list[dict[str, object]]:
+    def replace_items(self, version_id: str, items: list[ItemDraft]) -> list[Row]:
         """Swap a draft version's whole item list.
 
         Raises :class:`PublishedVersionError` on a published version. This is
@@ -244,7 +245,7 @@ class IntakePacketService:
         if version["published_at"] is not None:
             raise PublishedVersionError(version_id)
 
-        rows: list[dict[str, object]] = [
+        rows: list[Row] = [
             {
                 "id": str(uuid.uuid4()),
                 "version_id": version_id,
@@ -268,7 +269,7 @@ class IntakePacketService:
         ]
         return self._repo.replace_items(version_id, rows)
 
-    def publish(self, version_id: str, published_by: str) -> dict[str, object]:
+    def publish(self, version_id: str, published_by: str) -> Row:
         """Validate a draft's items, pin its documents, and freeze it.
 
         Raises :class:`ItemConfigError` naming the item that is wrong, or
@@ -315,7 +316,7 @@ class IntakePacketService:
             raise LookupError(version_id)
         return published
 
-    def _pin_documents(self, rows: list[dict[str, object]], configs: list[ItemConfig]) -> None:
+    def _pin_documents(self, rows: list[Row], configs: list[ItemConfig]) -> None:
         """Record on each consent item which revision of its document is live.
 
         ``configs`` came from ``rows`` in order, so the two zip. A service

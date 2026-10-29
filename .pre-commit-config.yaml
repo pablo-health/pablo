@@ -62,6 +62,11 @@ repos:
         entry: python backend/scripts/check_tenant_chain_platform.py
         language: system
         files: ^backend/alembic/versions/.*\.py$
+      - id: suppression-reasons
+        name: "Type suppressions need a reason (guardrail #7)"
+        entry: python scripts/check_suppression_reasons.py
+        language: system
+        files: ^(backend/(app|bin|scripts)/.*\.py|backend/entrypoint\.py|frontend/(src|app)/.*\.tsx?)$
         pass_filenames: false
 
       - id: migration-lint

@@ -168,7 +168,7 @@ def _pg_dump_platform_schema(container: object) -> str:
     (``pablo_credentialing_ops``) is applied by a migration that checks whether
     the role exists, not baked in here.
     """
-    container_id = container.get_wrapped_container().id  # type: ignore[attr-defined]
+    container_id = container.get_wrapped_container().id  # type: ignore[attr-defined]  # testcontainers returns an untyped wrapped container
     cmd = [
         "docker",
         "exec",
@@ -292,7 +292,7 @@ def main() -> None:
         dump = _pg_dump_platform_schema(container)
     finally:
         if container is not None:
-            container.stop()  # type: ignore[attr-defined]
+            container.stop()  # type: ignore[attr-defined]  # testcontainers returns an untyped wrapped container
 
     template = _post_process(dump)
 

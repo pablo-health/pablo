@@ -165,7 +165,7 @@ class FailoverChatLLMGateway(ChatLLMGateway):
                 else:
                     return
             finally:
-                await stream.aclose()  # type: ignore[attr-defined]
+                await stream.aclose()  # type: ignore[attr-defined]  # AsyncIterator has no aclose; the gateway yields an async generator
 
 
 def failover_chat_gateway(

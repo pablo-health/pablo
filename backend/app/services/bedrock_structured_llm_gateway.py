@@ -220,7 +220,7 @@ def build_botocore_session(
         extra_args={"RoleSessionName": "pablo-structured-llm"},
     )
 
-    class _GoogleWebIdentityProvider(CredentialProvider):  # type: ignore[misc]
+    class _GoogleWebIdentityProvider(CredentialProvider):  # type: ignore[misc]  # base class resolves to Any from an untyped import
         METHOD = "google-web-identity"
 
         def load(self) -> Any:

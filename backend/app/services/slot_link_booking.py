@@ -41,6 +41,7 @@ if TYPE_CHECKING:
 
     from ..models.booking_link import BookingLink
     from ..repositories.booking_link import BookingLinkRepository
+    from ..repositories.row import Row
     from ..scheduling_engine.models.appointment import Appointment
     from ..scheduling_engine.models.appointment_type import AppointmentType
     from ..scheduling_engine.services.scheduling import SchedulingService
@@ -69,7 +70,7 @@ def book_slot_link(
     link_repo: BookingLinkRepository,
     scheduling: SchedulingService,
     appointment_type: AppointmentType,
-    policy: dict[str, object],
+    policy: Row,
     patient_for_booking: Callable[[], str],
     notes: str,
     now: datetime,
@@ -99,7 +100,9 @@ def book_slot_link(
         "notes": notes,
     }
     if policy.get("self_book_mode") != "auto":
-        hold_hours = int(policy["pending_hold_hours"])  # type: ignore[call-overload]  # policy values are typed object; the column is an int
+        hold_hours = int(
+            policy["pending_hold_hours"]
+        )  # policy values are typed object; the column is an int
         data["status"] = "pending"
         data["pending_expires_at"] = min(now + timedelta(hours=hold_hours), start)
 

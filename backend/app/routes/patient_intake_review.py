@@ -105,6 +105,7 @@ from .patient_intake_assignments import (
 if TYPE_CHECKING:
     from ..repositories.patient import PatientRepository
     from ..repositories.patient_intake_signature import PatientIntakeSignatureRepository
+    from ..repositories.row import Row
 
 #: The notice a reopened form sends. A name and a link; see
 #: :mod:`app.portal.notices` for why it can be nothing more.
@@ -238,7 +239,7 @@ def get_intake_review(
             IntakeReviewItemResponse(
                 id=str(row["id"]),
                 key=str(row["key"]),
-                position=int(row["position"]),  # type: ignore[call-overload]
+                position=int(row["position"]),
                 item_type=str(row["item_type"]),
                 required=bool(row["required"]),
                 label=optional_str(row.get("label")),
@@ -510,7 +511,7 @@ def _own_assignment(
     assignment_id: str,
     patient_id: str,
     user_id: str,
-) -> dict[str, object]:
+) -> Row:
     """The assignment iff it is on this patient's chart, else 404."""
     assignment = service.get_for_clinician(assignment_id, user_id)
     if assignment is None or str(assignment["patient_id"]) != patient_id:
@@ -520,9 +521,9 @@ def _own_assignment(
 
 def _validate_entry(
     service: IntakeAssignmentService,
-    assignment: dict[str, object],
+    assignment: Row,
     item_id: str,
-    value: dict[str, object],
+    value: Row,
 ) -> None:
     """Refuse a value that would not be accepted from the portal.
 
@@ -559,7 +560,7 @@ def _validate_entry(
         raise UnprocessableEntityError(str(exc), {"item_id": item_id}) from exc
 
 
-def _instrument_codes(rows: list[dict[str, object]]) -> list[str]:
+def _instrument_codes(rows: list[Row]) -> list[str]:
     """The measures this form asks, in the order it asks them."""
     codes: list[str] = []
     for row in rows:
@@ -579,14 +580,14 @@ def _provenance(
     return None if row is None else optional_str(row.get("provenance"))
 
 
-def _event_response(row: dict[str, object]) -> IntakeReviewEventResponse:
+def _event_response(row: Row) -> IntakeReviewEventResponse:
     return IntakeReviewEventResponse(
         id=str(row["id"]),
         kind=str(row["kind"]),
         item_ids=event_item_ids(row),
         note_to_patient=optional_str(row.get("note_to_patient")),
         created_by=optional_str(row.get("created_by")),
-        created_at=row["created_at"],  # type: ignore[arg-type]
+        created_at=row["created_at"],
     )
 
 

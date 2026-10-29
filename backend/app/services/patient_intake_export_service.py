@@ -59,6 +59,7 @@ if TYPE_CHECKING:
     from ..repositories.patient_document import PatientDocumentRepository
     from ..repositories.patient_intake_artifact import PatientIntakeArtifactRepository
     from ..repositories.patient_intake_signature import PatientIntakeSignatureRepository
+    from ..repositories.row import Row
     from .patient_intake_assignment_service import IntakeAssignmentService
     from .patient_intake_review_service import IntakeReviewService
 
@@ -84,7 +85,7 @@ class IntakeExportService:
 
     def build(
         self,
-        assignment: dict[str, object],
+        assignment: Row,
         user_id: str,
         *,
         patient_name: str,
@@ -140,7 +141,7 @@ class IntakeExportService:
             events=[
                 ExportEvent(
                     kind=str(row["kind"]),
-                    created_at=row["created_at"],  # type: ignore[arg-type]
+                    created_at=row["created_at"],  # type: ignore[arg-type]  # created_at is a datetime on every stored event
                     note_to_patient=_optional_str(row.get("note_to_patient")),
                 )
                 for row in self._reviews.events(assignment_id, user_id)
@@ -153,7 +154,7 @@ class IntakeExportService:
         self,
         assignment_id: str,
         user_id: str,
-        items: list[dict[str, object]],
+        items: list[Row],
         document_url: Callable[[str], str],
     ) -> list[ExportArtifact]:
         """Every file on the form, named by the question that asked for it.
@@ -199,9 +200,7 @@ class IntakeExportService:
 
     # --- one question ---
 
-    def _item(
-        self, row: dict[str, object], answers: list[dict[str, object]], *, shown: bool
-    ) -> ExportItem:
+    def _item(self, row: Row, answers: list[Row], *, shown: bool) -> ExportItem:
         """One question with its current answer and everything it replaced."""
         config = self._assignments.config_for(row)
         item_type = str(row["item_type"])
@@ -219,7 +218,7 @@ class IntakeExportService:
             history=[_answer(earlier, config) for earlier in answers if earlier is not current_row],
         )
 
-    def _signature(self, row: dict[str, object]) -> ExportSignature:
+    def _signature(self, row: Row) -> ExportSignature:
         """One signature, with the document it names resolved to a title.
 
         The digest on the row is what names the words that were read, and
@@ -232,14 +231,14 @@ class IntakeExportService:
         statement_version = str(row["consent_statement_version"])
         return ExportSignature(
             document_title=None if document is None else str(document["title"]),
-            document_version=None if document is None else int(document["version"]),  # type: ignore[call-overload]
+            document_version=None if document is None else int(document["version"]),
             document_version_id=version_id,
             document_digest=str(row["document_digest"]),
             signer_role=str(row["signer_role"]),
             signer_typed_name=str(row["signer_typed_name"]),
             consent_statement=consent_statement(statement_version),
             consent_statement_version=statement_version,
-            signed_at=row["signed_at"],  # type: ignore[arg-type]
+            signed_at=row["signed_at"],
             auth_strength=str(row["auth_strength"]),
             session_id=_optional_str(row.get("session_id")),
             ip=_optional_str(row.get("ip")),
@@ -247,17 +246,15 @@ class IntakeExportService:
             evidence_digest=str(row["evidence_digest"]),
         )
 
-    def _responses_by_item(
-        self, assignment_id: str, user_id: str
-    ) -> dict[str, list[dict[str, object]]]:
+    def _responses_by_item(self, assignment_id: str, user_id: str) -> dict[str, list[Row]]:
         """Every answer on the form, grouped by question, oldest first."""
-        grouped: dict[str, list[dict[str, object]]] = {}
+        grouped: dict[str, list[Row]] = {}
         for row in self._assignments.all_responses_for_clinician(assignment_id, user_id):
             grouped.setdefault(str(row["item_id"]), []).append(row)
         return grouped
 
 
-def _current(answers: list[dict[str, object]]) -> dict[str, object] | None:
+def _current(answers: list[Row]) -> Row | None:
     """The answer that stands, chosen the way a read of one question is.
 
     A draft first when there is one, then the most recently written — the
@@ -267,10 +264,10 @@ def _current(answers: list[dict[str, object]]) -> dict[str, object] | None:
     live = [row for row in answers if row["superseded_by"] is None]
     if not live:
         return None
-    return max(live, key=lambda row: (bool(row["draft"]), row["updated_at"]))  # type: ignore[arg-type,return-value]
+    return max(live, key=lambda row: (bool(row["draft"]), row["updated_at"]))
 
 
-def _answer(row: dict[str, object], config: ItemConfig | None) -> ExportAnswer:
+def _answer(row: Row, config: ItemConfig | None) -> ExportAnswer:
     return ExportAnswer(
         lines=answer_lines(config, _mapping(row.get("value"))),
         state=_state(row),
@@ -279,7 +276,7 @@ def _answer(row: dict[str, object], config: ItemConfig | None) -> ExportAnswer:
     )
 
 
-def _state(row: dict[str, object]) -> AnswerState:
+def _state(row: Row) -> AnswerState:
     """What became of one answer.
 
     A row pointing at itself is the retirement the submit path writes for a
@@ -301,7 +298,7 @@ def _body_html(config: ItemConfig | None) -> str | None:
     return render_html(config.body_markdown) if isinstance(config, InstructionsConfig) else None
 
 
-def _mapping(value: object) -> dict[str, object] | None:
+def _mapping(value: object) -> Row | None:
     return dict(value) if isinstance(value, dict) else None
 
 

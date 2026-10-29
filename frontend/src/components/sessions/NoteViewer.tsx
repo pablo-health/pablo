@@ -465,7 +465,7 @@ function StructuredContent({
   const sectionData = structured[sectionKey as keyof StructuredSOAPNoteModel]
   if (!sectionData || typeof sectionData === "string") return null
 
-  const record = sectionData as unknown as Record<string, SOAPSentence | SOAPSentence[] | null>
+  const record = sectionData as unknown as Record<string, SOAPSentence | SOAPSentence[] | null>  // SectionData is a union of sub-field shapes; the viewer indexes it by a runtime field key
   const hasAny = fields.some((field) => {
     const value = record[field.key]
     return Array.isArray(value) ? value.length > 0 : !!value

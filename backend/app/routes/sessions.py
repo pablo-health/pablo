@@ -157,13 +157,13 @@ from .patient_documents import get_patient_documents_service
 # installed it registers ``app.routes.subscription``; otherwise the
 # import fails and the gate becomes a no-op.
 try:
-    from ..routes.subscription import (  # type: ignore[import-not-found]
+    from ..routes.subscription import (  # type: ignore[import-not-found]  # subscription routes exist only in the SaaS overlay; absent here
         TrialLimitReachedError,
         check_and_count_trial_session,
     )
 except ImportError:  # pragma: no cover -- no subscription overlay installed
-    TrialLimitReachedError = None  # type: ignore[assignment,misc]
-    check_and_count_trial_session = None  # type: ignore[assignment]
+    TrialLimitReachedError = None  # type: ignore[assignment,misc]  # subscription routes exist only in the SaaS overlay; absent here
+    check_and_count_trial_session = None  # type: ignore[assignment]  # subscription routes exist only in the SaaS overlay; absent here
 
 # Imported in its OWN try-block, not folded into the one above: a
 # ``from ... import a, b`` fails wholesale when any single name is missing,
@@ -171,13 +171,13 @@ except ImportError:  # pragma: no cover -- no subscription overlay installed
 # the trial gate on a deployment whose overlay predates the recording
 # policy. Each block degrades independently.
 try:
-    from ..routes.subscription import (  # type: ignore[import-not-found]
+    from ..routes.subscription import (  # type: ignore[import-not-found]  # subscription routes exist only in the SaaS overlay; absent here
         RecordingNotEnabledError,
         check_recording_allowed,
     )
 except ImportError:  # pragma: no cover -- overlay absent or predates the hook
-    RecordingNotEnabledError = None  # type: ignore[assignment,misc]
-    check_recording_allowed = None  # type: ignore[assignment]
+    RecordingNotEnabledError = None  # type: ignore[assignment,misc]  # subscription routes exist only in the SaaS overlay; absent here
+    check_recording_allowed = None  # type: ignore[assignment]  # subscription routes exist only in the SaaS overlay; absent here
 
 
 def _gate_recording(user_email: str) -> None:

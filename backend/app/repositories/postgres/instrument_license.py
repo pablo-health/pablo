@@ -27,8 +27,10 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session
 
+    from ..row import Row
 
-def _to_dict(row: InstrumentLicenseAttestationRow) -> dict[str, object]:
+
+def _to_dict(row: InstrumentLicenseAttestationRow) -> Row:
     return {
         "id": row.id,
         "instrument_code": row.instrument_code,
@@ -44,21 +46,21 @@ class PostgresInstrumentLicenseRepository(InstrumentLicenseRepository):
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def add(self, row: dict[str, object]) -> dict[str, object]:
+    def add(self, row: Row) -> Row:
         orm_row = InstrumentLicenseAttestationRow(
             id=str(row["id"]),
             instrument_code=str(row["instrument_code"]),
             attested_by=str(row["attested_by"]),
-            attested_at=row["attested_at"],  # type: ignore[arg-type]
-            license_reference=row.get("license_reference"),  # type: ignore[arg-type]
-            notes=row.get("notes"),  # type: ignore[arg-type]
+            attested_at=row["attested_at"],
+            license_reference=row.get("license_reference"),
+            notes=row.get("notes"),
             revoked_at=None,
         )
         self._session.add(orm_row)
         self._session.flush()
         return _to_dict(orm_row)
 
-    def list_active(self) -> list[dict[str, object]]:
+    def list_active(self) -> list[Row]:
         rows = (
             self._session.execute(
                 select(InstrumentLicenseAttestationRow)
@@ -73,7 +75,7 @@ class PostgresInstrumentLicenseRepository(InstrumentLicenseRepository):
         )
         return [_to_dict(row) for row in rows]
 
-    def active_for_code(self, instrument_code: str) -> dict[str, object] | None:
+    def active_for_code(self, instrument_code: str) -> Row | None:
         row = (
             self._session.execute(
                 select(InstrumentLicenseAttestationRow).where(
@@ -86,7 +88,7 @@ class PostgresInstrumentLicenseRepository(InstrumentLicenseRepository):
         )
         return _to_dict(row) if row else None
 
-    def revoke(self, attestation_id: str, revoked_at: datetime) -> dict[str, object] | None:
+    def revoke(self, attestation_id: str, revoked_at: datetime) -> Row | None:
         row = self._session.get(InstrumentLicenseAttestationRow, attestation_id)
         if row is None:
             return None

@@ -81,7 +81,7 @@ export function SubFieldEditor({ sectionKey, data, onChange }: SubFieldEditorPro
   const fields = SECTION_SUBFIELDS[sectionKey]
   if (!fields) return null
 
-  const record = data as unknown as Record<string, SOAPSentence | SOAPSentence[] | null>
+  const record = data as unknown as Record<string, SOAPSentence | SOAPSentence[] | null>  // SectionData is a union of sub-field shapes; the editor indexes it by a runtime field key
 
   const handleChange = (fieldKey: string, fieldType: string, value: string) => {
     const newValue = fieldType === "list" ? textToList(value) : sentence(value)
