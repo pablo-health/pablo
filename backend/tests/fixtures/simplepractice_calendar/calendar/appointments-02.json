@@ -1,0 +1,10 @@
+{
+  "data": [],
+  "meta": {
+    "count": 0
+  },
+  "links": {
+    "first": "https://secure.simplepractice.com/frontend/appointments?fields%5Bappointments%5D=permissions%2CstartTime&filter%5BclientId%5D=112230097&filter%5BstartingBefore%5D=2026-10-20T14%3A00%3A00.000Z&filter%5BwithMetaCount%5D=true&page%5Bnumber%5D=1&page%5Bsize%5D=2&sort=-startTime",
+    "last": "https://secure.simplepractice.com/frontend/appointments?fields%5Bappointments%5D=permissions%2CstartTime&filter%5BclientId%5D=112230097&filter%5BstartingBefore%5D=2026-10-20T14%3A00%3A00.000Z&filter%5BwithMetaCount%5D=true&page%5Bnumber%5D=1&page%5Bsize%5D=2&sort=-startTime"
+  }
+}

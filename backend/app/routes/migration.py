@@ -39,12 +39,14 @@ from ..migration.ledger import (
     archive_file,
     client_records_for_run,
     get_run,
+    later_run_stands,
     list_runs,
     new_run,
     record_state,
     sweep_expired_archives,
 )
 from ..migration.preview import decisions_complete
+from ..migration.readers import MIXED_LAYOUT_REASON, NO_LAYOUT_REASON, detect_layout
 from ..migration.readers.simplepractice import SOURCE_SYSTEM
 from ..models import User
 from ..models.audit import ResourceType
@@ -191,6 +193,16 @@ def _run_or_404(run_id: str) -> Any:
     if run is None:
         raise NotFoundError("That import was not found.")
     return run
+
+
+def _one_layout(unpacked: Path) -> None:
+    """Refuse an upload no reader takes, before the store copies it anywhere:
+    one holding both layouts, or one holding neither."""
+    layout = detect_layout(unpacked)
+    if layout == "mixed":
+        raise ArchiveError(MIXED_LAYOUT_REASON, code="INVALID_ARCHIVE")
+    if layout is None:
+        raise ArchiveError(NO_LAYOUT_REASON, code="INVALID_ARCHIVE")
 
 
 async def _spool_upload(file: UploadFile, into: Path) -> int:
@@ -343,7 +355,11 @@ async def start_import(
     scope: Annotated[Scope, Form()] = "both",
     password: Annotated[str | None, Form()] = None,
 ) -> ImportRunDetail:
-    """Upload an export archive (a .zip of the export folder) and start its preview.
+    """Upload an export archive and start its preview.
+
+    The zip is either the export folder or a ``calendar/`` folder of saved
+    web-calendar responses; the preview reads whichever it holds, and a zip
+    holding both is refused here.
 
     ``password`` opens a protected export (SimplePractice protects every one).
     It is used to unpack the archive and kept nowhere: not on the run, not in
@@ -356,7 +372,7 @@ async def start_import(
         upload = Path(spool) / "export.zip"
         size = await _spool_upload(file, upload)
         try:
-            ref = store.put(_schema(ctx), upload, password or None)
+            ref = store.put(_schema(ctx), upload, password or None, check=_one_layout)
         except ArchiveError as exc:
             raise BadRequestError(str(exc), code=exc.code) from exc
     run = new_run(
@@ -491,6 +507,13 @@ def undo_import(
     run = _run_or_404(run_id)
     if run.state != "applied":
         raise ConflictError("Only an applied import can be undone.", code="IMPORT_NOT_APPLIED")
+    if later_run_stands(get_db_session(), run):
+        # A later import builds on this one; it is undone first, so undo
+        # never has to untangle one run's landings from another's.
+        raise ConflictError(
+            "You applied another import after this one. Undo that one first.",
+            code="IMPORT_NOT_LATEST",
+        )
     applier = ArchiveApplier(
         session=get_db_session(),
         settings=get_settings(),
@@ -512,7 +535,11 @@ def undo_import(
         request,
         resource_type=ResourceType.IMPORT_RUN,
         resource_id=run.id,
-        changes={"removed": result["removed"], "kept": len(result["kept"])},
+        changes={
+            "removed": result["removed"],
+            "restored": result.get("restored", {}),
+            "kept": len(result["kept"]),
+        },
     )
     return _detail(run)
 
