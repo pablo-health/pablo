@@ -1,8 +1,11 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
- * Ask for a refill: pick a medication (or name one), optionally a
- * pharmacy, optionally a note.
+ * Ask for a refill: pick a medication (or name one), optionally how many
+ * days of it are left, optionally a pharmacy, optionally a note.
+ *
+ * Days left is a whole number from 0 (out today) up; anything else in the
+ * box is sent as no answer rather than blocking the request.
  *
  * The request names exactly one of a listed medication or a typed name —
  * the route rejects both or neither — so "Something else" is a choice in
@@ -23,6 +26,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import {
+  DAYS_LEFT_MAX,
   MEDICATION_TEXT_MAX,
   PATIENT_NOTE_MAX,
   PHARMACY_TEXT_MAX,
@@ -32,6 +36,7 @@ import {
 import { CRISIS_LINE } from "../messaging/ExpectationNotice"
 import {
   CANCEL,
+  DAYS_LEFT_LABEL,
   FORM_HEADING,
   MEDICATION_LEGEND,
   MEDICATION_NAME_LABEL,
@@ -59,6 +64,13 @@ function orNull(value: string): string | null {
   return trimmed ? trimmed : null
 }
 
+function daysOrNull(value: string): number | null {
+  const trimmed = value.trim()
+  if (!/^\d+$/.test(trimmed)) return null
+  const days = Number(trimmed)
+  return days <= DAYS_LEFT_MAX ? days : null
+}
+
 export function RefillRequestForm({
   medications,
   onSubmit,
@@ -69,6 +81,7 @@ export function RefillRequestForm({
   const hasList = medications.length > 0
   const [choice, setChoice] = useState<string | null>(null)
   const [medicationText, setMedicationText] = useState("")
+  const [daysLeft, setDaysLeft] = useState("")
   const [pharmacy, setPharmacy] = useState("")
   const [note, setNote] = useState("")
 
@@ -86,11 +99,13 @@ export function RefillRequestForm({
     try {
       await onSubmit({
         ...medication,
+        days_left: daysOrNull(daysLeft),
         pharmacy_text: orNull(pharmacy),
         patient_note: orNull(note),
       })
       setChoice(null)
       setMedicationText("")
+      setDaysLeft("")
       setPharmacy("")
       setNote("")
     } catch {
@@ -174,6 +189,23 @@ export function RefillRequestForm({
       ) : (
         nameInput
       )}
+
+      <div>
+        <Label htmlFor="portal-refills-days-left">{DAYS_LEFT_LABEL}</Label>
+        <Input
+          id="portal-refills-days-left"
+          data-testid="portal-refills-days-left"
+          type="number"
+          inputMode="numeric"
+          min={0}
+          max={DAYS_LEFT_MAX}
+          step={1}
+          value={daysLeft}
+          onChange={(event) => setDaysLeft(event.target.value)}
+          disabled={submitting}
+          className="mt-1 w-32"
+        />
+      </div>
 
       <div>
         <Label htmlFor="portal-refills-pharmacy">{PHARMACY_LABEL}</Label>

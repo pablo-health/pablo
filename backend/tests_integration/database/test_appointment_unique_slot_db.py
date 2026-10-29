@@ -26,13 +26,13 @@ from app.db import (
     arm_current_user_id,
     set_tenant_schema,
 )
-from app.models import Patient
 from app.repositories.postgres.appointment import PostgresAppointmentRepository
-from app.repositories.postgres.patient import PostgresPatientRepository
 from app.scheduling_engine.models.appointment import Appointment
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+
+from tests_integration.database.patient_rows import seed_patient_row
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -85,22 +85,6 @@ def _user() -> str:
     return str(uuid.uuid4())
 
 
-def _seed_patient(session: Session, user_id: str) -> str:
-    patient_id = str(uuid.uuid4())
-    now = datetime(2026, 1, 1, tzinfo=UTC)
-    PostgresPatientRepository(session).create(
-        Patient(
-            id=patient_id,
-            first_name="Pat",
-            last_name="Ient",
-            created_at=now,
-            updated_at=now,
-        ),
-        user_id,
-    )
-    return patient_id
-
-
 def _make_appointment(
     *,
     user_id: str,
@@ -129,7 +113,7 @@ def _make_appointment(
 def test_second_non_cancelled_appointment_at_same_slot_raises(session: Session) -> None:
     user_id = _user()
     _arm(session, user_id)
-    patient_id = _seed_patient(session, user_id)
+    patient_id = seed_patient_row(session, user_id)
     repo = PostgresAppointmentRepository(session)
     repo.create(
         _make_appointment(
@@ -153,7 +137,7 @@ def test_pending_hold_blocks_the_same_slot_too(session: Session) -> None:
     """A PENDING hold occupies its slot just as hard as a CONFIRMED booking."""
     user_id = _user()
     _arm(session, user_id)
-    patient_id = _seed_patient(session, user_id)
+    patient_id = seed_patient_row(session, user_id)
     repo = PostgresAppointmentRepository(session)
     repo.create(
         _make_appointment(
@@ -181,7 +165,7 @@ def test_pending_hold_blocks_the_same_slot_too(session: Session) -> None:
 def test_cancelled_appointment_does_not_block_the_slot(session: Session) -> None:
     user_id = _user()
     _arm(session, user_id)
-    patient_id = _seed_patient(session, user_id)
+    patient_id = seed_patient_row(session, user_id)
     repo = PostgresAppointmentRepository(session)
     repo.create(
         _make_appointment(
@@ -205,7 +189,7 @@ def test_cancelled_appointment_does_not_block_the_slot(session: Session) -> None
 def test_different_user_at_the_same_start_does_not_collide(session: Session) -> None:
     user_a, user_b = _user(), _user()
     _arm(session, user_a)
-    patient_a = _seed_patient(session, user_a)
+    patient_a = seed_patient_row(session, user_a)
     PostgresAppointmentRepository(session).create(
         _make_appointment(
             user_id=user_a, patient_id=patient_a, start=_NOW, end=_NOW + timedelta(hours=1)
@@ -214,7 +198,7 @@ def test_different_user_at_the_same_start_does_not_collide(session: Session) -> 
     session.commit()
 
     _arm(session, user_b)
-    patient_b = _seed_patient(session, user_b)
+    patient_b = seed_patient_row(session, user_b)
     PostgresAppointmentRepository(session).create(
         _make_appointment(
             user_id=user_b, patient_id=patient_b, start=_NOW, end=_NOW + timedelta(hours=1)

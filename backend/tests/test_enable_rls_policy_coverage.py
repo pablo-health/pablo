@@ -232,7 +232,7 @@ def test_appointments_gets_both_the_clinician_and_patient_arms() -> None:
 
     Both arms, and no patient write arm. The column set includes
     ``patient_id`` because the real table has it — and because
-    ``_apply_patient_principal_policies`` refuses to build a policy
+    ``_patient_principal_policy_statements`` refuses to build a policy
     against a missing column rather than shipping one that matches
     nothing.
     """
@@ -297,7 +297,7 @@ def _columns_for_rls(table: object) -> set[str]:
     of its own and is scoped through its parent conversation.
 
     Intersecting to the three would therefore make this fake disagree with
-    production, where ``_apply_patient_principal_policies`` is handed the
+    production, where ``_patient_principal_policy_statements`` is handed the
     table's FULL column set (its docstring says so, and says why). The
     disagreement fails in the direction that wastes the most time: the
     function raises "registered on X but that column is not present", the

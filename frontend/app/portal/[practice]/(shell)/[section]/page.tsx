@@ -7,7 +7,9 @@
  *
  * The shell is the layout above; which ids exist is the slot registry's
  * business, which lives in the browser — so an unknown id is sent back to
- * Home by the client component, not rejected here.
+ * Home by the client component, not rejected here. On a portal host the
+ * proxy answers an unknown id 404 before it gets this far
+ * (`PORTAL_PAGES` in `@/lib/portal-host/routing`).
  *
  * `recover` is not a section: the static `recover/` route beside the
  * `(shell)` group wins over this dynamic segment.

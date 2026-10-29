@@ -17,6 +17,7 @@ export function testRuntimeConfig(overrides: Partial<RuntimeConfig> = {}): Runti
     showVerificationBadges: false,
     introVideoUrl: "",
     passkeysEnabled: false,
+    googleSignInEnabled: true,
     resubscribeUrl: "",
     publicBookingEnabled: false,
     googleCalendarEnabled: false,

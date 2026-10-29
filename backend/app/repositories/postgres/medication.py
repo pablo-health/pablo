@@ -22,6 +22,8 @@ from ._grants import live_grant
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
+    from ..row import Row
+
 
 _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindparams(
     bindparam("pid", type_=Uuid(as_uuid=False)),
@@ -29,7 +31,7 @@ _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindpara
 )
 
 
-def _row_to_dict(row: PatientMedicationRow) -> dict[str, object]:
+def _row_to_dict(row: PatientMedicationRow) -> Row:
     return {
         "id": row.id,
         "patient_id": row.patient_id,
@@ -42,6 +44,8 @@ def _row_to_dict(row: PatientMedicationRow) -> dict[str, object]:
         "stopped_at": row.stopped_at,
         "stop_reason": row.stop_reason,
         "notes": row.notes,
+        "controlled": row.controlled,
+        "interruption_risk": row.interruption_risk,
         "source_note_id": row.source_note_id,
         "created_by": row.created_by,
         "created_at": row.created_at,
@@ -65,7 +69,7 @@ class PostgresMedicationRepository(MedicationRepository):
 
     # --- reads ---
 
-    def get(self, medication_id: str, user_id: str) -> dict[str, object] | None:
+    def get(self, medication_id: str, user_id: str) -> Row | None:
         """Fetch by id with access check, or ``None`` if absent/denied."""
         row = self._session.execute(
             select(PatientMedicationRow)
@@ -86,7 +90,7 @@ class PostgresMedicationRepository(MedicationRepository):
         user_id: str,
         *,
         status: str | None = None,
-    ) -> list[dict[str, object]]:
+    ) -> list[Row]:
         if not self._has_access(patient_id, user_id):
             return []
         query = select(PatientMedicationRow).where(
@@ -104,7 +108,7 @@ class PostgresMedicationRepository(MedicationRepository):
 
     # --- writes ---
 
-    def create(self, row: dict[str, object], user_id: str) -> dict[str, object]:
+    def create(self, row: Row, user_id: str) -> Row:
         patient_id = str(row["patient_id"])
         if not self._has_access(patient_id, user_id):
             raise PatientMedicationAccessDeniedError(patient_id, user_id)
@@ -113,24 +117,26 @@ class PostgresMedicationRepository(MedicationRepository):
             patient_id=patient_id,
             drug_name=str(row["drug_name"]),
             dose=str(row["dose"]),
-            frequency=row.get("frequency"),  # type: ignore[arg-type]
-            category=row.get("category"),  # type: ignore[arg-type]
+            frequency=row.get("frequency"),
+            category=row.get("category"),
             status=str(row["status"]),
-            started_at=row.get("started_at"),  # type: ignore[arg-type]
-            stopped_at=row.get("stopped_at"),  # type: ignore[arg-type]
-            stop_reason=row.get("stop_reason"),  # type: ignore[arg-type]
-            notes=row.get("notes"),  # type: ignore[arg-type]
-            source_note_id=row.get("source_note_id"),  # type: ignore[arg-type]
+            started_at=row.get("started_at"),
+            stopped_at=row.get("stopped_at"),
+            stop_reason=row.get("stop_reason"),
+            notes=row.get("notes"),
+            controlled=row.get("controlled"),
+            interruption_risk=row.get("interruption_risk"),
+            source_note_id=row.get("source_note_id"),
             created_by=str(row["created_by"]),
-            created_at=row["created_at"],  # type: ignore[arg-type]
-            updated_at=row["updated_at"],  # type: ignore[arg-type]
-            deleted_at=row.get("deleted_at"),  # type: ignore[arg-type]
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            deleted_at=row.get("deleted_at"),
         )
         self._session.add(orm_row)
         self._session.flush()
         return _row_to_dict(orm_row)
 
-    def update(self, row: dict[str, object], user_id: str) -> dict[str, object]:
+    def update(self, row: Row, user_id: str) -> Row:
         patient_id = str(row["patient_id"])
         if not self._has_access(patient_id, user_id):
             raise PatientMedicationAccessDeniedError(patient_id, user_id)
@@ -139,16 +145,18 @@ class PostgresMedicationRepository(MedicationRepository):
             return self.create(row, user_id)
         orm_row.drug_name = str(row["drug_name"])
         orm_row.dose = str(row["dose"])
-        orm_row.frequency = row.get("frequency")  # type: ignore[assignment]
-        orm_row.category = row.get("category")  # type: ignore[assignment]
+        orm_row.frequency = row.get("frequency")
+        orm_row.category = row.get("category")
         orm_row.status = str(row["status"])
-        orm_row.started_at = row.get("started_at")  # type: ignore[assignment]
-        orm_row.stopped_at = row.get("stopped_at")  # type: ignore[assignment]
-        orm_row.stop_reason = row.get("stop_reason")  # type: ignore[assignment]
-        orm_row.notes = row.get("notes")  # type: ignore[assignment]
-        orm_row.source_note_id = row.get("source_note_id")  # type: ignore[assignment]
-        orm_row.updated_at = row["updated_at"]  # type: ignore[assignment]
-        orm_row.deleted_at = row.get("deleted_at")  # type: ignore[assignment]
+        orm_row.started_at = row.get("started_at")
+        orm_row.stopped_at = row.get("stopped_at")
+        orm_row.stop_reason = row.get("stop_reason")
+        orm_row.notes = row.get("notes")
+        orm_row.controlled = row.get("controlled")
+        orm_row.interruption_risk = row.get("interruption_risk")
+        orm_row.source_note_id = row.get("source_note_id")
+        orm_row.updated_at = row["updated_at"]
+        orm_row.deleted_at = row.get("deleted_at")
         self._session.flush()
         return _row_to_dict(orm_row)
 

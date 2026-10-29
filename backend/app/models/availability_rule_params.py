@@ -175,6 +175,55 @@ class SessionDefaultsParams(_RuleParams):
     alignment: Literal["hour", "half_hour"] | None = None
 
 
+class FloatingBlockException(_RuleParams):
+    """One date's override of a floating block: pinned to a start, or skipped."""
+
+    start: TimeOfDay | None = None
+    skip: Literal[True] | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one(self) -> FloatingBlockException:
+        if (self.start is None) == (self.skip is None):
+            raise ValueError("an exception either pins a start or skips the day")
+        return self
+
+
+class FloatingBlockParams(_RuleParams):
+    """Keep ``duration_minutes`` free somewhere inside a window, on these days.
+
+    "An hour for lunch, somewhere between 11:30 and 2": unlike a
+    ``block_time_range`` the time is not fixed. Each day the block settles
+    into the earliest free stretch of the window, and a slot is not offered
+    when booking it would leave no free stretch of that length. ``label`` is
+    what the calendar and the booking warning call it. ``exceptions`` pins
+    or skips the block on single dates.
+    """
+
+    duration_minutes: Annotated[StrictInt, Field(ge=5, le=24 * 60)]
+    window_start: TimeOfDay
+    window_end: TimeOfDay
+    days_of_week: Annotated[list[DayOfWeek], Field(min_length=1, max_length=7)]
+    label: Annotated[str, Field(min_length=1, max_length=60)]
+    exceptions: dict[CalendarDate, FloatingBlockException] | None = None
+
+    @model_validator(mode="after")
+    def _fits_its_window(self) -> FloatingBlockParams:
+        if self.window_end <= self.window_start:
+            raise ValueError("window_end must be after window_start")
+        start_h, start_m = (int(part) for part in self.window_start.split(":"))
+        end_h, end_m = (int(part) for part in self.window_end.split(":"))
+        if (end_h * 60 + end_m) - (start_h * 60 + start_m) < self.duration_minutes:
+            raise ValueError("the window must be at least as long as duration_minutes")
+        if len(set(self.days_of_week)) != len(self.days_of_week):
+            raise ValueError("days_of_week must not repeat a day")
+        for exception in (self.exceptions or {}).values():
+            if exception.start is not None:
+                pin_h, pin_m = (int(part) for part in exception.start.split(":"))
+                if pin_h * 60 + pin_m + self.duration_minutes > 24 * 60:
+                    raise ValueError("a pinned start must leave the block inside the day")
+        return self
+
+
 class _TaggedRule(BaseModel):
     """One member of the tagged union: a rule type and the params it takes.
 
@@ -245,6 +294,11 @@ class SessionDefaultsRule(_TaggedRule):
     params: SessionDefaultsParams
 
 
+class FloatingBlockRule(_TaggedRule):
+    rule_type: Literal[RuleType.FLOATING_BLOCK]
+    params: FloatingBlockParams
+
+
 TaggedAvailabilityRule = Annotated[
     WorkingHoursRule
     | BlockDayOfWeekRule
@@ -255,7 +309,8 @@ TaggedAvailabilityRule = Annotated[
     | MaxPerWeekRule
     | BufferBeforeRule
     | BufferAfterRule
-    | SessionDefaultsRule,
+    | SessionDefaultsRule
+    | FloatingBlockRule,
     Field(discriminator="rule_type"),
 ]
 """The create-rule body: a rule type, its enforcement, and its params.

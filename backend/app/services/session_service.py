@@ -11,6 +11,7 @@ through to it for session-scoped endpoints.
 
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -172,6 +173,16 @@ class SessionInTerminalStatusError(ConflictError):
             f"Cannot modify session in terminal status '{status}'",
             {"status": status},
         )
+
+
+@dataclass(frozen=True, slots=True)
+class RatingUpdate:
+    """A finalized session after its note's quality rating changed."""
+
+    session: TherapySession
+    patient: Patient
+    note: Note
+    old_rating: int | None
 
 
 # Valid status transitions (state machine)
@@ -725,10 +736,8 @@ class SessionService:
         session_id: str,
         user_id: str,
         request: UpdateSessionRatingRequest,
-    ) -> tuple[TherapySession, Patient, Note, int | None]:
+    ) -> RatingUpdate:
         """Update quality rating on a finalized session's note.
-
-        Returns ``(session, patient, note, old_rating)``.
 
         Raises:
             SessionNotFoundError: If session doesn't exist.
@@ -763,7 +772,7 @@ class SessionService:
             raise InvalidSessionStatusError(session.status, "finalized") from exc
 
         patient = self._get_patient_or_raise(session.patient_id, user_id)
-        return session, patient, note, old_rating
+        return RatingUpdate(session=session, patient=patient, note=note, old_rating=old_rating)
 
     def update_soap_note_edits(
         self,

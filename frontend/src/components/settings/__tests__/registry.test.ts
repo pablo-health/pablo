@@ -30,6 +30,7 @@ describe("settings registry merge", () => {
       "profile",
       "appearance",
       "inbox",
+      "away",
       "security",
       "activity",
     ])
@@ -42,6 +43,7 @@ describe("settings registry merge", () => {
     expect(practice?.items.map((item) => item.id)).toEqual([
       "availability",
       "scheduling",
+      "waitlist",
       "calendars",
       "sessions",
       "note-types",
@@ -114,6 +116,7 @@ describe("settings registry merge", () => {
       "profile",
       "appearance",
       "inbox",
+      "away",
       "security",
       "activity",
       "notifications",

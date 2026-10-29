@@ -87,6 +87,7 @@ def migrated_schema(engine: Engine) -> Iterator[str]:
 
     module = _load_migration("b2d6f83a4c19_audit_logs_actor_split_policy.py")
     owner_read = _load_migration("a7e3c5d19b42_audit_logs_owner_reads_client_activity.py")
+    coverage_read = _load_migration("e7b3d9a2c4f1_coverage_grants.py")
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
@@ -107,6 +108,15 @@ def migrated_schema(engine: Engine) -> Iterator[str]:
             text(
                 f"CREATE POLICY {owner_read.POLICY_NAME} ON {schema}.audit_logs "
                 f"FOR SELECT USING ({owner_read.owner_client_read_using(schema)})"
+            )
+        )
+        conn.execute(
+            text(f"DROP POLICY IF EXISTS {coverage_read.POLICY_NAME} ON {schema}.audit_logs")
+        )
+        conn.execute(
+            text(
+                f"CREATE POLICY {coverage_read.POLICY_NAME} ON {schema}.audit_logs "
+                f"FOR SELECT USING ({coverage_read.coverage_read_using(schema)})"
             )
         )
     yield schema
@@ -211,15 +221,18 @@ class TestBothProvisioningPathsAgree:
             by_name = {p["policyname"]: p for p in _policies(engine, schema)}
             assert sorted(by_name) == [
                 "rls_audit_actor_access",
+                "rls_audit_coverage_read",
                 "rls_audit_owner_client_read",
                 "rls_audit_purge_delete",
                 "rls_audit_purge_select",
             ], schema
             assert by_name["rls_audit_actor_access"]["cmd"] == "ALL", schema
-            # Reads only: whatever the owner may see, writing a row in
-            # someone else's name stays with the actor policy.
-            assert by_name["rls_audit_owner_client_read"]["cmd"] == "SELECT", schema
-            assert by_name["rls_audit_owner_client_read"]["with_check"] is None, schema
+            # Reads only: whatever the owner, or a clinician back from an
+            # away period, may see, writing a row in someone else's name
+            # stays with the actor policy.
+            for widening in ("rls_audit_owner_client_read", "rls_audit_coverage_read"):
+                assert by_name[widening]["cmd"] == "SELECT", schema
+                assert by_name[widening]["with_check"] is None, schema
             assert by_name["rls_audit_purge_delete"]["cmd"] == "DELETE", schema
             assert by_name["rls_audit_purge_select"]["cmd"] == "SELECT", schema
             for policy in by_name.values():
@@ -321,6 +334,7 @@ class TestWhereThePolicyIsActuallyInForce:
         assert flags["relforcerowsecurity"] is False
         assert sorted(p["policyname"] for p in _policies(engine, "practice")) == [
             "rls_audit_actor_access",
+            "rls_audit_coverage_read",
             "rls_audit_owner_client_read",
             "rls_audit_purge_delete",
             "rls_audit_purge_select",

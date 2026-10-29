@@ -10,6 +10,9 @@ export default defineConfig({
     // `// @vitest-environment jsdom` pragma — see
     // src/lib/__tests__/dom-environment.test.ts.
     environment: "happy-dom",
+    // Every Date in the suite reads the same clock whatever zone the machine
+    // running it is in; a spec about a zone names it.
+    env: { TZ: "UTC" },
     setupFiles: ["./vitest.setup.ts"],
     globals: true,
     exclude: ["**/node_modules/**", "**/e2e/**"],

@@ -373,7 +373,7 @@ def validate_upload(value: Mapping[str, object], config: ItemConfig) -> None:
     if isinstance(config, InsuranceCardConfig):
         validate_insurance_card(value, config)
     else:
-        validate_document_request(value, config)  # type: ignore[arg-type]
+        validate_document_request(value, config)  # type: ignore[arg-type]  # ItemConfig is not narrowed by the insurance-card check; the only other upload kind is a document request
 
 
 # ---------------------------------------------------------------------------

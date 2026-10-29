@@ -451,6 +451,130 @@ class TestDecision:
         assert status == "needs_visit"
 
 
+class TestRunOutAndRisk:
+    """The stored run-out answer, the fill-math estimate and both flags, on real rows.
+
+    A patient of its own, so the counts other classes assert are untouched.
+    The prescription is written clinician-side, as the prescribing flow
+    writes it, and read on the clinician's session: the patient principal
+    cannot read prescriptions, which is why the estimate is made there.
+    """
+
+    def test_template_has_the_medication_flags(self, engine: Engine, tenant_schema: str) -> None:
+        from app.db.models import PatientMedicationRow  # noqa: PLC0415
+
+        with engine.connect() as conn:
+            columns = set(
+                conn.execute(
+                    text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_schema = :s AND table_name = 'patient_medications'"
+                    ),
+                    {"s": tenant_schema},
+                )
+                .scalars()
+                .all()
+            )
+        assert columns == {c.name for c in PatientMedicationRow.__table__.columns}
+        assert {"controlled", "interruption_risk"} <= columns
+
+    def test_the_queue_carries_run_out_and_flags(self, engine: Engine, tenant_schema: str) -> None:
+        from app.models.refill_request import RefillRisk  # noqa: PLC0415
+
+        patient_id = str(uuid.uuid4())
+        lithium, stimulant = str(uuid.uuid4()), str(uuid.uuid4())
+        encounter = str(uuid.uuid4())
+        seed = _as_clinician(engine, tenant_schema, _TREATING_CLINICIAN)
+        try:
+            seed.execute(
+                text(
+                    "INSERT INTO patients (id, first_name, last_name, first_name_lower, "
+                    "last_name_lower, status, session_count, created_at, updated_at) "
+                    "VALUES (CAST(:pid AS uuid), 'Rue', 'Risk', 'rue', 'risk', "
+                    "'active', 0, now(), now())"
+                ),
+                {"pid": patient_id},
+            )
+            seed.execute(
+                text(
+                    "INSERT INTO patient_clinicians (patient_id, user_id, granted_by) "
+                    "VALUES (CAST(:pid AS uuid), :u, :u)"
+                ),
+                {"pid": patient_id, "u": _TREATING_CLINICIAN},
+            )
+            for med_id, drug in ((lithium, "Lithium"), (stimulant, "Methylphenidate")):
+                seed.execute(
+                    text(
+                        "INSERT INTO patient_medications (id, patient_id, drug_name, dose, "
+                        "status, created_by, created_at, updated_at) "
+                        "VALUES (CAST(:id AS uuid), CAST(:pid AS uuid), :drug, '10 mg', "
+                        "'active', CAST(:u AS uuid), now(), now())"
+                    ),
+                    {"id": med_id, "pid": patient_id, "drug": drug, "u": _TREATING_CLINICIAN},
+                )
+            # Signed Sep 1 for 30 days with one refill: the supply lasts to Oct 31.
+            seed.execute(
+                text(
+                    "INSERT INTO prescribing_encounters (id, patient_id, prescriber_user_id, "
+                    "status, finalized_at, created_by, created_at, updated_at) "
+                    "VALUES (CAST(:id AS uuid), CAST(:pid AS uuid), CAST(:u AS uuid), "
+                    "'finalized', '2026-09-01T12:00:00Z', CAST(:u AS uuid), now(), now())"
+                ),
+                {"id": encounter, "pid": patient_id, "u": _TREATING_CLINICIAN},
+            )
+            seed.execute(
+                text(
+                    "INSERT INTO prescriptions (id, encounter_id, patient_id, drug_name, "
+                    "schedule, drug_class, days_supply, refills, created_by, created_at, "
+                    "updated_at) VALUES (gen_random_uuid(), CAST(:eid AS uuid), "
+                    "CAST(:pid AS uuid), 'Methylphenidate', 'II', 'stimulant', 30, 1, "
+                    "CAST(:u AS uuid), now(), now())"
+                ),
+                {"eid": encounter, "pid": patient_id, "u": _TREATING_CLINICIAN},
+            )
+            seed.commit()
+        finally:
+            seed.close()
+
+        writer = _as_patient(engine, tenant_schema, patient_id)
+        asked: dict[str, str] = {}
+        try:
+            for med_id, run_out in ((lithium, "2026-10-22"), (stimulant, None)):
+                request_id = str(uuid.uuid4())
+                writer.execute(
+                    text(
+                        "INSERT INTO refill_requests (id, patient_id, medication_id, "
+                        "medication_text, status, run_out_date, created_at, updated_at) "
+                        "VALUES (CAST(:id AS uuid), CAST(:pid AS uuid), CAST(:mid AS uuid), "
+                        "'asked', 'requested', CAST(:run_out AS date), now(), now())"
+                    ),
+                    {"id": request_id, "pid": patient_id, "mid": med_id, "run_out": run_out},
+                )
+                asked[med_id] = request_id
+            writer.commit()
+        finally:
+            writer.close()
+
+        with _clinician_repository(tenant_schema, _TREATING_CLINICIAN) as repo:
+            risks = {e.request.id: e.risk for e in repo.list_queue(_TREATING_CLINICIAN, "pending")}
+            one = repo.get_entry(asked[lithium], _TREATING_CLINICIAN)
+
+        assert risks[asked[lithium]] == RefillRisk(
+            run_out_date=datetime(2026, 10, 22, tzinfo=UTC).date(),
+            run_out_source="client",
+            controlled=False,
+            interruption_risk=True,
+        )
+        assert risks[asked[stimulant]] == RefillRisk(
+            run_out_date=datetime(2026, 10, 31, tzinfo=UTC).date(),
+            run_out_source="prescription",
+            controlled=True,
+            interruption_risk=False,
+        )
+        assert one is not None
+        assert one.risk == risks[asked[lithium]]
+
+
 class TestPatientDeletion:
     def test_their_requests_go_with_the_chart(self, engine: Engine, tenant_schema: str) -> None:
         patient_id = str(uuid.uuid4())

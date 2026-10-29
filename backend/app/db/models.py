@@ -52,6 +52,7 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -518,7 +519,9 @@ class PatientClinicianRow(Base):
     clinician(s) can read/write this patient's chart". v1 ships with
     one row per patient (``role = 'primary'``, backfilled from
     ``patients.user_id``); co-treating, supervision, and coverage
-    rows are inserted as the corresponding workflows land.
+    rows are inserted as the corresponding workflows land. ``covering``
+    rows are written by :mod:`app.away.coverage` when a colleague accepts
+    to cover an away period.
 
     The CHECK on ``role`` mirrors :class:`ClinicianRole` — the
     module-level assertion below fails the import if they drift.
@@ -544,7 +547,18 @@ class PatientClinicianRow(Base):
         server_default=text("now()"),
     )
     granted_by: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    #: When the grant takes effect; ``NULL`` means it already has. A grant
+    #: gives access only from ``starts_at`` until ``expires_at`` (see
+    #: ``has_patient_access``), so coverage booked ahead grants nothing early.
+    starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: For a ``covering`` grant, the away period it covers (see
+    #: :mod:`app.away.coverage`). ``NULL`` for every other grant.
+    away_period_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("clinician_away_periods.id", ondelete="SET NULL"),
+        index=True,
+    )
 
     __table_args__ = (
         CheckConstraint(
@@ -1556,7 +1570,13 @@ class PatientMessageRow(Base):
 
     ``sender`` names who wrote the message, not which credential posted it:
     ``'practice'`` is for a message the practice itself sends without a
-    clinician composing it. Nothing in the engine writes that value today.
+    clinician composing it — today, the out-of-office acknowledgment.
+
+    ``away_period_id`` is set only on that acknowledgment and names the
+    :class:`ClinicianAwayPeriodRow` it was sent for. The partial unique index
+    on ``(thread_id, away_period_id)`` is what makes "one acknowledgment per
+    thread per period" a fact of the database rather than of the route: two
+    client messages arriving at once both try, and one insert does nothing.
 
     ``read_at`` is set when the *patient* reads a message somebody else sent
     them. It stays NULL on the patient's own messages.
@@ -1571,11 +1591,22 @@ class PatientMessageRow(Base):
     body: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    away_period_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("clinician_away_periods.id", ondelete="SET NULL"),
+    )
 
     __table_args__ = (
         CheckConstraint(
             "sender IN ('patient','clinician','practice')",
             name="ck_patient_messages_sender",
+        ),
+        Index(
+            "uq_patient_messages_away_ack",
+            "thread_id",
+            "away_period_id",
+            unique=True,
+            postgresql_where=text("away_period_id IS NOT NULL"),
         ),
         ForeignKeyConstraint(
             ["thread_id", "patient_id"],
@@ -1842,6 +1873,12 @@ class PatientMedicationRow(Base):
     source_note_id: Mapped[str | None] = mapped_column(
         Uuid(as_uuid=False), ForeignKey("notes.id", ondelete="SET NULL")
     )
+    # Two clinical calls the clinician may make on the row; NULL means "use
+    # the default" (``app.models.refill_risk``). ``controlled`` is read only
+    # when no prescription is on file, whose schedule says it otherwise.
+    # ``interruption_risk`` overrides the engine's cited default list either way.
+    controlled: Mapped[bool | None] = mapped_column(Boolean)
+    interruption_risk: Mapped[bool | None] = mapped_column(Boolean)
     created_by: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -1910,6 +1947,68 @@ class PatientProblemRow(Base):
         CheckConstraint(
             "status IN ('active', 'rule_out', 'resolved')",
             name="ck_patient_problems_status",
+        ),
+    )
+
+
+class PatientPreferenceRow(Base):
+    """One thing to know about how to work with a client (``app.preferences``).
+
+    ``kind`` names a registered kind (``app.preferences.kinds``), which decides
+    what ``value``, ``text`` and ``strength`` may hold; ``domain`` is copied
+    from the kind so the chart can group without the registry. Scheduling kinds
+    keep a structured ``value`` that scheduling code reads as data. ``text`` is
+    the clinician's own words. ``stated_at`` is when it was last said, which
+    the chart shows; ``source_ref`` is the row or turn it came from, when it
+    came from one.
+
+    Retiring keeps the row (``retired_at``, ``retired_by``); rows go only with
+    the client's record. Access is governed by ``has_patient_access``, like
+    ``patient_problems``.
+    """
+
+    __tablename__ = "patient_preferences"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    domain: Mapped[str] = mapped_column(String(32), nullable=False)
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    value: Mapped[dict | None] = mapped_column(JSONB)
+    text: Mapped[str | None] = mapped_column(String(280))
+    strength: Mapped[str | None] = mapped_column(String(8))
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_ref: Mapped[str | None] = mapped_column(String(128))
+    stated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    created_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "strength IS NULL OR strength IN ('hard', 'soft')",
+            name="ck_patient_preferences_strength",
+        ),
+        CheckConstraint(
+            "source IN ('clinician', 'assistant', 'learned', 'intake', 'migrated')",
+            name="ck_patient_preferences_source",
+        ),
+        CheckConstraint(
+            "value IS NOT NULL OR text IS NOT NULL",
+            name="ck_patient_preferences_has_content",
+        ),
+        Index(
+            "ix_patient_preferences_active",
+            "patient_id",
+            "kind",
+            # ``text`` is a column of this table, so the class body shadows the function.
+            postgresql_where=sql_text("retired_at IS NULL"),
         ),
     )
 
@@ -2145,6 +2244,11 @@ class RefillRequestRow(Base):
     #: The practice's own target, never on the patient surface. ``None`` on
     #: requests from before the target existed; those sort by ``created_at``.
     due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: The day the client expects to run out, from their own answer to "how
+    #: many days do you have left?" when they asked. ``None`` when they left
+    #: it blank; the practice's read may then estimate it from a prescription
+    #: on file (``app.models.refill_risk``), which is never stored here.
+    run_out_date: Mapped[date | None] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -2468,6 +2572,12 @@ class AppointmentRow(Base):
     # means "moved"; NULL on a cancelled row means "cancelled outright". No
     # foreign key, matching ``recurring_appointment_id``.
     superseded_by_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False), nullable=True)
+    # A cancelled series occurrence the series carries on past ("skip this
+    # week"), as opposed to an ordinary cancellation. Set only alongside the
+    # cancellation record and cleared with it.
+    skipped: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
     # The caller's attestation that it was told the change was late and went
     # ahead. Load-bearing because the API REFUSES a late change without it, so
     # a client cannot reach this state without having been handed the warning
@@ -2602,6 +2712,130 @@ class AvailabilityRuleRow(Base):
     )
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class WaitlistEntryRow(Base):
+    """A client waiting for a better or more regular time with a clinician.
+
+    One open entry per client per clinician (``filled_at IS NULL``). The
+    clinician's list is ordered by ``position``, dense from 1 among open
+    entries, and the order is the clinician's: nothing re-sorts it.
+
+    ``days`` are weekday codes (``mon`` .. ``sun``) and ``times`` parts of the
+    day (``morning`` / ``afternoon`` / ``evening``); an entry wants any of its
+    days at any of its times. ``paused`` keeps a client on the list without
+    being offered anything; ``no_auto_offer`` means a person decides each
+    offer. ``filled_at`` marks an entry whose wait is over.
+
+    It carries ``patient_id``, so ``enable_rls_on_schema`` gives it the
+    ``has_patient_access`` policy.
+    """
+
+    __tablename__ = "waitlist_entries"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    #: The clinician whose waitlist this is.
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    days: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    times: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    modality: Mapped[str] = mapped_column(String(16), nullable=False)
+    session_type: Mapped[str | None] = mapped_column(String(30))
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    paused: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    no_auto_offer: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    filled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "modality IN ('in_person','telehealth','either')",
+            name="ck_waitlist_entries_modality",
+        ),
+        Index("ix_waitlist_entries_user_position", "user_id", "position"),
+        Index(
+            "uq_waitlist_entries_open",
+            "user_id",
+            "patient_id",
+            unique=True,
+            postgresql_where=text("filled_at IS NULL"),
+        ),
+    )
+
+
+class ClinicianAwayPeriodRow(Base):
+    """Dates a clinician is away, and what their clients are told meanwhile.
+
+    ``start_date`` and ``end_date`` are the first and last days away, both
+    inclusive, on the clinician's own calendar. ``return_date`` is the day
+    they are back; it is stored rather than derived because the day after
+    the last day away is often a weekend.
+
+    ``covering_user_id`` is an optional colleague in the same practice, asked
+    to cover. ``coverage_status`` is where that request stands: ``requested``
+    until the colleague answers, then ``accepted`` or ``declined``; ``NULL``
+    exactly when nobody is named. Naming a colleague grants nothing. Only
+    their acceptance does, as ``covering`` grants on the away clinician's
+    clients for the away dates (see :mod:`app.away.coverage`).
+
+    ``acknowledgment_text`` is the text the clinician reviewed, and the only
+    words an acknowledgment carries besides the fixed safety lines appended
+    after it (see :mod:`app.away.text`). ``acknowledgment_enabled`` turns the
+    acknowledgment off for this period without losing the dates.
+
+    ``ended_at`` is set when the clinician ends the period early; an ended
+    period is never active again. Periods are not deleted.
+
+    Practice data rather than a client's: it names no patient, and colleagues
+    and clients of the practice need to know who is away, so its isolation
+    boundary is the tenant schema (see ``_CORE_NOT_ROW_SCOPED``). Only the
+    clinician it belongs to changes it; the routes enforce that.
+    """
+
+    __tablename__ = "clinician_away_periods"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    #: The clinician who is away.
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    return_date: Mapped[date] = mapped_column(Date, nullable=False)
+    covering_user_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    coverage_status: Mapped[str | None] = mapped_column(String(10))
+    coverage_responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    acknowledgment_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true"), default=True
+    )
+    acknowledgment_text: Mapped[str] = mapped_column(Text, nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("end_date >= start_date", name="ck_clinician_away_periods_dates"),
+        CheckConstraint("return_date > end_date", name="ck_clinician_away_periods_return"),
+        CheckConstraint(
+            "coverage_status IN ('requested', 'accepted', 'declined')",
+            name="ck_clinician_away_periods_coverage_status",
+        ),
+        CheckConstraint(
+            "(covering_user_id IS NULL) = (coverage_status IS NULL)",
+            name="ck_clinician_away_periods_coverage_named",
+        ),
+        Index("ix_clinician_away_periods_user_dates", "user_id", "start_date", "end_date"),
+        Index("ix_clinician_away_periods_covering_user", "covering_user_id"),
+    )
 
 
 class AppointmentTypeRow(Base):

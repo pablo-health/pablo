@@ -115,11 +115,11 @@ def other_practice(engine: Engine) -> Iterator[SimpleNamespace]:
 @pytest.fixture(autouse=True)
 def _fresh_memo() -> Iterator[None]:
     """Each test starts as a freshly started instance would."""
-    from app.auth.sign_in_audit import forget_all  # noqa: PLC0415
+    from app.auth.sign_in_audit import _memo  # noqa: PLC0415
 
-    forget_all()
+    _memo.clear()
     yield
-    forget_all()
+    _memo.clear()
 
 
 @contextmanager
@@ -194,8 +194,20 @@ def _check_status(app: FastAPI, uid: str) -> tuple[int, Any]:
     return response.status_code, response.json()
 
 
-def _request_as(
-    app: FastAPI, uid: str, email: str, *, auth_time: int, issued_at: int | None = None
+_PASSWORD = {"sign_in_provider": "password", "sign_in_second_factor": "totp"}
+
+
+def _request_as(  # noqa: PLR0913 -- the token is the thing each test varies
+    app: FastAPI,
+    uid: str,
+    email: str,
+    *,
+    auth_time: int,
+    issued_at: int | None = None,
+    firebase: dict[str, Any] | None = None,
+    extra_claims: dict[str, Any] | None = None,
+    user_agent: str = _USER_AGENT,
+    extra_headers: dict[str, str] | None = None,
 ) -> tuple[int, Any]:
     """One authenticated request, with a token for *uid* from the sign-in at *auth_time*.
 
@@ -209,6 +221,7 @@ def _request_as(
         provider="firebase",
         subject_id=uid,
         email=email,
+        email_verified=True,
         mfa_satisfied=True,
         claims={
             "uid": uid,
@@ -216,7 +229,8 @@ def _request_as(
             "email": email,
             "iat": issued_at or auth_time,
             "auth_time": auth_time,
-            "firebase": {"sign_in_provider": "password", "sign_in_second_factor": "totp"},
+            "firebase": firebase or _PASSWORD,
+            **(extra_claims or {}),
         },
     )
     with (
@@ -225,9 +239,56 @@ def _request_as(
     ):
         response = client.get(
             _ME_STATUS,
-            headers={"Authorization": "Bearer test-token", "User-Agent": _USER_AGENT},
+            headers={
+                "Authorization": "Bearer test-token",
+                "User-Agent": user_agent,
+                **(extra_headers or {}),
+            },
         )
     return response.status_code, response.json()
+
+
+def _request_from_web_app_server(  # noqa: PLR0913 -- the browser token it was minted from
+    app: FastAPI,
+    uid: str,
+    email: str,
+    *,
+    browser_firebase: dict[str, Any],
+    browser_claims: dict[str, Any],
+    exchanged_at: int,
+) -> tuple[int, Any]:
+    """A request the web app's server makes for a page it renders.
+
+    Its token is minted from the browser's by a custom-token exchange: a
+    ``custom`` provider, the browser's provider as ``source_sign_in_provider``,
+    the browser's custom claims copied, and the exchange's own ``auth_time``.
+    """
+    return _request_as(
+        app,
+        uid,
+        email,
+        auth_time=exchanged_at,
+        firebase={"sign_in_provider": "custom"},
+        extra_claims={
+            **browser_claims,
+            "source_sign_in_provider": browser_firebase["sign_in_provider"],
+        },
+        user_agent="node",
+    )
+
+
+def _sign_in_sources(engine: Engine, schema: str, user_id: str) -> list[tuple[str, str]]:
+    """(ip_address, user_agent) of the user's ``signed_in`` rows in *schema*."""
+    with engine.begin() as conn:
+        conn.execute(text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": user_id})
+        rows = conn.execute(
+            text(
+                f'SELECT ip_address, user_agent FROM "{schema}".audit_logs '  # noqa: S608 -- test-owned schema name
+                "WHERE CAST(user_id AS VARCHAR) = :uid AND action = 'signed_in'"
+            ),
+            {"uid": user_id},
+        )
+        return [(r.ip_address, r.user_agent) for r in rows]
 
 
 def _sign_in_key(uid: str, auth_time: int) -> str:
@@ -272,7 +333,7 @@ class TestSignInIsRecordedByTheBackend:
     def test_a_token_refresh_writes_nothing(
         self, engine: Engine, fastapi_app: FastAPI, own_practice: SimpleNamespace
     ) -> None:
-        from app.auth.sign_in_audit import forget_all  # noqa: PLC0415
+        from app.auth.sign_in_audit import _memo  # noqa: PLC0415
 
         with _clinician(engine, own_practice) as user:
             signed_in_at = _now() - 600
@@ -281,7 +342,7 @@ class TestSignInIsRecordedByTheBackend:
             _request_as(fastapi_app, user.uid, user.email, auth_time=signed_in_at, issued_at=_now())
             # Another (or a restarted) instance: nothing remembered in-process,
             # so only the audit log itself can say the sign-in is recorded.
-            forget_all()
+            _memo.clear()
             status_code, _ = _request_as(
                 fastapi_app, user.uid, user.email, auth_time=signed_in_at, issued_at=_now()
             )
@@ -299,6 +360,145 @@ class TestSignInIsRecordedByTheBackend:
             assert sorted(r["changes"]["sign_in"] for r in rows) == sorted(
                 [_sign_in_key(user.uid, first), _sign_in_key(user.uid, first + 60)]
             )
+
+    @pytest.mark.parametrize(
+        ("browser_firebase", "browser_claims"),
+        [
+            pytest.param(_PASSWORD, {}, id="password"),
+            pytest.param(
+                {"sign_in_provider": "google.com", "sign_in_second_factor": "totp"},
+                {},
+                id="google-with-second-factor",
+            ),
+            pytest.param(
+                {"sign_in_provider": "custom"},
+                {"pablo_amr": ["webauthn"], "pablo_passkey": {"hw": True, "att": False}},
+                id="passkey",
+            ),
+        ],
+    )
+    def test_a_sign_in_through_the_web_app_is_one_row_from_the_browser(
+        self,
+        engine: Engine,
+        fastapi_app: FastAPI,
+        own_practice: SimpleNamespace,
+        browser_firebase: dict[str, Any],
+        browser_claims: dict[str, Any],
+    ) -> None:
+        """The web app's server session is not a second sign-in.
+
+        Its requests come first here (the page it renders after sign-in), then
+        the browser's own, then a re-synced server session for the same
+        sign-in: one row, the browser's, carrying the browser's agent.
+        """
+        with _clinician(engine, own_practice) as user:
+            signed_in_at = _now() - 5
+            server = {
+                "browser_firebase": browser_firebase,
+                "browser_claims": browser_claims,
+            }
+            status_code, _ = _request_from_web_app_server(
+                fastapi_app, user.uid, user.email, exchanged_at=signed_in_at + 1, **server
+            )
+            assert status_code == 200
+            assert _sign_in_rows(engine, own_practice.schema, user.user_id) == []
+
+            status_code, _ = _request_as(
+                fastapi_app,
+                user.uid,
+                user.email,
+                auth_time=signed_in_at,
+                firebase=browser_firebase,
+                extra_claims=browser_claims,
+            )
+            assert status_code == 200
+            _request_from_web_app_server(
+                fastapi_app, user.uid, user.email, exchanged_at=signed_in_at + 3, **server
+            )
+
+            rows = _sign_in_rows(engine, own_practice.schema, user.user_id)
+            assert [(r["user_agent"], r["changes"]) for r in rows] == [
+                (_USER_AGENT, {"sign_in": _sign_in_key(user.uid, signed_in_at)})
+            ]
+
+    def test_a_page_rendered_on_the_server_records_the_users_address_and_agent(
+        self, engine: Engine, fastapi_app: FastAPI, own_practice: SimpleNamespace
+    ) -> None:
+        """The web app's server forwards the user's IP and agent with its secret.
+
+        The server's session is a refresh of the browser's token (same
+        ``auth_time``), so if its request reaches the backend first, it writes
+        the sign-in's one row. That row must still name the user's device.
+        """
+        from app.request_context import (  # noqa: PLC0415
+            FORWARD_AUTH_HEADER,
+            FORWARDED_CLIENT_IP_HEADER,
+            FORWARDED_CLIENT_UA_HEADER,
+        )
+        from app.settings import get_settings  # noqa: PLC0415
+        from pydantic import SecretStr  # noqa: PLC0415
+
+        secret = uuid.uuid4().hex
+        configured = get_settings().model_copy(
+            update={"frontend_forward_secret": SecretStr(secret)}
+        )
+        browser_ua = "Mozilla/5.0 (Macintosh) Safari/605.1.15"
+        with (
+            _clinician(engine, own_practice) as user,
+            patch("app.settings.get_settings", return_value=configured),
+        ):
+            signed_in_at = _now()
+            status_code, _ = _request_as(
+                fastapi_app,
+                user.uid,
+                user.email,
+                auth_time=signed_in_at,
+                issued_at=signed_in_at + 1,
+                user_agent="node",
+                extra_headers={
+                    FORWARD_AUTH_HEADER: secret,
+                    FORWARDED_CLIENT_IP_HEADER: "198.51.100.23",
+                    FORWARDED_CLIENT_UA_HEADER: browser_ua,
+                },
+            )
+            assert status_code == 200
+            assert _sign_in_sources(engine, own_practice.schema, user.user_id) == [
+                ("198.51.100.23", browser_ua)
+            ]
+
+    def test_forwarded_headers_without_the_secret_are_ignored(
+        self, engine: Engine, fastapi_app: FastAPI, own_practice: SimpleNamespace
+    ) -> None:
+        from app.request_context import (  # noqa: PLC0415
+            FORWARD_AUTH_HEADER,
+            FORWARDED_CLIENT_IP_HEADER,
+            FORWARDED_CLIENT_UA_HEADER,
+        )
+        from app.settings import get_settings  # noqa: PLC0415
+        from pydantic import SecretStr  # noqa: PLC0415
+
+        configured = get_settings().model_copy(
+            update={"frontend_forward_secret": SecretStr(uuid.uuid4().hex)}
+        )
+        with (
+            _clinician(engine, own_practice) as user,
+            patch("app.settings.get_settings", return_value=configured),
+        ):
+            status_code, _ = _request_as(
+                fastapi_app,
+                user.uid,
+                user.email,
+                auth_time=_now(),
+                extra_headers={
+                    FORWARD_AUTH_HEADER: "guessed",
+                    FORWARDED_CLIENT_IP_HEADER: "198.51.100.23",
+                    FORWARDED_CLIENT_UA_HEADER: "forged",
+                },
+            )
+            assert status_code == 200
+            [(ip, ua)] = _sign_in_sources(engine, own_practice.schema, user.user_id)
+            assert ip != "198.51.100.23"
+            assert ua == _USER_AGENT
 
     def test_failed_audit_write_does_not_fail_the_request_and_is_retried(
         self, engine: Engine, fastapi_app: FastAPI, own_practice: SimpleNamespace

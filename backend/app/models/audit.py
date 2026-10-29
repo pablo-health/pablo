@@ -102,6 +102,11 @@ class AuditAction(StrEnum):
     APPOINTMENT_SERIES_CREATED = "appointment_series_created"
     APPOINTMENT_SERIES_UPDATED = "appointment_series_updated"
     APPOINTMENT_SERIES_CANCELLED = "appointment_series_cancelled"
+    # A client's own cancellation freed a slot and the open-slot event was
+    # raised for it (scheduling_engine/services/open_slots.py). Written by the
+    # system into the clinician's trail; the payload is the type id and the
+    # derived modality, never anything about the client.
+    APPOINTMENT_SLOT_OPENED = "appointment_slot_opened"
 
     # Admin operations
     EXPORT_QUEUE_VIEWED = "export_queue_viewed"
@@ -604,6 +609,21 @@ class AuditAction(StrEnum):
     REFILL_REQUEST_QUEUE_VIEWED = "refill_request_queue_viewed"
     REFILL_REQUEST_DECIDED = "refill_request_decided"
 
+    # Coverage of an away period (``app.away.coverage``). ACCEPTED and
+    # DECLINED are the colleague's answer, one row on the period.
+    # ACCESS_GRANTED is one row per client the colleague gains a covering
+    # grant on, naming the window; ACCESS_ENDED is one per client whose grant
+    # was cut short (the period ended early, its dates or colleague changed,
+    # or the colleague withdrew). A grant that simply reaches its return time
+    # writes nothing: its end was recorded when it was granted.
+    # ACTIVITY_VIEWED is the returning clinician reading what the colleague
+    # did, one row naming the period and the count. Ids and times only.
+    COVERAGE_ACCEPTED = "coverage_accepted"
+    COVERAGE_DECLINED = "coverage_declined"
+    COVERAGE_ACCESS_GRANTED = "coverage_access_granted"
+    COVERAGE_ACCESS_ENDED = "coverage_access_ended"
+    COVERAGE_ACTIVITY_VIEWED = "coverage_activity_viewed"
+
     # Homework. VIEWED is a clinician opening a client's homework; ADDED is
     # one the clinician wrote by hand; WITHDRAWN is one taken back;
     # EDITED is a reworded assignment; MARKED is the client marking one done
@@ -615,6 +635,16 @@ class AuditAction(StrEnum):
     HOMEWORK_WITHDRAWN = "homework_withdrawn"
     HOMEWORK_EDITED = "homework_edited"
     HOMEWORK_MARKED = "homework_marked"
+
+    # The waitlist. VIEWED is a clinician reading their list (one row per
+    # client on it) or one client's place on it; the others are changes to
+    # one entry, or to the order. Payloads carry ids, the operation and the
+    # names of the fields that changed, never the days or times wanted.
+    WAITLIST_VIEWED = "waitlist_viewed"
+    WAITLIST_ENTRY_ADDED = "waitlist_entry_added"
+    WAITLIST_ENTRY_UPDATED = "waitlist_entry_updated"
+    WAITLIST_ENTRY_REMOVED = "waitlist_entry_removed"
+    WAITLIST_REORDERED = "waitlist_reordered"
 
     # The Inbox. VIEWED is the list, one row per patient on it — what it
     # discloses is per patient: that something of theirs waits, and what.
@@ -808,7 +838,9 @@ class ResourceType(StrEnum):
     PATIENT_COVERAGE = "patient_coverage"
     PATIENT_MESSAGE_THREAD = "patient_message_thread"
     REFILL_REQUEST = "refill_request"
+    AWAY_PERIOD = "away_period"
     HOMEWORK_ASSIGNMENT = "homework_assignment"
+    WAITLIST_ENTRY = "waitlist_entry"
     INBOX_ITEM = "inbox_item"
     INVITATION = "invitation"
     PRACTICE_PORTAL = "practice_portal"

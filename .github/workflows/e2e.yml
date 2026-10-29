@@ -36,7 +36,7 @@ jobs:
     outputs:
       run: ${{ steps.result.outputs.run }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
@@ -65,9 +65,9 @@ jobs:
       matrix:
         shard: [1, 2, 3]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "24"
           cache: npm
@@ -88,7 +88,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Build the stack
-        uses: docker/bake-action@018cb6412ab401ebaa809aa5f85966b74628600f # v7
+        uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7
         with:
           source: .
           files: |
@@ -111,7 +111,7 @@ jobs:
 
       - name: Upload report and traces
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: playwright-report-shard-${{ matrix.shard }}
           path: |
@@ -131,9 +131,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "24"
           cache: npm
@@ -154,7 +154,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Build the stack
-        uses: docker/bake-action@018cb6412ab401ebaa809aa5f85966b74628600f # v7
+        uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7
         with:
           source: .
           files: |
@@ -177,7 +177,7 @@ jobs:
 
       - name: Upload report and traces
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: playwright-report-hosted-address
           path: |
@@ -197,9 +197,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "24"
           cache: npm
@@ -217,7 +217,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Build the stack
-        uses: docker/bake-action@018cb6412ab401ebaa809aa5f85966b74628600f # v7
+        uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7
         with:
           source: .
           files: |
@@ -240,7 +240,7 @@ jobs:
 
       - name: Upload report and traces
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: playwright-report-portal-accessibility-webkit
           path: |

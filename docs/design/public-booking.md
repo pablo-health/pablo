@@ -301,6 +301,60 @@ once the previous one is being beaten:
    at the cost of a widget that stays invisible for nearly all real
    bookers.
 
+## Single-slot links and the open-slot event
+
+A booking link can be scoped to **one slot and used once**. It is the
+natural way to offer a time somebody gave back: the clinician makes a link
+for exactly that window and hands it to whoever they choose. Choosing whom
+to offer it to, and contacting them, are outside the engine.
+
+**The open-slot event.** When a client cancels their own appointment
+(`cancelled_by = patient`), the engine raises an `OpenSlot` event carrying
+the appointment id, the clinician, the slot's start and end, its appointment
+type and its modality
+(`scheduling_engine/services/open_slots.py`). A clinician's cancellation, a
+lapsed hold, a system cancellation and the given-up half of a client's move
+raise nothing. There is no modality column on an appointment, so it is
+derived: telehealth when the appointment carries a meeting link or a meeting
+provider, otherwise in person. The cancellation writes an
+`appointment_slot_opened` audit row (system actor, scoped to the clinician,
+ids only) in its own transaction, and subscribers registered with
+`open_slots.subscribe(handler)` are called after it commits. A deployment
+acts on the event by subscribing; a subscriber that raises is logged by name
+and skipped.
+
+**The link.** `POST /api/booking-links/slot` takes an appointment type, a
+start and the display copy; the window is the start plus the type's length,
+and the slug is minted server-side and unguessable (`slot-<16 hex>`), because
+the link is meant for one person. Three nullable columns on
+`booking_links` carry it: `slot_start_at`, `slot_end_at`, and
+`slot_claimed_at`. The same type and practice switches gate it as any other
+link.
+
+On the public surface the card carries `slot: {start, end, taken}`, the slots
+endpoint returns that one time and nothing else, and the booking POST books
+that time only:
+
+1. **Claim** — a conditional `UPDATE ... SET slot_claimed_at = now() WHERE
+   slot_claimed_at IS NULL`. The row lock lasts until the request's
+   transaction ends, so a second visitor waits and then finds it claimed.
+2. **Collision check** — the engine's own overlap check, before any patient
+   record is written.
+3. **Book** — `create_appointment`, which checks again, backed by the unique
+   active-slot index.
+
+Any refusal — the link already used, the time passed, the time filled some
+other way — is a `409` with code `SLOT_TAKEN`, and the page tells the visitor
+the time has been taken. The practice's `self_book_mode` decides the result:
+`request` (the default) holds the time as a pending request that expires
+after `pending_hold_hours` or at the slot, whichever is first, and the
+response status is `requested`; `auto` books it outright as `confirmed`.
+
+A single-slot booking sends nothing. It does not take the email-confirmation
+hold path; the chart invariant still holds through the instant path's rule —
+a matched email books against a quarantined placeholder, never the existing
+chart — and under `request` mode the clinician confirms the booking in-app.
+
 ## What phase 1 deliberately leaves out
 
 - **Email confirmation to the booker.** There is no outbound email

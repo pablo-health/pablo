@@ -37,13 +37,14 @@ from app.db import (
     arm_current_user_id,
     set_tenant_schema,
 )
-from app.models import Patient, SessionStatus, TherapySession, Transcript
+from app.models import SessionStatus, TherapySession, Transcript
 from app.models.note import Note
 from app.repositories.postgres.note import PostgresNotesRepository
-from app.repositories.postgres.patient import PostgresPatientRepository
 from app.repositories.postgres.session import PostgresTherapySessionRepository
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+
+from tests_integration.database.patient_rows import seed_patient_row
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -95,23 +96,6 @@ def _arm(session: Session, user_id: str) -> None:
 
 def _user() -> str:
     return str(uuid.uuid4())
-
-
-def _seed_patient(session: Session, user_id: str) -> str:
-    """Create a patient owned by ``user_id`` (also inserts the primary grant)."""
-    patient_id = str(uuid.uuid4())
-    now = datetime(2026, 1, 1, tzinfo=UTC)
-    PostgresPatientRepository(session).create(
-        Patient(
-            id=patient_id,
-            first_name="Pat",
-            last_name="Ient",
-            created_at=now,
-            updated_at=now,
-        ),
-        user_id,
-    )
-    return patient_id
 
 
 def _seed_session(  # noqa: PLR0913 — seeding helper with independent date/number knobs
@@ -166,7 +150,7 @@ def _seed_note(
 def test_count_by_status_groups_over_full_accessible_set(session: Session) -> None:
     user_id = _user()
     _arm(session, user_id)
-    patient_id = _seed_patient(session, user_id)
+    patient_id = seed_patient_row(session, user_id)
     plan = (
         [SessionStatus.PENDING_REVIEW] * 3
         + [SessionStatus.QUEUED] * 2
@@ -188,7 +172,7 @@ def test_count_by_status_groups_over_full_accessible_set(session: Session) -> No
 def test_list_recent_by_status_orders_desc_and_limits(session: Session) -> None:
     user_id = _user()
     _arm(session, user_id)
-    patient_id = _seed_patient(session, user_id)
+    patient_id = seed_patient_row(session, user_id)
     # Seven pending_review sessions on ascending dates, inserted out of order.
     for n, day in [(1, 5), (2, 1), (3, 7), (4, 3), (5, 2), (6, 6), (7, 4)]:
         _seed_session(
@@ -220,7 +204,7 @@ def test_count_unfinalized_counts_only_session_attached_unsigned_notes(
 ) -> None:
     user_id = _user()
     _arm(session, user_id)
-    patient_id = _seed_patient(session, user_id)
+    patient_id = seed_patient_row(session, user_id)
     s1 = _seed_session(
         session, user_id=user_id, patient_id=patient_id, n=1, status=SessionStatus.PENDING_REVIEW
     )
@@ -255,14 +239,14 @@ def test_queries_isolate_across_grants(session: Session) -> None:
     user_a, user_b = _user(), _user()
 
     _arm(session, user_b)
-    patient_b = _seed_patient(session, user_b)
+    patient_b = seed_patient_row(session, user_b)
     sb = _seed_session(
         session, user_id=user_b, patient_id=patient_b, n=1, status=SessionStatus.PENDING_REVIEW
     )
     _seed_note(session, user_id=user_b, patient_id=patient_b, session_id=sb, finalized_at=None)
 
     _arm(session, user_a)
-    patient_a = _seed_patient(session, user_a)
+    patient_a = seed_patient_row(session, user_a)
     _seed_session(
         session, user_id=user_a, patient_id=patient_a, n=1, status=SessionStatus.PENDING_REVIEW
     )

@@ -107,6 +107,7 @@ if TYPE_CHECKING:
 
     from ..medications.repository import MedicationRepository
     from ..models import ChatConversation
+    from ..repositories.row import Row
 
 logger = logging.getLogger(__name__)
 
@@ -644,7 +645,7 @@ def sse_response(events: list[TurnStreamEvent]) -> StreamingResponse:
     same way and for the same reason.
     """
 
-    async def _sse() -> AsyncGenerator[bytes]:  # type: ignore[name-defined]
+    async def _sse() -> AsyncGenerator[bytes]:
         for event in events:
             payload = json.dumps(event.data, default=str)
             yield f"event: {event.kind}\ndata: {payload}\n\n".encode()
@@ -707,7 +708,7 @@ def save_message_as_note(
             code="EMPTY_MESSAGE",
         )
 
-    content: dict[str, object] = {
+    content: Row = {
         "note": {"body": msg.content},
         "__source": {
             "kind": "chat",

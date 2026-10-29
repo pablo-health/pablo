@@ -121,7 +121,7 @@ describe("BlockedTimeCard", () => {
     expect(mutateDelete).toHaveBeenCalledWith("r1", expect.anything())
   })
 
-  it("offers all nine rule types in the rule-type picker", async () => {
+  it("offers all ten rule types in the rule-type picker", async () => {
     const user = userEvent.setup()
     renderWithClient(<BlockedTimeCard />)
 
@@ -130,7 +130,67 @@ describe("BlockedTimeCard", () => {
 
     const listbox = screen.getByRole("listbox")
     const options = within(listbox).getAllByRole("option")
-    expect(options).toHaveLength(9)
+    expect(options).toHaveLength(10)
+  })
+
+  it("creates time kept free inside a window, weekdays by default", async () => {
+    const user = userEvent.setup()
+    renderWithClient(<BlockedTimeCard />)
+
+    await user.click(screen.getByRole("button", { name: "Block time" }))
+    await user.click(screen.getByRole("combobox", { name: /rule type/i }))
+    await user.click(screen.getByRole("option", { name: "Keep time free inside a window" }))
+    await user.click(screen.getByRole("button", { name: "Add rule" }))
+
+    expect(mutateCreate).toHaveBeenCalledWith(
+      {
+        rule_type: "floating_block",
+        enforcement: "hard",
+        params: {
+          label: "Lunch",
+          duration_minutes: 60,
+          window_start: "11:30",
+          window_end: "14:00",
+          days_of_week: [0, 1, 2, 3, 4],
+        },
+      },
+      expect.anything()
+    )
+  })
+
+  it("refuses a window shorter than the time kept free", async () => {
+    const user = userEvent.setup()
+    renderWithClient(<BlockedTimeCard />)
+
+    await user.click(screen.getByRole("button", { name: "Block time" }))
+    await user.click(screen.getByRole("combobox", { name: /rule type/i }))
+    await user.click(screen.getByRole("option", { name: "Keep time free inside a window" }))
+    const latest = screen.getByLabelText("Latest") as HTMLInputElement
+    await user.clear(latest)
+    await user.type(latest, "12:00")
+    await user.click(screen.getByRole("button", { name: "Add rule" }))
+
+    expect(screen.getByText(/at least as long as the time kept free/)).toBeInTheDocument()
+    expect(mutateCreate).not.toHaveBeenCalled()
+  })
+
+  it("lists a kept-free block with what it protects", () => {
+    rulesData = [
+      makeRule({
+        rule_type: "floating_block",
+        params: {
+          label: "Lunch",
+          duration_minutes: 60,
+          window_start: "11:30",
+          window_end: "14:00",
+          days_of_week: [0, 1, 2, 3, 4],
+        },
+      }),
+    ]
+    renderWithClient(<BlockedTimeCard />)
+
+    expect(screen.getByText(/Lunch: 60 min free between/)).toBeInTheDocument()
+    expect(screen.getByText(/weekdays/)).toBeInTheDocument()
   })
 
   it("rejects an end time before the start time", async () => {

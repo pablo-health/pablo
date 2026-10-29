@@ -14,6 +14,7 @@ import re
 import uuid
 from datetime import UTC, datetime
 
+# google.cloud is a namespace package that mypy cannot resolve
 from google.cloud import batch_v1, storage  # type: ignore[attr-defined]
 
 from ..settings import get_settings
@@ -180,7 +181,7 @@ class TranscriptionQueueService:
             response.name,
             "high" if priority else "standard",
         )
-        return response.name  # type: ignore[no-any-return]
+        return response.name  # type: ignore[no-any-return]  # the Batch client response is untyped
 
 
 def _build_entrypoint_script(

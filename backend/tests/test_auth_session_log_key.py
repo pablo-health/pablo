@@ -57,6 +57,7 @@ def _verified() -> VerifiedIdentity:
         provider="firebase",
         subject_id=UID,
         email="clinician@example.com",
+        email_verified=True,
         mfa_satisfied=True,
         claims={"uid": UID, "sub": UID, "auth_time": SIGNED_IN_AT},
     )

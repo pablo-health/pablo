@@ -54,8 +54,8 @@ class HomeworkAssignmentResponse(BaseModel):
             source_field=a.source_field,
             proposed_text=a.proposed_text if a.proposed_text != a.text else None,
             text=a.text,
-            status=a.status,  # type: ignore[arg-type]
-            origin=a.origin,  # type: ignore[arg-type]
+            status=a.status,  # type: ignore[arg-type]  # the repository stores plain strings; the write path validates them against the Literal
+            origin=a.origin,  # type: ignore[arg-type]  # the repository stores plain strings; the write path validates them against the Literal
             assigned_at=a.assigned_at,
             completed_at=a.completed_at,
             client_note=a.client_note,
@@ -104,7 +104,7 @@ class PatientHomeworkResponse(BaseModel):
         return cls(
             id=a.id,
             text=a.text,
-            status=a.status,  # type: ignore[arg-type]
+            status=a.status,  # type: ignore[arg-type]  # the repository stores plain strings; the write path validates them against the Literal
             assigned_at=a.assigned_at,
             completed_at=a.completed_at,
             client_note=a.client_note,

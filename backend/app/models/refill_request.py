@@ -4,8 +4,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from typing import Literal
 
 REFILL_STATUS_REQUESTED = "requested"
 REFILL_STATUS_APPROVED = "approved"
@@ -36,6 +37,9 @@ class RefillRequest:
     never shown to the patient. Nor is ``due_at``, the time the practice
     means to have answered by (see :mod:`app.services.refill_turnaround`);
     ``None`` on requests from before the practice had a target.
+
+    ``run_out_date`` is the client's own answer to how many days they have
+    left, as a date; ``None`` when they left it blank.
     """
 
     id: str
@@ -51,6 +55,26 @@ class RefillRequest:
     decided_at: datetime | None = None
     prescriber_note: str | None = None
     due_at: datetime | None = None
+    run_out_date: date | None = None
+
+
+#: Where a request's run-out date came from: the client's answer, or the
+#: estimate from a prescription on file.
+RunOutSource = Literal["client", "prescription"]
+
+
+@dataclass(frozen=True)
+class RefillRisk:
+    """What the practice's read of a request knows about time and risk.
+
+    Decided by :func:`app.models.refill_risk.assess`; see that module for
+    where each fact comes from. Never on the patient surface.
+    """
+
+    run_out_date: date | None = None
+    run_out_source: RunOutSource | None = None
+    controlled: bool = False
+    interruption_risk: bool = False
 
 
 def queue_order_key(request: RefillRequest) -> tuple[bool, datetime, datetime]:
@@ -60,9 +84,10 @@ def queue_order_key(request: RefillRequest) -> tuple[bool, datetime, datetime]:
 
 @dataclass(frozen=True)
 class RefillQueueEntry:
-    """A pending request as the practice's queue shows it: the request and whose it is."""
+    """A request as the practice's queue shows it: the request, whose it is, and its risk."""
 
     request: RefillRequest
     patient_first_name: str
     patient_last_name: str
     patient_preferred_name: str | None
+    risk: RefillRisk = field(default_factory=RefillRisk)

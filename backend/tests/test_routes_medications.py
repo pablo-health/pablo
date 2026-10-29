@@ -315,6 +315,40 @@ class TestUpdateMedication:
         assert resp.json()["frequency"] == "daily"
         assert resp.json()["category"] == "other"
 
+    def test_the_clinicians_flags_are_set_kept_and_cleared(
+        self, client_with_repo: TestClient
+    ) -> None:
+        created = _create_med(client_with_repo, drug_name="Lithium", interruption_risk=False)
+        assert (created["controlled"], created["interruption_risk"]) == (None, False)
+        url = f"/api/patients/{_PATIENT_ID}/medications/{created['id']}"
+
+        flagged = client_with_repo.patch(url, json={"controlled": True}).json()
+        assert (flagged["controlled"], flagged["interruption_risk"]) == (True, False)
+
+        kept = client_with_repo.patch(url, json={"dose": "450 mg"}).json()
+        assert (kept["controlled"], kept["interruption_risk"]) == (True, False)
+
+        # Sent as null, either goes back to the default.
+        cleared = client_with_repo.patch(url, json={"interruption_risk": None}).json()
+        assert (cleared["controlled"], cleared["interruption_risk"]) == (True, None)
+
+    def test_each_medication_says_what_the_default_list_holds_for_it(
+        self, client_with_repo: TestClient
+    ) -> None:
+        """The chart shows "Default (Yes)" or "Default (No)"; the list lives here, not there."""
+        lithium = _create_med(client_with_repo, drug_name="Lithium carbonate ER")
+        sertraline = _create_med(client_with_repo, drug_name="Sertraline")
+        assert lithium["interruption_risk_default"] is True
+        assert sertraline["interruption_risk_default"] is False
+
+        # The clinician's own call is kept beside it, never folded into it.
+        url = f"/api/patients/{_PATIENT_ID}/medications/{lithium['id']}"
+        overridden = client_with_repo.patch(url, json={"interruption_risk": False}).json()
+        assert (overridden["interruption_risk"], overridden["interruption_risk_default"]) == (
+            False,
+            True,
+        )
+
     def test_update_unknown_id_returns_404(self, client_with_repo: TestClient) -> None:
         resp = client_with_repo.patch(
             f"/api/patients/{_PATIENT_ID}/medications/{uuid.uuid4()}",

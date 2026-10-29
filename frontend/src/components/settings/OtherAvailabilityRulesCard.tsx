@@ -27,6 +27,7 @@ const SHOWN_ELSEWHERE: RuleType[] = [
   "block_time_range",
   "block_date_range",
   "block_specific_dates",
+  "floating_block",
 ]
 
 export function otherRules(rules: AvailabilityRule[]): AvailabilityRule[] {

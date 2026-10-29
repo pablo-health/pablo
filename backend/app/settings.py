@@ -53,6 +53,19 @@ class Settings(BaseSettings):
         default="production",
         description="Deployment environment",
     )
+    # entrypoint.py reads WEB_CONCURRENCY itself, before anything imports
+    # Settings; this field exists so the app can see the worker count too.
+    web_concurrency: int = Field(
+        default=1,
+        ge=1,
+        description=(
+            "Number of uvicorn worker processes. Leave at 1 on platforms that "
+            "add instances under load; raise it on a fixed-size host so one "
+            "slow request does not hold up the rest. Above 1, the in-process "
+            "background loops (calendar auto-sync, claims pipeline) must be "
+            "off, since each worker would run its own copy."
+        ),
+    )
 
     # Security Settings - HIPAA TLS Requirements
     # HTTPS is automatically enforced in production/staging, disabled in development
@@ -202,6 +215,20 @@ class Settings(BaseSettings):
             "end), never the leftmost (client-spoofable) entry. Cloud Run "
             "directly = 1 (GFE appends the real client IP last); add 1 per "
             "extra trusted proxy (e.g. an external HTTP(S) load balancer)."
+        ),
+    )
+    frontend_forward_secret: SecretStr = Field(
+        default=SecretStr(""),
+        description=(
+            "Lets the frontend server pass the end user's IP and user agent to "
+            "the backend for audit records. When the web app renders a page on "
+            "its server, its calls to the backend come from the server, not the "
+            "user's device; with this set, a request carrying a matching "
+            "X-Pablo-Frontend-Auth header has its X-Pablo-Client-IP and "
+            "X-Pablo-Client-UA headers recorded instead. Set the same value as "
+            "the frontend's FRONTEND_FORWARD_SECRET. Comma-separated to accept "
+            "more than one during a rotation. Empty (default): the headers are "
+            "ignored."
         ),
     )
 
@@ -752,6 +779,19 @@ class Settings(BaseSettings):
     firebase_workload_identity: bool = Field(
         default=False,
         description="Use Workload Identity Federation for Firebase Admin creds (non-GCP hosts)",
+    )
+    # Application default credentials that impersonate a service account (a
+    # developer's own sign-in, off Google Cloud) can sign bytes through IAM but
+    # are not a key firebase-admin can sign a custom token with directly. Naming
+    # the account routes custom-token signing (passkeys) through IAM signBlob,
+    # the same way the workload-identity path does. On Google Cloud the metadata
+    # server's credentials already sign that way; leave it empty there.
+    firebase_service_account_id: str = Field(
+        default="",
+        description=(
+            "Service account email firebase-admin signs custom tokens as, through "
+            "IAM signBlob, when application default credentials impersonate it."
+        ),
     )
     firebase_wif_audience: str = Field(
         default="",
@@ -2338,6 +2378,16 @@ def log_startup_posture(settings: Settings, logger: logging.Logger) -> None:
         bool(settings.ical_feed_base_url),
         bool(settings.google_calendar_base_url),
     )
+    if not settings.use_redis and not settings.is_development:
+        # Every rate-limit window lives in one process, so each replica
+        # grants the full budget again and a restart clears it. Right for a
+        # single-instance self-host, which is why this is a warning and not
+        # a refusal; wrong, silently, for anything that scales out.
+        logger.warning(
+            "Rate limits are kept in memory (USE_REDIS=false): each replica "
+            "enforces its own budget and a restart resets it. Set USE_REDIS=true "
+            "for any deployment running more than one instance."
+        )
 
 
 # Global settings instance for backwards compatibility

@@ -352,7 +352,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         # http_exception_handler returns Response | JSONResponse;
         # mypy is happy with the type because both inherit from Response.
         response = await http_exception_handler(request, exc)
-        return response  # type: ignore[return-value]
+        return response  # type: ignore[return-value]  # the handler returns a Response subclass; JSONResponse and Response share a base
 
     @app.exception_handler(Exception)
     async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:

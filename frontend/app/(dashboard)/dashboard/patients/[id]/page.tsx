@@ -6,6 +6,7 @@ import { use } from "react"
 import { ArrowLeft } from "lucide-react"
 import Link from "next/link"
 import { ClientTasks } from "@/components/patients/ClientTasks"
+import { ClientPreferences } from "@/components/patients/preferences/ClientPreferences"
 import { EditPatientButton } from "@/components/patients/EditPatientButton"
 import { PatientExport } from "@/components/patients/PatientExport"
 import { PatientSummary } from "@/components/patients/PatientSummary"
@@ -14,6 +15,7 @@ import { PatientChatDialog } from "@/components/patients/PatientChatDialog"
 import { PatientChartExtras } from "@/components/patients/PatientChartExtras"
 import { RecordActivity } from "@/components/patients/RecordActivity"
 import { NewNoteButton } from "@/components/notes/NewNoteButton"
+import { ClientWaitlistAction } from "@/components/waitlist/ClientWaitlistAction"
 import { usePatient } from "@/hooks/usePatients"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 
@@ -89,6 +91,12 @@ export default function PatientDetailPage({ params, searchParams }: PatientDetai
           <RecordActivity patientId={patient.id} />
           <EditPatientButton patient={patient} />
           <PatientChatDialog patientId={patient.id} />
+          <ClientWaitlistAction
+            patientId={patient.id}
+            patientName={`${patient.first_name} ${patient.last_name}`}
+            shortName={patient.preferred_name || patient.first_name}
+            patientStatus={patient.status}
+          />
           <NewNoteButton patientId={patient.id} />
           <PatientExport
             patientId={patient.id}
@@ -98,6 +106,13 @@ export default function PatientDetailPage({ params, searchParams }: PatientDetai
       </div>
 
       <PatientSummary patient={patient} />
+
+      <ClientPreferences
+        patientId={patient.id}
+        name={patient.preferred_name || patient.first_name}
+        preferredName={patient.preferred_name}
+        pronouns={patient.pronouns}
+      />
 
       <ClientTasks patientId={patient.id} patientName={`${patient.first_name} ${patient.last_name}`} />
 

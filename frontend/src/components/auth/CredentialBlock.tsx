@@ -134,7 +134,7 @@ export function CredentialBlock({
   onSignUpChange,
   renderShell,
 }: CredentialBlockProps) {
-  const { passkeysEnabled } = useConfig()
+  const { passkeysEnabled, googleSignInEnabled = true } = useConfig()
 
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
@@ -445,10 +445,12 @@ export function CredentialBlock({
 
   return renderShell(
     <div className="mt-8 space-y-4">
-      <div className="relative">
-        <AuthGoogleButton onClick={handleGoogleLogin} />
-        {!isSignUp && lastMethod === "google" && <LastUsedPill />}
-      </div>
+      {googleSignInEnabled && (
+        <div className="relative">
+          <AuthGoogleButton onClick={handleGoogleLogin} />
+          {!isSignUp && lastMethod === "google" && <LastUsedPill />}
+        </div>
+      )}
 
       {!isSignUp && passkeySupported && (
         <div className="space-y-2">
@@ -478,7 +480,7 @@ export function CredentialBlock({
         </div>
       )}
 
-      <AuthDivider />
+      {(googleSignInEnabled || (!isSignUp && passkeySupported)) && <AuthDivider />}
 
       <form
         onSubmit={isSignUp ? handleEmailSignUp : handleEmailLogin}

@@ -19,8 +19,9 @@ serves — configured and mounted — less the ones with a gate of their own
 one the deployment does not serve.
 
 The practice's refill turnaround target is set here too, beside the refills
-module it belongs to. It is the practice's own: it dates each request in the
-practice's queue, and nothing a client sees carries it.
+module it belongs to, and its reply-time target for client messages beside
+messaging. Both are the practice's own: they date items in the practice's
+queue, and nothing a client sees carries them.
 
 Not PHI: a switch, module names and a number.
 """
@@ -41,6 +42,8 @@ from ..services.audit_service import AuditService, get_audit_service
 from ..settings import get_settings
 from .modules import known_modules, mounted_modules_on
 from .portal_settings import (
+    MESSAGE_REPLY_TARGET_MAX_DAYS,
+    MESSAGE_REPLY_TARGET_MIN_DAYS,
     REFILL_TURNAROUND_MAX_DAYS,
     REFILL_TURNAROUND_MIN_DAYS,
     PortalSettings,
@@ -65,6 +68,9 @@ class PortalSettingsResponse(BaseModel):
     #: The practice's own target for answering a refill request, in working
     #: days. For the practice's settings page only.
     refill_turnaround_days: int
+    #: The practice's own target for answering a client's message, in working
+    #: days. For the practice's settings page only.
+    message_reply_target_days: int
 
 
 class PortalSettingsRequest(BaseModel):
@@ -73,6 +79,9 @@ class PortalSettingsRequest(BaseModel):
     modules: dict[str, bool] | None = None
     refill_turnaround_days: int | None = Field(
         default=None, ge=REFILL_TURNAROUND_MIN_DAYS, le=REFILL_TURNAROUND_MAX_DAYS
+    )
+    message_reply_target_days: int | None = Field(
+        default=None, ge=MESSAGE_REPLY_TARGET_MIN_DAYS, le=MESSAGE_REPLY_TARGET_MAX_DAYS
     )
     #: Apply this only if the practice has never answered. The first-client
     #: prompt sends it: a "not now" from a screen loaded before a colleague
@@ -97,6 +106,7 @@ def _response(settings: PortalSettings, choosable: tuple[str, ...]) -> PortalSet
         decided=settings.decided_at is not None,
         modules=_modules_on(settings, choosable),
         refill_turnaround_days=settings.refill_turnaround_days,
+        message_reply_target_days=settings.message_reply_target_days,
     )
 
 
@@ -164,6 +174,14 @@ def save_portal_settings(
     if days is not None and days != before.refill_turnaround_days:
         after = store.set_refill_turnaround(practice_id, days=days, by=user.id)
         changes["refill_turnaround_days"] = {"old": before.refill_turnaround_days, "new": days}
+
+    reply_days = body.message_reply_target_days
+    if reply_days is not None and reply_days != before.message_reply_target_days:
+        after = store.set_message_reply_target(practice_id, days=reply_days, by=user.id)
+        changes["message_reply_target_days"] = {
+            "old": before.message_reply_target_days,
+            "new": reply_days,
+        }
 
     if body.enabled is not None:
         if body.enabled:

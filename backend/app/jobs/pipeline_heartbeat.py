@@ -54,6 +54,7 @@ def run() -> int:
 def _write_heartbeat_marker(gcs_bucket: str, now_iso: str) -> None:
     """Write a small timestamp file to GCS to confirm the upload path works."""
     try:
+        # google.cloud is a namespace package that mypy cannot resolve
         from google.cloud import storage  # type: ignore[attr-defined]  # noqa: PLC0415
     except ImportError:
         logger.warning("google-cloud-storage not installed; skipping heartbeat marker")

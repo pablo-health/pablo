@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { screen, waitFor } from "@testing-library/react"
+import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 
 import { PortalOfferingCard } from "../PortalOfferingCard"
@@ -36,24 +36,31 @@ vi.mock("@/lib/api/schedulingPolicy", async (importOriginal) => ({
 type Modules = Record<string, boolean>
 const ALL_ON: Modules = { intake: true, messaging: true, appointments: true, refills: true }
 
-let current = { enabled: false, decided: false, modules: ALL_ON, refill_turnaround_days: 2 }
+let current = { enabled: false, decided: false, modules: ALL_ON, refill_turnaround_days: 2, message_reply_target_days: 2 }
 
 function settingsAre(enabled: boolean, modules: Modules = ALL_ON) {
-  current = { enabled, decided: true, modules, refill_turnaround_days: 2 }
+  current = { enabled, decided: true, modules, refill_turnaround_days: 2, message_reply_target_days: 2 }
 }
 
 describe("PortalOfferingCard", () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    current = { enabled: false, decided: false, modules: ALL_ON, refill_turnaround_days: 2 }
+    current = { enabled: false, decided: false, modules: ALL_ON, refill_turnaround_days: 2, message_reply_target_days: 2 }
     mockGet.mockImplementation(() => Promise.resolve(current))
     mockSave.mockImplementation(
-      (change: { enabled?: boolean; modules?: Modules; refill_turnaround_days?: number }) => {
+      (change: {
+        enabled?: boolean
+        modules?: Modules
+        refill_turnaround_days?: number
+        message_reply_target_days?: number
+      }) => {
         current = {
           enabled: change.enabled ?? current.enabled,
           decided: true,
           modules: { ...current.modules, ...change.modules },
           refill_turnaround_days: change.refill_turnaround_days ?? current.refill_turnaround_days,
+          message_reply_target_days:
+            change.message_reply_target_days ?? current.message_reply_target_days,
         }
         return Promise.resolve(current)
       },
@@ -167,7 +174,7 @@ describe("PortalOfferingCard", () => {
 
     const target = await screen.findByRole("combobox", { name: "Refill request target" })
     expect(target).toHaveValue("2")
-    expect(screen.getByRole("option", { name: "1 working day" })).toBeInTheDocument()
+    expect(within(target).getByRole("option", { name: "1 working day" })).toBeInTheDocument()
     await userEvent.selectOptions(target, "3")
 
     expect(mockSave).toHaveBeenCalledWith({ refill_turnaround_days: 3 })
@@ -181,6 +188,33 @@ describe("PortalOfferingCard", () => {
 
     await screen.findByRole("switch", { name: "Refill requests" })
     expect(screen.queryByTestId("refill-turnaround")).not.toBeInTheDocument()
+  })
+
+  it("sets the reply target for messages in working days, one to five", async () => {
+    settingsAre(true)
+    renderWithProviders(<PortalOfferingCard />)
+
+    const target = await screen.findByRole("combobox", { name: "Message reply target" })
+    expect(target).toHaveValue("2")
+    expect(within(target).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "1 working day",
+      "2 working days",
+      "3 working days",
+      "4 working days",
+      "5 working days",
+    ])
+    await userEvent.selectOptions(target, "1")
+
+    expect(mockSave).toHaveBeenCalledWith({ message_reply_target_days: 1 })
+    await waitFor(() => expect(target).toHaveValue("1"))
+  })
+
+  it("offers no reply target while messaging is off", async () => {
+    settingsAre(true, { ...ALL_ON, messaging: false })
+    renderWithProviders(<PortalOfferingCard />)
+
+    await screen.findByRole("combobox", { name: "Refill request target" })
+    expect(screen.queryByTestId("message-reply-target")).not.toBeInTheDocument()
   })
 
   it("renders nothing where the deployment has no portal", async () => {

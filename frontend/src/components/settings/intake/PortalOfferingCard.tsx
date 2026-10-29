@@ -18,7 +18,12 @@ import {
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { usePortalSettings, useSavePortalSettings } from "@/hooks/usePortalSettings"
 import { useSchedulingPolicy } from "@/hooks/useSchedulingPolicy"
-import { REFILL_TURNAROUND_MAX_DAYS, REFILL_TURNAROUND_MIN_DAYS } from "@/lib/api/portalSettings"
+import {
+  MESSAGE_REPLY_TARGET_MAX_DAYS,
+  MESSAGE_REPLY_TARGET_MIN_DAYS,
+  REFILL_TURNAROUND_MAX_DAYS,
+  REFILL_TURNAROUND_MIN_DAYS,
+} from "@/lib/api/portalSettings"
 import { portalModuleLabel } from "@/lib/portalModules"
 
 /**
@@ -92,10 +97,25 @@ export function PortalOfferingCard() {
                   />
                 </SettingsRow>
                 {name === "refills" && on && settings.enabled && (
-                  <RefillTargetRow
+                  <TargetRow
+                    label="Answer refill requests within"
+                    ariaLabel="Refill request target"
+                    testId="refill-turnaround"
+                    choices={REFILL_TARGET_CHOICES}
                     days={settings.refill_turnaround_days}
                     disabled={save.isPending}
                     onChange={(days) => save.mutate({ refill_turnaround_days: days })}
+                  />
+                )}
+                {name === "messaging" && on && settings.enabled && (
+                  <TargetRow
+                    label="Answer messages within"
+                    ariaLabel="Message reply target"
+                    testId="message-reply-target"
+                    choices={REPLY_TARGET_CHOICES}
+                    days={settings.message_reply_target_days}
+                    disabled={save.isPending}
+                    onChange={(days) => save.mutate({ message_reply_target_days: days })}
                   />
                 )}
               </Fragment>
@@ -131,21 +151,32 @@ export function PortalOfferingCard() {
   )
 }
 
-const REFILL_TARGET_CHOICES = Array.from(
-  { length: REFILL_TURNAROUND_MAX_DAYS - REFILL_TURNAROUND_MIN_DAYS + 1 },
-  (_, i) => REFILL_TURNAROUND_MIN_DAYS + i,
-)
+function range(min: number, max: number): number[] {
+  return Array.from({ length: max - min + 1 }, (_, i) => min + i)
+}
+
+const REFILL_TARGET_CHOICES = range(REFILL_TURNAROUND_MIN_DAYS, REFILL_TURNAROUND_MAX_DAYS)
+const REPLY_TARGET_CHOICES = range(MESSAGE_REPLY_TARGET_MIN_DAYS, MESSAGE_REPLY_TARGET_MAX_DAYS)
 
 /**
- * The practice's own target for answering a refill request. It dates each
- * request on the Refills page and in the Inbox; clients never see it, which
- * is why the row says "your own" rather than describing what clients are told.
+ * One of the practice's own targets: answering a refill request, or a
+ * client's message. It dates each item in the Inbox (and refills on the
+ * Refills page); clients never see it, which is why the row says "your own"
+ * rather than describing what clients are told.
  */
-function RefillTargetRow({
+function TargetRow({
+  label,
+  ariaLabel,
+  testId,
+  choices,
   days,
   disabled,
   onChange,
 }: {
+  label: string
+  ariaLabel: string
+  testId: string
+  choices: number[]
   days: number
   disabled: boolean
   onChange: (days: number) => void
@@ -153,18 +184,18 @@ function RefillTargetRow({
   return (
     <SettingsRow
       nested
-      label="Answer refill requests within"
+      label={label}
       description="Your own target, counted on the days you have hours set, or Monday to Friday."
     >
       <select
-        aria-label="Refill request target"
-        data-testid="refill-turnaround"
+        aria-label={ariaLabel}
+        data-testid={testId}
         value={days}
         disabled={disabled}
         onChange={(event) => onChange(Number(event.target.value))}
         className="rounded-md border border-neutral-200 px-3 py-2 text-sm"
       >
-        {REFILL_TARGET_CHOICES.map((n) => (
+        {choices.map((n) => (
           <option key={n} value={n}>
             {n === 1 ? "1 working day" : `${n} working days`}
           </option>

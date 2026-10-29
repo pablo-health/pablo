@@ -165,6 +165,7 @@ if TYPE_CHECKING:
     from ..models.patient_document import PatientDocument
     from ..repositories.patient import PatientRepository
     from ..repositories.patient_document import PatientDocumentRepository
+    from ..repositories.row import Row
 
 router = APIRouter(prefix="/api/patient/intake", tags=["patient-intake"])
 
@@ -294,7 +295,7 @@ def _progress(completion: Completion) -> IntakeProgressResponse:
 
 def _assignment_response(
     service: IntakeAssignmentService,
-    assignment: dict[str, object],
+    assignment: Row,
     patient_id: str,
 ) -> IntakeAssignmentResponse:
     """One assignment with its form's name and the progress on it."""
@@ -306,8 +307,8 @@ def _assignment_response(
         client_title=client_title,
         version=number,
         status=str(assignment["status"]),
-        assigned_at=assignment["assigned_at"],  # type: ignore[arg-type]
-        submitted_at=assignment["submitted_at"],  # type: ignore[arg-type]
+        assigned_at=assignment["assigned_at"],
+        submitted_at=assignment["submitted_at"],
         receipt_code=_optional_str(assignment.get("receipt_code")),
         progress=_progress(service.progress(assignment, patient_id)),
     )
@@ -344,7 +345,7 @@ def _version_label(
     name = str(template["name"]) if template else "Intake"
     title = template.get("client_title") if template else None
     client_title = title if isinstance(title, str) and title else None
-    return name, int(version["version"]), client_title  # type: ignore[call-overload]
+    return name, int(version["version"]), client_title
 
 
 # ---------------------------------------------------------------------------
@@ -406,7 +407,7 @@ def get_my_assignment(
             IntakeAssignmentItemResponse(
                 id=str(row["id"]),
                 key=str(row["key"]),
-                position=int(row["position"]),  # type: ignore[call-overload]
+                position=int(row["position"]),
                 item_type=str(row["item_type"]),
                 required=bool(row["required"]),
                 label=_optional_str(row.get("label")),
@@ -631,7 +632,7 @@ def sign_my_consent_document(
     return _signature_response(signature)
 
 
-def _signature_response(signature: dict[str, object]) -> IntakeSignatureResponse:
+def _signature_response(signature: Row) -> IntakeSignatureResponse:
     """The stored row as the person who signed it is shown it.
 
     The address and the browser are left behind: they are evidence about the
@@ -649,7 +650,7 @@ def _signature_response(signature: dict[str, object]) -> IntakeSignatureResponse
         signer_typed_name=str(signature["signer_typed_name"]),
         consent_statement_version=version,
         consent_statement=consent_statement(version),
-        signed_at=signature["signed_at"],  # type: ignore[arg-type]
+        signed_at=signature["signed_at"],
         auth_strength=str(signature["auth_strength"]),
         session_id=_optional_str(signature.get("session_id")),
         evidence_digest=str(signature["evidence_digest"]),
@@ -732,7 +733,7 @@ def submit_my_assignment(
     return IntakeSubmissionResponse(
         assignment_id=assignment_id,
         version_id=str(submitted["version_id"]),
-        submitted_at=submitted["submitted_at"],  # type: ignore[arg-type]
+        submitted_at=submitted["submitted_at"],
         receipt_code=str(submitted["receipt_code"]),
         measures=[
             SubmittedMeasureResponse(
@@ -748,7 +749,7 @@ def submit_my_assignment(
 
 
 def _correction_response(
-    service: IntakeAssignmentService, assignment: dict[str, object], patient_id: str
+    service: IntakeAssignmentService, assignment: Row, patient_id: str
 ) -> IntakeCorrectionResponse | None:
     """What the practice has asked this patient to redo, if anything.
 
@@ -762,16 +763,14 @@ def _correction_response(
     if correction is None:
         return None
     return IntakeCorrectionResponse(
-        requested_at=correction["created_at"],  # type: ignore[arg-type]
+        requested_at=correction["created_at"],
         note=_optional_str(correction.get("note_to_patient")),
         item_ids=event_item_ids(correction),
         outstanding=service.outstanding_corrections(assignment, patient_id, correction),
     )
 
 
-def _own_assignment(
-    service: IntakeAssignmentService, assignment_id: str, patient_id: str
-) -> dict[str, object]:
+def _own_assignment(service: IntakeAssignmentService, assignment_id: str, patient_id: str) -> Row:
     """The assignment iff it is the calling patient's, else 404."""
     assignment = service.get_for_patient(assignment_id, patient_id)
     if assignment is None:
@@ -779,7 +778,7 @@ def _own_assignment(
     return assignment
 
 
-def _artifact_response(row: dict[str, object]) -> IntakeArtifactResponse:
+def _artifact_response(row: Row) -> IntakeArtifactResponse:
     side = row.get("side")
     return IntakeArtifactResponse(
         id=str(row["id"]),
@@ -787,7 +786,7 @@ def _artifact_response(row: dict[str, object]) -> IntakeArtifactResponse:
         item_id=str(row["item_id"]),
         document_id=str(row["document_id"]),
         side=str(side) if side is not None else None,
-        created_at=row["created_at"],  # type: ignore[arg-type]
+        created_at=row["created_at"],
     )
 
 
@@ -811,7 +810,7 @@ def _item_labels(service: IntakeAssignmentService, version_id: str) -> dict[str,
 
 
 def _clinician_artifact_response(
-    row: dict[str, object], document: PatientDocument, labels: dict[str, str]
+    row: Row, document: PatientDocument, labels: dict[str, str]
 ) -> ClinicianIntakeArtifactResponse:
     """One artifact as the chart lists it, with its file's own facts.
 
@@ -831,7 +830,7 @@ def _clinician_artifact_response(
         content_type=document.mime_type,
         size_bytes=document.size_bytes,
         scan_status=None,
-        created_at=row["created_at"],  # type: ignore[arg-type]
+        created_at=row["created_at"],
     )
 
 
@@ -991,7 +990,7 @@ def _artifact_write_response(
     artifacts: IntakeArtifactService,
     assignment_id: str,
     patient: PatientContext,
-    artifact: dict[str, object],
+    artifact: Row,
 ) -> ArtifactWriteResponse:
     """The artifact that changed, and where the form stands now.
 
@@ -1220,7 +1219,7 @@ def get_patient_intake_assignment(
             ClinicianIntakeAnswerResponse(
                 id=str(row["id"]),
                 key=str(row["key"]),
-                position=int(row["position"]),  # type: ignore[call-overload]
+                position=int(row["position"]),
                 item_type=str(row["item_type"]),
                 required=bool(row["required"]),
                 label=_optional_str(row.get("label")),

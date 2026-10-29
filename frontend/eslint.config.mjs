@@ -1,18 +1,23 @@
 import nextConfig from "eslint-config-next"
 
+const rawErrorToConsole = {
+  selector:
+    "CallExpression[callee.object.name='console'][callee.property.name='error'] > Identifier.arguments",
+  message:
+    "Pass console.error() a derived value (e.g. errorCode(err)) instead of the raw error object.",
+}
+
+const inlineBrowserTimeZone = {
+  selector:
+    "MemberExpression[property.name='timeZone'] > CallExpression.object[callee.property.name='resolvedOptions']",
+  message: "Use browserTimeZone() from @/lib/dates.",
+}
+
 const config = [
   ...nextConfig,
   {
     rules: {
-      "no-restricted-syntax": [
-        "error",
-        {
-          selector:
-            "CallExpression[callee.object.name='console'][callee.property.name='error'] > Identifier.arguments",
-          message:
-            "Pass console.error() a derived value (e.g. errorCode(err)) instead of the raw error object.",
-        },
-      ],
+      "no-restricted-syntax": ["error", rawErrorToConsole],
     },
   },
   {
@@ -25,6 +30,7 @@ const config = [
       "**/*.test.tsx",
     ],
     rules: {
+      "no-restricted-syntax": ["error", rawErrorToConsole, inlineBrowserTimeZone],
       "no-restricted-imports": [
         "error",
         {

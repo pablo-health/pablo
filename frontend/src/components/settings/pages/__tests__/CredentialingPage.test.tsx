@@ -34,11 +34,17 @@ describe("the credentialing settings page", () => {
 })
 
 describe("where it lives", () => {
-  it("is still reachable, under the deprecated id", () => {
-    // Deprecated, not deleted: this is the only surface that reaches Tier 1
-    // and Tier 2, and taking it away before its replacement exists would
+  it("is kept under the deprecated id, behind a feature nothing turns on", () => {
+    // Hidden, not deleted: this is the only surface that reaches Tier 1 and
+    // Tier 2, and taking the code away before its replacement exists would
     // remove working screens.
-    expect(findSettingsItem(CREDENTIALING_LEGACY_SETTINGS_ID)?.page).toBe(CredentialingPage)
+    const item = findSettingsItem(CREDENTIALING_LEGACY_SETTINGS_ID)
+    expect(item?.page).toBe(CredentialingPage)
+    expect(item?.feature).toBe("credentialing_checklist")
+  })
+
+  it("offers the new flow only where the deployment turns credentialing on", () => {
+    expect(findSettingsItem(CREDENTIALING_SETTINGS_ID)?.feature).toBe("credentialing")
   })
 
   it("says deprecated in its label, where someone will actually read it", () => {

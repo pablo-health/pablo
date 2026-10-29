@@ -20,6 +20,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine
+from tests.audit_fakes import RecordingAudit
 from tests.placeholder_db import database_url_is_placeholder
 
 if TYPE_CHECKING:
@@ -384,3 +385,9 @@ def fastapi_app() -> FastAPI:
     from app.main import app  # noqa: PLC0415
 
     return app
+
+
+@pytest.fixture
+def recording_audit() -> RecordingAudit:
+    """An audit service that keeps what it was asked to record."""
+    return RecordingAudit()

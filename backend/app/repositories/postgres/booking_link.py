@@ -40,6 +40,9 @@ def _row_to_link(row: BookingLinkRow) -> BookingLink:
         updated_at=row.updated_at,
         require_email_confirmation=row.require_email_confirmation,
         deleted_at=row.deleted_at,
+        slot_start_at=row.slot_start_at,
+        slot_end_at=row.slot_end_at,
+        slot_claimed_at=row.slot_claimed_at,
     )
 
 
@@ -100,6 +103,8 @@ class PostgresBookingLinkRepository(BookingLinkRepository):
             is_active=link.is_active,
             created_at=link.created_at,
             updated_at=link.updated_at,
+            slot_start_at=link.slot_start_at,
+            slot_end_at=link.slot_end_at,
         )
         # SAVEPOINT, not a bare flush: a slug collision must undo this INSERT
         # and nothing else. Rolling back the request session here would
@@ -153,4 +158,26 @@ class PostgresBookingLinkRepository(BookingLinkRepository):
             ),
         )
         self._session.flush()
+        return bool(result.rowcount)
+
+    def claim_slot(self, link_id: str) -> bool:
+        # One conditional UPDATE is the whole claim. Its row lock lasts until
+        # the caller's transaction ends, so a second claim blocks here and then
+        # re-reads the row under READ COMMITTED: if the first committed, the
+        # predicate no longer matches and it claims nothing; if the first rolled
+        # back, the link is still unused and the second gets it.
+        now = utc_now()
+        result = cast(
+            "CursorResult[Any]",
+            self._session.execute(
+                update(BookingLinkRow)
+                .where(
+                    BookingLinkRow.id == link_id,
+                    BookingLinkRow.deleted_at.is_(None),
+                    BookingLinkRow.slot_start_at.is_not(None),
+                    BookingLinkRow.slot_claimed_at.is_(None),
+                )
+                .values(slot_claimed_at=now, updated_at=now)
+            ),
+        )
         return bool(result.rowcount)

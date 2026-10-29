@@ -13,6 +13,13 @@ For each answer the models are tried in order, the feature's own first:
 - a failure that is not transient (a safety block, a refused request) is
   the answer, as it is without fallbacks.
 
+A feature may opt in to ``retry_refusals``. Then a model that refuses the
+turn (``finish_reason="safety"``) before its first word hands over to the
+next model too, and a refusal is the answer only when every model refused.
+If a model could not be reached and the last one then refused, the answer
+is the failure to reach it, since that model might have answered. A refusal
+after the first word is never retried, for the same reason a failure is not.
+
 So one answer makes at most one attempt per model, each with its gateway's
 own retry of the connection. The turn service's single retry of a failed
 answer runs this sequence once more, and that is the most an answer ever
@@ -24,8 +31,10 @@ gateway. So a feature whose primary is a Bedrock model (``ai_models``) can
 fall back to the tier default on Vertex, and the other way round.
 
 Each answer that needed a fallback logs one line: the model that
-answered and the error code of each that did not. Never prompt or answer
-text.
+answered and the error code of each that did not. Each answer in which a
+model refused logs one line too: every model tried with how it finished,
+and whether the answer ended refused, answered by a fallback, or failed.
+So the refusal rate can be counted. Never prompt or answer text.
 """
 
 from __future__ import annotations
@@ -58,16 +67,43 @@ class FailoverChatLLMGateway(ChatLLMGateway):
         fallbacks: Sequence[str],
         *,
         resolve: Callable[[str], ChatLLMGateway] | None = None,
+        retry_refusals: bool = False,
+        feature: str = "",
     ) -> None:
         self._gateway = gateway
         self._fallbacks = tuple(fallbacks)
         self._resolve = resolve or self._default_resolve
+        self._retry_refusals = retry_refusals
+        self._feature = feature
 
     def _default_resolve(self, model: str) -> ChatLLMGateway:
         provider, sep, _ = model.partition(":")
         if sep and provider == LLMProvider.BEDROCK:
             return _bedrock_gateway()
         return self._gateway
+
+    def _hands_over(self, event: StreamEvent) -> bool:
+        """Whether ``event``, arriving before any word, sends the answer to the next model."""
+        if event.delta:
+            return False
+        if event.finish_reason == "error":
+            return event.transient
+        return self._retry_refusals and event.finish_reason == "safety"
+
+    def _log_refusal(self, legs: list[str], final: StreamEvent) -> None:
+        """One line for an answer in which a model refused: models, reasons, outcome."""
+        if final.finish_reason == "safety":
+            outcome = "safety"
+        elif final.finish_reason in ("stop", "length"):
+            outcome = "answered_by_fallback"
+        else:
+            outcome = "error"
+        logger.info(
+            "Chat refusal: feature=%s legs=%s final=%s",
+            self._feature or "-",
+            ",".join(legs),
+            outcome,
+        )
 
     async def stream_completion(
         self,
@@ -80,7 +116,10 @@ class FailoverChatLLMGateway(ChatLLMGateway):
         temperature: float = 0.4,
     ) -> AsyncIterator[StreamEvent]:
         models = [model, *(m for m in dict.fromkeys(self._fallbacks) if m != model)]
+        # Each model that handed over, as ``model:reason``.
         failures: list[str] = []
+        refused = False
+        unreached: StreamEvent | None = None
         for index, leg_model in enumerate(models):
             gateway = self._resolve(leg_model)
             stream = gateway.stream_completion(
@@ -94,41 +133,58 @@ class FailoverChatLLMGateway(ChatLLMGateway):
             answering = False
             try:
                 async for event in stream:
-                    if (
-                        not answering
-                        and not event.delta
-                        and event.finish_reason == "error"
-                        and event.transient
-                        and index < len(models) - 1
-                    ):
-                        failures.append(f"{leg_model}:{event.error_code}")
+                    if not answering and index < len(models) - 1 and self._hands_over(event):
+                        if event.finish_reason == "safety":
+                            refused = True
+                            failures.append(f"{leg_model}:safety")
+                        else:
+                            unreached = event
+                            failures.append(f"{leg_model}:{event.error_code}")
                         break
-                    if not answering and failures:
+                    if not answering and failures and not refused:
                         logger.info(
                             "Chat answered by fallback: model=%s failures=%s",
                             leg_model,
                             ",".join(failures),
                         )
+                    shown = event
+                    if (
+                        not answering
+                        and self._retry_refusals
+                        and event.finish_reason == "safety"
+                        and unreached is not None
+                    ):
+                        # A model that could not be reached might have answered.
+                        shown = unreached
+                    if event.finish_reason is not None and (
+                        refused or event.finish_reason == "safety"
+                    ):
+                        self._log_refusal([*failures, f"{leg_model}:{event.finish_reason}"], shown)
                     answering = True
-                    yield event
+                    yield shown
                 else:
                     return
             finally:
-                await stream.aclose()  # type: ignore[attr-defined]
+                await stream.aclose()  # type: ignore[attr-defined]  # AsyncIterator has no aclose; the gateway yields an async generator
 
 
-def failover_chat_gateway(feature: str, gateway: ChatLLMGateway) -> ChatLLMGateway:
+def failover_chat_gateway(
+    feature: str, gateway: ChatLLMGateway, *, retry_refusals: bool = False
+) -> ChatLLMGateway:
     """``gateway`` with ``feature``'s fallbacks behind it, or unchanged with none.
 
     Also wrapped when the feature has a primary of its own in ``ai_models``,
     so a ``bedrock:`` primary streams through Bedrock with ``gateway``'s
-    models as its fallbacks.
+    models as its fallbacks. ``retry_refusals`` lets a refused turn move to
+    the next model too (see the module docstring).
     """
     settings = get_settings()
     fallbacks = settings.fallbacks_for(feature)
     if not fallbacks and feature not in settings.ai_models:
         return gateway
-    return FailoverChatLLMGateway(gateway, fallbacks)
+    return FailoverChatLLMGateway(
+        gateway, fallbacks, retry_refusals=retry_refusals, feature=feature
+    )
 
 
 __all__ = ["FailoverChatLLMGateway", "failover_chat_gateway"]

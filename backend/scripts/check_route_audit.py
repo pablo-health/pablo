@@ -103,6 +103,8 @@ PHI_PATH_MARKERS: tuple[str, ...] = (
     # The client's own homework: what their clinician asked them to work on,
     # and the note they leave when they finish it.
     "/patient/homework",
+    # Who is waiting for a time with the clinician, and what they want.
+    "/waitlist",
 )
 
 FORBIDDEN_UNDERSCORE_PARAMS: frozenset[str] = frozenset({"_audit", "_http_request"})
@@ -383,6 +385,7 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("post", "/api/webhooks/telehealth/room"),  # waiting-room callback, no disclosure
         # booking_links.py — owner's own link metadata (slug/copy/duration), no patient data
         ("post", "/api/booking-links"),  # creates a booking link
+        ("post", "/api/booking-links/slot"),  # creates a single-slot link: type + one window
         ("get", "/api/booking-links"),  # lists caller's own booking links
         ("patch", "/api/booking-links/{link_id}"),  # updates link copy/duration/active
         ("delete", "/api/booking-links/{link_id}"),  # deletes a booking link
@@ -440,6 +443,9 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("post", "/api/availability/rules/parse"),  # NL rule proposals, no client attached
         ("get", "/api/availability/slots"),  # open free-slot times, no client
         ("post", "/api/availability/check"),  # conflict check, rule messages only
+        ("get", "/api/availability/floating-blocks"),  # protected-time positions, no client
+        ("put", "/api/availability/rules/{rule_id}/exceptions/{day}"),  # pin/skip one date
+        ("delete", "/api/availability/rules/{rule_id}/exceptions/{day}"),  # clear pin/skip
         ("get", "/api/scheduling/policy"),  # practice booking policy; no patient data
         ("patch", "/api/scheduling/policy"),  # practice booking policy; no patient data
         # practice_billing.py — the practice's own billing identity (legal
@@ -525,6 +531,14 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("get", "/api/users/baa/{version}"),  # versioned BAA document text
         ("get", "/api/users/me"),  # caller's own profile
         ("get", "/api/users/me/baa-status"),  # caller's own BAA status
+        # away_periods.py — the caller's own away dates and out-of-office text;
+        # names no client and carries nothing clinical
+        ("get", "/api/away-periods"),  # caller's away dates + colleagues who may cover
+        ("post", "/api/away-periods/preview"),  # suggested text for dates, nothing stored
+        ("post", "/api/away-periods"),  # sets caller's away dates; grants nothing
+        # covering.py — the away dates the caller is asked to cover: colleagues
+        # and dates, no client
+        ("get", "/api/covering"),  # requests naming the caller, no client
         ("get", "/api/users/me/preferences"),  # caller's own UI preferences
         ("get", "/api/users/me/security-guide-status"),  # caller's own security-guide status
         ("get", "/api/users/me/status"),  # caller's own account/onboarding status

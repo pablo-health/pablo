@@ -9,6 +9,7 @@
 
 import { getClientAuthProvider } from "@/lib/auth/provider"
 import { apiErrorInterceptors } from "./client.extensions"
+import { forwardedClientHeaders } from "./clientForwarding"
 
 /**
  * Observe a failed response before its body is consumed and return a partial
@@ -207,9 +208,9 @@ function findErrorEnvelope(data: unknown): ApiErrorResponse | null {
   const top = data as Record<string, unknown>
   const detail = top.detail
   if (typeof detail === "object" && detail !== null && "error" in detail) {
-    return detail as unknown as ApiErrorResponse
+    return detail as unknown as ApiErrorResponse  // parsed JSON narrowed structurally; no runtime schema validates it
   }
-  return top as unknown as ApiErrorResponse
+  return top as unknown as ApiErrorResponse  // parsed JSON narrowed structurally; no runtime schema validates it
 }
 
 /**
@@ -305,7 +306,8 @@ export const TERMINAL_AUTH_CODES = new Set([
  *
  * Client-side: prefers the supplied token, else asks the active auth
  * provider for the current user's id token. Server-side: returns the
- * supplied token or null. Shared by ``apiClient`` and the SSE consumer so
+ * supplied token or null, and with a token, also the end user's IP and agent
+ * for the backend's audit records (see `clientForwarding.ts`). Shared by ``apiClient`` and the SSE consumer so
  * SSE calls land with the same auth posture as regular API calls without
  * going through the JSON fetch wrapper.
  *
@@ -325,7 +327,15 @@ export async function getAuthHeader(
       // Provider not initialized or no current user — proceed without token.
     }
   }
-  return authToken ? { Authorization: `Bearer ${authToken}` } : {}
+  if (!authToken) return {}
+  const auth = { Authorization: `Bearer ${authToken}` }
+  // A page rendered on the server calls the backend from the server, so pass
+  // along whose request it is rendering. Only for calls made on someone's
+  // behalf (a token), which are always inside a request.
+  if (typeof window === "undefined") {
+    return { ...(await forwardedClientHeaders()), ...auth }
+  }
+  return auth
 }
 
 export function buildApiUrl(endpoint: string): string {
@@ -437,7 +447,7 @@ export async function apiClient<T>(
         const text = await response.text()
         return (text ? JSON.parse(text) : undefined) as T
       }
-      return (await response.text()) as unknown as T
+      return (await response.text()) as unknown as T  // a non-JSON body is handed back as text for callers that ask for it
     }
 
     let errorData: ApiErrorResponse | null = null

@@ -21,6 +21,15 @@ Three layers keep it to one row:
 * a transaction-scoped advisory lock around that lookup and the write, so two
   first requests racing on different workers cannot both miss it.
 
+Only the clinician's own token records a sign-in. The web app's server keeps a
+session of its own for the pages it renders, and the token behind it is minted
+from the browser's by a custom-token exchange: it has an ``auth_time`` of its
+own (the exchange, and a fresh one each time the web app re-syncs its session)
+and reaches this service from the web app's server, with that server's address
+and agent. Recording it wrote a second row for every sign-in through the web
+app, so it is recognised and skipped (``_minted_from_another_token``); the
+browser's own requests carry the sign-in.
+
 Best-effort: a failure is logged and the request carries on. A sign-in must not
 be refused because the audit store hiccuped, and the next request tries again.
 """
@@ -69,10 +78,17 @@ def _remember(sign_in: str) -> None:
         _memo.add(sign_in)
 
 
-def forget_all() -> None:
-    """Clear the memo. For tests that sign the same session in twice."""
-    with _memo_lock:
-        _memo.clear()
+# The claim a custom-token exchange stamps on the token it mints from another:
+# the provider the original token signed in with. The identity provider sets
+# it only through a service-account-signed custom token, so a client cannot
+# add it to its own sign-in to hide it. A passkey sign-in's custom token does
+# not carry it; that token is the browser's own sign-in and is recorded.
+_SOURCE_PROVIDER_CLAIM = "source_sign_in_provider"
+
+
+def _minted_from_another_token(claims: dict[str, Any]) -> bool:
+    """Whether this token is a copy of a sign-in, not the sign-in itself."""
+    return _SOURCE_PROVIDER_CLAIM in claims
 
 
 def record_sign_in(user_id: str, claims: dict[str, Any], request: Request | None) -> None:
@@ -81,6 +97,8 @@ def record_sign_in(user_id: str, claims: dict[str, Any], request: Request | None
     ``claims`` are the verified token's. ``request`` is the clinician's own
     request, so its address and agent are recorded. Never raises.
     """
+    if _minted_from_another_token(claims):
+        return
     sign_in = idle_session.session_log_key(claims)
     if sign_in is None or _remembered(sign_in):
         return

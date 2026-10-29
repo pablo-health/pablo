@@ -28,6 +28,10 @@ import { peopleWords } from "@/lib/peopleTerm"
 import { type CurrentStateId, stepsForState } from "../routes"
 import { STEP_BODIES } from "../stepBodies"
 
+// The deployment offers credentialing unless a test says otherwise.
+const useFeature = vi.hoisted(() => vi.fn((_name: string | undefined) => true))
+vi.mock("@/lib/featureGates", () => ({ useFeature: (name: string | undefined) => useFeature(name) }))
+
 vi.mock("@/components/settings/PracticeIdentityCard", () => ({
   PracticeIdentityCard: () => <div />,
 }))

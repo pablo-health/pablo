@@ -204,6 +204,7 @@ def _get_as(app: FastAPI, owner: SimpleNamespace, path: str) -> tuple[int, Any]:
         provider="firebase",
         subject_id=owner.uid,
         email=owner.email,
+        email_verified=True,
         mfa_satisfied=True,
         claims={
             "uid": owner.uid,

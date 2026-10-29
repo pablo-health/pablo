@@ -46,7 +46,10 @@ CREATE TABLE platform.booking_links (
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     require_email_confirmation boolean DEFAULT true NOT NULL,
-    deleted_at timestamp with time zone
+    deleted_at timestamp with time zone,
+    slot_start_at timestamp with time zone,
+    slot_end_at timestamp with time zone,
+    slot_claimed_at timestamp with time zone
 );
 
 CREATE TABLE platform.claim_reviews (
@@ -536,7 +539,8 @@ CREATE TABLE platform.practice_portal_settings (
     decided_at timestamp with time zone,
     updated_at timestamp with time zone NOT NULL,
     updated_by character varying(128),
-    refill_turnaround_days smallint DEFAULT 2 NOT NULL
+    refill_turnaround_days smallint DEFAULT 2 NOT NULL,
+    message_reply_target_days smallint DEFAULT 2 NOT NULL
 );
 
 CREATE TABLE platform.practice_site_versions (

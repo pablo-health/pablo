@@ -88,6 +88,7 @@ if TYPE_CHECKING:
     from ..repositories.outcome_measure import OutcomeMeasureRepository
     from ..repositories.patient import PatientRepository
     from ..repositories.patient_intake_submission import PatientIntakeSubmissionRepository
+    from ..repositories.row import Row
 
 router = APIRouter(prefix="/api/patient/intake", tags=["patient-intake"])
 
@@ -347,7 +348,7 @@ class ClinicianIntakeSubmissionResponse(BaseModel):
     reason_text: str
 
 
-def _submission_response(row: dict[str, object]) -> ClinicianIntakeSubmissionResponse:
+def _submission_response(row: Row) -> ClinicianIntakeSubmissionResponse:
     """Project a stored row onto the fields the chart shows.
 
     Reads defensively out of the JSON payload rather than indexing it: the
@@ -355,12 +356,12 @@ def _submission_response(row: dict[str, object]) -> ClinicianIntakeSubmissionRes
     version of that form is a normal thing to find, not an error.
     """
     payload = row.get("payload")
-    body: dict[str, object] = payload if isinstance(payload, dict) else {}
+    body: Row = payload if isinstance(payload, dict) else {}
     corrections = body.get("corrections")
     reason_text = body.get("reason_text")
     return ClinicianIntakeSubmissionResponse(
         id=str(row["id"]),
-        submitted_at=row["submitted_at"],  # type: ignore[arg-type]
+        submitted_at=row["submitted_at"],
         name_confirmed=bool(body.get("name_confirmed", True)),
         dob_confirmed=bool(body.get("dob_confirmed", True)),
         corrections=str(corrections) if corrections else None,

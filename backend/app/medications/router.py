@@ -52,7 +52,7 @@ def get_medication_repository(
     _ctx: TenantContext = Depends(get_tenant_context),
 ) -> MedicationRepository:
     """Return a tenant-scoped medication repository."""
-    return _repo_factory()  # type: ignore[no-any-return]
+    return _repo_factory()  # type: ignore[no-any-return]  # the repo factory is an overridable hook typed as returning Any
 
 
 def get_medication_service(

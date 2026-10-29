@@ -25,9 +25,10 @@ from ..models.refill_request import (
     RefillRequest,
     queue_order_key,
 )
+from ..models.refill_risk import PrescriptionOnFile, assess, same_drug
 
 if TYPE_CHECKING:
-    from datetime import datetime
+    from datetime import date, datetime
 
 # ``pending`` is the queue: everything still waiting, soonest due first,
 # because the request closest to the practice's own target is the one to
@@ -111,12 +112,15 @@ class InMemoryRefillRequestRepository(RefillRequestRepository):
     """In-memory repository for unit tests.
 
     Seed patients with :meth:`add_patient`, medications with
-    :meth:`add_medication`, and clinician grants with :meth:`grant_access`.
+    :meth:`add_medication`, signed prescriptions with
+    :meth:`add_prescription`, and clinician grants with :meth:`grant_access`.
     """
 
     def __init__(self) -> None:
         self._requests: dict[str, RefillRequest] = {}
         self._medications: dict[str, tuple[str, str, str, bool]] = {}
+        self._medication_flags: dict[str, tuple[bool | None, bool | None]] = {}
+        self._prescriptions: list[tuple[str, str, PrescriptionOnFile]] = []
         self._patients: dict[str, tuple[str, str, str | None]] = {}
         self._access: set[tuple[str, str]] = set()
 
@@ -127,21 +131,75 @@ class InMemoryRefillRequestRepository(RefillRequestRepository):
     ) -> None:
         self._patients[patient_id] = (first_name, last_name, preferred_name)
 
-    def add_medication(
-        self, medication_id: str, patient_id: str, drug_name: str, dose: str, *, active: bool = True
+    def add_medication(  # noqa: PLR0913 - one keyword per column a test may set
+        self,
+        medication_id: str,
+        patient_id: str,
+        drug_name: str,
+        dose: str,
+        *,
+        active: bool = True,
+        controlled: bool | None = None,
+        interruption_risk: bool | None = None,
     ) -> None:
         self._medications[medication_id] = (patient_id, drug_name, dose, active)
+        self._medication_flags[medication_id] = (controlled, interruption_risk)
+
+    def add_prescription(  # noqa: PLR0913 - one keyword per column the estimate reads
+        self,
+        patient_id: str,
+        drug_name: str,
+        *,
+        written_on: date,
+        schedule: str = "none",
+        days_supply: int | None = None,
+        refills: int = 0,
+    ) -> None:
+        """A signed prescription; add them oldest first, as the newest one is used."""
+        self._prescriptions.insert(
+            0,
+            (
+                patient_id,
+                drug_name,
+                PrescriptionOnFile(
+                    written_on=written_on,
+                    schedule=schedule,
+                    days_supply=days_supply,
+                    refills=refills,
+                ),
+            ),
+        )
 
     def grant_access(self, patient_id: str, user_id: str) -> None:
         self._access.add((patient_id, user_id))
 
     def _entry(self, request: RefillRequest) -> RefillQueueEntry:
         first, last, preferred = self._patients.get(request.patient_id, ("", "", None))
+        medication = self._medications.get(request.medication_id or "")
+        name = medication[1] if medication is not None else request.medication_text
+        controlled, interruption = self._medication_flags.get(
+            request.medication_id or "", (None, None)
+        )
+        on_file = next(
+            (
+                rx
+                for patient_id, drug, rx in self._prescriptions
+                if patient_id == request.patient_id and same_drug(drug, name)
+            ),
+            None,
+        )
         return RefillQueueEntry(
             request=replace(request),
             patient_first_name=first,
             patient_last_name=last,
             patient_preferred_name=preferred,
+            risk=assess(
+                medication=name,
+                client_run_out=request.run_out_date,
+                prescription=on_file,
+                clinician_controlled=controlled,
+                clinician_interruption_risk=interruption,
+            ),
         )
 
     # --- patient arm ---

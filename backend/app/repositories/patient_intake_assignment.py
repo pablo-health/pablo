@@ -21,7 +21,7 @@ The patient-principal writes take no ``user_id`` and ask for no grant, the
 way the submission repository's do: the writer is the patient, who holds no
 grant and never will.
 
-Rows are plain ``dict[str, object]`` matching the column layout, the same
+Rows are plain ``Row`` matching the column layout, the same
 shape the other repositories in this package hand back.
 """
 
@@ -33,6 +33,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime
+
+    from .row import Row
 
 #: Statuses an assignment can be in while it is still somebody's to finish.
 #: The partial unique index on ``(patient_id, version_id)`` is defined
@@ -92,7 +94,7 @@ class PatientIntakeAssignmentRepository(ABC):
     # --- clinician side ---
 
     @abstractmethod
-    def add_assignment(self, row: dict[str, object], user_id: str) -> dict[str, object] | None:
+    def add_assignment(self, row: Row, user_id: str) -> Row | None:
         """Ask a patient to fill in a version of a form.
 
         Returns ``None`` when *user_id* holds no grant on the patient, so a
@@ -100,9 +102,7 @@ class PatientIntakeAssignmentRepository(ABC):
         """
 
     @abstractmethod
-    def list_assignments_for_clinician(
-        self, patient_id: str, user_id: str
-    ) -> list[dict[str, object]]:
+    def list_assignments_for_clinician(self, patient_id: str, user_id: str) -> list[Row]:
         """A patient's assignments, newest first, read by a clinician.
 
         An empty list when *user_id* holds no grant — the same answer a
@@ -111,13 +111,11 @@ class PatientIntakeAssignmentRepository(ABC):
         """
 
     @abstractmethod
-    def get_assignment_for_clinician(
-        self, assignment_id: str, user_id: str
-    ) -> dict[str, object] | None:
+    def get_assignment_for_clinician(self, assignment_id: str, user_id: str) -> Row | None:
         """One assignment, or ``None`` when there is no such id or no grant."""
 
     @abstractmethod
-    def list_awaiting_review(self, user_id: str, *, limit: int = 200) -> list[dict[str, object]]:
+    def list_awaiting_review(self, user_id: str, *, limit: int = 200) -> list[Row]:
         """Every handed-in form across the clinician's patients, newest first.
 
         The practice-wide review queue: ``submitted`` assignments on patients
@@ -127,18 +125,14 @@ class PatientIntakeAssignmentRepository(ABC):
         """
 
     @abstractmethod
-    def get_review_entries(
-        self, user_id: str, assignment_ids: list[str]
-    ) -> list[dict[str, object]]:
+    def get_review_entries(self, user_id: str, assignment_ids: list[str]) -> list[Row]:
         """These assignments in the same shape, whatever their status now.
 
         An id with no grant behind it is left out, like one that does not exist.
         """
 
     @abstractmethod
-    def find_active_assignment(
-        self, patient_id: str, version_id: str, user_id: str
-    ) -> dict[str, object] | None:
+    def find_active_assignment(self, patient_id: str, version_id: str, user_id: str) -> Row | None:
         """The live assignment for this patient and version, if there is one.
 
         "Live" is :data:`ACTIVE_STATUSES` — the same set the partial unique
@@ -146,9 +140,7 @@ class PatientIntakeAssignmentRepository(ABC):
         """
 
     @abstractmethod
-    def list_responses_for_clinician(
-        self, assignment_id: str, user_id: str
-    ) -> list[dict[str, object]]:
+    def list_responses_for_clinician(self, assignment_id: str, user_id: str) -> list[Row]:
         """What the patient answered on one assignment, read by a clinician.
 
         An empty list when *user_id* holds no grant on the patient — the
@@ -159,13 +151,13 @@ class PatientIntakeAssignmentRepository(ABC):
     @abstractmethod
     def set_status_for_clinician(
         self, assignment_id: str, user_id: str, *, status: str, now: datetime
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         """Move an assignment to *status*, stamping the matching column."""
 
     @abstractmethod
     def get_live_response_for_clinician(
         self, assignment_id: str, user_id: str, item_id: str
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         """This question's live answer, read through the clinician's grant.
 
         What a clinician entry supersedes. ``None`` when nobody has answered
@@ -175,8 +167,8 @@ class PatientIntakeAssignmentRepository(ABC):
 
     @abstractmethod
     def add_clinician_response(
-        self, row: dict[str, object], user_id: str, *, supersedes: str | None
-    ) -> dict[str, object] | None:
+        self, row: Row, user_id: str, *, supersedes: str | None
+    ) -> Row | None:
         """Record an answer a clinician entered, superseding what it replaces.
 
         Returns ``None`` when *user_id* holds no grant on the patient, so a
@@ -189,16 +181,14 @@ class PatientIntakeAssignmentRepository(ABC):
         """
 
     @abstractmethod
-    def add_review_event(self, row: dict[str, object], user_id: str) -> dict[str, object] | None:
+    def add_review_event(self, row: Row, user_id: str) -> Row | None:
         """Record something the practice did with a form.
 
         Returns ``None`` when *user_id* holds no grant on the patient.
         """
 
     @abstractmethod
-    def list_review_events_for_clinician(
-        self, assignment_id: str, user_id: str
-    ) -> list[dict[str, object]]:
+    def list_review_events_for_clinician(self, assignment_id: str, user_id: str) -> list[Row]:
         """Everything done with one form, oldest first, read by a clinician.
 
         An empty list when *user_id* holds no grant — the same answer a form
@@ -206,9 +196,7 @@ class PatientIntakeAssignmentRepository(ABC):
         """
 
     @abstractmethod
-    def list_all_responses_for_clinician(
-        self, assignment_id: str, user_id: str
-    ) -> list[dict[str, object]]:
+    def list_all_responses_for_clinician(self, assignment_id: str, user_id: str) -> list[Row]:
         """Every answer ever written on one form, oldest first.
 
         The replaced ones and the retired ones as well as the live ones,
@@ -236,13 +224,13 @@ class PatientIntakeAssignmentRepository(ABC):
     # --- patient side ---
 
     @abstractmethod
-    def list_assignments_for_patient_principal(self, patient_id: str) -> list[dict[str, object]]:
+    def list_assignments_for_patient_principal(self, patient_id: str) -> list[Row]:
         """The calling patient's own assignments, newest first."""
 
     @abstractmethod
     def get_assignment_for_patient_principal(
         self, assignment_id: str, patient_id: str
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         """One of the calling patient's own assignments, or ``None``.
 
         The ``patient_id`` predicate is the primary isolation. Naming
@@ -251,9 +239,7 @@ class PatientIntakeAssignmentRepository(ABC):
         """
 
     @abstractmethod
-    def record_save(
-        self, assignment_id: str, patient_id: str, now: datetime
-    ) -> dict[str, object] | None:
+    def record_save(self, assignment_id: str, patient_id: str, now: datetime) -> Row | None:
         """Note that the patient just saved something on their own assignment.
 
         Always bumps ``updated_at``, which is what makes "when did they last
@@ -263,11 +249,11 @@ class PatientIntakeAssignmentRepository(ABC):
         """
 
     @abstractmethod
-    def list_draft_responses(self, assignment_id: str, patient_id: str) -> list[dict[str, object]]:
+    def list_draft_responses(self, assignment_id: str, patient_id: str) -> list[Row]:
         """The live draft answers on one of the calling patient's assignments."""
 
     @abstractmethod
-    def list_live_responses(self, assignment_id: str, patient_id: str) -> list[dict[str, object]]:
+    def list_live_responses(self, assignment_id: str, patient_id: str) -> list[Row]:
         """Every answer that has not been superseded, draft or handed in.
 
         Wider than :meth:`list_draft_responses` by exactly the rows a submit
@@ -277,9 +263,7 @@ class PatientIntakeAssignmentRepository(ABC):
         """
 
     @abstractmethod
-    def get_live_response(
-        self, assignment_id: str, patient_id: str, item_id: str
-    ) -> dict[str, object] | None:
+    def get_live_response(self, assignment_id: str, patient_id: str, item_id: str) -> Row | None:
         """This question's live answer on this assignment, whatever its state.
 
         Answers the one question :meth:`save_draft_response` cannot ask for
@@ -289,7 +273,7 @@ class PatientIntakeAssignmentRepository(ABC):
         """
 
     @abstractmethod
-    def save_draft_response(self, row: dict[str, object]) -> dict[str, object]:
+    def save_draft_response(self, row: Row) -> Row:
         """Record an answer, replacing this question's live draft if there is one.
 
         An upsert keyed on ``(assignment_id, item_id)`` among live drafts —
@@ -299,9 +283,7 @@ class PatientIntakeAssignmentRepository(ABC):
         """
 
     @abstractmethod
-    def add_successor_response(
-        self, row: dict[str, object], *, supersedes: str
-    ) -> dict[str, object]:
+    def add_successor_response(self, row: Row, *, supersedes: str) -> Row:
         """Record a patient's corrected answer beside the one it replaces.
 
         The counterpart of :meth:`save_draft_response` for a question that
@@ -311,7 +293,7 @@ class PatientIntakeAssignmentRepository(ABC):
         """
 
     @abstractmethod
-    def add_patient_review_event(self, row: dict[str, object]) -> dict[str, object]:
+    def add_patient_review_event(self, row: Row) -> Row:
         """Record that the calling patient handed a reopened form back in.
 
         The only kind of review event a patient writes, and their row policy
@@ -321,7 +303,7 @@ class PatientIntakeAssignmentRepository(ABC):
     @abstractmethod
     def list_review_events_for_patient_principal(
         self, assignment_id: str, patient_id: str
-    ) -> list[dict[str, object]]:
+    ) -> list[Row]:
         """Everything done with one of the calling patient's own forms.
 
         Oldest first. What the portal reads to show the note asking for a
@@ -366,7 +348,7 @@ class PatientIntakeAssignmentRepository(ABC):
     @abstractmethod
     def mark_submitted(
         self, assignment_id: str, patient_id: str, *, now: datetime, receipt_code: str
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         """Record that the patient handed this form in, with their receipt.
 
         Only moves a row the patient may still submit — the statuses in
@@ -393,9 +375,9 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
     """
 
     def __init__(self) -> None:
-        self.assignments: dict[str, dict[str, object]] = {}
-        self.responses: dict[str, dict[str, object]] = {}
-        self.review_events: dict[str, dict[str, object]] = {}
+        self.assignments: dict[str, Row] = {}
+        self.responses: dict[str, Row] = {}
+        self.review_events: dict[str, Row] = {}
         self._access: set[tuple[str, str]] = set()
         self._allow_all = False
         self._patient_names: dict[str, str] = {}
@@ -417,7 +399,7 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
         """Stand in for the template the real review queue joins for a name."""
         self._form_names[version_id] = name
 
-    def _review_entry(self, row: dict[str, object]) -> dict[str, object]:
+    def _review_entry(self, row: Row) -> Row:
         return {
             **row,
             "patient_name": self._patient_names.get(str(row["patient_id"]), ""),
@@ -429,28 +411,24 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
 
     # --- clinician side ---
 
-    def add_assignment(self, row: dict[str, object], user_id: str) -> dict[str, object] | None:
+    def add_assignment(self, row: Row, user_id: str) -> Row | None:
         if not self._can_access(str(row["patient_id"]), user_id):
             return None
         self.assignments[str(row["id"])] = dict(row)
         return dict(row)
 
-    def list_assignments_for_clinician(
-        self, patient_id: str, user_id: str
-    ) -> list[dict[str, object]]:
+    def list_assignments_for_clinician(self, patient_id: str, user_id: str) -> list[Row]:
         if not self._can_access(patient_id, user_id):
             return []
         return self._for_patient(patient_id)
 
-    def get_assignment_for_clinician(
-        self, assignment_id: str, user_id: str
-    ) -> dict[str, object] | None:
+    def get_assignment_for_clinician(self, assignment_id: str, user_id: str) -> Row | None:
         row = self.assignments.get(assignment_id)
         if row is None or not self._can_access(str(row["patient_id"]), user_id):
             return None
         return dict(row)
 
-    def list_awaiting_review(self, user_id: str, *, limit: int = 200) -> list[dict[str, object]]:
+    def list_awaiting_review(self, user_id: str, *, limit: int = 200) -> list[Row]:
         rows = [
             self._review_entry(row)
             for row in self.assignments.values()
@@ -459,9 +437,7 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
         rows.sort(key=lambda row: str(row.get("submitted_at") or ""), reverse=True)
         return rows[:limit]
 
-    def get_review_entries(
-        self, user_id: str, assignment_ids: list[str]
-    ) -> list[dict[str, object]]:
+    def get_review_entries(self, user_id: str, assignment_ids: list[str]) -> list[Row]:
         return [
             self._review_entry(row)
             for assignment_id in assignment_ids
@@ -469,9 +445,7 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
             and self._can_access(str(row["patient_id"]), user_id)
         ]
 
-    def find_active_assignment(
-        self, patient_id: str, version_id: str, user_id: str
-    ) -> dict[str, object] | None:
+    def find_active_assignment(self, patient_id: str, version_id: str, user_id: str) -> Row | None:
         if not self._can_access(patient_id, user_id):
             return None
         for row in self._for_patient(patient_id):
@@ -479,9 +453,7 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
                 return dict(row)
         return None
 
-    def list_responses_for_clinician(
-        self, assignment_id: str, user_id: str
-    ) -> list[dict[str, object]]:
+    def list_responses_for_clinician(self, assignment_id: str, user_id: str) -> list[Row]:
         row = self.assignments.get(assignment_id)
         if row is None or not self._can_access(str(row["patient_id"]), user_id):
             return []
@@ -489,7 +461,7 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
 
     def set_status_for_clinician(
         self, assignment_id: str, user_id: str, *, status: str, now: datetime
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         row = self.assignments.get(assignment_id)
         if row is None or not self._can_access(str(row["patient_id"]), user_id):
             return None
@@ -498,36 +470,32 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
 
     def get_live_response_for_clinician(
         self, assignment_id: str, user_id: str, item_id: str
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         row = self.assignments.get(assignment_id)
         if row is None or not self._can_access(str(row["patient_id"]), user_id):
             return None
         return self.get_live_response(assignment_id, str(row["patient_id"]), item_id)
 
     def add_clinician_response(
-        self, row: dict[str, object], user_id: str, *, supersedes: str | None
-    ) -> dict[str, object] | None:
+        self, row: Row, user_id: str, *, supersedes: str | None
+    ) -> Row | None:
         if not self._can_access(str(row["patient_id"]), user_id):
             return None
         return self._write_successor(row, supersedes)
 
-    def add_review_event(self, row: dict[str, object], user_id: str) -> dict[str, object] | None:
+    def add_review_event(self, row: Row, user_id: str) -> Row | None:
         if not self._can_access(str(row["patient_id"]), user_id):
             return None
         self.review_events[str(row["id"])] = dict(row)
         return dict(row)
 
-    def list_review_events_for_clinician(
-        self, assignment_id: str, user_id: str
-    ) -> list[dict[str, object]]:
+    def list_review_events_for_clinician(self, assignment_id: str, user_id: str) -> list[Row]:
         row = self.assignments.get(assignment_id)
         if row is None or not self._can_access(str(row["patient_id"]), user_id):
             return []
         return self._events(assignment_id, str(row["patient_id"]))
 
-    def list_all_responses_for_clinician(
-        self, assignment_id: str, user_id: str
-    ) -> list[dict[str, object]]:
+    def list_all_responses_for_clinician(self, assignment_id: str, user_id: str) -> list[Row]:
         row = self.assignments.get(assignment_id)
         if row is None or not self._can_access(str(row["patient_id"]), user_id):
             return []
@@ -537,7 +505,7 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
             if str(r["assignment_id"]) == assignment_id
             and str(r["patient_id"]) == str(row["patient_id"])
         ]
-        rows.sort(key=lambda r: (r["created_at"], str(r["id"])))  # type: ignore[index]
+        rows.sort(key=lambda r: (r["created_at"], str(r["id"])))
         return rows
 
     def count_superseded_responses_for_clinician(
@@ -558,20 +526,18 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
 
     # --- patient side ---
 
-    def list_assignments_for_patient_principal(self, patient_id: str) -> list[dict[str, object]]:
+    def list_assignments_for_patient_principal(self, patient_id: str) -> list[Row]:
         return self._for_patient(patient_id)
 
     def get_assignment_for_patient_principal(
         self, assignment_id: str, patient_id: str
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         row = self.assignments.get(assignment_id)
         if row is None or str(row["patient_id"]) != patient_id:
             return None
         return dict(row)
 
-    def record_save(
-        self, assignment_id: str, patient_id: str, now: datetime
-    ) -> dict[str, object] | None:
+    def record_save(self, assignment_id: str, patient_id: str, now: datetime) -> Row | None:
         row = self.assignments.get(assignment_id)
         if row is None or str(row["patient_id"]) != patient_id:
             return None
@@ -580,25 +546,23 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
         row["updated_at"] = now
         return dict(row)
 
-    def list_draft_responses(self, assignment_id: str, patient_id: str) -> list[dict[str, object]]:
+    def list_draft_responses(self, assignment_id: str, patient_id: str) -> list[Row]:
         return self._live(assignment_id, patient_id, drafts_only=True)
 
-    def list_live_responses(self, assignment_id: str, patient_id: str) -> list[dict[str, object]]:
+    def list_live_responses(self, assignment_id: str, patient_id: str) -> list[Row]:
         return self._live(assignment_id, patient_id, drafts_only=False)
 
-    def get_live_response(
-        self, assignment_id: str, patient_id: str, item_id: str
-    ) -> dict[str, object] | None:
+    def get_live_response(self, assignment_id: str, patient_id: str, item_id: str) -> Row | None:
         rows = [
             row
             for row in self._live(assignment_id, patient_id, drafts_only=False)
             if str(row["item_id"]) == item_id
         ]
         # A draft first when there is one, as the Postgres sibling does.
-        rows.sort(key=lambda r: (not r["draft"], r["updated_at"]))  # type: ignore[return-value]
+        rows.sort(key=lambda r: (not r["draft"], r["updated_at"]))
         return rows[0] if rows else None
 
-    def save_draft_response(self, row: dict[str, object]) -> dict[str, object]:
+    def save_draft_response(self, row: Row) -> Row:
         existing = next(
             (
                 r
@@ -617,18 +581,16 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
         self.responses[str(row["id"])] = dict(row)
         return dict(row)
 
-    def add_successor_response(
-        self, row: dict[str, object], *, supersedes: str
-    ) -> dict[str, object]:
+    def add_successor_response(self, row: Row, *, supersedes: str) -> Row:
         return self._write_successor(row, supersedes)
 
-    def add_patient_review_event(self, row: dict[str, object]) -> dict[str, object]:
+    def add_patient_review_event(self, row: Row) -> Row:
         self.review_events[str(row["id"])] = dict(row)
         return dict(row)
 
     def list_review_events_for_patient_principal(
         self, assignment_id: str, patient_id: str
-    ) -> list[dict[str, object]]:
+    ) -> list[Row]:
         return self._events(assignment_id, patient_id)
 
     def retire_draft_responses(
@@ -669,7 +631,7 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
 
     def mark_submitted(
         self, assignment_id: str, patient_id: str, *, now: datetime, receipt_code: str
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         row = self.assignments.get(assignment_id)
         if row is None or str(row["patient_id"]) != patient_id:
             return None
@@ -687,7 +649,7 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
 
     # --- helpers ---
 
-    def _write_successor(self, row: dict[str, object], supersedes: str | None) -> dict[str, object]:
+    def _write_successor(self, row: Row, supersedes: str | None) -> Row:
         """Store *row*, then point the row it replaces at it.
 
         This order, not the other one: the pointer names an id, so the row
@@ -701,18 +663,16 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
                 previous["superseded_by"] = str(row["id"])
         return dict(row)
 
-    def _events(self, assignment_id: str, patient_id: str) -> list[dict[str, object]]:
+    def _events(self, assignment_id: str, patient_id: str) -> list[Row]:
         rows = [
             dict(r)
             for r in self.review_events.values()
             if str(r["assignment_id"]) == assignment_id and str(r["patient_id"]) == patient_id
         ]
-        rows.sort(key=lambda r: (r["created_at"], str(r["id"])))  # type: ignore[index]
+        rows.sort(key=lambda r: (r["created_at"], str(r["id"])))
         return rows
 
-    def _live(
-        self, assignment_id: str, patient_id: str, *, drafts_only: bool
-    ) -> list[dict[str, object]]:
+    def _live(self, assignment_id: str, patient_id: str, *, drafts_only: bool) -> list[Row]:
         rows = [
             dict(r)
             for r in self.responses.values()
@@ -724,13 +684,13 @@ class InMemoryPatientIntakeAssignmentRepository(PatientIntakeAssignmentRepositor
         rows.sort(key=lambda r: str(r["item_id"]))
         return rows
 
-    def _for_patient(self, patient_id: str) -> list[dict[str, object]]:
+    def _for_patient(self, patient_id: str) -> list[Row]:
         rows = [dict(r) for r in self.assignments.values() if str(r["patient_id"]) == patient_id]
-        rows.sort(key=lambda r: (r["assigned_at"], str(r["id"])), reverse=True)  # type: ignore[index]
+        rows.sort(key=lambda r: (r["assigned_at"], str(r["id"])), reverse=True)
         return rows
 
 
-def _apply_status(row: dict[str, object], status: str, now: datetime) -> None:
+def _apply_status(row: Row, status: str, now: datetime) -> None:
     """Set *status* and stamp whichever column records reaching it.
 
     Shared by the in-memory repository and its Postgres sibling so the two

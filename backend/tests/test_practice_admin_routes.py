@@ -40,6 +40,8 @@ if TYPE_CHECKING:
 
     from app.repositories.practice_admin import InMemoryPracticeAdminRepository
 
+    from tests.audit_fakes import RecordingAudit
+
 URL = "/api/practice/admins"
 OWNER_ID = "11111111-1111-1111-1111-111111111111"
 COLLEAGUE_ID = "22222222-2222-2222-2222-222222222222"
@@ -64,19 +66,6 @@ THIRD = _user(THIRD_ID, "third@example.com", "Avery Third")
 OUTSIDER = _user(OUTSIDER_ID, "outsider@example.com", "Nobody Here")
 
 
-class _RecordingAudit:
-    def __init__(self) -> None:
-        self.entries: list[dict[str, Any]] = []
-
-    def log(self, action: Any, *_args: Any, **kwargs: Any) -> None:
-        self.entries.append({"action": action, **kwargs})
-
-
-@pytest.fixture
-def audit() -> _RecordingAudit:
-    return _RecordingAudit()
-
-
 @pytest.fixture
 def acting() -> dict[str, User]:
     """Who is signed in; a test switches it by assigning ``acting["user"]``."""
@@ -86,7 +75,7 @@ def acting() -> dict[str, User]:
 @pytest.fixture
 def app(
     acting: dict[str, User],
-    audit: _RecordingAudit,
+    recording_audit: RecordingAudit,
     practice_admins: InMemoryPracticeAdminRepository,
 ) -> Iterator[FastAPI]:
     users = InMemoryUserRepository()
@@ -105,7 +94,7 @@ def app(
     application.dependency_overrides[require_active_subscription] = lambda: acting["user"]
     application.dependency_overrides[get_user_repository] = lambda: users
     application.dependency_overrides[get_practice_admin_repository] = lambda: practice_admins
-    application.dependency_overrides[get_audit_service] = lambda: audit
+    application.dependency_overrides[get_audit_service] = lambda: recording_audit
 
     session = MagicMock()
     session.get.return_value = SimpleNamespace(
@@ -158,7 +147,7 @@ class TestTheOwner:
         }
 
     def test_grants_and_revokes_each_audited_once(
-        self, client: TestClient, audit: _RecordingAudit
+        self, client: TestClient, recording_audit: RecordingAudit
     ) -> None:
         granted = client.put(f"{URL}/{COLLEAGUE_ID}")
         assert granted.status_code == 200
@@ -171,20 +160,20 @@ class TestTheOwner:
         assert _admins(revoked)["colleague@example.com"] is False
         assert client.delete(f"{URL}/{COLLEAGUE_ID}").status_code == 200
 
-        assert [(e["action"], e["changes"]) for e in audit.entries] == [
+        assert [(e["action"], e["changes"]) for e in recording_audit.entries] == [
             (AuditAction.PRACTICE_ADMIN_GRANTED, {"user_id": COLLEAGUE_ID}),
             (AuditAction.PRACTICE_ADMIN_REVOKED, {"user_id": COLLEAGUE_ID}),
         ]
-        assert {e["resource_id"] for e in audit.entries} == {"practice-1"}
+        assert {e["resource_id"] for e in recording_audit.entries} == {"practice-1"}
 
     def test_cannot_grant_or_revoke_the_owner(
-        self, client: TestClient, audit: _RecordingAudit
+        self, client: TestClient, recording_audit: RecordingAudit
     ) -> None:
         for method in ("put", "delete"):
             response = client.request(method, f"{URL}/{OWNER_ID}")
             assert response.status_code == 400, method
             assert _code(response) == "PRACTICE_OWNER"
-        assert audit.entries == []
+        assert recording_audit.entries == []
 
     def test_cannot_grant_someone_outside_the_practice(
         self, client: TestClient, practice_admins: InMemoryPracticeAdminRepository
@@ -211,7 +200,7 @@ class TestAnAdmin:
     def test_cannot_list_grant_or_revoke(
         self,
         client: TestClient,
-        audit: _RecordingAudit,
+        recording_audit: RecordingAudit,
         practice_admins: InMemoryPracticeAdminRepository,
     ) -> None:
         """Deciding who else may change settings stays with the owner."""
@@ -219,7 +208,7 @@ class TestAnAdmin:
         assert _code(client.put(f"{URL}/{THIRD_ID}")) == "NOT_PRACTICE_OWNER"
         assert _code(client.delete(f"{URL}/{COLLEAGUE_ID}")) == "NOT_PRACTICE_OWNER"
         assert practice_admins.list_admin_ids() == {COLLEAGUE_ID}
-        assert audit.entries == []
+        assert recording_audit.entries == []
 
 
 class TestAPlainClinician:

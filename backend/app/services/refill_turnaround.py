@@ -38,7 +38,9 @@ from ..repositories.postgres.user import PostgresUserRepository
 from .working_days import WorkingCalendar, due_at
 
 if TYPE_CHECKING:
-    from datetime import datetime, tzinfo
+    from datetime import date, datetime, tzinfo
+
+    from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -48,24 +50,34 @@ class RefillDueClock(Protocol):
         """When a request arriving at *submitted_at* is due, for this practice."""
 
 
-def _owner_calendar(practice_schema: str) -> tuple[WorkingCalendar, tzinfo]:
+def _owner_and_zone(session: Session, practice_schema: str) -> tuple[str | None, tzinfo]:
+    """The practice owner and their time zone; UTC when either is unknown."""
+    owner = (
+        session.query(PracticeRow.owner_user_id)
+        .filter(PracticeRow.schema_name == practice_schema)
+        .scalar()
+    )
+    if not owner:
+        return None, UTC
+    try:
+        return owner, ZoneInfo(PostgresUserRepository(session).get_preferences(owner).timezone)
+    except (ZoneInfoNotFoundError, ValueError, AttributeError):
+        # The raw preference is caller-controlled; only the id is logged.
+        logger.warning("refill turnaround: unresolvable timezone for owner %s, using UTC", owner)
+        return owner, UTC
+
+
+def practice_calendar(practice_schema: str) -> tuple[WorkingCalendar, tzinfo]:
+    """The practice owner's working calendar and zone; Monday to Friday in UTC without one.
+
+    Shared by every target the practice counts in working days (a refill's
+    turnaround, a message's reply time), so they all fall on the same days.
+    """
     session = create_standalone_session()
     try:
-        owner = (
-            session.query(PracticeRow.owner_user_id)
-            .filter(PracticeRow.schema_name == practice_schema)
-            .scalar()
-        )
-        if not owner:
+        owner, tz = _owner_and_zone(session, practice_schema)
+        if owner is None:
             return WorkingCalendar(), UTC
-        try:
-            tz: tzinfo = ZoneInfo(PostgresUserRepository(session).get_preferences(owner).timezone)
-        except (ZoneInfoNotFoundError, ValueError, AttributeError):
-            # The raw preference is caller-controlled; only the id is logged.
-            logger.warning(
-                "refill turnaround: unresolvable timezone for owner %s, using UTC", owner
-            )
-            tz = UTC
         set_tenant_schema(session, practice_schema)
         arm_current_user_id(session, owner)
         rules = PostgresAvailabilityRuleRepository(session).list_by_user(owner)
@@ -77,9 +89,32 @@ def _owner_calendar(practice_schema: str) -> tuple[WorkingCalendar, tzinfo]:
 def practice_refill_due_at(practice_schema: str, submitted_at: datetime) -> datetime:
     """The due time for a request arriving now, on the practice's own calendar."""
     days = portal_settings_for_schema(practice_schema).refill_turnaround_days
-    calendar, tz = _owner_calendar(practice_schema)
+    calendar, tz = practice_calendar(practice_schema)
     return due_at(submitted_at, days, calendar, tz)
 
 
 def get_refill_due_clock() -> RefillDueClock:
     return practice_refill_due_at
+
+
+class PracticeToday(Protocol):
+    def __call__(self, practice_schema: str, moment: datetime) -> date:
+        """The practice's calendar date at *moment*."""
+
+
+def practice_today(practice_schema: str, moment: datetime) -> date:
+    """The date at *moment* in the practice owner's zone, the frame due days are counted in.
+
+    A client's "days left" is counted from this day, so a request sent late
+    in the evening is not read as a day later than the client meant.
+    """
+    session = create_standalone_session()
+    try:
+        _owner, tz = _owner_and_zone(session, practice_schema)
+    finally:
+        session.close()
+    return moment.astimezone(tz).date()
+
+
+def get_practice_today() -> PracticeToday:
+    return practice_today

@@ -4,19 +4,40 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from sqlalchemy import distinct, func, literal, select, text, tuple_
 
-from ...db.models import AuditLogRow
-from ...models.audit import ACTOR_TYPE_PATIENT
+from ...db.models import AuditLogRow, PatientClinicianRow
+from ...models.audit import ACTOR_TYPE_CLINICIAN, ACTOR_TYPE_PATIENT
+from ...models.enums import ClinicianRole
 from ..audit import (
     DEFAULT_BASELINE_DAYS,
     MIN_USER_BASELINE_DAYS,
     AuditRepository,
     _assert_phi_free,
 )
+from ._grants import grant_in_force
+
+#: The ``changes`` keys a row written under a covering grant carries. Kept in
+#: step with ``app.away.coverage`` and the ``rls_audit_coverage_read`` policy,
+#: which reads the second.
+GRANT_ROLE_KEY = "grant_role"
+COVERAGE_PERIOD_KEY = "coverage_period_id"
+#: Coverage's own rows (accepted, granted, ended) record the coverage; they
+#: are not something done under it.
+_COVERAGE_ACTION_PREFIX = "coverage_"
+
+
+def _is_uuid(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
+
 
 if TYPE_CHECKING:
     from sqlalchemy import Select
@@ -120,14 +141,60 @@ class PostgresAuditRepository(AuditRepository):
         return found is not None
 
     def append(self, entry: AuditLogEntry) -> None:
+        self._note_coverage([entry])
         self._session.add(_entry_to_row(entry))
         self._session.flush()
 
     def append_many(self, entries: list[AuditLogEntry]) -> None:
+        self._note_coverage(entries)
         # One flush for the lot: SQLAlchemy batches same-table inserts into
         # a single executemany, so a list view's rows cost one round-trip.
         self._session.add_all([_entry_to_row(e) for e in entries])
         self._session.flush()
+
+    def _note_coverage(self, entries: list[AuditLogEntry]) -> None:
+        """Mark each clinician's row on a client they reach only by covering.
+
+        The row's ``changes`` gains the grant's role and the away period it
+        covers, which is how the clinician back from that period reads what
+        was done on their clients (``app.away.coverage.coverage_activity``).
+        One query for the lot, on the actor's own grants: under row-level
+        security a session sees only the grants of the clinician it is
+        armed as, which for every clinician row is the actor.
+        """
+        candidates = [
+            entry
+            for entry in entries
+            if entry.patient_id
+            and entry.actor_type == ACTOR_TYPE_CLINICIAN
+            and not entry.action.startswith(_COVERAGE_ACTION_PREFIX)
+            and not (entry.changes and COVERAGE_PERIOD_KEY in entry.changes)
+            and _is_uuid(entry.user_id)
+        ]
+        if not candidates:
+            return
+        pairs = {(entry.user_id, entry.patient_id) for entry in candidates}
+        rows = self._session.execute(
+            select(
+                PatientClinicianRow.user_id,
+                PatientClinicianRow.patient_id,
+                PatientClinicianRow.away_period_id,
+            ).where(
+                PatientClinicianRow.role == ClinicianRole.COVERING.value,
+                PatientClinicianRow.away_period_id.is_not(None),
+                tuple_(PatientClinicianRow.user_id, PatientClinicianRow.patient_id).in_(pairs),
+                grant_in_force(),
+            )
+        ).all()
+        covering = {(str(r.user_id), str(r.patient_id)): str(r.away_period_id) for r in rows}
+        for entry in candidates:
+            period_id = covering.get((entry.user_id, str(entry.patient_id)))
+            if period_id is not None:
+                entry.changes = {
+                    **(entry.changes or {}),
+                    GRANT_ROLE_KEY: ClinicianRole.COVERING.value,
+                    COVERAGE_PERIOD_KEY: period_id,
+                }
 
     def metadata_for_review(
         self, window_hours: int = 24, baseline_days: int = DEFAULT_BASELINE_DAYS

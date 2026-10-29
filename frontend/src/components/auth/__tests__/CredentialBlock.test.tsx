@@ -79,7 +79,7 @@ function renderBlock(props: Partial<CredentialBlockProps> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  useConfig.mockReturnValue({ passkeysEnabled: true })
+  useConfig.mockReturnValue({ passkeysEnabled: true, googleSignInEnabled: true })
   browserSupportsWebAuthn.mockReturnValue(true)
   // Keep step-up inactive unless a test opts into it.
   getUserStatus.mockResolvedValue({ session_mfa_satisfied: true, has_passkey: false })
@@ -176,6 +176,25 @@ describe("CredentialBlock passkey gating", () => {
     })
     expect(screen.queryByText(RECOVERY_LINK)).toBeNull()
     expect(browserSupportsWebAuthn).not.toHaveBeenCalled()
+  })
+})
+
+describe("CredentialBlock Google gating", () => {
+  it("offers Google sign-in when the deployment has a Google client", async () => {
+    renderBlock()
+
+    expect(await screen.findByRole("button", { name: /Continue with Google/ })).not.toBeNull()
+  })
+
+  it("offers only email and password when it has none", async () => {
+    useConfig.mockReturnValue({ passkeysEnabled: false, googleSignInEnabled: false })
+
+    renderBlock()
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /Continue with Google/ })).toBeNull()
+    })
+    expect(screen.getByLabelText("Email")).not.toBeNull()
   })
 })
 

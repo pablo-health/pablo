@@ -43,7 +43,7 @@ from ..reliability import (
     is_transient,
 )
 from .llm_provider import strip_provider_prefix
-from .llm_telemetry import LLMSpanRequest, llm_span
+from .llm_telemetry import LLMSpanRequest, llm_span, usage_detail_tokens, usage_tokens
 from .vertex_client import vertex_genai_client
 
 if TYPE_CHECKING:
@@ -269,6 +269,7 @@ class GeminiChatLLMGateway(ChatLLMGateway):
         # recorded — never the delta text, which is the response content.
         with llm_span(LLMSpanRequest(operation="chat", model=model)) as span:
             output_token_total = 0
+            last_usage: object = None
             final_reason: FinishReason | None = None
             try:
                 # ``generate_content_stream`` itself only parses the config and
@@ -301,6 +302,7 @@ class GeminiChatLLMGateway(ChatLLMGateway):
                         final_reason = reason
                     usage = getattr(chunk, "usage_metadata", None)
                     if usage is not None:
+                        last_usage = usage
                         ct = getattr(usage, "candidates_token_count", None)
                         if ct:
                             output_token_total = ct
@@ -318,8 +320,16 @@ class GeminiChatLLMGateway(ChatLLMGateway):
 
             if final_reason is None:
                 final_reason = "stop"
-            if output_token_total:
-                span.set_token_usage(completion_tokens=output_token_total)
+            if output_token_total or last_usage is not None:
+                prompt_tokens, _, total_tokens = usage_tokens(last_usage)
+                cached_tokens, thoughts_tokens = usage_detail_tokens(last_usage)
+                span.set_token_usage(
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=output_token_total or None,
+                    total_tokens=total_tokens,
+                    cached_tokens=cached_tokens,
+                    thoughts_tokens=thoughts_tokens,
+                )
             yield StreamEvent(
                 finish_reason=final_reason,
                 output_tokens=output_token_total or None,

@@ -36,6 +36,7 @@ def _request(*, mfa_satisfied: bool) -> MagicMock:
         provider="firebase",
         subject_id="fb-uid",
         email=USER.email,
+        email_verified=True,
         mfa_satisfied=mfa_satisfied,
         claims={},
     )

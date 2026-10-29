@@ -53,6 +53,8 @@ if TYPE_CHECKING:
 
     from app.models import User
 
+    from tests.audit_fakes import RecordingAudit
+
 PRACTICE_ID = "practice-1"
 URL = "/api/practice/email-sender"
 SENDER = EXAMPLE_SENDER
@@ -322,22 +324,9 @@ class _FakeStore:
         return self.view(practice_id)
 
 
-class _RecordingAudit:
-    def __init__(self) -> None:
-        self.entries: list[dict[str, Any]] = []
-
-    def log(self, action: Any, *_args: Any, **kwargs: Any) -> None:
-        self.entries.append({"action": action, **kwargs})
-
-
 @pytest.fixture
 def store() -> _FakeStore:
     return _FakeStore()
-
-
-@pytest.fixture
-def audit() -> _RecordingAudit:
-    return _RecordingAudit()
 
 
 @pytest.fixture
@@ -353,14 +342,18 @@ def channel() -> Any:
 
 @pytest.fixture
 def client(
-    mock_user: User, store: _FakeStore, audit: _RecordingAudit, owner_email: str, channel: Any
+    mock_user: User,
+    store: _FakeStore,
+    recording_audit: RecordingAudit,
+    owner_email: str,
+    channel: Any,
 ) -> Iterator[TestClient]:
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(sender_routes.router)
     app.dependency_overrides[require_active_subscription] = lambda: mock_user
     app.dependency_overrides[get_sender_settings_store] = lambda: store
-    app.dependency_overrides[get_audit_service] = lambda: audit
+    app.dependency_overrides[get_audit_service] = lambda: recording_audit
     app.dependency_overrides[get_invite_delivery] = lambda: channel
 
     session = MagicMock()
@@ -406,7 +399,7 @@ def test_with_no_reply_to_the_smtp_message_carries_no_reply_to_header() -> None:
 
 
 def test_the_owner_saves_the_three_fields_and_the_change_is_audited(
-    client: TestClient, store: _FakeStore, audit: _RecordingAudit, mock_user: User
+    client: TestClient, store: _FakeStore, recording_audit: RecordingAudit, mock_user: User
 ) -> None:
     response = client.put(
         URL,
@@ -424,7 +417,7 @@ def test_the_owner_saves_the_three_fields_and_the_change_is_audited(
         "reply_to": "frontdesk@example.com",
     }
     assert store.saved_by == mock_user.id
-    (entry,) = audit.entries
+    (entry,) = recording_audit.entries
     assert entry["action"] == AuditAction.PRACTICE_EMAIL_SENDER_CHANGED
     assert entry["resource_type"] == ResourceType.PRACTICE
     assert entry["resource_id"] == PRACTICE_ID
@@ -441,7 +434,7 @@ def test_blank_fields_go_back_to_their_defaults(client: TestClient, store: _Fake
 
 @pytest.mark.parametrize("owner_email", ["someone-else@example.com"])
 def test_a_clinician_who_does_not_own_the_practice_reads_but_cannot_save(
-    client: TestClient, store: _FakeStore, audit: _RecordingAudit
+    client: TestClient, store: _FakeStore, recording_audit: RecordingAudit
 ) -> None:
     assert client.get(URL).json()["can_edit"] is False
 
@@ -449,7 +442,7 @@ def test_a_clinician_who_does_not_own_the_practice_reads_but_cannot_save(
 
     assert response.status_code == 403
     assert store.chosen == SenderSettings()
-    assert audit.entries == []
+    assert recording_audit.entries == []
 
 
 @pytest.mark.parametrize(
@@ -463,7 +456,7 @@ def test_a_clinician_who_does_not_own_the_practice_reads_but_cannot_save(
     ],
 )
 def test_a_setting_that_cannot_be_saved_is_a_422_that_says_why(
-    client: TestClient, store: _FakeStore, audit: _RecordingAudit, body: dict[str, str]
+    client: TestClient, store: _FakeStore, recording_audit: RecordingAudit, body: dict[str, str]
 ) -> None:
     response = client.put(URL, json=body)
 
@@ -471,7 +464,7 @@ def test_a_setting_that_cannot_be_saved_is_a_422_that_says_why(
     assert response.json()["error"]["code"] == "EMAIL_SENDER_INVALID"
     assert response.json()["error"]["message"]
     assert store.chosen == SenderSettings()
-    assert audit.entries == []
+    assert recording_audit.entries == []
 
 
 @pytest.mark.parametrize("channel", [CapturingInviteDelivery()])

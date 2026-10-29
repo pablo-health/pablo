@@ -1,0 +1,47 @@
+# Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+#
+# How one Pablo address splits between the frontend and the backend, imported
+# by the VM's Caddyfile and the local one. The frontend owns four paths under
+# /api (its config, the Firebase session cookie's login and logout, and the
+# setup-token exchange); every other /api path is the backend's,
+# /api/auth/session included. Firebase sign-in only: the OIDC provider's
+# /api/auth/* catch-all is not routed here.
+
+encode zstd gzip
+
+request_body {
+	max_size 64MB
+}
+
+@frontend_api path /api/config /api/login /api/logout /api/auth/exchange-setup-token
+handle @frontend_api {
+	reverse_proxy frontend:3000 {
+		header_up X-Forwarded-Proto https
+	}
+}
+
+handle /api/* {
+	reverse_proxy backend:8000 {
+		# Every request arrives over HTTPS: the VM redirects plain HTTP before
+		# it gets here, and locally Tailscale Funnel terminates TLS in front.
+		# Said explicitly, so the backend's HTTPS check holds behind Funnel.
+		header_up X-Forwarded-Proto https
+		# Streamed responses (note generation) go out as they are written.
+		flush_interval -1
+		transport http {
+			read_timeout 300s
+			write_timeout 300s
+		}
+	}
+}
+
+handle {
+	reverse_proxy frontend:3000 {
+		header_up X-Forwarded-Proto https
+	}
+}
+
+log {
+	output stdout
+	format json
+}

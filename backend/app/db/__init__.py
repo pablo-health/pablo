@@ -35,6 +35,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..settings import Settings, get_settings
+from .rls_state import TablePlan, read_live_rls, record_fingerprints, table_matches
 
 _VALID_SCHEMA_RE = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 
@@ -220,7 +221,10 @@ def _build_cloud_sql_engine(settings: Settings, option_parts: list[str]) -> Engi
     same way as the plain-DSN path.
     """
     try:
-        from google.cloud.sql.connector import Connector, IPTypes  # type: ignore[import-untyped]
+        from google.cloud.sql.connector import (  # type: ignore[import-untyped]  # cloud-sql-python-connector ships no type information
+            Connector,
+            IPTypes,
+        )
     except ImportError as exc:
         msg = (
             "db_use_cloud_sql_connector=true but the 'cloud-sql-python-connector' package "
@@ -774,8 +778,8 @@ def read_once_as(
 
 
 @event.listens_for(Session, "after_begin")
-def _rearm_rls_principal_gucs_on_txn_begin(  # type: ignore[no-untyped-def]
-    session, _transaction, connection
+def _rearm_rls_principal_gucs_on_txn_begin(
+    session: Session, _transaction: Any, connection: Any
 ) -> None:
     """Re-apply the RLS ``app.current_user_id`` GUC on every txn begin.
 
@@ -870,7 +874,7 @@ def _rearm_rls_principal_gucs_on_txn_begin(  # type: ignore[no-untyped-def]
 
 
 @event.listens_for(Engine, "checkout")
-def _reapply_search_path_on_checkout(dbapi_conn, _conn_record, _conn_proxy) -> None:  # type: ignore[no-untyped-def]
+def _reapply_search_path_on_checkout(dbapi_conn: Any, _conn_record: Any, _conn_proxy: Any) -> None:
     """Re-apply ``search_path`` from the request-scoped ContextVar on every
     pool checkout.
 
@@ -921,7 +925,7 @@ def _reapply_search_path_on_checkout(dbapi_conn, _conn_record, _conn_proxy) -> N
 
 
 @event.listens_for(Engine, "checkin")
-def _reset_search_path_on_checkin(dbapi_conn, _conn_record) -> None:  # type: ignore[no-untyped-def]
+def _reset_search_path_on_checkin(dbapi_conn: Any, _conn_record: Any) -> None:
     """Return the connection to a neutral ``search_path``, with no principal
     armed, on pool checkin.
 
@@ -1138,6 +1142,13 @@ _CORE_NOT_ROW_SCOPED: frozenset[str] = frozenset(
         # clinician's request asks whether they are one. The schema is the
         # boundary; the grant and revoke routes are the owner's alone.
         "practice_admins",
+        # ``clinician_away_periods`` — when a clinician is away and what their
+        # clients are told. Its ``user_id`` would earn it the "your own rows"
+        # policy, but a client writing in reads their clinician's period to
+        # be acknowledged, and colleagues read it to know who is out. It names
+        # no patient; the schema is the boundary, and the routes let only the
+        # clinician it belongs to change it.
+        "clinician_away_periods",
     }
 )
 
@@ -1595,14 +1606,14 @@ def _patient_principal_predicate_for(
     return _patient_principal_predicate(key_column)
 
 
-def _apply_patient_principal_policies(
-    session: Session, schema_name: str, table_name: str, columns: set[str]
-) -> None:
-    """Add the additive patient-principal policies to a registered table.
+def _patient_principal_policy_statements(
+    schema_name: str, table_name: str, columns: set[str]
+) -> list[str]:
+    """The additive patient-principal policies for a registered table.
 
-    Called for every table before the clinician policy shape is chosen, so
+    Planned for every table before the clinician policy shape is chosen, so
     a registered table gets its patient arm regardless of which clinician
-    branch handles it (several of them ``continue``).
+    branch handles it.
 
     Unregistered tables get nothing — which is the point. A clinician-
     scoped table keyed on ``app.current_user_id`` fails closed for a
@@ -1619,14 +1630,10 @@ def _apply_patient_principal_policies(
     Worse, the unit-level registry test would stay green throughout,
     because it checks the ORM metadata, which has all the columns.
     """
-    import logging
-
-    logger = logging.getLogger(__name__)
-
     qualified = f"{schema_name}.{table_name}"
     key_column = PATIENT_READABLE_TABLES.get(table_name)
     if key_column is None:
-        return
+        return []
 
     if key_column not in columns:
         raise RuntimeError(
@@ -1637,10 +1644,9 @@ def _apply_patient_principal_policies(
         )
 
     predicate = _patient_principal_predicate_for(table_name, key_column, schema_name, qualified)
-    session.execute(
-        text(f"CREATE POLICY rls_patient_self_read ON {qualified} FOR SELECT USING ({predicate})")
-    )
-    logger.info("RLS (patient self-read on %s) enabled on %s", key_column, qualified)
+    statements = [
+        f"CREATE POLICY rls_patient_self_read ON {qualified} FOR SELECT USING ({predicate})"
+    ]
 
     if table_name in PATIENT_WRITABLE_TABLES:
         # The write arm, which is the read predicate unless the table asked
@@ -1648,11 +1654,9 @@ def _apply_patient_principal_policies(
         # a fixed string from this module, never a caller's.
         narrowing = PATIENT_WRITE_NARROWING.get(table_name)
         writable = predicate if narrowing is None else f"({predicate}) AND ({narrowing})"
-        session.execute(
-            text(
-                f"CREATE POLICY rls_patient_self_write ON {qualified} "
-                f"FOR UPDATE USING ({writable}) WITH CHECK ({writable})"
-            )
+        statements.append(
+            f"CREATE POLICY rls_patient_self_write ON {qualified} "
+            f"FOR UPDATE USING ({writable}) WITH CHECK ({writable})"
         )
         # INSERT needs a policy of its own: an UPDATE policy does not cover
         # it, and under FORCE ROW LEVEL SECURITY an INSERT with no matching
@@ -1662,13 +1666,10 @@ def _apply_patient_principal_policies(
         # is no prior row for ``USING`` to test: the predicate pins the NEW
         # row's owning column to the calling patient, and that is what stops
         # A from writing a row owned by B.
-        session.execute(
-            text(
-                f"CREATE POLICY rls_patient_self_insert ON {qualified} "
-                f"FOR INSERT WITH CHECK ({writable})"
-            )
+        statements.append(
+            f"CREATE POLICY rls_patient_self_insert ON {qualified} "
+            f"FOR INSERT WITH CHECK ({writable})"
         )
-        logger.info("RLS (patient self-write on %s) enabled on %s", key_column, qualified)
 
     if table_name in PATIENT_DELETABLE_TABLES:
         # DELETE is the quiet one. With no DELETE policy the row is simply
@@ -1676,27 +1677,26 @@ def _apply_patient_principal_policies(
         # an error and the caller is told it succeeded. The arm makes the
         # patient's own rows deletable and nothing else: the predicate is
         # the same ownership pair the read arm uses.
-        session.execute(
-            text(
-                f"CREATE POLICY rls_patient_self_delete ON {qualified} "
-                f"FOR DELETE USING ({predicate})"
-            )
+        statements.append(
+            f"CREATE POLICY rls_patient_self_delete ON {qualified} FOR DELETE USING ({predicate})"
         )
-        logger.info("RLS (patient self-delete on %s) enabled on %s", key_column, qualified)
+    return statements
 
 
 class RlsReconcileCounts(NamedTuple):
     """What one ``enable_rls_on_schema`` pass did to a schema.
 
-    ``applied`` is the tables whose row-level security state it set;
-    ``skipped`` the ones it deliberately passed over (see the ``strict``
-    argument). Both are reported per schema so an operator reading a
-    fan-out log can tell "nothing to do here" from "we left tables
-    alone".
+    ``applied`` is the tables whose row-level security state it verified or
+    set; ``skipped`` the ones it deliberately passed over (see the ``strict``
+    argument); ``altered`` the subset of ``applied`` it actually had to
+    change. All three are reported per schema so an operator reading a
+    fan-out log can tell "nothing to do here" from "we left tables alone"
+    from "we repaired tables".
     """
 
     applied: int
     skipped: int
+    altered: int = 0
 
 
 def engine_known_tenant_tables() -> set[str]:
@@ -1720,7 +1720,443 @@ def engine_known_tenant_tables() -> set[str]:
     )
 
 
-def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant-table shape
+def _plan_row_scoped_table(  # noqa: PLR0912, PLR0915 — one policy arm per tenant-table shape
+    schema_name: str,
+    table_name: str,
+    columns: set[str],
+    schema_tables: frozenset[str] = frozenset(),
+) -> TablePlan:
+    """Every statement that sets one row-scoped table's RLS, in order, without running any.
+
+    The full drop-and-recreate: enable and force RLS, drop every policy name
+    this function has ever created, then create the ones the table's shape
+    calls for. ``enable_rls_on_schema`` runs it only when the table does not
+    already hold its result. Raises for a table that matches no policy shape.
+
+    ``schema_tables`` is every table in the schema, for a policy that reads
+    another table the schema may not have yet: older revisions run this
+    mid-chain.
+    """
+    qualified = f"{schema_name}.{table_name}"
+    statements: list[str] = []
+    statements.append(f"ALTER TABLE {qualified} ENABLE ROW LEVEL SECURITY")
+    statements.append(f"ALTER TABLE {qualified} FORCE ROW LEVEL SECURITY")
+    statements.append(f"DROP POLICY IF EXISTS rls_user_isolation ON {qualified}")
+    statements.append(f"DROP POLICY IF EXISTS rls_patient_access ON {qualified}")
+    statements.append(f"DROP POLICY IF EXISTS rls_patient_doc_access ON {qualified}")
+    statements.append(f"DROP POLICY IF EXISTS rls_note_access ON {qualified}")
+    statements.append(f"DROP POLICY IF EXISTS rls_note_child_access ON {qualified}")
+    # Per-command policies on ``patients`` (split out from the
+    # legacy single ALL policy to fix the INSERT chicken-and-egg).
+    # Idempotent for tables that don't have these policies.
+    statements.append(f"DROP POLICY IF EXISTS rls_patient_modify ON {qualified}")
+    statements.append(f"DROP POLICY IF EXISTS rls_patient_delete ON {qualified}")
+    statements.append(f"DROP POLICY IF EXISTS rls_patient_insert ON {qualified}")
+    # The patient-principal arm. Dropped unconditionally so a table
+    # that is later UNregistered sheds its patient policy on the next
+    # run, rather than keeping a stale grant nobody is looking for.
+    statements.append(f"DROP POLICY IF EXISTS rls_patient_self_read ON {qualified}")
+    statements.append(f"DROP POLICY IF EXISTS rls_patient_self_write ON {qualified}")
+    statements.append(f"DROP POLICY IF EXISTS rls_patient_self_insert ON {qualified}")
+    statements.append(f"DROP POLICY IF EXISTS rls_patient_self_delete ON {qualified}")
+    statements.append(f"DROP POLICY IF EXISTS rls_practice_answers ON {qualified}")
+
+    # Additive: created before the clinician shape is chosen, because
+    # several of those branches return early. Permissive policies OR
+    # together, so this widens access for a patient principal without
+    # touching any clinician policy.
+    statements.extend(_patient_principal_policy_statements(schema_name, table_name, columns))
+
+    # Pick the policy shape:
+    #   * patient_documents — combined policy. Non-private rows
+    #     follow patient_access (co-treaters see the chart);
+    #     private rows collapse to uploader-only. Single CREATE
+    #     POLICY with an OR so PG can short-circuit.
+    #   * patients (the access target itself) — gate by id via the
+    #     has_patient_access function.
+    #   * Any other table with patient_id — gate by patient_id via
+    #     has_patient_access.
+    #   * Fallback to direct user_id ownership for tables that have
+    #     a user_id column but no patient_id (e.g. availability_rules,
+    #     google_calendar_tokens, ical_sync_configs).
+    if table_name == "patient_documents":
+        # Non-restricted categories (chart, consent) → patient_access
+        # (co-treaters share). category IN ('therapist_private',
+        # 'psychotherapy_notes') → uploader-only. Both restricted
+        # categories collapse to the same access predicate; the
+        # distinction matters at the disclosure-workflow layer, not
+        # RLS. Gated by the restricted set (not an enumerated
+        # allow-list) so adding a future non-restricted category
+        # needs no RLS change.
+        statements.append(
+            f"CREATE POLICY rls_patient_doc_access ON {qualified} "
+            f"USING ("
+            f"  (category NOT IN ('therapist_private', 'psychotherapy_notes') "
+            f"   AND has_patient_access("
+            f"    patient_id, current_setting('app.current_user_id', true)"
+            f"  )) "
+            f"  OR "
+            f"  (category IN ('therapist_private', 'psychotherapy_notes') "
+            f"   AND user_id::text = current_setting('app.current_user_id', true))"
+            f")"
+        )
+        description = (
+            "RLS (patient_doc_access: chart=patient_access, restricted=uploader) enabled on %s"
+        )
+        return TablePlan(tuple(statements), row_scoped=True, description=description)
+    if table_name == "notes" and "restricted" in columns:
+        # Same two-arm shape as patient_documents. An ordinary note
+        # follows patient_access (co-treaters share the chart); a
+        # restricted one (a psychotherapy note) is its author's alone.
+        # Keyed on the ``restricted`` column rather than on
+        # ``note_type`` so a future restricted type needs no RLS
+        # change. The column guard is what lets the heal revision
+        # earlier in the chain replay over a schema that predates it:
+        # such a schema falls through to the plain patient_access
+        # shape until its own upgrade adds the column.
+        statements.append(
+            f"CREATE POLICY rls_note_access ON {qualified} "
+            f"USING ("
+            f"  (NOT restricted "
+            f"   AND has_patient_access("
+            f"    patient_id, current_setting('app.current_user_id', true)"
+            f"  )) "
+            f"  OR "
+            f"  (restricted "
+            f"   AND author_user_id::text = current_setting('app.current_user_id', true))"
+            f")"
+        )
+        description = "RLS (note_access: shared=patient_access, restricted=author) enabled on %s"
+        return TablePlan(tuple(statements), row_scoped=True, description=description)
+    if table_name in NOTE_CHILD_TABLES:
+        # A note's signed versions and addenda carry its body and the
+        # clinician's words about it, so they are readable exactly when
+        # the note is. The subquery reads ``notes`` under its own row
+        # policy, so a restricted note's children stay its author's and
+        # an ordinary note's follow patient access, with no second copy
+        # of either predicate to drift. ``qualified`` and ``schema_name``
+        # are validated identifiers; nothing here is caller input.
+        statements.append(
+            f"CREATE POLICY rls_note_child_access ON {qualified} "  # noqa: S608
+            f"USING (EXISTS ("
+            f"  SELECT 1 FROM {schema_name}.notes n "
+            f"  WHERE n.id = {qualified}.note_id"
+            f"))"
+        )
+        description = "RLS (note_child_access: follows the parent note) enabled on %s"
+        return TablePlan(tuple(statements), row_scoped=True, description=description)
+    if table_name == "patient_source_mappings" and "scope" in columns:
+        # A calendar's answers are shared by every armed clinician, a
+        # feed's are their clinician's, and rows from before scopes carry
+        # plain-text identifiers and stay their owner's until adopted. The
+        # column guard lets the reconcile replay over a schema that
+        # predates the ``scope`` column: such a schema keeps the
+        # owner-only shape below until its own upgrade adds it.
+        # ``single_practice_migration`` mirrors this branch.
+        from .practice_answers import practice_answers_policy_statements
+
+        statements.extend(practice_answers_policy_statements(schema_name))
+        description = "RLS (practice answers; old rows owner-only) enabled on %s"
+        return TablePlan(tuple(statements), row_scoped=True, description=description)
+    if table_name == "patient_clinicians":
+        # The grant table itself: gating it via
+        # ``has_patient_access(patient_id, …)`` would recurse
+        # (the function reads patient_clinicians), and even a
+        # non-recursive check on ``patient_id`` would create the
+        # same INSERT chicken-and-egg as ``patients`` had — a
+        # new grant's row can't satisfy "has a grant for this
+        # patient" until that very grant exists. Gate by
+        # ``user_id`` directly: each clinician sees only their
+        # own grants, and INSERTs are permitted as long as the
+        # row's ``user_id`` matches the current user (i.e. you
+        # can't grant access to other clinicians from a normal
+        # request path — admin endpoints would run with a
+        # different effective user via SET ROLE or similar).
+        statements.append(
+            f"CREATE POLICY rls_user_isolation ON {qualified} "
+            f"USING (user_id::text = current_setting('app.current_user_id', true)) "
+            f"WITH CHECK (user_id::text = current_setting('app.current_user_id', true))"
+        )
+        description = "RLS (user_id) enabled on %s"
+    elif table_name == "patients":
+        # The ``patients`` table is the access-table target: a row's
+        # grant in ``patient_clinicians`` is what makes the row
+        # visible. Letting USING also gate INSERT (PG's default
+        # when WITH CHECK is omitted) creates a chicken-and-egg —
+        # ``has_patient_access(new_id, user)`` returns false for
+        # a brand-new patient because the grant doesn't exist yet,
+        # so the very first INSERT into a fresh tenant is rejected
+        # ("new row violates row-level security policy"). This is
+        # exactly the failure mode the 2026-05-17 pentest hit on
+        # freshly-provisioned ``practice_pentest_*`` schemas.
+        #
+        # Split the policy: USING gates SELECT/UPDATE/DELETE
+        # (only granted clinicians can read or modify rows), and
+        # an explicit ``WITH CHECK (true)`` permits INSERTs. The
+        # app inserts the patient + its primary-clinician grant
+        # in the same flush so a new patient is immediately
+        # visible to its creator. Other tables (sessions, notes,
+        # etc.) keep the USING-as-WITH-CHECK shape — they SHOULD
+        # require an existing grant to insert.
+        statements.append(
+            f"CREATE POLICY rls_patient_access ON {qualified} "
+            f"FOR SELECT USING (has_patient_access("
+            f"  id, current_setting('app.current_user_id', true)"
+            f"))"
+        )
+        statements.append(
+            f"CREATE POLICY rls_patient_modify ON {qualified} "
+            f"FOR UPDATE USING (has_patient_access("
+            f"  id, current_setting('app.current_user_id', true)"
+            f"))"
+        )
+        statements.append(
+            f"CREATE POLICY rls_patient_delete ON {qualified} "
+            f"FOR DELETE USING (has_patient_access("
+            f"  id, current_setting('app.current_user_id', true)"
+            f"))"
+        )
+        # The clinician chicken-and-egg: a brand-new patient has no
+        # ``patient_clinicians`` grant yet, so ``has_patient_access``
+        # is false on the very INSERT that creates them. The policy
+        # therefore cannot test patient access — but it must still
+        # name a principal. Requiring an armed ``app.current_user_id``
+        # admits any clinician (which is the point) while refusing a
+        # patient principal, who arms ``app.current_patient_id`` and
+        # leaves this one empty. ``WITH CHECK (true)`` admitted both.
+        statements.append(
+            f"CREATE POLICY rls_patient_insert ON {qualified} "
+            f"FOR INSERT WITH CHECK ("
+            f"coalesce(current_setting('app.current_user_id', true), '') <> ''"
+            f")"
+        )
+        description = "RLS (patient_access split policies) enabled on %s"
+    elif table_name == "audit_logs":
+        # audit_logs carries user_id, so without this branch it would
+        # take the generic clinician policy below — and that policy
+        # compares against ``app.current_user_id``, which a patient
+        # principal never arms. Every audit row a patient's own action
+        # produced would be refused at INSERT, which under
+        # § 164.312(b) is the one failure this table cannot have: the
+        # action still happens, and nothing records it.
+        #
+        # So the policy splits by who acted. Anything that is not a
+        # patient keeps exactly the predicate it has today, which is
+        # what keeps clinician rows, anonymous public-booking rows and
+        # system rows writing unchanged — they are all scoped to a
+        # user_id and arm the user GUC. A patient actor is checked
+        # against the patient GUC instead, and against their own id,
+        # so one patient cannot write a row in another's name.
+        insert_check = (
+            "(actor_type IS DISTINCT FROM 'patient' AND "
+            "user_id::text = current_setting('app.current_user_id', true)) OR "
+            "(actor_type = 'patient' AND "
+            "user_id::text = current_setting('app.current_patient_id', true))"
+        )
+        # Reads: an actor reads the rows they are the actor of. A
+        # patient principal reads nothing at all.
+        #
+        # The one widening is the practice owner, who reads every row
+        # about a client they have access to, whoever wrote it — the
+        # review of activity on a client's record that the practice is
+        # responsible for (§ 164.308(a)(1)(ii)(D)). That is its own
+        # SELECT-only policy below, so it adds reads and nothing else.
+        #
+        # The audit log is still a compliance record, not a
+        # read-surface for product behaviour. When a clinically
+        # meaningful signal matters — that an intake packet was
+        # completed, and when — it belongs in a domain column that
+        # says so, queried like any other clinical fact. Deriving it
+        # from audit rows would make the compliance record load-bearing
+        # for product behaviour.
+        select_using = "user_id::text = current_setting('app.current_user_id', true)"
+        # The practice is found through this table's own schema, not a
+        # schema name written into the policy: the tenant template is
+        # captured from ``practice`` and rewrites only ``practice.``-
+        # qualified names, which a regclass literal is and a string
+        # literal is not. Same text as migration ``a7e3c5d19b42``;
+        # ``test_audit_policy_parity`` holds the two together.
+        #
+        # No name it reaches may depend on the caller's search_path: it is
+        # evaluated wherever an audit row is read, including the
+        # RETURNING of an INSERT made from a session not scoped to this
+        # tenant. ``has_patient_access`` is called schema-qualified, and
+        # since ``a7e3c5d19b42`` its SQL-standard body is bound to its own
+        # schema's ``patient_clinicians``, not found through the path.
+        #
+        # ``qualified`` is built from the validated schema name and a
+        # fixed table name; not user input.
+        owner_client_read = (
+            "patient_id IS NOT NULL "  # noqa: S608
+            f"AND {schema_name}.has_patient_access("
+            "patient_id, current_setting('app.current_user_id', true)) "
+            "AND EXISTS (SELECT 1 FROM platform.practices p "
+            "WHERE p.owner_user_id::text = current_setting('app.current_user_id', true) "
+            f"AND to_regclass(p.schema_name || '.audit_logs') = '{qualified}'::regclass)"
+        )
+        # The second widening: a clinician back from an away period reads
+        # what the colleague who covered it did on their clients, and
+        # nothing else of that colleague's. A row qualifies only if it was
+        # written under a covering grant (``app.away.coverage`` tags it with
+        # the period), the period is the reader's own, the row's actor is
+        # that period's covering colleague, and the reader still has
+        # access to the client. SELECT-only, like the owner's. Same text as
+        # migration ``e7b3d9a2c4f1``; ``test_audit_policy_parity`` holds the
+        # two together. Created only once the schema has the away-periods
+        # table: older revisions run this function mid-chain, before it.
+        coverage_read = (
+            "patient_id IS NOT NULL "  # noqa: S608
+            "AND (changes ->> 'coverage_period_id') IS NOT NULL "
+            f"AND EXISTS (SELECT 1 FROM {schema_name}.clinician_away_periods ap "
+            "WHERE ap.id::text = (audit_logs.changes ->> 'coverage_period_id') "
+            "AND ap.user_id::text = current_setting('app.current_user_id', true) "
+            "AND ap.covering_user_id::text = audit_logs.user_id) "
+            f"AND {schema_name}.has_patient_access("
+            "patient_id, current_setting('app.current_user_id', true))"
+        )
+        # One ALL policy, the same shape the generic branch uses, so
+        # UPDATE and DELETE keep a predicate. Splitting this into
+        # SELECT-only and INSERT-only policies would leave those two
+        # commands with no policy at all — under RLS that is not a
+        # refusal, it is a silent match against zero rows, which would
+        # turn a tampering attempt from a loud trigger error into a
+        # quiet no-op and would strand the retention purge.
+        # The retention purge is not a principal and has no identity to
+        # arm: ``_delete_expired`` sets ``search_path``, arms
+        # ``app.allow_audit_purge`` and issues one DELETE across every
+        # actor's rows. Under the actor policy alone that DELETE compares
+        # ``user_id`` against an unset GUC and matches nothing — silently,
+        # rowcount 0, a cron reporting a successful run having purged
+        # nothing while rows outlive ``expires_at`` forever.
+        #
+        # So the purge gets its own permissive policies, gated on the same
+        # GUC the append-only trigger already treats as the authorization
+        # to delete. No new trust boundary: anything that can set that GUC
+        # can already get a DELETE past the trigger, and RLS was only
+        # hiding the rows by accident.
+        #
+        # SELECT as well as DELETE, because ``_count_expired`` backs
+        # ``--dry-run`` and reads through the same predicate. Without it an
+        # operator asking whether the purge has work is told "none" while
+        # the real run deletes thousands — a worse failure than both
+        # reporting zero. Both are gated on the purge GUC, so an ordinary
+        # request (which never sets it) sees exactly what it saw before.
+        #
+        # Deliberately NOT ``FOR ALL``: that would also admit INSERT and
+        # UPDATE under the purge GUC, letting a purge-context session
+        # forge or rewrite rows. The trigger blocks UPDATE, but the policy
+        # should not be the thing relying on it.
+        purge_armed = "current_setting('app.allow_audit_purge', true) = 'on'"
+        statements.append(f"DROP POLICY IF EXISTS rls_user_isolation ON {qualified}")
+        statements.append(f"DROP POLICY IF EXISTS rls_audit_actor_access ON {qualified}")
+        statements.append(f"DROP POLICY IF EXISTS rls_audit_purge_delete ON {qualified}")
+        statements.append(f"DROP POLICY IF EXISTS rls_audit_purge_select ON {qualified}")
+        statements.append(f"DROP POLICY IF EXISTS rls_audit_owner_client_read ON {qualified}")
+        statements.append(f"DROP POLICY IF EXISTS rls_audit_coverage_read ON {qualified}")
+        statements.append(
+            f"CREATE POLICY rls_audit_actor_access ON {qualified} "
+            f"USING ({select_using}) WITH CHECK ({insert_check})"
+        )
+        statements.append(
+            f"CREATE POLICY rls_audit_owner_client_read ON {qualified} "
+            f"FOR SELECT USING ({owner_client_read})"
+        )
+        if "clinician_away_periods" in schema_tables:
+            statements.append(
+                f"CREATE POLICY rls_audit_coverage_read ON {qualified} "
+                f"FOR SELECT USING ({coverage_read})"
+            )
+        statements.append(
+            f"CREATE POLICY rls_audit_purge_delete ON {qualified} FOR DELETE USING ({purge_armed})"
+        )
+        statements.append(
+            f"CREATE POLICY rls_audit_purge_select ON {qualified} FOR SELECT USING ({purge_armed})"
+        )
+        description = "RLS (audit actor access + retention purge) enabled on %s"
+    elif "user_id" in columns:
+        # Tables where a row has a direct owning clinician
+        # (therapy_sessions, appointments, audit_logs, etc.).
+        # Each user sees only their own rows. WITH CHECK matches
+        # USING explicitly so INSERTs are permitted as long as the
+        # new row's ``user_id`` matches the current user — no
+        # chicken-and-egg, and you can't insert a row claiming
+        # someone else's user_id from a normal request path.
+        #
+        # ``patient_id`` is checked AFTER ``user_id`` (despite
+        # both columns sometimes coexisting on the same table —
+        # e.g. ``therapy_sessions``, ``audit_logs``) because the
+        # documented intent is "user owns the row directly", and
+        # the patient_id-based policy is only meant for tables
+        # that have *no* user_id column (currently just
+        # ``notes``).
+        statements.append(
+            f"CREATE POLICY rls_user_isolation ON {qualified} "
+            f"USING (user_id::text = current_setting('app.current_user_id', true)) "
+            f"WITH CHECK (user_id::text = current_setting('app.current_user_id', true))"
+        )
+        description = "RLS (user_id) enabled on %s"
+    elif "patient_id" in columns:
+        statements.append(
+            f"CREATE POLICY rls_patient_access ON {qualified} "
+            f"USING (has_patient_access("
+            f"  patient_id, "
+            f"  current_setting('app.current_user_id', true)"
+            f"))"
+        )
+        description = "RLS (patient_access) enabled on %s"
+    elif table_name == "chat_messages":
+        # chat_messages has neither user_id nor patient_id — gate
+        # by the parent conversation's patient. Without this branch
+        # the loop ENABLE+FORCEs RLS but leaves no policy, which is
+        # a deny-all configuration that only the BYPASSRLS-on-role
+        # posture mistakenly hides in production.
+        statements.append(f"DROP POLICY IF EXISTS rls_chat_message_access ON {qualified}")
+        # ``qualified`` + ``schema_name`` are validated identifiers
+        # built from the validated schema name (see _validate_schema_name
+        # earlier) and a fixed table name; not user input.
+        statements.append(
+            f"CREATE POLICY rls_chat_message_access ON {qualified} "  # noqa: S608
+            f"USING (EXISTS ("
+            f"  SELECT 1 FROM {schema_name}.chat_conversations c "
+            f"  WHERE c.id = {qualified}.conversation_id "
+            f"    AND has_patient_access("
+            f"      c.patient_id, "
+            f"      current_setting('app.current_user_id', true)"
+            f"    )"
+            f"))"
+        )
+        description = "RLS (chat_message_access via parent conversation) enabled on %s"
+    elif table_name == "compliance_documents":
+        # compliance_documents owns rows directly via
+        # ``uploaded_by_user_id`` — but the column isn't literally
+        # named ``user_id``, so the user_id branch above misses it
+        # and the table would otherwise fall through to a deny-all.
+        # Gate by the uploader rather than the parent
+        # ``compliance_item_id`` (which is nullable, so a parent-based
+        # policy would hide item-less documents); uploaded_by_user_id
+        # is NOT NULL, so every row is attributable.
+        owner = "uploaded_by_user_id::text = current_setting('app.current_user_id', true)"
+        statements.append(
+            f"CREATE POLICY rls_user_isolation ON {qualified} USING ({owner}) WITH CHECK ({owner})"
+        )
+        description = "RLS (uploaded_by_user_id) enabled on %s"
+    else:
+        # We force-enabled RLS at the top of the loop but matched no
+        # policy shape. Leaving it here would be a silent deny-all
+        # (the exact trap the chat_messages branch calls out). Fail
+        # loud so a newly-added tenant table can't ship deny-all:
+        # the author must add a policy branch above, or list the
+        # table in ``not_row_scoped`` if it isn't row-owned.
+        raise RuntimeError(
+            f"enable_rls_on_schema: no RLS policy defined for {qualified} "
+            f"(columns present: {sorted(columns)}). Add a policy branch "
+            f"or list the table in ``not_row_scoped`` — refusing to leave "
+            f"it deny-all."
+        )
+    return TablePlan(tuple(statements), row_scoped=True, description=description)
+
+
+def enable_rls_on_schema(  # noqa: PLR0915 — planning, verify and the registration guard
     session: Session, schema_name: str, *, strict: bool = True
 ) -> RlsReconcileCounts:
     """Enable Row-Level Security on every patient-scoped table in the schema.
@@ -1789,13 +2225,21 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
     unset, so any query without a tenant-context middleware that set
     ``app.current_user_id`` sees zero rows — fail-closed.
 
-    Idempotent: DROP POLICY IF EXISTS before each CREATE so the policy
-    body always tracks the current code; not_row_scoped tables DISABLE
-    RLS each run to heal a schema a prior version forced it on. That is
-    what lets the per-tenant migrate fan-out re-run it over every schema
-    on every deploy (see ``migrate_tenants.reconcile_tenant_rls``), which
-    is how a table added by a revision — or a registration that changed
-    shape — reaches practices that already existed.
+    Idempotent, and a verify before it is a rebuild. Each table's plan is
+    the full drop-and-recreate (``_plan_row_scoped_table``): DROP POLICY IF
+    EXISTS before each CREATE so the policy body always tracks the current
+    code, and DISABLE for a not_row_scoped table to heal a schema a prior
+    version forced it on. The plan runs only on a table whose live state
+    differs from what it would leave — RLS flags, the policies present
+    under the names it manages, and a fingerprint of the policy text (see
+    ``rls_state``). A schema provisioned from the template already carries
+    all of it, so provisioning verifies in a few catalog reads instead of
+    rebuilding. That is also what lets the per-tenant migrate fan-out
+    re-run it over every schema on every deploy (see
+    ``migrate_tenants.reconcile_tenant_rls``) cheaply, while a table added
+    by a revision — or a registration that changed shape, or a policy
+    dropped or altered by hand — still reaches practices that already
+    existed.
 
     ``strict`` decides what happens to a table the engine does not know
     (absent from the ORM and from both registration seams — see
@@ -1813,9 +2257,9 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
       never fails the practice. The engine's own tables keep the strict
       treatment either way: a new one with no policy branch still raises.
 
-    Returns the tables whose row-level security state it set and the ones
-    it passed over. Both zero for the template schema and for a schema
-    with no scoping-column table.
+    Returns the tables whose row-level security state it verified or set,
+    the ones it passed over, and how many it had to change. All zero for
+    the template schema and for a schema with no scoping-column table.
     """
     import logging
 
@@ -1824,7 +2268,7 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
     _validate_schema_name(schema_name)
     if schema_name == DEFAULT_PRACTICE_SCHEMA:
         logger.info("Skipping RLS on template schema '%s'", schema_name)
-        return RlsReconcileCounts(applied=0, skipped=0)
+        return RlsReconcileCounts(applied=0, skipped=0, altered=0)
 
     # One query per schema; gives us {table_name: {columns...}} and lets
     # us pick the right policy shape per table.
@@ -1833,7 +2277,7 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
     # to the three scoping names in SQL. Which tables enter the loop is
     # unchanged — still "carries one of user_id / patient_id / id" — but
     # the column set each branch receives is now the table's real one.
-    # ``_apply_patient_principal_policies`` checks a patient-scoped
+    # ``_patient_principal_policy_statements`` checks a patient-scoped
     # registration's key column against that set, and against the narrowed
     # version it could only ever accept ``patient_id`` or ``id``: the first
     # table registered on, say, ``submitted_by_patient_id`` would have
@@ -1873,7 +2317,7 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
             "No tables with user_id or patient_id in schema '%s' — nothing to do",
             schema_name,
         )
-        return RlsReconcileCounts(applied=0, skipped=0)
+        return RlsReconcileCounts(applied=0, skipped=0, altered=0)
 
     # `patient_clinicians` is the access table itself — applying the
     # access-function policy to its own backing table would cause an
@@ -1910,11 +2354,17 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
     skipped: set[str] = set()
     engine_known = engine_known_tenant_tables()
 
+    # Plan every table before touching any: a table that matches no policy
+    # shape raises here, with nothing executed.
+    plans: dict[str, TablePlan] = {}
     for table_name, columns in tables.items():
         qualified = f"{schema_name}.{table_name}"
         if table_name in not_row_scoped:
-            session.execute(text(f"ALTER TABLE {qualified} DISABLE ROW LEVEL SECURITY"))
-            logger.info("RLS intentionally not applied to %s (not row-scoped)", qualified)
+            plans[table_name] = TablePlan(
+                (f"ALTER TABLE {qualified} DISABLE ROW LEVEL SECURITY",),
+                row_scoped=False,
+                description="RLS intentionally not applied to %s (not row-scoped)",
+            )
             continue
         if not strict and table_name not in engine_known:
             # Another layer's table, created after provisioning. The
@@ -1936,439 +2386,10 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
             logger.warning("rls reconcile: skipped %s", message)
             skipped.add(table_name)
             continue
-        session.execute(text(f"ALTER TABLE {qualified} ENABLE ROW LEVEL SECURITY"))
-        session.execute(text(f"ALTER TABLE {qualified} FORCE ROW LEVEL SECURITY"))
-        session.execute(text(f"DROP POLICY IF EXISTS rls_user_isolation ON {qualified}"))
-        session.execute(text(f"DROP POLICY IF EXISTS rls_patient_access ON {qualified}"))
-        session.execute(text(f"DROP POLICY IF EXISTS rls_patient_doc_access ON {qualified}"))
-        session.execute(text(f"DROP POLICY IF EXISTS rls_note_access ON {qualified}"))
-        session.execute(text(f"DROP POLICY IF EXISTS rls_note_child_access ON {qualified}"))
-        # Per-command policies on ``patients`` (split out from the
-        # legacy single ALL policy to fix the INSERT chicken-and-egg).
-        # Idempotent for tables that don't have these policies.
-        session.execute(text(f"DROP POLICY IF EXISTS rls_patient_modify ON {qualified}"))
-        session.execute(text(f"DROP POLICY IF EXISTS rls_patient_delete ON {qualified}"))
-        session.execute(text(f"DROP POLICY IF EXISTS rls_patient_insert ON {qualified}"))
-        # The patient-principal arm. Dropped unconditionally so a table
-        # that is later UNregistered sheds its patient policy on the next
-        # run, rather than keeping a stale grant nobody is looking for.
-        session.execute(text(f"DROP POLICY IF EXISTS rls_patient_self_read ON {qualified}"))
-        session.execute(text(f"DROP POLICY IF EXISTS rls_patient_self_write ON {qualified}"))
-        session.execute(text(f"DROP POLICY IF EXISTS rls_patient_self_insert ON {qualified}"))
-        session.execute(text(f"DROP POLICY IF EXISTS rls_patient_self_delete ON {qualified}"))
-        session.execute(text(f"DROP POLICY IF EXISTS rls_practice_answers ON {qualified}"))
-
-        # Additive: created before the clinician shape is chosen, because
-        # several of those branches ``continue``. Permissive policies OR
-        # together, so this widens access for a patient principal without
-        # touching any clinician policy.
-        _apply_patient_principal_policies(session, schema_name, table_name, columns)
+        plans[table_name] = _plan_row_scoped_table(
+            schema_name, table_name, columns, frozenset(all_columns)
+        )
         patient_scoped_applied.add(table_name)
-
-        # Pick the policy shape:
-        #   * patient_documents — combined policy. Non-private rows
-        #     follow patient_access (co-treaters see the chart);
-        #     private rows collapse to uploader-only. Single CREATE
-        #     POLICY with an OR so PG can short-circuit.
-        #   * patients (the access target itself) — gate by id via the
-        #     has_patient_access function.
-        #   * Any other table with patient_id — gate by patient_id via
-        #     has_patient_access.
-        #   * Fallback to direct user_id ownership for tables that have
-        #     a user_id column but no patient_id (e.g. availability_rules,
-        #     google_calendar_tokens, ical_sync_configs).
-        if table_name == "patient_documents":
-            # Non-restricted categories (chart, consent) → patient_access
-            # (co-treaters share). category IN ('therapist_private',
-            # 'psychotherapy_notes') → uploader-only. Both restricted
-            # categories collapse to the same access predicate; the
-            # distinction matters at the disclosure-workflow layer, not
-            # RLS. Gated by the restricted set (not an enumerated
-            # allow-list) so adding a future non-restricted category
-            # needs no RLS change.
-            session.execute(
-                text(
-                    f"CREATE POLICY rls_patient_doc_access ON {qualified} "
-                    f"USING ("
-                    f"  (category NOT IN ('therapist_private', 'psychotherapy_notes') "
-                    f"   AND has_patient_access("
-                    f"    patient_id, current_setting('app.current_user_id', true)"
-                    f"  )) "
-                    f"  OR "
-                    f"  (category IN ('therapist_private', 'psychotherapy_notes') "
-                    f"   AND user_id::text = current_setting('app.current_user_id', true))"
-                    f")"
-                )
-            )
-            logger.info(
-                "RLS (patient_doc_access: chart=patient_access, restricted=uploader) enabled on %s",
-                qualified,
-            )
-            continue
-        if table_name == "notes" and "restricted" in columns:
-            # Same two-arm shape as patient_documents. An ordinary note
-            # follows patient_access (co-treaters share the chart); a
-            # restricted one (a psychotherapy note) is its author's alone.
-            # Keyed on the ``restricted`` column rather than on
-            # ``note_type`` so a future restricted type needs no RLS
-            # change. The column guard is what lets the heal revision
-            # earlier in the chain replay over a schema that predates it:
-            # such a schema falls through to the plain patient_access
-            # shape until its own upgrade adds the column.
-            session.execute(
-                text(
-                    f"CREATE POLICY rls_note_access ON {qualified} "
-                    f"USING ("
-                    f"  (NOT restricted "
-                    f"   AND has_patient_access("
-                    f"    patient_id, current_setting('app.current_user_id', true)"
-                    f"  )) "
-                    f"  OR "
-                    f"  (restricted "
-                    f"   AND author_user_id::text = current_setting('app.current_user_id', true))"
-                    f")"
-                )
-            )
-            logger.info(
-                "RLS (note_access: shared=patient_access, restricted=author) enabled on %s",
-                qualified,
-            )
-            continue
-        if table_name in NOTE_CHILD_TABLES:
-            # A note's signed versions and addenda carry its body and the
-            # clinician's words about it, so they are readable exactly when
-            # the note is. The subquery reads ``notes`` under its own row
-            # policy, so a restricted note's children stay its author's and
-            # an ordinary note's follow patient access, with no second copy
-            # of either predicate to drift. ``qualified`` and ``schema_name``
-            # are validated identifiers; nothing here is caller input.
-            session.execute(
-                text(
-                    f"CREATE POLICY rls_note_child_access ON {qualified} "  # noqa: S608
-                    f"USING (EXISTS ("
-                    f"  SELECT 1 FROM {schema_name}.notes n "
-                    f"  WHERE n.id = {qualified}.note_id"
-                    f"))"
-                )
-            )
-            logger.info("RLS (note_child_access: follows the parent note) enabled on %s", qualified)
-            continue
-        if table_name == "patient_source_mappings" and "scope" in columns:
-            # A calendar's answers are shared by every armed clinician, a
-            # feed's are their clinician's, and rows from before scopes carry
-            # plain-text identifiers and stay their owner's until adopted. The
-            # column guard lets the reconcile replay over a schema that
-            # predates the ``scope`` column: such a schema keeps the
-            # owner-only shape below until its own upgrade adds it.
-            # ``single_practice_migration`` mirrors this branch.
-            from .practice_answers import apply_practice_answers_policy
-
-            apply_practice_answers_policy(session, schema_name)
-            logger.info("RLS (practice answers; old rows owner-only) enabled on %s", qualified)
-            continue
-        if table_name == "patient_clinicians":
-            # The grant table itself: gating it via
-            # ``has_patient_access(patient_id, …)`` would recurse
-            # (the function reads patient_clinicians), and even a
-            # non-recursive check on ``patient_id`` would create the
-            # same INSERT chicken-and-egg as ``patients`` had — a
-            # new grant's row can't satisfy "has a grant for this
-            # patient" until that very grant exists. Gate by
-            # ``user_id`` directly: each clinician sees only their
-            # own grants, and INSERTs are permitted as long as the
-            # row's ``user_id`` matches the current user (i.e. you
-            # can't grant access to other clinicians from a normal
-            # request path — admin endpoints would run with a
-            # different effective user via SET ROLE or similar).
-            session.execute(
-                text(
-                    f"CREATE POLICY rls_user_isolation ON {qualified} "
-                    f"USING (user_id::text = current_setting('app.current_user_id', true)) "
-                    f"WITH CHECK (user_id::text = current_setting('app.current_user_id', true))"
-                )
-            )
-            logger.info("RLS (user_id) enabled on %s", qualified)
-        elif table_name == "patients":
-            # The ``patients`` table is the access-table target: a row's
-            # grant in ``patient_clinicians`` is what makes the row
-            # visible. Letting USING also gate INSERT (PG's default
-            # when WITH CHECK is omitted) creates a chicken-and-egg —
-            # ``has_patient_access(new_id, user)`` returns false for
-            # a brand-new patient because the grant doesn't exist yet,
-            # so the very first INSERT into a fresh tenant is rejected
-            # ("new row violates row-level security policy"). This is
-            # exactly the failure mode the 2026-05-17 pentest hit on
-            # freshly-provisioned ``practice_pentest_*`` schemas.
-            #
-            # Split the policy: USING gates SELECT/UPDATE/DELETE
-            # (only granted clinicians can read or modify rows), and
-            # an explicit ``WITH CHECK (true)`` permits INSERTs. The
-            # app inserts the patient + its primary-clinician grant
-            # in the same flush so a new patient is immediately
-            # visible to its creator. Other tables (sessions, notes,
-            # etc.) keep the USING-as-WITH-CHECK shape — they SHOULD
-            # require an existing grant to insert.
-            session.execute(
-                text(
-                    f"CREATE POLICY rls_patient_access ON {qualified} "
-                    f"FOR SELECT USING (has_patient_access("
-                    f"  id, current_setting('app.current_user_id', true)"
-                    f"))"
-                )
-            )
-            session.execute(
-                text(
-                    f"CREATE POLICY rls_patient_modify ON {qualified} "
-                    f"FOR UPDATE USING (has_patient_access("
-                    f"  id, current_setting('app.current_user_id', true)"
-                    f"))"
-                )
-            )
-            session.execute(
-                text(
-                    f"CREATE POLICY rls_patient_delete ON {qualified} "
-                    f"FOR DELETE USING (has_patient_access("
-                    f"  id, current_setting('app.current_user_id', true)"
-                    f"))"
-                )
-            )
-            # The clinician chicken-and-egg: a brand-new patient has no
-            # ``patient_clinicians`` grant yet, so ``has_patient_access``
-            # is false on the very INSERT that creates them. The policy
-            # therefore cannot test patient access — but it must still
-            # name a principal. Requiring an armed ``app.current_user_id``
-            # admits any clinician (which is the point) while refusing a
-            # patient principal, who arms ``app.current_patient_id`` and
-            # leaves this one empty. ``WITH CHECK (true)`` admitted both.
-            session.execute(
-                text(
-                    f"CREATE POLICY rls_patient_insert ON {qualified} "
-                    f"FOR INSERT WITH CHECK ("
-                    f"coalesce(current_setting('app.current_user_id', true), '') <> ''"
-                    f")"
-                )
-            )
-            logger.info("RLS (patient_access split policies) enabled on %s", qualified)
-        elif table_name == "audit_logs":
-            # audit_logs carries user_id, so without this branch it would
-            # take the generic clinician policy below — and that policy
-            # compares against ``app.current_user_id``, which a patient
-            # principal never arms. Every audit row a patient's own action
-            # produced would be refused at INSERT, which under
-            # § 164.312(b) is the one failure this table cannot have: the
-            # action still happens, and nothing records it.
-            #
-            # So the policy splits by who acted. Anything that is not a
-            # patient keeps exactly the predicate it has today, which is
-            # what keeps clinician rows, anonymous public-booking rows and
-            # system rows writing unchanged — they are all scoped to a
-            # user_id and arm the user GUC. A patient actor is checked
-            # against the patient GUC instead, and against their own id,
-            # so one patient cannot write a row in another's name.
-            insert_check = (
-                "(actor_type IS DISTINCT FROM 'patient' AND "
-                "user_id::text = current_setting('app.current_user_id', true)) OR "
-                "(actor_type = 'patient' AND "
-                "user_id::text = current_setting('app.current_patient_id', true))"
-            )
-            # Reads: an actor reads the rows they are the actor of. A
-            # patient principal reads nothing at all.
-            #
-            # The one widening is the practice owner, who reads every row
-            # about a client they have access to, whoever wrote it — the
-            # review of activity on a client's record that the practice is
-            # responsible for (§ 164.308(a)(1)(ii)(D)). That is its own
-            # SELECT-only policy below, so it adds reads and nothing else.
-            #
-            # The audit log is still a compliance record, not a
-            # read-surface for product behaviour. When a clinically
-            # meaningful signal matters — that an intake packet was
-            # completed, and when — it belongs in a domain column that
-            # says so, queried like any other clinical fact. Deriving it
-            # from audit rows would make the compliance record load-bearing
-            # for product behaviour.
-            select_using = "user_id::text = current_setting('app.current_user_id', true)"
-            # The practice is found through this table's own schema, not a
-            # schema name written into the policy: the tenant template is
-            # captured from ``practice`` and rewrites only ``practice.``-
-            # qualified names, which a regclass literal is and a string
-            # literal is not. Same text as migration ``a7e3c5d19b42``;
-            # ``test_audit_policy_parity`` holds the two together.
-            #
-            # No name it reaches may depend on the caller's search_path: it is
-            # evaluated wherever an audit row is read, including the
-            # RETURNING of an INSERT made from a session not scoped to this
-            # tenant. ``has_patient_access`` is called schema-qualified, and
-            # since ``a7e3c5d19b42`` its SQL-standard body is bound to its own
-            # schema's ``patient_clinicians``, not found through the path.
-            #
-            # ``qualified`` is built from the validated schema name and a
-            # fixed table name; not user input.
-            owner_client_read = (
-                "patient_id IS NOT NULL "  # noqa: S608
-                f"AND {schema_name}.has_patient_access("
-                "patient_id, current_setting('app.current_user_id', true)) "
-                "AND EXISTS (SELECT 1 FROM platform.practices p "
-                "WHERE p.owner_user_id::text = current_setting('app.current_user_id', true) "
-                f"AND to_regclass(p.schema_name || '.audit_logs') = '{qualified}'::regclass)"
-            )
-            # One ALL policy, the same shape the generic branch uses, so
-            # UPDATE and DELETE keep a predicate. Splitting this into
-            # SELECT-only and INSERT-only policies would leave those two
-            # commands with no policy at all — under RLS that is not a
-            # refusal, it is a silent match against zero rows, which would
-            # turn a tampering attempt from a loud trigger error into a
-            # quiet no-op and would strand the retention purge.
-            # The retention purge is not a principal and has no identity to
-            # arm: ``_delete_expired`` sets ``search_path``, arms
-            # ``app.allow_audit_purge`` and issues one DELETE across every
-            # actor's rows. Under the actor policy alone that DELETE compares
-            # ``user_id`` against an unset GUC and matches nothing — silently,
-            # rowcount 0, a cron reporting a successful run having purged
-            # nothing while rows outlive ``expires_at`` forever.
-            #
-            # So the purge gets its own permissive policies, gated on the same
-            # GUC the append-only trigger already treats as the authorization
-            # to delete. No new trust boundary: anything that can set that GUC
-            # can already get a DELETE past the trigger, and RLS was only
-            # hiding the rows by accident.
-            #
-            # SELECT as well as DELETE, because ``_count_expired`` backs
-            # ``--dry-run`` and reads through the same predicate. Without it an
-            # operator asking whether the purge has work is told "none" while
-            # the real run deletes thousands — a worse failure than both
-            # reporting zero. Both are gated on the purge GUC, so an ordinary
-            # request (which never sets it) sees exactly what it saw before.
-            #
-            # Deliberately NOT ``FOR ALL``: that would also admit INSERT and
-            # UPDATE under the purge GUC, letting a purge-context session
-            # forge or rewrite rows. The trigger blocks UPDATE, but the policy
-            # should not be the thing relying on it.
-            purge_armed = "current_setting('app.allow_audit_purge', true) = 'on'"
-            session.execute(text(f"DROP POLICY IF EXISTS rls_user_isolation ON {qualified}"))
-            session.execute(text(f"DROP POLICY IF EXISTS rls_audit_actor_access ON {qualified}"))
-            session.execute(text(f"DROP POLICY IF EXISTS rls_audit_purge_delete ON {qualified}"))
-            session.execute(text(f"DROP POLICY IF EXISTS rls_audit_purge_select ON {qualified}"))
-            session.execute(
-                text(f"DROP POLICY IF EXISTS rls_audit_owner_client_read ON {qualified}")
-            )
-            session.execute(
-                text(
-                    f"CREATE POLICY rls_audit_actor_access ON {qualified} "
-                    f"USING ({select_using}) WITH CHECK ({insert_check})"
-                )
-            )
-            session.execute(
-                text(
-                    f"CREATE POLICY rls_audit_owner_client_read ON {qualified} "
-                    f"FOR SELECT USING ({owner_client_read})"
-                )
-            )
-            session.execute(
-                text(
-                    f"CREATE POLICY rls_audit_purge_delete ON {qualified} "
-                    f"FOR DELETE USING ({purge_armed})"
-                )
-            )
-            session.execute(
-                text(
-                    f"CREATE POLICY rls_audit_purge_select ON {qualified} "
-                    f"FOR SELECT USING ({purge_armed})"
-                )
-            )
-            logger.info("RLS (audit actor access + retention purge) enabled on %s", qualified)
-        elif "user_id" in columns:
-            # Tables where a row has a direct owning clinician
-            # (therapy_sessions, appointments, audit_logs, etc.).
-            # Each user sees only their own rows. WITH CHECK matches
-            # USING explicitly so INSERTs are permitted as long as the
-            # new row's ``user_id`` matches the current user — no
-            # chicken-and-egg, and you can't insert a row claiming
-            # someone else's user_id from a normal request path.
-            #
-            # ``patient_id`` is checked AFTER ``user_id`` (despite
-            # both columns sometimes coexisting on the same table —
-            # e.g. ``therapy_sessions``, ``audit_logs``) because the
-            # documented intent is "user owns the row directly", and
-            # the patient_id-based policy is only meant for tables
-            # that have *no* user_id column (currently just
-            # ``notes``).
-            session.execute(
-                text(
-                    f"CREATE POLICY rls_user_isolation ON {qualified} "
-                    f"USING (user_id::text = current_setting('app.current_user_id', true)) "
-                    f"WITH CHECK (user_id::text = current_setting('app.current_user_id', true))"
-                )
-            )
-            logger.info("RLS (user_id) enabled on %s", qualified)
-        elif "patient_id" in columns:
-            session.execute(
-                text(
-                    f"CREATE POLICY rls_patient_access ON {qualified} "
-                    f"USING (has_patient_access("
-                    f"  patient_id, "
-                    f"  current_setting('app.current_user_id', true)"
-                    f"))"
-                )
-            )
-            logger.info("RLS (patient_access) enabled on %s", qualified)
-        elif table_name == "chat_messages":
-            # chat_messages has neither user_id nor patient_id — gate
-            # by the parent conversation's patient. Without this branch
-            # the loop ENABLE+FORCEs RLS but leaves no policy, which is
-            # a deny-all configuration that only the BYPASSRLS-on-role
-            # posture mistakenly hides in production.
-            session.execute(text(f"DROP POLICY IF EXISTS rls_chat_message_access ON {qualified}"))
-            # ``qualified`` + ``schema_name`` are validated identifiers
-            # built from the validated schema name (see _validate_schema_name
-            # earlier) and a fixed table name; not user input.
-            session.execute(
-                text(
-                    f"CREATE POLICY rls_chat_message_access ON {qualified} "  # noqa: S608
-                    f"USING (EXISTS ("
-                    f"  SELECT 1 FROM {schema_name}.chat_conversations c "
-                    f"  WHERE c.id = {qualified}.conversation_id "
-                    f"    AND has_patient_access("
-                    f"      c.patient_id, "
-                    f"      current_setting('app.current_user_id', true)"
-                    f"    )"
-                    f"))"
-                )
-            )
-            logger.info(
-                "RLS (chat_message_access via parent conversation) enabled on %s",
-                qualified,
-            )
-        elif table_name == "compliance_documents":
-            # compliance_documents owns rows directly via
-            # ``uploaded_by_user_id`` — but the column isn't literally
-            # named ``user_id``, so the user_id branch above misses it
-            # and the table would otherwise fall through to a deny-all.
-            # Gate by the uploader rather than the parent
-            # ``compliance_item_id`` (which is nullable, so a parent-based
-            # policy would hide item-less documents); uploaded_by_user_id
-            # is NOT NULL, so every row is attributable.
-            owner = "uploaded_by_user_id::text = current_setting('app.current_user_id', true)"
-            session.execute(
-                text(
-                    f"CREATE POLICY rls_user_isolation ON {qualified} "
-                    f"USING ({owner}) WITH CHECK ({owner})"
-                )
-            )
-            logger.info("RLS (uploaded_by_user_id) enabled on %s", qualified)
-        else:
-            # We force-enabled RLS at the top of the loop but matched no
-            # policy shape. Leaving it here would be a silent deny-all
-            # (the exact trap the chat_messages branch calls out). Fail
-            # loud so a newly-added tenant table can't ship deny-all:
-            # the author must add a policy branch above, or list the
-            # table in ``not_row_scoped`` if it isn't row-owned.
-            raise RuntimeError(
-                f"enable_rls_on_schema: no RLS policy defined for {qualified} "
-                f"(columns present: {sorted(columns)}). Add a policy branch "
-                f"or list the table in ``not_row_scoped`` — refusing to leave "
-                f"it deny-all."
-            )
 
     # Every patient-scoped registration that names a table in THIS schema
     # must have been given a policy above. See ``patient_scoped_applied``
@@ -2387,19 +2408,36 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
         # back into a failed practice.
         and table_name not in skipped
     }
-    skipped = registered_here - patient_scoped_applied
+    ungranted = registered_here - patient_scoped_applied
     unreachable = {
         table_name for table_name in PATIENT_READABLE_TABLES if table_name in not_row_scoped
     }
-    if skipped or unreachable:
+    if ungranted or unreachable:
         raise RuntimeError(
             f"enable_rls_on_schema: patient-scoped registrations got no policy in "
-            f"{schema_name} — skipped={sorted(skipped)}, "
+            f"{schema_name} — skipped={sorted(ungranted)}, "
             f"registered-but-not-row-scoped={sorted(unreachable)}. A table listed in "
             f"PATIENT_READABLE_TABLES must be row-scoped and must carry one of the "
             f"columns the schema query selects. Refusing to report success on a "
             f"grant that was never created."
         )
+
+    # Verify, then rebuild only what differs. A table that already holds
+    # exactly what its plan would leave is not touched — which is every
+    # table of a schema provisioned from the template, and of any schema
+    # this pass has already reconciled. See ``rls_state`` for what "exactly"
+    # covers and why a mismatch always takes the full rebuild.
+    live = read_live_rls(session, schema_name)
+    altered = {
+        table_name: plan
+        for table_name, plan in plans.items()
+        if not table_matches(schema_name, table_name, plan, live)
+    }
+    for table_name, plan in altered.items():
+        for statement in plan.statements:
+            session.execute(text(statement))
+        logger.info(plan.description, f"{schema_name}.{table_name}")
+    record_fingerprints(session, schema_name, altered)
 
     # The one read of ``patients`` that sees the whole practice: matching.
     # Owner, grants and its two role-scoped policies — see the module.
@@ -2408,7 +2446,14 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
     apply_practice_directory_access(session, schema_name)
 
     session.commit()
-    return RlsReconcileCounts(applied=len(tables) - len(skipped), skipped=len(skipped))
+    logger.info(
+        "RLS reconcile on %s: %d tables verified, %d altered, %d skipped",
+        schema_name,
+        len(plans),
+        len(altered),
+        len(skipped),
+    )
+    return RlsReconcileCounts(applied=len(plans), skipped=len(skipped), altered=len(altered))
 
 
 def rls_forced_tenant_tables() -> set[str]:

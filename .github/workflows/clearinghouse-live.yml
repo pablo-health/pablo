@@ -31,9 +31,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.13"
 
@@ -44,7 +44,7 @@ jobs:
         run: poetry config virtualenvs.in-project true
 
       - name: Cache Poetry virtualenv
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .venv
           key: venv-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
@@ -73,7 +73,7 @@ jobs:
 
       - name: Upload test report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: clearinghouse-live-report
           path: clearinghouse-live-report/
@@ -93,7 +93,7 @@ jobs:
       issues: write
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: ./.github/actions/notify-scheduled-failure
         with:
           workflow: "Clearinghouse live suite"

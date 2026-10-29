@@ -71,6 +71,7 @@ from app.auth.service import (  # noqa: E402
     require_baa_acceptance,
     require_mfa,
 )
+from app.away.service import NoAwayAcknowledgment, get_away_acknowledger  # noqa: E402
 from app.calendar_providers import pkce_store  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import User  # noqa: E402
@@ -163,6 +164,7 @@ from app.services.recording_consent import (  # noqa: E402
 )
 from fastapi.testclient import TestClient  # noqa: E402
 
+from tests.audit_fakes import RecordingAudit  # noqa: E402
 from tests.calendar_oauth_fakes import FakePkceRedis  # noqa: E402
 
 
@@ -379,6 +381,12 @@ def mock_ehr_navigation_service() -> MockEhrNavigationService:
 
 
 @pytest.fixture
+def recording_audit() -> RecordingAudit:
+    """An audit service that keeps what it was asked to record."""
+    return RecordingAudit()
+
+
+@pytest.fixture
 def mock_audit_service() -> AuditService:
     """Create a mock audit service for testing."""
     mock_db = MagicMock()
@@ -508,6 +516,9 @@ def client(
     app.dependency_overrides[get_allowlist_repository] = lambda: mock_allowlist_repo
     app.dependency_overrides[get_identity_repository] = lambda: mock_identity_repo
     app.dependency_overrides[get_audit_service] = lambda: mock_audit_service
+    # Nobody is away unless a test says so: the real acknowledger reads the
+    # database, which these tests do not have.
+    app.dependency_overrides[get_away_acknowledger] = NoAwayAcknowledgment
     app.dependency_overrides[get_ehr_route_repository] = lambda: mock_ehr_route_repo
     app.dependency_overrides[get_ehr_prompt_repository] = lambda: mock_ehr_prompt_repo
     app.dependency_overrides[get_ehr_navigation_service] = lambda: mock_ehr_navigation_service

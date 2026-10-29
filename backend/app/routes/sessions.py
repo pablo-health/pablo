@@ -148,6 +148,7 @@ from ..services.transcription_queue_service import (
     TranscriptionQueueService,
 )
 from ..settings import get_settings
+from ..uploads import read_bounded
 from ..utcnow import utc_now
 from .notes import get_audio_on_signing, get_note_generation_service, get_registry
 from .patient_documents import get_patient_documents_service
@@ -156,13 +157,13 @@ from .patient_documents import get_patient_documents_service
 # installed it registers ``app.routes.subscription``; otherwise the
 # import fails and the gate becomes a no-op.
 try:
-    from ..routes.subscription import (  # type: ignore[import-not-found]
+    from ..routes.subscription import (  # type: ignore[import-not-found]  # subscription routes exist only in the SaaS overlay; absent here
         TrialLimitReachedError,
         check_and_count_trial_session,
     )
 except ImportError:  # pragma: no cover -- no subscription overlay installed
-    TrialLimitReachedError = None  # type: ignore[assignment,misc]
-    check_and_count_trial_session = None  # type: ignore[assignment]
+    TrialLimitReachedError = None  # type: ignore[assignment,misc]  # subscription routes exist only in the SaaS overlay; absent here
+    check_and_count_trial_session = None  # type: ignore[assignment]  # subscription routes exist only in the SaaS overlay; absent here
 
 # Imported in its OWN try-block, not folded into the one above: a
 # ``from ... import a, b`` fails wholesale when any single name is missing,
@@ -170,13 +171,13 @@ except ImportError:  # pragma: no cover -- no subscription overlay installed
 # the trial gate on a deployment whose overlay predates the recording
 # policy. Each block degrades independently.
 try:
-    from ..routes.subscription import (  # type: ignore[import-not-found]
+    from ..routes.subscription import (  # type: ignore[import-not-found]  # subscription routes exist only in the SaaS overlay; absent here
         RecordingNotEnabledError,
         check_recording_allowed,
     )
 except ImportError:  # pragma: no cover -- overlay absent or predates the hook
-    RecordingNotEnabledError = None  # type: ignore[assignment,misc]
-    check_recording_allowed = None  # type: ignore[assignment]
+    RecordingNotEnabledError = None  # type: ignore[assignment,misc]  # subscription routes exist only in the SaaS overlay; absent here
+    check_recording_allowed = None  # type: ignore[assignment]  # subscription routes exist only in the SaaS overlay; absent here
 
 
 def _gate_recording(user_email: str) -> None:
@@ -743,12 +744,14 @@ async def import_session(
             raise NotFoundError("Patient not found", {"patient_id": patient_id})
         chart = proposal_step.chart(charted, user.id)
 
-    data = await file.read()
-    if len(data) > _MAX_IMPORT_DOC_BYTES:
-        raise HTTPException(
+    data = await read_bounded(
+        file,
+        _MAX_IMPORT_DOC_BYTES,
+        too_large=HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"File too large. Max {_MAX_IMPORT_DOC_BYTES // (1024 * 1024)} MB.",
-        )
+        ),
+    )
 
     # Release the request-scoped DB connection before reading the document
     # (OCR of a scan) and the multi-second LLM parse. The middleware opens a
@@ -1048,9 +1051,7 @@ def update_session_rating(
     Allows therapist to update rating after finalization.
     """
     try:
-        session, patient, note, old_rating = session_service.update_rating(
-            session_id, user.id, request
-        )
+        updated = session_service.update_rating(session_id, user.id, request)
     except SessionNotFoundError as e:
         raise NotFoundError("Session not found", {"session_id": session_id}) from e
     except InvalidSessionStatusError as e:
@@ -1060,18 +1061,18 @@ def update_session_rating(
             code="INVALID_STATUS",
         ) from e
 
-    patient_name = patient.display_name if patient else "Unknown"
+    patient_name = updated.patient.display_name if updated.patient else "Unknown"
 
     audit.log_session_action(
         AuditAction.SESSION_RATING_UPDATED,
         user,
         http_request,
-        session,
-        patient,
-        changes={"quality_rating": {"old": old_rating, "new": request.quality_rating}},
+        updated.session,
+        updated.patient,
+        changes={"quality_rating": {"old": updated.old_rating, "new": request.quality_rating}},
     )
 
-    return SessionResponse.from_session(session, patient_name, _embed_note(note))
+    return SessionResponse.from_session(updated.session, patient_name, _embed_note(updated.note))
 
 
 # --- Companion scheduling endpoints ---

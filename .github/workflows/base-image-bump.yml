@@ -30,7 +30,7 @@ jobs:
     name: Bump Chainguard digests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Resolve upstream digests
         id: upstream
@@ -67,7 +67,7 @@ jobs:
 
       - name: Trivy scan new runtime digest
         if: steps.decide.outputs.changed == 'true'
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: cgr.dev/chainguard/python:latest@${{ steps.upstream.outputs.latest }}
           severity: CRITICAL,HIGH
@@ -76,7 +76,7 @@ jobs:
 
       - name: Trivy scan new builder digest
         if: steps.decide.outputs.changed == 'true'
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: cgr.dev/chainguard/python:latest-dev@${{ steps.upstream.outputs.dev }}
           severity: CRITICAL,HIGH
@@ -97,7 +97,7 @@ jobs:
 
       - name: Open pull request
         if: steps.decide.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@v8
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
         with:
           branch: chore/base-image-bump
           delete-branch: true
@@ -129,7 +129,7 @@ jobs:
       issues: write
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: ./.github/actions/notify-scheduled-failure
         with:
           workflow: "Base Image Bump"

@@ -4,7 +4,7 @@
  * Availability rule types
  *
  * Mirrors backend/app/scheduling_engine/models/availability.py — the
- * ten RuleType values and the two EnforcementLevel values.
+ * eleven RuleType values and the two EnforcementLevel values.
  *
  * params shape varies per rule_type, and the authority on it is the
  * backend's tagged union, emitted as availabilityRuleParams.schema.json
@@ -26,6 +26,7 @@ export const RULE_TYPES = [
   "block_date_range",
   "block_specific_dates",
   "session_defaults",
+  "floating_block",
 ] as const
 
 export type RuleType = (typeof RULE_TYPES)[number]
@@ -160,6 +161,36 @@ export interface TimeSlot {
   start: string
   end: string
 }
+
+/**
+ * Where one floating block sits on a date, as the engine resolves it
+ * (GET /api/availability/floating-blocks). Floating: settled into the
+ * earliest free stretch of its window. Pinned: set to a start for this date.
+ * Skipped: nothing kept free this date. Unplaced: no free stretch of its
+ * length is left. `start`/`end` are UTC instants, null when skipped or
+ * unplaced; `window_start`/`window_end` are the practice's "HH:MM".
+ */
+export type FloatingBlockState = "floating" | "pinned" | "skipped" | "unplaced"
+
+export interface FloatingBlock {
+  rule_id: string
+  label: string
+  date: string
+  state: FloatingBlockState
+  duration_minutes: number
+  window_start: string
+  window_end: string
+  start: string | null
+  end: string | null
+}
+
+export interface FloatingBlocksResponse {
+  date: string
+  blocks: FloatingBlock[]
+}
+
+/** Pin a floating block to a start ("HH:MM", practice-local) or skip it. */
+export type FloatingBlockException = { start: string } | { skip: true }
 
 export interface FreeSlotsResponse {
   date: string

@@ -15,6 +15,7 @@ published question may still name a form the practice has stopped using.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
@@ -25,8 +26,10 @@ from ..intake_blank_form import IntakeBlankFormRepository
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
+    from ..row import Row
 
-def _to_dict(row: IntakeBlankFormRow) -> dict[str, object]:
+
+def _to_dict(row: IntakeBlankFormRow) -> Row:
     return {
         "id": row.id,
         "title": row.title,
@@ -45,16 +48,16 @@ class PostgresIntakeBlankFormRepository(IntakeBlankFormRepository):
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def add(self, row: dict[str, object]) -> dict[str, object]:
+    def add(self, row: Row) -> Row:
         orm_row = IntakeBlankFormRow(
             id=str(row["id"]),
             title=str(row["title"]),
             filename=str(row["filename"]),
             mime_type=str(row["mime_type"]),
             gcs_path=str(row["gcs_path"]),
-            size_bytes=int(row["size_bytes"]),  # type: ignore[call-overload]
+            size_bytes=int(row["size_bytes"]),
             uploaded_by=str(row["uploaded_by"]),
-            created_at=row["created_at"],  # type: ignore[arg-type]
+            created_at=row["created_at"],
             finalized_at=None,
             deleted_at=None,
         )
@@ -63,27 +66,27 @@ class PostgresIntakeBlankFormRepository(IntakeBlankFormRepository):
         return _to_dict(orm_row)
 
     def mark_finalized(
-        self, form_id: str, *, size_bytes: int, finalized_at: object
-    ) -> dict[str, object] | None:
+        self, form_id: str, *, size_bytes: int, finalized_at: datetime
+    ) -> Row | None:
         row = self._live(form_id)
         if row is None:
             return None
         row.size_bytes = size_bytes
-        row.finalized_at = finalized_at  # type: ignore[assignment]
+        row.finalized_at = finalized_at
         self._session.flush()
         return _to_dict(row)
 
-    def get(self, form_id: str) -> dict[str, object] | None:
+    def get(self, form_id: str) -> Row | None:
         row = self._live(form_id)
         return _to_dict(row) if row else None
 
-    def get_finalized(self, form_id: str) -> dict[str, object] | None:
+    def get_finalized(self, form_id: str) -> Row | None:
         row = self._live(form_id)
         if row is None or row.finalized_at is None:
             return None
         return _to_dict(row)
 
-    def list_all(self) -> list[dict[str, object]]:
+    def list_all(self) -> list[Row]:
         rows = (
             self._session.execute(
                 select(IntakeBlankFormRow)
@@ -98,11 +101,11 @@ class PostgresIntakeBlankFormRepository(IntakeBlankFormRepository):
         )
         return [_to_dict(row) for row in rows]
 
-    def soft_delete(self, form_id: str, deleted_at: object) -> bool:
+    def soft_delete(self, form_id: str, deleted_at: datetime) -> bool:
         row = self._live(form_id)
         if row is None:
             return False
-        row.deleted_at = deleted_at  # type: ignore[assignment]
+        row.deleted_at = deleted_at
         self._session.flush()
         return True
 

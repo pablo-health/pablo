@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING
 from ..models.availability import EnforcementLevel, RuleType
 from ..models.busy import BusyKind
 from ..models.conflict import Conflict, ConflictCheckResult, FreeSlotsResult, TimeSlot
+from ..models.floating_block import ResolvedFloatingBlock
+from . import floating_block
 
 if TYPE_CHECKING:
     from ..models.appointment import Appointment
@@ -46,6 +48,19 @@ def _minute_to_utc_iso(day: date, minute: int, tz: tzinfo) -> str:
     hour, mins = divmod(minute_of_day, 60)
     local_dt = datetime.combine(day + timedelta(days=extra_days), time(hour, mins), tzinfo=tz)
     return local_dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _minute_to_utc(day: date, minute: int, tz: tzinfo) -> datetime:
+    """A local (day, minute-of-day) as an aware UTC instant."""
+    extra_days, minute_of_day = divmod(minute, 24 * 60)
+    hour, mins = divmod(minute_of_day, 60)
+    return datetime.combine(
+        day + timedelta(days=extra_days), time(hour, mins), tzinfo=tz
+    ).astimezone(UTC)
+
+
+def _hhmm(minute: int) -> str:
+    return f"{minute // 60:02d}:{minute % 60:02d}"
 
 
 def _time_to_minutes(t: str) -> int:
@@ -112,6 +127,41 @@ def _applies_to_type(rule: AvailabilityRule, appointment_type_id: str | None) ->
     set behaves exactly as it did before types entered the picture.
     """
     return rule.appointment_type_id is None or rule.appointment_type_id == appointment_type_id
+
+
+def _sets_up_availability(rules: list[AvailabilityRule]) -> bool:
+    """Whether any rule says something about when the clinician can be booked.
+
+    A floating block alone does not: it protects time inside availability
+    that has not been set up yet, so a clinician whose only rule is a lunch
+    block still reads as not configured, exactly as before they added it.
+    """
+    return any(r.rule_type != RuleType.FLOATING_BLOCK for r in rules)
+
+
+def _local_minutes(start: datetime, end: datetime, day: date) -> set[int]:
+    """The minutes-of-day ``[start, end)`` covers on ``day``, both already local."""
+    day_start = datetime.combine(day, time(0), tzinfo=start.tzinfo)
+    first = max(math.floor((start - day_start).total_seconds() / 60), 0)
+    last = min(math.ceil((end - day_start).total_seconds() / 60), 24 * 60)
+    return set(range(first, last))
+
+
+def _breaks_a_floating_block(
+    rules: list[AvailabilityRule], day: date, occupied: set[int], span: set[int]
+) -> bool:
+    """Whether booking ``span`` would leave any floating block no room.
+
+    A rule whose params cannot be read is skipped, the engine's usual stance
+    on an unvalidated rule (see :meth:`AvailabilityEngine.check_conflicts`).
+    """
+    for rule in rules:
+        try:
+            if floating_block.breaks_block(rule, day, occupied, span):
+                return True
+        except (KeyError, TypeError, ValueError, AttributeError):
+            continue
+    return False
 
 
 def _intersect_ranges(a: list[tuple[int, int]], b: list[tuple[int, int]]) -> list[tuple[int, int]]:
@@ -199,8 +249,18 @@ class AvailabilityEngine:
         proposed_start = _local(start_at, tz)
         proposed_end = _local(end_at, tz)
         conflicts: list[Conflict] = []
+        hours_checked = False
 
         for rule in rules:
+            if rule.rule_type == RuleType.WORKING_HOURS and rule.appointment_type_id is None:
+                # A day's ranges are one answer, not one per range: see
+                # _check_working_hours. Asked once, where the first one sits.
+                if not hours_checked:
+                    hours_checked = True
+                    conflict = self._check_working_hours(rules, proposed_start, proposed_end)
+                    if conflict:
+                        conflicts.append(conflict)
+                continue
             try:
                 conflict = self._check_rule(rule, user_id, proposed_start, proposed_end)
             except (KeyError, TypeError, ValueError):
@@ -216,7 +276,7 @@ class AvailabilityEngine:
         if include_busy:
             conflicts.extend(self._busy_conflicts(user_id, rules, proposed_start, proposed_end, tz))
 
-        return ConflictCheckResult(configured=bool(rules), conflicts=conflicts)
+        return ConflictCheckResult(configured=_sets_up_availability(rules), conflicts=conflicts)
 
     def _busy_conflicts(
         self,
@@ -357,7 +417,7 @@ class AvailabilityEngine:
         resolved_duration = (
             duration_minutes if duration_minutes is not None else self._get_default_duration(rules)
         )
-        if not all_rules:
+        if not _sets_up_availability(all_rules):
             return FreeSlotsResult(configured=False, slots=[], duration_minutes=resolved_duration)
 
         working_ranges = self._get_working_hours(rules, date_str, appointment_type_id)
@@ -389,6 +449,7 @@ class AvailabilityEngine:
             return FreeSlotsResult(configured=True, slots=[], duration_minutes=resolved_duration)
         over_cap = capped is _DayCap.OVER
 
+        busy: list[BusyInterval] = []
         if self._busy_source is not None:
             # Asked for only once the day has hours left to offer, so a
             # closed or full day never costs a calendar read. Widened by the
@@ -403,6 +464,19 @@ class AvailabilityEngine:
                 busy, day_start, tz, buffer_before, buffer_after
             )
 
+        # A floating block is checked per candidate: whether a slot breaks it
+        # depends on where the rest of the day's free time is, so it cannot
+        # be folded into blocked_minutes up front. What it counts as taken is
+        # appointments and busy time without their buffers (see
+        # ``floating_block``).
+        floating = [r for r in rules if r.rule_type == RuleType.FLOATING_BLOCK]
+        occupied = (
+            self._appointments_to_blocked_minutes(active, 0, 0, tz)
+            | _busy_to_blocked_minutes(busy, day_start, tz)
+            if floating
+            else set()
+        )
+
         alignment_step = self._get_alignment_step(rules)
 
         slots: list[TimeSlot] = []
@@ -413,7 +487,9 @@ class AvailabilityEngine:
             )
             while minute + resolved_duration <= work_end:
                 slot_range = set(range(minute, minute + resolved_duration))
-                if not slot_range & blocked_minutes:
+                if not slot_range & blocked_minutes and not _breaks_a_floating_block(
+                    floating, day, occupied, slot_range
+                ):
                     slot = TimeSlot(
                         start=_minute_to_utc_iso(day, minute, tz),
                         end=_minute_to_utc_iso(day, minute + resolved_duration, tz),
@@ -452,9 +528,8 @@ class AvailabilityEngine:
             return None
 
         checkers = {
-            RuleType.WORKING_HOURS: lambda: self._check_working_hours(
-                rule, proposed_start, proposed_end
-            ),
+            # WORKING_HOURS is not here: a day's ranges are checked together,
+            # once, by check_conflicts (_check_working_hours).
             RuleType.BLOCK_DAY_OF_WEEK: lambda: self._check_block_day_of_week(rule, proposed_start),
             RuleType.BLOCK_TIME_RANGE: lambda: self._check_block_time_range(
                 rule, proposed_start, proposed_end
@@ -471,32 +546,59 @@ class AvailabilityEngine:
             RuleType.BLOCK_SPECIFIC_DATES: lambda: self._check_block_specific_dates(
                 rule, proposed_start
             ),
+            RuleType.FLOATING_BLOCK: lambda: self._check_floating_block(
+                rule, user_id, proposed_start, proposed_end
+            ),
         }
         checker = checkers.get(RuleType(rule.rule_type))
         return checker() if checker else None
 
     def _check_working_hours(
         self,
-        rule: AvailabilityRule,
+        rules: list[AvailabilityRule],
         proposed_start: datetime,
         proposed_end: datetime,
     ) -> Conflict | None:
-        day_of_week = rule.params["day_of_week"]
-        if proposed_start.weekday() != day_of_week:
-            return None
+        """Whether the time sits inside one of the day's working ranges.
 
-        work_start = _time_to_minutes(rule.params["start"])
-        work_end = _time_to_minutes(rule.params["end"])
+        A day can have several ranges (9-12 and 2-6). The time is inside
+        working hours when any one of them holds all of it, which is how
+        :meth:`get_free_slots` lists slots, range by range. Checking each
+        range on its own would put every time on a split day outside one of
+        them. With no range for the weekday there is nothing to check, as
+        before. A rule whose params cannot be read is skipped.
+        """
         prop_start_min = proposed_start.hour * 60 + proposed_start.minute
         prop_end_min = proposed_end.hour * 60 + proposed_end.minute
-
-        if prop_start_min >= work_start and prop_end_min <= work_end:
+        ranges: list[tuple[int, int, AvailabilityRule]] = []
+        for rule in rules:
+            if rule.rule_type != RuleType.WORKING_HOURS or rule.appointment_type_id is not None:
+                continue
+            try:
+                if rule.params["day_of_week"] != proposed_start.weekday():
+                    continue
+                span = (
+                    _time_to_minutes(rule.params["start"]),
+                    _time_to_minutes(rule.params["end"]),
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+            ranges.append((*span, rule))
+        if not ranges:
+            return None
+        if any(start <= prop_start_min and prop_end_min <= end for start, end, _ in ranges):
             return None
 
+        ranges.sort(key=lambda r: r[0])
+        # The strictest range speaks for the day: a hard one is not softened by
+        # a soft one beside it (the same reading as the daily cap's).
+        hard = [r for _, _, r in ranges if r.enforcement == EnforcementLevel.HARD]
+        rule = hard[0] if hard else ranges[0][2]
+        spans = ", ".join(f"{r.params['start']}-{r.params['end']}" for _, _, r in ranges)
         return Conflict(
             rule=rule,
             enforcement=rule.enforcement,
-            message=f"Outside working hours ({rule.params['start']}-{rule.params['end']})",
+            message=f"Outside working hours ({spans})",
         )
 
     def _check_block_day_of_week(
@@ -657,6 +759,93 @@ class AvailabilityEngine:
                 message=f"Date {date_str} is specifically blocked",
             )
         return None
+
+    def _day_occupancy(self, user_id: str, day: date, tz: tzinfo) -> set[int]:
+        """The minutes of ``day`` appointments and busy time hold, without buffers.
+
+        What a floating block counts as taken (see ``floating_block``).
+        """
+        day_start = datetime.combine(day, time(0), tzinfo=tz)
+        day_end = day_start + timedelta(days=1)
+        active = [
+            a
+            for a in self._appt_repo.list_by_range(user_id, day_start, day_end)
+            if a.status != "cancelled"
+        ]
+        occupied = self._appointments_to_blocked_minutes(active, 0, 0, tz)
+        if self._busy_source is not None:
+            busy = self._busy_source.busy_between(user_id, day_start, day_end)
+            occupied |= _busy_to_blocked_minutes(busy, day_start, tz)
+        return occupied
+
+    def _check_floating_block(
+        self,
+        rule: AvailabilityRule,
+        user_id: str,
+        proposed_start: datetime,
+        proposed_end: datetime,
+    ) -> Conflict | None:
+        """Whether the proposed time would leave the block no room that day.
+
+        The message names the block, so the clinician booking directly sees
+        what they would be giving up before deciding to go ahead. Every path
+        that books without that decision (no override) is refused by a HARD
+        block, which is the default.
+        """
+        day = proposed_start.date()
+        if not floating_block.applies_on(rule, day) or floating_block.is_skipped(rule, day):
+            return None
+        tz = proposed_start.tzinfo or UTC
+        occupied = self._day_occupancy(user_id, day, tz)
+        span = _local_minutes(proposed_start, proposed_end, day)
+        if not floating_block.breaks_block(rule, day, occupied, span):
+            return None
+        label = rule.params["label"]
+        pinned = floating_block.pinned_span(rule, day)
+        if pinned is not None:
+            message = f"Overlaps {label} ({_hhmm(pinned[0])}-{_hhmm(pinned[1])})"
+        else:
+            message = (
+                f"Leaves no time for {label} between "
+                f"{rule.params['window_start']} and {rule.params['window_end']}"
+            )
+        return Conflict(rule=rule, enforcement=rule.enforcement, message=message)
+
+    def floating_blocks(
+        self, user_id: str, date_str: str, *, tz: tzinfo = UTC
+    ) -> list[ResolvedFloatingBlock]:
+        """Where each of the user's floating blocks sits on ``date_str``.
+
+        Read-only: the position is derived from what the day holds, never
+        stored, so it moves as the day fills and every reader sees the same
+        answer. ``date_str`` is a local date in ``tz``.
+        """
+        day = date.fromisoformat(date_str)
+        rules = [
+            r
+            for r in self._rule_repo.list_by_user(user_id)
+            if r.rule_type == RuleType.FLOATING_BLOCK
+        ]
+        if not rules:
+            return []
+        occupied = self._day_occupancy(user_id, day, tz)
+        resolved: list[ResolvedFloatingBlock] = []
+        for block in floating_block.day_blocks(rules, day, occupied):
+            params = block.rule.params
+            resolved.append(
+                ResolvedFloatingBlock(
+                    rule_id=block.rule.id,
+                    label=block.label,
+                    date=day,
+                    state=block.state.value,
+                    duration_minutes=int(params["duration_minutes"]),
+                    window_start=params["window_start"],
+                    window_end=params["window_end"],
+                    start=_minute_to_utc(day, block.start, tz) if block.start is not None else None,
+                    end=_minute_to_utc(day, block.end, tz) if block.end is not None else None,
+                )
+            )
+        return resolved
 
     # --- Free slots helpers ---
 

@@ -4,7 +4,6 @@
 
 import contextlib
 import logging
-import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -31,6 +30,7 @@ from ..repositories import (
     get_identity_repository,
     get_user_repository,
 )
+from ..reserved_identities import E2E_EMAIL_PATTERN, PENTEST_EMAIL_PATTERN
 from ..settings import Settings, get_settings
 from ..utcnow import utc_now
 from ..version_check import check_client_version
@@ -50,11 +50,6 @@ from .route_access import (
 
 logger = logging.getLogger(__name__)
 
-# Reserved E2E test-user prefix. Mirrors PENTEST_EMAIL_PATTERN (see
-# jobs/pentest_identity.py). The bypass that honors this pattern is
-# gated on settings.is_prod_project in both auth/service.py and
-# routes/ext_auth.py.
-E2E_EMAIL_PATTERN = re.compile(r"^e2etest-[0-9a-f]{8}@pablo\.health$")
 security = HTTPBearer()
 
 
@@ -83,7 +78,7 @@ def _get_cached_token(request: Request | None, token: str) -> dict[str, Any] | N
         return None
     cached_raw = getattr(request.state, "verified_firebase_token_raw", None)
     if cached_raw is not None and cached_raw == token:
-        return request.state.decoded_firebase_token  # type: ignore[no-any-return]
+        return request.state.decoded_firebase_token  # type: ignore[no-any-return]  # request.state is untyped Starlette state
     return None
 
 
@@ -158,6 +153,9 @@ def _note_expired_token_subject(token: str) -> None:
     signing in again be read as that person's session.
     """
     with contextlib.suppress(Exception):
+        # Unverified on purpose, per the docstring: the caller is the
+        # ExpiredIdTokenError branch, and the request still gets its 401.
+        # nosemgrep
         claims = jwt.decode(token, options={"verify_signature": False, "verify_exp": False})
         _bind_auth_session(claims, claimed=True)
         subject = claims.get("sub")
@@ -526,6 +524,21 @@ def get_tenant_context(
 
     # Resolve practice from user's email
     email = _extract_email(decoded_token)
+    if email and not identity.email_verified:
+        # The mapping exists before the invitee has an account, and a
+        # password account can be registered for any address — so an email
+        # the issuer has not verified must not be looked up at all. The
+        # schema-resolving middleware applies the same rule.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": {
+                    "code": "EMAIL_NOT_VERIFIED",
+                    "message": "Verify your email address to continue",
+                    "details": {},
+                }
+            },
+        )
     if email:
         practice = _resolve_practice_from_email(email)
         if practice:
@@ -886,13 +899,15 @@ def _resolve_user(
         # only (Firebase signup doesn't verify email — an attacker could
         # otherwise mint a token for an arbitrary e2etest-<hex>@pablo.health
         # address and ride this path into prod).
-        from ..jobs.pentest_identity import PENTEST_EMAIL_PATTERN
-
         settings = get_settings()
         is_prod_project = settings.is_prod_project
         is_pentest_user = not is_prod_project and bool(email and PENTEST_EMAIL_PATTERN.match(email))
         is_e2e_user = not is_prod_project and bool(email and E2E_EMAIL_PATTERN.match(email))
-        is_provisioned_tenant = bool(email and _email_has_tenant_mapping(email))
+        # A practice mapping vouches for the address only once the issuer
+        # has confirmed the account holder controls it (see providers).
+        is_provisioned_tenant = bool(
+            email and identity.email_verified and _email_has_tenant_mapping(email)
+        )
         if (
             settings.restrict_signups
             and not is_pentest_user
@@ -1049,6 +1064,7 @@ def require_active_subscription(
     if not settings.is_saas:
         return user
 
+    # The subscription routes exist only in the SaaS overlay.
     from ..routes.subscription import _fetch_subscription  # type: ignore[import-not-found]
 
     sub = _fetch_subscription(user.email, settings)

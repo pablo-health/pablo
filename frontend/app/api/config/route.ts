@@ -58,6 +58,10 @@ export async function GET(request: NextRequest) {
     // Runtime toggle (no client rebuild) for the WebAuthn passkey UI, dark
     // until the egm.4 cutover. Set PASSKEYS_ENABLED=true on the container.
     passkeysEnabled: process.env.PASSKEYS_ENABLED === 'true',
+    // Google sign-in needs the deployment's own OAuth client. A self-hosted
+    // install that chose email and password only has none, and a Google
+    // button there could only fail.
+    googleSignInEnabled: Boolean(process.env.GOOGLE_CLIENT_ID),
     // Which optional features this deployment has turned on. Absent means off.
     features: enabledFeatures(),
     // Where the app sends someone whose subscription has ended when they

@@ -14,8 +14,12 @@ repositories.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
 from ..utcnow import utc_now
+
+if TYPE_CHECKING:
+    from ..repositories.row import Row
 
 
 class PatientMedicationAccessDeniedError(Exception):
@@ -30,7 +34,7 @@ class PatientMedicationAccessDeniedError(Exception):
 class MedicationRepository(ABC):
     """Abstract base class for medication data access.
 
-    Rows are plain ``dict[str, object]`` matching the ``PatientMedicationRow``
+    Rows are plain ``Row`` matching the ``PatientMedicationRow``
     column layout (uuid columns as ``str``).
 
     * Reads return ``None`` / empty when access is denied — same shape as
@@ -41,7 +45,7 @@ class MedicationRepository(ABC):
     """
 
     @abstractmethod
-    def get(self, medication_id: str, user_id: str) -> dict[str, object] | None:
+    def get(self, medication_id: str, user_id: str) -> Row | None:
         """Get a medication by ID, or ``None`` if absent or inaccessible."""
 
     @abstractmethod
@@ -51,7 +55,7 @@ class MedicationRepository(ABC):
         user_id: str,
         *,
         status: str | None = None,
-    ) -> list[dict[str, object]]:
+    ) -> list[Row]:
         """List medications for a patient (excluding soft-deleted).
 
         Returns ``[]`` when access is denied.  When ``status`` is provided,
@@ -62,11 +66,11 @@ class MedicationRepository(ABC):
         """
 
     @abstractmethod
-    def create(self, row: dict[str, object], user_id: str) -> dict[str, object]:
+    def create(self, row: Row, user_id: str) -> Row:
         """Insert a new row. Raises :class:`PatientMedicationAccessDeniedError` if blocked."""
 
     @abstractmethod
-    def update(self, row: dict[str, object], user_id: str) -> dict[str, object]:
+    def update(self, row: Row, user_id: str) -> Row:
         """Update an existing row (full replacement).
 
         Raises :class:`PatientMedicationAccessDeniedError` if blocked.
@@ -93,7 +97,7 @@ class InMemoryMedicationRepository(MedicationRepository):
     """
 
     def __init__(self) -> None:
-        self._rows: dict[str, dict[str, object]] = {}
+        self._rows: dict[str, Row] = {}
         self._access: set[tuple[str, str]] = set()
         self._allow_all = False
 
@@ -114,7 +118,7 @@ class InMemoryMedicationRepository(MedicationRepository):
         self,
         medication_id: str,
         user_id: str = _TEST_DEFAULT_USER,
-    ) -> dict[str, object] | None:
+    ) -> Row | None:
         row = self._rows.get(medication_id)
         if row is None:
             return None
@@ -128,7 +132,7 @@ class InMemoryMedicationRepository(MedicationRepository):
         user_id: str = _TEST_DEFAULT_USER,
         *,
         status: str | None = None,
-    ) -> list[dict[str, object]]:
+    ) -> list[Row]:
         if not self._can_access(patient_id, user_id):
             return []
         rows = [
@@ -140,7 +144,7 @@ class InMemoryMedicationRepository(MedicationRepository):
         ]
 
         # active first, then other statuses; within each group, started_at desc (nulls last)
-        def _sort_key(r: dict[str, object]) -> tuple[int, object]:
+        def _sort_key(r: Row) -> tuple[int, object]:
             status_order = 0 if r.get("status") == "active" else 1
             started = r.get("started_at")
             # Negate for descending; None sorts after real dates
@@ -155,9 +159,9 @@ class InMemoryMedicationRepository(MedicationRepository):
 
     def create(
         self,
-        row: dict[str, object],
+        row: Row,
         user_id: str = _TEST_DEFAULT_USER,
-    ) -> dict[str, object]:
+    ) -> Row:
         patient_id = str(row["patient_id"])
         if not self._can_access(patient_id, user_id):
             raise PatientMedicationAccessDeniedError(patient_id, user_id)
@@ -166,9 +170,9 @@ class InMemoryMedicationRepository(MedicationRepository):
 
     def update(
         self,
-        row: dict[str, object],
+        row: Row,
         user_id: str = _TEST_DEFAULT_USER,
-    ) -> dict[str, object]:
+    ) -> Row:
         patient_id = str(row["patient_id"])
         if not self._can_access(patient_id, user_id):
             raise PatientMedicationAccessDeniedError(patient_id, user_id)

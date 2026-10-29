@@ -30,6 +30,8 @@ export interface PracticeHostLookupOptions {
   /** Milliseconds; injectable so tests can move time. */
   now?: () => number
   ttlMs?: number
+  /** How long a found answer is kept, when that differs from `ttlMs` (which then covers only a 404). */
+  foundTtlMs?: number
   maxEntries?: number
   timeoutMs?: number
 }
@@ -47,6 +49,7 @@ export type PracticeHostLookup = (hostname: string) => Promise<PracticeHostAnswe
 const TTL_MS = 60_000
 const MAX_ENTRIES = 5_000
 const TIMEOUT_MS = 3_000
+const SLUG_FOUND_TTL_MS = 24 * 60 * 60_000
 
 function parsePortalHost(body: unknown): PracticeHost | "unavailable" {
   if (typeof body !== "object" || body === null) return "unavailable"
@@ -73,6 +76,7 @@ export function createHostLookup<T>(options: PracticeHostLookupOptions, route: H
   const fetchFn = options.fetch ?? fetch
   const now = options.now ?? Date.now
   const ttlMs = options.ttlMs ?? TTL_MS
+  const foundTtlMs = options.foundTtlMs ?? ttlMs
   const maxEntries = options.maxEntries ?? MAX_ENTRIES
   const timeoutMs = options.timeoutMs ?? TIMEOUT_MS
   const kept = new Map<string, { until: number; answer: T | null }>()
@@ -101,7 +105,7 @@ export function createHostLookup<T>(options: PracticeHostLookupOptions, route: H
 
   function keep(hostname: string, answer: T | null): void {
     kept.delete(hostname)
-    kept.set(hostname, { until: now() + ttlMs, answer })
+    kept.set(hostname, { until: now() + (answer === null ? ttlMs : foundTtlMs), answer })
     while (kept.size > maxEntries) {
       const oldest = kept.keys().next().value
       if (oldest === undefined) break
@@ -143,3 +147,32 @@ export function serverApiUrl(): string {
 
 /** The process-wide lookup the proxy uses, against the server-side `API_URL`. */
 export const lookupPracticeHost: PracticeHostLookup = createPracticeHostLookup({ apiUrl: serverApiUrl })
+
+/**
+ * Whether a practice holds `slug`: `true`, `null` (the backend's 404), or
+ * `"unavailable"`.
+ *
+ * `GET {API_URL}/api/portal/practices/{slug}` is the call the portal shell
+ * makes first in the browser. The proxy asks it as well, so that an address
+ * naming no practice is served with a 404 status and the same card
+ * (`./unknown-practice`) instead of a 200.
+ *
+ * A practice that has a portal is kept for a day. Being wrong about one is
+ * cheap: a portal turned off or a slug given up within the day still gets the
+ * page, which asks the same route and shows the practice missing itself. A
+ * slug no practice holds is kept only a minute, so a portal that has just
+ * been set up is not refused for a day.
+ *
+ * The route is rate-limited by address and every call from here shares this
+ * server's, so under a flood of made-up slugs the answer turns
+ * `"unavailable"` and the proxy serves the page as it did before.
+ */
+export function createPortalSlugLookup(options: PracticeHostLookupOptions): HostLookup<true> {
+  return createHostLookup({ foundTtlMs: SLUG_FOUND_TTL_MS, ...options }, {
+    path: (slug) => `/api/portal/practices/${encodeURIComponent(slug)}`,
+    parse: () => true,
+  })
+}
+
+/** The process-wide slug lookup the proxy uses. */
+export const lookupPortalSlug: HostLookup<true> = createPortalSlugLookup({ apiUrl: serverApiUrl })

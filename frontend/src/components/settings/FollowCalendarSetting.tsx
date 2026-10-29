@@ -18,18 +18,11 @@ import {
   type FollowableCalendar,
 } from "@/lib/api/outsideSessions"
 import { importNeedsConsent, scanCalendarForImport } from "@/lib/api/scheduling"
+import { browserTimeZone } from "@/lib/dates"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 
 /** What following "the main calendar" is stored as until a read resolves it. */
 const MAIN_CALENDAR = "primary"
-
-function browserTimeZone(): string {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
-  } catch {
-    return "UTC"
-  }
-}
 
 /**
  * "Keep importing new sessions", from a calendar the clinician chooses —

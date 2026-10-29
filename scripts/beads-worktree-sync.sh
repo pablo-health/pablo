@@ -2,7 +2,8 @@
 # Bring a git worktree's beads configuration in line with the main checkout.
 #
 # The committed .beads/metadata.json selects dolt_mode=embedded: a private,
-# per-checkout database seeded from the committed issues.jsonl. A developer
+# per-checkout database seeded from a local issues.jsonl, if any (the
+# published export lives on the beads-metadata branch, not main). A developer
 # who works against a shared beads server carries a different metadata.json
 # and config.yaml in the main checkout, hidden from `git status` with
 # `git update-index --skip-worktree` so the override never gets committed.

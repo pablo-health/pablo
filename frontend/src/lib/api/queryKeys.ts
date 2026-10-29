@@ -162,6 +162,11 @@ const baseQueryKeys = {
     rules: () => [...baseQueryKeys.availability.all, "rules"] as const,
     slots: (date: string, duration?: number) =>
       [...baseQueryKeys.availability.all, "slots", date, duration ?? null] as const,
+    // Under `availability.all`, so a rule edit moves the bands too. Appointment
+    // writes invalidate the prefix as well: a booking can push a block along.
+    floatingBlocksAll: () => [...baseQueryKeys.availability.all, "floating-blocks"] as const,
+    floatingBlocks: (date: string) =>
+      [...baseQueryKeys.availability.all, "floating-blocks", date] as const,
   },
 
   // User query keys
@@ -389,6 +394,13 @@ const baseQueryKeys = {
       [...baseQueryKeys.problems.all, "byPatient", patientId] as const,
   },
 
+  // How to work with a client: their preferences on the chart
+  patientPreferences: {
+    all: ["patientPreferences"] as const,
+    byPatient: (patientId: string) =>
+      [...baseQueryKeys.patientPreferences.all, "byPatient", patientId] as const,
+  },
+
   // A client's history fields on the chart
   chartHistory: {
     all: ["chartHistory"] as const,
@@ -457,6 +469,26 @@ const baseQueryKeys = {
     all: ["homework"] as const,
     byPatient: (patientId: string) =>
       [...baseQueryKeys.homework.all, "byPatient", patientId] as const,
+  },
+
+  // The clinician's away dates
+  away: {
+    all: ["away"] as const,
+    coverageActivity: (periodId: string) =>
+      [...baseQueryKeys.away.all, "coverageActivity", periodId] as const,
+  },
+
+  // Away dates a colleague asked the clinician to cover
+  covering: {
+    all: ["covering"] as const,
+  },
+
+  // The clinician's waitlist, and one client's place on it
+  waitlist: {
+    all: ["waitlist"] as const,
+    list: () => [...baseQueryKeys.waitlist.all, "list"] as const,
+    byPatient: (patientId: string) =>
+      [...baseQueryKeys.waitlist.all, "byPatient", patientId] as const,
   },
 
   // Refill requests (the prescriber's queue) query keys

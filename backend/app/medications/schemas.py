@@ -26,6 +26,10 @@ class CreateMedicationRequest(BaseModel):
     started_at: date | None = None
     stop_reason: str | None = None
     notes: str | None = None
+    # The clinician's own call; ``None`` uses the default (see
+    # ``app.models.refill_risk``).
+    controlled: bool | None = None
+    interruption_risk: bool | None = None
 
 
 class UpdateMedicationRequest(BaseModel):
@@ -45,6 +49,9 @@ class UpdateMedicationRequest(BaseModel):
     stopped_at: date | None = None
     stop_reason: str | None = None
     notes: str | None = None
+    # Sent as null, either goes back to the default.
+    controlled: bool | None = None
+    interruption_risk: bool | None = None
 
 
 class MedicationResponse(BaseModel):
@@ -63,6 +70,11 @@ class MedicationResponse(BaseModel):
     stopped_at: date | None
     stop_reason: str | None
     notes: str | None
+    controlled: bool | None = None
+    interruption_risk: bool | None = None
+    # What the default list says for this drug name, so the chart can show
+    # what a ``None`` above means (``app.models.refill_risk``).
+    interruption_risk_default: bool = False
     created_by: str
     created_at: datetime
     updated_at: datetime

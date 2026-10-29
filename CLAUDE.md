@@ -4,12 +4,12 @@
 
 **Pablo** = **P**aperwork **A**utomation for **B**ehavioral **L**ogging & **O**utcomes
 
-AI-powered therapy documentation — SOAP note generation from session transcripts, with dual-method verification (LLM + classical NLP).
+AI-powered practice software for therapists — session notes drafted from transcripts, plus scheduling, billing and the inbox.
 
 ### Tech Stack
 | Layer | Technology |
 |-------|-----------|
-| Frontend | Next.js 15, TypeScript, Tailwind CSS, shadcn/ui |
+| Frontend | Next.js 16, TypeScript, Tailwind CSS, shadcn/ui |
 | Backend | FastAPI, Python 3.13, PostgreSQL (Cloud SQL) |
 | Infra | Docker, Google Cloud Run, GitHub Actions CI/CD |
 
@@ -177,8 +177,18 @@ Four that are easy to get wrong:
    `enable_rls_on_schema`. A newly-added table MUST have a policy
    branch in that function or be explicitly listed as not-row-scoped
    via `register_overlay_not_row_scoped()`, otherwise it silently
-   ships as deny-all. That isolation contract is verified at
-   **three layers**:
+   ships as deny-all.
+
+   The tenant template carries that function's output: its last section
+   (after the row-level security marker) is captured by running the real
+   `enable_rls_on_schema` over a scratch practice during regen, and
+   provisioning applies it to every new practice. `enable_rls_on_schema`
+   still runs afterwards as a verify — it rebuilds only tables whose flags,
+   policies or policy fingerprints differ, so it stays the repair pass for
+   existing practices. **So a change to a policy in that function is a
+   template change too: regenerate the template in the same commit**, or
+   the `Tenant template matches alembic head` job fails. That isolation
+   contract is verified at **three layers**:
 
    - **L2 real-time hook** — `.claude/settings.json` PostToolUse hook runs
      `poetry run python .claude/skills/rls-coverage-check/check.py`
@@ -241,9 +251,12 @@ Four that are easy to get wrong:
     commit and a fresh worktree's `post-checkout` dirties the beads
     DB. `export.git-add` is set to `false` (`bd config get
     export.git-add`), so the auto-exported `.beads/issues.jsonl` is no
-    longer auto-staged — but it still shows as modified in `git
-    status`. When committing code, `git add` explicit paths (never
-    `git add -A` / `git add .`) so that churn stays out of your commit.
+    longer auto-staged. The published board export lives on the
+    `beads-metadata` branch, not main (`git fetch origin beads-metadata
+    && git show FETCH_HEAD:.beads/issues.jsonl`); on main the file is
+    untracked and ignored, and must not be committed back. When
+    committing code, `git add` explicit paths (never `git add -A` /
+    `git add .`) so that churn stays out of your commit.
     If beads files ever sneak into the index, `git restore --staged`
     them.
 

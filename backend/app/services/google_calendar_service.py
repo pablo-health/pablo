@@ -558,6 +558,7 @@ def _build_calendar_service(credentials: Any, *, base_url: str | None = None) ->
     call then goes — the library's own seam for that, ``api_endpoint`` — so
     a stand-in is reached by the same request code as Google is.
     """
+    # google-api-python-client ships no type information.
     from googleapiclient.discovery import build  # type: ignore[import-untyped,import-not-found]
 
     client_options = (
@@ -576,7 +577,7 @@ def _make_credentials(
     """Lazily import and construct google.oauth2 Credentials."""
     from google.oauth2.credentials import Credentials as CredentialsCls
 
-    return CredentialsCls(  # type: ignore[no-untyped-call]
+    return CredentialsCls(  # type: ignore[no-untyped-call]  # google-auth credentials constructors are untyped
         token=token,
         refresh_token=refresh_token,
         token_uri=token_uri,
@@ -619,7 +620,7 @@ def _refresh_credentials(credentials: Credentials) -> None:
     """Refresh expired credentials using Google auth transport."""
     from google.auth.transport.requests import Request as GoogleAuthRequest
 
-    credentials.refresh(GoogleAuthRequest())  # type: ignore[no-untyped-call]
+    credentials.refresh(GoogleAuthRequest())  # type: ignore[no-untyped-call]  # google-auth credentials constructors are untyped
 
 
 class GoogleCalendarError(Exception):

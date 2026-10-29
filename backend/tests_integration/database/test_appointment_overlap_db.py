@@ -25,12 +25,12 @@ from app.db import (
     arm_current_user_id,
     set_tenant_schema,
 )
-from app.models import Patient
 from app.repositories.postgres.appointment import PostgresAppointmentRepository
-from app.repositories.postgres.patient import PostgresPatientRepository
 from app.scheduling_engine.models.appointment import Appointment
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+
+from tests_integration.database.patient_rows import seed_patient_row
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -83,22 +83,6 @@ def _user() -> str:
     return str(uuid.uuid4())
 
 
-def _seed_patient(session: Session, user_id: str) -> str:
-    patient_id = str(uuid.uuid4())
-    now = datetime(2026, 1, 1, tzinfo=UTC)
-    PostgresPatientRepository(session).create(
-        Patient(
-            id=patient_id,
-            first_name="Pat",
-            last_name="Ient",
-            created_at=now,
-            updated_at=now,
-        ),
-        user_id,
-    )
-    return patient_id
-
-
 def _seed_appointment(  # noqa: PLR0913 — seeding helper with independent start/end/status knobs
     session: Session,
     *,
@@ -132,7 +116,7 @@ def _seed_appointment(  # noqa: PLR0913 — seeding helper with independent star
 def test_exact_same_start_and_end_collides(session: Session) -> None:
     user_id = _user()
     _arm(session, user_id)
-    patient_id = _seed_patient(session, user_id)
+    patient_id = seed_patient_row(session, user_id)
     _seed_appointment(
         session, user_id=user_id, patient_id=patient_id, start=_NOW, end=_NOW + timedelta(hours=1)
     )
@@ -148,7 +132,7 @@ def test_exact_same_start_and_end_collides(session: Session) -> None:
 def test_existing_fully_contains_proposed_slot_collides(session: Session) -> None:
     user_id = _user()
     _arm(session, user_id)
-    patient_id = _seed_patient(session, user_id)
+    patient_id = seed_patient_row(session, user_id)
     _seed_appointment(
         session,
         user_id=user_id,
@@ -168,7 +152,7 @@ def test_existing_fully_contains_proposed_slot_collides(session: Session) -> Non
 def test_proposed_slot_fully_contains_existing_collides(session: Session) -> None:
     user_id = _user()
     _arm(session, user_id)
-    patient_id = _seed_patient(session, user_id)
+    patient_id = seed_patient_row(session, user_id)
     _seed_appointment(
         session,
         user_id=user_id,
@@ -189,7 +173,7 @@ def test_existing_starts_before_window_and_ends_inside_collides(session: Session
     """The case ``list_by_range`` misses — it filters on ``start_at`` only."""
     user_id = _user()
     _arm(session, user_id)
-    patient_id = _seed_patient(session, user_id)
+    patient_id = seed_patient_row(session, user_id)
     _seed_appointment(
         session,
         user_id=user_id,
@@ -209,7 +193,7 @@ def test_existing_starts_before_window_and_ends_inside_collides(session: Session
 def test_back_to_back_does_not_collide(session: Session) -> None:
     user_id = _user()
     _arm(session, user_id)
-    patient_id = _seed_patient(session, user_id)
+    patient_id = seed_patient_row(session, user_id)
     _seed_appointment(
         session, user_id=user_id, patient_id=patient_id, start=_NOW - timedelta(hours=1), end=_NOW
     )
@@ -225,7 +209,7 @@ def test_back_to_back_does_not_collide(session: Session) -> None:
 def test_cancelled_appointment_does_not_collide(session: Session) -> None:
     user_id = _user()
     _arm(session, user_id)
-    patient_id = _seed_patient(session, user_id)
+    patient_id = seed_patient_row(session, user_id)
     _seed_appointment(
         session,
         user_id=user_id,
@@ -246,7 +230,7 @@ def test_cancelled_appointment_does_not_collide(session: Session) -> None:
 def test_exclude_appointment_id_omits_that_appointment(session: Session) -> None:
     user_id = _user()
     _arm(session, user_id)
-    patient_id = _seed_patient(session, user_id)
+    patient_id = seed_patient_row(session, user_id)
     moving_id = _seed_appointment(
         session, user_id=user_id, patient_id=patient_id, start=_NOW, end=_NOW + timedelta(hours=1)
     )
@@ -262,7 +246,7 @@ def test_exclude_appointment_id_omits_that_appointment(session: Session) -> None
 def test_different_user_id_not_returned(session: Session) -> None:
     user_a, user_b = _user(), _user()
     _arm(session, user_b)
-    patient_b = _seed_patient(session, user_b)
+    patient_b = seed_patient_row(session, user_b)
     _seed_appointment(
         session, user_id=user_b, patient_id=patient_b, start=_NOW, end=_NOW + timedelta(hours=1)
     )

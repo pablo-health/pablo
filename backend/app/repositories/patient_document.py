@@ -30,12 +30,14 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from ..models import ExtractionStatus
 
 if TYPE_CHECKING:
     from ..models import PatientDocument
+    from .row import Row
 
 
 @dataclass(frozen=True)
@@ -44,7 +46,7 @@ class FinalizedExtraction:
 
     text: str | None
     via: str | None
-    metadata: dict[str, object] | None
+    metadata: Row | None
 
 
 class PatientDocumentRepository(ABC):
@@ -71,7 +73,7 @@ class PatientDocumentRepository(ABC):
         user_id: str,
         *,
         size_bytes: int,
-        finalized_at: object,
+        finalized_at: datetime,
     ) -> PatientDocument | None:
         """Stamp ``finalized_at`` + size and set ``extraction_status='pending'``.
 
@@ -144,7 +146,7 @@ class PatientDocumentRepository(ABC):
         """
 
     @abstractmethod
-    def soft_delete(self, document_id: str, user_id: str, deleted_at: object) -> bool:
+    def soft_delete(self, document_id: str, user_id: str, deleted_at: datetime) -> bool:
         """Tombstone a document. Returns True if a row was updated.
 
         Delete is restricted to the uploader — even a co-treater with
@@ -162,7 +164,7 @@ class PatientDocumentRepository(ABC):
         patient_id: str,
         *,
         size_bytes: int,
-        finalized_at: object,
+        finalized_at: datetime,
     ) -> PatientDocument | None:
         """Stamp size and ``finalized_at`` on the calling patient's own upload.
 
@@ -199,7 +201,7 @@ class PatientDocumentRepository(ABC):
 
     @abstractmethod
     def soft_delete_for_patient_principal(
-        self, document_id: str, patient_id: str, deleted_at: object
+        self, document_id: str, patient_id: str, deleted_at: datetime
     ) -> bool:
         """Tombstone one of the calling patient's OWN uploads.
 
@@ -253,13 +255,13 @@ class InMemoryPatientDocumentRepository(PatientDocumentRepository):
         user_id: str,
         *,
         size_bytes: int,
-        finalized_at: object,
+        finalized_at: datetime,
     ) -> PatientDocument | None:
         doc = self._by_id.get(document_id)
         if doc is None or doc.user_id != user_id or doc.deleted_at is not None:
             return None
         doc.size_bytes = size_bytes
-        doc.finalized_at = finalized_at  # type: ignore[assignment]
+        doc.finalized_at = finalized_at
         doc.extraction_status = ExtractionStatus.PENDING
         return doc
 
@@ -290,11 +292,11 @@ class InMemoryPatientDocumentRepository(PatientDocumentRepository):
         doc.extraction_status = ExtractionStatus.FAILED
         return doc
 
-    def soft_delete(self, document_id: str, user_id: str, deleted_at: object) -> bool:
+    def soft_delete(self, document_id: str, user_id: str, deleted_at: datetime) -> bool:
         doc = self._by_id.get(document_id)
         if doc is None or doc.user_id != user_id or doc.deleted_at is not None:
             return False
-        doc.deleted_at = deleted_at  # type: ignore[assignment]
+        doc.deleted_at = deleted_at
         return True
 
     # --- reads --------------------------------------------------------
@@ -328,13 +330,13 @@ class InMemoryPatientDocumentRepository(PatientDocumentRepository):
         patient_id: str,
         *,
         size_bytes: int,
-        finalized_at: object,
+        finalized_at: datetime,
     ) -> PatientDocument | None:
         doc = self._by_id.get(document_id)
         if doc is None or doc.uploaded_by_patient_id != patient_id or doc.deleted_at is not None:
             return None
         doc.size_bytes = size_bytes
-        doc.finalized_at = finalized_at  # type: ignore[assignment]
+        doc.finalized_at = finalized_at
         return doc
 
     def get_for_patient_principal(
@@ -355,12 +357,12 @@ class InMemoryPatientDocumentRepository(PatientDocumentRepository):
         return rows
 
     def soft_delete_for_patient_principal(
-        self, document_id: str, patient_id: str, deleted_at: object
+        self, document_id: str, patient_id: str, deleted_at: datetime
     ) -> bool:
         doc = self._by_id.get(document_id)
         if doc is None or doc.uploaded_by_patient_id != patient_id or doc.deleted_at is not None:
             return False
-        doc.deleted_at = deleted_at  # type: ignore[assignment]
+        doc.deleted_at = deleted_at
         return True
 
     def _patient_can_read(self, doc: PatientDocument, patient_id: str) -> bool:

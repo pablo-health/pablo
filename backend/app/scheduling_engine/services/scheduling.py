@@ -28,6 +28,7 @@ from ..models.availability import EnforcementLevel
 from .recurrence import RecurrenceGenerator
 
 if TYPE_CHECKING:
+    from ...repositories.row import Row
     from ..models.conflict import Conflict
     from ..repositories.appointment import AppointmentRepository
     from .availability import AvailabilityEngine
@@ -175,6 +176,15 @@ class SchedulingService:
                 f"Conflicts with an existing appointment at {conflicting.start_at.isoformat()}"
             )
 
+    def reject_if_taken(self, user_id: str, start_at: datetime, end_at: datetime) -> None:
+        """Raise :class:`AppointmentConflictError` if anything booked overlaps.
+
+        The same collision check every create runs, exposed for a caller that
+        wants the answer before it writes anything else the booking would
+        need. It is not a reservation: the create still runs it again.
+        """
+        self._reject_if_overlapping(user_id, _as_datetime(start_at), _as_datetime(end_at))
+
     def _reject_if_really_booked(
         self,
         user_id: str,
@@ -209,7 +219,7 @@ class SchedulingService:
         self,
         user_id: str,
         *,
-        data: dict[str, str | int | datetime | None],
+        data: Row,
         tz: tzinfo = UTC,
         rule_override: bool = False,
     ) -> Appointment:
@@ -262,12 +272,12 @@ class SchedulingService:
             duration_minutes=duration_minutes,
             status=status,
             pending_expires_at=pending_expires_at,
-            confirmation_token_hash=data.get("confirmation_token_hash"),  # type: ignore[arg-type]
+            confirmation_token_hash=data.get("confirmation_token_hash"),
             session_type=str(data.get("session_type", "individual")),
-            appointment_type_id=data.get("appointment_type_id"),  # type: ignore[arg-type]
-            video_link=data.get("video_link"),  # type: ignore[arg-type]
-            video_platform=data.get("video_platform"),  # type: ignore[arg-type]
-            notes=data.get("notes"),  # type: ignore[arg-type]
+            appointment_type_id=data.get("appointment_type_id"),
+            video_link=data.get("video_link"),
+            video_platform=data.get("video_platform"),
+            notes=data.get("notes"),
             note_type=str(data.get("note_type") or "soap"),
             note_inputs=_note_inputs(data.get("note_inputs")),
             created_at=now,
@@ -617,8 +627,13 @@ class SchedulingService:
         user_id: str,
         *,
         record: ChangeRecord | None = None,
+        skip: bool = False,
     ) -> Appointment:
         """Cancel a single appointment.
+
+        ``skip`` marks a series occurrence as skipped: the client is not
+        coming that week and the series carries on. Refused on an appointment
+        that is not part of a series, where there is nothing to carry on.
 
         Clears any confirmation token along with it — once a clinician has
         cancelled a hold in-app, its link must stop working. This is the
@@ -639,7 +654,12 @@ class SchedulingService:
         acting for somebody else say so.
         """
         appointment = self.get_appointment(appointment_id, user_id)
+        if skip and not appointment.recurring_appointment_id:
+            raise InvalidAppointmentError(
+                f"Appointment {appointment_id} is not part of a series, so it cannot be skipped"
+            )
         appointment.status = AppointmentStatus.CANCELLED
+        appointment.skipped = skip
         appointment.pending_expires_at = None
         appointment.confirmation_token_hash = None
         record = record or ChangeRecord()
@@ -677,6 +697,7 @@ class SchedulingService:
             exclude_appointment_id=appointment_id,
         )
         appointment.status = AppointmentStatus.CONFIRMED
+        appointment.skipped = False
         appointment.cancelled_at = None
         appointment.cancelled_by = None
         appointment.cancelled_by_id = None
@@ -695,7 +716,7 @@ class SchedulingService:
         self,
         user_id: str,
         *,
-        data: dict[str, str | int | datetime | None],
+        data: Row,
         recurrence: dict[str, str | int | None],
         tz: tzinfo = UTC,
         rule_override: bool = False,
@@ -792,9 +813,9 @@ class SchedulingService:
                 duration_minutes=duration_minutes,
                 status=AppointmentStatus.CONFIRMED,
                 session_type=str(data.get("session_type", "individual")),
-                video_link=data.get("video_link"),  # type: ignore[arg-type]
-                video_platform=data.get("video_platform"),  # type: ignore[arg-type]
-                notes=data.get("notes"),  # type: ignore[arg-type]
+                video_link=data.get("video_link"),
+                video_platform=data.get("video_platform"),
+                notes=data.get("notes"),
                 note_type=str(data.get("note_type") or "soap"),
                 recurrence_rule=rrule_str,
                 recurring_appointment_id=master_id,

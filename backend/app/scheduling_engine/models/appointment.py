@@ -209,6 +209,12 @@ class Appointment:
     # most recent move could ever be reconstructed.
     superseded_by_id: str | None = None
 
+    # A cancelled occurrence of a series that the series carries on past: the
+    # client is not coming that week and nothing else changes. Set with the
+    # cancellation, only on a series occurrence, and cleared when the
+    # cancellation is undone. False on every other row.
+    skipped: bool = False
+
     # Whether the person was told the change fell inside the notice period and
     # went ahead anyway. Set only alongside a late change.
     #
@@ -285,6 +291,7 @@ class Appointment:
             cancelled_by_id=data.get("cancelled_by_id"),
             late_cancellation=data.get("late_cancellation"),
             superseded_by_id=data.get("superseded_by_id"),
+            skipped=bool(data.get("skipped", False)),
             late_change_acknowledged=data.get("late_change_acknowledged"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
@@ -344,6 +351,7 @@ class Appointment:
             "cancelled_by_id": self.cancelled_by_id,
             "late_cancellation": self.late_cancellation,
             "superseded_by_id": self.superseded_by_id,
+            "skipped": self.skipped,
             "late_change_acknowledged": self.late_change_acknowledged,
             "created_at": self.created_at,
             "updated_at": self.updated_at,

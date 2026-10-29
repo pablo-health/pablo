@@ -1,0 +1,18 @@
+# Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+#
+# Installed to /etc/cron.d/pablo by bootstrap.sh and pablo-update. Times are
+# UTC.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Backups: weekly full, daily differential, monthly restore drill.
+0 3 * * 0    root  pablo-backup full
+0 3 * * 1-6  root  pablo-backup diff
+0 4 2 * *    root  pablo-backup restore-drill
+
+# HIPAA log review (daily, and a monthly 30-day look back), pipeline
+# heartbeat, quarterly attestation.
+0 7 * * *          root  pablo-job hipaa_log_review REVIEW_WINDOW_HOURS=24
+0 6 1 * *          root  pablo-job hipaa_log_review REVIEW_WINDOW_HOURS=720
+0 9 * * 1          root  pablo-job pipeline_heartbeat
+0 5 1 1,4,7,10 *   root  pablo-job hipaa_attestation

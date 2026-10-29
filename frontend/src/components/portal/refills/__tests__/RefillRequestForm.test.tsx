@@ -85,9 +85,34 @@ describe("RefillRequestForm", () => {
     expect(onSubmit).toHaveBeenCalledWith({
       medication_id: "med-2",
       medication_text: null,
+      days_left: null,
       pharmacy_text: "Main St Pharmacy",
       patient_note: null,
     })
+  })
+
+  it("sends how many days are left as a whole number", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+    const user = userEvent.setup()
+    render(<RefillRequestForm medications={MEDS} onSubmit={onSubmit} submitting={false} />)
+
+    await user.click(screen.getByLabelText("Bupropion 150 mg"))
+    await user.type(screen.getByLabelText("How many days do you have left? (optional)"), "3")
+    await user.click(submitButton())
+
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ days_left: 3 }))
+  })
+
+  it("sends 0 days left as an answer, not as none", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+    const user = userEvent.setup()
+    render(<RefillRequestForm medications={MEDS} onSubmit={onSubmit} submitting={false} />)
+
+    await user.click(screen.getByLabelText("Bupropion 150 mg"))
+    await user.type(screen.getByTestId("portal-refills-days-left"), "0")
+    await user.click(submitButton())
+
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ days_left: 0 }))
   })
 
   it("sends the typed name and no id for Something else", async () => {
@@ -106,6 +131,7 @@ describe("RefillRequestForm", () => {
     expect(onSubmit).toHaveBeenCalledWith({
       medication_id: null,
       medication_text: "Lamotrigine 25 mg",
+      days_left: null,
       pharmacy_text: null,
       patient_note: "Running low",
     })
@@ -122,6 +148,7 @@ describe("RefillRequestForm", () => {
     expect(onSubmit).toHaveBeenCalledWith({
       medication_id: null,
       medication_text: "Lamotrigine",
+      days_left: null,
       pharmacy_text: null,
       patient_note: null,
     })

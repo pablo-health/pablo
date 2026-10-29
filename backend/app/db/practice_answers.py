@@ -43,17 +43,26 @@ _MINE = f"({_ARMED} AND scope = 'clinician:' || current_setting('app.current_use
 PREDICATE = f"({_SHARED} OR {_MINE} OR (scope IS NULL AND {_OWN}))"
 
 
+def practice_answers_policy_statements(schema: str) -> list[str]:
+    """The statements that put the practice-answers policy on this schema's table.
+
+    ``schema`` must already be validated by the caller.
+    """
+    qualified = f"{schema}.{TABLE}"
+    return [
+        f"DROP POLICY IF EXISTS {OWNER_POLICY} ON {qualified}",
+        f"DROP POLICY IF EXISTS {POLICY} ON {qualified}",
+        f"CREATE POLICY {POLICY} ON {qualified} USING ({PREDICATE}) WITH CHECK ({PREDICATE})",
+    ]
+
+
 def apply_practice_answers_policy(db: Session | Connection, schema: str) -> None:
     """Put the practice-answers policy on this schema's table, replacing the owner-only one.
 
     Idempotent. ``schema`` must already be validated by the caller.
     """
-    qualified = f"{schema}.{TABLE}"
-    db.execute(text(f"DROP POLICY IF EXISTS {OWNER_POLICY} ON {qualified}"))
-    db.execute(text(f"DROP POLICY IF EXISTS {POLICY} ON {qualified}"))
-    db.execute(
-        text(f"CREATE POLICY {POLICY} ON {qualified} USING ({PREDICATE}) WITH CHECK ({PREDICATE})")
-    )
+    for statement in practice_answers_policy_statements(schema):
+        db.execute(text(statement))
 
 
 def restore_owner_policy(db: Session | Connection, schema: str) -> None:
@@ -72,5 +81,6 @@ __all__ = [
     "PREDICATE",
     "TABLE",
     "apply_practice_answers_policy",
+    "practice_answers_policy_statements",
     "restore_owner_policy",
 ]

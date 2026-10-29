@@ -1,0 +1,121 @@
+# Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+#
+# The whole engine on one VM: Caddy terminates TLS (Let's Encrypt) and routes
+# to the frontend and backend. Postgres runs on the host, on its own persistent
+# disk, so its data outlives the containers and the boot disk; the containers
+# reach it through the network gateway (host.docker.internal).
+#
+# Run by deploy/vm/bin/pablo-update, which renders /etc/pablo/*.env and sets
+# PABLO_VERSION. Not meant to be started by hand.
+
+name: pablo
+
+x-backend: &backend
+  image: ghcr.io/pablo-health/backend:${PABLO_VERSION:?set PABLO_VERSION}
+  env_file: /etc/pablo/backend.env
+  extra_hosts:
+    # The network's own gateway, where Postgres listens; `host-gateway`
+    # would be the default bridge's, which Postgres does not bind.
+    - "host.docker.internal:172.30.0.1"
+  networks:
+    - pablo
+
+services:
+  backend:
+    <<: *backend
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health').getcode() == 200 else 1)",
+        ]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 6
+
+  # One-shot Python in the backend image, with the backend's env: migrations
+  # (pablo-update), the admin allowlist entry (bootstrap) and the scheduled
+  # jobs (pablo-job). The image has no shell, so each caller passes the script
+  # or `-m app.jobs.<name>` as the argument.
+  tool:
+    <<: *backend
+    profiles: ["tools"]
+    environment:
+      PYTHONPATH: /app/backend
+    entrypoint: ["python"]
+
+  frontend:
+    image: ghcr.io/pablo-health/frontend:${PABLO_VERSION:?set PABLO_VERSION}
+    restart: unless-stopped
+    env_file: /etc/pablo/frontend.env
+    # The backend refuses plain HTTP from anything but the trusted proxy, so
+    # the frontend's server-side calls go through Caddy too: the app's own
+    # hostname resolves to Caddy inside the network.
+    extra_hosts:
+      - "${PABLO_HOST:?set PABLO_HOST}:172.30.0.10"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/nodejs/bin/node",
+          "-e",
+          "fetch('http://localhost:3000/api/config').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 6
+    networks:
+      - pablo
+
+  # Short-lived state only: calendar-connect handshakes, passkey challenges,
+  # rate limits and the idle-session clock. Nothing to back up, so no disk;
+  # a restart signs people out at worst.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb", "--maxmemory-policy", "volatile-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    networks:
+      - pablo
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      PABLO_HOST: ${PABLO_HOST:?set PABLO_HOST}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./routes.caddy:/etc/caddy/routes.caddy:ro
+      - /var/lib/pablo/caddy:/data
+    networks:
+      pablo:
+        # Fixed, so the backend can trust exactly this address for
+        # X-Forwarded-For / X-Forwarded-Proto (TRUSTED_PROXY_IPS).
+        ipv4_address: 172.30.0.10
+
+networks:
+  # Created by bootstrap.sh before Postgres starts (172.30.0.0/24, gateway
+  # 172.30.0.1), so Postgres can bind the gateway and admit exactly this
+  # subnet in pg_hba.conf.
+  pablo:
+    external: true

@@ -189,6 +189,18 @@ describe("routePracticeHost", () => {
     },
   )
 
+  it.each(["/phpinfo", "/server-status", "/actuator/env", "/forms/extra", "/acme/phpinfo", "/portal/acme/actuator"])(
+    "answers 404 for %s, which no portal page serves, without sending an alias on first",
+    (path) => {
+      expect(on(PRIMARY, path)).toEqual({ kind: "not-found" })
+      expect(on(ALIAS, path)).toEqual({ kind: "not-found" })
+    },
+  )
+
+  it.each(["/forms", "/appointments", "/homework", "/refills"])("still serves the section %s", (path) => {
+    expect(on(PRIMARY, path)).toEqual({ kind: "rewrite", pathname: `/portal/acme${path}` })
+  })
+
   it.each(["/api/config", "/_next/data/x.json", "/favicon.ico", "/robots.txt"])("passes %s through", (path) => {
     expect(on(PRIMARY, path)).toEqual({ kind: "pass" })
   })

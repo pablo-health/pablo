@@ -177,6 +177,8 @@ def run(
     exit_code = 0
     zero_window = 0
     hidden: list[str] = []
+    reviewed: list[str] = []
+    failed: list[str] = []
     for schema in schemas:
         try:
             scan = _review_tenant(
@@ -188,7 +190,9 @@ def run(
         except Exception:
             logger.exception("Review failed for tenant schema=%s", schema)
             exit_code = 1
+            failed.append(schema)
             continue
+        reviewed.append(schema)
         if scan.total_entries == 0:
             zero_window += 1
         if scan.rows_hidden:
@@ -211,7 +215,49 @@ def run(
         )
         exit_code = 1
 
+    try:
+        _write_run_record(
+            {
+                "mode": review_mode,
+                "window_hours": window_hours,
+                "reviewed": sorted(reviewed),
+                "failed": sorted(failed),
+                "blind": sorted(hidden),
+            },
+            gcs_bucket=gcs_bucket,
+        )
+    except Exception:
+        # Without the record a reader cannot tell a removed practice from
+        # one whose review failed, so this run did not finish its job.
+        logger.exception("hipaa_log_review_run_record_failed")
+        exit_code = 1
+
     return exit_code
+
+
+def _write_run_record(record: dict[str, Any], *, gcs_bucket: str | None) -> str | None:
+    """Record which practice schemas this run covered.
+
+    Per-tenant reports say what a review found; this says which reviews a run
+    attempted. A practice whose reports stop appearing is either no longer a
+    practice (its schema is gone, so it is absent here) or failed review (it is
+    listed under ``failed``) — the reports alone cannot tell those apart.
+    Schema names only, which already appear in every report path; no PHI.
+    Written even when the run exits non-zero.
+    """
+    ts = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
+    filename = f"hipaa-log-review/runs/{ts}.json"
+    if not gcs_bucket:
+        logger.info("COMPLIANCE_REPORT_BUCKET unset — run record not written")
+        return None
+
+    # google.cloud is a namespace package that mypy cannot resolve
+    from google.cloud import storage  # type: ignore[attr-defined]  # noqa: PLC0415
+
+    client = storage.Client()
+    blob = client.bucket(gcs_bucket).blob(filename)
+    blob.upload_from_string(json.dumps(record), content_type="application/json")
+    return f"gs://{gcs_bucket}/{filename}"
 
 
 def _list_practice_schemas(*, include_pentest: bool = False) -> list[str]:
@@ -357,7 +403,7 @@ def _review_tenant(
         report = _deterministic_clean_report(summary, review_mode)
         severity = "NONE"
     else:
-        report = _ask_model(payload, review_mode=review_mode, tenant_schema=practice_schema)
+        report = _ask_model(payload, review_mode=review_mode)
         severity = _parse_severity(report)
 
     report_path = _write_report(
@@ -531,7 +577,6 @@ def _authorized_user_ids(session: Any, practice_schema: str) -> set[str] | None:
 def _ask_model(
     payload: dict[str, Any],
     review_mode: str = "daily",
-    tenant_schema: str | None = None,
 ) -> str:
     """Send payload to Gemini on Vertex AI and return the markdown report.
 
@@ -548,55 +593,26 @@ def _ask_model(
             "in hour-of-day distribution, sustained elevated export rates. Point-in-time "
             "flags still matter but lean heavier on trends."
         )
-    try:
-        from google import genai  # noqa: PLC0415
-        from google.genai import types  # noqa: PLC0415
-    except ImportError:
-        logger.exception("google-genai is required for the HIPAA log review.")
-        raise
-
-    from ..reliability import LLM_JOB, Idempotency, call_with_retry  # noqa: PLC0415
-    from ..services.vertex_client import (  # noqa: PLC0415
-        DEFAULT_VERTEX_TIMEOUT_SECONDS,
-        seconds_to_genai_timeout_ms,
-    )
+    from ..services.text_llm_gateway import generate_text  # noqa: PLC0415
     from ..settings import get_settings  # noqa: PLC0415
 
-    project = os.environ.get("GCP_PROJECT_ID") or os.environ["GOOGLE_CLOUD_PROJECT"]
-    # Gemini 3.x is served from the ``global`` Vertex location, not a single
-    # region; the cron env may not carry the backend service's
-    # GOOGLE_CLOUD_LOCATION, so default it here.
-    location = os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
     model = os.environ.get("HIPAA_REVIEW_MODEL") or get_settings().ai_model
     # Thinking models spend part of the output budget on reasoning before
     # emitting the report; size generously so the narrative isn't truncated.
     max_output_tokens = int(os.environ.get("HIPAA_REVIEW_MAX_OUTPUT_TOKENS", "8192"))
-
-    http_options = types.HttpOptions(
-        timeout=seconds_to_genai_timeout_ms(DEFAULT_VERTEX_TIMEOUT_SECONDS)
-    )
-    client = genai.Client(
-        vertexai=True, project=project, location=location, http_options=http_options
-    )
     user_content = (
         f"Review the following audit log entries:\n\n```json\n{json.dumps(payload, indent=2)}\n```"
     )
-    config = types.GenerateContentConfig(
-        system_instruction=system_prompt,
+    # The gateway writes the per-call usage record (tokens, latency, tenant
+    # from the request context); ``tenant_schema`` only names the report.
+    report = generate_text(
+        model=model,
+        system_prompt=system_prompt,
+        user_content=user_content,
         temperature=0.3,
         max_output_tokens=max_output_tokens,
+        feature="hipaa_log_review",
     )
-    resp = call_with_retry(
-        lambda: client.models.generate_content(
-            model=model,
-            contents=user_content,
-            config=config,
-        ),
-        policy=LLM_JOB,
-        idempotency=Idempotency.SAFE,
-    )
-    _log_token_usage(resp, review_mode=review_mode, tenant_schema=tenant_schema)
-    report = (resp.text or "").strip()
     if not report:
         # An empty response must fail the tenant's review loudly (exit 1,
         # exception in the log) — falling back to a placeholder would
@@ -605,26 +621,6 @@ def _ask_model(
         msg = "Model returned an empty report — failing this review rather than recording NONE"
         raise RuntimeError(msg)
     return report
-
-
-def _log_token_usage(resp: Any, *, review_mode: str, tenant_schema: str | None) -> None:
-    """Emit the model's token counts at INFO so each run's cost is visible
-    in the job logs. Counts only — no prompt or response content — so this
-    stays PHI-free. The SDK leaves ``usage_metadata`` (or any individual
-    field) unset on some responses, so every read is guarded.
-    """
-    usage = getattr(resp, "usage_metadata", None)
-    if usage is None:
-        return
-    logger.info(
-        "token_usage schema=%s mode=%s prompt=%s candidates=%s thoughts=%s total=%s",
-        tenant_schema or "-",
-        review_mode,
-        getattr(usage, "prompt_token_count", None),
-        getattr(usage, "candidates_token_count", None),
-        getattr(usage, "thoughts_token_count", None),
-        getattr(usage, "total_token_count", None),
-    )
 
 
 # The structured line the SYSTEM_PROMPT asks the model to end with.
@@ -695,6 +691,7 @@ def _write_report(
         return f"stdout://{filename}"
 
     try:
+        # google.cloud is a namespace package that mypy cannot resolve
         from google.cloud import storage  # type: ignore[attr-defined]  # noqa: PLC0415
     except ImportError:
         logger.exception("google-cloud-storage not installed; add to pyproject main deps.")

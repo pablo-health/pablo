@@ -278,5 +278,5 @@ export function ruleOf(config: Record<string, unknown>): VisibleWhen | null {
   if (typeof rule !== "object" || rule === null) return null
   const candidate = rule as Record<string, unknown>
   if (typeof candidate.item_key !== "string" || typeof candidate.op !== "string") return null
-  return candidate as unknown as VisibleWhen
+  return candidate as unknown as VisibleWhen  // item_key and op are checked above; the other fields are optional
 }
