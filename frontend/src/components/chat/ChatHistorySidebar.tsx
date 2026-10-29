@@ -73,36 +73,52 @@ export function ChatHistorySidebar({
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
 
-  const refresh = useCallback(async () => {
-    setLoading(true)
-    setLoadError(null)
-    try {
-      const resp = await listConversations({
+  const load = useCallback(
+    () =>
+      listConversations({
         patientId,
         callerFeatureKey,
         includeArchived: showArchived,
       })
-      // Backend already sorts by last_turn_at desc nulls last; defensive
-      // client-side sort keeps the order stable if a future server
-      // change relaxes that.
-      const sorted = [...resp.data].sort((a, b) => {
-        const at = a.last_turn_at ?? a.created_at
-        const bt = b.last_turn_at ?? b.created_at
-        return bt.localeCompare(at)
-      })
-      setConversations(sorted)
-    } catch (exc) {
-      setLoadError(
-        exc instanceof Error ? exc.message : "Failed to load conversations.",
-      )
-    } finally {
-      setLoading(false)
-    }
-  }, [patientId, callerFeatureKey, showArchived])
+        .then((resp) => {
+          // Backend already sorts by last_turn_at desc nulls last; defensive
+          // client-side sort keeps the order stable if a future server
+          // change relaxes that.
+          const sorted = [...resp.data].sort((a, b) => {
+            const at = a.last_turn_at ?? a.created_at
+            const bt = b.last_turn_at ?? b.created_at
+            return bt.localeCompare(at)
+          })
+          setConversations(sorted)
+        })
+        .catch((exc) => {
+          setLoadError(
+            exc instanceof Error ? exc.message : "Failed to load conversations.",
+          )
+        })
+        .finally(() => setLoading(false)),
+    [patientId, callerFeatureKey, showArchived],
+  )
+
+  const refresh = useCallback(async () => {
+    setLoading(true)
+    setLoadError(null)
+    await load()
+  }, [load])
+
+  // A changed list request shows the spinner from its first render; the
+  // effect below fetches it.
+  const request = [patientId, callerFeatureKey, showArchived, refreshKey].join("|")
+  const [shownRequest, setShownRequest] = useState(request)
+  if (request !== shownRequest) {
+    setShownRequest(request)
+    setLoading(true)
+    setLoadError(null)
+  }
 
   useEffect(() => {
-    void refresh()
-  }, [refresh, refreshKey])
+    void load()
+  }, [load, refreshKey])
 
   const handleArchive = useCallback(
     async (conv: ChatConversation) => {

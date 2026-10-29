@@ -169,3 +169,23 @@ describe("ChatHistorySidebar — show archived", () => {
     )
   })
 })
+
+describe("ChatHistorySidebar — refreshKey", () => {
+  it("shows the spinner and re-lists when the parent bumps refreshKey", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    )
+    const { rerender } = rtlRender(<ChatHistorySidebar {...props()} refreshKey={0} />, {
+      wrapper,
+    })
+    await screen.findByText("First chat")
+
+    mockList.mockReturnValueOnce(new Promise(() => {}))
+    rerender(<ChatHistorySidebar {...props()} refreshKey={1} />)
+
+    expect(screen.getByText("Loading…")).toBeInTheDocument()
+    expect(screen.queryByText("First chat")).not.toBeInTheDocument()
+    expect(mockList).toHaveBeenCalledTimes(2)
+  })
+})

@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 
 import { PatientDocuments } from "../PatientDocuments"
@@ -178,6 +178,43 @@ describe("PatientDocuments", () => {
       render(<PatientDocuments patientId="patient-1" />, { wrapper: createWrapper() })
 
       expect(screen.getByLabelText(/only you can see this/i)).toBeInTheDocument()
+    })
+  })
+
+  it("shows extraction progress until the document settles, then re-lists", () => {
+    mockUseUploadPatientDocument.mockReturnValue({
+      mutate: (_vars: unknown, options: { onSuccess: (doc: PatientDocumentResponse) => void }) =>
+        options.onSuccess(makeDoc({ id: "doc-2", extraction_status: "pending" })),
+      isPending: false,
+      stage: "idle",
+    })
+    const queryClient = new QueryClient()
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+    const { container, rerender } = render(<PatientDocuments patientId="patient-1" />, {
+      wrapper,
+    })
+
+    fireEvent.change(container.querySelector('input[type="file"]')!, {
+      target: { files: [new File(["x"], "scan.pdf", { type: "application/pdf" })] },
+    })
+
+    expect(screen.getByText("Extracting text…")).toBeInTheDocument()
+    expect(mockUsePatientDocument).toHaveBeenLastCalledWith("doc-2")
+    expect(invalidate).not.toHaveBeenCalled()
+
+    mockUsePatientDocument.mockReturnValue({
+      data: makeDoc({ id: "doc-2", extraction_status: "complete" }),
+      pollCount: 2,
+    })
+    rerender(<PatientDocuments patientId="patient-1" />)
+
+    expect(screen.queryByText("Extracting text…")).not.toBeInTheDocument()
+    expect(invalidate).toHaveBeenCalledTimes(1)
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: ["patient-documents", "byPatient", "patient-1"],
     })
   })
 })

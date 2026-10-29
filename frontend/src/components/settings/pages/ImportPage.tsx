@@ -115,13 +115,12 @@ export function ImportPage() {
   const run = active.data
 
   // Coming back to the page picks up a run that is still being read or waiting for review.
-  useEffect(() => {
-    if (activeId || !history.data) return
-    const open = history.data.runs.find(
-      (r) => IMPORT_BUSY_STATES.has(r.state) || r.state === "previewed",
-    )
-    if (open) setActiveId(open.id)
-  }, [activeId, history.data])
+  const resumable = activeId
+    ? undefined
+    : history.data?.runs.find(
+        (r) => IMPORT_BUSY_STATES.has(r.state) || r.state === "previewed",
+      )
+  if (resumable) setActiveId(resumable.id)
 
   const refresh = (id: string) =>
     Promise.all([
