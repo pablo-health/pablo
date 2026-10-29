@@ -135,7 +135,7 @@ class TestHTTPSEnforcementMiddleware:
         assert response.status_code == status.HTTP_200_OK
 
     def test_enforcement_disabled_in_development(self, development_settings: Settings) -> None:
-        """HTTPS enforcement should be disabled when enforce_https is False."""
+        """HTTPS enforcement should be disabled when the environment is development."""
         app = FastAPI()
         app.add_middleware(HTTPSEnforcementMiddleware, settings=development_settings)
 

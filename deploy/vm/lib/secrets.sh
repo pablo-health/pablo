@@ -29,7 +29,6 @@ _fernet_key() { openssl rand -base64 32 | tr '+/' '-_'; }
 
 ensure_generated_secrets() {
     ensure_generated_secret pablo-db-password _hex32
-    ensure_generated_secret JWT_SECRET_KEY _hex32
     ensure_generated_secret AUTH_SECRET _hex32
     ensure_generated_secret AUTH_COOKIE_SIGNATURE_KEY _hex32
     # Lets the frontend server pass the end user's IP to the backend for
