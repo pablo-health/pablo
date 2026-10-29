@@ -86,6 +86,42 @@ describe("zonedInstant", () => {
       Date.UTC(2026, 0, 12, 14, 0),
     )
   })
+
+  // 2026-03-08 springs forward in New York (02:00 EST becomes 03:00 EDT) and
+  // 2026-11-01 falls back (02:00 EDT becomes 01:00 EST). These mirror the
+  // engine's cases in backend/tests/test_availability_engine.py.
+  it("lands either side of the spring-forward gap on the right offset", () => {
+    expect(zonedInstant("2026-03-08", 1 * 60, "America/New_York")).toBe(
+      Date.UTC(2026, 2, 8, 6, 0), // 01:00 EST
+    )
+    expect(zonedInstant("2026-03-08", 3 * 60, "America/New_York")).toBe(
+      Date.UTC(2026, 2, 8, 7, 0), // 03:00 EDT, one real hour later
+    )
+    expect(zonedInstant("2026-03-08", 9 * 60, "America/New_York")).toBe(
+      Date.UTC(2026, 2, 8, 13, 0), // 09:00 EDT
+    )
+    expect(zonedInstant("2026-03-08", 17 * 60, "America/New_York")).toBe(
+      Date.UTC(2026, 2, 8, 21, 0),
+    )
+  })
+
+  it("reads a repeated fall-back hour as its first pass", () => {
+    expect(zonedInstant("2026-11-01", 1 * 60, "America/New_York")).toBe(
+      Date.UTC(2026, 10, 1, 5, 0), // 01:00 EDT, not the 01:00 EST an hour on
+    )
+    expect(zonedInstant("2026-11-01", 1 * 60 + 30, "America/New_York")).toBe(
+      Date.UTC(2026, 10, 1, 5, 30),
+    )
+    expect(zonedInstant("2026-11-01", 3 * 60, "America/New_York")).toBe(
+      Date.UTC(2026, 10, 1, 8, 0), // 03:00 EST, three real hours after 01:00
+    )
+    expect(zonedInstant("2026-11-01", 9 * 60, "America/New_York")).toBe(
+      Date.UTC(2026, 10, 1, 14, 0), // 09:00 EST
+    )
+    expect(zonedInstant("2026-11-01", 17 * 60, "America/New_York")).toBe(
+      Date.UTC(2026, 10, 1, 22, 0),
+    )
+  })
 })
 
 describe("workingRangesForDay", () => {
@@ -115,6 +151,40 @@ describe("workingRangesForDay", () => {
     expect(workingRangesForDay(MON_TO_THU_9_TO_5, new Date(2026, 8, 28), BROWSER_ZONE)).toEqual([
       { startMin: 9 * 60, endMin: 17 * 60 },
     ])
+  })
+
+  describe("on the days New York changes its clocks, drawn from UTC", () => {
+    // The suite runs with TZ=UTC (vitest.config.ts), so a UTC day column is
+    // the browser's day and the minutes below are minutes past 00:00Z.
+    const SUNDAY = 6
+    const smallHours = [
+      rule({ id: "wh-sun", params: { day_of_week: SUNDAY, start: "01:00", end: "03:00" } }),
+    ]
+    const nineToFive = [
+      rule({ id: "wh-sun", params: { day_of_week: SUNDAY, start: "09:00", end: "17:00" } }),
+    ]
+
+    it("draws 01:00-03:00 as one hour on the spring-forward day", () => {
+      expect(BROWSER_ZONE).toBe("UTC")
+      expect(workingRangesForDay(smallHours, new Date(2026, 2, 8), "America/New_York")).toEqual([
+        { startMin: 6 * 60, endMin: 7 * 60 },
+      ])
+    })
+
+    it("draws 01:00-03:00 as three hours on the fall-back day", () => {
+      expect(workingRangesForDay(smallHours, new Date(2026, 10, 1), "America/New_York")).toEqual([
+        { startMin: 5 * 60, endMin: 8 * 60 },
+      ])
+    })
+
+    it("draws an ordinary nine-to-five on each at its new offset", () => {
+      expect(workingRangesForDay(nineToFive, new Date(2026, 2, 8), "America/New_York")).toEqual([
+        { startMin: 13 * 60, endMin: 21 * 60 },
+      ])
+      expect(workingRangesForDay(nineToFive, new Date(2026, 10, 1), "America/New_York")).toEqual([
+        { startMin: 14 * 60, endMin: 22 * 60 },
+      ])
+    })
   })
 })
 
