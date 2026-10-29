@@ -16,17 +16,23 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 
 from ...db.models import (
     COLLECTING_CHARGE_KINDS,
+    DEFAULT_CHARGE_CURRENCY,
     PatientChargeRow,
     PatientPaymentMethodRow,
 )
 from ...models.payments import CardOnFile, PatientCharge
+from ...payments.balance import patient_balance
 from ...utcnow import utc_now
-from ..patient_payment import PatientPaymentRepository, PaymentAlreadyInFlightError
+from ..patient_payment import (
+    PatientPaymentRepository,
+    PaymentAlreadyInFlightError,
+    WriteOffExceedsBalanceError,
+)
 
 #: The unique partial index that refuses a second pending balance payment for
 #: one client. Matched on the driver's message rather than assuming every
@@ -248,6 +254,33 @@ class PostgresPatientPaymentRepository(PatientPaymentRepository):
         self._session.add(row)
         self._session.commit()
         return _to_charge(row)
+
+    def add_write_off(
+        self, *, patient_id: str, amount_cents: int, user_id: str, reason: str, note: str | None
+    ) -> PatientCharge:
+        # A transaction-scoped advisory lock keyed on the client, not a row
+        # lock: the balance is a sum over rows and there is no one row that
+        # stands for it. Every write-off for this client queues here, reads
+        # the ledger only once the previous one has committed, and the commit
+        # inside ``add_ledger_row`` is what releases it.
+        self._session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"ledger:{patient_id}"},
+        )
+        balance_cents = patient_balance(self.list_charges(patient_id)).balance_cents
+        if amount_cents > balance_cents:
+            raise WriteOffExceedsBalanceError(
+                patient_id, amount_cents=amount_cents, balance_cents=balance_cents
+            )
+        return self.add_ledger_row(
+            patient_id=patient_id,
+            kind="write_off",
+            amount_cents=amount_cents,
+            currency=DEFAULT_CHARGE_CURRENCY,
+            user_id=user_id,
+            write_off_reason=reason,
+            note=note,
+        )
 
     def commit(self) -> None:
         self._session.commit()

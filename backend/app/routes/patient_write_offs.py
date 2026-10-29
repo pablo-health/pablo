@@ -23,7 +23,9 @@ the client's ledger. Three gates keep it from being an unlogged discount:
   waivers on its billing profile; ``small_balance`` is refused unless the
   client's current balance is at or under the practice's own threshold.
 * The amount can never exceed the balance — a write-off reduces a debt, it
-  does not manufacture a credit.
+  does not manufacture a credit. The repository holds that line, under a
+  per-client lock, because two write-offs that each read the balance before
+  either wrote would otherwise clear it twice over.
 
 Per client, per amount, never a list: there is no bulk write-off route, and
 writing off many clients' balances in one motion is a decision that deserves
@@ -54,6 +56,7 @@ from ..repositories import (
     get_patient_repository,
     get_payer_repository,
 )
+from ..repositories.patient_payment import WriteOffExceedsBalanceError
 from ..services import AuditService, get_audit_service
 from ..services.practice_billing_profile import load_billing_profile
 from ._deps import client_not_found, visible_patient
@@ -143,6 +146,11 @@ def create_write_off(
     The other two gates need no such guard. Refusing a write-off larger than
     the balance is only ever too STRICT when the balance is short, and
     courtesy is a policy switch that has nothing to do with the figure.
+
+    The balance read here serves the policy gates and the audit trail. The
+    amount-versus-balance check is the repository's, taken against a fresh
+    read under the client's ledger lock, so the figure this route saw a moment
+    ago is not the one the write-off is held to.
     """
     visible_patient(patients, patient_id, user.id, client_not_found)
 
@@ -176,21 +184,20 @@ def create_write_off(
                 detail="This client's balance is above the practice's small-balance "
                 "write-off threshold.",
             )
-    if payload.amount_cents > balance_cents:
+
+    try:
+        charge = payments.add_write_off(
+            patient_id=patient_id,
+            amount_cents=payload.amount_cents,
+            user_id=user.id,
+            reason=payload.reason,
+            note=payload.note,
+        )
+    except WriteOffExceedsBalanceError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="A write-off cannot exceed the client's balance.",
-        )
-
-    charge = payments.add_ledger_row(
-        patient_id=patient_id,
-        kind="write_off",
-        amount_cents=payload.amount_cents,
-        currency=DEFAULT_CHARGE_CURRENCY,
-        user_id=user.id,
-        write_off_reason=payload.reason,
-        note=payload.note,
-    )
+        ) from exc
     audit.log(
         AuditAction.PATIENT_WRITE_OFF_CREATED,
         user,
