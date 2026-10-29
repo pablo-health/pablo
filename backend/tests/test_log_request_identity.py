@@ -197,7 +197,7 @@ class TestTenantBoundWhereTheSchemaResolves:
         """The database middleware resolves the practice inside run_in_threadpool."""
         request = MagicMock()
         request.state = SimpleNamespace(
-            verified_identity=SimpleNamespace(email="clinician@example.com")
+            verified_identity=SimpleNamespace(email="clinician@example.com", email_verified=True)
         )
         _identity, token = begin_request_log_identity()
         try:

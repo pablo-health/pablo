@@ -182,6 +182,7 @@ def _verify_and_stash_clinician_identity(request: Request) -> None:
 # have different causes. An unauthenticated request is the ordinary one.
 UNRESOLVED_UNAUTHENTICATED = "unauthenticated"
 UNRESOLVED_NO_EMAIL = "identity-carries-no-email"
+UNRESOLVED_EMAIL_UNVERIFIED = "identity-email-not-verified"
 UNRESOLVED_NO_MAPPING = "no-practice-mapping-for-identity"
 UNRESOLVED_LOOKUP_RAISED = "practice-lookup-raised"
 
@@ -192,6 +193,12 @@ def _resolve_schema_from_request(request: Request) -> tuple[str | None, str]:
     Reuses the identity ``_verify_and_stash_clinician_identity`` already
     verified for this request, then resolves the practice schema from its
     email. Tenant resolution is email-based, so it is provider-agnostic.
+
+    Only an email the issuer has verified is looked up. An invite writes the
+    email-to-practice mapping before the invitee has an account, and a
+    password account can be registered for any address, so until the
+    provider confirms the person controls the address it identifies nobody
+    (``get_tenant_context`` refuses the same token with a 403).
 
     Returns ``(schema, reason)``. The reason exists so the caller can say WHY
     a request is running on the default schema. Deployments that keep their
@@ -210,6 +217,8 @@ def _resolve_schema_from_request(request: Request) -> tuple[str | None, str]:
         return None, UNRESOLVED_UNAUTHENTICATED
     if not identity.email:
         return None, UNRESOLVED_NO_EMAIL
+    if not identity.email_verified:
+        return None, UNRESOLVED_EMAIL_UNVERIFIED
 
     try:
         from ..auth.service import _resolve_practice_from_email

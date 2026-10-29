@@ -51,6 +51,7 @@ def test_verified_identity_mfa_satisfied_is_immutable() -> None:
         provider="firebase",
         subject_id="u",
         email="t@pablo.health",
+        email_verified=True,
         mfa_satisfied=False,
         claims={},
     )

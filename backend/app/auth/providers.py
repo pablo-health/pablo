@@ -48,8 +48,11 @@ class VerifiedIdentity(BaseModel):
     ``provider`` + ``subject_id`` is the natural key into
     ``platform.user_identities``. ``mfa_satisfied`` is the issuer's
     assertion that a second factor was used — interpreted per provider
-    (see each verifier). ``claims`` is the full decoded payload for
-    callers that still need raw claims (email extraction, idle-session,
+    (see each verifier). ``email_verified`` is the issuer's assertion that
+    the account holder controls ``email``; until it is True the address is
+    only what the person typed at sign-up, so nothing may be granted on it
+    (see ``email_verified_claim``). ``claims`` is the full decoded payload
+    for callers that still need raw claims (email extraction, idle-session,
     legacy ``firebase.*`` reads).
     """
 
@@ -58,6 +61,7 @@ class VerifiedIdentity(BaseModel):
     provider: str
     subject_id: str
     email: str
+    email_verified: bool
     mfa_satisfied: bool
     claims: dict[str, Any]
 
@@ -127,6 +131,7 @@ class FirebaseVerifier:
             provider=self.provider,
             subject_id=str(uid),
             email=_extract_email_claim(decoded),
+            email_verified=email_verified_claim(decoded),
             mfa_satisfied=mfa_satisfied,
             claims=decoded,
         )
@@ -207,6 +212,7 @@ class OidcVerifier:
             provider=self.provider,
             subject_id=str(subject_id),
             email=str(claims.get("email", "")).lower(),
+            email_verified=email_verified_claim(claims),
             mfa_satisfied=second_factor_satisfied(claims),
             claims=claims,
         )
@@ -265,6 +271,21 @@ def second_factor_satisfied(claims: dict[str, Any]) -> bool:
     if _recovery_factor_satisfied(claims):
         return True
     return _oidc_mfa_satisfied(claims)
+
+
+def email_verified_claim(claims: dict[str, Any]) -> bool:
+    """Whether the issuer vouches that the account holder controls the email.
+
+    Both supported issuers surface this as the OIDC standard ``email_verified``
+    claim: Firebase sets it from the user record (True after the verification
+    link is followed, or at once for a Google sign-in; False for a fresh
+    password account), and a standards-compliant OIDC issuer such as Keycloak
+    emits it with the ``email`` scope. An issuer that omits the claim has
+    made no such assertion, so the address counts as unverified — this is
+    what stops someone who registered an invited address first from being
+    handed the practice it was invited to.
+    """
+    return claims.get("email_verified") is True
 
 
 def _extract_email_claim(decoded: dict[str, Any]) -> str:

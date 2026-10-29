@@ -529,6 +529,21 @@ def get_tenant_context(
 
     # Resolve practice from user's email
     email = _extract_email(decoded_token)
+    if email and not identity.email_verified:
+        # The mapping exists before the invitee has an account, and a
+        # password account can be registered for any address — so an email
+        # the issuer has not verified must not be looked up at all. The
+        # schema-resolving middleware applies the same rule.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": {
+                    "code": "EMAIL_NOT_VERIFIED",
+                    "message": "Verify your email address to continue",
+                    "details": {},
+                }
+            },
+        )
     if email:
         practice = _resolve_practice_from_email(email)
         if practice:
@@ -895,7 +910,11 @@ def _resolve_user(
         is_prod_project = settings.is_prod_project
         is_pentest_user = not is_prod_project and bool(email and PENTEST_EMAIL_PATTERN.match(email))
         is_e2e_user = not is_prod_project and bool(email and E2E_EMAIL_PATTERN.match(email))
-        is_provisioned_tenant = bool(email and _email_has_tenant_mapping(email))
+        # A practice mapping vouches for the address only once the issuer
+        # has confirmed the account holder controls it (see providers).
+        is_provisioned_tenant = bool(
+            email and identity.email_verified and _email_has_tenant_mapping(email)
+        )
         if (
             settings.restrict_signups
             and not is_pentest_user

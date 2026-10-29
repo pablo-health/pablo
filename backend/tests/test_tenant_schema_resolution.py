@@ -22,6 +22,7 @@ from __future__ import annotations
 import types
 
 from app.db.middleware import (
+    UNRESOLVED_EMAIL_UNVERIFIED,
     UNRESOLVED_LOOKUP_RAISED,
     UNRESOLVED_NO_EMAIL,
     UNRESOLVED_NO_MAPPING,
@@ -35,8 +36,8 @@ def _request(identity: object | None) -> types.SimpleNamespace:
     return types.SimpleNamespace(state=types.SimpleNamespace(verified_identity=identity))
 
 
-def _identity(email: str | None) -> types.SimpleNamespace:
-    return types.SimpleNamespace(email=email)
+def _identity(email: str | None, *, verified: bool = True) -> types.SimpleNamespace:
+    return types.SimpleNamespace(email=email, email_verified=verified)
 
 
 def test_unauthenticated_is_the_one_legitimate_unresolved_case() -> None:
@@ -53,6 +54,25 @@ def test_identity_without_an_email_is_reported_separately() -> None:
 
     assert schema is None
     assert reason == UNRESOLVED_NO_EMAIL
+
+
+def test_an_unverified_email_is_never_looked_up(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """An invite maps the address to a practice before the invitee has an
+    account, and a password account can be registered for any address. Until
+    the issuer confirms the person controls it, the address identifies nobody —
+    so the lookup is not even attempted, and the reason says why."""
+
+    def _must_not_be_called(_email: str) -> None:
+        raise AssertionError("an unverified email reached the practice lookup")
+
+    monkeypatch.setattr("app.auth.service._resolve_practice_from_email", _must_not_be_called)
+
+    schema, reason = _resolve_schema_from_request(
+        _request(_identity("invited@example.invalid", verified=False))
+    )
+
+    assert schema is None
+    assert reason == UNRESOLVED_EMAIL_UNVERIFIED
 
 
 def test_authenticated_with_no_practice_mapping_is_named(monkeypatch) -> None:  # type: ignore[no-untyped-def]
