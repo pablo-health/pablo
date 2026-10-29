@@ -570,6 +570,7 @@ def client(
         provider="test",
         subject_id=_CLINICIAN,
         email=_CLINICIAN_EMAIL,
+        email_verified=True,
         mfa_satisfied=True,
         claims={},
     )

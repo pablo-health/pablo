@@ -471,6 +471,7 @@ def _wire_clinician_x(practice_x: str, clinician_x_user) -> Iterator[None]:  # t
             provider="test",
             subject_id=_CLINICIAN_X_ID,
             email=_CLINICIAN_X_EMAIL,
+            email_verified=True,
             mfa_satisfied=True,
             claims={},
         )

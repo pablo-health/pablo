@@ -775,7 +775,12 @@ def client(tenant_schema: str, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     # middleware's own resolver look ``_TENANT_EMAIL`` up against the rows
     # ``tenant_schema`` seeded, rather than handing it a fixed schema.
     identity = VerifiedIdentity(
-        provider="test", subject_id=_CLINICIAN_A, email=_TENANT_EMAIL, mfa_satisfied=True, claims={}
+        provider="test",
+        subject_id=_CLINICIAN_A,
+        email=_TENANT_EMAIL,
+        email_verified=True,
+        mfa_satisfied=True,
+        claims={},
     )
 
     def _stash_identity(request: Request) -> None:

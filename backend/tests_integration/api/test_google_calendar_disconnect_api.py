@@ -158,7 +158,12 @@ def _client(
     from fastapi.testclient import TestClient  # noqa: PLC0415
 
     identity = VerifiedIdentity(
-        provider="test", subject_id=user.id, email=_TENANT_EMAIL, mfa_satisfied=True, claims={}
+        provider="test",
+        subject_id=user.id,
+        email=_TENANT_EMAIL,
+        email_verified=True,
+        mfa_satisfied=True,
+        claims={},
     )
 
     def _stash_identity(request: Request) -> None:
