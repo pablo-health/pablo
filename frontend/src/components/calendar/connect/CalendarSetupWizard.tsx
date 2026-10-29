@@ -30,6 +30,7 @@ import {
   rememberImportPending,
 } from "./importConsent"
 import { listFollowableCalendars, setFollowedCalendar } from "@/lib/api/outsideSessions"
+import { browserTimeZone } from "@/lib/dates"
 import {
   completeGoogleCalendarConnect,
   completeGoogleCalendarImportConsent,
@@ -96,14 +97,6 @@ function recallSelection(): GoogleCalendarSelection {
     }
   } catch {
     return DEFAULT_SELECTION
-  }
-}
-
-function browserTimeZone(): string {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
-  } catch {
-    return "UTC"
   }
 }
 

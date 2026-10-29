@@ -5,6 +5,8 @@
 import { useEffect, useRef, useState } from "react"
 import { format, isSameDay, isToday } from "date-fns"
 import type { FloatingBlock } from "@/types/availability"
+import { browserTimeZone, clockToMinutes, todayCivilDate } from "@/lib/dates"
+import { formatClockTime } from "@/lib/workingHours"
 import { minutesSinceMidnight } from "./dateUtils"
 import { zonedInstant } from "./schedule"
 import { clampToViewport } from "./viewportClamp"
@@ -36,26 +38,6 @@ interface FloatingBlockLayerProps {
   actions: FloatingBlockActions
 }
 
-function practiceZone(timeZone?: string): string {
-  if (timeZone) return timeZone
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
-  } catch {
-    return "UTC"
-  }
-}
-
-function clockMinutes(clock: string): number {
-  const [h, m] = clock.split(":").map(Number)
-  return h * 60 + m
-}
-
-/** "14:00" as the practice reads it: "2:00 PM". */
-function clockLabel(clock: string): string {
-  const [h, m] = clock.split(":").map(Number)
-  return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`
-}
-
 /** An instant on the practice's own clock, "HH:MM", for the time field. */
 function practiceClock(iso: string, timeZone: string): string {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -66,16 +48,6 @@ function practiceClock(iso: string, timeZone: string): string {
   }).formatToParts(new Date(iso))
   const field = (type: string) => parts.find((p) => p.type === type)?.value ?? "00"
   return `${field("hour")}:${field("minute")}`
-}
-
-/** Today's date on the practice's clock, "YYYY-MM-DD". */
-function practiceToday(timeZone: string): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date())
 }
 
 /**
@@ -95,10 +67,10 @@ export function FloatingBlockLayer({
   timeZone,
   actions,
 }: FloatingBlockLayerProps) {
-  const zone = practiceZone(timeZone)
+  const zone = timeZone ?? browserTimeZone()
   // A past date can't be changed (the server refuses it), so its band is
   // drawn for the record and opens nothing.
-  const today = practiceToday(zone)
+  const today = todayCivilDate(zone)
   const top = (minute: number) => ((minute - dayStart * 60) / 60) * rowHeightPx
   return (
     <>
@@ -124,7 +96,7 @@ export function FloatingBlockLayer({
           )
         }
         if (block.state === "skipped" && block.date >= today) {
-          const windowAt = zonedInstant(block.date, clockMinutes(block.window_start), zone)
+          const windowAt = zonedInstant(block.date, clockToMinutes(block.window_start) ?? 0, zone)
           if (!isSameDay(new Date(windowAt), day)) return null
           const at = new Date(windowAt)
           return (
@@ -309,7 +281,7 @@ function FloatingBlockMenu({
         <div className="text-[11.5px]" style={{ color: "var(--ed-ink-soft)" }}>
           {block.state === "pinned"
             ? "Set for this day"
-            : `Between ${clockLabel(block.window_start)} and ${clockLabel(block.window_end)}`}
+            : `Between ${formatClockTime(block.window_start)} and ${formatClockTime(block.window_end)}`}
         </div>
       </div>
 
