@@ -14,7 +14,9 @@ What lands, and how:
   came from.
 * A progress note becomes a finalized imported session with a narrative
   note whose body is the export's text, verbatim, dated from the note's
-  appointment line, beside a completed appointment for the visit. A chart,
+  appointment line, beside a completed appointment for the visit — unless
+  that visit overlaps another appointment on the calendar, which is
+  reported and left behind. A chart,
   administrative or treatment-plan note becomes a finalized standalone
   narrative note. A psychotherapy note becomes a restricted standalone note
   whose author is the mapped provider — the restricted class already keeps
@@ -74,6 +76,7 @@ from ..repositories import (
     get_patient_repository,
     get_session_repository,
 )
+from ..scheduling_engine.exceptions import AppointmentConflictError
 from ..scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from ..scheduling_engine.models.appointment_type import AppointmentType
 from ..services.note_service import NoteService
@@ -394,7 +397,18 @@ class ArchiveApplier:
             note_type="narrative",
             created_at=utc_now(),
         )
-        created = self._appointments.create(appointment)
+        try:
+            created = self._appointments.create(appointment)
+        except AppointmentConflictError:
+            # The old system let two visits share a slot on one calendar; this
+            # one does not. The note still lands; the visit stays behind.
+            run.report.miss(
+                "appointment",
+                _key("appointment", note.source_id),
+                "the visit overlaps another appointment on the calendar",
+                bucket="skipped",
+            )
+            return None
         run.visits[visit_key] = created.id
         self._ledger(
             run, Landed("appointment", note.source_id, "appointments", created.id, note.digest)

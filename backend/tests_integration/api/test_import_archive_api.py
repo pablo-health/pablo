@@ -8,10 +8,12 @@ practice schema with RLS on. What the chart holds afterwards is counted with
 the clinician's own RLS principal armed, so nothing here can see rows the
 clinician could not.
 
-Three journeys:
+The journeys:
 
 * the main fixture end to end — preview, the questions it asks, apply,
   exactly what landed, a second upload that changes nothing, and undo;
+* a visit that overlaps a booking already on the calendar — the note lands,
+  the visit stays behind and is reported;
 * a client who already exists here without a birthday — the duplicate
   question, and a merge that creates no second patient;
 * two same-named clients with no birthday — every record asked about,
@@ -29,6 +31,7 @@ import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from unittest.mock import ANY
 
 import pytest
 from sqlalchemy import text
@@ -335,6 +338,52 @@ def test_existing_client_without_birthday_is_merged_on_request(
     assert after["imported_patients"] == 0
     assert _notes_for(engine, schema, existing_id) == 0
     assert client.get(f"/api/patients/{existing_id}").status_code == 200
+
+
+def _book(engine: Engine, schema: str, patient_id: str, start: str, end: str) -> None:
+    """A live appointment on the clinician's calendar, written as a booking would be."""
+    with engine.begin() as conn:
+        conn.execute(
+            text("SELECT set_config('search_path', :p, true)"),
+            {"p": f"{schema}, platform, public"},
+        )
+        conn.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _USER})
+        conn.execute(
+            text(
+                "INSERT INTO appointments (id, user_id, patient_id, title, start_at, end_at, "
+                "duration_minutes, status, session_type, is_exception, reminder_24h_sent, "
+                "reminder_1h_sent, created_at) VALUES (:id, :u, :p, 'Session', :s, :e, 50, "
+                "'confirmed', 'individual', false, false, false, now())"
+            ),
+            {"id": str(uuid.uuid4()), "u": _USER, "p": patient_id, "s": start, "e": end},
+        )
+
+
+def test_a_visit_that_overlaps_a_booking_stays_behind_and_its_note_lands(
+    client: TestClient, engine: Engine, schema: str
+) -> None:
+    """The old system let two visits share a slot; this calendar refuses the second.
+
+    The import still lands every note — only the overlapping visit's calendar
+    row stays behind, and the report says which.
+    """
+    made = client.post("/api/patients", json={"first_name": "Otto", "last_name": "Other"})
+    assert made.status_code == 201, made.text
+    # Lulu's first progress note is a visit at 13:00 ET on 2026-09-24.
+    _book(engine, schema, made.json()["id"], "2026-09-24 13:30:00-04", "2026-09-24 14:20:00-04")
+
+    run = _upload(client, MAIN)
+    done = _apply(
+        client,
+        run["id"],
+        {"providers": {"Avery Provider": "me"}, "assignments": _upload_answers(run, PABLO_A)},
+    )
+    report = done["report"]
+    assert report["counts"]["note"] == {"new": 15}
+    assert report["counts"]["appointment"] == {"new": 5, "skipped": 1}
+    assert {"key": "appointment:1007836363", "reason": ANY} in report["not_landed"]
+    chart = _chart(engine, schema)
+    assert (chart["notes"], chart["sessions"], chart["appointments"]) == (15, 6, 5)
 
 
 def test_same_name_without_birthdays_lands_only_where_assigned(

@@ -56,6 +56,7 @@ from ..patients.matching import (
 )
 from ..repositories.external_calendar_event import ANSWER_OPEN, ExternalCalendarEvent
 from ..repositories.ical_sync_config import ICalSyncConfig, ICalSyncConfigRepository
+from ..scheduling_engine.exceptions import AppointmentConflictError
 from ..scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from ..settings import get_settings
 from ..utcnow import utc_now
@@ -426,7 +427,13 @@ class ICalSyncService:
             if self._outside.booked_by_name(row, ctx):
                 # Booked on the title's name alone: listed for the clinician.
                 appt.auto_booked_at = _now()
-            self._appt_repo.create(appt)
+            try:
+                self._appt_repo.create(appt)
+            except AppointmentConflictError:
+                # The feed has it over a session already booked here; one
+                # overlapping event must not fail the rest of the feed.
+                logger.info("A feed event overlaps a booking; not booked twice")
+                return
             self._outside.settle(user_id, source, event.uid, appt)
             result.created += 1
             return
@@ -620,7 +627,11 @@ class ICalSyncService:
 
         if changed:
             existing.updated_at = _now()
-            self._appt_repo.update(existing)
+            try:
+                self._appt_repo.update(existing)
+            except AppointmentConflictError:
+                logger.info("A feed event moved onto a booking; left where it was")
+                return False
 
         return changed
 
