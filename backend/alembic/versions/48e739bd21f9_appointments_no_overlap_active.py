@@ -89,7 +89,26 @@ def _refuse_if_already_double_booked() -> None:
     raise RuntimeError("\n".join(lines))
 
 
+def _already_constrained() -> bool:
+    return (
+        op.get_bind()
+        .execute(
+            text(
+                "SELECT 1 FROM pg_constraint "
+                "WHERE conrelid = to_regclass('appointments') AND conname = :name"
+            ),
+            {"name": CONSTRAINT_NAME},
+        )
+        .first()
+        is not None
+    )
+
+
 def upgrade() -> None:
+    # A schema built from the template already has the constraint, and an
+    # earlier revision's downgrade-and-replay runs this one over it again.
+    if _already_constrained():
+        return
     _refuse_if_already_double_booked()
     op.execute(
         f"ALTER TABLE appointments ADD CONSTRAINT {CONSTRAINT_NAME} "
