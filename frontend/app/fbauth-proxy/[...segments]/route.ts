@@ -52,6 +52,14 @@ const HOP_BY_HOP = new Set([
   "host",
 ]);
 
+// Our own credentials must never reach the helper origin. The clinician's
+// httpOnly session cookie is set for our domain, and the browser attaches it
+// to every /__/auth/* request because that path is served from our domain;
+// the Firebase helper has no use for it. Likewise, nothing the helper sets
+// should land on our domain.
+const CREDENTIAL_REQUEST_HEADERS = new Set(["cookie", "authorization"]);
+const CREDENTIAL_RESPONSE_HEADERS = new Set(["set-cookie"]);
+
 async function proxy(req: NextRequest, segments: string[]): Promise<Response> {
   const origin = helperOrigin();
   if (!origin) {
@@ -63,7 +71,10 @@ async function proxy(req: NextRequest, segments: string[]): Promise<Response> {
 
   const fwdHeaders = new Headers();
   req.headers.forEach((value, key) => {
-    if (!HOP_BY_HOP.has(key.toLowerCase())) fwdHeaders.set(key, value);
+    const name = key.toLowerCase();
+    if (!HOP_BY_HOP.has(name) && !CREDENTIAL_REQUEST_HEADERS.has(name)) {
+      fwdHeaders.set(key, value);
+    }
   });
   fwdHeaders.set("host", new URL(origin).host);
 
@@ -80,7 +91,10 @@ async function proxy(req: NextRequest, segments: string[]): Promise<Response> {
 
   const respHeaders = new Headers();
   upstream.headers.forEach((value, key) => {
-    if (!HOP_BY_HOP.has(key.toLowerCase())) respHeaders.set(key, value);
+    const name = key.toLowerCase();
+    if (!HOP_BY_HOP.has(name) && !CREDENTIAL_RESPONSE_HEADERS.has(name)) {
+      respHeaders.set(key, value);
+    }
   });
 
   return new Response(upstream.body, {
