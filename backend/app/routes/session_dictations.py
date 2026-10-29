@@ -80,6 +80,7 @@ from ..services.session_dictation_service import (
 )
 from ..services.session_generation_worker import resolve_tenant_schema_for_user
 from ..settings import get_settings
+from ..uploads import read_bounded
 from .notes import get_note_generation_service, get_worker_proposal_step
 from .sessions import (
     _ALLOWED_AUDIO_TYPES,
@@ -207,12 +208,14 @@ async def add_session_dictation(
             detail=f"Unsupported audio type: {content_type}",
         )
     await _reject_if_not_audio(audio, "audio")
-    data = await audio.read(MAX_DICTATION_BYTES + 1)
-    if len(data) > MAX_DICTATION_BYTES:
-        raise HTTPException(
+    data = await read_bounded(
+        audio,
+        MAX_DICTATION_BYTES,
+        too_large=HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="The dictation is too long.",
-        )
+        ),
+    )
 
     dictation, note, keep_edits = dictation_service.start(
         session_id,
