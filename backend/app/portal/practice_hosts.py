@@ -45,6 +45,7 @@ from sqlalchemy import select
 
 from ..db import create_standalone_session
 from ..db.platform_models import PortalPracticeSlugRow, PracticeDomainRow
+from ..settings import get_settings
 from .hosted import (
     hosted_addresses_ready,
     hosted_portal_host,
@@ -64,9 +65,6 @@ if TYPE_CHECKING:
 _MAX_HOST_LENGTH = 253
 _LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
-#: How long an answer is kept, found or not. A host that becomes active, or
-#: stops being, is noticed within this long.
-CACHE_TTL_SECONDS = 60.0
 #: How many hosts are remembered at once. Past this the oldest answer goes, so
 #: a caller inventing hostnames costs memory up to here and no further.
 CACHE_MAX_ENTRIES = 10_000
@@ -196,7 +194,8 @@ def portal_host_root_url(host: str) -> str:
 class HostAnswerCache[T]:
     """Answers to "what does this host serve", kept for a short while.
 
-    Found and not-found answers are both kept for ``ttl_seconds``, and at most
+    Found and not-found answers are both kept for ``ttl_seconds`` (by default
+    ``Settings.host_answer_cache_ttl_seconds``), and at most
     ``max_entries`` hosts are kept, the oldest answer going first. The clock is
     a parameter so tests can move it. The portal's answers are kept in one of
     these, and a practice website's (:mod:`app.sites.hosts`) in another.
@@ -205,11 +204,13 @@ class HostAnswerCache[T]:
     def __init__(
         self,
         *,
-        ttl_seconds: float = CACHE_TTL_SECONDS,
+        ttl_seconds: float | None = None,
         max_entries: int = CACHE_MAX_ENTRIES,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        self._ttl = ttl_seconds
+        self._ttl = (
+            get_settings().host_answer_cache_ttl_seconds if ttl_seconds is None else ttl_seconds
+        )
         self._max = max_entries
         self._clock = clock
         self._entries: OrderedDict[str, tuple[float, T | None]] = OrderedDict()

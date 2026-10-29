@@ -1268,6 +1268,19 @@ class Settings(BaseSettings):
         description="Mount the unauthenticated /api/public/booking-links/* endpoints.",
     )
 
+    host_answer_cache_ttl_seconds: float = Field(
+        default=60.0,
+        ge=0,
+        description=(
+            'How long the answer to "what does this host serve" is kept, found '
+            "or not, for a practice's own portal and website hosts. A host that "
+            "starts or stops working, or a site that is published, is noticed "
+            "within this long here and again, for the same time, in the web "
+            "app. The e2e stack shortens it so a spec need not wait a minute; "
+            "the web app reads the same variable."
+        ),
+    )
+
     # ── A practice's own domains (Settings > Domains) ────────────────────
     practice_domain_cname_target: str = Field(
         default="",

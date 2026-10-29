@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { createPortalSlugLookup, createPracticeHostLookup } from "../practice-host-lookup"
 
 const API = "http://backend.internal:8000"
@@ -227,5 +227,35 @@ describe("createPortalSlugLookup", () => {
 
     await lookup("../patients")
     expect(fetch).toHaveBeenCalledWith(`${API}/api/portal/practices/..%2Fpatients`, expect.anything())
+  })
+})
+
+describe("how long an answer is kept", () => {
+  afterEach(() => vi.unstubAllEnvs())
+
+  async function askTwiceAfter(ms: number) {
+    const { lookup, fetch, advance } = setup(() => json(200, { slug: "acme", primary_host: null }))
+    await lookup("portal.example.com")
+    advance(ms)
+    await lookup("portal.example.com")
+    return fetch.mock.calls.length
+  }
+
+  it("is a minute unless the deployment says otherwise", async () => {
+    expect(await askTwiceAfter(59_000)).toBe(1)
+    expect(await askTwiceAfter(60_000)).toBe(2)
+  })
+
+  it("follows HOST_ANSWER_CACHE_TTL_SECONDS", async () => {
+    vi.stubEnv("HOST_ANSWER_CACHE_TTL_SECONDS", "2")
+
+    expect(await askTwiceAfter(1_999)).toBe(1)
+    expect(await askTwiceAfter(2_000)).toBe(2)
+  })
+
+  it("ignores a value that is not a number of seconds", async () => {
+    vi.stubEnv("HOST_ANSWER_CACHE_TTL_SECONDS", "soon")
+
+    expect(await askTwiceAfter(59_000)).toBe(1)
   })
 })

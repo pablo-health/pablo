@@ -116,6 +116,32 @@ def test_a_found_host_is_kept_for_the_ttl_then_asked_again() -> None:
     assert load.asked == ["portal.example.com", "portal.example.com"]
 
 
+def test_answers_are_kept_for_a_minute_unless_the_deployment_says_otherwise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("HOST_ANSWER_CACHE_TTL_SECONDS", raising=False)
+    get_settings.cache_clear()
+    clock = _Clock()
+    load = _Loader({"portal.example.com": _FOUND})
+    cache = PortalHostCache(clock=clock)
+    cache.get_or_load("portal.example.com", load)
+    clock.now += 59
+    cache.get_or_load("portal.example.com", load)
+    assert len(load.asked) == 1
+
+    monkeypatch.setenv("HOST_ANSWER_CACHE_TTL_SECONDS", "2")
+    get_settings.cache_clear()
+    try:
+        shorter = PortalHostCache(clock=clock)
+        shorter.get_or_load("portal.example.com", load)
+        clock.now += 2
+        shorter.get_or_load("portal.example.com", load)
+        assert len(load.asked) == 3
+    finally:
+        monkeypatch.undo()
+        get_settings.cache_clear()
+
+
 def test_a_host_that_serves_nothing_is_kept_too() -> None:
     """Otherwise a made-up hostname would cost a query on every request."""
     clock = _Clock()
