@@ -148,6 +148,7 @@ from ..services.transcription_queue_service import (
     TranscriptionQueueService,
 )
 from ..settings import get_settings
+from ..uploads import read_bounded
 from ..utcnow import utc_now
 from .notes import get_audio_on_signing, get_note_generation_service, get_registry
 from .patient_documents import get_patient_documents_service
@@ -743,12 +744,14 @@ async def import_session(
             raise NotFoundError("Patient not found", {"patient_id": patient_id})
         chart = proposal_step.chart(charted, user.id)
 
-    data = await file.read()
-    if len(data) > _MAX_IMPORT_DOC_BYTES:
-        raise HTTPException(
+    data = await read_bounded(
+        file,
+        _MAX_IMPORT_DOC_BYTES,
+        too_large=HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"File too large. Max {_MAX_IMPORT_DOC_BYTES // (1024 * 1024)} MB.",
-        )
+        ),
+    )
 
     # Release the request-scoped DB connection before reading the document
     # (OCR of a scan) and the multi-second LLM parse. The middleware opens a

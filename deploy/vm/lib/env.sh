@@ -22,10 +22,9 @@ render_env_files() {
     local dir="$1" origin="$2" db_host="$3" api_url="$4"
     # Read up front: a failed lookup inside the heredocs below would not stop
     # the script, and would write an empty secret.
-    local db_password jwt_secret calendar_key assemblyai_key auth_secret cookie_key client_secret
+    local db_password calendar_key assemblyai_key auth_secret cookie_key client_secret
     local forward_secret
     db_password="$(secret pablo-db-password)"
-    jwt_secret="$(secret JWT_SECRET_KEY)"
     calendar_key="$(secret GOOGLE_CALENDAR_ENCRYPTION_KEY)"
     assemblyai_key="$(optional_secret pablo-assemblyai-api-key)"
     auth_secret="$(secret AUTH_SECRET)"
@@ -45,7 +44,6 @@ render_env_files() {
         cat > "${dir}/backend.env" <<ENV
 ENVIRONMENT=production
 PORT=8000
-ENFORCE_HTTPS=true
 TRUSTED_PROXY_IPS=172.30.0.10
 GCP_PROJECT_ID=${PROJECT_ID}
 GOOGLE_CLOUD_PROJECT=${PROJECT_ID}
@@ -75,7 +73,6 @@ FILE_STORAGE_PROVIDER=gcs
 PATIENT_DOCUMENTS_GCS_BUCKET=${DOCUMENTS_BUCKET}
 COMPLIANCE_REPORT_BUCKET=${COMPLIANCE_BUCKET}
 PABLO_VERSION=${VERSION}
-JWT_SECRET_KEY=${jwt_secret}
 GOOGLE_CALENDAR_ENCRYPTION_KEY=${calendar_key}
 GOOGLE_CALENDAR_CLIENT_ID=${GOOGLE_CLIENT_ID}
 GOOGLE_CALENDAR_CLIENT_SECRET=${client_secret}

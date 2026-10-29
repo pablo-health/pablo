@@ -41,6 +41,7 @@ import { NoteInputFields } from "@/components/notes/NoteInputFields"
 import { ApiError } from "@/lib/api/client"
 import { isReviewInput } from "@/lib/mdm"
 import { filledInputs } from "@/lib/noteInputs"
+import { browserTimeZone } from "@/lib/dates"
 import { isTelehealth } from "@/lib/telehealth"
 import type { EditorialTheme } from "./editorial/EditorialSidebar"
 import "./editorial/editorial.css"
@@ -552,7 +553,7 @@ function AppointmentForm({
         {
           ...payload,
           frequency: repeat,
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          timezone: browserTimeZone(),
           count,
           end_date: endDate,
         },

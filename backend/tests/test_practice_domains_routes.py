@@ -48,28 +48,17 @@ if TYPE_CHECKING:
     from app.models import User
     from app.repositories.practice_admin import InMemoryPracticeAdminRepository
 
+    from tests.audit_fakes import RecordingAudit
+
 PRACTICE_ID = "practice-1"
 OTHER_PRACTICE = "practice-2"
 URL = "/api/practice/domains"
 CNAME_TARGET = "sites.example.net"
 
 
-class _RecordingAudit:
-    def __init__(self) -> None:
-        self.entries: list[dict[str, Any]] = []
-
-    def log(self, action: Any, *_args: Any, **kwargs: Any) -> None:
-        self.entries.append({"action": action, **kwargs})
-
-
 @pytest.fixture
 def repo() -> InMemoryPracticeDomainRepository:
     return InMemoryPracticeDomainRepository()
-
-
-@pytest.fixture
-def audit() -> _RecordingAudit:
-    return _RecordingAudit()
 
 
 @pytest.fixture(autouse=True)
@@ -105,7 +94,7 @@ def deferred_removal() -> bool:
 def client(
     mock_user: User,
     repo: InMemoryPracticeDomainRepository,
-    audit: _RecordingAudit,
+    recording_audit: RecordingAudit,
     owner_email: str,
     zone: dict[tuple[str, str], list[str] | None],
     deferred_removal: bool,
@@ -121,7 +110,7 @@ def client(
     )
     app.dependency_overrides[require_active_subscription] = lambda: mock_user
     app.dependency_overrides[get_practice_domain_service] = lambda: service
-    app.dependency_overrides[get_audit_service] = lambda: audit
+    app.dependency_overrides[get_audit_service] = lambda: recording_audit
     app.dependency_overrides[get_dns_lookup] = lambda: (
         lambda name, rdtype: zone.get((name, rdtype), [])
     )
@@ -235,7 +224,7 @@ class TestList:
 
 class TestAdd:
     def test_adds_a_pending_portal_host_and_audits_it(
-        self, client: TestClient, audit: _RecordingAudit
+        self, client: TestClient, recording_audit: RecordingAudit
     ) -> None:
         response = client.post(URL, json={"domain": "Portal.Ours.Example.", "purpose": "portal"})
 
@@ -244,7 +233,7 @@ class TestAdd:
         assert added["status"] == "pending"
         assert added["is_primary"] is False
         assert added["purpose"] == "portal"
-        assert audit.entries == [
+        assert recording_audit.entries == [
             {
                 "action": AuditAction.PRACTICE_DOMAIN_ADDED,
                 "resource_type": ResourceType.PRACTICE,
@@ -319,7 +308,7 @@ class TestAdd:
         self,
         client: TestClient,
         repo: InMemoryPracticeDomainRepository,
-        audit: _RecordingAudit,
+        recording_audit: RecordingAudit,
     ) -> None:
         repo.put(_row("www.taken.example", practice_id=OTHER_PRACTICE, purpose="site"))
 
@@ -328,7 +317,7 @@ class TestAdd:
         assert response.status_code == 409
         assert _code(response) == "DOMAIN_TAKEN"
         assert repo.get("taken.example") is None
-        assert audit.entries == []
+        assert recording_audit.entries == []
 
     def test_adding_a_host_twice_is_409(self, client: TestClient) -> None:
         client.post(URL, json={"domain": "portal.ours.example", "purpose": "portal"})
@@ -541,7 +530,7 @@ class TestPrimary:
         self,
         client: TestClient,
         repo: InMemoryPracticeDomainRepository,
-        audit: _RecordingAudit,
+        recording_audit: RecordingAudit,
     ) -> None:
         repo.put(_row("old.ours.example", is_primary=True))
         repo.put(_row("new.ours.example"))
@@ -555,8 +544,8 @@ class TestPrimary:
         assert domains["old.ours.example"]["is_primary"] is False
         # The website's primary is a different purpose and stays.
         assert domains["ours.example"]["is_primary"] is True
-        assert audit.entries[-1]["action"] == AuditAction.PRACTICE_DOMAIN_MADE_PRIMARY
-        assert audit.entries[-1]["changes"] == {
+        assert recording_audit.entries[-1]["action"] == AuditAction.PRACTICE_DOMAIN_MADE_PRIMARY
+        assert recording_audit.entries[-1]["changes"] == {
             "domain": "new.ours.example",
             "purpose": "portal",
             "previous": "old.ours.example",
@@ -597,7 +586,7 @@ class TestRemove:
         self,
         client: TestClient,
         repo: InMemoryPracticeDomainRepository,
-        audit: _RecordingAudit,
+        recording_audit: RecordingAudit,
     ) -> None:
         repo.put(_row("old.ours.example", is_primary=True))
         repo.put(_row("other.ours.example"))
@@ -608,8 +597,8 @@ class TestRemove:
         domains = response.json()["domains"]
         assert [d["domain"] for d in domains] == ["other.ours.example"]
         assert not any(d["is_primary"] for d in domains)
-        assert audit.entries[-1]["action"] == AuditAction.PRACTICE_DOMAIN_REMOVED
-        assert audit.entries[-1]["changes"]["was_primary"] is True
+        assert recording_audit.entries[-1]["action"] == AuditAction.PRACTICE_DOMAIN_REMOVED
+        assert recording_audit.entries[-1]["changes"]["was_primary"] is True
 
     def test_another_practices_host_is_404_and_stays(
         self, client: TestClient, repo: InMemoryPracticeDomainRepository
@@ -649,7 +638,7 @@ class TestRemoveWhileServed:
         self,
         client: TestClient,
         repo: InMemoryPracticeDomainRepository,
-        audit: _RecordingAudit,
+        recording_audit: RecordingAudit,
     ) -> None:
         repo.put(_row("portal.ours.example", is_primary=True))
         repo.put(_row("book.ours.example"))
@@ -664,8 +653,8 @@ class TestRemoveWhileServed:
         assert stored is not None
         assert (stored.status, stored.is_primary) == ("removing", False)
         assert repo.get_apex("ours.example") is not None
-        assert audit.entries[-1]["action"] == AuditAction.PRACTICE_DOMAIN_REMOVED
-        assert audit.entries[-1]["changes"]["was_primary"] is True
+        assert recording_audit.entries[-1]["action"] == AuditAction.PRACTICE_DOMAIN_REMOVED
+        assert recording_audit.entries[-1]["changes"]["was_primary"] is True
 
     def test_a_host_being_removed_cannot_be_added_back_yet(
         self, client: TestClient, repo: InMemoryPracticeDomainRepository
@@ -738,7 +727,7 @@ class TestDomainRows:
         self,
         client: TestClient,
         repo: InMemoryPracticeDomainRepository,
-        audit: _RecordingAudit,
+        recording_audit: RecordingAudit,
     ) -> None:
         repo.put_apex(_apex("theirs.example", practice_id=OTHER_PRACTICE))
 
@@ -747,7 +736,7 @@ class TestDomainRows:
         assert response.status_code == 409
         assert _code(response) == "DOMAIN_TAKEN"
         assert repo.get("portal.theirs.example") is None
-        assert audit.entries == []
+        assert recording_audit.entries == []
 
     def test_a_public_suffix_is_not_a_domain_anyone_can_add(self, client: TestClient) -> None:
         response = client.post(URL, json={"domain": "co.uk", "purpose": "site"})
@@ -862,7 +851,7 @@ class TestCheck:
         self,
         client: TestClient,
         repo: InMemoryPracticeDomainRepository,
-        audit: _RecordingAudit,
+        recording_audit: RecordingAudit,
         zone: dict[tuple[str, str], list[str] | None],
     ) -> None:
         repo.put(_row("portal.ours.example", status="pending", cert_auth_value="abc.1"))
@@ -889,7 +878,7 @@ class TestCheck:
         # Nothing about the host itself changed.
         assert domain["status"] == "pending"
         assert repo.get("portal.ours.example").status == "pending"  # type: ignore[union-attr]  # put above
-        assert audit.entries == [
+        assert recording_audit.entries == [
             {
                 "action": AuditAction.PRACTICE_DOMAIN_OWNERSHIP_CONFIRMED,
                 "resource_type": ResourceType.PRACTICE,
@@ -902,7 +891,7 @@ class TestCheck:
         self,
         client: TestClient,
         repo: InMemoryPracticeDomainRepository,
-        audit: _RecordingAudit,
+        recording_audit: RecordingAudit,
     ) -> None:
         repo.put(_row("portal.ours.example", status="pending"))
         repo.put_apex(_apex("ours.example"))
@@ -912,7 +901,7 @@ class TestCheck:
         assert {r["check"] for r in domain["dns_records"]} == {"missing"}
         assert domain["apex_verified_at"] is None
         assert repo.get_apex("ours.example").verified_at is None  # type: ignore[union-attr]  # put above
-        assert audit.entries == []
+        assert recording_audit.entries == []
 
     def test_a_host_from_before_domain_rows_gets_one(
         self, client: TestClient, repo: InMemoryPracticeDomainRepository

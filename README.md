@@ -9,7 +9,7 @@ Pablo generates SOAP notes from session transcripts with dual-method verificatio
 - **AI SOAP Note Generation** — Upload a session transcript, get a clinically accurate SOAP note
 - **Built-in Calendar** — Schedule and manage therapy sessions
 - **Patient Management** — Secure patient records with session history
-- **HIPAA-Ready** — TLS enforcement, audit logging, encryption at rest
+- **Built for HIPAA** — HTTPS only, mandatory MFA, a 15-minute idle logoff, an append-only audit log of every record access, continuous backups with a monthly restore check. What the installer sets up and what stays yours: [Self-Hosting HIPAA Guide](docs/SELF_HOSTING_HIPAA_GUIDE.md)
 
 ## Quick Start
 
@@ -84,12 +84,12 @@ docker compose up
 
 ## HIPAA Compliance
 
-Self-hosting Pablo means **you** are responsible for HIPAA compliance. See our [Self-Hosting HIPAA Guide](docs/SELF_HOSTING_HIPAA_GUIDE.md) for what you need to do.
+Self-hosting Pablo means **you** are the covered entity. The [Self-Hosting HIPAA Guide](docs/SELF_HOSTING_HIPAA_GUIDE.md) says what `install.sh` builds, what it does not (no alerting, no scheduled purge, audit retention set but not locked), and a shared-responsibility matrix for the rest.
 
 Two things worth flagging up front for self-hosters:
 
 1. **Sign the Google Cloud BAA** before you deploy. It's free, takes a few minutes, and covers Compute Engine / Cloud Storage / Secret Manager / Identity Platform / Vertex AI. Console → Settings → Compliance → Business Associate Agreement.
-2. **Pick your transcription provider and its BAA.** `assemblyai` is the only transcription backend wired for deployment today — it's lower ops, but requires a direct BAA with AssemblyAI before any PHI is sent. A self-hosted `whisper` path (Cloud Batch + spot GPUs, covered by the Google Cloud BAA and needing no third-party BAA) is planned but not yet operational. `install.sh` asks whether to turn on transcription; saying yes is your statement that the AssemblyAI BAA is signed. Otherwise transcription stays off. Details in the [Self-Hosting HIPAA Guide](docs/SELF_HOSTING_HIPAA_GUIDE.md#1-business-associate-agreement-baa).
+2. **Pick your transcription provider and its BAA.** `assemblyai` is the only transcription backend wired for deployment today — it's lower ops, but requires a direct BAA with AssemblyAI before any PHI is sent. A self-hosted `whisper` path (Cloud Batch + spot GPUs, covered by the Google Cloud BAA and needing no third-party BAA) is planned but not yet operational. `install.sh` asks whether to turn on transcription; saying yes is your statement that the AssemblyAI BAA is signed. Otherwise transcription stays off. Details in the [Self-Hosting HIPAA Guide](docs/SELF_HOSTING_HIPAA_GUIDE.md#business-associate-agreements).
 
 ## Want Managed Hosting?
 

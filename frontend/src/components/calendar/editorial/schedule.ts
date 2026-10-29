@@ -28,6 +28,7 @@
 
 import { addDays, endOfWeek, isSameDay, startOfDay } from "date-fns"
 import type { AvailabilityRule } from "@/types/availability"
+import { browserTimeZone, clockToMinutes } from "@/lib/dates"
 import { format } from "./dateUtils"
 import { jsWeekdayToRuleDay, matchWholeDayBlockRule } from "./unavailability"
 
@@ -41,12 +42,6 @@ const MS_PER_MINUTE = 60_000
 
 /** How far ahead to look for the next working day before giving up. */
 const NEXT_WORKING_DAY_HORIZON = 14
-
-function clockToMinutes(value: unknown): number | null {
-  const match = /^(\d{1,2}):(\d{2})/.exec(String(value ?? ""))
-  if (!match) return null
-  return Number(match[1]) * 60 + Number(match[2])
-}
 
 /** A calendar date as a local Date at midnight, from "yyyy-MM-dd". */
 function localDate(dateStr: string): Date {
@@ -135,14 +130,6 @@ function localMinutes(instantMs: number, day: Date): number {
   if (instantMs <= day.getTime()) return 0
   const at = new Date(instantMs)
   return at.getHours() * 60 + at.getMinutes()
-}
-
-function browserTimeZone(): string {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
-  } catch {
-    return "UTC"
-  }
 }
 
 /**

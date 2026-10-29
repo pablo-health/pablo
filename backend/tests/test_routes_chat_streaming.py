@@ -22,11 +22,13 @@ from app.auth.service import (
     require_mfa,
 )
 from app.main import app
-from app.models import Patient, QuotaStatus, User
+from app.models import QuotaStatus, User
 from app.routes.chat import get_chat_llm_gateway, get_llm_usage_meter
 from app.services.chat_llm_gateway import FakeChatLLMGateway, StreamEvent
 from app.services.chat_model_resolver import get_chat_model_resolver
 from fastapi import HTTPException, status
+
+from tests.patient_seeds import seed_patient
 
 from ._streaming_body_guard import assert_no_db_checkouts
 
@@ -38,19 +40,6 @@ if TYPE_CHECKING:
 
 
 _SYSTEM_PROMPT = "You are a clinical assistant for chart QA."
-
-
-def _seed_patient(patient_repo, *, user_id: str, patient_id: str = "patient-stream-1") -> Patient:
-    now = datetime.now(UTC)
-    patient = Patient(
-        id=patient_id,
-        first_name="Jane",
-        last_name="Doe",
-        created_at=now,
-        updated_at=now,
-    )
-    created: Patient = patient_repo.create(patient, user_id)
-    return created
 
 
 def _create_conversation(client: TestClient, patient_id: str) -> str:
@@ -98,7 +87,7 @@ class TestSendMessage:
         mock_repo: InMemoryPatientRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         conversation_id = _create_conversation(client, patient.id)
         gateway = FakeChatLLMGateway(
             script=[
@@ -139,7 +128,7 @@ class TestSendMessage:
         mock_repo: InMemoryPatientRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         conversation_id = _create_conversation(client, patient.id)
         gateway = FakeChatLLMGateway(script=[StreamEvent(finish_reason="stop", output_tokens=0)])
         _install_gateway(client, gateway)
@@ -159,7 +148,7 @@ class TestSendMessage:
         mock_repo: InMemoryPatientRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         conversation_id = _create_conversation(client, patient.id)
         gateway = FakeChatLLMGateway(script=[StreamEvent(finish_reason="stop", output_tokens=0)])
         _install_gateway(client, gateway)
@@ -182,7 +171,7 @@ class TestSendMessage:
         mock_repo: InMemoryPatientRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         conversation_id = _create_conversation(client, patient.id)
         client.patch(
             f"/api/chat/conversations/{conversation_id}",
@@ -217,7 +206,7 @@ class TestSendMessage:
         chat_repo_explicit = InMemoryChatRepository()
         app.dependency_overrides[get_chat_repository_dep] = lambda: chat_repo_explicit
 
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         # Owner grant for the chat creation call below.
         chat_repo_explicit.grant_access(patient.id, mock_user_id)
         conversation_id = _create_conversation(client, patient.id)
@@ -259,7 +248,7 @@ class TestSendMessage:
         """A meter that hard-blocks short-circuits before the gateway
         is called and surfaces a ``quota_exceeded`` SSE error event
         (THERAPY-f6eg, Phase 3b)."""
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         conversation_id = _create_conversation(client, patient.id)
 
         # Pin a meter that always hard-blocks. Real OSS meters always
@@ -294,7 +283,7 @@ class TestSendMessage:
         mock_repo: InMemoryPatientRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         conversation_id = _create_conversation(client, patient.id)
         gateway = FakeChatLLMGateway(script=[StreamEvent(finish_reason="safety")])
         _install_gateway(client, gateway)
@@ -317,7 +306,7 @@ class TestSendMessage:
         mock_repo: InMemoryPatientRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         conversation_id = _create_conversation(client, patient.id)
 
         # Empty content fails Pydantic min_length=1.
@@ -334,7 +323,7 @@ class TestSendMessage:
         mock_user_id: str,
     ) -> None:
         """A caller over the per-user burst limit gets 429 before the LLM call."""
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         conversation_id = _create_conversation(client, patient.id)
 
         def raise_429(key: str) -> None:

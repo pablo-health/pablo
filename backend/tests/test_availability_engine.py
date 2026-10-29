@@ -1339,6 +1339,103 @@ class TestNaiveInputIsHostIndependent:
         assert len(naive_early) == 1
 
 
+class TestDaylightSavingTransitionDays:
+    """Slots on the two days a year the local clock jumps.
+
+    2026-03-08 springs forward (02:00 EST becomes 03:00 EDT, so the hour
+    02:00-02:59 never happens) and 2026-11-01 falls back (02:00 EDT becomes
+    01:00 EST, so 01:00-01:59 happens twice). Both are Sundays. The engine
+    walks the day in wall-clock minutes, so these pin the UTC instants it
+    hands out when a working window sits on the jump, and that an ordinary
+    nine-to-five on the same date is untouched by it.
+
+    The expected lists read working hours as instants: a window runs from the
+    moment the clock first reads its start to the moment it reads its end, so
+    01:00-03:00 is one real hour on the spring day and three on the fall day.
+    """
+
+    SUNDAY = 6
+    SLOT, BUFFER = 30, 10
+
+    def _hours(self, rule_repo: InMemoryAvailabilityRuleRepository, start: str, end: str) -> None:
+        rule_repo.create(
+            _rule(RuleType.WORKING_HOURS, {"day_of_week": self.SUNDAY, "start": start, "end": end})
+        )
+        rule_repo.create(_rule(RuleType.BUFFER_AFTER, {"minutes": self.BUFFER}, rule_id="buf"))
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "PABLO-8gna.8: get_free_slots walks wall-clock minutes, so on the spring-forward "
+            "day it offers slots at local 01:40 and 02:20 — the second in the hour that does "
+            "not exist, rendered as 07:20Z (03:20 EDT), outside the 01:00-03:00 window"
+        ),
+    )
+    def test_spring_forward_skips_the_missing_hour(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        self._hours(rule_repo, "01:00", "03:00")
+
+        slots = engine.get_free_slots(USER_ID, "2026-03-08", self.SLOT, tz=NY).slots
+
+        # 01:00 EST is 06:00Z and 03:00 EDT is 07:00Z: one real hour, which
+        # fits a single 30-minute slot once the 10-minute buffer follows it.
+        assert [(s.start, s.end) for s in slots] == [
+            ("2026-03-08T06:00:00Z", "2026-03-08T06:30:00Z"),
+        ]
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "PABLO-8gna.8: get_free_slots walks wall-clock minutes, so on the fall-back day "
+            "the slot at local 01:40 is rendered 05:40Z-07:10Z (90 real minutes across the "
+            "repeated hour) and the second 01:00-02:00 hour is never offered"
+        ),
+    )
+    def test_fall_back_offers_the_repeated_hour_once_each(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        self._hours(rule_repo, "01:00", "03:00")
+
+        slots = engine.get_free_slots(USER_ID, "2026-11-01", self.SLOT, tz=NY).slots
+
+        # 01:00 EDT is 05:00Z and 03:00 EST is 08:00Z: three real hours, every
+        # slot 30 minutes long, none repeated, 40 minutes apart.
+        assert [(s.start, s.end) for s in slots] == [
+            ("2026-11-01T05:00:00Z", "2026-11-01T05:30:00Z"),
+            ("2026-11-01T05:40:00Z", "2026-11-01T06:10:00Z"),
+            ("2026-11-01T06:20:00Z", "2026-11-01T06:50:00Z"),
+            ("2026-11-01T07:00:00Z", "2026-11-01T07:30:00Z"),
+        ]
+
+    @pytest.mark.parametrize(
+        ("date_str", "first_start", "last_start"),
+        [
+            # EDT from 03:00 on, so 09:00 is 13:00Z and the day is UTC-4.
+            ("2026-03-08", "2026-03-08T13:00:00Z", "2026-03-08T20:00:00Z"),
+            # EST from 02:00 on, so 09:00 is 14:00Z and the day is UTC-5.
+            ("2026-11-01", "2026-11-01T14:00:00Z", "2026-11-01T21:00:00Z"),
+        ],
+    )
+    def test_an_ordinary_day_on_the_transition_date(
+        self,
+        rule_repo: InMemoryAvailabilityRuleRepository,
+        engine: AvailabilityEngine,
+        date_str: str,
+        first_start: str,
+        last_start: str,
+    ) -> None:
+        self._hours(rule_repo, "09:00", "17:00")
+
+        slots = engine.get_free_slots(USER_ID, date_str, 50, tz=NY).slots
+
+        # Eight hours, each holding one 50-minute slot and its 10-minute buffer.
+        assert len(slots) == 8
+        assert slots[0].start == first_start
+        assert slots[-1].start == last_start
+        assert all(s.end[11:] == f"{int(s.start[11:13]):02d}:50:00Z" for s in slots)
+
+
 # 2026-03-16 is a Monday, so this week runs Mon 16 through Sun 22.
 _MON, _TUE, _WED, _THU, _FRI = (f"2026-03-{d}" for d in (16, 17, 18, 19, 20))
 _SAT, _SUN = "2026-03-21", "2026-03-22"

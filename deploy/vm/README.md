@@ -38,13 +38,19 @@ seven days.
 | Restore check | monthly: the latest backup is restored into a scratch copy and queried |
 | Short-lived state | Redis, in memory only: calendar-connect handshakes, passkey challenges, rate limits, the idle-session clock |
 | Scheduled jobs | `/etc/cron.d/pablo`: HIPAA log reviews, pipeline heartbeat, quarterly attestation |
-| Logs | containers and jobs to Cloud Logging; audit events kept six years by the audit sink |
+| Logs | containers and jobs to Cloud Logging; audit events kept six years by the audit sink, in a bucket whose retention is locked |
 | Sign-in | Identity Platform: email and Google, 15-character passwords, authenticator-app MFA |
 
 Google credentials come from the VM's own service account (`pablo-vm`)
 through the metadata server. There is no key file on the VM. SSH is allowed
 only through Identity-Aware Proxy. Only ports 80 and 443 are open to the
 internet.
+
+Caddy is the only way in. The backend's env file sets `TRUSTED_PROXY_IPS` to
+Caddy's fixed address on the Docker network, so the backend takes the client
+address from Caddy's `X-Forwarded-For` and counts sign-in and booking limits
+per client. If you put the backend behind a different proxy, list that proxy's
+address instead, or every client shares the proxy's one budget.
 
 ## Hostname
 
