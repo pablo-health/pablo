@@ -36,9 +36,9 @@ _CLAIMS: dict[str, Any] = {"uid": "fb-uid", "auth_time": _AUTH_TIME, "iat": _AUT
 
 @pytest.fixture(autouse=True)
 def _fresh_memo() -> Iterator[None]:
-    sign_in_audit.forget_all()
+    sign_in_audit._memo.clear()
     yield
-    sign_in_audit.forget_all()
+    sign_in_audit._memo.clear()
 
 
 @contextmanager
