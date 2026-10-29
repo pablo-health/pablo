@@ -40,6 +40,7 @@ from app.services import AuditService, get_audit_service
 
 from tests.claims_fixtures import claim as claim_fixture
 from tests.claims_fixtures import line as line_fixture
+from tests.patient_seeds import seed_patient
 
 if TYPE_CHECKING:
     from app.repositories import (
@@ -199,21 +200,7 @@ def _claims_on(appointment_id: str, *, state: str, claim_id: str = "claim-1"):
     return claims
 
 
-def _seed_patient(
-    mock_repo: InMemoryPatientRepository, mock_user_id: str, *, rate_cents: int
-) -> None:
-    now = datetime.now(UTC)
-    mock_repo.create(
-        Patient(
-            id=PATIENT_ID,
-            first_name="Ada",
-            last_name="Early",
-            created_at=now,
-            updated_at=now,
-            rate_cents=rate_cents,
-        ),
-        mock_user_id,
-    )
+_ADA_EARLY = {"patient_id": PATIENT_ID, "first_name": "Ada", "last_name": "Early"}
 
 
 def _seed_visit(
@@ -300,7 +287,7 @@ def test_populated_queue_shows_client_date_and_resolved_amount(
     mock_notes_repo: InMemoryNotesRepository,
     mock_user_id: str,
 ) -> None:
-    _seed_patient(mock_repo, mock_user_id, rate_cents=15000)
+    seed_patient(mock_repo, mock_user_id, **_ADA_EARLY, rate_cents=15000)
     session_date = datetime(2026, 6, 10, 14, 0, tzinfo=UTC)
     mock_session_repo.create(_session("sess-1", session_date, user_id=mock_user_id))
     mock_notes_repo.add(_note("sess-1", finalized=True), mock_user_id)
@@ -323,7 +310,7 @@ def test_unfinalized_note_is_not_in_the_queue(
     mock_notes_repo: InMemoryNotesRepository,
     mock_user_id: str,
 ) -> None:
-    _seed_patient(mock_repo, mock_user_id, rate_cents=15000)
+    seed_patient(mock_repo, mock_user_id, **_ADA_EARLY, rate_cents=15000)
     mock_session_repo.create(
         _session("sess-1", datetime(2026, 6, 10, tzinfo=UTC), user_id=mock_user_id)
     )
@@ -341,7 +328,7 @@ def test_succeeded_charge_drops_the_session_from_the_queue(
     mock_notes_repo: InMemoryNotesRepository,
     mock_user_id: str,
 ) -> None:
-    _seed_patient(mock_repo, mock_user_id, rate_cents=15000)
+    seed_patient(mock_repo, mock_user_id, **_ADA_EARLY, rate_cents=15000)
     mock_session_repo.create(
         _session("sess-1", datetime(2026, 6, 10, tzinfo=UTC), user_id=mock_user_id)
     )
@@ -361,7 +348,7 @@ def test_failed_charge_keeps_the_session_in_the_queue(
     mock_notes_repo: InMemoryNotesRepository,
     mock_user_id: str,
 ) -> None:
-    _seed_patient(mock_repo, mock_user_id, rate_cents=15000)
+    seed_patient(mock_repo, mock_user_id, **_ADA_EARLY, rate_cents=15000)
     mock_session_repo.create(
         _session("sess-1", datetime(2026, 6, 10, tzinfo=UTC), user_id=mock_user_id)
     )
@@ -386,7 +373,7 @@ def test_amount_falls_back_to_appointment_type_default(
     mock_notes_repo: InMemoryNotesRepository,
     mock_user_id: str,
 ) -> None:
-    _seed_patient(mock_repo, mock_user_id, rate_cents=None)
+    seed_patient(mock_repo, mock_user_id, **_ADA_EARLY, rate_cents=None)
     mock_session_repo.create(
         _session("sess-1", datetime(2026, 6, 10, tzinfo=UTC), user_id=mock_user_id)
     )
@@ -415,7 +402,7 @@ def test_row_says_whether_the_client_has_coverage(
     mock_notes_repo: InMemoryNotesRepository,
     mock_user_id: str,
 ) -> None:
-    _seed_patient(mock_repo, mock_user_id, rate_cents=15000)
+    seed_patient(mock_repo, mock_user_id, **_ADA_EARLY, rate_cents=15000)
     mock_session_repo.create(
         _session("sess-1", datetime(2026, 6, 10, tzinfo=UTC), user_id=mock_user_id)
     )
@@ -441,7 +428,7 @@ def test_row_carries_the_newest_claim_on_the_visit(
     mock_notes_repo: InMemoryNotesRepository,
     mock_user_id: str,
 ) -> None:
-    _seed_patient(mock_repo, mock_user_id, rate_cents=15000)
+    seed_patient(mock_repo, mock_user_id, **_ADA_EARLY, rate_cents=15000)
     mock_session_repo.create(
         _session("sess-1", datetime(2026, 6, 10, tzinfo=UTC), user_id=mock_user_id)
     )
@@ -466,7 +453,7 @@ def test_paid_claim_drops_the_session_from_the_queue(
     mock_notes_repo: InMemoryNotesRepository,
     mock_user_id: str,
 ) -> None:
-    _seed_patient(mock_repo, mock_user_id, rate_cents=15000)
+    seed_patient(mock_repo, mock_user_id, **_ADA_EARLY, rate_cents=15000)
     mock_session_repo.create(
         _session("sess-1", datetime(2026, 6, 10, tzinfo=UTC), user_id=mock_user_id)
     )
@@ -485,7 +472,7 @@ def test_denied_claim_keeps_the_session_in_the_queue(
     mock_notes_repo: InMemoryNotesRepository,
     mock_user_id: str,
 ) -> None:
-    _seed_patient(mock_repo, mock_user_id, rate_cents=15000)
+    seed_patient(mock_repo, mock_user_id, **_ADA_EARLY, rate_cents=15000)
     mock_session_repo.create(
         _session("sess-1", datetime(2026, 6, 10, tzinfo=UTC), user_id=mock_user_id)
     )
@@ -512,7 +499,7 @@ def one_finalized_visit(
     mock_user_id: str,
 ) -> InMemoryAppointmentRepository:
     """One finalized, booked, unbilled session for a client with a rate."""
-    _seed_patient(mock_repo, mock_user_id, rate_cents=15000)
+    seed_patient(mock_repo, mock_user_id, **_ADA_EARLY, rate_cents=15000)
     mock_session_repo.create(
         _session("sess-1", datetime(2026, 6, 10, tzinfo=UTC), user_id=mock_user_id)
     )
@@ -660,7 +647,7 @@ def test_list_finalized_is_called_with_the_queue_limit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     assert UNBILLED_QUEUE_NOTE_LIMIT == 500
-    _seed_patient(mock_repo, mock_user_id, rate_cents=15000)
+    seed_patient(mock_repo, mock_user_id, **_ADA_EARLY, rate_cents=15000)
     mock_session_repo.create(
         _session("sess-1", datetime(2026, 6, 10, tzinfo=UTC), user_id=mock_user_id)
     )
@@ -693,7 +680,7 @@ def test_queue_rows_and_order_are_unchanged_by_batching(
     didn't change which rows come back or their order — newest finalized
     note first, settled visits dropped.
     """
-    _seed_patient(mock_repo, mock_user_id, rate_cents=15000)
+    seed_patient(mock_repo, mock_user_id, **_ADA_EARLY, rate_cents=15000)
     oldest = datetime(2026, 6, 1, tzinfo=UTC)
     middle = datetime(2026, 6, 5, tzinfo=UTC)
     newest = datetime(2026, 6, 10, tzinfo=UTC)

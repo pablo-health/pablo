@@ -188,7 +188,7 @@ def test_proxyable_origins_are_allowed_in_production_and_reported(
     logger = logging.getLogger("app.settings.test_origin_posture")
     with caplog.at_level(logging.INFO, logger=logger.name):
         log_startup_posture(settings, logger)
-    [record] = [r for r in caplog.records if r.name == logger.name]
+    [record] = [r for r in caplog.records if r.name == logger.name and r.levelno == logging.INFO]
     message = record.getMessage()
     assert "nppes_origin_override=True" in message
     assert "clearinghouse_origin_override=True" in message
@@ -214,3 +214,29 @@ def test_log_startup_posture_emits_summary_line(caplog: pytest.LogCaptureFixture
     assert "clearinghouse_origin_override=False" in message
     assert "ical_feed_origin_override=False" in message
     assert "google_calendar_origin_override=False" in message
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_in_memory_rate_limits_warn_outside_development(
+    environment: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    settings = _make(environment=environment, use_redis=False)
+    logger = logging.getLogger("app.settings.test_in_memory_limits")
+    with caplog.at_level(logging.INFO, logger=logger.name):
+        log_startup_posture(settings, logger)
+    [warning] = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert "USE_REDIS=false" in warning.getMessage()
+
+
+@pytest.mark.parametrize(
+    ("environment", "use_redis"),
+    [("development", False), ("production", True)],
+)
+def test_in_memory_rate_limits_do_not_warn_in_development_or_with_redis(
+    environment: str, use_redis: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    settings = _make(environment=environment, use_redis=use_redis)
+    logger = logging.getLogger("app.settings.test_in_memory_limits")
+    with caplog.at_level(logging.INFO, logger=logger.name):
+        log_startup_posture(settings, logger)
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]

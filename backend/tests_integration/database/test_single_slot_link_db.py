@@ -24,17 +24,17 @@ from typing import TYPE_CHECKING
 import pytest
 from app.db import PLATFORM_SCHEMA, _current_tenant_schema, arm_current_user_id, set_tenant_schema
 from app.db.platform_models import BookingLinkRow, PlatformUserRow
-from app.models import Patient
 from app.repositories.postgres.appointment import PostgresAppointmentRepository
 from app.repositories.postgres.appointment_type import PostgresAppointmentTypeRepository
 from app.repositories.postgres.booking_link import PostgresBookingLinkRepository
-from app.repositories.postgres.patient import PostgresPatientRepository
 from app.scheduling_engine.models.appointment_type import AppointmentType
 from app.scheduling_engine.services.scheduling import SchedulingService
 from app.scheduling_engine.services.scheduling_policy import DEFAULTS
 from app.services.slot_link_booking import SlotTakenError, book_slot_link
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+
+from tests_integration.database.patient_rows import seed_patient_row
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -153,16 +153,6 @@ def _seed_link(engine: Engine, start: datetime) -> str:
     return slug
 
 
-def _seed_patient(session: Session) -> str:
-    patient_id = str(uuid.uuid4())
-    now = datetime.now(UTC)
-    PostgresPatientRepository(session).create(
-        Patient(id=patient_id, first_name="Pat", last_name="Ient", created_at=now, updated_at=now),
-        _OWNER,
-    )
-    return patient_id
-
-
 def _live_at(engine: Engine, start: datetime) -> int:
     with engine.connect() as conn:
         conn.execute(text("SELECT set_config('app.current_user_id', :u, false)"), {"u": _OWNER})
@@ -210,7 +200,7 @@ def test_two_simultaneous_uses_make_exactly_one_booking(engine: Engine, tenant: 
     start_at = _DAY.replace(hour=15)
     slug = _seed_link(engine, start_at)
     with _owner_session(engine) as s:
-        patients = [_seed_patient(s), _seed_patient(s)]
+        patients = [seed_patient_row(s, _OWNER), seed_patient_row(s, _OWNER)]
         s.commit()
 
     outcomes: list[str] = []
@@ -240,7 +230,7 @@ def test_a_later_use_is_refused_as_taken(engine: Engine, tenant: None) -> None:
     start_at = _DAY.replace(hour=17)
     slug = _seed_link(engine, start_at)
     with _owner_session(engine) as s:
-        first, second = _seed_patient(s), _seed_patient(s)
+        first, second = seed_patient_row(s, _OWNER), seed_patient_row(s, _OWNER)
         s.commit()
 
     outcomes: list[str] = []

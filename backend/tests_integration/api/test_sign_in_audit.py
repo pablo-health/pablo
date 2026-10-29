@@ -115,11 +115,11 @@ def other_practice(engine: Engine) -> Iterator[SimpleNamespace]:
 @pytest.fixture(autouse=True)
 def _fresh_memo() -> Iterator[None]:
     """Each test starts as a freshly started instance would."""
-    from app.auth.sign_in_audit import forget_all  # noqa: PLC0415
+    from app.auth.sign_in_audit import _memo  # noqa: PLC0415
 
-    forget_all()
+    _memo.clear()
     yield
-    forget_all()
+    _memo.clear()
 
 
 @contextmanager
@@ -332,7 +332,7 @@ class TestSignInIsRecordedByTheBackend:
     def test_a_token_refresh_writes_nothing(
         self, engine: Engine, fastapi_app: FastAPI, own_practice: SimpleNamespace
     ) -> None:
-        from app.auth.sign_in_audit import forget_all  # noqa: PLC0415
+        from app.auth.sign_in_audit import _memo  # noqa: PLC0415
 
         with _clinician(engine, own_practice) as user:
             signed_in_at = _now() - 600
@@ -341,7 +341,7 @@ class TestSignInIsRecordedByTheBackend:
             _request_as(fastapi_app, user.uid, user.email, auth_time=signed_in_at, issued_at=_now())
             # Another (or a restarted) instance: nothing remembered in-process,
             # so only the audit log itself can say the sign-in is recorded.
-            forget_all()
+            _memo.clear()
             status_code, _ = _request_as(
                 fastapi_app, user.uid, user.email, auth_time=signed_in_at, issued_at=_now()
             )

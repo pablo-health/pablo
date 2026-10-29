@@ -51,6 +51,8 @@ if TYPE_CHECKING:
 
     from app.models import User
 
+    from tests.audit_fakes import RecordingAudit
+
 FIXTURES = Path(__file__).parent / "fixtures" / "domain_connect"
 PRACTICE_ID = "practice-1"
 URL = "/api/practice/domains/connect"
@@ -73,14 +75,6 @@ CONFIG = DomainConnectConfig(
     apex_ips=(SITE_IP,),
     redirect_uri=REDIRECT,
 )
-
-
-class _RecordingAudit:
-    def __init__(self) -> None:
-        self.entries: list[dict[str, Any]] = []
-
-    def log(self, action: Any, *_args: Any, **kwargs: Any) -> None:
-        self.entries.append({"action": action, **kwargs})
 
 
 class _Web:
@@ -112,11 +106,6 @@ def repo() -> InMemoryPracticeDomainRepository:
 
 
 @pytest.fixture
-def audit() -> _RecordingAudit:
-    return _RecordingAudit()
-
-
-@pytest.fixture
 def web() -> _Web:
     return _Web()
 
@@ -140,7 +129,7 @@ def owner_email() -> str:
 def client(
     mock_user: User,
     repo: InMemoryPracticeDomainRepository,
-    audit: _RecordingAudit,
+    recording_audit: RecordingAudit,
     web: _Web,
     zone: dict[tuple[str, str], list[str]],
     config: DomainConnectConfig,
@@ -167,7 +156,7 @@ def client(
     app.dependency_overrides[require_active_subscription] = lambda: mock_user
     app.dependency_overrides[get_domain_connect_service] = lambda: connect
     app.dependency_overrides[get_practice_domain_service] = lambda: domains
-    app.dependency_overrides[get_audit_service] = lambda: audit
+    app.dependency_overrides[get_audit_service] = lambda: recording_audit
     app.dependency_overrides[get_dns_lookup] = lambda: lookup
 
     session = MagicMock()
@@ -279,12 +268,15 @@ class TestOffers:
         verify_signed_query(urlsplit(url).query, private_key.public_key())
 
     def test_issuing_links_is_audited_with_the_domain_only(
-        self, client: TestClient, repo: InMemoryPracticeDomainRepository, audit: _RecordingAudit
+        self,
+        client: TestClient,
+        repo: InMemoryPracticeDomainRepository,
+        recording_audit: RecordingAudit,
     ) -> None:
         _portal_ready(repo)
         _website_ready(repo)
         _offers(client)
-        assert audit.entries == [
+        assert recording_audit.entries == [
             {
                 "action": AuditAction.PRACTICE_DOMAIN_CONNECT_LINK_ISSUED,
                 "resource_type": ResourceType.PRACTICE,
@@ -415,7 +407,7 @@ class TestReturn:
         client: TestClient,
         repo: InMemoryPracticeDomainRepository,
         zone: dict[tuple[str, str], list[str]],
-        audit: _RecordingAudit,
+        recording_audit: RecordingAudit,
     ) -> None:
         _portal_ready(repo)
         zone[(f"portal.{APEX}", "CNAME")] = [CNAME_TARGET]
@@ -433,11 +425,11 @@ class TestReturn:
         assert records[("CNAME", f"test-dkim-one._domainkey.{APEX}")] == "missing"
         # Coming back is not the host working.
         assert body["domains"][0]["status"] == "pending"
-        assert [e["action"] for e in audit.entries] == [
+        assert [e["action"] for e in recording_audit.entries] == [
             AuditAction.PRACTICE_DOMAIN_CONNECT_RETURNED,
             AuditAction.PRACTICE_DOMAIN_OWNERSHIP_CONFIRMED,
         ]
-        assert audit.entries[0]["changes"] == {"domain": APEX}
+        assert recording_audit.entries[0]["changes"] == {"domain": APEX}
 
     def test_passes_on_the_providers_error(
         self, client: TestClient, repo: InMemoryPracticeDomainRepository
@@ -451,12 +443,12 @@ class TestReturn:
 
     @pytest.mark.parametrize("state", ["not-a-state", "x.y"])
     def test_refuses_a_state_it_did_not_issue(
-        self, client: TestClient, audit: _RecordingAudit, state: str
+        self, client: TestClient, recording_audit: RecordingAudit, state: str
     ) -> None:
         response = client.post(f"{URL}/return", json={"state": state})
         assert response.status_code == 422
         assert response.json()["error"]["code"] == "DOMAIN_CONNECT_STATE"
-        assert audit.entries == []
+        assert recording_audit.entries == []
 
     def test_refuses_another_practices_state(self, client: TestClient) -> None:
         response = client.post(f"{URL}/return", json={"state": self._state("practice-2")})

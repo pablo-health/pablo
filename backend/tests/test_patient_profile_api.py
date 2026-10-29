@@ -52,6 +52,8 @@ from fastapi.testclient import TestClient
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from tests.audit_fakes import RecordingAudit
+
 TENANT = "practice_abc123"
 SIGNING_KEY = "profile-route-test-key-not-a-real-secret"
 PROFILE = "/api/patient/profile"
@@ -90,23 +92,6 @@ class _StubResolver:
             auth_strength=strength,
             session_id="session-handle",
         )
-
-
-class _RecordingAudit:
-    def __init__(self) -> None:
-        self.actions: list[str] = []
-        self.changes: list[dict[str, Any]] = []
-
-    def log_patient_principal_action(self, action: Any, *_args: Any, **kwargs: Any) -> None:
-        self.actions.append(str(action))
-        self.changes.append(kwargs.get("changes") or {})
-
-    def changes_for(self, action: AuditAction) -> list[dict[str, Any]]:
-        return [
-            payload
-            for name, payload in zip(self.actions, self.changes, strict=True)
-            if action.value in name
-        ]
 
 
 def _chart(patient_id: str, **overrides: Any) -> Patient:
@@ -154,14 +139,9 @@ def patients() -> InMemoryPatientRepository:
 
 
 @pytest.fixture
-def audit() -> _RecordingAudit:
-    return _RecordingAudit()
-
-
-@pytest.fixture
 def app(
     patients: InMemoryPatientRepository,
-    audit: _RecordingAudit,
+    recording_audit: RecordingAudit,
     monkeypatch: pytest.MonkeyPatch,
 ) -> FastAPI:
     application = FastAPI()
@@ -172,7 +152,7 @@ def app(
     registry.register(_StubResolver())
     application.dependency_overrides[get_patient_resolver_registry] = lambda: registry
     application.dependency_overrides[get_patient_repository] = lambda: patients
-    application.dependency_overrides[get_audit_service] = lambda: audit
+    application.dependency_overrides[get_audit_service] = lambda: recording_audit
 
     import sys  # noqa: PLC0415
 
@@ -272,11 +252,11 @@ class TestReadingTheProfile:
 
         assert response.status_code == 404
 
-    def test_the_read_is_audited(self, client: TestClient, audit: _RecordingAudit) -> None:
+    def test_the_read_is_audited(self, client: TestClient, recording_audit: RecordingAudit) -> None:
         """Demographics are the chart, so opening them is a read of the record."""
         client.get(PROFILE, headers=_auth(TOKEN_A))
 
-        assert AuditAction.PATIENT_VIEWED.value in " ".join(audit.actions)
+        assert AuditAction.PATIENT_VIEWED.value in " ".join(recording_audit.actions)
 
 
 class TestWritingContactDetails:
@@ -317,15 +297,15 @@ class TestWritingContactDetails:
         assert body["first_name"] == "Ada"
 
     def test_writing_nothing_is_a_valid_no_op(
-        self, client: TestClient, audit: _RecordingAudit
+        self, client: TestClient, recording_audit: RecordingAudit
     ) -> None:
         response = client.patch(PROFILE, headers=_auth(TOKEN_A), json={})
 
         assert response.status_code == 200
-        assert audit.changes_for(AuditAction.PATIENT_PROFILE_UPDATED) == []
+        assert recording_audit.changes_for(AuditAction.PATIENT_PROFILE_UPDATED) == []
 
     def test_writing_the_same_value_is_not_a_change(
-        self, client: TestClient, audit: _RecordingAudit
+        self, client: TestClient, recording_audit: RecordingAudit
     ) -> None:
         """A form that resubmits unchanged fields must not fill the log.
 
@@ -334,8 +314,8 @@ class TestWritingContactDetails:
         """
         client.patch(PROFILE, headers=_auth(TOKEN_A), json={"email": "ada@example.test"})
 
-        assert audit.changes_for(AuditAction.PATIENT_PROFILE_UPDATED) == []
-        assert audit.changes_for(AuditAction.PATIENT_PROFILE_CONTACT_CHANGED) == []
+        assert recording_audit.changes_for(AuditAction.PATIENT_PROFILE_UPDATED) == []
+        assert recording_audit.changes_for(AuditAction.PATIENT_PROFILE_CONTACT_CHANGED) == []
 
     def test_a_single_factor_principal_is_refused(self, client: TestClient) -> None:
         response = client.patch(PROFILE, headers=_auth(TOKEN_A_WEAK), json={"city": "Brooklyn"})
@@ -449,31 +429,31 @@ class TestTwoPatientsCannotReachEachOther:
 
 class TestTheAuditPayloadCarriesNoValues:
     def test_a_profile_write_records_field_names_only(
-        self, client: TestClient, audit: _RecordingAudit
+        self, client: TestClient, recording_audit: RecordingAudit
     ) -> None:
         """An address is PHI-adjacent and already lives on the row."""
         client.patch(
             PROFILE, headers=_auth(TOKEN_A), json={"city": "Brooklyn", "postal_code": "11201"}
         )
 
-        assert audit.changes_for(AuditAction.PATIENT_PROFILE_UPDATED) == [
+        assert recording_audit.changes_for(AuditAction.PATIENT_PROFILE_UPDATED) == [
             {"fields": ["city", "postal_code"]}
         ]
 
     def test_an_address_change_is_not_a_contact_channel_change(
-        self, client: TestClient, audit: _RecordingAudit
+        self, client: TestClient, recording_audit: RecordingAudit
     ) -> None:
         """The second event is about where a CREDENTIAL would be sent."""
         client.patch(PROFILE, headers=_auth(TOKEN_A), json={"city": "Brooklyn"})
 
-        assert audit.changes_for(AuditAction.PATIENT_PROFILE_CONTACT_CHANGED) == []
+        assert recording_audit.changes_for(AuditAction.PATIENT_PROFILE_CONTACT_CHANGED) == []
 
     def test_an_email_change_records_hashed_old_and_new(
-        self, client: TestClient, audit: _RecordingAudit
+        self, client: TestClient, recording_audit: RecordingAudit
     ) -> None:
         client.patch(PROFILE, headers=_auth(TOKEN_A), json={"email": "ada@newmail.test"})
 
-        recorded = audit.changes_for(AuditAction.PATIENT_PROFILE_CONTACT_CHANGED)
+        recorded = recording_audit.changes_for(AuditAction.PATIENT_PROFILE_CONTACT_CHANGED)
         assert len(recorded) == 1
         handles = recorded[0]["email"]
         assert handles["old"]
@@ -481,7 +461,7 @@ class TestTheAuditPayloadCarriesNoValues:
         assert handles["old"] != handles["new"]
 
     def test_neither_address_appears_in_the_payload(
-        self, client: TestClient, audit: _RecordingAudit
+        self, client: TestClient, recording_audit: RecordingAudit
     ) -> None:
         """The whole point of hashing them.
 
@@ -490,39 +470,39 @@ class TestTheAuditPayloadCarriesNoValues:
         """
         client.patch(PROFILE, headers=_auth(TOKEN_A), json={"email": "ada@newmail.test"})
 
-        payload = str(audit.changes_for(AuditAction.PATIENT_PROFILE_CONTACT_CHANGED))
+        payload = str(recording_audit.changes_for(AuditAction.PATIENT_PROFILE_CONTACT_CHANGED))
         assert "ada@newmail.test" not in payload
         assert "ada@example.test" not in payload
 
     def test_a_phone_change_is_recorded_too(
-        self, client: TestClient, audit: _RecordingAudit
+        self, client: TestClient, recording_audit: RecordingAudit
     ) -> None:
         client.patch(PROFILE, headers=_auth(TOKEN_A), json={"phone": "+15005550009"})
 
-        recorded = audit.changes_for(AuditAction.PATIENT_PROFILE_CONTACT_CHANGED)
+        recorded = recording_audit.changes_for(AuditAction.PATIENT_PROFILE_CONTACT_CHANGED)
         assert list(recorded[0]) == ["phone"]
         assert "5550009" not in str(recorded[0])
 
     def test_clearing_a_channel_records_a_null_new_handle(
-        self, client: TestClient, audit: _RecordingAudit
+        self, client: TestClient, recording_audit: RecordingAudit
     ) -> None:
         """That a value was CLEARED is not a secret, and hashing the empty
         string would produce one constant that gave it away anyway."""
         client.patch(PROFILE, headers=_auth(TOKEN_A), json={"phone": None})
 
-        recorded = audit.changes_for(AuditAction.PATIENT_PROFILE_CONTACT_CHANGED)
+        recorded = recording_audit.changes_for(AuditAction.PATIENT_PROFILE_CONTACT_CHANGED)
         assert recorded[0]["phone"]["new"] is None
         assert recorded[0]["phone"]["old"] is not None
 
     def test_both_rows_are_written_for_one_contact_change(
-        self, client: TestClient, audit: _RecordingAudit
+        self, client: TestClient, recording_audit: RecordingAudit
     ) -> None:
         """They answer different questions, so one does not stand in for the
         other: what the patient edited, and that a delivery channel moved."""
         client.patch(PROFILE, headers=_auth(TOKEN_A), json={"email": "ada@newmail.test"})
 
-        assert len(audit.changes_for(AuditAction.PATIENT_PROFILE_UPDATED)) == 1
-        assert len(audit.changes_for(AuditAction.PATIENT_PROFILE_CONTACT_CHANGED)) == 1
+        assert len(recording_audit.changes_for(AuditAction.PATIENT_PROFILE_UPDATED)) == 1
+        assert len(recording_audit.changes_for(AuditAction.PATIENT_PROFILE_CONTACT_CHANGED)) == 1
 
 
 def test_a_changed_email_is_what_recovery_would_find(

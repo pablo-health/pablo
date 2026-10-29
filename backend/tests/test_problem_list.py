@@ -9,7 +9,6 @@ from datetime import UTC, datetime
 
 import pytest
 from app.main import app
-from app.models import Patient
 from app.problems.models import (
     derived_diagnosis,
     normalize_icd10_code,
@@ -23,18 +22,7 @@ from app.routes.patient_problems import get_problem_diagnostic_repository
 from fastapi.testclient import TestClient  # noqa: TC002 — runtime fixture type
 from pydantic import ValidationError
 
-
-def _seed_patient(repo: InMemoryPatientRepository, user_id: str) -> Patient:
-    now = datetime.now(UTC)
-    patient = Patient(
-        id=str(uuid.uuid4()),
-        first_name="Sam",
-        last_name="Sample",
-        created_at=now,
-        updated_at=now,
-    )
-    return repo.create(patient, user_id)
-
+from tests.patient_seeds import seed_patient
 
 # --- Code shape and free text ---------------------------------------------------
 
@@ -156,7 +144,7 @@ def test_api_add_list_edit_reorder_remove(
     mock_user_id: str,
     assessments: InMemoryDiagnosticAssessmentRepository,
 ) -> None:
-    patient = _seed_patient(mock_repo, mock_user_id)
+    patient = seed_patient(mock_repo, mock_user_id)
     base = f"/api/patients/{patient.id}/problems"
 
     assert client.get(base).json() == {"data": [], "total": 0}
@@ -212,7 +200,7 @@ def test_api_links_the_diagnostic_worksheet_to_the_new_problem(
     mock_user_id: str,
     assessments: InMemoryDiagnosticAssessmentRepository,
 ) -> None:
-    patient = _seed_patient(mock_repo, mock_user_id)
+    patient = seed_patient(mock_repo, mock_user_id)
     now = datetime.now(UTC)
     assessments.add(
         {

@@ -6,12 +6,11 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import pytest
 from app.main import app
-from app.models import AuditAction, Patient
+from app.models import AuditAction
 from app.preferences.dependencies import get_preference_repository
 from app.preferences.kinds import (
     AVAILABILITY,
@@ -34,6 +33,8 @@ from app.preferences.service import (
 )
 from app.repositories import InMemoryPatientPreferenceRepository, InMemoryPatientRepository
 from pydantic import BaseModel, ConfigDict
+
+from tests.patient_seeds import seed_patient
 
 from .conftest import audited_entries
 
@@ -239,18 +240,6 @@ def api(client: TestClient, repo: InMemoryPatientPreferenceRepository) -> TestCl
     return client
 
 
-def _seed_patient(repo: InMemoryPatientRepository, user_id: str) -> Patient:
-    now = datetime.now(UTC)
-    patient = Patient(
-        id=str(uuid.uuid4()),
-        first_name="Maya",
-        last_name="Sample",
-        created_at=now,
-        updated_at=now,
-    )
-    return repo.create(patient, user_id)
-
-
 def test_api_add_list_edit_retire(
     api: TestClient,
     mock_repo: InMemoryPatientRepository,
@@ -259,7 +248,7 @@ def test_api_add_list_edit_retire(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.DEBUG)
-    patient = _seed_patient(mock_repo, mock_user_id)
+    patient = seed_patient(mock_repo, mock_user_id)
     base = f"/api/patients/{patient.id}/preferences"
 
     assert api.get(base).json() == {"data": [], "total": 0}
@@ -323,7 +312,7 @@ def test_api_lists_a_registered_kind_with_its_summary(
     mock_user_id: str,
     interpreter_kind: str,
 ) -> None:
-    patient = _seed_patient(mock_repo, mock_user_id)
+    patient = seed_patient(mock_repo, mock_user_id)
     base = f"/api/patients/{patient.id}/preferences"
     added = api.post(base, json={"kind": interpreter_kind, "value": {"language": "Spanish"}})
     assert added.status_code == 201, added.text

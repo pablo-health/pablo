@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label"
 import { useAiConsent, useRecordAiConsent } from "@/hooks/useAiConsent"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import type { PeopleWords } from "@/lib/peopleTerm"
+import { formatCivilDate, MEDIUM_DATE, todayCivilDate } from "@/lib/dates"
 import type {
   AiConsentDecision,
   AiConsentEntry,
@@ -26,22 +27,11 @@ import type {
 
 /** A civil date (YYYY-MM-DD) as "Oct 6, 2026". Parsed as a local date so a
  * clinician west of UTC does not see the day before. */
-export function formatConsentDate(isoDate: string): string {
-  const [year, month, day] = isoDate.split("-").map(Number)
-  return new Date(year, month - 1, day).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  })
+export function formatConsentDate(civil: string): string {
+  return formatCivilDate(civil, MEDIUM_DATE, "en-US")
 }
 
 /** Today on the clinician's own calendar, as YYYY-MM-DD. */
-function localToday(): string {
-  const now = new Date()
-  const pad = (n: number) => String(n).padStart(2, "0")
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
-}
-
 const DECISION_WORD: Record<AiConsentDecision, string> = {
   consented: "agreed",
   declined: "declined",
@@ -120,7 +110,7 @@ export function AiConsentDialog({
   modality: sessionModality,
 }: AiConsentDialogProps) {
   const [decision, setDecision] = useState<AiConsentDecision | null>(null)
-  const [effectiveOn, setEffectiveOn] = useState(localToday)
+  const [effectiveOn, setEffectiveOn] = useState(todayCivilDate)
   const [modality, setModality] = useState<AiConsentModality | undefined>(sessionModality)
   const [location, setLocation] = useState("")
   const [giver, setGiver] = useState<AiConsentGiver>("client")
@@ -131,7 +121,7 @@ export function AiConsentDialog({
   function handleOpenChange(next: boolean) {
     if (!next) {
       setDecision(null)
-      setEffectiveOn(localToday())
+      setEffectiveOn(todayCivilDate())
       setModality(sessionModality)
       setLocation("")
       setGiver("client")
@@ -195,7 +185,7 @@ export function AiConsentDialog({
               id="ai-consent-date"
               type="date"
               value={effectiveOn}
-              max={localToday()}
+              max={todayCivilDate()}
               onChange={(e) => setEffectiveOn(e.target.value)}
             />
           </div>
