@@ -104,12 +104,12 @@ HIPAA requires audit trails for PHI access.
 |---|---|---|
 | Application logs | Cloud Run logs to Cloud Logging | Same |
 | Data access logs | You enable Cloud Audit Logs | Pre-configured |
-| Log retention | You configure retention policy | We manage it |
+| Log retention | `install.sh` keeps audit events 6 years in a bucket whose retention policy it locks (`--no-lock-audit-retention` leaves it unlocked, for an evaluation project only) | We manage it |
 | Log immutability | `audit_logs` ships **append-only** — database triggers block the app role from altering, deleting, or `TRUNCATE`-ing audit rows | Enforced by privilege (the app role is a non-owner with `UPDATE`/`DELETE`/`TRUNCATE` revoked; separate maintenance role) |
 
 **What you need to do:**
 1. Enable Data Access audit logs for Cloud SQL in GCP Console
-2. Set a log retention period (HIPAA requires minimum 6 years)
+2. If you did not use `install.sh`, set a log retention period (HIPAA requires minimum 6 years) and lock it: `scripts/setup-hipaa-audit-sink.sh <project-id>`
 3. Restrict access to logs to authorized personnel
 4. Audit-log immutability works out of the box — the append-only triggers are in the tenant schema template. For defense-in-depth you can also `REVOKE UPDATE, DELETE, TRUNCATE ON <schema>.audit_logs FROM <your app role>` (see `docs/HIPAA_AUDIT_LOGS.md` → Integrity). This is what the managed build does as its primary control.
 
@@ -181,7 +181,7 @@ We will never spam you or share your information. This is solely for your protec
 - [ ] Verified HTTPS enforcement is active
 - [ ] Generated and stored encryption keys in Secret Manager
 - [ ] Enabled Cloud Audit Logs for Cloud SQL
-- [ ] Set log retention to 6+ years
+- [ ] Audit log retention of 6+ years is set and locked (`install.sh` does this)
 - [ ] Enabled Cloud SQL automated backups and point-in-time recovery
 - [ ] Tested restore from backup
 - [ ] Documented your disaster recovery plan
