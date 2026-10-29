@@ -719,7 +719,7 @@ def _place_hold(
         )
     except InvalidAppointmentError as e:
         raise BadRequestError(str(e)) from e
-    except IntegrityError as e:
+    except (AppointmentConflictError, IntegrityError) as e:
         raise ConflictError(_SLOT_NO_LONGER_AVAILABLE) from e
 
     audit.log_appointment_action(
@@ -945,11 +945,12 @@ def create_public_booking(
         )
     except InvalidAppointmentError as e:
         raise BadRequestError(str(e)) from e
-    except IntegrityError as e:
+    except (AppointmentConflictError, IntegrityError) as e:
         # The check above and this insert are two separate statements — a
         # second booking for the same slot can slip in between them. The
-        # unique active-slot index is the backstop; this is where its
-        # violation surfaces as the same "slot taken" response.
+        # no-overlap constraints are the backstop, and the repository raises
+        # their violation as the same conflict the check does; this is where
+        # either surfaces as the same "slot taken" response.
         raise ConflictError(_SLOT_NO_LONGER_AVAILABLE) from e
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_CREATED,

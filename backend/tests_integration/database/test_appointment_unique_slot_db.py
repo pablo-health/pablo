@@ -6,9 +6,11 @@
 ``test_appointment_overlap_db.py``) is a check-then-insert query — it
 can't stop two concurrent requests from both passing the check before
 either commits. ``uq_appointments_user_start_active`` is the DB-level
-backstop: these tests prove the index actually rejects a genuine
-duplicate insert, and does so exactly on the rows the predicate says it
-should.
+backstop for the shared-start case (``ex_appointments_user_time_active``
+covers every other overlap — see ``test_appointment_no_overlap_db.py``):
+these tests prove a genuine duplicate insert is rejected, surfaces as the
+same ``AppointmentConflictError`` the check raises, and does so exactly on
+the rows the predicate says it should.
 
 Run: ``make test-integration``.
 """
@@ -27,9 +29,9 @@ from app.db import (
     set_tenant_schema,
 )
 from app.repositories.postgres.appointment import PostgresAppointmentRepository
+from app.scheduling_engine.exceptions import AppointmentConflictError
 from app.scheduling_engine.models.appointment import Appointment
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from tests_integration.database.patient_rows import seed_patient_row
@@ -122,7 +124,7 @@ def test_second_non_cancelled_appointment_at_same_slot_raises(session: Session) 
     )
     session.commit()
 
-    with pytest.raises(IntegrityError):
+    with pytest.raises(AppointmentConflictError):
         repo.create(
             _make_appointment(
                 user_id=user_id,
@@ -150,7 +152,7 @@ def test_pending_hold_blocks_the_same_slot_too(session: Session) -> None:
     )
     session.commit()
 
-    with pytest.raises(IntegrityError):
+    with pytest.raises(AppointmentConflictError):
         repo.create(
             _make_appointment(
                 user_id=user_id,
