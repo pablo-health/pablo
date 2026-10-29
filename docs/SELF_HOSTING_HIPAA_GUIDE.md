@@ -52,7 +52,6 @@ These are not oversights to hide; they are the lines where your work starts.
 | Not done | Where it is covered |
 |---|---|
 | Alerting of any kind: no email when a backup fails, the disk fills or the site goes down | [Operations: what to watch](self-hosting/operations.md#what-to-watch) |
-| Locking the audit bucket's retention policy. It is set, and can still be shortened by a project owner until you lock it | [Post-install checklist](#post-install-checklist) |
 | Scheduled permanent deletion of records. Deleting a client hides the record; nothing removes it later | [Data retention and deletion](#data-retention-and-deletion) |
 | Outbound email. Portal invitations and booking confirmations stay off until you add an SMTP provider | [BAA chain](#business-associate-agreements) |
 | Customer-managed encryption keys. Disks and buckets use Google-managed keys | [Encryption](#encryption) |
@@ -77,7 +76,7 @@ practice. "Google" means what the Google Cloud BAA covers once you accept it.
 | Automatic logoff | 15 minutes idle, enforced by the backend and fail-closed | — | — |
 | Workforce access changes | Admin can disable a user (`PATCH /api/admin/users/{id}/disable`) | Remove leavers the same day, in Pablo and in Identity Platform | — |
 | Audit of PHI access | Every PHI route writes to `audit_logs`; the table is append-only by trigger | Read it; the monthly review is yours to act on | — |
-| Audit retention (6 years) | Mirror to the retention bucket, 2255 days | Lock the bucket; keep the VM's database too | — |
+| Audit retention (6 years) | Mirror to the retention bucket, 2255 days, retention locked | Keep the VM's database too | — |
 | Log review | Daily and monthly review reports to the compliance bucket | Read them; investigate HIGH findings | — |
 | Backups | Continuous, with a monthly restore drill | Check the drill ran; know the restore steps | — |
 | Disaster recovery | Data disk outlives the VM; images are tagged for rollback | Write down your recovery plan and test it yearly | — |
@@ -99,14 +98,7 @@ Do these once the installer prints "Pablo is running".
 
 1. **Sign in and enroll your authenticator app.** The first sign-in asks
    for it.
-2. **Lock the audit bucket.** The installer sets retention but does not
-   lock it. Locking is permanent for the retention period. From Cloud Shell:
-
-   ```bash
-   scripts/setup-hipaa-audit-sink.sh <project-id> --lock
-   ```
-
-3. **Prove a restore works, today.** The drill also runs monthly.
+2. **Prove a restore works, today.** The drill also runs monthly.
 
    ```bash
    gcloud compute ssh pablo --zone=<zone> --tunnel-through-iap
@@ -114,20 +106,20 @@ Do these once the installer prints "Pablo is running".
    sudo pablo-backup restore-drill  # restores the latest backup into a scratch copy
    ```
 
-4. **Decide how you will find out when something breaks.** Nothing emails
+3. **Decide how you will find out when something breaks.** Nothing emails
    you by default. See [what to watch](self-hosting/operations.md#what-to-watch).
-5. **Write your recovery steps down** where someone other than you can
+4. **Write your recovery steps down** where someone other than you can
    find them. [Operations](self-hosting/operations.md#restoring) has the
    outline.
-6. **Record your BAAs**: Google Cloud (date accepted), AssemblyAI if used,
+5. **Record your BAAs**: Google Cloud (date accepted), AssemblyAI if used,
    your email provider if used. `docs/compliance/baa-manifest.yaml` is a
    starting list; fill in the dates for your copy.
-7. **Confirm Vertex AI coverage with Google** for the global endpoint and
+6. **Confirm Vertex AI coverage with Google** for the global endpoint and
    the preview model (see below).
-8. **Register the deployment** at [pablo.health/register](https://pablo.health/register)
+7. **Register the deployment** at [pablo.health/register](https://pablo.health/register)
    so you hear about security releases. Watching the GitHub repository's
    releases does the same.
-9. **Put the paper in place**: risk analysis, policies, training, incident
+8. **Put the paper in place**: risk analysis, policies, training, incident
    response. Pablo gives you evidence for some of them; it does not write
    them.
 
@@ -204,7 +196,7 @@ Every route that touches a client's record writes a row to that practice's
 - **Retention.** Rows carry a 7-year `expires_at`. The job that would delete
   expired rows is not scheduled on the VM, so rows stay until you decide
   otherwise. The bucket keeps its copy 2255 days (about 6 years and 2
-  months), locked only once you lock it.
+  months); the installer locks that policy, so it cannot be shortened.
 - **Your own view.** Clinicians can read their own audit log in the app,
   and see who acted on a client's record.
 - **Postgres-level logging.** `pgaudit` is loaded and records role and DDL

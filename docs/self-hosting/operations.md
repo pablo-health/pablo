@@ -131,22 +131,24 @@ build it does nothing without a hosted component). See
 
 ## The audit sink
 
-Source: `scripts/setup-hipaa-audit-sink.sh`, called by `install.sh` without
-`--lock`; `backend/app/services/audit_cloud_logging.py`.
+Source: `scripts/setup-hipaa-audit-sink.sh`, called by `install.sh`;
+`backend/app/services/audit_cloud_logging.py`.
 
 | Piece | Value |
 |---|---|
 | Bucket | `gs://<project>-hipaa-audit-6y`, Archive class, location `us` |
-| Retention | 2255 days (6 years plus a 60-day margin). **Set, not locked**, until you run the script with `--lock` |
+| Retention | 2255 days (6 years plus a 60-day margin), **locked** by the installer once it has verified the period on the bucket |
 | Sink 1 | Google's admin activity log: IAM changes, VM changes, SSH through IAP, secret access. Google keeps these only 400 days on its own |
 | Sink 2 | Pablo's `pablo.audit_events`: a copy of every `audit_logs` row, written by the backend with the Cloud Logging client as each row is saved |
 
-Lock it once you are satisfied the install is the one you will keep.
-Locking cannot be undone for the retention period, and the bucket cannot be
-deleted while it holds objects under retention:
+The lock cannot be undone for the retention period, and the bucket cannot
+be deleted while it holds objects under retention; the installer's summary
+says so before it creates anything. A run with `--no-lock-audit-retention`
+leaves the policy unlocked, for an evaluation project you will throw away.
+To lock such a project later:
 
 ```bash
-scripts/setup-hipaa-audit-sink.sh <project-id> --lock
+scripts/setup-hipaa-audit-sink.sh <project-id>
 ```
 
 Check: `gsutil retention get gs://<project>-hipaa-audit-6y` and

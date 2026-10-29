@@ -32,7 +32,6 @@ one-off test, and run `sudo pablo-update` to apply. Definitions:
 | `GOOGLE_GENAI_USE_VERTEXAI`, `VERTEX_REGION` | `true`, `global` | Notes go to Gemini through Vertex AI in your project | Confirm global-endpoint coverage with Google, or set a US region |
 | `TRANSCRIPTION_ENABLED`, `ASSEMBLYAI_API_KEY` | from the installer's answer | Session audio to AssemblyAI | Needs your BAA with AssemblyAI |
 | `DEBUG` | unset (`false`) | Interactive tracebacks | Refused outside `development` |
-| `ENFORCE_HTTPS`, `JWT_SECRET_KEY` | written by `env.sh` | Not read by the current backend (`Settings` ignores unknown variables). HTTPS is governed by `ENVIRONMENT` | — |
 
 ## Frontend settings
 
@@ -58,7 +57,6 @@ account can read them; nothing else needs to.
 | `FRONTEND_FORWARD_SECRET` | Both |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google sign-in and calendar, if chosen |
 | `pablo-assemblyai-api-key` | Transcription, if chosen |
-| `JWT_SECRET_KEY` | Not read by the current backend |
 
 Access to each secret is in Google's admin activity log, which the audit
 sink keeps.
