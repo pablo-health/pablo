@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, Mock, patch
 
+import jwt
 import pytest
 from app.auth.service import (
     TenantContext,
@@ -156,6 +157,64 @@ class TestVerifyFirebaseToken:
 
         assert "USER_NOT_FOUND" in caplog.text
         assert "SECRET" not in caplog.text
+
+    @staticmethod
+    def _unsigned(claims: dict[str, Any]) -> str:
+        return jwt.encode(claims, "test-signing-key-not-a-secret-32b", algorithm="HS256")
+
+    def test_service_account_token_rejection_logs_at_debug(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Cloud Scheduler / Cloud Tasks send Google service-account ID tokens;
+        # the middleware offers them to Firebase first, which must reject them
+        # without a WARNING per scheduler tick.
+        token = self._unsigned(
+            {
+                "iss": "https://accounts.google.com",
+                "email": "scheduler@example-project.iam.gserviceaccount.com",
+                "aud": "https://app.example.test",
+            }
+        )
+        with patch(VERIFY_PATCH) as mock_verify:
+            mock_verify.side_effect = firebase_auth.InvalidIdTokenError("incorrect aud")
+            with caplog.at_level(logging.DEBUG), pytest.raises(HTTPException) as exc_info:
+                verify_firebase_token(token)
+
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        rejections = [r for r in caplog.records if "INVALID_TOKEN" in r.getMessage()]
+        assert [r.levelno for r in rejections] == [logging.DEBUG]
+
+    @pytest.mark.parametrize(
+        "token_factory",
+        [
+            pytest.param(lambda: "not-a-jwt", id="malformed"),
+            pytest.param(
+                lambda: TestVerifyFirebaseToken._unsigned(
+                    {"iss": "https://accounts.google.com", "email": "someone@gmail.com"}
+                ),
+                id="google_user_not_service_account",
+            ),
+            pytest.param(
+                lambda: TestVerifyFirebaseToken._unsigned(
+                    {
+                        "iss": "https://securetoken.google.com/other-project",
+                        "email": "x@example-project.iam.gserviceaccount.com",
+                    }
+                ),
+                id="firebase_issuer",
+            ),
+        ],
+    )
+    def test_other_invalid_tokens_still_log_at_warning(
+        self, caplog: pytest.LogCaptureFixture, token_factory: Any
+    ) -> None:
+        with patch(VERIFY_PATCH) as mock_verify:
+            mock_verify.side_effect = firebase_auth.InvalidIdTokenError("bad")
+            with caplog.at_level(logging.DEBUG), pytest.raises(HTTPException):
+                verify_firebase_token(token_factory())
+
+        rejections = [r for r in caplog.records if "INVALID_TOKEN" in r.getMessage()]
+        assert [r.levelno for r in rejections] == [logging.WARNING]
 
 
 class TestTokenCaching:
