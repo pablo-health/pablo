@@ -9,7 +9,7 @@ AI-powered practice software for therapists — session notes drafted from trans
 ### Tech Stack
 | Layer | Technology |
 |-------|-----------|
-| Frontend | Next.js 15, TypeScript, Tailwind CSS, shadcn/ui |
+| Frontend | Next.js 16, TypeScript, Tailwind CSS, shadcn/ui |
 | Backend | FastAPI, Python 3.13, PostgreSQL (Cloud SQL) |
 | Infra | Docker, Google Cloud Run, GitHub Actions CI/CD |
 
