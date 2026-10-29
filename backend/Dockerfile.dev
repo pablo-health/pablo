@@ -31,7 +31,7 @@ COPY pyproject.toml poetry.lock ./
 # Install all dependencies (including the dev group) into the system
 # python. --no-root: the app is bind-mounted at runtime, not installed.
 RUN poetry config virtualenvs.create false \
-    && poetry install --no-interaction --no-ansi --no-root
+    && poetry install --no-interaction --no-ansi --no-root --with pentest
 
 # Application code (shadowed by the docker-compose bind mount at runtime,
 # but present for non-compose runs).

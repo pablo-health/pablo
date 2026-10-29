@@ -127,7 +127,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.classify.outputs.substantive != 'false'
-        run: poetry install --no-interaction --no-ansi
+        run: poetry install --no-interaction --no-ansi --with pentest
 
       - name: Audit Python dependencies
         if: steps.classify.outputs.substantive != 'false'
@@ -207,7 +207,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.classify.outputs.substantive != 'false'
-        run: poetry install --no-interaction --no-ansi
+        run: poetry install --no-interaction --no-ansi --with pentest
 
       # Postgres comes up via testcontainers — see
       # backend/tests_integration/conftest.py. Docker is preinstalled on
@@ -301,7 +301,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.classify.outputs.substantive != 'false'
-        run: poetry install --no-interaction --no-ansi
+        run: poetry install --no-interaction --no-ansi --with pentest
 
       - name: Cache Postgres test image
         if: steps.classify.outputs.substantive != 'false'

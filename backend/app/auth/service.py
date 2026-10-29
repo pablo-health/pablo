@@ -4,7 +4,6 @@
 
 import contextlib
 import logging
-import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -31,6 +30,7 @@ from ..repositories import (
     get_identity_repository,
     get_user_repository,
 )
+from ..reserved_identities import E2E_EMAIL_PATTERN, PENTEST_EMAIL_PATTERN
 from ..settings import Settings, get_settings
 from ..utcnow import utc_now
 from ..version_check import check_client_version
@@ -50,11 +50,6 @@ from .route_access import (
 
 logger = logging.getLogger(__name__)
 
-# Reserved E2E test-user prefix. Mirrors PENTEST_EMAIL_PATTERN (see
-# jobs/pentest_identity.py). The bypass that honors this pattern is
-# gated on settings.is_prod_project in both auth/service.py and
-# routes/ext_auth.py.
-E2E_EMAIL_PATTERN = re.compile(r"^e2etest-[0-9a-f]{8}@pablo\.health$")
 security = HTTPBearer()
 
 
@@ -889,8 +884,6 @@ def _resolve_user(
         # only (Firebase signup doesn't verify email — an attacker could
         # otherwise mint a token for an arbitrary e2etest-<hex>@pablo.health
         # address and ride this path into prod).
-        from ..jobs.pentest_identity import PENTEST_EMAIL_PATTERN
-
         settings = get_settings()
         is_prod_project = settings.is_prod_project
         is_pentest_user = not is_prod_project and bool(email and PENTEST_EMAIL_PATTERN.match(email))

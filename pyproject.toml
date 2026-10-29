@@ -109,9 +109,6 @@ google-api-python-client = "^2.0"
 # never used.
 anthropic = {version = "^0.116.0", extras = ["vertex"]}
 
-# TOTP generation — pentest identity bootstrap (backend/app/jobs/pentest_identity.py)
-# creates ephemeral MFA-enrolled Firebase users for the automated pentest.
-pyotp = "^2.10.0"
 opentelemetry-sdk = "^1.42.1"
 opentelemetry-exporter-otlp-proto-http = "^1.42.1"
 openinference-semantic-conventions = "^0.1.30"
@@ -165,6 +162,18 @@ optional = true
 braintrust = ">=0.27.0"
 openai = ">=2.45.0"
 pyyaml = ">=6.0"
+
+
+# Automated pentest runner (backend/app/jobs/pentest_*.py). TOTP generation for
+# the ephemeral MFA-enrolled Firebase users pentest_identity.py creates each
+# run. Optional so the product image (``--only main``) does not ship it; the
+# pentest image installs it with pip directly (backend/Dockerfile.pentest).
+# Enable with: poetry install --with pentest
+[tool.poetry.group.pentest]
+optional = true
+
+[tool.poetry.group.pentest.dependencies]
+pyotp = "^2.10.0"
 
 
 [tool.poetry.group.dev.dependencies]
