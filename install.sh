@@ -33,6 +33,10 @@
 #   --google-signin     Turn on Google sign-in and calendar (one console step)
 #   --skip-google-signin  Email and password sign-in only (the default)
 #   --no-transcription  Leave transcription off; no AssemblyAI key needed
+#   --no-lock-audit-retention
+#                       Leave the audit log bucket's 6-year retention unlocked.
+#                       Only for an evaluation project you will throw away:
+#                       locked is what HIPAA asks for, and the lock is permanent.
 #   --yes               Skip the final confirmation
 #   --target local      Run on this machine (Docker Desktop and Tailscale
 #                       Funnel) instead of a VM. For development and demos,
@@ -84,6 +88,7 @@ DEPLOY_REF=""
 BAA_ACCEPTED=false
 GOOGLE_SIGNIN=""
 NO_TRANSCRIPTION=false
+LOCK_AUDIT_RETENTION=true
 ASSUME_YES=false
 TARGET=vm
 
@@ -104,6 +109,7 @@ while [ $# -gt 0 ]; do
         --yes) ASSUME_YES=true; shift ;;
         --target) TARGET="$2"; shift 2 ;;
         --no-transcription) NO_TRANSCRIPTION=true; shift ;;
+        --no-lock-audit-retention) LOCK_AUDIT_RETENTION=false; shift ;;
         -h | --help) usage ;;
         *) echo "Unknown option: $1" >&2; usage 2 ;;
     esac
@@ -192,6 +198,11 @@ else
     echo "  Server    ${MACHINE_TYPE} in ${ZONE}, ${DATA_DISK_GB} GB for records, backed up daily"
 fi
 echo "  Release   ${PABLO_VERSION}${DEPLOY_REF:+ (deploy files at ${DEPLOY_REF})}"
+if [ "$LOCK_AUDIT_RETENTION" = true ]; then
+    echo "  Audit log kept 6 years in a locked bucket: it cannot be shortened or deleted"
+else
+    warn "  Audit log kept 6 years, not locked (--no-lock-audit-retention): not for real records"
+fi
 if [ "$TARGET" = vm ]; then
     echo "  Cost      about \$20 a month to Google, plus AI and transcription by use"
 fi
@@ -262,7 +273,11 @@ done_ "Secrets in Secret Manager"
 
 # --- 6. Audit log and queues ---------------------------------------------------
 step "6/7  Audit log retention and task queues"
-"${REPO_ROOT}/scripts/setup-hipaa-audit-sink.sh" "$PROJECT_ID"
+# The sink script locks the bucket's retention after verifying it; locking is
+# permanent, which is why the summary above said so before anything was made.
+audit_sink_lock=""
+[ "$LOCK_AUDIT_RETENTION" = true ] || audit_sink_lock=--no-lock
+"${REPO_ROOT}/scripts/setup-hipaa-audit-sink.sh" "$PROJECT_ID" ${audit_sink_lock:+"$audit_sink_lock"}
 GCP_PROJECT_ID="$PROJECT_ID" GCP_REGION="$REGION" BACKEND_SA="$VM_SA" \
     "${REPO_ROOT}/scripts/setup-transcription-queue.sh"
 done_ "Audit sink and queues ready"

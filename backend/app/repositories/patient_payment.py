@@ -37,6 +37,22 @@ class PaymentAlreadyInFlightError(Exception):
     """
 
 
+class WriteOffExceedsBalanceError(Exception):
+    """The write-off asked for more than the client owes.
+
+    Raised by :meth:`PatientPaymentRepository.add_write_off` from the balance
+    it reads while holding the client's ledger lock — the only reading that
+    two requests cannot both have taken before either wrote. The route turns
+    it into the same 422 a too-large amount has always received.
+    """
+
+    def __init__(self, patient_id: str, *, amount_cents: int, balance_cents: int) -> None:
+        super().__init__(f"write-off of {amount_cents} exceeds balance of {balance_cents}")
+        self.patient_id = patient_id
+        self.amount_cents = amount_cents
+        self.balance_cents = balance_cents
+
+
 class PatientPaymentRepository(ABC):
     """Reads and writes for one practice's card-on-file and charge ledger."""
 
@@ -124,6 +140,21 @@ class PatientPaymentRepository(ABC):
         transfer — where ``kind`` is a collecting one and ``method`` says how
         it arrived. Those two travel together: the table refuses a collecting
         kind with no method, and a method on anything else.
+        """
+
+    @abstractmethod
+    def add_write_off(
+        self, *, patient_id: str, amount_cents: int, user_id: str, reason: str, note: str | None
+    ) -> PatientCharge:
+        """Write off part of the client's balance, and commit.
+
+        The balance is arithmetic over the ledger, not a column, so "never
+        more than the balance" is a read followed by an insert — and two
+        write-offs that both read before either wrote would together exceed
+        it. This method is the one place that pairing happens: it serializes
+        ledger writes for this client, reads the balance under that
+        serialization, and raises :class:`WriteOffExceedsBalanceError` rather
+        than write a row the balance cannot cover.
         """
 
     @abstractmethod

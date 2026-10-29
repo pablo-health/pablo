@@ -13,6 +13,7 @@ where the reasoning is, and they fail loudly when it changes.
 from __future__ import annotations
 
 import pytest
+from app import money
 from app.claims.sdk_eligibility import outcome_from_sdk
 from stedi.models import (
     CreateEligibilityCheckOutput,
@@ -127,13 +128,12 @@ class TestStatus:
 
 
 class TestMoney:
-    @pytest.mark.parametrize(("sent", "cents"), [("25", 2500), ("25.0", 2500), ("40.00", 4000)])
-    def test_a_copay_survives_whatever_precision_the_payer_sent(
-        self, sent: str, cents: int
-    ) -> None:
+    @pytest.mark.parametrize("sent", ["0.125", "1.005", "12.345", "25", "25.0", "40.00"])
+    def test_a_copay_survives_whatever_precision_the_payer_sent(self, sent: str) -> None:
+        """The half-cent cases are the ones a float would round down."""
         benefits = EligibilityCheckBenefits(co_payment=[EligibilityCheckCoPayment(amount=sent)])
 
-        assert _map(_output(benefits=benefits)).copay_cents == cents
+        assert _map(_output(benefits=benefits)).copay_cents == money.dollars_to_cents(sent)
 
     def test_coinsurance_is_shown_as_a_percentage(self) -> None:
         """The vendor sends the patient's share as a fraction."""

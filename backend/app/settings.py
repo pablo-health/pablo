@@ -2378,6 +2378,16 @@ def log_startup_posture(settings: Settings, logger: logging.Logger) -> None:
         bool(settings.ical_feed_base_url),
         bool(settings.google_calendar_base_url),
     )
+    if not settings.use_redis and not settings.is_development:
+        # Every rate-limit window lives in one process, so each replica
+        # grants the full budget again and a restart clears it. Right for a
+        # single-instance self-host, which is why this is a warning and not
+        # a refusal; wrong, silently, for anything that scales out.
+        logger.warning(
+            "Rate limits are kept in memory (USE_REDIS=false): each replica "
+            "enforces its own budget and a restart resets it. Set USE_REDIS=true "
+            "for any deployment running more than one instance."
+        )
 
 
 # Global settings instance for backwards compatibility

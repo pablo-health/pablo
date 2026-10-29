@@ -134,13 +134,6 @@ google-cloud-compute = "^1.54.0"
 google-cloud-kms = "^3.0.0"
 
 
-[tool.poetry.group.pii]
-optional = true
-
-[tool.poetry.group.pii.dependencies]
-faker = "^40.31.0"
-
-
 # Cloud SQL Python connector — optional transport for GCP-managed deployments.
 # Only needed when DB_USE_CLOUD_SQL_CONNECTOR=true.  psycopg2-binary is
 # already a core dependency so no extras are needed.
@@ -422,9 +415,6 @@ module = [
     "firebase_admin.*",
     "redis.*",
     "reportlab.*",
-    "presidio_analyzer.*",
-    "presidio_anonymizer.*",
-    "faker.*",
     "datasets.*",
     "sklearn.*",
     "scipy.*",

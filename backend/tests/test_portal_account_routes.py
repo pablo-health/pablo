@@ -53,6 +53,8 @@ from fastapi.testclient import TestClient
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from tests.audit_fakes import RecordingAudit
+
 TENANT = "practice_abc123"
 PRACTICE_NAME = "Meadowlark Counseling"
 OTHER_PRACTICE_NAME = "Juniper Therapy"
@@ -114,16 +116,6 @@ class _StubResolver:
         )
 
 
-class _RecordingAudit:
-    def __init__(self) -> None:
-        self.actions: list[str] = []
-        self.changes: list[dict[str, Any]] = []
-
-    def log_patient_principal_action(self, action: Any, *_args: Any, **kwargs: Any) -> None:
-        self.actions.append(str(action))
-        self.changes.append(kwargs.get("changes") or {})
-
-
 def _record(jti: str, patient_id: str, *, revoked_at: int | None = None) -> PortalSessionRecord:
     return PortalSessionRecord(
         jti=jti,
@@ -154,11 +146,6 @@ def sessions() -> InMemoryPortalSessionStore:
 
 
 @pytest.fixture
-def audit() -> _RecordingAudit:
-    return _RecordingAudit()
-
-
-@pytest.fixture
 def welcomes() -> InMemoryPortalWelcomeStore:
     return InMemoryPortalWelcomeStore()
 
@@ -171,7 +158,7 @@ def portal_settings() -> InMemoryPortalSettingsStore:
 @pytest.fixture
 def app(
     sessions: InMemoryPortalSessionStore,
-    audit: _RecordingAudit,
+    recording_audit: RecordingAudit,
     welcomes: InMemoryPortalWelcomeStore,
     portal_settings: InMemoryPortalSettingsStore,
     monkeypatch: pytest.MonkeyPatch,
@@ -183,7 +170,7 @@ def app(
     registry = PatientResolverRegistry()
     registry.register(_StubResolver())
     application.dependency_overrides[get_patient_resolver_registry] = lambda: registry
-    application.dependency_overrides[get_audit_service] = lambda: audit
+    application.dependency_overrides[get_audit_service] = lambda: recording_audit
     # The routes take the request's tenant-scoped session only to build the
     # store; the store itself is the double, so the session never has to be
     # real.
@@ -288,12 +275,12 @@ class TestSigningOutOneDevice:
         assert client.post("/api/patient/auth/logout").status_code == 401
 
     def test_it_audits_the_revocation_with_the_session_handle(
-        self, client: TestClient, audit: _RecordingAudit
+        self, client: TestClient, recording_audit: RecordingAudit
     ) -> None:
         client.post("/api/patient/auth/logout", headers=_auth(TOKEN_A1))
 
-        assert AuditAction.PATIENT_SESSION_REVOKED.value in " ".join(audit.actions)
-        assert audit.changes[-1] == {"scope": "session", "sessions_revoked": 1}
+        assert AuditAction.PATIENT_SESSION_REVOKED.value in " ".join(recording_audit.actions)
+        assert recording_audit.changes[-1] == {"scope": "session", "sessions_revoked": 1}
 
 
 class TestSigningOutEverywhere:
@@ -332,11 +319,11 @@ class TestSigningOutEverywhere:
         assert sessions.live_count_for_patient(PATIENT_A, now=NOW) == 2
 
     def test_it_audits_the_scope_and_the_count(
-        self, client: TestClient, audit: _RecordingAudit
+        self, client: TestClient, recording_audit: RecordingAudit
     ) -> None:
         client.post("/api/patient/auth/logout-all", headers=_auth(TOKEN_A1))
 
-        assert audit.changes[-1] == {"scope": "all", "sessions_revoked": 2}
+        assert recording_audit.changes[-1] == {"scope": "all", "sessions_revoked": 2}
 
 
 class TestSigningOutIsNotWithdrawal:
@@ -458,7 +445,7 @@ class TestTheCapabilityDocument:
         assert a == b
 
     def test_reading_it_writes_no_audit_row(
-        self, client: TestClient, audit: _RecordingAudit
+        self, client: TestClient, recording_audit: RecordingAudit
     ) -> None:
         """Deployment shape is not a disclosure.
 
@@ -467,7 +454,7 @@ class TestTheCapabilityDocument:
         """
         client.get("/api/patient/capabilities", headers=_auth(TOKEN_A1))
 
-        assert audit.actions == []
+        assert recording_audit.actions == []
 
 
 class TestTheWelcome:

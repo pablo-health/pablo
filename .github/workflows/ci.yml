@@ -33,7 +33,7 @@ jobs:
     name: Version consistency
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Check version sync
         run: bash scripts/check-version-sync.sh
@@ -51,11 +51,11 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.13"
 
@@ -71,12 +71,12 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Needs history back to the PR base to diff against it.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.13"
 
@@ -92,7 +92,7 @@ jobs:
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost
           sudo apt-get clean
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Need history back to the PR base for the classify step below.
           fetch-depth: 0
@@ -105,7 +105,7 @@ jobs:
         if: github.event_name == 'pull_request'
         run: bash scripts/ci_classify_diff.sh "origin/${{ github.base_ref }}"
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         if: steps.classify.outputs.substantive != 'false'
         with:
           python-version: "3.13"
@@ -120,7 +120,7 @@ jobs:
 
       - name: Cache Poetry virtualenv
         if: steps.classify.outputs.substantive != 'false'
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .venv
           key: venv-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
@@ -175,7 +175,7 @@ jobs:
     name: Backend integration (Postgres)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Need history back to the PR base for the classify step below.
           fetch-depth: 0
@@ -185,7 +185,7 @@ jobs:
         if: github.event_name == 'pull_request'
         run: bash scripts/ci_classify_diff.sh "origin/${{ github.base_ref }}"
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         if: steps.classify.outputs.substantive != 'false'
         with:
           python-version: "3.13"
@@ -200,7 +200,7 @@ jobs:
 
       - name: Cache Poetry virtualenv
         if: steps.classify.outputs.substantive != 'false'
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .venv
           key: venv-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
@@ -226,7 +226,7 @@ jobs:
       # tenant-fan-out semantics); re-enable them as those issues close.
       - name: Cache Postgres test image
         if: steps.classify.outputs.substantive != 'false'
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/tc-images
           key: tc-image-postgres-16-alpine
@@ -269,7 +269,7 @@ jobs:
     name: Tenant template matches alembic head
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Need history back to the PR base for the classify step below.
           fetch-depth: 0
@@ -279,7 +279,7 @@ jobs:
         if: github.event_name == 'pull_request'
         run: bash scripts/ci_classify_diff.sh "origin/${{ github.base_ref }}"
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         if: steps.classify.outputs.substantive != 'false'
         with:
           python-version: "3.13"
@@ -294,7 +294,7 @@ jobs:
 
       - name: Cache Poetry virtualenv
         if: steps.classify.outputs.substantive != 'false'
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: .venv
           key: venv-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
@@ -305,7 +305,7 @@ jobs:
 
       - name: Cache Postgres test image
         if: steps.classify.outputs.substantive != 'false'
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.cache/tc-images
           key: tc-image-postgres-16-alpine
@@ -366,7 +366,7 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Need history back to the PR base for the classify step below.
           fetch-depth: 0
@@ -379,7 +379,7 @@ jobs:
         working-directory: .
         run: bash scripts/ci_classify_diff.sh "origin/${{ github.base_ref }}"
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         if: steps.classify.outputs.substantive != 'false'
         with:
           node-version: "24"

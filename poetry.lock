@@ -1119,25 +1119,6 @@ files = [
 test = ["pytest (>=6)"]
 
 [[package]]
-name = "faker"
-version = "40.41.0"
-description = "Faker is a Python package that generates fake data for you."
-optional = false
-python-versions = ">=3.10"
-groups = ["pii"]
-files = [
-    {file = "faker-40.41.0-py3-none-any.whl", hash = "sha256:35a7f66282990698c20c3e6dd57180900206b760c2f777112c085cc217e7de92"},
-    {file = "faker-40.41.0.tar.gz", hash = "sha256:5383e4ebba7061491530ae5952a33dcf8f161a250c89717fa0ac856602dcfaf3"},
-]
-
-[package.dependencies]
-tzdata = {version = "*", markers = "platform_system == \"Windows\""}
-
-[package.extras]
-image = ["pillow"]
-tzdata = ["tzdata"]
-
-[[package]]
 name = "fastapi"
 version = "0.141.1"
 description = "FastAPI framework, high performance, easy to learn, fast to code, ready for production"
@@ -5449,12 +5430,11 @@ version = "2025.3"
 description = "Provider of IANA time zone data"
 optional = false
 python-versions = ">=2"
-groups = ["main", "pii"]
+groups = ["main"]
 files = [
     {file = "tzdata-2025.3-py2.py3-none-any.whl", hash = "sha256:06a47e5700f3081aab02b2e513160914ff0694bce9947d6b76ebd6bf57cfc5d1"},
     {file = "tzdata-2025.3.tar.gz", hash = "sha256:de39c2ca5dc7b0344f2eba86f49d614019d29f060fc4ebc8a417896a620b56a7"},
 ]
-markers = {pii = "platform_system == \"Windows\""}
 
 [[package]]
 name = "uritemplate"
@@ -6073,4 +6053,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.13,<3.15"
-content-hash = "e2a667673b2ae7bfd38fa3b2e66fea692547c90d4b508b20a55c21b3c4e81389"
+content-hash = "d9413c9db501c932bb4d46b85712f7ebf4b13ed4da88f2103c944dc9abe22434"

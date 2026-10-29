@@ -31,6 +31,8 @@ from app.services import AuditService  # noqa: TC002 — runtime fixture type
 from fastapi import HTTPException, status
 from fastapi.testclient import TestClient  # noqa: TC002 — runtime fixture type
 
+from tests.patient_seeds import seed_patient
+
 from .conftest import audited_entries
 
 # A clinician who is NOT the test's authenticated user (conftest's mock_user).
@@ -336,18 +338,6 @@ class TestScheduleSession:
     """
 
     @staticmethod
-    def _seed_patient(repo: InMemoryPatientRepository, user_id: str) -> Patient:
-        now = datetime.now(UTC)
-        patient = Patient(
-            id=str(uuid.uuid4()),
-            first_name="Jane",
-            last_name="Smith",
-            created_at=now,
-            updated_at=now,
-        )
-        return repo.create(patient, user_id)
-
-    @staticmethod
     def _payload(patient_id: str, **extra: object) -> dict[str, object]:
         return {
             "patient_id": patient_id,
@@ -362,7 +352,7 @@ class TestScheduleSession:
         mock_notes_repo: InMemoryNotesRepository,
         mock_user_id: str,
     ) -> None:
-        patient = self._seed_patient(mock_repo, mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
 
         resp = client.post(
             "/api/sessions/schedule",
@@ -381,7 +371,7 @@ class TestScheduleSession:
         mock_notes_repo: InMemoryNotesRepository,
         mock_user_id: str,
     ) -> None:
-        patient = self._seed_patient(mock_repo, mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
 
         resp = client.post("/api/sessions/schedule", json=self._payload(patient.id))
 
@@ -396,7 +386,7 @@ class TestScheduleSession:
         mock_repo: InMemoryPatientRepository,
         mock_user_id: str,
     ) -> None:
-        patient = self._seed_patient(mock_repo, mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
 
         resp = client.post(
             "/api/sessions/schedule",
@@ -415,7 +405,7 @@ class TestScheduleSession:
         """A deployment-injected authorizer that locks the requested type
         must reject at the route (403), mirroring the appointment
         start-session gate — before any session or note is created."""
-        patient = self._seed_patient(mock_repo, mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         app.dependency_overrides[get_note_type_authorizer] = _DenyAllNoteTypes
         try:
             resp = client.post(
@@ -436,7 +426,7 @@ class TestScheduleSession:
         """No explicit note_type → the default applies without an authorizer
         check (parity with the appointment route's rule that falling back
         to the default is always allowed)."""
-        patient = self._seed_patient(mock_repo, mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         app.dependency_overrides[get_note_type_authorizer] = _DenyAllNoteTypes
         try:
             resp = client.post("/api/sessions/schedule", json=self._payload(patient.id))

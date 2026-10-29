@@ -28,6 +28,7 @@ from ..services.compliance_storage import (
     ComplianceStorageNotConfiguredError,
 )
 from ..settings import Settings, get_settings
+from ..uploads import read_bounded
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
@@ -218,14 +219,14 @@ async def upload_document(
             code="INVALID_DOCUMENT_TYPE",
         )
 
-    data = await file.read()
     max_bytes = settings.compliance_documents_max_bytes
-    if len(data) > max_bytes:
-        raise BadRequestError(
-            "File too large",
-            {"max_bytes": max_bytes, "size_bytes": len(data)},
-            code="FILE_TOO_LARGE",
-        )
+    data = await read_bounded(
+        file,
+        max_bytes,
+        too_large=BadRequestError(
+            "File too large", {"max_bytes": max_bytes}, code="FILE_TOO_LARGE"
+        ),
+    )
     if len(data) == 0:
         raise BadRequestError("File is empty", code="EMPTY_FILE")
 

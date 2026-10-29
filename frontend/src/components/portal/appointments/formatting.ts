@@ -15,6 +15,8 @@
  * printing a word that looks like a bug in the browser.
  */
 
+import { civilDate } from "@/lib/dates"
+
 /** A day and a time: "Tue, 3 Mar at 2:00 PM". */
 export function formatWhen(iso: string, timeZone: string): string {
   const at = new Date(iso)
@@ -74,8 +76,7 @@ export function formatDayHeading(isoDate: string, timeZone: string): string {
  * the display.
  */
 export function practiceDate(at: Date, timeZone: string): string {
-  // `en-CA` is ISO-shaped (YYYY-MM-DD), which is what the route parses.
-  return at.toLocaleDateString("en-CA", { timeZone })
+  return civilDate(at, timeZone)
 }
 
 /** `isoDate` moved by whole days, staying a `YYYY-MM-DD` calendar date. */
