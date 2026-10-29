@@ -5,6 +5,7 @@
 import { FileText } from "lucide-react"
 import { useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
+import { formatCivilDate, LONG_DATE } from "@/lib/dates"
 import { REPEAT_RULES, TASK_CATEGORIES, type Task } from "@/types/tasks"
 import { type EnrichedItem, type HorizonId, categoryDot } from "./horizons"
 import { formatDueLabel } from "./urgency"
@@ -121,7 +122,7 @@ export function ComplianceItemRow({
         <div className="mt-2 pl-5 space-y-1 text-xs text-neutral-600" data-testid="compliance-item-details">
           {client && <p className="text-neutral-800">{client}</p>}
           <p>{kind}</p>
-          {item.due_date &&<p>Due {formatDueDate(item.due_date)}</p>}
+          {item.due_date &&<p>Due {formatCivilDate(item.due_date, LONG_DATE, "en-US")}</p>}
           {repeats && <p>{repeats}</p>}
           {item.notes && <p className="whitespace-pre-wrap">{item.notes}</p>}
           <Button variant="outline" size="sm" className="mt-1" onClick={onEdit}>
@@ -168,15 +169,4 @@ function dotFor(task: Task): string {
 
 function labelForType(type: string): string {
   return type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
-}
-
-/** A stored `YYYY-MM-DD` as a calendar date, without a timezone shift. */
-function formatDueDate(isoDate: string): string {
-  const [y, m, d] = isoDate.slice(0, 10).split("-").map(Number)
-  if (!y || !m || !d) return isoDate
-  return new Date(y, m - 1, d).toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  })
 }

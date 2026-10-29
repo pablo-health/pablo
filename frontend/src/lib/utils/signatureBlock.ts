@@ -6,6 +6,7 @@
  */
 
 import type { NoteSigningRecord } from "@/types/notes"
+import { formatDate, MEDIUM_DATE } from "@/lib/dates"
 import type { PDFSignatureBlock } from "./pdfExport"
 
 export function signedByLine(name: string, credentials: string | null | undefined): string {
@@ -34,12 +35,7 @@ export function formatSignedAt(iso: string, timeZone: string): string {
 
 /** A day, e.g. "Oct 5, 2026". */
 export function formatDay(iso: string, timeZone: string): string {
-  return new Date(iso).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    timeZone,
-  })
+  return formatDate(iso, { ...MEDIUM_DATE, timeZone }, "en-US")
 }
 
 export function amendmentLine(unlockedAt: string, reason: string, timeZone: string): string {
