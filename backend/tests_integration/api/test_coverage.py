@@ -202,7 +202,12 @@ def as_clinician(
     def _stash_identity(request: Request) -> None:
         email, _name = _CLINICIANS[acting["id"]]
         request.state.verified_identity = VerifiedIdentity(
-            provider="test", subject_id=acting["id"], email=email, mfa_satisfied=True, claims={}
+            provider="test",
+            subject_id=acting["id"],
+            email=email,
+            email_verified=True,
+            mfa_satisfied=True,
+            claims={},
         )
 
     monkeypatch.setattr("app.db.middleware._verify_and_stash_clinician_identity", _stash_identity)

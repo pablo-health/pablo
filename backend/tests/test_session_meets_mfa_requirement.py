@@ -30,6 +30,7 @@ def _identity(*, email: str, mfa: bool, verified: bool = True) -> VerifiedIdenti
         provider="firebase",
         subject_id="uid-1",
         email=email,
+        email_verified=verified,
         mfa_satisfied=mfa,
         claims={"uid": "uid-1", "email": email, "email_verified": verified},
     )

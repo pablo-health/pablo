@@ -190,7 +190,12 @@ def e2e_client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI dep
     # middleware's own resolver look ``_TENANT_EMAIL`` up against the rows
     # ``tenant_schema`` seeded, rather than handing it a fixed schema.
     identity = VerifiedIdentity(
-        provider="test", subject_id=e2e_user_id, email=_TENANT_EMAIL, mfa_satisfied=True, claims={}
+        provider="test",
+        subject_id=e2e_user_id,
+        email=_TENANT_EMAIL,
+        email_verified=True,
+        mfa_satisfied=True,
+        claims={},
     )
 
     def _stash_identity(request: Request) -> None:

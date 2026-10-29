@@ -163,7 +163,12 @@ def client(
         baa_version="2024-01-01",
     )
     identity = VerifiedIdentity(
-        provider="test", subject_id=_CLINICIAN, email=_TENANT_EMAIL, mfa_satisfied=True, claims={}
+        provider="test",
+        subject_id=_CLINICIAN,
+        email=_TENANT_EMAIL,
+        email_verified=True,
+        mfa_satisfied=True,
+        claims={},
     )
 
     def _stash_identity(request: Request) -> None:

@@ -221,6 +221,7 @@ def _request_as(  # noqa: PLR0913 -- the token is the thing each test varies
         provider="firebase",
         subject_id=uid,
         email=email,
+        email_verified=True,
         mfa_satisfied=True,
         claims={
             "uid": uid,
