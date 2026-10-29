@@ -41,7 +41,7 @@ help:
 
 # Install dependencies
 install:
-	poetry install
+	poetry install --with pentest
 
 # Run linters
 lint:

@@ -23,15 +23,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr
 
 from ..auth.route_security import truly_public
-from ..auth.service import E2E_EMAIL_PATTERN
 from ..db import get_db_session
 from ..db.platform_models import EmailTenantMappingRow
-from ..jobs.pentest_identity import PENTEST_EMAIL_PATTERN
 from ..repositories import (
     get_allowlist_repository,
     get_identity_repository,
     get_user_repository,
 )
+from ..reserved_identities import E2E_EMAIL_PATTERN, PENTEST_EMAIL_PATTERN
 from ..settings import get_settings
 
 logger = logging.getLogger(__name__)
