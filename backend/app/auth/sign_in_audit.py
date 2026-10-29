@@ -91,12 +91,6 @@ def _minted_from_another_token(claims: dict[str, Any]) -> bool:
     return _SOURCE_PROVIDER_CLAIM in claims
 
 
-def forget_all() -> None:
-    """Clear the memo. For tests that sign the same session in twice."""
-    with _memo_lock:
-        _memo.clear()
-
-
 def record_sign_in(user_id: str, claims: dict[str, Any], request: Request | None) -> None:
     """Write this sign-in's ``signed_in`` row, unless it already has one.
 
