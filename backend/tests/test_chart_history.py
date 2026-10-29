@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
@@ -18,9 +17,10 @@ from app.chart_history.service import (
     UnknownHistoryFieldError,
 )
 from app.main import app
-from app.models import Patient
 from app.notes.spec_templates import TEMPLATES_DIR
 from app.repositories import InMemoryChartHistoryRepository, InMemoryPatientRepository
+
+from tests.patient_seeds import seed_patient
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -28,14 +28,6 @@ if TYPE_CHECKING:
     from fastapi.testclient import TestClient
 
 TEMPLATES = TEMPLATES_DIR
-
-
-def _seed_patient(repo: InMemoryPatientRepository, user_id: str) -> Patient:
-    now = datetime.now(UTC)
-    patient = Patient(
-        id=str(uuid.uuid4()), first_name="Sam", last_name="Sample", created_at=now, updated_at=now
-    )
-    return repo.create(patient, user_id)
 
 
 # --- The fields ------------------------------------------------------------------
@@ -167,7 +159,7 @@ def test_every_field_is_listed_and_an_empty_one_reads_none(
     mock_user_id: str,
     history_repo: InMemoryChartHistoryRepository,
 ) -> None:
-    patient = _seed_patient(mock_repo, mock_user_id)
+    patient = seed_patient(mock_repo, mock_user_id)
 
     response = client.get(f"/api/patients/{patient.id}/chart-history")
 
@@ -184,7 +176,7 @@ def test_editing_a_field_records_who_and_when_and_keeps_the_prior_text(
     mock_user_id: str,
     history_repo: InMemoryChartHistoryRepository,
 ) -> None:
-    patient = _seed_patient(mock_repo, mock_user_id)
+    patient = seed_patient(mock_repo, mock_user_id)
     url = f"/api/patients/{patient.id}/chart-history/work_school"
 
     first = client.put(url, json={"text": "  Teacher, full time.  "})
@@ -209,7 +201,7 @@ def test_removing_a_field_keeps_it_in_the_history(
     mock_user_id: str,
     history_repo: InMemoryChartHistoryRepository,
 ) -> None:
-    patient = _seed_patient(mock_repo, mock_user_id)
+    patient = seed_patient(mock_repo, mock_user_id)
     url = f"/api/patients/{patient.id}/chart-history/family_medical"
     client.put(url, json={"text": "Father: type 2 diabetes."})
 
@@ -237,7 +229,7 @@ def test_an_unknown_key_or_blank_text_is_refused(
     body: dict[str, str],
     status: int,
 ) -> None:
-    patient = _seed_patient(mock_repo, mock_user_id)
+    patient = seed_patient(mock_repo, mock_user_id)
     response = client.put(f"/api/patients/{patient.id}/chart-history/{key}", json=body)
     assert response.status_code == status, response.text
 

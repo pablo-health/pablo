@@ -21,11 +21,13 @@ from typing import TYPE_CHECKING
 
 from app.auth.service import require_baa_acceptance
 from app.main import app
-from app.models import ChatConversation, ChatMessage, Note, Patient, User
+from app.models import ChatConversation, ChatMessage, Note, User
 from app.models.audit import AuditAction
 from app.repositories import InMemoryChatRepository
 from app.routes.chat import get_chat_repository_dep
 from app.utcnow import utc_now
+
+from tests.patient_seeds import seed_patient
 
 if TYPE_CHECKING:
     from app.repositories import (
@@ -36,25 +38,6 @@ if TYPE_CHECKING:
     from fastapi.testclient import TestClient
 
 _SYSTEM_PROMPT = "You are a clinical assistant for chart QA."
-
-
-def _seed_patient(
-    patient_repo: InMemoryPatientRepository,
-    *,
-    user_id: str,
-    patient_id: str = "patient-1",
-    first_name: str = "Jane",
-    last_name: str = "Doe",
-) -> Patient:
-    now = datetime.now(UTC)
-    patient = Patient(
-        id=patient_id,
-        first_name=first_name,
-        last_name=last_name,
-        created_at=now,
-        updated_at=now,
-    )
-    return patient_repo.create(patient, user_id)
 
 
 def _create_payload(
@@ -79,7 +62,7 @@ class TestCreateConversation:
         mock_repo: InMemoryPatientRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         response = client.post("/api/chat/conversations", json=_create_payload(patient.id))
         assert response.status_code == 201
         body = response.json()
@@ -97,7 +80,7 @@ class TestCreateConversation:
         mock_repo: InMemoryPatientRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         response = client.post(
             "/api/chat/conversations",
             json=_create_payload(patient.id, title=None),
@@ -120,7 +103,7 @@ class TestCreateConversation:
     ) -> None:
         # Seeded under a different owner — the in-memory repo's get()
         # rejects on user_id mismatch, mirroring production behavior.
-        _seed_patient(mock_repo, user_id="someone-else", patient_id="patient-other")
+        seed_patient(mock_repo, "someone-else", patient_id="patient-other")
         response = client.post("/api/chat/conversations", json=_create_payload("patient-other"))
         assert response.status_code == 404
 
@@ -130,7 +113,7 @@ class TestCreateConversation:
         mock_repo: InMemoryPatientRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         payload = _create_payload(patient.id)
         payload["caller_system_prompt"] = "x" * 16_385
         response = client.post("/api/chat/conversations", json=payload)
@@ -144,7 +127,7 @@ class TestGetConversation:
         mock_repo: InMemoryPatientRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         create = client.post("/api/chat/conversations", json=_create_payload(patient.id))
         conv_id = create.json()["id"]
 
@@ -168,7 +151,7 @@ class TestGetConversation:
         """The detail read returns full message bodies, so it must audit a
         chat_conversation_viewed event — matching get_session / get_patient.
         """
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         create = client.post("/api/chat/conversations", json=_create_payload(patient.id))
         conv_id = create.json()["id"]
 
@@ -186,7 +169,7 @@ class TestListConversations:
         mock_repo: InMemoryPatientRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         for i in range(3):
             client.post(
                 "/api/chat/conversations",
@@ -204,7 +187,7 @@ class TestListConversations:
         mock_repo: InMemoryPatientRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         client.post(
             "/api/chat/conversations",
             json=_create_payload(patient.id, feature_key="chart_qa"),
@@ -228,7 +211,7 @@ class TestListConversations:
         mock_repo: InMemoryPatientRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         create = client.post("/api/chat/conversations", json=_create_payload(patient.id))
         conv_id = create.json()["id"]
         client.patch(f"/api/chat/conversations/{conv_id}", json={"archive": True})
@@ -250,7 +233,7 @@ class TestUpdateConversation:
         mock_repo: InMemoryPatientRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         create = client.post("/api/chat/conversations", json=_create_payload(patient.id))
         conv_id = create.json()["id"]
 
@@ -264,7 +247,7 @@ class TestUpdateConversation:
         mock_repo: InMemoryPatientRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         create = client.post("/api/chat/conversations", json=_create_payload(patient.id))
         conv_id = create.json()["id"]
 
@@ -278,7 +261,7 @@ class TestUpdateConversation:
         mock_repo: InMemoryPatientRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         create = client.post("/api/chat/conversations", json=_create_payload(patient.id))
         conv_id = create.json()["id"]
         client.patch(f"/api/chat/conversations/{conv_id}", json={"archive": True})
@@ -300,7 +283,7 @@ class TestDeleteConversation:
         mock_user_id: str,
         mock_chat_repo: InMemoryChatRepository,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         create = client.post("/api/chat/conversations", json=_create_payload(patient.id))
         conv_id = create.json()["id"]
 
@@ -315,7 +298,7 @@ class TestDeleteConversation:
         mock_user_id: str,
         mock_chat_repo: InMemoryChatRepository,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         create = client.post("/api/chat/conversations", json=_create_payload(patient.id))
         conv_id = create.json()["id"]
 
@@ -366,7 +349,7 @@ class TestPreviewContext:
         mock_notes_repo: InMemoryNotesRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         intake_at = datetime(2026, 3, 3, 10, 0, tzinfo=UTC)
         soap_at = datetime(2026, 5, 9, 10, 0, tzinfo=UTC)
         _seed_note(
@@ -411,7 +394,7 @@ class TestPreviewContext:
         mock_notes_repo: InMemoryNotesRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         # No notes seeded — the default selection still resolves but
         # most sources report row_count=0 / land in sources_dropped.
         response = client.post(
@@ -434,7 +417,7 @@ class TestPreviewContext:
         client: TestClient,
         mock_repo: InMemoryPatientRepository,
     ) -> None:
-        _seed_patient(mock_repo, user_id="other-user", patient_id="patient-other")
+        seed_patient(mock_repo, "other-user", patient_id="patient-other")
         response = client.post(
             "/api/chat/conversations/preview",
             json={"patient_id": "patient-other"},
@@ -454,7 +437,7 @@ class TestPreviewContext:
         mock_repo: InMemoryPatientRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         response = client.post(
             "/api/chat/conversations/preview",
             json={
@@ -475,7 +458,7 @@ class TestPreviewContext:
         mock_chat_repo: InMemoryChatRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         client.post(
             "/api/chat/conversations/preview",
             json={"patient_id": patient.id},
@@ -500,7 +483,7 @@ class TestPreviewContext:
         # Regression: ``/conversations/{conversation_id}`` GET could
         # swallow ``/conversations/preview`` if route order regresses.
         # Confirm the POST route still resolves to the preview handler.
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         response = client.post(
             "/api/chat/conversations/preview",
             json={"patient_id": patient.id},
@@ -634,7 +617,7 @@ class TestPatientAccessIDOR:
             # The requesting user (mock_user_id) has no grant on this
             # patient — the patient was created under a different
             # owner. mock_repo.create auto-grants only the creator.
-            _seed_patient(mock_repo, user_id="other-clinician", patient_id="foreign-pat-list")
+            seed_patient(mock_repo, "other-clinician", patient_id="foreign-pat-list")
             response = client.get(
                 "/api/chat/conversations",
                 params={"patient_id": "foreign-pat-list"},
@@ -684,7 +667,7 @@ class TestPostTransferAccess:
             # Clinician A (= conftest's mock_user) creates a patient
             # and a chat about that patient. Both rows now carry A's
             # grant.
-            patient = _seed_patient(mock_repo, user_id=mock_user_id)
+            patient = seed_patient(mock_repo, mock_user_id)
             chat_repo_explicit.grant_access(patient.id, mock_user_id)
             create = client.post(
                 "/api/chat/conversations",
@@ -782,7 +765,7 @@ class TestSaveMessageAsNote:
         mock_chat_repo: InMemoryChatRepository,
         mock_notes_repo: InMemoryNotesRepository,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         create = client.post("/api/chat/conversations", json=_create_payload(patient.id))
         conv_id = create.json()["id"]
         body_text = "Patient is improving; sleep is back to 7 hours nightly."
@@ -826,7 +809,7 @@ class TestSaveMessageAsNote:
         mock_user_id: str,
         mock_chat_repo: InMemoryChatRepository,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         create = client.post("/api/chat/conversations", json=_create_payload(patient.id))
         conv_id = create.json()["id"]
         user_msg = ChatMessage(
@@ -852,7 +835,7 @@ class TestSaveMessageAsNote:
         mock_user_id: str,
         mock_chat_repo: InMemoryChatRepository,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         create = client.post("/api/chat/conversations", json=_create_payload(patient.id))
         conv_id = create.json()["id"]
         msg = _seed_assistant_message(mock_chat_repo, conversation_id=conv_id, content="   ")
@@ -867,7 +850,7 @@ class TestSaveMessageAsNote:
         mock_repo: InMemoryPatientRepository,
         mock_user_id: str,
     ) -> None:
-        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        patient = seed_patient(mock_repo, mock_user_id)
         create = client.post("/api/chat/conversations", json=_create_payload(patient.id))
         conv_id = create.json()["id"]
 
@@ -894,7 +877,7 @@ class TestSaveMessageAsNote:
         prior = app.dependency_overrides.get(get_chat_repository_dep)
         app.dependency_overrides[get_chat_repository_dep] = lambda: chat_repo
         try:
-            patient = _seed_patient(mock_repo, user_id=mock_user_id)
+            patient = seed_patient(mock_repo, mock_user_id, patient_id="patient-1")
             create = client.post("/api/chat/conversations", json=_create_payload(patient.id))
             conv_id = create.json()["id"]
             msg = _seed_assistant_message(

@@ -5,31 +5,23 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
-from app.models import Patient
 from app.models.patient import UpdateAllergiesRequest
 from fastapi.testclient import TestClient  # noqa: TC002 — runtime fixture type
 from pydantic import ValidationError
+
+from tests.patient_seeds import seed_patient
 
 if TYPE_CHECKING:
     from app.repositories import InMemoryPatientRepository
 
 
-def _seed_patient(repo: InMemoryPatientRepository, user_id: str) -> Patient:
-    now = datetime.now(UTC)
-    patient = Patient(
-        id=str(uuid.uuid4()), first_name="Sam", last_name="Sample", created_at=now, updated_at=now
-    )
-    return repo.create(patient, user_id)
-
-
 def test_a_new_patient_reads_not_recorded(
     client: TestClient, mock_repo: InMemoryPatientRepository, mock_user_id: str
 ) -> None:
-    patient = _seed_patient(mock_repo, mock_user_id)
+    patient = seed_patient(mock_repo, mock_user_id)
 
     body = client.get(f"/api/patients/{patient.id}").json()
 
@@ -40,7 +32,7 @@ def test_a_new_patient_reads_not_recorded(
 def test_recording_nkda_then_a_list_then_clearing(
     client: TestClient, mock_repo: InMemoryPatientRepository, mock_user_id: str
 ) -> None:
-    patient = _seed_patient(mock_repo, mock_user_id)
+    patient = seed_patient(mock_repo, mock_user_id)
     url = f"/api/patients/{patient.id}/allergies"
 
     nkda = client.put(url, json={"status": "nkda"})
@@ -98,7 +90,7 @@ def test_allergies_for_a_patient_the_caller_cannot_see_is_404(client: TestClient
 def test_the_diagnosis_is_kept_on_the_problem_list_not_patched(
     client: TestClient, mock_repo: InMemoryPatientRepository, mock_user_id: str
 ) -> None:
-    patient = _seed_patient(mock_repo, mock_user_id)
+    patient = seed_patient(mock_repo, mock_user_id)
 
     response = client.patch(f"/api/patients/{patient.id}", json={"diagnosis": "Anxiety"})
 

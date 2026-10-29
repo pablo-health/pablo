@@ -13,7 +13,7 @@ import uuid
 from datetime import UTC, datetime
 from unittest.mock import patch
 
-from app.models import Patient, SessionStatus, TherapySession, Transcript
+from app.models import SessionStatus, TherapySession, Transcript
 from app.models.audit import AuditAction
 from app.repositories import (  # noqa: TC002 — runtime fixture types
     InMemoryPatientRepository,
@@ -21,6 +21,8 @@ from app.repositories import (  # noqa: TC002 — runtime fixture types
 )
 from app.services import AuditService  # noqa: TC002 — runtime fixture type
 from fastapi.testclient import TestClient  # noqa: TC002 — runtime fixture type
+
+from tests.patient_seeds import seed_patient
 
 _OTHER_CLINICIAN = "other-clinician-999"
 
@@ -46,18 +48,6 @@ def _seed_session(
     return repo.create(session)
 
 
-def _seed_patient(repo: InMemoryPatientRepository, session: TherapySession, owner: str) -> Patient:
-    now = datetime.now(UTC)
-    patient = Patient(
-        id=session.patient_id,
-        first_name="Jane",
-        last_name="Smith",
-        created_at=now,
-        updated_at=now,
-    )
-    return repo.create(patient, owner)
-
-
 class TestPatchSessionStatus:
     def test_status_scheduled_to_in_progress_returns_200(
         self,
@@ -67,7 +57,7 @@ class TestPatchSessionStatus:
         mock_user_id: str,
     ) -> None:
         session = _seed_session(mock_session_repo, owner=mock_user_id)
-        _seed_patient(mock_repo, session, mock_user_id)
+        seed_patient(mock_repo, mock_user_id, patient_id=session.patient_id)
 
         resp = client.patch(f"/api/sessions/{session.id}/status", json={"status": "in_progress"})
 
@@ -87,7 +77,7 @@ class TestPatchSessionStatus:
         session = _seed_session(
             mock_session_repo, owner=mock_user_id, status=SessionStatus.IN_PROGRESS
         )
-        _seed_patient(mock_repo, session, mock_user_id)
+        seed_patient(mock_repo, mock_user_id, patient_id=session.patient_id)
 
         resp = client.patch(f"/api/sessions/{session.id}/status", json={"status": "in_progress"})
 
@@ -102,7 +92,7 @@ class TestPatchSessionStatus:
         mock_user_id: str,
     ) -> None:
         session = _seed_session(mock_session_repo, owner=mock_user_id)
-        _seed_patient(mock_repo, session, mock_user_id)
+        seed_patient(mock_repo, mock_user_id, patient_id=session.patient_id)
 
         resp = client.patch(f"/api/sessions/{session.id}/status", json={"status": "finalized"})
 
@@ -141,7 +131,7 @@ class TestPatchSessionStatus:
         mock_user_id: str,
     ) -> None:
         session = _seed_session(mock_session_repo, owner=mock_user_id)
-        _seed_patient(mock_repo, session, mock_user_id)
+        seed_patient(mock_repo, mock_user_id, patient_id=session.patient_id)
 
         with patch.object(mock_audit_service, "log_session_action") as mock_log:
             resp = client.patch(
@@ -165,7 +155,7 @@ class TestPatchSessionMetadata:
         mock_user_id: str,
     ) -> None:
         session = _seed_session(mock_session_repo, owner=mock_user_id)
-        _seed_patient(mock_repo, session, mock_user_id)
+        seed_patient(mock_repo, mock_user_id, patient_id=session.patient_id)
         new_time = "2026-03-10T15:00:00Z"
 
         resp = client.patch(
@@ -187,7 +177,7 @@ class TestPatchSessionMetadata:
         mock_user_id: str,
     ) -> None:
         session = _seed_session(mock_session_repo, owner=mock_user_id)
-        _seed_patient(mock_repo, session, mock_user_id)
+        seed_patient(mock_repo, mock_user_id, patient_id=session.patient_id)
 
         with patch.object(mock_audit_service, "log_session_action") as mock_log:
             resp = client.patch(f"/api/sessions/{session.id}", json={})
@@ -206,7 +196,7 @@ class TestPatchSessionMetadata:
         session = _seed_session(
             mock_session_repo, owner=mock_user_id, status=SessionStatus.FINALIZED
         )
-        _seed_patient(mock_repo, session, mock_user_id)
+        seed_patient(mock_repo, mock_user_id, patient_id=session.patient_id)
 
         resp = client.patch(f"/api/sessions/{session.id}", json={"video_link": "https://x"})
 
@@ -245,7 +235,7 @@ class TestPatchSessionMetadata:
         mock_user_id: str,
     ) -> None:
         session = _seed_session(mock_session_repo, owner=mock_user_id)
-        _seed_patient(mock_repo, session, mock_user_id)
+        seed_patient(mock_repo, mock_user_id, patient_id=session.patient_id)
 
         with patch.object(mock_audit_service, "log_session_action") as mock_log:
             resp = client.patch(
