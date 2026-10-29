@@ -11,7 +11,7 @@
 
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { QualityRating } from "./QualityRating"
 import { useConfig } from "@/lib/config"
 import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
@@ -51,9 +51,11 @@ export function QualityRatingWithFeedback({
   const viewOnly = readonly || readOnly
 
   // Sync local state with prop changes
-  useEffect(() => {
+  const [syncedValue, setSyncedValue] = useState(value)
+  if (value !== syncedValue) {
+    setSyncedValue(value)
     setLocalValue(value)
-  }, [value])
+  }
 
   const showFeedbackUI =
     localValue.rating !== null &&

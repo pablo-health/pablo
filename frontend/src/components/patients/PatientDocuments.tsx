@@ -118,8 +118,8 @@ export function PatientDocuments({ patientId }: PatientDocumentsProps) {
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [viewerDoc, setViewerDoc] = useState<PatientDocumentResponse | null>(null)
   const [category, setCategory] = useState<DocumentCategory>("chart")
-  // Set once finalize returns a document still mid-extraction; cleared once
-  // usePatientDocument observes a terminal status below.
+  // Set once finalize returns a document still mid-extraction; it counts as
+  // extracting until usePatientDocument observes a terminal status below.
   const [extractingDocumentId, setExtractingDocumentId] = useState<string | null>(null)
 
   const queryClient = useQueryClient()
@@ -130,32 +130,28 @@ export function PatientDocuments({ patientId }: PatientDocumentsProps) {
 
   const documents = data?.data ?? []
 
+  const extractionStatus = extractingDocument.data?.extraction_status
+  const reachedTerminalStatus =
+    extractionStatus !== undefined && extractionStatus !== "pending"
+  // usePatientDocument's refetchInterval stops polling after
+  // EXTRACTION_POLL_TIMEOUT_TICKS, but the last-seen data is still
+  // "pending" — pollCount is how we tell "gave up" from "still
+  // waiting for the first poll".
+  const gaveUpPolling =
+    extractingDocument.pollCount > EXTRACTION_POLL_TIMEOUT_TICKS
+  const extracting =
+    extractingDocumentId !== null && !reachedTerminalStatus && !gaveUpPolling
+
   useEffect(() => {
-    if (!extractingDocumentId) return
-    const status = extractingDocument.data?.extraction_status
-    const reachedTerminalStatus = status !== undefined && status !== "pending"
-    // usePatientDocument's refetchInterval stops polling after
-    // EXTRACTION_POLL_TIMEOUT_TICKS, but the last-seen data is still
-    // "pending" — pollCount is how we tell "gave up" from "still
-    // waiting for the first poll".
-    const gaveUpPolling =
-      extractingDocument.pollCount > EXTRACTION_POLL_TIMEOUT_TICKS
-    if (!reachedTerminalStatus && !gaveUpPolling) return
-    // Extraction reached complete/failed (or timed out) — drop it and let
-    // the list re-fetch pick up the final extraction_status/text_extraction_failed.
-    setExtractingDocumentId(null)
+    if (!extractingDocumentId || extracting) return
+    // Extraction reached complete/failed (or timed out) — let the list
+    // re-fetch pick up the final extraction_status/text_extraction_failed.
     if (patientId) {
       queryClient.invalidateQueries({
         queryKey: queryKeys.patientDocuments.byPatient(patientId),
       })
     }
-  }, [
-    extractingDocument.data,
-    extractingDocument.pollCount,
-    extractingDocumentId,
-    patientId,
-    queryClient,
-  ])
+  }, [extracting, extractingDocumentId, patientId, queryClient])
 
   const handleFile = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -231,9 +227,9 @@ export function PatientDocuments({ patientId }: PatientDocumentsProps) {
         return "Extracting text…"
       default:
         // The finalize POST itself resolves quickly (202, pending); the
-        // heavy work runs on a worker and extractingDocumentId keeps this
+        // heavy work runs on a worker and `extracting` keeps this
         // label up until usePatientDocument observes a terminal status.
-        return extractingDocumentId ? "Extracting text…" : null
+        return extracting ? "Extracting text…" : null
     }
   })()
 

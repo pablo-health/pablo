@@ -10,7 +10,7 @@
  * their surface is a redirect shell instead.
  */
 
-import { useEffect, useRef, useState, Suspense } from "react"
+import { useEffect, useRef, useState, useSyncExternalStore, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import {
   applyActionCode,
@@ -27,38 +27,57 @@ import { errorCode } from "@/lib/errors/errorCode"
 type ActionMode = "verifyEmail" | "resetPassword" | "recoverEmail" | "revertSecondFactorAddition"
 type Status = "loading" | "success" | "error" | "reset-form"
 
+const ACTION_TITLES: Record<ActionMode, string> = {
+  verifyEmail: "Email Verification",
+  resetPassword: "Reset Password",
+  recoverEmail: "Email Recovery",
+  revertSecondFactorAddition: "Two-Factor Authentication",
+}
+
+function isActionMode(mode: string | null): mode is ActionMode {
+  return mode !== null && Object.hasOwn(ACTION_TITLES, mode)
+}
+
+function noSubscription(): () => void {
+  return () => {}
+}
+
 function AuthActionContent() {
   const config = useConfig()
   const searchParams = useSearchParams()
-  const mode = searchParams.get("mode") as ActionMode | null
+  const mode = searchParams.get("mode")
   const oobCode = searchParams.get("oobCode")
   const continueUrl = searchParams.get("continueUrl")
 
-  const [status, setStatus] = useState<Status>("loading")
-  const [message, setMessage] = useState("")
+  const [actionStatus, setStatus] = useState<Status>("loading")
+  const [actionMessage, setMessage] = useState("")
   const [newPassword, setNewPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
   const [resetEmail, setResetEmail] = useState("")
   const [submitting, setSubmitting] = useState(false)
   // Resolved on the client, where the page's own origin is known. The server
   // render carries the fallback so the two never disagree.
-  const [continueHref, setContinueHref] = useState("/login")
+  const continueHref = useSyncExternalStore(
+    noSubscription,
+    () => safeContinuePath(continueUrl, window.location.origin),
+    () => "/login",
+  )
   const [continueLabel, setContinueLabel] = useState("Continue to Sign In")
   // An action code is single-use: running the handler twice (a re-render with
   // a new config object, or React's dev double-invoke) would spend the code on
   // the first pass and report "expired" on the second.
   const handledCode = useRef<string | null>(null)
 
-  useEffect(() => {
-    setContinueHref(safeContinuePath(continueUrl, window.location.origin))
-  }, [continueUrl])
+  const linkError = !oobCode || !mode
+    ? "Invalid action link. It may have expired or already been used."
+    : !isActionMode(mode)
+      ? "Unknown action."
+      : null
+  const status: Status = linkError ? "error" : actionStatus
+  const message = linkError ?? actionMessage
 
   useEffect(() => {
-    if (!oobCode || !mode) {
-      setStatus("error")
-      setMessage("Invalid action link. It may have expired or already been used.")
-      return
-    }
+    if (!oobCode || !isActionMode(mode)) return
 
     if (handledCode.current === oobCode) return
     handledCode.current = oobCode
@@ -77,95 +96,91 @@ function AuthActionContent() {
       appId: config.firebaseAppId,
     })
 
-    handleAction(mode, oobCode)
-  }, [mode, oobCode, config])
+    async function handleAction(actionMode: ActionMode, code: string) {
+      const auth = getFirebaseAuth()
 
-  async function handleAction(actionMode: ActionMode, code: string) {
-    const auth = getFirebaseAuth()
-
-    switch (actionMode) {
-      case "verifyEmail":
-        try {
-          await applyActionCode(auth, code)
-          // Someone verifying from the browser they signed up in is already
-          // signed in. Refresh their user so the app sees the verified flag,
-          // then send them straight back in rather than to the sign-in page.
-          await auth.authStateReady()
-          if (auth.currentUser) {
-            try {
-              await auth.currentUser.reload()
-            } catch (err) {
-              console.warn("verifyEmail user reload failed:", errorCode(err))
+      switch (actionMode) {
+        case "verifyEmail":
+          try {
+            await applyActionCode(auth, code)
+            // Someone verifying from the browser they signed up in is already
+            // signed in. Refresh their user so the app sees the verified flag,
+            // then send them straight back in rather than to the sign-in page.
+            await auth.authStateReady()
+            if (auth.currentUser) {
+              try {
+                await auth.currentUser.reload()
+              } catch (err) {
+                console.warn("verifyEmail user reload failed:", errorCode(err))
+              }
+              // Honor where the email asked to go (e.g. back to MFA enrollment);
+              // a /login target means "the app" for someone already signed in.
+              window.location.replace(
+                safeReturnTo(safeContinuePath(continueUrl, window.location.origin))
+              )
+              return
             }
-            // Honor where the email asked to go (e.g. back to MFA enrollment);
-            // a /login target means "the app" for someone already signed in.
-            window.location.replace(
-              safeReturnTo(safeContinuePath(continueUrl, window.location.origin))
+            setStatus("success")
+            setMessage("Your email is verified.")
+            setContinueLabel("Continue to Pablo")
+          } catch (err) {
+            console.error("verifyEmail action failed:", errorCode(err))
+            setStatus("error")
+            setMessage(
+              `This verification link has expired or already been used (${errorCode(err)}).`
             )
-            return
           }
-          setStatus("success")
-          setMessage("Your email is verified.")
-          setContinueLabel("Continue to Pablo")
-        } catch (err) {
-          console.error("verifyEmail action failed:", errorCode(err))
-          setStatus("error")
-          setMessage(
-            `This verification link has expired or already been used (${errorCode(err)}).`
-          )
-        }
-        break
+          break
 
-      case "resetPassword":
-        try {
-          const email = await verifyPasswordResetCode(auth, code)
-          setResetEmail(email)
-          setStatus("reset-form")
-        } catch (err) {
-          console.error("resetPassword action failed:", errorCode(err))
-          setStatus("error")
-          setMessage(
-            `This password reset link has expired or already been used (${errorCode(err)}).`
-          )
-        }
-        break
+        case "resetPassword":
+          try {
+            const email = await verifyPasswordResetCode(auth, code)
+            setResetEmail(email)
+            setStatus("reset-form")
+          } catch (err) {
+            console.error("resetPassword action failed:", errorCode(err))
+            setStatus("error")
+            setMessage(
+              `This password reset link has expired or already been used (${errorCode(err)}).`
+            )
+          }
+          break
 
-      case "recoverEmail":
-        try {
-          const info = await checkActionCode(auth, code)
-          await applyActionCode(auth, code)
-          setStatus("success")
-          setMessage(
-            `Your email has been reverted to ${info.data.email}. If you didn't request this change, consider resetting your password.`
-          )
-        } catch (err) {
-          console.error("recoverEmail action failed:", errorCode(err))
-          setStatus("error")
-          setMessage(
-            `This email recovery link has expired or already been used (${errorCode(err)}).`
-          )
-        }
-        break
+        case "recoverEmail":
+          try {
+            const info = await checkActionCode(auth, code)
+            await applyActionCode(auth, code)
+            setStatus("success")
+            setMessage(
+              `Your email has been reverted to ${info.data.email}. If you didn't request this change, consider resetting your password.`
+            )
+          } catch (err) {
+            console.error("recoverEmail action failed:", errorCode(err))
+            setStatus("error")
+            setMessage(
+              `This email recovery link has expired or already been used (${errorCode(err)}).`
+            )
+          }
+          break
 
-      case "revertSecondFactorAddition":
-        try {
-          await applyActionCode(auth, code)
-          setStatus("success")
-          setMessage(
-            "Two-factor authentication has been removed from your account. If you didn't request this, secure your account immediately."
-          )
-        } catch (err) {
-          console.error("revertSecondFactorAddition action failed:", errorCode(err))
-          setStatus("error")
-          setMessage(`This link has expired or already been used (${errorCode(err)}).`)
-        }
-        break
-
-      default:
-        setStatus("error")
-        setMessage("Unknown action.")
+        case "revertSecondFactorAddition":
+          try {
+            await applyActionCode(auth, code)
+            setStatus("success")
+            setMessage(
+              "Two-factor authentication has been removed from your account. If you didn't request this, secure your account immediately."
+            )
+          } catch (err) {
+            console.error("revertSecondFactorAddition action failed:", errorCode(err))
+            setStatus("error")
+            setMessage(`This link has expired or already been used (${errorCode(err)}).`)
+          }
+          break
+      }
     }
-  }
+
+    handleAction(mode, oobCode)
+  }, [mode, oobCode, config, continueUrl])
 
   async function handlePasswordReset(e: React.FormEvent) {
     e.preventDefault()
@@ -195,19 +210,12 @@ function AuthActionContent() {
     }
   }
 
-  const title: Record<ActionMode, string> = {
-    verifyEmail: "Email Verification",
-    resetPassword: "Reset Password",
-    recoverEmail: "Email Recovery",
-    revertSecondFactorAddition: "Two-Factor Authentication",
-  }
-
   return (
     <AuthCard className="w-full max-w-md space-y-6 bg-card p-10 rounded-2xl shadow-xl border border-neutral-100">
       <div className="text-center">
         <h1 className="text-4xl font-display font-bold text-primary-600">Pablo</h1>
         <h2 className="mt-3 text-xl font-semibold text-neutral-800">
-          {mode ? title[mode] || "Account Action" : "Account Action"}
+          {isActionMode(mode) ? ACTION_TITLES[mode] : "Account Action"}
         </h2>
       </div>
 

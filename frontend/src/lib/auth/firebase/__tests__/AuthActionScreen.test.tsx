@@ -110,4 +110,38 @@ describe("FirebaseAuthActionScreen", () => {
 
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/mfa-enrollment"))
   })
+
+  it("points a signed-out verifier at the page the email asked for on this origin", async () => {
+    searchParams.set("continueUrl", "https://app.test/mfa-enrollment")
+
+    render(<FirebaseAuthActionScreen />)
+
+    await screen.findByText("Your email is verified.")
+    expect(screen.getByRole("link", { name: "Continue to Pablo" })).toHaveAttribute(
+      "href",
+      "/mfa-enrollment",
+    )
+  })
+
+  it("rejects a link without a code and spends nothing", async () => {
+    searchParams.delete("oobCode")
+
+    render(<FirebaseAuthActionScreen />)
+
+    expect(
+      await screen.findByText("Invalid action link. It may have expired or already been used."),
+    ).toBeInTheDocument()
+    expect(initFirebase).not.toHaveBeenCalled()
+    expect(applyActionCode).not.toHaveBeenCalled()
+  })
+
+  it("rejects an action it does not handle and spends nothing", async () => {
+    searchParams.set("mode", "somethingElse")
+
+    render(<FirebaseAuthActionScreen />)
+
+    expect(await screen.findByText("Unknown action.")).toBeInTheDocument()
+    expect(screen.getByText("Account Action")).toBeInTheDocument()
+    expect(applyActionCode).not.toHaveBeenCalled()
+  })
 })

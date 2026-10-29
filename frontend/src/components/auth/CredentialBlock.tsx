@@ -10,7 +10,7 @@
  * AFTER a credential resolves is the host's job, via `onCredential`.
  */
 
-import { useEffect, useState, type ReactNode } from "react"
+import { useState, useSyncExternalStore, type ReactNode } from "react"
 import {
   signInWithPopup,
   signInWithRedirect,
@@ -83,6 +83,10 @@ function rememberAuthMethod(method: AuthMethod): void {
   }
 }
 
+function noSubscription(): () => void {
+  return () => {}
+}
+
 function LastUsedPill() {
   return (
     <span className="pointer-events-none absolute -top-2 right-3 rounded-full bg-primary-600 px-2 py-0.5 text-[11px] font-semibold text-on-honey shadow-sm ring-2 ring-card">
@@ -138,7 +142,7 @@ export function CredentialBlock({
 
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
-  const [error, setError] = useState("")
+  const [error, setError] = useState(notice ?? "")
   const [loading, setLoading] = useState(false)
   const [resetSent, setResetSent] = useState(false)
   const [resendSent, setResendSent] = useState(false)
@@ -154,31 +158,37 @@ export function CredentialBlock({
     onSignUpChange?.(v)
   }
 
-  // "Last used" hint, and the method that kicked off an in-progress MFA
-  // challenge (so we record the right one once the challenge resolves).
-  const [lastMethod, setLastMethod] = useState<AuthMethod | null>(null)
+  // The method that kicked off an in-progress MFA challenge (so we record the
+  // right one once the challenge resolves).
   const [pendingMethod, setPendingMethod] = useState<AuthMethod>("email")
   // Retain the first-factor credential while its passkey is asserted.
   const [pendingCredential, setPendingCredential] = useState<UserCredential | null>(null)
 
   // Only offer passkey sign-in where the browser can actually run the
-  // ceremony — resolved client-side after mount to avoid an SSR mismatch.
-  const [passkeySupported, setPasskeySupported] = useState(false)
-  useEffect(() => {
-    setPasskeySupported(passkeysEnabled && browserSupportsWebAuthn())
-  }, [passkeysEnabled])
+  // ceremony. The server renders `false` and the client corrects it after
+  // hydration, without a mismatch.
+  const passkeySupported = useSyncExternalStore(
+    noSubscription,
+    () => passkeysEnabled && browserSupportsWebAuthn(),
+    () => false,
+  )
 
   // A host-supplied notice (forced logout, recovery notice, post-credential
-  // failure) lands in the error slot; the next attempt clears it like any
-  // other error.
-  useEffect(() => {
+  // failure) lands in the error slot when it changes; the next attempt clears
+  // it like any other error.
+  const [shownNotice, setShownNotice] = useState(notice)
+  if (notice !== shownNotice) {
+    setShownNotice(notice)
     if (notice) setError(notice)
-  }, [notice])
+  }
 
-  // Surface the method this device signed in with last.
-  useEffect(() => {
-    if (showLastUsed) setLastMethod(readLastAuthMethod())
-  }, [showLastUsed])
+  // Surface the method this device signed in with last — read from the
+  // browser, so the server renders no pill.
+  const lastMethod = useSyncExternalStore(
+    noSubscription,
+    () => (showLastUsed ? readLastAuthMethod() : null),
+    () => null,
+  )
 
   const resolveCredential = async (credential: UserCredential, method: AuthMethod) => {
     // Prompt inline when a Firebase sign-in still needs Pablo's passkey.

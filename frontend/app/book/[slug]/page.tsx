@@ -113,7 +113,7 @@ export default function PublicBookingPage({
   params: Promise<{ slug: string }>
 }) {
   const [slug, setSlug] = useState<string | null>(null)
-  const dates = useMemo(upcomingDates, [])
+  const dates = useMemo(() => upcomingDates(), [])
   const [selectedDate, setSelectedDate] = useState(dates[0])
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null)
   const [firstName, setFirstName] = useState("")

@@ -62,18 +62,21 @@ export function IntegrationSettings() {
   const [importResult, setImportResult] = useState<ImportClientsResponse | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const loadStatus = useCallback(async () => {
-    try {
-      const status = await getICalSyncStatus()
-      setConnections(status.connections)
-      setLoadError(null)
-    } catch (err) {
-      setLoadError(
-        err instanceof Error ? err.message : "Could not load calendar connections."
-      )
-    }
-    setLoaded(true)
-  }, [])
+  const loadStatus = useCallback(
+    () =>
+      getICalSyncStatus()
+        .then((status) => {
+          setConnections(status.connections)
+          setLoadError(null)
+        })
+        .catch((err) => {
+          setLoadError(
+            err instanceof Error ? err.message : "Could not load calendar connections."
+          )
+        })
+        .finally(() => setLoaded(true)),
+    []
+  )
 
   useEffect(() => {
     // On a full page load this effect can run before the provider that

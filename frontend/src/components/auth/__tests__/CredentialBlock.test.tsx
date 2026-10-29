@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 import { useState } from "react"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { UserCredential } from "firebase/auth"
 
@@ -254,5 +254,61 @@ describe("CredentialBlock sign-up gating", () => {
     renderBlock()
 
     expect(await screen.findByText("Create account")).not.toBeNull()
+  })
+})
+
+describe("CredentialBlock host notice", () => {
+  function NoticeHost({ notice }: { notice?: string }) {
+    const [email, setEmail] = useState("")
+    return (
+      <CredentialBlock
+        onCredential={vi.fn()}
+        email={email}
+        onEmailChange={setEmail}
+        notice={notice}
+        renderShell={(form) => <div>{form}</div>}
+      />
+    )
+  }
+
+  it("shows a notice until the next attempt, and each new notice after that", async () => {
+    signInWithEmailAndPassword.mockReturnValue(new Promise(() => {}))
+    const { container, rerender } = render(<NoticeHost notice="You were signed out." />)
+
+    expect(screen.getByText("You were signed out.")).toBeInTheDocument()
+
+    await signInWithPassword(container)
+    await waitFor(() => expect(screen.queryByText("You were signed out.")).toBeNull())
+
+    rerender(<NoticeHost notice="You were signed out." />)
+    expect(screen.queryByText("You were signed out.")).toBeNull()
+
+    rerender(<NoticeHost notice="Failed to get authentication tokens." />)
+    expect(screen.getByText("Failed to get authentication tokens.")).toBeInTheDocument()
+  })
+})
+
+describe("CredentialBlock last-used hint", () => {
+  beforeEach(() => {
+    localStorage.setItem("pablo:lastAuthMethod", "passkey")
+  })
+
+  afterEach(() => {
+    localStorage.removeItem("pablo:lastAuthMethod")
+  })
+
+  it("flags the method this device signed in with last", async () => {
+    renderBlock({ showLastUsed: true })
+
+    const passkey = await screen.findByRole("button", { name: PASSKEY_BUTTON })
+    expect(passkey.parentElement).toHaveTextContent("Last used")
+    expect(screen.getAllByText("Last used")).toHaveLength(1)
+  })
+
+  it("shows no hint when the host does not ask for one", async () => {
+    renderBlock()
+
+    await screen.findByRole("button", { name: PASSKEY_BUTTON })
+    expect(screen.queryByText("Last used")).toBeNull()
   })
 })
