@@ -164,6 +164,7 @@ from app.services.recording_consent import (  # noqa: E402
 )
 from fastapi.testclient import TestClient  # noqa: E402
 
+from tests.audit_fakes import RecordingAudit  # noqa: E402
 from tests.calendar_oauth_fakes import FakePkceRedis  # noqa: E402
 
 
@@ -377,6 +378,12 @@ def mock_ehr_prompt_repo() -> InMemoryEhrPromptRepository:
 def mock_ehr_navigation_service() -> MockEhrNavigationService:
     """Create a mock EHR navigation service for testing."""
     return MockEhrNavigationService()
+
+
+@pytest.fixture
+def recording_audit() -> RecordingAudit:
+    """An audit service that keeps what it was asked to record."""
+    return RecordingAudit()
 
 
 @pytest.fixture
