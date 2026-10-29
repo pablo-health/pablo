@@ -196,6 +196,10 @@ services:
       # mail server above, and the step-up code goes to the fake gateway
       # below. Both gateways that make the code readable are refused outside
       # a development environment, which this stack is.
+      # What a practice's own host serves is looked up and kept for a minute here
+      # and again in the web app; a spec that publishes a site or changes a
+      # setting should see it in seconds, so both keep it for two.
+      - HOST_ANSWER_CACHE_TTL_SECONDS=2
       - ENABLE_PATIENT_PORTAL=true
       - PORTAL_TOKEN_SIGNING_KEY=e2e-portal-signing-key-not-a-real-secret
       - PORTAL_WEB_BASE_URL=http://localhost:${E2E_FRONTEND_PORT:-3000}
@@ -514,6 +518,7 @@ services:
       # The backend's CORS_ORIGINS and fake-gcs's allowed origins name this
       # host as well; change the three together.
       - PORTAL_HOSTS=127.0.0.1:${E2E_FRONTEND_PORT:-3000}
+      - HOST_ANSWER_CACHE_TTL_SECONDS=2
       # The clinician app's own host. Naming it turns on serving a practice's
       # portal from the practice's own hosts: any other name is looked up,
       # and serves that practice's portal at its root or answers 404.

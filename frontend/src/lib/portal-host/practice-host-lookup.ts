@@ -51,6 +51,16 @@ const MAX_ENTRIES = 5_000
 const TIMEOUT_MS = 3_000
 const SLUG_FOUND_TTL_MS = 24 * 60 * 60_000
 
+/**
+ * How long an answer is kept: a minute, unless `HOST_ANSWER_CACHE_TTL_SECONDS`
+ * says otherwise. The backend reads the same variable for its own cache, and
+ * the e2e stack sets it low so a published change shows at once.
+ */
+function defaultTtlMs(): number {
+  const seconds = Number(process.env.HOST_ANSWER_CACHE_TTL_SECONDS)
+  return process.env.HOST_ANSWER_CACHE_TTL_SECONDS && seconds >= 0 ? seconds * 1000 : TTL_MS
+}
+
 function parsePortalHost(body: unknown): PracticeHost | "unavailable" {
   if (typeof body !== "object" || body === null) return "unavailable"
   const { slug, primary_host: primaryHost, theme, site_host: siteHost } = body as Record<string, unknown>
@@ -75,7 +85,7 @@ function parsePortalHost(body: unknown): PracticeHost | "unavailable" {
 export function createHostLookup<T>(options: PracticeHostLookupOptions, route: HostLookupRoute<T>): HostLookup<T> {
   const fetchFn = options.fetch ?? fetch
   const now = options.now ?? Date.now
-  const ttlMs = options.ttlMs ?? TTL_MS
+  const ttlMs = options.ttlMs ?? defaultTtlMs()
   const foundTtlMs = options.foundTtlMs ?? ttlMs
   const maxEntries = options.maxEntries ?? MAX_ENTRIES
   const timeoutMs = options.timeoutMs ?? TIMEOUT_MS
