@@ -15,6 +15,7 @@ def _evidence(**overrides) -> Evidence:  # type: ignore[no-untyped-def]
         "project_id": "pablohealth-test",
         "pablo_version": "v1.2.3",
         "audit_row_count": 1234,
+        "audit_practice_count": 3,
         "audit_oldest_ts": "2025-10-01T00:00:00Z",
         "audit_newest_ts": "2026-04-17T11:59:00Z",
         "audit_retention_days": 2555,
