@@ -44,6 +44,7 @@ class Evidence:
 
     # Audit log stats
     audit_row_count: int
+    audit_practice_count: int
     audit_oldest_ts: str | None
     audit_newest_ts: str | None
     audit_retention_days: int
@@ -80,7 +81,7 @@ def run() -> int:
 
 def _gather_evidence(gcs_bucket: str | None, project_id: str) -> Evidence:
     now = datetime.now(UTC)
-    audit_count, audit_oldest, audit_newest = _audit_stats()
+    audit_count, audit_practices, audit_oldest, audit_newest = _audit_stats()
     inventory = _bucket_inventory(gcs_bucket) if gcs_bucket else _empty_inventory()
     retention_days, retention_locked = _bucket_retention(gcs_bucket)
 
@@ -91,6 +92,7 @@ def _gather_evidence(gcs_bucket: str | None, project_id: str) -> Evidence:
         project_id=project_id,
         pablo_version=os.environ.get("PABLO_VERSION", "unknown"),
         audit_row_count=audit_count,
+        audit_practice_count=audit_practices,
         audit_oldest_ts=audit_oldest,
         audit_newest_ts=audit_newest,
         audit_retention_days=AUDIT_LOG_RETENTION_DAYS,
@@ -107,34 +109,54 @@ def _gather_evidence(gcs_bucket: str | None, project_id: str) -> Evidence:
     )
 
 
-def _audit_stats() -> tuple[int, str | None, str | None]:
-    """Return (row_count, oldest_ts_iso, newest_ts_iso) from audit_logs."""
-    try:
-        from sqlalchemy import func, select  # noqa: PLC0415
+def _audit_stats() -> tuple[int, int, str | None, str | None]:
+    """Return (row_count, practice_count, oldest_ts_iso, newest_ts_iso).
 
-        from ..db import create_standalone_session  # noqa: PLC0415
-        from ..db.models import AuditLogRow  # noqa: PLC0415
-    except ImportError:
-        logger.exception("DB modules not importable — reporting zeros")
-        return 0, None, None
+    ``audit_logs`` lives in each practice's schema, so the stats are summed
+    across every practice the daily log review covers. The first version
+    queried an unqualified ``audit_logs`` with no schema on the path, which
+    cannot resolve once every deployment runs practice schemas; it failed the
+    quarterly run outright.
 
-    session = create_standalone_session()
-    try:
-        result = session.execute(
-            select(
-                func.count(AuditLogRow.id),
-                func.min(AuditLogRow.timestamp),
-                func.max(AuditLogRow.timestamp),
-            )
-        ).one()
-        count, oldest, newest = result
-        return (
-            int(count or 0),
-            oldest.isoformat().replace("+00:00", "Z") if oldest else None,
-            newest.isoformat().replace("+00:00", "Z") if newest else None,
-        )
-    finally:
-        session.close()
+    A practice whose rows this connection cannot read (row-level security,
+    when the job runs as a role without access) raises rather than counting
+    as zero: a falsely small number in an auditor's document is worse than a
+    run that fails and says why.
+    """
+    from sqlalchemy import text  # noqa: PLC0415
+
+    from ..db import PLATFORM_SCHEMA, _validate_schema_name, get_engine  # noqa: PLC0415
+    from .hipaa_log_review import _list_practice_schemas, audit_rows_hidden  # noqa: PLC0415
+
+    total = 0
+    oldest: datetime | None = None
+    newest: datetime | None = None
+    schemas = _list_practice_schemas()
+    with get_engine().connect() as conn:
+        for schema in schemas:
+            _validate_schema_name(schema)
+            # Operator job: schema validated by _validate_schema_name(); not web-reachable.
+            # nosemgrep
+            conn.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
+            if audit_rows_hidden(conn, schema):
+                raise RuntimeError(
+                    f"audit_logs in {schema} has rows this connection cannot read; "
+                    "run the attestation as a role that bypasses row-level security"
+                )
+            count, first, last = conn.execute(
+                text('SELECT COUNT(*), MIN("timestamp"), MAX("timestamp") FROM audit_logs')
+            ).one()
+            total += int(count or 0)
+            if first is not None and (oldest is None or first < oldest):
+                oldest = first
+            if last is not None and (newest is None or last > newest):
+                newest = last
+        conn.rollback()
+
+    def _iso(ts: datetime | None) -> str | None:
+        return ts.isoformat().replace("+00:00", "Z") if ts else None
+
+    return total, len(schemas), _iso(oldest), _iso(newest)
 
 
 def _empty_inventory() -> dict[str, Any]:
@@ -287,6 +309,7 @@ routes from bypassing the service.
 | Metric | Value |
 |---|---|
 | Rows in `audit_logs` | {e.audit_row_count:,} |
+| Practices counted | {e.audit_practice_count} |
 | Oldest entry | `{e.audit_oldest_ts or "(empty)"}` |
 | Newest entry | `{e.audit_newest_ts or "(empty)"}` |
 | Configured retention (days) | {e.audit_retention_days} |
