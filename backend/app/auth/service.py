@@ -165,6 +165,27 @@ def _note_expired_token_subject(token: str) -> None:
                 bind_log_claimed_user_id(str(user_id))
 
 
+_GOOGLE_ISSUERS = frozenset({"https://accounts.google.com", "accounts.google.com"})
+
+
+def _is_google_service_account_token(token: str) -> bool:
+    """Whether a token is shaped like a Google service-account ID token.
+
+    Reads the claims WITHOUT verifying the signature, so the answer may only
+    choose a log level — never an authentication decision.
+    """
+    try:
+        claims = jwt.decode(token, options={"verify_signature": False})
+    except jwt.PyJWTError:
+        return False
+    email = claims.get("email")
+    return (
+        claims.get("iss") in _GOOGLE_ISSUERS
+        and isinstance(email, str)
+        and email.endswith(".gserviceaccount.com")
+    )
+
+
 def verify_firebase_token(token: str) -> dict[str, Any]:
     """Verify a Firebase ID token (project-level, single-pass).
 
@@ -264,8 +285,14 @@ def verify_firebase_token(token: str) -> dict[str, Any]:
         ) from err
     except firebase_auth.InvalidIdTokenError as err:
         # Logs the PyJWT failure reason only — no token or credential value.
+        # A Google service-account ID token (Cloud Scheduler, Cloud Tasks) is
+        # expected to land here: the request middleware offers every credential
+        # to this verifier first, and the route then checks it as OIDC. Logging
+        # those at WARNING buried real rejections under hundreds a day, so they
+        # drop to DEBUG. The outcome is unchanged either way: still a 401 here.
+        level = logging.DEBUG if _is_google_service_account_token(token) else logging.WARNING
         # nosemgrep
-        logger.warning("Firebase ID token rejected: invalid (INVALID_TOKEN): %s", err)
+        logger.log(level, "Firebase ID token rejected: invalid (INVALID_TOKEN): %s", err)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
