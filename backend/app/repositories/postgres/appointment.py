@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import String, Uuid, bindparam, func, select, text, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from ...db.models import AppointmentRow, PatientClinicianRow
 from ...db.practice_directory import OUTSIDE_APPOINTMENT_FUNCTION
@@ -76,6 +76,28 @@ def _translate_integrity_error(exc: IntegrityError, *, outside_event_taken: bool
         raise OutsideEventAlreadyBookedError("That outside event is already booked") from exc
     if name in _NO_OVERLAP_CONSTRAINTS:
         raise AppointmentConflictError("Conflicts with an existing appointment") from exc
+
+
+#: SQLSTATE deadlock_detected.
+_DEADLOCK_DETECTED = "40P01"
+
+
+def _translate_deadlock(exc: OperationalError, *, outside_event_taken: bool = False) -> None:
+    """Raise the overlap error when two racing writes deadlocked on the calendar.
+
+    The exclusion constraint makes a write wait on any uncommitted row it
+    overlaps. Two overlapping bookings that each insert before the other
+    commits can wait on each other, and Postgres breaks the cycle by aborting
+    one with deadlock_detected instead of an exclusion violation. The aborted
+    one lost the same race, so it gets the same error. Anything else is left
+    for the caller to re-raise.
+    """
+    diag = getattr(exc.orig, "diag", None)
+    if getattr(diag, "sqlstate", None) != _DEADLOCK_DETECTED:
+        return
+    if outside_event_taken:
+        raise OutsideEventAlreadyBookedError("That outside event is already booked") from exc
+    raise AppointmentConflictError("Conflicts with an existing appointment") from exc
 
 
 _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindparams(
@@ -452,6 +474,9 @@ class PostgresAppointmentRepository(AppointmentRepository):
                 exc, outside_event_taken=self._outside_event_taken(appointment)
             )
             raise
+        except OperationalError as exc:
+            _translate_deadlock(exc, outside_event_taken=self._outside_event_taken(appointment))
+            raise
         return appointment
 
     def _outside_event_taken(self, appointment: Appointment) -> bool:
@@ -479,6 +504,9 @@ class PostgresAppointmentRepository(AppointmentRepository):
         except IntegrityError as exc:
             _translate_integrity_error(exc)
             raise
+        except OperationalError as exc:
+            _translate_deadlock(exc)
+            raise
         return appointments
 
     def update(self, appointment: Appointment) -> Appointment:
@@ -496,6 +524,9 @@ class PostgresAppointmentRepository(AppointmentRepository):
             _translate_integrity_error(
                 exc, outside_event_taken=self._outside_event_taken(appointment)
             )
+            raise
+        except OperationalError as exc:
+            _translate_deadlock(exc, outside_event_taken=self._outside_event_taken(appointment))
             raise
         return appointment
 
