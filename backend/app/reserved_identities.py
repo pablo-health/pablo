@@ -5,8 +5,8 @@
 Both prefixes live under the real ``pablo.health`` domain with an 8-hex
 suffix, so a collision with any real account is statistically impossible
 and visually obvious to auditors. Real signups matching either pattern
-are rejected server-side; the bypasses that honor them (``auth.service``,
-``routes/ext_auth.py``) are gated on ``settings.is_prod_project``.
+are rejected server-side; the bypass that honors them (``auth.service``)
+is gated on ``settings.is_prod_project``.
 
 This module is deliberately stdlib-only. The pentest runner imports it
 from a container that has none of the app's dependencies installed, and

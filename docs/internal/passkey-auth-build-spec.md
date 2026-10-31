@@ -102,7 +102,7 @@ A periodic sweep / TTL backstop reclaims rows (reuse whatever reclaims `launch_i
 ### Dependencies / plumbing
 
 - Pin `py_webauthn` in `pyproject.toml` via **poetry** (never uv), with a same-PR lockfile update.
-- New router `backend/app/routes/passkey.py`, registered in `main.py` alongside the auth router family (mirror `routes/ext_auth.py` / `routes/auth.py` registration).
+- New router `backend/app/routes/passkey.py`, registered in `main.py` alongside the auth router family (mirror `routes/auth.py` registration).
 - New settings: `webauthn_rp_id`, `webauthn_rp_name`, `webauthn_origins` (list: prod + dev). RP id = registrable domain (`pablo.health`); origins are the full `https://…` values.
 
 ### Endpoint contracts

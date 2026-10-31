@@ -340,8 +340,6 @@ record; session tokens are bound to the UUID, not the email.
 
 - All Cloud Run services are HTTPS-only; HTTP requests receive 301
   redirects enforced by the Cloud Run front-end.
-- Internal service-to-service calls use OIDC-signed JWTs verified
-  against the expected audience (`backend/app/routes/ext_auth.py`).
 - Cloud SQL connections go through the Cloud SQL Auth Proxy with
   mutual TLS.
 

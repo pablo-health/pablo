@@ -4,10 +4,6 @@
 # Identity Platform for install.sh: Firebase on the project, a web app, email
 # and Google sign-in, the NIST password policy and authenticator-app MFA.
 # Sourced, not run. Every function is safe to repeat. Expects PROJECT_ID.
-#
-# No blocking functions: since sign-in auditing moved into the backend
-# (#1761) they are optional defense in depth, and functions/README.md covers
-# deploying them by hand.
 
 _api() {
     local method="$1" url="$2" body="${3:-}"
