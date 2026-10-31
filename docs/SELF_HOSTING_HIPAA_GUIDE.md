@@ -193,10 +193,10 @@ Every route that touches a client's record writes a row to that practice's
   `pablo.audit_events`, and the sink copies it to the retention bucket.
   Write failures there are logged and do not fail the request; the
   database row is the record. (`backend/app/services/audit_cloud_logging.py`)
-- **Retention.** Rows carry a 7-year `expires_at`. The job that would delete
-  expired rows is not scheduled on the VM, so rows stay until you decide
-  otherwise. The bucket keeps its copy 2255 days (about 6 years and 2
-  months); the installer locks that policy, so it cannot be shortened.
+- **Retention.** Rows are kept 2555 days (7 years), then deleted by
+  `audit_retention_cron`, daily at 02:30 UTC. The bucket keeps its copy
+  2255 days (about 6 years and 2 months); the installer locks that policy,
+  so it cannot be shortened.
 - **Your own view.** Clinicians can read their own audit log in the app,
   and see who acted on a client's record.
 - **Postgres-level logging.** `pgaudit` is loaded and records role and DDL
@@ -212,22 +212,22 @@ The daily and monthly reviews of this log, and what they produce, are in
 What the code does today, not what is planned.
 
 - **Deleting a client** sets `deleted_at`. The record disappears from
-  lists, can be restored for 30 days, and after that is hidden but still in
-  the database. (`backend/app/routes/patients.py`)
-- **Permanent removal** is `backend/app/jobs/hard_purge_cron.py`. It is not
-  in the VM's crontab, and in this build it exits without doing anything
-  unless a retention-stub writer is registered, which the open-source image
-  does not do. So nothing purges on its own.
-- **Session audio** can be deleted when a note is signed, or kept for a
-  number of days you choose, from the app's settings.
-- **Backups** hold whatever the database held when they were taken. The
-  bucket keeps four full backups and their differentials; disk snapshots are
-  kept 14 days.
-- **Audit rows** are kept indefinitely on the VM (above).
-
-If your state's record-retention rules or your own policy require purging
-after a period, that is a manual job today: there is no supported command.
-Follow the repository for the change that wires it.
+  lists and can be restored for 30 days. Before deleting, the clinician
+  confirms they have met their own record-retention obligations.
+  (`backend/app/routes/patients.py`)
+- **After 30 days the client is permanently removed**: the record, notes,
+  sessions and their audio, appointments, chat history and uploaded
+  documents. `hard_purge_cron` does this daily at 02:00 UTC on the VM, and
+  nightly before the backup on a local install.
+- **What remains** is one audit entry saying the client was purged, with
+  the internal ID and the time. No name or date of birth is kept.
+- **Session audio** can also be deleted sooner: when a note is signed, or
+  after a number of days you choose, from the app's settings.
+- **Backups** hold whatever the database held when they were taken, so a
+  purged client stays in them until they age out: about 4 to 5 weeks on the
+  VM (four weekly full backups and their differentials; disk snapshots are
+  kept 14 days), 30 days on a local install.
+- **Audit rows** are kept 2555 days (7 years), then deleted (above).
 
 ## A client's right of access
 

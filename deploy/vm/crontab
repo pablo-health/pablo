@@ -5,6 +5,11 @@
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
+# Retention, before the night's backup: clients deleted more than 30 days
+# ago are purged, then audit entries past their 7-year retention.
+0 2 * * *    root  pablo-job hard_purge_cron
+30 2 * * *   root  pablo-job audit_retention_cron
+
 # Backups: weekly full, daily differential, monthly restore drill.
 0 3 * * 0    root  pablo-backup full
 0 3 * * 1-6  root  pablo-backup diff

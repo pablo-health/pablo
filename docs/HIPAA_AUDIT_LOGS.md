@@ -19,7 +19,7 @@ Pablo uses a two-layer audit trail:
 
 | Layer | Source | What it captures | Retention |
 |---|---|---|---|
-| **Application audit log** | `AuditService` (`backend/app/services/audit_service.py`) | Structured records of every PHI-touching API request: who (user_id, email), what (action + resource), when, where (IP, user agent), change diff for mutations. The Postgres `audit_logs` row is the record; each row is also mirrored to Cloud Logging as `pablo.audit_events` (`backend/app/services/audit_cloud_logging.py`) | Rows: 7-year `expires_at`, and no purge is scheduled on the VM. Mirror: 2255 days in the audit sink bucket (`scripts/setup-hipaa-audit-sink.sh`) |
+| **Application audit log** | `AuditService` (`backend/app/services/audit_service.py`) | Structured records of every PHI-touching API request: who (user_id, email), what (action + resource), when, where (IP, user agent), change diff for mutations. The Postgres `audit_logs` row is the record; each row is also mirrored to Cloud Logging as `pablo.audit_events` (`backend/app/services/audit_cloud_logging.py`) | Rows: 2555 days (7 years), then deleted by `audit_retention_cron` (daily, 02:30 UTC on the VM; nightly on a local install). Mirror: 2255 days in the audit sink bucket (`scripts/setup-hipaa-audit-sink.sh`) |
 | **Database-level log** | `pgaudit` on the VM's Postgres | Role and DDL changes by database users other than the app. **Not** a record of PHI access: see below | The VM's Postgres log; not shipped off the VM |
 
 The application layer is the audit trail. The hosted service's and the single-VM install's sink configuration differ only in who runs the script; both feed the `<project>-hipaa-audit-6y` bucket.
