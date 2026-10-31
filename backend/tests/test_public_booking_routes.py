@@ -20,7 +20,7 @@ import types
 import uuid
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from app.api_errors import register_exception_handlers
@@ -734,16 +734,20 @@ def test_public_booking_audit_rows_live_in_the_owner_scope_as_anonymous(
     date_str = _bookable_date()
     client.rule_repo.create(_working_hours_rule(date_str))
 
-    resp = client.post(
-        "/api/public/booking-links/intro-call/bookings",
-        json={
-            "start_at": f"{date_str}T09:30:00Z",
-            "first_name": "Jane",
-            "last_name": "Roe",
-            "email": "jane@example.com",
-        },
-        headers={"X-Forwarded-For": "203.0.113.9"},
-    )
+    # The booker's address comes from the proxy in front of the backend, so
+    # the test client's peer has to be one the deployment trusts.
+    behind_proxy = get_settings().model_copy(update={"trusted_proxy_ips": "testclient"})
+    with patch("app.settings.get_settings", return_value=behind_proxy):
+        resp = client.post(
+            "/api/public/booking-links/intro-call/bookings",
+            json={
+                "start_at": f"{date_str}T09:30:00Z",
+                "first_name": "Jane",
+                "last_name": "Roe",
+                "email": "jane@example.com",
+            },
+            headers={"X-Forwarded-For": "203.0.113.9"},
+        )
     assert resp.status_code == 201
 
     rows = repo.list_for_user(OWNER_ID)

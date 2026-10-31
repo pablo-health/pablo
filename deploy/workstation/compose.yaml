@@ -127,7 +127,9 @@ services:
       - ../vm/routes.caddy:/etc/caddy/routes.caddy:ro
     networks:
       pablo:
-        # The one address the backend trusts for X-Forwarded-Proto.
+        # Fixed, so the backend can trust exactly this address for
+        # X-Forwarded-For / X-Forwarded-Proto: TRUSTED_PROXY_IPS, which
+        # render_env_files (deploy/vm/lib/env.sh) writes for both installs.
         ipv4_address: 172.30.0.10
 
 networks:

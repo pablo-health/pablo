@@ -131,5 +131,29 @@ class TestExtractRequestContext:
             ip, _ua = extract_request_context(_request("1.2.3.4, 203.0.113.7"))
         assert ip == "203.0.113.7"
 
+    def test_untrusted_peer_cannot_name_the_audited_address(self) -> None:
+        _, rc = _patch_hops(1, trusted_proxy_ips="")
+        with rc:
+            ip, _ua = extract_request_context(_request("203.0.113.7", peer="198.51.100.4"))
+        assert ip == "198.51.100.4"
+
+    def test_peer_not_in_list_is_audited_as_itself(self) -> None:
+        _, rc = _patch_hops(1, trusted_proxy_ips="172.30.0.10")
+        with rc:
+            ip, _ua = extract_request_context(_request("203.0.113.7", peer="198.51.100.4"))
+        assert ip == "198.51.100.4"
+
+    def test_listed_peer_yields_the_right_hand_hop(self) -> None:
+        _, rc = _patch_hops(1, trusted_proxy_ips="172.30.0.10")
+        with rc:
+            ip, _ua = extract_request_context(_request("1.2.3.4, 203.0.113.7", peer="172.30.0.10"))
+        assert ip == "203.0.113.7"
+
+    def test_no_peer_address_is_audited_as_none(self) -> None:
+        _, rc = _patch_hops(1, trusted_proxy_ips="172.30.0.10")
+        request = Request({"type": "http", "headers": [(b"x-forwarded-for", b"203.0.113.7")]})
+        with rc:
+            assert extract_request_context(request) == (None, None)
+
     def test_none_request_returns_none(self) -> None:
         assert extract_request_context(None) == (None, None)

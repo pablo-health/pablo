@@ -282,37 +282,16 @@ def check_recovery_redeem_account_limit(user_id: str) -> None:
 
 
 def get_client_ip(request: Request) -> str:
-    """Extract the real client IP, honouring X-Forwarded-For only from a trusted proxy.
+    """The limiter key for a request: the real client IP (see ``trusted_proxy.client_ip``).
 
-    The client controls the *leftmost* X-Forwarded-For entries (it can send
-    any value it likes), while a trusted reverse proxy *appends* the real
-    peer IP on the right. Reading the leftmost entry therefore lets a caller
-    forge a unique IP per request and defeat the rate limiter entirely. We
-    instead read ``settings.trusted_proxy_hops`` entries from the right —
-    the proxy-controlled end — which is the real client IP for our Cloud Run
-    deployment (one trusted hop) and stays correct if more proxies are added.
-
-    The header is only consulted when the immediate peer is one of
-    ``settings.trusted_proxy_ips``. A caller that reaches the app port
-    directly gets keyed on its own address no matter what it sends, because
-    from that peer the whole header is free-form input: with the right end
-    read but any peer trusted, a fresh single-entry header per request was
-    a fresh limiter key per request.
+    X-Forwarded-For counts only from a peer in ``settings.trusted_proxy_ips``,
+    and only its proxy-appended right end. Otherwise a caller could send a
+    fresh forged address per request and get a fresh limiter key every time.
     """
     from .settings import get_settings  # noqa: PLC0415
-    from .trusted_proxy import is_from_trusted_proxy  # noqa: PLC0415
+    from .trusted_proxy import client_ip  # noqa: PLC0415
 
-    peer = request.client.host if request.client else "unknown"
-    settings = get_settings()
-    if not is_from_trusted_proxy(request, settings):
-        return peer
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        parts = [p.strip() for p in forwarded.split(",") if p.strip()]
-        if parts:
-            hops = min(settings.trusted_proxy_hops, len(parts))
-            return parts[-hops]
-    return peer
+    return client_ip(request, get_settings()) or "unknown"
 
 
 def require_rate_limit(request: Request) -> None:

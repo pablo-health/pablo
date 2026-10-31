@@ -22,6 +22,7 @@ from app.repositories.audit import InMemoryAuditRepository
 from app.services import audit_cloud_logging
 from app.services.audit_service import AuditService
 from app.settings import get_settings
+from starlette.datastructures import Headers
 
 
 @pytest.fixture
@@ -70,15 +71,23 @@ def test_session(test_patient: Patient) -> TherapySession:
 
 
 @pytest.fixture
-def mock_request() -> MagicMock:
+def mock_request(monkeypatch: pytest.MonkeyPatch) -> Iterator[MagicMock]:
     request = MagicMock()
-    request.headers = {
-        "User-Agent": "TestBrowser/1.0",
-        "X-Forwarded-For": "192.168.1.100",
-    }
+    request.headers = Headers(
+        {
+            "User-Agent": "TestBrowser/1.0",
+            "X-Forwarded-For": "192.168.1.100",
+        }
+    )
     request.client = MagicMock()
     request.client.host = "127.0.0.1"
-    return request
+    # The forwarded address counts only from a proxy the deployment trusts.
+    # Set through the environment, not a patched get_settings, so tests that
+    # set other settings the same way still see them.
+    monkeypatch.setenv("TRUSTED_PROXY_IPS", "127.0.0.1")
+    get_settings.cache_clear()
+    yield request
+    get_settings.cache_clear()
 
 
 class TestAuditLogEntry:
