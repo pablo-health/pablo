@@ -77,15 +77,16 @@ def extract_request_context(
 ) -> tuple[str | None, str | None]:
     """Return (ip_address, user_agent) from a Request, or (None, None).
 
-    The client IP is read from the proxy-appended (right) end of
-    X-Forwarded-For, not the client-spoofable leftmost entry — otherwise a
-    caller could forge the source IP recorded in the audit trail. See
-    ``Settings.trusted_proxy_hops``.
-
     A request the web app's server makes while rendering a page would record
     the server's address and agent, not the user's. When
     ``Settings.frontend_forward_secret`` is set and the request carries it, the
     user's IP and agent the server forwarded are used instead.
+
+    Otherwise the IP is the one the rate limiter keys on: X-Forwarded-For only
+    from a peer in ``Settings.trusted_proxy_ips``, read from its
+    proxy-appended (right) end; from any other peer, the peer's own address.
+    A caller reaching the backend directly cannot make an audit row name an
+    address it chose. See ``trusted_proxy.client_ip``.
     """
     if request is None:
         return None, None
@@ -95,14 +96,6 @@ def extract_request_context(
         return forwarded_client
 
     from .settings import get_settings  # noqa: PLC0415
+    from .trusted_proxy import client_ip  # noqa: PLC0415
 
-    forwarded = request.headers.get("X-Forwarded-For")
-    parts = [p.strip() for p in forwarded.split(",") if p.strip()] if forwarded else []
-    if parts:
-        hops = min(get_settings().trusted_proxy_hops, len(parts))
-        ip: str | None = parts[-hops]
-    elif request.client:
-        ip = request.client.host
-    else:
-        ip = None
-    return ip, request.headers.get("User-Agent")
+    return client_ip(request, get_settings()), request.headers.get("User-Agent")

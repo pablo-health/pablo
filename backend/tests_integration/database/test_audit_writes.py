@@ -44,8 +44,10 @@ from app.models.audit import AuditAction, ResourceType
 from app.models.session import TherapySession, Transcript
 from app.repositories.postgres.audit import PostgresAuditRepository
 from app.services.audit_service import AuditService
+from app.settings import get_settings
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
+from starlette.datastructures import Headers
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -157,10 +159,20 @@ def _build_request(
     request = MagicMock()
     request.client = MagicMock()
     request.client.host = client_ip
-    request.headers = {"User-Agent": user_agent}
+    headers = {"User-Agent": user_agent}
     if forwarded_for is not None:
-        request.headers["X-Forwarded-For"] = forwarded_for
+        headers["X-Forwarded-For"] = forwarded_for
+    request.headers = Headers(headers)
     return request
+
+
+@pytest.fixture
+def peer_is_trusted_proxy(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Trust the address ``_build_request`` connects from as the reverse proxy."""
+    monkeypatch.setenv("TRUSTED_PROXY_IPS", "198.51.100.7")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 def _count_rows(pg_session: Session) -> int:
@@ -221,7 +233,10 @@ class TestGenericLog:
         delta_days = (row["expires_at"] - row["timestamp"]).days
         assert 2554 <= delta_days <= 2556
 
-    def test_x_forwarded_for_takes_precedence_over_client_host(self, pg_session: Session) -> None:
+    @pytest.mark.usefixtures("peer_is_trusted_proxy")
+    def test_x_forwarded_for_from_trusted_proxy_takes_precedence_over_client_host(
+        self, pg_session: Session
+    ) -> None:
         service = _build_service(pg_session)
         # The trusted proxy appends the real client IP on the right; the
         # spoofable leftmost entry (10.0.0.1 here) must not be recorded.
@@ -235,6 +250,19 @@ class TestGenericLog:
         pg_session.commit()
         row = _fetch_only_row(pg_session)
         assert row["ip_address"] == "203.0.113.9"
+
+    def test_x_forwarded_for_from_untrusted_peer_is_ignored(self, pg_session: Session) -> None:
+        service = _build_service(pg_session)
+        service.log(
+            action=AuditAction.PATIENT_VIEWED,
+            user=_build_user(),
+            request=_build_request(forwarded_for="203.0.113.9"),
+            resource_type=ResourceType.PATIENT,
+            resource_id="p1",
+        )
+        pg_session.commit()
+        row = _fetch_only_row(pg_session)
+        assert row["ip_address"] == "198.51.100.7"
 
     def test_changes_with_phi_field_name_is_rejected_before_write(
         self, pg_session: Session

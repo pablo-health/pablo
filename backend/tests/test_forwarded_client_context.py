@@ -37,12 +37,15 @@ _USER_UA = "Mozilla/5.0 (Macintosh) Safari/605.1.15"
 _SECRET = "s3cret-forwarding-value"
 
 
-def _request(extra: dict[str, str]) -> Request:
+_PROXY_IP = "10.0.0.9"
+
+
+def _request(extra: dict[str, str], *, peer: str = _PROXY_IP) -> Request:
     headers = {"x-forwarded-for": _SERVER_IP, "user-agent": _SERVER_UA, **extra}
     scope = {
         "type": "http",
         "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
-        "client": ("10.0.0.9", 12345),
+        "client": (peer, 12345),
     }
     return Request(scope)
 
@@ -58,7 +61,11 @@ def _forwarding(auth: str = _SECRET, ip: str = _USER_IP, ua: str = _USER_UA) -> 
 @contextmanager
 def _configured(secret: str) -> Iterator[None]:
     settings = get_settings().model_copy(
-        update={"frontend_forward_secret": SecretStr(secret), "trusted_proxy_hops": 1}
+        update={
+            "frontend_forward_secret": SecretStr(secret),
+            "trusted_proxy_hops": 1,
+            "trusted_proxy_ips": _PROXY_IP,
+        }
     )
     with patch("app.settings.get_settings", return_value=settings):
         yield
@@ -68,6 +75,13 @@ class TestForwardedClient:
     def test_matching_secret_uses_forwarded_ip_and_agent(self) -> None:
         with _configured(_SECRET):
             assert extract_request_context(_request(_forwarding())) == (_USER_IP, _USER_UA)
+
+    def test_secret_is_honoured_from_an_untrusted_peer(self) -> None:
+        # The secret is the proof here, not the peer: the web app's server
+        # need not sit behind the proxy the deployment trusts.
+        with _configured(_SECRET):
+            result = extract_request_context(_request(_forwarding(), peer="198.51.100.4"))
+        assert result == (_USER_IP, _USER_UA)
 
     def test_ipv6_is_accepted_and_normalised(self) -> None:
         with _configured(_SECRET):

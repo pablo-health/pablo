@@ -22,10 +22,12 @@ import io
 import json
 import logging
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 from app.api_errors import register_exception_handlers
 from app.logging_config import JSONFormatter, RedactPHIFilter
+from app.settings import get_settings
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
@@ -366,12 +368,24 @@ def test_source_ip_recorded(auth_logs: io.StringIO) -> None:
     assert "source_ip" in payloads[0]
 
 
-def test_x_forwarded_for_used_when_present(auth_logs: io.StringIO) -> None:
+def _get_with_spoofable_xff(trusted_proxy_ips: str) -> None:
+    settings = get_settings().model_copy(update={"trusted_proxy_ips": trusted_proxy_ips})
+    with patch("app.settings.get_settings", return_value=settings):
+        TestClient(_build_app()).get(
+            "/unauth-invalid-token",
+            headers={"X-Forwarded-For": "1.2.3.4, 203.0.113.7"},
+        )
+
+
+def test_x_forwarded_for_used_from_a_trusted_proxy(auth_logs: io.StringIO) -> None:
     # The trusted proxy (Cloud Run) appends the real client IP on the RIGHT;
     # a client-supplied leftmost value is spoofable and must be ignored.
-    TestClient(_build_app()).get(
-        "/unauth-invalid-token",
-        headers={"X-Forwarded-For": "1.2.3.4, 203.0.113.7"},
-    )
+    _get_with_spoofable_xff("testclient")
     payloads = _lines(auth_logs)
     assert payloads[0]["source_ip"] == "203.0.113.7"
+
+
+def test_x_forwarded_for_ignored_from_an_untrusted_peer(auth_logs: io.StringIO) -> None:
+    _get_with_spoofable_xff("")
+    payloads = _lines(auth_logs)
+    assert payloads[0]["source_ip"] == "testclient"
