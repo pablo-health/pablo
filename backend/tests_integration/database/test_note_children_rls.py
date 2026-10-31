@@ -255,7 +255,11 @@ class TestPolicyShipped:
                 ),
                 {"s": tenant_schema, "t": table},
             ).scalar()
-        assert policies == {"rls_note_child_access"}
+        expected = {"rls_note_child_access"}
+        if table == "session_dictations":
+            # The hard purge reads a dictation's audio path before deleting it.
+            expected.add("rls_patient_purge_read")
+        assert policies == expected
         assert forced is True
 
 

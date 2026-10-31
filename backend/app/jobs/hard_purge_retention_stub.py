@@ -2,12 +2,17 @@
 
 """Pluggable compliance **minimal retention stub** writer for hard-purge (THERAPY-cgy).
 
-This module ships the SQLAlchemy implementation
-(:class:`SqlComplianceRetentionStubWriter`) but does **not** register
-it at import time. Hosted images call
+With nothing registered the purge uses :class:`AuditOnlyRetentionStubWriter`:
+the record that a client was purged is the job's own audit entry (internal
+patient ID and purge time), and no name or date of birth survives. That is
+the open-source build's behaviour, and it needs no table beyond
+``audit_logs``.
+
+Hosted images register :class:`SqlComplianceRetentionStubWriter` through
 ``register_compliance_retention_stub_writer`` from a deployment-specific
-entrypoint before running the purge job, so self-hosted deployments
-never accidentally execute compliance DML with no DDL present.
+entrypoint before running the job; an explicit registration always wins.
+It writes into ``compliance.patient_identity_tombstone``, which only the
+hosted schema has, so it is never the default.
 
 SQL identifiers retain their legacy DDL names
 (``patient_identity_tombstone``, ``tombstoned_*``); product language
@@ -62,8 +67,29 @@ def register_compliance_retention_stub_writer(writer: ComplianceRetentionStubWri
     _registry.writer = writer
 
 
-def get_compliance_retention_stub_writer() -> ComplianceRetentionStubWriter | None:
-    return _registry.writer
+def get_compliance_retention_stub_writer() -> ComplianceRetentionStubWriter:
+    return _registry.writer or AuditOnlyRetentionStubWriter()
+
+
+class AuditOnlyRetentionStubWriter:
+    """The default: keep nothing beyond the purge's own audit entry."""
+
+    def is_supported(self, conn: Any) -> bool:  # noqa: ARG002 — the protocol's signature
+        return True
+
+    def stub_row_exists(
+        self,
+        conn: Any,  # noqa: ARG002 — the protocol's signature, unused here
+        patient_id: str,  # noqa: ARG002
+    ) -> bool:
+        return False
+
+    def insert_stub(
+        self,
+        conn: Any,  # noqa: ARG002 — the protocol's signature, unused here
+        stub: ComplianceRetentionStubPayload,  # noqa: ARG002
+    ) -> None:
+        return None
 
 
 def _compliance_schema_exists(conn: Any) -> bool:
@@ -74,7 +100,7 @@ def _compliance_schema_exists(conn: Any) -> bool:
 
 
 class SqlComplianceRetentionStubWriter:
-    """Default implementation against the legacy compliance DDL."""
+    """Hosted implementation against the legacy compliance DDL."""
 
     def is_supported(self, conn: Any) -> bool:
         if not _compliance_schema_exists(conn):

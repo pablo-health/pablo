@@ -143,6 +143,11 @@ def _indexes(engine: Engine, schema: str, table: str) -> set[str]:
         )
 
 
+# The hard purge's policies on this table come from the RLS reconcile, not
+# from the revision under test, and are left alone by both directions of it.
+_PURGE_POLICIES = {"rls_patient_purge_read", "rls_patient_purge_delete"}
+
+
 def _policies(engine: Engine, schema: str, table: str) -> set[str]:
     with engine.connect() as conn:
         return set(
@@ -419,7 +424,10 @@ def test_the_revision_only_adds(engine: Engine, tenant_at_parent: dict[str, str]
         "uq_appointments_outside_event_per_calendar",
         "uq_appointments_outside_event_per_clinician",
     } <= _indexes(engine, schema, "appointments")
-    assert _policies(engine, schema, "patient_source_mappings") == {"rls_practice_answers"}
+    assert _policies(engine, schema, "patient_source_mappings") == {
+        "rls_practice_answers",
+        *_PURGE_POLICIES,
+    }
     assert "rls_practice_directory_read" in _policies(engine, schema, "appointments")
     assert _function_owner(engine, schema) == _ROLE
     # The old rows are exactly as they were, with no scope: still their owner's.
@@ -459,7 +467,10 @@ def test_a_rerun_changes_nothing(engine: Engine, tenant_at_parent: dict[str, str
     assert result.status is TenantStatus.SUCCESS, result.detail
     assert (_all_answers(engine, schema), _outside_links(engine, schema)) == before
     assert _function_owner(engine, schema) == _ROLE
-    assert _policies(engine, schema, "patient_source_mappings") == {"rls_practice_answers"}
+    assert _policies(engine, schema, "patient_source_mappings") == {
+        "rls_practice_answers",
+        *_PURGE_POLICIES,
+    }
 
 
 def test_the_downgrade_takes_only_what_it_added(
@@ -484,7 +495,10 @@ def test_the_downgrade_takes_only_what_it_added(
     )
     assert _function_owner(engine, schema) is None
     assert "rls_practice_directory_read" not in _policies(engine, schema, "appointments")
-    assert _policies(engine, schema, "patient_source_mappings") == {"rls_user_isolation"}
+    assert _policies(engine, schema, "patient_source_mappings") == {
+        "rls_user_isolation",
+        *_PURGE_POLICIES,
+    }
     assert _answers_at_parent(engine, schema) == before
 
 

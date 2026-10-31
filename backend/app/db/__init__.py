@@ -103,6 +103,13 @@ _RLS_PATIENT_ID_KEY = "rls_current_patient_id"
 # on pool checkin so no principal outlives the request that armed it.
 _PRINCIPAL_SETTINGS = ("app.current_user_id", "app.current_patient_id")
 
+# The purge jobs' authorizations: each opens policies (and, for the audit
+# log, its append-only trigger) that no request should ever run under. The
+# jobs set them with ``SET LOCAL``, so they normally go with the
+# transaction; resetting them on checkin as well means a session-level set,
+# wherever it came from, cannot ride a pooled connection into a request.
+_JOB_ONLY_SETTINGS = ("app.allow_audit_purge", "app.allow_patient_purge")
+
 # The provisioning TEMPLATE schema. Every practice schema is built from
 # this one; no practice's data ever lives in it. ``enable_rls_on_schema``
 # skips it deliberately, which is only safe because it holds no rows —
@@ -947,7 +954,8 @@ def _reset_search_path_on_checkin(dbapi_conn: Any, _conn_record: Any) -> None:
     ``autocommit = True`` for the duration of the ``SET`` (see inline
     comments in the body below).
 
-    It also ``RESET``\\ s ``app.current_user_id`` and ``app.current_patient_id``.
+    It also ``RESET``\\ s ``app.current_user_id`` and ``app.current_patient_id``,
+    and the purge jobs' ``app.allow_audit_purge`` and ``app.allow_patient_purge``.
     Application code arms both transaction-locally (``is_local=true``), so on
     the ordinary path they have already gone with the transaction. The reset
     is defense in depth for the path that is not ordinary: a session-level
@@ -1020,7 +1028,7 @@ def _reset_search_path_on_checkin(dbapi_conn: Any, _conn_record: Any) -> None:
             # already; this is what makes that true of a session-level
             # ``set_config(..., false)`` too, wherever it came from, instead of
             # letting it ride the connection into the next checkout.
-            for setting in _PRINCIPAL_SETTINGS:
+            for setting in (*_PRINCIPAL_SETTINGS, *_JOB_ONLY_SETTINGS):
                 cursor.execute(f"RESET {setting}")
         finally:
             cursor.close()
@@ -1683,6 +1691,84 @@ def _patient_principal_policy_statements(
     return statements
 
 
+#: What the hard purge (``app.jobs.hard_purge_cron``) does to each table it
+#: touches, beyond reading it. ``patients`` also needs ``lock``: the job takes
+#: the row ``FOR UPDATE`` so a restore cannot race the purge, and Postgres
+#: tests that against the UPDATE policies. ``patient_documents`` and
+#: ``session_dictations`` are read for their storage paths only; their rows go
+#: with the patient by foreign-key cascade, which row security does not apply to.
+PATIENT_PURGE_TABLES: dict[str, frozenset[str]] = {
+    "patients": frozenset({"read", "lock", "delete"}),
+    "appointments": frozenset({"read", "delete"}),
+    "notes": frozenset({"read", "delete"}),
+    "therapy_sessions": frozenset({"read", "delete"}),
+    "patient_source_mappings": frozenset({"read", "delete"}),
+    "chat_conversations": frozenset({"read", "delete"}),
+    "chat_messages": frozenset({"read", "delete"}),
+    "patient_documents": frozenset({"read"}),
+    "session_dictations": frozenset({"read"}),
+}
+
+_PATIENT_PURGE_ARMED = "current_setting('app.allow_patient_purge', true) = 'on'"
+
+
+def _patient_purge_policy_statements(schema_name: str, table_name: str) -> list[str]:
+    """The hard purge's policies on one table, gated on ``app.allow_patient_purge``.
+
+    The purge is not a principal: it has no clinician to arm, and the app
+    role does not bypass row-level security, so without these it reads no
+    patients and deletes nothing — and exits 0 as if it had. Same shape as
+    the audit retention purge's policies on ``audit_logs``, and the same
+    trust boundary: the only code in ``app`` that sets the setting is the
+    job, transaction-locally (``SET LOCAL``), so it never reaches a pooled
+    connection or a request. Anything that could set it some other way is
+    already running SQL as the schema owner, which can switch row security
+    off outright.
+
+    Narrow even when armed. ``patients`` admits only soft-deleted rows, and
+    every other table only rows whose patient is soft-deleted, so the setting
+    can never expose a current client. No INSERT arm, and the UPDATE arm on
+    ``patients`` exists only for the row lock: its ``WITH CHECK (false)``
+    refuses any actual update.
+
+    ``schema_name`` is validated and the table names are fixed; no caller
+    input reaches these strings.
+    """
+    commands = PATIENT_PURGE_TABLES.get(table_name)
+    if commands is None:
+        return []
+    qualified = f"{schema_name}.{table_name}"
+    patients = f"{schema_name}.patients"
+    if table_name == "patients":
+        predicate = f"{_PATIENT_PURGE_ARMED} AND deleted_at IS NOT NULL"
+    elif table_name == "chat_messages":
+        predicate = (
+            f"{_PATIENT_PURGE_ARMED} AND EXISTS ("  # noqa: S608
+            f"SELECT 1 FROM {schema_name}.chat_conversations c "
+            f"JOIN {patients} p ON p.id = c.patient_id "
+            f"WHERE c.id = {qualified}.conversation_id AND p.deleted_at IS NOT NULL)"
+        )
+    else:
+        predicate = (
+            f"{_PATIENT_PURGE_ARMED} AND EXISTS ("  # noqa: S608
+            f"SELECT 1 FROM {patients} p "
+            f"WHERE p.id = {qualified}.patient_id AND p.deleted_at IS NOT NULL)"
+        )
+    statements = [
+        f"CREATE POLICY rls_patient_purge_read ON {qualified} FOR SELECT USING ({predicate})"
+    ]
+    if "lock" in commands:
+        statements.append(
+            f"CREATE POLICY rls_patient_purge_lock ON {qualified} "
+            f"FOR UPDATE USING ({predicate}) WITH CHECK (false)"
+        )
+    if "delete" in commands:
+        statements.append(
+            f"CREATE POLICY rls_patient_purge_delete ON {qualified} FOR DELETE USING ({predicate})"
+        )
+    return statements
+
+
 class RlsReconcileCounts(NamedTuple):
     """What one ``enable_rls_on_schema`` pass did to a schema.
 
@@ -1760,12 +1846,17 @@ def _plan_row_scoped_table(  # noqa: PLR0912, PLR0915 — one policy arm per ten
     statements.append(f"DROP POLICY IF EXISTS rls_patient_self_insert ON {qualified}")
     statements.append(f"DROP POLICY IF EXISTS rls_patient_self_delete ON {qualified}")
     statements.append(f"DROP POLICY IF EXISTS rls_practice_answers ON {qualified}")
+    statements.append(f"DROP POLICY IF EXISTS rls_patient_purge_read ON {qualified}")
+    statements.append(f"DROP POLICY IF EXISTS rls_patient_purge_lock ON {qualified}")
+    statements.append(f"DROP POLICY IF EXISTS rls_patient_purge_delete ON {qualified}")
 
     # Additive: created before the clinician shape is chosen, because
     # several of those branches return early. Permissive policies OR
     # together, so this widens access for a patient principal without
     # touching any clinician policy.
     statements.extend(_patient_principal_policy_statements(schema_name, table_name, columns))
+    # Additive in the same way, and only under the hard purge's own setting.
+    statements.extend(_patient_purge_policy_statements(schema_name, table_name))
 
     # Pick the policy shape:
     #   * patient_documents — combined policy. Non-private rows

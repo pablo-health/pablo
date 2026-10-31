@@ -412,7 +412,11 @@ def test_an_author_only_note_policy_reaches_an_old_practice(
     results = fan_out(engine, [schema])
 
     assert all(r.ok for r in results), [(r.schema, r.status, r.detail) for r in results]
-    assert _policy_names(engine, schema, "notes") == {"rls_note_access"}
+    assert _policy_names(engine, schema, "notes") == {
+        "rls_note_access",
+        "rls_patient_purge_read",
+        "rls_patient_purge_delete",
+    }
     assert _rls_flags(engine, schema, "notes") == (True, True)
 
 

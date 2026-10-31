@@ -92,7 +92,9 @@ periodically, run `gcloud auth application-default login` and then
 
 The nightly run is a launchd job on a Mac (it runs on wake if the Mac was
 asleep at 2:30) and a cron entry on WSL or Linux; its log is
-`~/.pablo/<project>/backup.log`.
+`~/.pablo/<project>/backup.log`. Before the backup it permanently removes
+clients deleted more than 30 days ago, and audit entries older than 7 years
+(`pablo-local nightly`).
 
 ## Day to day
 

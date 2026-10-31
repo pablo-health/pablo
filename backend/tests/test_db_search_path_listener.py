@@ -83,7 +83,8 @@ def test_cursor_closed_even_if_execute_raises() -> None:
 
 
 def test_checkin_neutralises_search_path_and_both_principals() -> None:
-    """The next checkout gets no tenant and nobody to read as."""
+    """The next checkout gets no tenant, nobody to read as, and neither purge
+    job's authorization."""
     conn = _fake_dbapi_conn()
     conn.autocommit = False
 
@@ -94,6 +95,8 @@ def test_checkin_neutralises_search_path_and_both_principals() -> None:
         "SET search_path = platform, public",
         "RESET app.current_user_id",
         "RESET app.current_patient_id",
+        "RESET app.allow_audit_purge",
+        "RESET app.allow_patient_purge",
     ]
     conn.cursor.return_value.close.assert_called_once()
 
@@ -108,7 +111,7 @@ def test_checkin_runs_outside_a_transaction_and_restores_autocommit() -> None:
 
     _reset_search_path_on_checkin(conn, None)
 
-    assert seen == [True, True, True]
+    assert seen == [True] * 5
     assert conn.autocommit is False
 
 
