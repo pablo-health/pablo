@@ -5,6 +5,16 @@
 
 {
 	auto_https off
+	# Every request reaches Caddy from tailscaled through Docker's port
+	# forward, so its peer is the pablo network's gateway. Trusting that one
+	# address keeps the client IP Funnel puts in X-Forwarded-For; Caddy then
+	# appends the gateway, and the backend and frontend read two hops from the
+	# right (TRUSTED_PROXY_HOPS=2 in compose.yaml). Safe because Caddy is
+	# published on 127.0.0.1 only: no other machine can reach it, and Funnel
+	# replaces any X-Forwarded-For the client sends.
+	servers {
+		trusted_proxies static 172.30.0.1/32
+	}
 }
 
 :80 {

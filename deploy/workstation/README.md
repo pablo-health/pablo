@@ -71,7 +71,8 @@ Note generation, transcription and calendar sync run as Cloud Tasks that call
 back into the backend, so the machine needs an address Google can reach.
 Funnel provides it and its certificate. Caddy, on loopback port 8080, splits
 the routes between frontend and backend exactly as on the VM
-(`deploy/vm/routes.caddy`).
+(`deploy/vm/routes.caddy`). It keeps the client address Funnel passes on, so
+audit records and sign-in limits see each client, not this machine.
 
 ## Credentials
 
