@@ -1,7 +1,7 @@
 # Frontend Dockerfile for local development
-# Uses Node.js 22 LTS for Next.js 15
+# Same Node major as the production image (Dockerfile.production)
 
-FROM node:24-slim
+FROM node:26-slim
 
 WORKDIR /app
 
