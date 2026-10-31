@@ -3,9 +3,15 @@
 # Optimized for Google Cloud Run deployment
 
 # Stage 1: Builder - Build Next.js app
-FROM node:24-slim AS builder
+# Chainguard's -dev variant: the same Node as the runtime, plus a shell and npm.
+FROM cgr.dev/chainguard/node:latest-dev AS builder
 
+USER root
 WORKDIR /app
+
+# The compose healthchecks call node at /nodejs/bin/node. The runtime has no
+# shell to create that link, so build it here and copy it across.
+RUN mkdir -p /out/nodejs/bin && ln -s /usr/bin/node /out/nodejs/bin/node
 
 # Copy dependency files (patches/ must land before `npm ci` so the
 # patch-package postinstall hook can apply them during install).
@@ -39,8 +45,10 @@ ENV NEXT_PUBLIC_CLIENT_BUILD=${NEXT_PUBLIC_CLIENT_BUILD}
 # the real key is injected via Cloud Run environment variables.
 RUN AUTH_COOKIE_SIGNATURE_KEY="build-time-placeholder-replaced-at-runtime" npm run build
 
-# Stage 2: Runner - Distroless production image (no shell, no package manager)
-FROM gcr.io/distroless/nodejs24-debian12:nonroot AS runner
+# Stage 2: Runner - Chainguard Node, distroless (no shell, no package manager)
+FROM cgr.dev/chainguard/node:latest AS runner
+
+COPY --from=builder /out/nodejs /nodejs
 
 WORKDIR /app
 
@@ -52,7 +60,7 @@ COPY --from=builder --chown=65532:65532 /app/.next/standalone ./
 COPY --from=builder --chown=65532:65532 /app/.next/static ./.next/static
 COPY --from=builder --chown=65532:65532 /app/public ./public
 
-USER nonroot
+USER 65532:65532
 
 # Expose port (Cloud Run uses PORT env var, defaults to 3000)
 EXPOSE 3000
