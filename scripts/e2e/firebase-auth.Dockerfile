@@ -3,7 +3,7 @@
 # Only the auth emulator runs, which is pure Node: no JVM, unlike the
 # Firestore and database emulators. The firebase-tools version is pinned so
 # the emulator's token shapes don't drift under the suite.
-FROM node:24-slim
+FROM node:26-slim
 
 RUN npm install -g firebase-tools@15.29.0
 
