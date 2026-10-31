@@ -789,11 +789,8 @@ def _ensure_tenant_mapping(email: str) -> None:
 def _email_has_tenant_mapping(email: str) -> bool:
     """True if `email` has an `EmailTenantMappingRow` in the platform schema.
 
-    Mirrors the implicit-allowlist fallback applied by
-    `/api/ext/auth/check-allowlist` (routes/ext_auth.py): a provisioned
-    tenant grants its primary email access even without an explicit
-    `platform.allowed_emails` row. Keeping both gates in sync prevents
-    the "passes blocking-fn but blocked on every API call" failure mode.
+    A provisioned tenant grants its primary email access even without an
+    explicit `platform.allowed_emails` row.
     """
     from ..db import create_standalone_session
     from ..db.platform_models import EmailTenantMappingRow

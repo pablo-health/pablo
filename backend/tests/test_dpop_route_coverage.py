@@ -113,8 +113,6 @@ DPOP_UNCOVERABLE: dict[str, str] = {
     "POST /api/auth/native/exchange": "pre-auth: exchanges the code + enrolls the device",
     # --- Pre-auth allowlist / status probes used by the browser extension
     # and sign-in screen before a session exists. No authenticated user. ---
-    "POST /api/ext/auth/check-allowlist": "pre-auth: checks email allowlist before sign-in",
-    "POST /api/ext/auth/check-status": "pre-auth: checks account status before sign-in",
     # --- Pre-auth WebAuthn assertion: this IS the factor being asserted, so
     # there is no authenticated session (and no enrolled companion) to bind a
     # device proof to. ---

@@ -242,20 +242,6 @@ class Settings(BaseSettings):
             "allowlist."
         ),
     )
-    allow_test_identity_signup: bool = Field(
-        default=False,
-        description=(
-            "Let the reserved test-identity addresses "
-            "(pentestuser-<hex>@ and e2etest-<hex>@pablo.health) register "
-            "themselves through the beforeCreate allowlist check. Off by "
-            "default: the weekly pentest creates its users with the Admin SDK "
-            "and never needs it, so a deployment that leaves this off cannot "
-            "have a stranger register a test-shaped address just because the "
-            "project id lacks a -prod suffix. Only honored on a non-production "
-            "project (see is_prod_project); a hosted dev environment that runs "
-            "browser e2e against fresh users sets it explicitly."
-        ),
-    )
 
     # API Settings
     api_title: str = Field(
@@ -620,27 +606,10 @@ class Settings(BaseSettings):
                 )
         return self
 
-    # Firebase Blocking Function OIDC Verification
-    # The blocking functions (beforeCreate / beforeSignIn) call this backend
-    # with a Google-signed OIDC token. We verify audience + issuer + caller
-    # email to ensure only the configured blocking function SA can reach the
-    # /api/ext/auth endpoints.
     backend_base_url: str = Field(
         default="",
         description=(
-            "This service's public base URL. Used as the expected audience "
-            "for OIDC tokens from Firebase blocking functions. "
-            "Example: https://pablo-backend-xxx-uc.a.run.app. "
-            "If empty, audience is not enforced (logged as a warning on startup)."
-        ),
-    )
-    blocking_function_service_account: str = Field(
-        default="",
-        description=(
-            "Service account email of the Firebase blocking function runtime. "
-            "When set, only tokens minted by this SA are accepted on "
-            "/api/ext/auth endpoints. If empty, caller identity is not "
-            "enforced (logged as a warning on startup)."
+            "This service's public base URL. Example: https://pablo-backend-xxx-uc.a.run.app."
         ),
     )
 
@@ -2339,17 +2308,6 @@ class Settings(BaseSettings):
         return self.environment == "production"
 
     @property
-    def test_identity_signup_armed(self) -> bool:
-        """True when a reserved test-identity address may self-register.
-
-        Requires the explicit opt-in AND a non-production project, so the
-        default deployment is disarmed no matter what the project is
-        called. Consumed by the beforeCreate allowlist check and by the
-        startup posture log.
-        """
-        return self.allow_test_identity_signup and not self.is_prod_project
-
-    @property
     def effective_firebase_project_id(self) -> str:
         """Firebase project ID, falling back to GCP project ID."""
         return self.firebase_project_id or self.gcp_project_id
@@ -2377,13 +2335,12 @@ def log_startup_posture(settings: Settings, logger: logging.Logger) -> None:
     # (see _validate_deployment_posture) and is here so a boot log says so.
     logger.info(
         "startup posture: mfa=%s restrict_signups=%s use_redis=%s "
-        "test_identity_signup=%s dpop=%s cors_origins=%d "
+        "dpop=%s cors_origins=%d "
         "nppes_origin_override=%s clearinghouse_origin_override=%s "
         "ical_feed_origin_override=%s google_calendar_origin_override=%s",
         settings.require_mfa,
         settings.restrict_signups,
         settings.use_redis,
-        settings.test_identity_signup_armed,
         settings.enable_dpop_validation,
         cors_origin_count,
         bool(settings.nppes_base_url),

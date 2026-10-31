@@ -232,12 +232,10 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("post", "/api/admin/pentest/tenant"),  # provisions a synthetic pentest tenant
         ("delete", "/api/admin/pentest/tenant/{tenant_id}"),  # tears down a pentest tenant
         ("post", "/api/admin/pentest/audit"),  # emits a PlatformAudit pentest-run row, PHI-free
-        # auth.py / ext_auth.py — auth tokens and boolean checks only
+        # auth.py — auth tokens only
         ("post", "/api/auth/native/code"),  # mints a short-lived native auth code
         ("get", "/api/auth/session"),  # caller's own idle-session liveness, no PHI
         ("post", "/api/auth/session/touch"),  # refreshes caller's own idle heartbeat, no PHI
-        ("post", "/api/ext/auth/check-allowlist"),  # allowlist membership check
-        ("post", "/api/ext/auth/check-status"),  # account disabled-status check
         # passkey.py — WebAuthn ceremonies: authenticator metadata + token mint, no PHI
         ("post", "/api/auth/passkey/register/begin"),  # issues registration options
         ("post", "/api/auth/passkey/register/finish"),  # stores enrolled authenticator

@@ -67,23 +67,6 @@ def test_is_prod_project_default_is_false() -> None:
     assert not _make(environment="development").is_prod_project
 
 
-def test_test_identity_signup_is_disarmed_by_default() -> None:
-    # The wizard names projects "pablo-<random>", which is non-prod by the
-    # project-id rule; that alone must not arm self-signup for test addresses.
-    settings = _make(environment="production", gcp_project_id="pablo-x7k2m9")
-    assert not settings.allow_test_identity_signup
-    assert not settings.test_identity_signup_armed
-
-
-def test_test_identity_signup_needs_opt_in_and_non_prod_project() -> None:
-    assert _make(
-        allow_test_identity_signup=True, gcp_project_id="pablo-x7k2m9"
-    ).test_identity_signup_armed
-    assert not _make(
-        allow_test_identity_signup=True, gcp_project_id="pablohealth-prod"
-    ).test_identity_signup_armed
-
-
 def test_internal_actor_user_ids_default_is_empty() -> None:
     assert _make().internal_actor_user_ids == set()
 
@@ -207,7 +190,6 @@ def test_log_startup_posture_emits_summary_line(caplog: pytest.LogCaptureFixture
     assert "mfa=True" in message
     assert "restrict_signups=False" in message
     assert "use_redis=False" in message
-    assert "test_identity_signup=False" in message
     assert "dpop=False" in message
     assert "cors_origins=1" in message
     assert "nppes_origin_override=False" in message

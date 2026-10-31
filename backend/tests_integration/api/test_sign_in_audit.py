@@ -5,10 +5,7 @@
 The backend records a sign-in on the first authenticated request it makes
 (``app/auth/sign_in_audit.py``), keyed by the token's subject and
 ``auth_time``. A refreshed token keeps its ``auth_time``, so it is the same
-sign-in and must write nothing; signing in again must write a new row. The
-optional ``beforeSignIn`` hook's ``/api/ext/auth/check-status`` no longer
-writes the row, so a deployment that still has the hook registered does not
-get two.
+sign-in and must write nothing; signing in again must write a new row.
 
 These go through the real middleware, the real identity mapping, the real
 practice resolution and practice schemas provisioned the production way (RLS
@@ -57,7 +54,6 @@ pytestmark = pytest.mark.skipif(
 
 os.environ.setdefault("ENVIRONMENT", "development")
 
-_CHECK_STATUS = "/api/ext/auth/check-status"
 _ME_STATUS = "/api/users/me/status"
 _USER_AGENT = "sign-in-audit-test"
 
@@ -184,14 +180,6 @@ def _sign_in_rows(engine: Engine, schema: str, user_id: str) -> list[dict[str, A
             )
         )
         return [dict(r._mapping) for r in rows]
-
-
-def _check_status(app: FastAPI, uid: str) -> tuple[int, Any]:
-    from fastapi.testclient import TestClient  # noqa: PLC0415
-
-    with TestClient(app) as client:
-        response = client.post(_CHECK_STATUS, json={"uid": uid})
-    return response.status_code, response.json()
 
 
 _PASSWORD = {"sign_in_provider": "password", "sign_in_second_factor": "totp"}
@@ -543,7 +531,7 @@ class TestSignInIsRecordedByTheBackend:
     def test_non_allowlisted_user_is_refused_and_never_created(
         self, engine: Engine, fastapi_app: FastAPI, own_practice: SimpleNamespace
     ) -> None:
-        """With no beforeCreate hook to stop the account, the backend still refuses it."""
+        """The backend refuses an address that is not on the allowlist before creating anything."""
         from app.db.platform_models import UserIdentityRow  # noqa: PLC0415
         from app.settings import get_settings  # noqa: PLC0415
         from sqlalchemy.orm import Session  # noqa: PLC0415
@@ -559,58 +547,3 @@ class TestSignInIsRecordedByTheBackend:
             assert session.query(UserIdentityRow).filter_by(subject_id=uid).count() == 0
         assert _sign_in_rows(engine, "practice", uid) == []
         assert _sign_in_rows(engine, own_practice.schema, uid) == []
-
-
-class TestCheckStatusStillAnswersButNoLongerRecords:
-    """The optional hook keeps working for deployments that still register it."""
-
-    def test_enabled_user_is_allowed_and_no_row_is_written(
-        self, engine: Engine, fastapi_app: FastAPI, own_practice: SimpleNamespace
-    ) -> None:
-        with _clinician(engine, own_practice) as user:
-            assert _check_status(fastapi_app, user.uid) == (200, {"disabled": False})
-            assert _sign_in_rows(engine, own_practice.schema, user.user_id) == []
-
-    def test_hook_then_first_request_is_still_one_row(
-        self, engine: Engine, fastapi_app: FastAPI, own_practice: SimpleNamespace
-    ) -> None:
-        """What a deployment with the hook still registered sees on each sign-in."""
-        with _clinician(engine, own_practice) as user:
-            _check_status(fastapi_app, user.uid)
-            _request_as(fastapi_app, user.uid, user.email, auth_time=_now())
-            assert len(_sign_in_rows(engine, own_practice.schema, user.user_id)) == 1
-
-    def test_unknown_uid_is_not_disabled(
-        self, engine: Engine, fastapi_app: FastAPI, own_practice: SimpleNamespace
-    ) -> None:
-        # A brand-new account's first sign-in: no user, no mapping, no practice.
-        uid = f"fb{uuid.uuid4().hex[:26]}"
-        assert _check_status(fastapi_app, uid) == (200, {"disabled": False})
-        assert _sign_in_rows(engine, "practice", uid) == []
-        assert _sign_in_rows(engine, own_practice.schema, uid) == []
-
-    def test_disabled_user_is_refused(
-        self, engine: Engine, fastapi_app: FastAPI, own_practice: SimpleNamespace
-    ) -> None:
-        with _clinician(engine, own_practice, status="disabled") as user:
-            assert _check_status(fastapi_app, user.uid) == (200, {"disabled": True})
-
-    def test_caller_without_service_identity_is_rejected(
-        self, engine: Engine, fastapi_app: FastAPI, own_practice: SimpleNamespace
-    ) -> None:
-        from app.settings import get_settings  # noqa: PLC0415
-
-        real = get_settings()
-        deployed = real.model_copy(
-            update={
-                "environment": "production",
-                "backend_base_url": "https://api.example.invalid",
-                "blocking_function_service_account": "hook@example.invalid",
-            }
-        )
-        with (
-            _clinician(engine, own_practice) as user,
-            patch("app.routes.ext_auth.get_settings", return_value=deployed),
-        ):
-            status_code, _ = _check_status(fastapi_app, user.uid)
-            assert status_code == 403

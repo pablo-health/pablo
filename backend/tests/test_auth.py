@@ -601,10 +601,8 @@ class TestGetCurrentUser:
     ) -> None:
         """A user with an EmailTenantMappingRow but no allowed_emails row passes.
 
-        Mirrors the implicit-allowlist fallback in /api/ext/auth/check-allowlist
-        so the marketing-signup -> provisioned-tenant flow can actually use
-        the app after sign-up (THERAPY-glzf). Without this, blocking-fn lets
-        them sign up but the token-auth middleware 403s every API call.
+        A provisioned tenant's own address is allowed in without an explicit
+        allowlist row, so a practice that signs up can use the app.
         """
         mock_verify.return_value = {
             "uid": "self-serve-user",

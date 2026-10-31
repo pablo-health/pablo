@@ -76,7 +76,6 @@ from .routes import (
     dashboard,
     domain_connect,
     ehr_routes,
-    ext_auth,
     homework,
     ical_sync,
     inbox,
@@ -154,19 +153,6 @@ if settings.is_development:
         "MFA enforcement, admin checks, and HTTPS enforcement are DISABLED. "
         "Do NOT use ENVIRONMENT=development in production."
     )
-
-# Say out loud whether reserved test addresses can register themselves.
-# Off is the default; a deployment that turns it on should see it in the
-# boot log every time, next to the project it applies to.
-if settings.test_identity_signup_armed:
-    logger.warning(
-        "SECURITY: test-identity self-signup is ARMED for project %s — "
-        "reserved pentestuser-/e2etest- addresses can register without an "
-        "allowlist entry (ALLOW_TEST_IDENTITY_SIGNUP=true).",
-        settings.gcp_project_id or "<unset>",
-    )
-else:
-    logger.info("Test-identity self-signup is disarmed.")
 
 log_startup_posture(settings, logger)
 
@@ -334,7 +320,6 @@ app.add_middleware(RequestContextMiddleware)
 # Core routes (always included)
 app.include_router(auth.router)
 app.include_router(passkey.router)
-app.include_router(ext_auth.router)
 app.include_router(admin.router)
 app.include_router(admin_pentest.router)
 app.include_router(users.router)
