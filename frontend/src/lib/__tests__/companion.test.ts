@@ -1,7 +1,12 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { companionPlatform, isCompanionAvailable, isWindows } from "../companion"
+import {
+  companionNeedsServerAddress,
+  companionPlatform,
+  isCompanionAvailable,
+  isWindows,
+} from "../companion"
 
 const flags = vi.hoisted(() => ({ companion_mac: true, companion_windows: true }))
 
@@ -53,5 +58,19 @@ describe("companion platform helpers", () => {
   it("is never available on Linux", () => {
     setPlatform(...LINUX)
     expect(isCompanionAvailable()).toBe(false)
+  })
+})
+
+describe("companionNeedsServerAddress", () => {
+  it("is false on the desktop app's default server, whatever the path or case", () => {
+    expect(companionNeedsServerAddress("https://app.pablo.health")).toBe(false)
+    expect(companionNeedsServerAddress("https://APP.pablo.health/dashboard")).toBe(false)
+  })
+
+  it("is true anywhere else", () => {
+    expect(companionNeedsServerAddress("https://practice.pablo.clinic")).toBe(true)
+    expect(companionNeedsServerAddress("https://203-0-113-7.sslip.io")).toBe(true)
+    expect(companionNeedsServerAddress("http://app.pablo.health")).toBe(true)
+    expect(companionNeedsServerAddress("https://machine.tailnet.ts.net:8443")).toBe(true)
   })
 })

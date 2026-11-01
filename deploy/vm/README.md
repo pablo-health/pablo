@@ -8,6 +8,9 @@ git clone https://github.com/pablo-health/pablo.git && cd pablo
 ./install.sh
 ```
 
+The step-by-step guide, through first sign-in and the desktop app, is
+[Start here](../../docs/self-hosting/start-here.md).
+
 Before running it, accept the Google Cloud BAA for the account that owns the
 project. If you transcribe with AssemblyAI, you need a signed BAA with
 AssemblyAI too; the script asks.

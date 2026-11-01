@@ -499,7 +499,7 @@ done
 
 echo
 done_ "Pablo is running: https://${PABLO_HOST}"
-echo "Sign in with ${ADMIN_EMAIL}. You will set up an authenticator app the first time."
+echo "Sign in with ${ADMIN_EMAIL}. You will add a passkey or an authenticator app the first time."
 echo
 echo "Updates:  gcloud compute ssh ${VM_NAME} --zone=${ZONE} --tunnel-through-iap -- sudo pablo-update vX.Y.Z"
 echo "Backups:  daily to gs://${BACKUP_BUCKET}, restore-tested monthly (sudo pablo-backup info)"

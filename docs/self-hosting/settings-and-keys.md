@@ -40,6 +40,7 @@ one-off test, and run `sudo pablo-update` to apply. Definitions:
 | `AUTH_SECRET`, `AUTH_COOKIE_SIGNATURE_KEY` | from Secret Manager | Sign the web app's own session cookies. Changing them signs everyone out |
 | `FRONTEND_FORWARD_SECRET` | same value as the backend | See above |
 | `PASSKEYS_ENABLED` | `true` | Passkeys as a sign-in method, scoped to `PABLO_HOST` |
+| `TOTP_ENABLED` | `true` | First sign-in offers an authenticator app beside the passkey. Set it only where Identity Platform has authenticator apps turned on, as the installer does |
 | `ENABLE_LOCAL_AUTH`, `DEV_MODE` | `false` | Development-only sign-in paths, off |
 | `GOOGLE_CALENDAR_ENABLED` | `true` if you set up the OAuth client | Calendar sync |
 

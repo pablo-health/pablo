@@ -28,6 +28,7 @@ vi.mock("@/lib/companion", () => ({
   isMacOS: () => true,
   companionPlatform: () => "macos",
   isCompanionAvailable: () => true,
+  companionNeedsServerAddress: () => false,
 }))
 
 function makeAppointment(

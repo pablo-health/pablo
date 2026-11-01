@@ -11,7 +11,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { companionPlatform } from "@/lib/companion"
+import { CopyButton } from "@/components/settings/domains/CopyButton"
+import {
+  companionNeedsServerAddress,
+  companionPlatform,
+} from "@/lib/companion"
 import { useCompanionDownloadUrl } from "@/lib/companion.extensions"
 
 interface CompanionGetDialogProps {
@@ -27,7 +31,13 @@ export function CompanionGetDialog({
   const mac = platform === "macos"
   const windows = platform === "windows"
   const name = mac ? "macOS" : "Windows"
-  const downloadUrl = useCompanionDownloadUrl()
+  const downloadUrl = useCompanionDownloadUrl(platform)
+  // The desktop app signs in to its default server unless told otherwise, so
+  // anywhere else it needs this deployment's address once. The browser's
+  // origin is that address: the app signs in through the same web sign-in
+  // this page is served from.
+  const origin = typeof window === "undefined" ? "" : window.location.origin
+  const showAddress = origin !== "" && companionNeedsServerAddress(origin)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -66,9 +76,13 @@ export function CompanionGetDialog({
               </Button>
               {/* The dashboard only learns the app is installed once someone
                   signs in from it, so say so where they download it. */}
-              <p className="text-xs text-neutral-500">
-                After installing, open the app and sign in.
-              </p>
+              {showAddress ? (
+                <ServerAddress origin={origin} />
+              ) : (
+                <p className="text-xs text-neutral-500">
+                  After installing, open the app and sign in.
+                </p>
+              )}
             </>
           ) : platform ? (
             <>
@@ -89,5 +103,22 @@ export function CompanionGetDialog({
         </div>
       </DialogContent>
     </Dialog>
+  )
+}
+
+function ServerAddress({ origin }: { origin: string }) {
+  return (
+    <div className="space-y-1.5">
+      <p className="text-xs text-neutral-500">
+        After installing, open the app, choose Connect to a different server,
+        enter this address, and sign in.
+      </p>
+      <div className="flex items-center justify-center gap-1">
+        <code className="rounded bg-muted px-2 py-1 font-mono text-xs break-all">
+          {origin}
+        </code>
+        <CopyButton text={origin} label="Copy this Pablo's address" />
+      </div>
+    </div>
   )
 }

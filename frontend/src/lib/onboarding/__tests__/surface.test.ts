@@ -17,7 +17,7 @@ import {
   type OnboardingSurface,
   type StepDef,
 } from "../types"
-import { MINIMAL_ONBOARDING_SURFACE } from "../minimal"
+import { MINIMAL_ONBOARDING_SURFACE, minimalOnboardingSurface } from "../minimal"
 
 // The gates below only read fields they care about, so a partial cast is
 // enough to drive them.
@@ -178,5 +178,44 @@ describe("MINIMAL_ONBOARDING_SURFACE (stock surface)", () => {
       import_prompted_at: "2026-09-27",
     } as UserStatus
     expect(firstIncompleteStep(MINIMAL_ONBOARDING_SURFACE, status)).toBeNull()
+  })
+})
+
+describe("minimalOnboardingSurface (second-factor settings)", () => {
+  const ids = (surface: OnboardingSurface) => surface.steps.map((s) => s.id)
+  const none = status({ mfa_enrolled_at: null })
+
+  it("offers only the passkey when the deployment has not turned on authenticator apps", () => {
+    const surface = minimalOnboardingSurface({ passkeys: true, totp: false })
+    expect(ids(surface)).toEqual(["passkey", "import-source", "schedule"])
+    expect(surface.steps[0].group).toBeUndefined()
+  })
+
+  it("pairs the authenticator app with the passkey as one step when both are on", () => {
+    const surface = minimalOnboardingSurface({ passkeys: true, totp: true })
+    // The passkey page links the authenticator app only when an mfa step is here.
+    expect(ids(surface)).toEqual(["passkey", "mfa", "import-source", "schedule"])
+    expect(firstIncompleteRequiredStep(surface, none)?.id).toBe("passkey")
+    expect(requiredStepPosition(surface, "passkey")).toMatchObject({ index: 1, subLabel: "a", total: 1 })
+    expect(requiredStepPosition(surface, "mfa")).toMatchObject({ index: 1, subLabel: "b", total: 1 })
+  })
+
+  it("clears both steps once either second factor is enrolled", () => {
+    const surface = minimalOnboardingSurface({ passkeys: true, totp: true })
+    const enrolled = status({ mfa_enrolled_at: "2026-10-31", import_prompted_at: null })
+    expect(firstIncompleteRequiredStep(surface, enrolled)).toBeNull()
+    expect(firstIncompleteStep(surface, enrolled)?.id).toBe("import-source")
+  })
+
+  it("makes the authenticator app the lone, plainly numbered step without passkeys", () => {
+    const surface = minimalOnboardingSurface({ passkeys: false, totp: true })
+    expect(ids(surface)).toEqual(["mfa", "import-source", "schedule"])
+    expect(surface.steps[0].group).toBeUndefined()
+    expect(firstIncompleteRequiredStep(surface, none)?.id).toBe("mfa")
+  })
+
+  it("requires nothing when neither is on", () => {
+    const surface = minimalOnboardingSurface({ passkeys: false, totp: false })
+    expect(firstIncompleteRequiredStep(surface, none)).toBeNull()
   })
 })

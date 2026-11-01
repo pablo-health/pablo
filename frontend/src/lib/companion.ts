@@ -36,3 +36,21 @@ export function isCompanionAvailable(): boolean {
   if (platform === "windows") return isEnabled("companion_windows")
   return false
 }
+
+/**
+ * The server the desktop app signs in to until someone gives it another one
+ * (its "Connect to a different server" field).
+ */
+export const COMPANION_DEFAULT_SERVER = "https://app.pablo.health"
+
+/**
+ * True when the desktop app has to be told this deployment's address before
+ * it can sign in: anywhere other than its default server.
+ */
+export function companionNeedsServerAddress(origin: string): boolean {
+  try {
+    return new URL(origin).origin !== new URL(COMPANION_DEFAULT_SERVER).origin
+  } catch {
+    return true
+  }
+}

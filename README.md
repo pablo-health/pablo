@@ -26,6 +26,9 @@ $20 a month billed by Google. Your records stay in your account.
 
 [![Open in Cloud Shell](https://gstatic.com/cloudssh/images/open-btn.svg)](https://shell.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/pablo-health/pablo.git&cloudshell_tutorial=deploy/vm/TUTORIAL.md)
 
+The whole path, from a Google account to your first recorded session, is in
+[Start here](docs/self-hosting/start-here.md).
+
 Cloud Shell opens with a short guide beside the terminal. Run:
 
 ```bash

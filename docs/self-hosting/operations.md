@@ -2,7 +2,8 @@
 
 Day-to-day care of a self-hosted Pablo: backups, restores, the scheduled
 jobs, the audit sink, and what to watch. Companion to the
-[Self-hosting HIPAA guide](../SELF_HOSTING_HIPAA_GUIDE.md).
+[Self-hosting HIPAA guide](../SELF_HOSTING_HIPAA_GUIDE.md). Installing for
+the first time? [Start here](start-here.md).
 
 Every command below runs on the VM:
 
