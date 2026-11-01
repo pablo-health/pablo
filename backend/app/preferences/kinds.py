@@ -131,10 +131,6 @@ def get_kind(kind: str) -> KindSpec | None:
     return _REGISTRY.get(kind)
 
 
-def registered_kinds() -> list[KindSpec]:
-    return list(_REGISTRY.values())
-
-
 def normalize(
     kind: str,
     value: dict[str, Any] | None,

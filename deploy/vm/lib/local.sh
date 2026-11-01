@@ -84,8 +84,9 @@ check_disk_encryption() {
     fi
 }
 
-# Nightly database dumps to the backup bucket, kept 30 days, plus the
-# command to run them by hand and to check a restore (pablo-local).
+# Nightly retention jobs and database dumps to the backup bucket (dumps kept
+# 30 days), plus the command to run them by hand and to check a restore
+# (pablo-local).
 install_local_backups() {
     install -d -m 0700 "${PABLO_LOCAL_DIR}/bin"
     install -m 0755 "${DEPLOY_DIR}/../workstation/bin/pablo-local" "${PABLO_LOCAL_DIR}/bin/pablo-local"
@@ -103,7 +104,7 @@ EOF
     gcloud storage buckets update "gs://${BACKUP_BUCKET}" --lifecycle-file="$lifecycle" >/dev/null
     rm -f "$lifecycle"
 
-    local command="${PABLO_LOCAL_DIR}/bin/pablo-local backup"
+    local command="${PABLO_LOCAL_DIR}/bin/pablo-local nightly"
     if [ "$(uname)" = Darwin ]; then
         # launchd runs a missed time once the Mac wakes, unlike cron.
         local plist="${HOME}/Library/LaunchAgents/health.pablo.backup.${PROJECT_ID}.plist"

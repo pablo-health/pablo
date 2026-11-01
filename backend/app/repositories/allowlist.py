@@ -52,10 +52,6 @@ class InMemoryAllowlistRepository(AllowlistRepository):
     def is_allowed(self, email: str) -> bool:
         return email.lower() in self._entries
 
-    def practice_for(self, email: str) -> str | None:
-        """The practice this email resolves to, or None."""
-        return self._mappings.get(email.lower())
-
     def add(self, email: str, added_by: str, *, practice_id: str) -> None:
         self._entries[email.lower()] = {
             "email": email.lower(),

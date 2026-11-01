@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import time
 from datetime import datetime
+from itertools import pairwise
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -1345,13 +1346,15 @@ class TestDaylightSavingTransitionDays:
     2026-03-08 springs forward (02:00 EST becomes 03:00 EDT, so the hour
     02:00-02:59 never happens) and 2026-11-01 falls back (02:00 EDT becomes
     01:00 EST, so 01:00-01:59 happens twice). Both are Sundays. The engine
-    walks the day in wall-clock minutes, so these pin the UTC instants it
-    hands out when a working window sits on the jump, and that an ordinary
-    nine-to-five on the same date is untouched by it.
+    walks the day in real minutes, so these pin the UTC instants it hands out
+    when a working window sits on the jump, and that an ordinary nine-to-five
+    on the same date is untouched by it.
 
     The expected lists read working hours as instants: a window runs from the
     moment the clock first reads its start to the moment it reads its end, so
     01:00-03:00 is one real hour on the spring day and three on the fall day.
+    A time the clock skips means the moment it jumps (03:00 EDT); a time it
+    reads twice means the first reading, still on daylight time.
     """
 
     SUNDAY = 6
@@ -1363,14 +1366,6 @@ class TestDaylightSavingTransitionDays:
         )
         rule_repo.create(_rule(RuleType.BUFFER_AFTER, {"minutes": self.BUFFER}, rule_id="buf"))
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "PABLO-8gna.8: get_free_slots walks wall-clock minutes, so on the spring-forward "
-            "day it offers slots at local 01:40 and 02:20 — the second in the hour that does "
-            "not exist, rendered as 07:20Z (03:20 EDT), outside the 01:00-03:00 window"
-        ),
-    )
     def test_spring_forward_skips_the_missing_hour(
         self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
     ) -> None:
@@ -1384,14 +1379,6 @@ class TestDaylightSavingTransitionDays:
             ("2026-03-08T06:00:00Z", "2026-03-08T06:30:00Z"),
         ]
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "PABLO-8gna.8: get_free_slots walks wall-clock minutes, so on the fall-back day "
-            "the slot at local 01:40 is rendered 05:40Z-07:10Z (90 real minutes across the "
-            "repeated hour) and the second 01:00-02:00 hour is never offered"
-        ),
-    )
     def test_fall_back_offers_the_repeated_hour_once_each(
         self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
     ) -> None:
@@ -1407,6 +1394,115 @@ class TestDaylightSavingTransitionDays:
             ("2026-11-01T06:20:00Z", "2026-11-01T06:50:00Z"),
             ("2026-11-01T07:00:00Z", "2026-11-01T07:30:00Z"),
         ]
+
+    def test_spring_forward_across_the_jump_never_overlaps(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        self._hours(rule_repo, "01:00", "04:00")
+
+        slots = engine.get_free_slots(USER_ID, "2026-03-08", self.SLOT, tz=NY).slots
+
+        # 01:00 EST is 06:00Z and 04:00 EDT is 08:00Z: two real hours.
+        spans = [(s.start, s.end) for s in slots]
+        assert spans == [
+            ("2026-03-08T06:00:00Z", "2026-03-08T06:30:00Z"),
+            ("2026-03-08T06:40:00Z", "2026-03-08T07:10:00Z"),
+            ("2026-03-08T07:20:00Z", "2026-03-08T07:50:00Z"),
+        ]
+        assert spans == sorted(spans)
+        assert all(end <= next_start for (_, end), (next_start, _) in pairwise(spans))
+        assert all(a >= "2026-03-08T06:00:00Z" and b <= "2026-03-08T08:00:00Z" for a, b in spans)
+
+    @pytest.mark.parametrize(
+        ("start", "end", "expected"),
+        [
+            # 02:30 never happens; the window opens when the clock jumps, 03:00
+            # EDT (07:00Z), and runs to 05:00 EDT (09:00Z).
+            (
+                "02:30",
+                "05:00",
+                [
+                    ("2026-03-08T07:00:00Z", "2026-03-08T07:30:00Z"),
+                    ("2026-03-08T07:40:00Z", "2026-03-08T08:10:00Z"),
+                    ("2026-03-08T08:20:00Z", "2026-03-08T08:50:00Z"),
+                ],
+            ),
+            # Closing at 02:30 closes at the jump too: the same single real
+            # hour as 01:00-03:00, never the later 03:30 EDT.
+            ("01:00", "02:30", [("2026-03-08T06:00:00Z", "2026-03-08T06:30:00Z")]),
+        ],
+    )
+    def test_a_window_edge_in_the_missing_hour_sits_at_the_jump(
+        self,
+        rule_repo: InMemoryAvailabilityRuleRepository,
+        engine: AvailabilityEngine,
+        start: str,
+        end: str,
+        expected: list[tuple[str, str]],
+    ) -> None:
+        self._hours(rule_repo, start, end)
+
+        slots = engine.get_free_slots(USER_ID, "2026-03-08", self.SLOT, tz=NY).slots
+
+        assert [(s.start, s.end) for s in slots] == expected
+
+    def test_a_window_ending_in_the_repeated_hour_ends_at_its_first_reading(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        self._hours(rule_repo, "00:00", "01:30")
+
+        slots = engine.get_free_slots(USER_ID, "2026-11-01", self.SLOT, tz=NY).slots
+
+        # 00:00 EDT is 04:00Z and the first 01:30 (EDT) is 05:30Z, not the
+        # second (EST, 06:30Z).
+        assert [(s.start, s.end) for s in slots] == [
+            ("2026-11-01T04:00:00Z", "2026-11-01T04:30:00Z"),
+            ("2026-11-01T04:40:00Z", "2026-11-01T05:10:00Z"),
+        ]
+
+    def test_an_appointment_in_the_repeated_hour_blocks_its_own_instants(
+        self,
+        rule_repo: InMemoryAvailabilityRuleRepository,
+        appt_repo: InMemoryAppointmentRepository,
+        engine: AvailabilityEngine,
+    ) -> None:
+        self._hours(rule_repo, "01:00", "03:00")
+        # The second 01:00-01:30, on standard time.
+        appt_repo.create(_appt("2026-11-01T06:00:00Z", "2026-11-01T06:30:00Z"))
+
+        slots = engine.get_free_slots(USER_ID, "2026-11-01", self.SLOT, tz=NY).slots
+
+        assert [(s.start, s.end) for s in slots] == [
+            ("2026-11-01T05:00:00Z", "2026-11-01T05:30:00Z"),
+            ("2026-11-01T06:40:00Z", "2026-11-01T07:10:00Z"),
+            ("2026-11-01T07:20:00Z", "2026-11-01T07:50:00Z"),
+        ]
+
+    def test_a_floating_block_reads_its_window_in_real_time(
+        self,
+        rule_repo: InMemoryAvailabilityRuleRepository,
+        appt_repo: InMemoryAppointmentRepository,
+        engine: AvailabilityEngine,
+    ) -> None:
+        rule_repo.create(
+            _rule(
+                RuleType.FLOATING_BLOCK,
+                {
+                    "duration_minutes": 60,
+                    "window_start": "11:30",
+                    "window_end": "14:00",
+                    "days_of_week": [self.SUNDAY],
+                    "label": "Lunch",
+                },
+            )
+        )
+        # 12:00-13:00 EST, so the only free hour in the window is 13:00-14:00.
+        appt_repo.create(_appt("2026-11-01T17:00:00Z", "2026-11-01T18:00:00Z"))
+
+        (block,) = engine.floating_blocks(USER_ID, "2026-11-01", tz=NY)
+
+        assert block.start == datetime.fromisoformat("2026-11-01T18:00:00+00:00")
+        assert block.end == datetime.fromisoformat("2026-11-01T19:00:00+00:00")
 
     @pytest.mark.parametrize(
         ("date_str", "first_start", "last_start"),

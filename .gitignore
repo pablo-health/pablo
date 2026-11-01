@@ -64,6 +64,12 @@ frontend/test-results/
 frontend/e2e/playwright-report/
 frontend/e2e/.auth/
 
+# Mutation testing output (Stryker, mutmut): reports, incremental cache, sandboxes
+frontend/reports/
+frontend/.stryker-tmp/
+backend/mutants/
+.mutmut-cache
+
 # Beads / Dolt files (added by bd init)
 .dolt/
 *.db

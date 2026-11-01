@@ -774,27 +774,6 @@ class SessionService:
         patient = self._get_patient_or_raise(session.patient_id, user_id)
         return RatingUpdate(session=session, patient=patient, note=note, old_rating=old_rating)
 
-    def update_soap_note_edits(
-        self,
-        session_id: str,
-        user_id: str,
-        content_edited: dict[str, Any],
-    ) -> Note:
-        """Persist clinician edits via the session-scoped path.
-
-        Thin wrapper around :meth:`NoteService.update_note_edits` so
-        callers that only know the ``session_id`` (legacy frontend) can
-        edit through the session route.
-        """
-        session = self.session_repo.get(session_id, user_id)
-        if not session:
-            raise SessionNotFoundError(f"Session {session_id} not found")
-
-        note = self.note_service.get_note_by_session_id(session_id, user_id)
-        if note is None:
-            raise NoteNotFoundError(f"Session {session_id} has no note")
-        return self.note_service.update_note_edits(note.id, content_edited, user_id)
-
     def schedule_session(
         self,
         user_id: str,

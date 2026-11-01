@@ -3,6 +3,7 @@
 #
 # Backups for Pablo on your own machine, to the project's backup bucket.
 #
+#   pablo-local nightly        the retention jobs, then a backup (scheduled)
 #   pablo-local backup         dump the database to Cloud Storage
 #   pablo-local restore-drill  restore the latest dump into a scratch
 #                              database, check it answers, then delete it
@@ -28,6 +29,22 @@ compose() {
 log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [pablo-local] $*"; }
 
 case "${1:-}" in
+    nightly)
+        # Clients deleted more than 30 days ago are purged, then audit entries
+        # past their 7-year retention. A failed job still gets the night's
+        # backup, and the run still reports the failure.
+        failed=0
+        for job in hard_purge_cron audit_retention_cron; do
+            if compose run --rm tool -m "app.jobs.${job}"; then
+                log "${job} done"
+            else
+                log "${job} failed"
+                failed=1
+            fi
+        done
+        "$0" backup
+        exit "$failed"
+        ;;
     backup)
         stamp="${PREFIX}/pablo-$(date -u +%Y%m%dT%H%M%SZ)"
         # The roles first: the row-level security policies name the roles the
@@ -61,7 +78,7 @@ case "${1:-}" in
         log "restore drill passed: ${latest##*/} restores and answers (${users} users)"
         ;;
     *)
-        echo "usage: pablo-local backup|list|restore-drill" >&2
+        echo "usage: pablo-local nightly|backup|list|restore-drill" >&2
         exit 2
         ;;
 esac

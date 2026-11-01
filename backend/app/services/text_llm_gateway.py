@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import os
 import threading
 import time
 from typing import Any
@@ -57,11 +56,6 @@ _CACHE_REFRESH_MARGIN_SECONDS = 120.0
 # same prompt is not retried for this long: the call goes inline instead of
 # paying a failing round-trip on every request.
 _CACHE_FAILURE_BACKOFF_SECONDS = 600.0
-
-
-def resolve_location() -> str:
-    """The Vertex location, defaulting to ``global`` (where Gemini 3.x serves)."""
-    return os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
 
 
 class _CacheEntry:

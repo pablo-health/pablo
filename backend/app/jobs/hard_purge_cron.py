@@ -2,16 +2,21 @@
 
 """Soft-delete hard purge job (THERAPY-cgy), stage 2 of the retention model.
 
-Requires a registered :class:`~app.jobs.hard_purge_retention_stub.ComplianceRetentionStubWriter`
-(see ``get_compliance_retention_stub_writer``). Hosted images register
+Uses the writer from ``get_compliance_retention_stub_writer``. With nothing
+registered that is the audit-only default, so ``python -m
+app.jobs.hard_purge_cron`` purges on a self-hosted install and the purge's
+audit entry is the only record left. Hosted images register
 :class:`~app.jobs.hard_purge_retention_stub.SqlComplianceRetentionStubWriter`
-from a deployment-specific entrypoint. Self-hosted invocations of
-``python -m app.jobs.hard_purge_cron`` with **no** writer registered
-exit **0** without opening a database connection — soft-delete plus
-audit remains the only semantics.
+from a deployment-specific entrypoint.
 
 Before any deletes, the writer's ``is_supported`` probes the DB; if False,
 exit **2** (misconfigured deployment or DDL not applied).
+
+The job is not a principal, and the app role does not bypass row-level
+security, so every transaction that reads or deletes patient rows arms
+``app.allow_patient_purge`` with ``SET LOCAL``. The policies that setting
+opens (see ``_patient_purge_policy_statements`` in ``app.db``) reach only
+soft-deleted clients and their rows; nothing else in ``app`` sets it.
 
 Retention stub semantics live in ``hard_purge_retention_stub``. Cloud Storage
 cleanup runs inside the per-patient transaction (THERAPY-zu4): blobs referenced
@@ -32,6 +37,7 @@ Invoked from repo ``backend/``::
     python -m app.jobs.hard_purge_cron --dry-run
     python -m app.jobs.hard_purge_cron --purge-before 2026-01-01T00:00:00Z
 
+Self-hosted installs run it daily from cron (``deploy/vm/crontab``).
 Cloud Run (**hosted**) should use ``PYTHONPATH=/app/backend`` plus the
 deployment-specific entrypoint that registers a retention-stub writer.
 """
@@ -50,7 +56,12 @@ from sqlalchemy import text
 from ..db import PLATFORM_SCHEMA, _validate_schema_name, get_engine
 from ..db.migrate_tenants import list_active_practice_registry
 from ..logging_config import configure_job_logging
-from ..models.audit import AUDIT_LOG_RETENTION_DAYS, AuditAction, ResourceType
+from ..models.audit import (
+    ACTOR_TYPE_SYSTEM,
+    AUDIT_LOG_RETENTION_DAYS,
+    AuditAction,
+    ResourceType,
+)
 from .hard_purge_retention_stub import (
     ComplianceRetentionStubPayload,
     get_compliance_retention_stub_writer,
@@ -59,6 +70,17 @@ from .hard_purge_retention_stub import (
 logger = logging.getLogger(__name__)
 
 _RETENTION_JOB_USER_ID = "system:retention_job"
+_RETENTION_JOB_COMPONENT = "hard_purge"
+
+
+def _arm_patient_purge(conn: Any) -> None:
+    """Open the purge policies for the rest of this transaction only.
+
+    ``SET LOCAL`` outside a transaction is a no-op, so callers hold one
+    (``engine.begin()``); the setting goes with the commit or rollback and
+    never reaches the pool.
+    """
+    conn.execute(text("SET LOCAL app.allow_patient_purge = 'on'"))
 
 
 def _parse_purge_before(raw: str | None) -> datetime:
@@ -77,10 +99,11 @@ def _purge_before_timestamp(purge_before: datetime) -> str:
 
 def _fetch_purgeable_patient_ids(engine: Any, schema: str, purge_before: datetime) -> list[str]:
     _validate_schema_name(schema)
-    with engine.connect() as conn:
+    with engine.begin() as conn:
         # Operator job: schema validated by _validate_schema_name(); not web-reachable.
         # nosemgrep
         conn.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
+        _arm_patient_purge(conn)
         rows = conn.execute(
             text(
                 "SELECT id FROM patients "
@@ -119,16 +142,24 @@ def _append_purge_audit(conn: Any, schema: str, patient_id: str) -> None:
     # Operator job: schema validated by _validate_schema_name(); not web-reachable.
     # nosemgrep
     conn.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
+    # The audit row's insert policy wants the writer armed as the row's
+    # user_id; the job's own id matches no patient grant, so arming it
+    # widens nothing else in the transaction.
+    conn.execute(
+        text("SELECT set_config('app.current_user_id', :uid, true)"),
+        {"uid": _RETENTION_JOB_USER_ID},
+    )
     entry_id = str(uuid.uuid4())
     now = datetime.now(UTC)
     expires_at = now + timedelta(days=AUDIT_LOG_RETENTION_DAYS)
     conn.execute(
         text(
             "INSERT INTO audit_logs ("
-            " id, timestamp, expires_at, user_id, action, resource_type, "
-            " resource_id, patient_id, changes"
+            " id, timestamp, expires_at, user_id, actor_type, actor_component, action, "
+            " resource_type, resource_id, patient_id, changes"
             ") VALUES ("
-            " :id, :ts, :exp, :uid, :action, :rtype, :rid, :pid, CAST(:changes AS jsonb)"
+            " :id, :ts, :exp, :uid, :actor_type, :component, :action, :rtype, :rid, :pid,"
+            " CAST(:changes AS jsonb)"
             ")"
         ),
         {
@@ -136,6 +167,8 @@ def _append_purge_audit(conn: Any, schema: str, patient_id: str) -> None:
             "ts": now,
             "exp": expires_at,
             "uid": _RETENTION_JOB_USER_ID,
+            "actor_type": ACTOR_TYPE_SYSTEM,
+            "component": _RETENTION_JOB_COMPONENT,
             "action": AuditAction.PATIENT_PURGED.value,
             "rtype": ResourceType.PATIENT.value,
             "rid": patient_id,
@@ -321,10 +354,6 @@ def run(argv: list[str] | None = None) -> int:
     args = _parse_argv(argv)
 
     stub_writer = get_compliance_retention_stub_writer()
-    if stub_writer is None:
-        logger.info("hard_purge_skip_no_retention_stub_writer")
-        return 0
-
     engine = get_engine()
     purge_before = _parse_purge_before(args.purge_before_raw)
 
@@ -354,6 +383,7 @@ def run(argv: list[str] | None = None) -> int:
                 continue
             try:
                 with engine.begin() as conn:
+                    _arm_patient_purge(conn)
                     row = _patient_row_for_stub(conn, schema_name, patient_id, purge_before)
                     if row is None:
                         continue
