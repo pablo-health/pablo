@@ -43,6 +43,9 @@ render_env_files() {
     # The clinician's one OAuth client serves Google sign-in and Google Calendar.
     local calendar_enabled=false
     [ -z "$GOOGLE_CLIENT_ID" ] || calendar_enabled=true
+    # TOTP_ENABLED below: configure_identity_platform (identity.sh) turns
+    # authenticator apps on, so first sign-in can offer one beside the
+    # passkey, for a device that cannot make a passkey.
 
     (
         umask 077
@@ -98,6 +101,7 @@ DEV_MODE=false
 DATA_MODE=api
 ENABLE_LOCAL_AUTH=false
 PASSKEYS_ENABLED=true
+TOTP_ENABLED=true
 FIREBASE_PROJECT_ID=${PROJECT_ID}
 GOOGLE_CLOUD_PROJECT=${PROJECT_ID}
 GCLOUD_PROJECT=${PROJECT_ID}

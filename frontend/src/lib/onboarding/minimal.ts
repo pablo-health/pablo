@@ -5,21 +5,22 @@
  *
  * A stock deployment doesn't run a guided setup wizard — the only thing
  * onboarding must guarantee is that every account has a second factor
- * before it reaches the dashboard. So this surface holds a single
- * required step: passkey enrolment, present only when passkeys are
- * enabled for the deployment (`PASSKEYS_ENABLED`).
+ * before it reaches the dashboard. So this surface's one required step
+ * is the second factor: passkey enrolment, present only when passkeys
+ * are enabled for the deployment (`PASSKEYS_ENABLED`).
  *
- * When passkeys are disabled the surface is empty: nothing is required,
+ * When neither passkeys nor TOTP are enabled nothing is required,
  * `firstIncompleteRequiredStep` returns null, and the dashboard layout
  * falls through to its standalone `/mfa-enrollment` (TOTP) safety-net
  * exactly as before this surface existed.
  *
- * The `/onboarding/mfa` (authenticator-app) page is a reachable
- * fallback route but is intentionally NOT a member of this surface: the
- * passkey step covers `mfa_enrolled_at`, and a deployment whose auth
- * backend can't enrol TOTP shouldn't advertise it. The passkey page
- * only links to the TOTP fallback when the active surface actually
- * contains an `mfa` step.
+ * The `/onboarding/mfa` (authenticator-app) step joins the surface only
+ * when the deployment says its auth backend can enrol TOTP
+ * (`TOTP_ENABLED`); one that can't shouldn't advertise it. The passkey
+ * page links to it only when the surface contains it, which matters on a
+ * device that cannot create a passkey. Beside a passkey step the two are
+ * grouped: both gate on `mfa_enrolled_at`, so finishing either clears
+ * both, and they count as one step.
  *
  * A downstream build supplies its own richer surface and selects it in
  * a shadowed ./surface.ts.
@@ -37,15 +38,25 @@
 
 import type { OnboardingSurface, StepDef } from "./types"
 
+// Read by the Next server at run time, so one prebuilt image serves
+// deployments that differ.
 const PASSKEYS_ENABLED = process.env.PASSKEYS_ENABLED === "true"
+const TOTP_ENABLED = process.env.TOTP_ENABLED === "true"
 
-// No `group` here: grouping only matters when it shares a step number
-// with a sibling (a passkey/TOTP pair in a richer surface). As the lone
-// required step it stands alone.
-const PASSKEY_STEP: StepDef = {
-  id: "passkey",
-  path: "/onboarding/passkey",
-  gate: (status) => Boolean(status.mfa_enrolled_at),
+const SECOND_FACTOR_GROUP = "second-factor"
+
+const hasSecondFactor: StepDef["gate"] = (status) => Boolean(status.mfa_enrolled_at)
+
+/**
+ * The second-factor steps: passkey first, the authenticator app as its
+ * alternative. A lone step carries no `group`, so it numbers plainly
+ * rather than as a lettered sub-step with no sibling.
+ */
+function secondFactorSteps(passkeys: boolean, totp: boolean): StepDef[] {
+  const group = passkeys && totp ? { group: SECOND_FACTOR_GROUP } : {}
+  const passkey: StepDef = { id: "passkey", path: "/onboarding/passkey", gate: hasSecondFactor, ...group }
+  const authenticatorApp: StepDef = { id: "mfa", path: "/onboarding/mfa", gate: hasSecondFactor, ...group }
+  return [...(passkeys ? [passkey] : []), ...(totp ? [authenticatorApp] : [])]
 }
 
 // Optional and asked once: "Are you importing from another records system?"
@@ -66,6 +77,20 @@ const SCHEDULE_STEP: StepDef = {
   required: false,
 }
 
-export const MINIMAL_ONBOARDING_SURFACE: OnboardingSurface = {
-  steps: [...(PASSKEYS_ENABLED ? [PASSKEY_STEP] : []), IMPORT_SOURCE_STEP, SCHEDULE_STEP],
+/** The stock surface for a deployment with these second factors enabled. */
+export function minimalOnboardingSurface({
+  passkeys,
+  totp,
+}: {
+  passkeys: boolean
+  totp: boolean
+}): OnboardingSurface {
+  return {
+    steps: [...secondFactorSteps(passkeys, totp), IMPORT_SOURCE_STEP, SCHEDULE_STEP],
+  }
 }
+
+export const MINIMAL_ONBOARDING_SURFACE: OnboardingSurface = minimalOnboardingSurface({
+  passkeys: PASSKEYS_ENABLED,
+  totp: TOTP_ENABLED,
+})
