@@ -52,12 +52,52 @@ address from Caddy's `X-Forwarded-For` and counts sign-in and booking limits
 per client. If you put the backend behind a different proxy, list that proxy's
 address instead, or every client shares the proxy's one budget.
 
-## Hostname
+## Address
 
-Without `--hostname` you get `<ip-with-dashes>.sslip.io`, which works but
-looks odd to clients. With your own domain, add one A record pointing it at
-the address the script prints; the certificate is issued once the record
-resolves.
+The installer asks how you and your clients reach Pablo, or takes a flag:
+
+| Choice | Flag | What you do |
+|---|---|---|
+| Your own domain | `--hostname clinic.example.com` | Add one A record pointing it at the address the script prints. The certificate is issued once the record resolves. |
+| A name at the hosted-subdomain service | `--hosted-name yourpractice` | Nothing: the VM claims `yourpractice.pablo.clinic` when it starts. |
+| An automatic address | neither | Nothing: you get `<ip-with-dashes>.sslip.io`, which works but looks odd to clients. |
+
+Running `install.sh` again keeps the address the VM has, unless you pass
+`--hostname` or `--hosted-name`.
+
+### The hosted-subdomain service
+
+An optional service, configurable per deployment, that keeps DNS records for
+names under one domain. The default is `https://names.pablo.clinic`, with
+names under `pablo.clinic`; `--names-endpoint` and `--names-zone` point the
+installer at another. Names are 3 to 40 lowercase letters, numbers and
+hyphens, and cannot start or end with a hyphen. The installer checks the name
+is free before it creates anything.
+
+It does DNS and nothing more. It holds one A record for your name, set to the
+address the VM's request comes from, which is the VM's static IP. It never
+sees your traffic: browsers connect straight to the VM, HTTPS ends at Caddy on
+the VM, and the certificate is the VM's own, from Let's Encrypt. The VM proves
+who it is with the identity token Google gives it, so there is no key to keep.
+The name belongs to your Google Cloud project, so a new VM in the same project
+can claim it again.
+
+The VM claims the name on every boot, waits until the zone's nameservers
+answer with its address, and only then starts Caddy, so Let's Encrypt never
+sees the name missing. It renews the name every week (`/etc/cron.d/pablo`). A
+name not renewed for 30 days loses its record. Renewals log a JSON line to
+Cloud Logging under `pablo-name`, for an alert on `"status":"failed"`.
+
+```bash
+sudo pablo-name status           # what the service and DNS say about the name
+sudo pablo-name claim            # claim or renew it now
+sudo pablo-name release OLDNAME  # give up a name this VM no longer uses
+```
+
+To move to your own domain later, add its A record, run `install.sh` again
+with `--hostname clinic.example.com`, then release the old name. The installer
+reminds you how; it never releases one on its own. A VM refuses to release the
+name it still uses, since the next boot would only claim it back.
 
 ## Day to day
 
@@ -69,6 +109,7 @@ sudo pablo-backup info           # what the backup bucket holds
 sudo pablo-backup restore-drill  # restore the latest backup into a scratch copy
 sudo pablo-job hipaa_log_review  # run a scheduled job now
 sudo pablo-config list           # the VM's settings, and where each comes from
+sudo pablo-name status           # the hosted name, if the VM has one
 ```
 
 An update restarts the app in place, so expect about a minute of downtime.
@@ -141,12 +182,14 @@ figures for memory, CPU and first boot belong here once they are taken
 ## Files
 
 - `../../install.sh`: the Cloud Shell half, with `lib/` (project, sign-in,
-  secrets, VM)
+  secrets, VM, the hosted name check)
 - `boot-stub.sh`: the VM's startup script, which runs the release's
   `bootstrap.sh` on every boot
 - `compose.yaml`, `Caddyfile`: the stack; `routes.caddy`: how the address splits
   between frontend and backend, shared with `deploy/workstation`
 - `lib/env.sh`: the backend and frontend env files, shared with the local target
-- `bin/`: `pablo-update`, `pablo-update-request`, `pablo-backup`, `pablo-job`, `pablo-config`
+- `bin/`: `pablo-update`, `pablo-update-request`, `pablo-backup`, `pablo-job`, `pablo-config`,
+  `pablo-name`
 - `systemd/`: the path unit and service behind the app's **Update now**
-- `crontab`: backups, scheduled jobs and the weekly release check
+- `crontab`: backups, scheduled jobs, the weekly release check and the hosted
+  name's renewal

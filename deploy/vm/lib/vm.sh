@@ -53,6 +53,16 @@ _ensure_snapshot_schedule() {
     echo "$policy"
 }
 
+# The config an earlier run gave the VM (KEY=VALUE lines), or nothing when
+# there is no VM yet.
+previous_vm_config() {
+    gcloud compute instances describe "$VM_NAME" --zone="$ZONE" --project="$PROJECT_ID" \
+        --format=json --quiet 2>/dev/null | python3 -c '
+import json, sys
+items = json.load(sys.stdin).get("metadata", {}).get("items", [])
+print(next((i["value"] for i in items if i["key"] == "pablo-config"), ""))' 2>/dev/null || true
+}
+
 # ensure_vm <config file> — creates the VM, or updates its config and
 # reboots it so bootstrap.sh converges on the new one.
 #
