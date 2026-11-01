@@ -278,14 +278,25 @@ class TestPeek:
         assert result == SessionPeek(enforced=False, active=True, seconds_remaining=None)
 
 
+def _request(headers: dict[str, str] | None = None) -> MagicMock:
+    request = MagicMock()
+    request.headers = headers or {}
+    return request
+
+
 class TestEnforceIdleSessionWrapper:
     """The Depends-friendly wrapper in service.py just chains and returns."""
 
     def test_returns_decoded_token_on_success(self) -> None:
         with patch("app.auth.idle_session.check_and_touch") as mock_check:
-            result = enforce_idle_session(_TOKEN)
+            result = enforce_idle_session(_request(), _TOKEN)
         assert result is _TOKEN
-        mock_check.assert_called_once_with(_TOKEN)
+        mock_check.assert_called_once_with(_TOKEN, refresh=True)
+
+    def test_background_request_does_not_refresh(self) -> None:
+        with patch("app.auth.idle_session.check_and_touch") as mock_check:
+            enforce_idle_session(_request({"X-Pablo-Background": "1"}), _TOKEN)
+        mock_check.assert_called_once_with(_TOKEN, refresh=False)
 
     def test_propagates_idle_timeout_exception(self) -> None:
         boom = HTTPException(status_code=401, detail={"error": {"code": "IDLE_TIMEOUT"}})
@@ -293,5 +304,5 @@ class TestEnforceIdleSessionWrapper:
             patch("app.auth.idle_session.check_and_touch", side_effect=boom),
             pytest.raises(HTTPException) as exc,
         ):
-            enforce_idle_session(_TOKEN)
+            enforce_idle_session(_request(), _TOKEN)
         assert exc.value is boom

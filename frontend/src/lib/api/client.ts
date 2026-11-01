@@ -8,6 +8,7 @@
  */
 
 import { getClientAuthProvider } from "@/lib/auth/provider"
+import { BACKGROUND_REQUEST_HEADER, isBackgroundRequest } from "./backgroundRequests"
 import { apiErrorInterceptors } from "./client.extensions"
 import { forwardedClientHeaders } from "./clientForwarding"
 
@@ -394,6 +395,9 @@ export async function apiClient<T>(
   options: FetchOptions = {}
 ): Promise<T> {
   const { token, ...fetchOptions } = options
+  // Read before the first await: the background mark only lasts for the
+  // synchronous part of the call that started this request.
+  const background = isBackgroundRequest()
 
   const url = buildApiUrl(endpoint)
 
@@ -404,6 +408,7 @@ export async function apiClient<T>(
         ? {}
         : { "Content-Type": "application/json" }),
       ...clientBuildHeader(),
+      ...(background ? { [BACKGROUND_REQUEST_HEADER]: "1" } : {}),
       ...(fetchOptions.headers as Record<string, string>),
       ...(await getAuthHeader(token, forceRefresh)),
     }

@@ -16,7 +16,7 @@ import {
 } from "@/lib/api/availability"
 import { queryKeys } from "@/lib/api/queryKeys"
 import { useAuth } from "@/lib/auth-context"
-import { calendarFreshness } from "./calendarFreshness"
+import { withCalendarFreshness } from "./calendarFreshness"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
 
 /**
@@ -31,13 +31,14 @@ const NO_BLOCKS: FloatingBlock[] = []
 
 /** Each floating block on one date ("YYYY-MM-DD"). */
 export function useFloatingBlocks(date: string, token?: string) {
-  return useAuthQuery<FloatingBlocksResponse>({
-    queryKey: queryKeys.availability.floatingBlocks(date),
-    queryFn: () => getFloatingBlocks(date, token),
-    staleTime: FLOATING_STALE_MS,
-    ...calendarFreshness,
-    enabled: !!date,
-  })
+  return useAuthQuery<FloatingBlocksResponse>(
+    withCalendarFreshness({
+      queryKey: queryKeys.availability.floatingBlocks(date),
+      queryFn: () => getFloatingBlocks(date, token),
+      staleTime: FLOATING_STALE_MS,
+      enabled: !!date,
+    }),
+  )
 }
 
 /**
@@ -48,13 +49,14 @@ export function useFloatingBlocks(date: string, token?: string) {
 export function useFloatingBlocksForDates(dates: string[], enabled = true): FloatingBlock[] {
   const { loading } = useAuth()
   return useQueries({
-    queries: dates.map((date) => ({
-      queryKey: queryKeys.availability.floatingBlocks(date),
-      queryFn: () => getFloatingBlocks(date),
-      staleTime: FLOATING_STALE_MS,
-      ...calendarFreshness,
-      enabled: enabled && !loading && !!date,
-    })),
+    queries: dates.map((date) =>
+      withCalendarFreshness({
+        queryKey: queryKeys.availability.floatingBlocks(date),
+        queryFn: () => getFloatingBlocks(date),
+        staleTime: FLOATING_STALE_MS,
+        enabled: enabled && !loading && !!date,
+      }),
+    ),
     combine: flattenBlocks,
   })
 }

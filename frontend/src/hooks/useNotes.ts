@@ -2,7 +2,6 @@
 
 "use client"
 
-import type { UseQueryOptions } from "@tanstack/react-query"
 import type {
   CreateStandaloneNoteRequest,
   FinalizeNoteRequest,
@@ -18,20 +17,20 @@ import {
   updateNoteEdits,
 } from "@/lib/api/notes"
 import { queryKeys } from "@/lib/api/queryKeys"
+import { pollingOptions, type PollInterval } from "@/lib/query/polling"
 import { withDashboard } from "./dashboardFreshness"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
 
-export function useNote(
-  noteId: string | undefined,
-  token?: string,
-  options?: Omit<UseQueryOptions<Note>, "queryKey" | "queryFn" | "enabled">,
-) {
-  return useAuthQuery<Note>({
-    ...options,
+/** One note; given `pollInterval`, it polls through `pollingOptions`. */
+export function useNote(noteId: string | undefined, token?: string, pollInterval?: PollInterval<Note>) {
+  const query = {
     queryKey: queryKeys.notes.detail(noteId ?? ""),
     queryFn: () => fetchNote(noteId!, token),
     enabled: !!noteId,
-  })
+  }
+  return useAuthQuery<Note>(
+    pollInterval === undefined ? query : pollingOptions(query, pollInterval),
+  )
 }
 
 export function usePatientNotes(patientId: string | undefined, token?: string) {

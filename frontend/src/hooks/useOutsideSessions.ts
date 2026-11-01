@@ -15,40 +15,43 @@ import {
   type OutsideAnswerResult,
 } from "@/lib/api/outsideSessions"
 import { queryKeys } from "@/lib/api/queryKeys"
-import { calendarFreshness } from "./calendarFreshness"
+import { withCalendarFreshness } from "./calendarFreshness"
 import { withDashboard } from "./dashboardFreshness"
 import { GOOGLE_CALENDAR_STATUS_KEY } from "./useGoogleCalendarStatus"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
 
 /** Open events from the clinician's own calendar over a range. */
 export function useOutsideSessions(start: string, end: string) {
-  return useAuthQuery({
-    queryKey: queryKeys.appointments.outsideSessions({ start, end }),
-    queryFn: () => listOutsideSessions(start, end),
-    staleTime: 60 * 1000,
-    ...calendarFreshness,
-    enabled: !!start && !!end,
-  })
+  return useAuthQuery(
+    withCalendarFreshness({
+      queryKey: queryKeys.appointments.outsideSessions({ start, end }),
+      queryFn: () => listOutsideSessions(start, end),
+      staleTime: 60 * 1000,
+      enabled: !!start && !!end,
+    }),
+  )
 }
 
 /** The "who is this?" questions still waiting, one per client. */
 export function useOutsideQuestions() {
-  return useAuthQuery({
-    queryKey: queryKeys.appointments.outsideQuestions(),
-    queryFn: () => getOutsideQuestions(),
-    staleTime: 60 * 1000,
-    ...calendarFreshness,
-  })
+  return useAuthQuery(
+    withCalendarFreshness({
+      queryKey: queryKeys.appointments.outsideQuestions(),
+      queryFn: () => getOutsideQuestions(),
+      staleTime: 60 * 1000,
+    }),
+  )
 }
 
 /** Sessions booked automatically from a title, not yet acknowledged. */
 export function useAutoBooked() {
-  return useAuthQuery({
-    queryKey: queryKeys.appointments.autoBooked(),
-    queryFn: () => listAutoBooked(),
-    staleTime: 60 * 1000,
-    ...calendarFreshness,
-  })
+  return useAuthQuery(
+    withCalendarFreshness({
+      queryKey: queryKeys.appointments.autoBooked(),
+      queryFn: () => listAutoBooked(),
+      staleTime: 60 * 1000,
+    }),
+  )
 }
 
 /** Undo one: the ordinary cancel, so the next read leaves it cancelled. */

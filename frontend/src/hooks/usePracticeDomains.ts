@@ -15,6 +15,7 @@ import {
   type DomainName,
   type PracticeDomainList,
 } from "@/lib/api/practiceDomains"
+import { pollingOptions, type PollInterval } from "@/lib/query/polling"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
 
 const DESCRIBE_DELAY_MS = 250
@@ -29,20 +30,25 @@ export const practiceDomainKeys = {
   all: ["practiceDomains"] as const,
 }
 
+function pollWhileUnsettled(pollUntil: number | null): PollInterval<PracticeDomainList> {
+  return (query) => {
+    if (pollUntil === null || Date.now() >= pollUntil) return false
+    return query.state.data?.domains.some(isUnsettled) ? DOMAIN_POLL_MS : false
+  }
+}
+
 /**
  * The practice's hosts. Given `pollUntil`, asks again every `DOMAIN_POLL_MS`
  * until then, for as long as any host is still pending or verifying — so a
  * host the server finishes turns Active on the page by itself.
  */
 export function usePracticeDomains(pollUntil: number | null = null) {
-  return useAuthQuery<PracticeDomainList>({
-    queryKey: practiceDomainKeys.all,
-    queryFn: () => listPracticeDomains(),
-    refetchInterval: (query) => {
-      if (pollUntil === null || Date.now() >= pollUntil) return false
-      return query.state.data?.domains.some(isUnsettled) ? DOMAIN_POLL_MS : false
-    },
-  })
+  return useAuthQuery<PracticeDomainList>(
+    pollingOptions(
+      { queryKey: practiceDomainKeys.all, queryFn: () => listPracticeDomains() },
+      pollWhileUnsettled(pollUntil),
+    ),
+  )
 }
 
 /**

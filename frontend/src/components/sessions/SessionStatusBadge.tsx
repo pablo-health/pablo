@@ -91,10 +91,12 @@ export function SessionStatusBadge({
   className,
 }: SessionStatusBadgeProps) {
   // Auto-poll when status is "processing"
-  const { data: session } = useSession(sessionId, undefined, {
-    refetchInterval: status === "processing" ? 5000 : false,
-    enabled: status === "processing",
-  })
+  const { data: session } = useSession(
+    sessionId,
+    undefined,
+    { enabled: status === "processing" },
+    status === "processing" ? 5000 : false,
+  )
 
   // Use updated status from polling if available
   const currentStatus = session?.status ?? status

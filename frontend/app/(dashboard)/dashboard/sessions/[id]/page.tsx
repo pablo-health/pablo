@@ -66,14 +66,12 @@ interface PageProps {
 
 export default function SessionDetailPage({ params }: PageProps) {
   const { id } = use(params)
-  const { data: session, isLoading, error } = useSession(id, undefined, {
-    // Poll while the note is being generated (or drafted again) so the page
-    // updates itself without a manual refresh.
-    refetchInterval: (query) => {
-      const s = query.state.data?.status
-      const drafting = s === "queued" || s === "processing"
-      return drafting || query.state.data?.note?.status === "processing" ? 3000 : false
-    },
+  // Poll while the note is being generated (or drafted again) so the page
+  // updates itself without a manual refresh.
+  const { data: session, isLoading, error } = useSession(id, undefined, undefined, (query) => {
+    const s = query.state.data?.status
+    const drafting = s === "queued" || s === "processing"
+    return drafting || query.state.data?.note?.status === "processing" ? 3000 : false
   })
   const updateRatingMutation = useUpdateSessionRating()
   const updateMetadataMutation = useUpdateSessionMetadata()

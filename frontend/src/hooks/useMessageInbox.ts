@@ -11,6 +11,7 @@ import {
   type ReplyMessage,
   type ThreadDetail,
 } from "@/lib/api/messageInbox"
+import { pollingOptions } from "@/lib/query/polling"
 import { inboxKeys } from "./inboxKeys"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
 
@@ -23,13 +24,17 @@ export const messageInboxKeys = {
 const POLL_MS = 60_000
 
 export function useThread(threadId: string | null) {
-  return useAuthQuery<ThreadDetail>({
-    queryKey: messageInboxKeys.thread(threadId ?? ""),
-    queryFn: () => getThread(threadId as string),
-    enabled: threadId !== null,
-    // An open conversation picks up what arrives while it is open.
-    refetchInterval: POLL_MS,
-  })
+  // An open conversation picks up what arrives while it is open.
+  return useAuthQuery<ThreadDetail>(
+    pollingOptions(
+      {
+        queryKey: messageInboxKeys.thread(threadId ?? ""),
+        queryFn: () => getThread(threadId as string),
+        enabled: threadId !== null,
+      },
+      POLL_MS,
+    ),
+  )
 }
 
 /** Every write re-reads the conversation and the Inbox: what is open moves. */

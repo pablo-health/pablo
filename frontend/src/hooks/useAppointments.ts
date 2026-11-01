@@ -20,7 +20,7 @@ import {
   updateAppointment,
 } from "@/lib/api/scheduling"
 import { queryKeys } from "@/lib/api/queryKeys"
-import { calendarFreshness } from "./calendarFreshness"
+import { withCalendarFreshness } from "./calendarFreshness"
 import { withDashboard } from "./dashboardFreshness"
 import { useAuthQuery, useAuthMutation } from "./useAuthQuery"
 
@@ -34,13 +34,14 @@ function afterAppointmentWrite(keys: readonly (readonly unknown[])[]) {
 }
 
 export function useAppointmentList(start: string, end: string, token?: string) {
-  return useAuthQuery({
-    queryKey: queryKeys.appointments.list({ start, end }),
-    queryFn: () => listAppointments(start, end, token),
-    staleTime: 60 * 1000,
-    ...calendarFreshness,
-    enabled: !!start && !!end,
-  })
+  return useAuthQuery(
+    withCalendarFreshness({
+      queryKey: queryKeys.appointments.list({ start, end }),
+      queryFn: () => listAppointments(start, end, token),
+      staleTime: 60 * 1000,
+      enabled: !!start && !!end,
+    }),
+  )
 }
 
 /** Range params a list query was created with, read back off its query key. */

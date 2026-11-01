@@ -21,6 +21,7 @@ CLIENT_HEADERS = [
     "X-Client-Device",
     "X-Client-Browser",
     "X-Client-Version",
+    "X-Pablo-Background",
 ]
 
 

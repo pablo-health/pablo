@@ -15,6 +15,7 @@ Design: two Redis keys per (uid, auth_time):
 
   idle:session:{uid}:{auth_time}    long-TTL marker — "we've seen this sign-in"
   idle:activity:{uid}:{auth_time}   short-TTL heartbeat — refreshed on each request
+                                    except background ones (see below)
 
 The pair lets us disambiguate the three "missing key" cases that a
 single-key design conflates:
@@ -36,6 +37,14 @@ auth_time, so the next request would revive the session via the
 "create both, allow" branch. The tombstone makes idle-out terminal for
 that auth_time; only a real re-auth (new auth_time) recovers.
 
+Background requests: a request that carries ``X-Pablo-Background: 1`` was
+started by a timer (a poll), not by the person at the keyboard. It is
+checked like any other — rejected once the session has idled out — but it
+does not refresh the heartbeat. Without that distinction a visible tab that
+polls every minute would never idle out, which is the unattended screen this
+control exists for. Requests without the header refresh as before, so API
+clients that never send it behave exactly as they always have.
+
 Skipped when ``settings.use_redis`` is false (single-instance OSS
 self-hosters who run without Redis fall back to the client-side
 IdleTimeout component as their only protection).
@@ -50,7 +59,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Request, status
 
 from ..redis_client import get_redis_client
 from ..settings import get_settings
@@ -60,6 +69,13 @@ logger = logging.getLogger(__name__)
 # Marker TTL matches Firebase's refresh-token lifetime so stale markers
 # for abandoned sessions self-expire instead of accumulating forever.
 _SESSION_MARKER_TTL_SECONDS = 31 * 24 * 60 * 60
+
+BACKGROUND_REQUEST_HEADER = "X-Pablo-Background"
+
+
+def is_background_request(request: Request) -> bool:
+    """True when the client marked this request as timer-driven."""
+    return request.headers.get(BACKGROUND_REQUEST_HEADER) == "1"
 
 
 def _session_marker_key(uid: str, auth_time: int) -> str:
@@ -142,12 +158,16 @@ def session_log_key(decoded_token: dict[str, Any]) -> str | None:
     return hashlib.sha256(f"{subject}:{auth_time}".encode()).hexdigest()[:16]
 
 
-def check_and_touch(decoded_token: dict[str, Any]) -> None:
+def check_and_touch(decoded_token: dict[str, Any], *, refresh: bool = True) -> None:
     """Enforce the idle window for this token's session.
 
     Raises HTTPException(401 IDLE_TIMEOUT) when the activity heartbeat
     has expired. Returns silently when the session is fresh, active, or
     when the check is disabled (dev mode, Redis unavailable).
+
+    ``refresh=False`` is for background requests: the session is checked
+    and a first request still seeds the keys, but an existing heartbeat is
+    left to run down rather than extended.
     """
     settings = get_settings()
     if settings.is_development:
@@ -181,7 +201,8 @@ def check_and_touch(decoded_token: dict[str, Any]) -> None:
             return
 
         if redis.exists(activity_key):
-            redis.set(activity_key, "1", ex=idle_ttl)
+            if refresh:
+                redis.set(activity_key, "1", ex=idle_ttl)
             return
 
         # Marker present, activity absent → idle TTL elapsed. Burn the

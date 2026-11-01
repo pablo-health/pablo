@@ -132,8 +132,10 @@ Do these once the installer prints "Pablo is running".
   SMS) and the backend requires the second factor on every token
   (`REQUIRE_MFA`, default on; the app refuses to boot with it off outside
   development). Passkeys are also available.
-- **Idle logoff.** The backend ends a session after 15 minutes without a
-  request (`idle_timeout_seconds`). The clock lives in Redis. If Redis
+- **Idle logoff.** The backend ends a session after 15 minutes without
+  activity (`idle_timeout_seconds`). Requests the browser makes on its own
+  timer are marked as background and do not count, so an open tab nobody
+  is using still signs out. The clock lives in Redis. If Redis
   cannot be reached, requests are refused rather than let through
   (`idle_session_fail_open=false`). The browser warns before the cutoff.
 - **Leavers.** Disable the account in Pablo (admin, disable user) and in

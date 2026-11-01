@@ -130,10 +130,9 @@ describe("calendar query freshness", () => {
       const query = queryClient.getQueryCache().find({
         queryKey: queryKeys.appointments.list(RANGE),
       })
-      expect(query?.options).toMatchObject({
-        refetchInterval: CALENDAR_REFETCH_INTERVAL_MS,
-        refetchIntervalInBackground: false,
-      })
+      const observed = query?.observers[0]?.options
+      expect(observed?.refetchInterval).toBe(CALENDAR_REFETCH_INTERVAL_MS)
+      expect(observed?.refetchIntervalInBackground).toBe(false)
       expect(CALENDAR_REFETCH_INTERVAL_MS).toBe(60 * 1000)
     })
   })

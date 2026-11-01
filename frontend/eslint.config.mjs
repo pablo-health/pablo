@@ -13,11 +13,25 @@ const inlineBrowserTimeZone = {
   message: "Use browserTimeZone() from @/lib/dates.",
 }
 
+// A poll that counts as activity keeps an unattended screen signed in past the
+// idle sign-out. pollingOptions marks its requests so the API does not.
+const bareRefetchInterval = {
+  selector: "Property:matches([key.name='refetchInterval'], [key.value='refetchInterval'])",
+  message:
+    "Poll with pollingOptions() from @/lib/query/polling, so polled requests do not count as activity and keep an idle session signed in.",
+}
+
 const config = [
   ...nextConfig,
   // Mutation-testing sandboxes and reports (npm run test:mutation).
   { ignores: [".stryker-tmp/**", "reports/**"] },
   {
+    rules: {
+      "no-restricted-syntax": ["error", rawErrorToConsole, bareRefetchInterval],
+    },
+  },
+  {
+    files: ["src/lib/query/polling.ts"],
     rules: {
       "no-restricted-syntax": ["error", rawErrorToConsole],
     },
@@ -32,7 +46,12 @@ const config = [
       "**/*.test.tsx",
     ],
     rules: {
-      "no-restricted-syntax": ["error", rawErrorToConsole, inlineBrowserTimeZone],
+      "no-restricted-syntax": [
+        "error",
+        rawErrorToConsole,
+        inlineBrowserTimeZone,
+        bareRefetchInterval,
+      ],
       "no-restricted-imports": [
         "error",
         {

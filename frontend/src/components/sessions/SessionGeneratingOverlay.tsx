@@ -67,7 +67,7 @@ interface SessionGeneratingOverlayProps {
  *
  *  1. `useSessionProcessing(patientId)` — polls the session list until the
  *     in-flight session's id becomes visible (within ~1-3 s of POST start).
- *  2. `useSession(sessionId, { refetchInterval })` — polls the detail until
+ *  2. `useSession(sessionId, …, pollInterval)` — polls the detail until
  *     status leaves `queued`/`processing`.
  *
  * Once status reaches `pending_review`, it navigates to the session detail
@@ -103,12 +103,10 @@ export function SessionGeneratingOverlay({
   const { data: session } = useSession(
     sessionId ?? "__none__",
     undefined,
-    {
-      enabled: sessionId !== null,
-      refetchInterval: (query) => {
-        const s = query.state.data?.status
-        return s === "queued" || s === "processing" ? 3000 : false
-      },
+    { enabled: sessionId !== null },
+    (query) => {
+      const s = query.state.data?.status
+      return s === "queued" || s === "processing" ? 3000 : false
     },
   )
 

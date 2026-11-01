@@ -25,21 +25,27 @@ import {
 import { queryKeys } from "@/lib/api/queryKeys"
 import { useAuth } from "@/lib/auth-context"
 import { useConfig } from "@/lib/config"
+import { pollingOptions, type PollInterval } from "@/lib/query/polling"
 import { watchDraft } from "@/lib/draftWatch"
 import { withDashboard } from "./dashboardFreshness"
 import { useAuthMutation } from "./useAuthQuery"
 
 // Query hooks — mock-aware, so they use raw useQuery instead of useAuthQuery.
+// Each takes an optional poll interval; a query given one polls through
+// pollingOptions, so its requests do not count as activity.
+
+type QueryOptions<T> = Omit<UseQueryOptions<T>, "queryKey" | "queryFn" | "refetchInterval">
 
 export function useSessionList(
   token?: string,
-  options?: Omit<UseQueryOptions<SessionListResponse>, "queryKey" | "queryFn">,
+  options?: QueryOptions<SessionListResponse>,
+  pollInterval?: PollInterval<SessionListResponse>,
 ) {
   const { loading } = useAuth()
   const { dataMode } = useConfig()
   const isMock = dataMode === "mock"
 
-  return useQuery({
+  const query = {
     queryKey: queryKeys.sessions.list(),
     queryFn: async () => {
       if (isMock) {
@@ -51,7 +57,8 @@ export function useSessionList(
     staleTime: isMock ? Infinity : 60 * 1000,
     enabled: (options?.enabled ?? true) && (isMock || !loading),
     ...options,
-  })
+  }
+  return useQuery(pollInterval === undefined ? query : pollingOptions(query, pollInterval))
 }
 
 const SESSION_DISCOVERY_TIMEOUT_MS = 60_000
@@ -83,11 +90,11 @@ export function useSessionProcessing(patientId: string | null): {
 
   const searching = patientId !== null && sessionId === null && !timedOut
 
-  const { data: list } = useSessionList(undefined, {
-    enabled: searching,
-    staleTime: 0,
-    refetchInterval: searching ? 2000 : false,
-  })
+  const { data: list } = useSessionList(
+    undefined,
+    { enabled: searching, staleTime: 0 },
+    searching ? 2000 : false,
+  )
 
   // Respond to each new list snapshot: lock in the session id when it appears.
   useEffect(() => {
@@ -119,12 +126,13 @@ export function useSessionProcessing(patientId: string | null): {
 export function useSession(
   sessionId: string,
   token?: string,
-  options?: Omit<UseQueryOptions<SessionResponse>, "queryKey" | "queryFn">,
+  options?: QueryOptions<SessionResponse>,
+  pollInterval?: PollInterval<SessionResponse>,
 ) {
   const { dataMode } = useConfig()
   const isMock = dataMode === "mock"
 
-  return useQuery({
+  const query = {
     queryKey: queryKeys.sessions.detail(sessionId),
     queryFn: async () => {
       if (isMock) {
@@ -137,7 +145,8 @@ export function useSession(
     },
     staleTime: isMock ? Infinity : 60 * 1000,
     ...options,
-  })
+  }
+  return useQuery(pollInterval === undefined ? query : pollingOptions(query, pollInterval))
 }
 
 // Mutation hooks

@@ -51,12 +51,11 @@ interface PageProps {
 export default function StandaloneNotePage({ params }: PageProps) {
   const { id: patientId, noteId } = use(params)
   const { data: patient } = usePatient(patientId)
-  const { data: note, isLoading, error } = useNote(noteId, undefined, {
-    // Poll while the dictated note is generating so the page updates
-    // itself without a manual refresh.
-    refetchInterval: (query) =>
-      query.state.data?.status === "processing" ? 3000 : false,
-  })
+  // Poll while the dictated note is generating so the page updates
+  // itself without a manual refresh.
+  const { data: note, isLoading, error } = useNote(noteId, undefined, (query) =>
+    query.state.data?.status === "processing" ? 3000 : false,
+  )
   const updateEdits = useUpdateNoteEdits()
   const noteTypeLabel = useNoteTypeLabel()
   const sign = useSignNote()

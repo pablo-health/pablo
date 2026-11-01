@@ -4,19 +4,23 @@
 
 import { addSessionDictation, listSessionDictations } from "@/lib/api/dictations"
 import { queryKeys } from "@/lib/api/queryKeys"
+import { pollingOptions } from "@/lib/query/polling"
 import type { SessionDictation, SessionDictationList } from "@/types/dictations"
 import type { RedraftEdits } from "@/types/notes"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
 
 /** What was dictated for the session; polled while a clip is transcribing. */
 export function useSessionDictations(sessionId: string | undefined, token?: string) {
-  return useAuthQuery<SessionDictationList>({
-    queryKey: queryKeys.sessions.dictations(sessionId ?? ""),
-    queryFn: () => listSessionDictations(sessionId!, token),
-    enabled: !!sessionId,
-    refetchInterval: (query) =>
-      query.state.data?.data.some((d) => d.status === "transcribing") ? 3000 : false,
-  })
+  return useAuthQuery<SessionDictationList>(
+    pollingOptions(
+      {
+        queryKey: queryKeys.sessions.dictations(sessionId ?? ""),
+        queryFn: () => listSessionDictations(sessionId!, token),
+        enabled: !!sessionId,
+      },
+      (query) => (query.state.data?.data.some((d) => d.status === "transcribing") ? 3000 : false),
+    ),
+  )
 }
 
 export interface AddDictationVariables {

@@ -511,6 +511,7 @@ def require_mfa(
 
 
 def enforce_idle_session(
+    request: Request,
     decoded_token: dict[str, Any] = Depends(require_mfa),
 ) -> dict[str, Any]:
     """Reject requests whose Firebase session has been idle past the timeout.
@@ -518,11 +519,14 @@ def enforce_idle_session(
     Drop-in replacement for ``require_mfa`` in dependency chains: returns
     the same decoded token so downstream deps don't need to change.
     Defers the Redis logic to ``idle_session.check_and_touch`` to keep
-    that module free of imports from this file.
+    that module free of imports from this file. A background (polling)
+    request is checked without refreshing the idle clock.
     """
     from . import idle_session
 
-    idle_session.check_and_touch(decoded_token)
+    idle_session.check_and_touch(
+        decoded_token, refresh=not idle_session.is_background_request(request)
+    )
     return decoded_token
 
 
@@ -821,7 +825,9 @@ def get_current_user_no_mfa(
     # Lazy import avoids a circular service <-> idle_session import.
     from . import idle_session
 
-    idle_session.check_and_touch(decoded_token)
+    idle_session.check_and_touch(
+        decoded_token, refresh=not idle_session.is_background_request(request)
+    )
 
     return _resolve_user(decoded_token, user_repo, allowlist_repo, identity_repo, request)
 
