@@ -15,6 +15,8 @@ const inlineBrowserTimeZone = {
 
 const config = [
   ...nextConfig,
+  // Mutation-testing sandboxes and reports (npm run test:mutation).
+  { ignores: [".stryker-tmp/**", "reports/**"] },
   {
     rules: {
       "no-restricted-syntax": ["error", rawErrorToConsole],
