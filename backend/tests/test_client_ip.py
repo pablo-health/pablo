@@ -111,6 +111,22 @@ class TestTrustedProxyGate:
             ip = get_client_ip(_request("1.2.3.4, 203.0.113.7, 35.0.0.1", peer="172.30.0.11"))
         assert ip == "203.0.113.7"
 
+    def test_vm_shape_one_hop_yields_the_client(self) -> None:
+        # deploy/vm: Caddy faces the internet and is the only proxy.
+        rl, _ = _patch_hops(1, trusted_proxy_ips="172.30.0.10")
+        with rl:
+            ip = get_client_ip(_request("203.0.113.7", peer="172.30.0.10"))
+        assert ip == "203.0.113.7"
+
+    def test_local_shape_two_hops_yields_the_client(self) -> None:
+        # deploy/workstation: Funnel sets the client, Caddy appends the Docker
+        # gateway it trusts.
+        rl, _ = _patch_hops(2, trusted_proxy_ips="172.30.0.10")
+        with rl:
+            request = _request("203.0.113.7, 172.30.0.1", peer="172.30.0.10")
+            assert get_client_ip(request) == "203.0.113.7"
+            assert extract_request_context(request)[0] == "203.0.113.7"
+
     def test_wildcard_trusts_any_peer(self) -> None:
         rl, _ = _patch_hops(1, trusted_proxy_ips="*")
         with rl:

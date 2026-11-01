@@ -60,6 +60,8 @@ services:
     restart: unless-stopped
     environment:
       GOOGLE_APPLICATION_CREDENTIALS: /secrets/google.json
+      # Funnel and Caddy both sit in front (see Caddyfile); the VM has one.
+      TRUSTED_PROXY_HOPS: "2"
     depends_on:
       postgres:
         condition: service_healthy
@@ -98,6 +100,8 @@ services:
     env_file: ${PABLO_LOCAL_DIR}/frontend.env
     environment:
       GOOGLE_APPLICATION_CREDENTIALS: /secrets/google.json
+      # Read the same way as the backend's, for the IP it forwards to it.
+      TRUSTED_PROXY_HOPS: "2"
     depends_on:
       backend:
         condition: service_healthy
@@ -135,6 +139,8 @@ networks:
     ipam:
       config:
         - subnet: 172.30.0.0/24
+          # Caddy's peer for every request (see Caddyfile), so pinned.
+          gateway: 172.30.0.1
 
 volumes:
   postgres-data:
