@@ -1,0 +1,14 @@
+# Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+#
+# Starts pablo-update-request when the backend asks for an update by writing
+# this file. Installed and enabled by pablo-update.
+
+[Unit]
+Description=Pablo: watch for an update asked for in the app
+
+[Path]
+PathExists=/var/lib/pablo/update/requests/update.json
+Unit=pablo-update-request.service
+
+[Install]
+WantedBy=multi-user.target

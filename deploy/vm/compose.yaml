@@ -24,6 +24,11 @@ services:
   backend:
     <<: *backend
     restart: unless-stopped
+    # The update notice (SELF_UPDATE_ENABLED): the host's answers read-only,
+    # and the one directory the backend writes to ask for an update.
+    volumes:
+      - /var/lib/pablo/update/host:/var/lib/pablo/update/host:ro
+      - /var/lib/pablo/update/requests:/var/lib/pablo/update/requests
     depends_on:
       redis:
         condition: service_healthy
@@ -107,6 +112,8 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./routes.caddy:/etc/caddy/routes.caddy:ro
       - /var/lib/pablo/caddy:/data
+      # status.json, served at /update-status.json while the backend restarts.
+      - /var/lib/pablo/update/host:/srv/update:ro
     networks:
       pablo:
         # Fixed, so the backend can trust exactly this address for

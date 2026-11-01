@@ -10,7 +10,7 @@
 secret() { gcloud secrets versions access latest --secret="$1" --project="$PROJECT_ID"; }
 optional_secret() { secret "$1" 2>/dev/null || true; }
 
-# render_env_files <dir> <origin> <database host> <frontend's API URL>
+# render_env_files <dir> <origin> <database host> <frontend's API URL> [update dir]
 #
 # <origin> is the address clinicians and Cloud Tasks reach (https://...).
 # Passkeys are scoped to PABLO_HOST (no port): a clinician who later moves to
@@ -18,8 +18,13 @@ optional_secret() { secret "$1" 2>/dev/null || true; }
 # work meanwhile.
 # <frontend's API URL> is where the frontend's server reaches the backend: it
 # must arrive through Caddy, the only proxy the backend trusts for HTTPS.
+# [update dir] turns on the in-app update notice, with the host and the
+# backend container both seeing it at that path. Only the VM passes it: its
+# host checks for releases and acts on the request (pablo-update-request).
 render_env_files() {
-    local dir="$1" origin="$2" db_host="$3" api_url="$4"
+    local dir="$1" origin="$2" db_host="$3" api_url="$4" update_dir="${5:-}"
+    local self_update=false
+    [ -z "$update_dir" ] || self_update=true
     # Read up front: a failed lookup inside the heredocs below would not stop
     # the script, and would write an empty secret.
     local db_password calendar_key assemblyai_key auth_secret cookie_key client_secret
@@ -73,6 +78,8 @@ FILE_STORAGE_PROVIDER=gcs
 PATIENT_DOCUMENTS_GCS_BUCKET=${DOCUMENTS_BUCKET}
 COMPLIANCE_REPORT_BUCKET=${COMPLIANCE_BUCKET}
 PABLO_VERSION=${VERSION}
+SELF_UPDATE_ENABLED=${self_update}
+SELF_UPDATE_DIR=${update_dir:-/var/lib/pablo/update}
 GOOGLE_CALENDAR_ENCRYPTION_KEY=${calendar_key}
 GOOGLE_CALENDAR_CLIENT_ID=${GOOGLE_CLIENT_ID}
 GOOGLE_CALENDAR_CLIENT_SECRET=${client_secret}
