@@ -218,8 +218,13 @@ What the code does today, not what is planned.
   sessions and their audio, appointments, chat history and uploaded
   documents. `hard_purge_cron` does this daily at 02:00 UTC on the VM, and
   nightly before the backup on a local install.
-- **What remains** is one audit entry saying the client was purged, with
-  the internal ID and the time. No name or date of birth is kept.
+- **Not yet removed by the purge:** intake questionnaires and their
+  answers, charges and saved payment methods, companion recording sessions,
+  links to calendar events, and tasks (which stay, detached from the
+  client). These stay in the database after the purge until the job covers
+  them.
+- **The purge itself** leaves one audit entry with the client's internal ID
+  and the time. No name or date of birth is kept.
 - **Session audio** can also be deleted sooner: when a note is signed, or
   after a number of days you choose, from the app's settings.
 - **Backups** hold whatever the database held when they were taken, so a

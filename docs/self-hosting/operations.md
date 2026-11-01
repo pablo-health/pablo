@@ -102,7 +102,7 @@ JSON line in the system log, tagged `pablo-job`:
 
 | Job | When | What it does | Where the output goes |
 |---|---|---|---|
-| `hard_purge_cron` | Daily 02:00 | Permanently removes clients deleted more than 30 days ago: their records, session audio and documents. Leaves one audit entry per client with the internal ID and the time | `audit_logs`, system log |
+| `hard_purge_cron` | Daily 02:00 | Permanently removes clients deleted more than 30 days ago: their records, notes, sessions and audio, appointments, chat and documents (intake answers, billing and a few other tables are not yet covered; see the HIPAA guide). Leaves one audit entry per client with the internal ID and the time | `audit_logs`, system log |
 | `audit_retention_cron` | Daily 02:30 | Deletes audit entries past their 7-year retention | System log |
 | `hipaa_log_review` (24 hours) | Daily 07:00 | Deterministic anomaly flags over the last day of `audit_logs` for every practice, then Gemini narrates anything flagged. The input is PHI-free by contract: ids, times, actions, addresses | A markdown report and a JSON run record in `gs://<project>-pablo-compliance/`. A HIGH finding also logs an `ERROR` line with `alert_type=hipaa_review_high` |
 | `hipaa_log_review` (720 hours) | 1st of the month 06:00 | The same over 30 days, with a broader look at active practices | Same bucket |
