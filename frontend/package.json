@@ -13,6 +13,7 @@
     "test:coverage": "vitest --coverage",
     "test:e2e": "playwright test --config e2e/playwright.config.ts",
     "test:e2e:a11y": "playwright test --config e2e/playwright.mobile.config.ts",
+    "test:mutation": "mkdir -p .stryker-tmp/frontend && ln -sfn ../../backend .stryker-tmp/backend && ln -sfn ../../public .stryker-tmp/frontend/public && TZ=UTC stryker run",
     "postinstall": "patch-package"
   },
   "dependencies": {
@@ -56,6 +57,8 @@
     "@axe-core/playwright": "^4.14.0",
     "@eslint/eslintrc": "^3.3.7",
     "@playwright/test": "^1.64.1",
+    "@stryker-mutator/core": "^10.1.1",
+    "@stryker-mutator/vitest-runner": "^10.1.1",
     "@tailwindcss/postcss": "^4.3.3",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
