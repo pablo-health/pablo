@@ -7,6 +7,7 @@ import { CompanionGetDialog } from "../CompanionGetDialog"
 
 const isMacOS = vi.hoisted(() => vi.fn())
 const useCompanionDownloadUrl = vi.hoisted(() => vi.fn())
+const needsServerAddress = vi.hoisted(() => vi.fn((_origin: string) => false))
 
 vi.mock("@/lib/companion", () => ({
   companionPlatform: () => {
@@ -14,6 +15,7 @@ vi.mock("@/lib/companion", () => ({
     if (mac === "windows") return "windows"
     return mac ? "macos" : null
   },
+  companionNeedsServerAddress: (origin: string) => needsServerAddress(origin),
 }))
 
 vi.mock("@/lib/companion.extensions", () => ({
@@ -24,19 +26,21 @@ vi.mock("@/lib/companion.extensions", () => ({
 
 afterEach(() => {
   vi.clearAllMocks()
+  needsServerAddress.mockReturnValue(false)
 })
 
 describe("CompanionGetDialog", () => {
-  it("links to the default download URL on macOS", () => {
+  it("links the platform's download on macOS", () => {
     isMacOS.mockReturnValue(true)
-    useCompanionDownloadUrl.mockReturnValue("https://pablo.health")
+    useCompanionDownloadUrl.mockReturnValue("https://downloads.example/Pablo.dmg")
 
     renderWithProviders(
       <CompanionGetDialog open={true} onOpenChange={() => {}} />,
     )
 
+    expect(useCompanionDownloadUrl).toHaveBeenCalledWith("macos")
     const link = screen.getByRole("link", { name: "Download for macOS" })
-    expect(link).toHaveAttribute("href", "https://pablo.health")
+    expect(link).toHaveAttribute("href", "https://downloads.example/Pablo.dmg")
     expect(link).toHaveAttribute("target", "_blank")
     // Installing is not enough: the dashboard only sees the app once the
     // clinician signs in from it.
@@ -76,7 +80,7 @@ describe("CompanionGetDialog", () => {
 
   it("shows unsupported-platform copy and no link on non-macOS", () => {
     isMacOS.mockReturnValue(false)
-    useCompanionDownloadUrl.mockReturnValue("https://pablo.health")
+    useCompanionDownloadUrl.mockReturnValue(null)
 
     renderWithProviders(
       <CompanionGetDialog open={true} onOpenChange={() => {}} />,
@@ -99,7 +103,46 @@ describe("CompanionGetDialog", () => {
     )
 
     expect(screen.getByText("Get Pablo for Windows")).toBeInTheDocument()
+    expect(useCompanionDownloadUrl).toHaveBeenCalledWith("windows")
     const link = screen.getByRole("link", { name: "Download for Windows" })
     expect(link).toHaveAttribute("href", "https://downloads.example/win")
+  })
+
+  it("gives the address to enter in the app on a deployment elsewhere", () => {
+    isMacOS.mockReturnValue(true)
+    useCompanionDownloadUrl.mockReturnValue("https://downloads.example/Pablo.dmg")
+    needsServerAddress.mockReturnValue(true)
+
+    renderWithProviders(
+      <CompanionGetDialog open={true} onOpenChange={() => {}} />,
+    )
+
+    expect(needsServerAddress).toHaveBeenCalledWith(window.location.origin)
+    expect(screen.getByText(/choose Connect to a different server/)).toBeInTheDocument()
+    expect(screen.getByText(window.location.origin)).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: "Copy this Pablo's address" }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText("After installing, open the app and sign in."),
+    ).not.toBeInTheDocument()
+  })
+
+  it("asks for no address on the desktop app's default server", () => {
+    isMacOS.mockReturnValue("windows")
+    useCompanionDownloadUrl.mockReturnValue("https://downloads.example/win")
+    needsServerAddress.mockReturnValue(false)
+
+    renderWithProviders(
+      <CompanionGetDialog open={true} onOpenChange={() => {}} />,
+    )
+
+    expect(screen.queryByText(/Connect to a different server/)).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: "Copy this Pablo's address" }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByText("After installing, open the app and sign in."),
+    ).toBeInTheDocument()
   })
 })
