@@ -8,12 +8,14 @@
 #
 #   1. Config: the stub's copy of instance metadata, then local.env
 #   2. Packages: Docker, Postgres 16 + pgaudit + pgBackRest (PGDG), Ops Agent
-#   3. The data disk, mounted at /mnt/disks/pablo (formatted only if blank)
-#   4. Postgres on that disk, reachable from the Compose network only
-#   5. pgBackRest to the backup bucket, encrypted, with the VM's own identity
-#   6. The pablo-* commands, from these deploy files
-#   7. pablo-update: deploy files, env from Secret Manager, migrate, start
-#   8. The first clinician's email on the allowlist, and a first backup
+#   3. The hosted name, when there is one: claimed (renewed on later boots)
+#   4. The data disk, mounted at /mnt/disks/pablo (formatted only if blank)
+#   5. Postgres on that disk, reachable from the Compose network only
+#   6. pgBackRest to the backup bucket, encrypted, with the VM's own identity
+#   7. The pablo-* commands, from these deploy files
+#   8. pablo-update: deploy files, env from Secret Manager, migrate, start,
+#      once a hosted name answers in DNS
+#   9. The first clinician's email on the allowlist, and a first backup
 #
 # Google credentials come from the metadata server everywhere — gcloud,
 # pgBackRest, the containers, the Ops Agent. No key file exists on this VM.
@@ -25,6 +27,8 @@ readonly DATA_MOUNT="/mnt/disks/pablo"
 readonly PG_VERSION=16
 readonly PG_DATA="${DATA_MOUNT}/postgresql/${PG_VERSION}/main"
 readonly PG_CONF_DIR="/etc/postgresql/${PG_VERSION}/main"
+DEPLOY_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+readonly DEPLOY_DIR
 
 log() { echo "[pablo-bootstrap] $*"; }
 
@@ -93,7 +97,24 @@ JSON
     systemctl restart docker
 fi
 
-# --- 3. Data disk ----------------------------------------------------------
+# --- 3. Hosted name --------------------------------------------------------
+# Claimed this early so the record has the steps below to reach the zone's
+# nameservers before Caddy asks for a certificate (step 8). After packages,
+# which bring python3. A first claim that fails stops here, with the
+# service's reason in the log. On later boots it is a renewal, and a failed
+# one only logs: the record is already there, and an outage at the service
+# should not keep the practice offline. The weekly renewal tries again.
+if [ -n "${HOSTED_NAME:-}" ]; then
+    STEP="claiming ${HOSTED_NAME}.${NAMES_ZONE}"
+    if [ "$(cat /var/lib/pablo/hosted-name 2>/dev/null)" = "$HOSTED_NAME" ]; then
+        bash "${DEPLOY_DIR}/bin/pablo-name" claim || log "could not renew ${HOSTED_NAME}.${NAMES_ZONE}; continuing"
+    else
+        bash "${DEPLOY_DIR}/bin/pablo-name" claim
+        echo "$HOSTED_NAME" > /var/lib/pablo/hosted-name
+    fi
+fi
+
+# --- 4. Data disk ----------------------------------------------------------
 STEP="preparing the data disk"
 if ! blkid "$DATA_DEVICE" >/dev/null 2>&1; then
     log "formatting the new data disk"
@@ -105,7 +126,7 @@ if ! grep -q "$DATA_MOUNT" /etc/fstab; then
 fi
 mountpoint -q "$DATA_MOUNT" || mount "$DATA_MOUNT"
 
-# --- 4. Postgres -----------------------------------------------------------
+# --- 5. Postgres -----------------------------------------------------------
 STEP="setting up the database"
 # A fresh boot disk with an existing data disk (VM recreated) adopts the data
 # directory: pg_createcluster integrates a non-empty one rather than init it.
@@ -161,7 +182,7 @@ SQL
 fi
 unset DB_PASSWORD
 
-# --- 5. Backups ------------------------------------------------------------
+# --- 6. Backups ------------------------------------------------------------
 STEP="setting up backups"
 # Encrypted when install.sh made a passphrase, which it does only while the
 # bucket holds no repository. No secret means unencrypted; any other failure
@@ -206,16 +227,22 @@ CONF
 unset cipher
 sudo -u postgres pgbackrest --stanza=pablo stanza-create
 
-# --- 6-7. Deploy files, commands, the stack ---------------------------------
+# --- 7-8. Deploy files, commands, the stack ---------------------------------
 STEP="starting Pablo"
 # The commands come fresh from the deploy ref on every boot: the stub fetched
 # it into the directory this script runs from. So a boot that stopped halfway
 # never leaves a broken pablo-update behind.
-install -m 0755 "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"/bin/pablo-* /usr/local/bin/
+install -m 0755 "${DEPLOY_DIR}"/bin/pablo-* /usr/local/bin/
+# Let's Encrypt remembers a name that did not resolve for a few minutes, so
+# Caddy starts once the zone's own nameservers answer with this VM. Slower
+# than that and it starts anyway: Caddy keeps retrying the certificate.
+if [ -n "${HOSTED_NAME:-}" ] && ! /usr/local/bin/pablo-name wait 300; then
+    log "starting before ${HOSTED_NAME}.${NAMES_ZONE} answers; the certificate follows once it does"
+fi
 /usr/local/bin/pablo-update
 PABLO_VERSION="$(cat /etc/pablo/version)"
 
-# --- 8. First clinician ----------------------------------------------------
+# --- 9. First clinician ----------------------------------------------------
 STEP="admitting the first clinician and taking the first backup"
 if [ ! -f /var/lib/pablo/admin-allowed ]; then
     # From the deploy files rather than the image, so it works with any
