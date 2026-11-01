@@ -6,9 +6,50 @@
  * of failing silently.
  */
 import { describe, it, expect, vi } from "vitest"
-import { QueryClientProvider, useMutation } from "@tanstack/react-query"
+import { QueryClientProvider, useMutation, useQuery } from "@tanstack/react-query"
 import { renderHook, waitFor } from "@testing-library/react"
-import { createAppQueryClient } from "../providers"
+import { createAppQueryClient, shouldRetryQuery } from "../providers"
+import { ApiError } from "@/lib/api/client"
+
+function apiError(status: number): ApiError {
+  return new ApiError("CODE", "message", undefined, status)
+}
+
+describe("shouldRetryQuery", () => {
+  it.each([400, 401, 403, 404, 422])("does not retry a %i", (status) => {
+    expect(shouldRetryQuery(0, apiError(status))).toBe(false)
+  })
+
+  it.each([408, 429, 500, 503])("retries a %i", (status) => {
+    expect(shouldRetryQuery(0, apiError(status))).toBe(true)
+  })
+
+  it("retries a network failure", () => {
+    expect(shouldRetryQuery(0, new TypeError("Failed to fetch"))).toBe(true)
+  })
+
+  it("stops after three retries", () => {
+    expect(shouldRetryQuery(2, apiError(500))).toBe(true)
+    expect(shouldRetryQuery(3, apiError(500))).toBe(false)
+  })
+})
+
+describe("app query defaults", () => {
+  // A 403 used to retry three times with backoff, holding the dashboard
+  // panels in their loading state for seconds before any error showed.
+  it("surfaces a 403 after a single request", async () => {
+    const queryClient = createAppQueryClient(vi.fn())
+    const queryFn = vi.fn().mockRejectedValue(apiError(403))
+
+    const { result } = renderHook(
+      () => useQuery({ queryKey: ["x"], queryFn }),
+      { wrapper: wrapperFor(queryClient) },
+    )
+
+    await waitFor(() => expect(result.current.isError).toBe(true))
+    expect(queryFn).toHaveBeenCalledTimes(1)
+  })
+})
 
 function wrapperFor(queryClient: ReturnType<typeof createAppQueryClient>) {
   return function Wrapper({ children }: { children: React.ReactNode }) {
