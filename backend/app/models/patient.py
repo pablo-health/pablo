@@ -405,10 +405,3 @@ class Patient:
     def to_dict(self) -> dict[str, Any]:
         """Convert Patient to dictionary."""
         return asdict(self)
-
-    def to_api_dict(self) -> dict[str, Any]:
-        """Convert Patient to dictionary for API response (excludes internal fields)."""
-        data = asdict(self)
-        del data["first_name_lower"]
-        del data["last_name_lower"]
-        return data
