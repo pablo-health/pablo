@@ -10,6 +10,7 @@ import { PortalBootLoading } from "@/components/portal-shell/PortalBootLoading"
 import { ConfigProvider } from "@/lib/config-provider"
 import { isUnder } from "@/lib/portal-host/routing"
 import { AuthProvider } from "@/lib/auth-context"
+import { ApiError } from "@/lib/api/client"
 import { ToastProvider, useToast } from "@/components/ui/Toast"
 import { ThemeProvider } from "@/components/theme/ThemeProvider"
 import { installGlobalErrorReporter } from "@/lib/feErrorReporter"
@@ -52,6 +53,25 @@ export function isPortalPage(pathname: string | null, portalOnlyHost: boolean): 
  * valid default. Call sites that want bespoke copy can still add their own
  * onError; that one runs in addition to this global one.
  */
+/** Client errors that can still succeed when asked again. */
+const RETRYABLE_CLIENT_STATUSES = new Set([408, 429])
+
+/**
+ * Query retry policy: up to three retries, except for a client error the
+ * server has already decided — a 403 or 404 answers the same way every time.
+ * Retrying those only held a panel in its loading state for several seconds
+ * before its "didn't load" message and support line could show, which read
+ * as an empty page.
+ */
+export function shouldRetryQuery(failureCount: number, error: unknown): boolean {
+  if (failureCount >= 3) return false
+  const status = error instanceof ApiError ? error.status : undefined
+  if (status !== undefined && status >= 400 && status < 500) {
+    return RETRYABLE_CLIENT_STATUSES.has(status)
+  }
+  return true
+}
+
 export function createAppQueryClient(showToast: (message: string) => void): QueryClient {
   return new QueryClient({
     mutationCache: new MutationCache({
@@ -63,6 +83,7 @@ export function createAppQueryClient(showToast: (message: string) => void): Quer
       queries: {
         staleTime: 60 * 1000,
         refetchOnWindowFocus: false,
+        retry: shouldRetryQuery,
       },
     },
   })
