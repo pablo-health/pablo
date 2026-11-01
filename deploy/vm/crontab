@@ -5,11 +5,6 @@
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-# Retention, before the night's backup: clients deleted more than 30 days
-# ago are purged, then audit entries past their 7-year retention.
-0 2 * * *    root  pablo-job hard_purge_cron
-30 2 * * *   root  pablo-job audit_retention_cron
-
 # Backups: weekly full, daily differential, monthly restore drill.
 0 3 * * 0    root  pablo-backup full
 0 3 * * 1-6  root  pablo-backup diff
@@ -24,3 +19,8 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # The latest published release, for the update notice admins see in the app.
 30 8 * * 1   root  pablo-update --check
+
+# The hosted name's renewal, when there is one (a name not renewed for 30
+# days loses its record). At a random minute in the hour, so every VM does
+# not ask the service at once. Nothing to do without a hosted name.
+0 10 * * 3   root  sleep $((RANDOM \% 3600)); pablo-name renew

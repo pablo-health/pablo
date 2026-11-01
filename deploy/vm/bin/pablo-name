@@ -1,0 +1,312 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+#
+# This VM's name at the hosted-subdomain service, when install.sh was given
+# one (--hosted-name): HOSTED_NAME under NAMES_ZONE, kept by NAMES_ENDPOINT.
+#
+#   pablo-name claim           point the name at this VM (bootstrap.sh, every boot)
+#   pablo-name renew           the same, quiet unless it fails (the crontab, weekly)
+#   pablo-name wait [SECONDS]  until the zone's nameservers answer with this VM
+#   pablo-name status [NAME]   what the service and DNS say about the name
+#   pablo-name release NAME    give up a name this VM no longer uses
+#
+# The service keeps DNS and nothing else: one A record, always to the address
+# the request came from, which is this VM's static IP. It never sees traffic;
+# HTTPS ends at Caddy on this VM, with this VM's own certificate. The VM
+# proves who it is with an identity token from the metadata server, so no key
+# is stored here. A name belongs to the project, so a claim from any VM in it
+# is a renewal. A name not renewed for 30 days loses its record.
+
+set -euo pipefail
+
+readonly CONFIG_DIR=/etc/pablo
+readonly METADATA=http://metadata.google.internal/computeMetadata/v1/instance
+# Seconds before the first retry; doubled each time, unless the service says
+# how long to wait (Retry-After).
+readonly RETRY_BASE=5
+readonly ATTEMPTS=5
+
+log() { echo "[pablo-name] $*" >&2; }
+die() { log "$*"; exit 1; }
+
+usage() {
+    echo "usage: pablo-name claim | renew | wait [SECONDS] | status [NAME] | release NAME" >&2
+    exit 2
+}
+
+# shellcheck source=/dev/null
+source "${CONFIG_DIR}/config.env"
+# shellcheck source=/dev/null
+[ ! -f "${CONFIG_DIR}/local.env" ] || source "${CONFIG_DIR}/local.env"
+HOSTED_NAME="${HOSTED_NAME:-}"
+NAMES_ENDPOINT="${NAMES_ENDPOINT:-https://names.pablo.clinic}"
+NAMES_ENDPOINT="${NAMES_ENDPOINT%/}"
+NAMES_ZONE="${NAMES_ZONE:-pablo.clinic}"
+
+valid_name() { [[ "$1" =~ ^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$ ]]; }
+
+# json_field <file> <key> — the key's value when it is a string, else empty.
+json_field() {
+    python3 -c '
+import json, sys
+try:
+    value = json.load(open(sys.argv[1])).get(sys.argv[2])
+except (ValueError, AttributeError):
+    value = None
+print(value if isinstance(value, (str, bool)) else "")' "$1" "$2" 2>/dev/null || true
+}
+
+metadata() { curl -fsS --max-time 10 -H "Metadata-Flavor: Google" "${METADATA}/$1"; }
+
+BODY="$(mktemp)"
+HEADERS="$(mktemp)"
+trap 'rm -f "$BODY" "$HEADERS"' EXIT
+
+# request <method> <path> [<json body>] — sets CODE; the answer is in $BODY.
+# Retried while the service is unreachable, busy (429) or failing (5xx), with
+# a fresh token each time. Anything else is the service's answer.
+request() {
+    local method="$1" path="$2" data="${3:-}" attempt delay token retry_after
+    local args why
+    for attempt in $(seq "$ATTEMPTS"); do
+        : > "$BODY"
+        : > "$HEADERS"
+        args=(-sS --max-time 30 -X "$method" -o "$BODY" -D "$HEADERS" -w '%{http_code}')
+        [ -z "$data" ] || args+=(-H "Content-Type: application/json" --data "$data")
+        # The audience is the service's own address, which it checks.
+        if [ "$method" != GET ] \
+            && ! token="$(metadata "service-accounts/default/identity?audience=${NAMES_ENDPOINT}&format=full" 2>/dev/null)"; then
+            CODE=000
+            why="could not get this VM's identity token from the metadata server"
+        else
+            [ "$method" = GET ] || args+=(-H "Authorization: Bearer ${token}")
+            CODE="$(curl "${args[@]}" "${NAMES_ENDPOINT}${path}" 2>/dev/null)" || CODE=000
+            why="${NAMES_ENDPOINT} answered ${CODE}"
+            [ "$CODE" != 000 ] || why="${NAMES_ENDPOINT} did not answer"
+        fi
+        case "$CODE" in
+            000 | 429 | 5??) ;;
+            *) return 0 ;;
+        esac
+        [ "$attempt" -lt "$ATTEMPTS" ] || return 0
+        delay=$((RETRY_BASE * 2 ** (attempt - 1)))
+        retry_after="$(sed -n 's/^[Rr]etry-[Aa]fter: *\([0-9][0-9]*\).*/\1/p' "$HEADERS" | head -1)"
+        if [ -n "$retry_after" ]; then
+            delay=$((retry_after > 300 ? 300 : retry_after))
+        fi
+        log "${why}; trying again in ${delay}s"
+        sleep "$delay"
+    done
+}
+
+# Why the service said no, in its own words when it gave some.
+refusal() {
+    local detail
+    detail="$(json_field "$BODY" detail)"
+    case "$CODE" in
+        000) echo "${NAMES_ENDPOINT} did not answer." ;;
+        401) echo "The service did not accept this VM's identity token." ;;
+        *) echo "${detail:-The service answered ${CODE}.}" ;;
+    esac
+}
+
+require_name() {
+    [ -n "$HOSTED_NAME" ] && return
+    echo "This VM has no hosted name; it uses ${PABLO_HOST:-its own address}. install.sh --hosted-name sets one." >&2
+    exit "${1:-0}"
+}
+
+# claim [quiet] — POST is both: 201 the first time, 200 when this project
+# already holds the name.
+claim() {
+    local quiet="${1:-}" hostname
+    valid_name "$HOSTED_NAME" || die "${HOSTED_NAME} is not a name the service accepts."
+    request POST /v1/names "{\"name\": \"${HOSTED_NAME}\"}"
+    case "$CODE" in
+        200 | 201)
+            hostname="$(json_field "$BODY" hostname)"
+            hostname="${hostname:-${HOSTED_NAME}.${NAMES_ZONE}}"
+            [ -n "$quiet" ] || log "${hostname} points at $(json_field "$BODY" address) ($(json_field "$BODY" outcome))"
+            return 0
+            ;;
+    esac
+    log "could not claim ${HOSTED_NAME}.${NAMES_ZONE}: $(refusal)"
+    return 1
+}
+
+# The zone's own nameservers, asked directly, so a missing record is never
+# cached on the way: Let's Encrypt keeps a "no such name" for minutes, and
+# Caddy asks for a certificate as soon as it starts. Python's standard
+# library has no DNS client and dig is not installed, so this is a minimal
+# one over UDP. Falls back to this VM's resolver if the zone's nameservers
+# cannot be found or reached.
+#
+# dns_answers <hostname> <zone> — prints "<source> <address>..." per server.
+dns_answers() {
+    python3 - "$1" "$2" <<'PY'
+import random, socket, struct, sys
+
+hostname, zone = sys.argv[1], sys.argv[2]
+A, NS = 1, 2
+
+def query(server, name, qtype, recursive):
+    header = struct.pack(">HHHHHH", random.randrange(65536), 0x0100 if recursive else 0, 1, 0, 0, 0)
+    labels = b"".join(bytes([len(p)]) + p.encode() for p in name.strip(".").split("."))
+    packet = header + labels + b"\0" + struct.pack(">HH", qtype, 1)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.settimeout(3)
+        s.sendto(packet, (server, 53))
+        while True:
+            data = s.recv(4096)
+            if data[:2] == packet[:2]:
+                return data
+
+def read_name(data, offset):
+    labels, resume = [], None
+    for _ in range(64):
+        length = data[offset]
+        if length & 0xC0 == 0xC0:
+            resume = resume or offset + 2
+            offset = ((length & 0x3F) << 8) | data[offset + 1]
+            continue
+        offset += 1
+        if length == 0:
+            break
+        labels.append(data[offset:offset + length].decode())
+        offset += length
+    return ".".join(labels), resume or offset
+
+def answers(data, qtype):
+    questions, count = struct.unpack(">HH", data[4:8])
+    offset = 12
+    for _ in range(questions):
+        offset = read_name(data, offset)[1] + 4
+    found = []
+    for _ in range(count):
+        offset = read_name(data, offset)[1]
+        rtype, _, _, length = struct.unpack(">HHIH", data[offset:offset + 10])
+        offset += 10
+        if rtype == qtype == A:
+            found.append(socket.inet_ntoa(data[offset:offset + 4]))
+        elif rtype == qtype == NS:
+            found.append(read_name(data, offset)[0])
+        offset += length
+    return found
+
+def resolvers():
+    with open("/etc/resolv.conf") as f:
+        for line in f:
+            parts = line.split()
+            if len(parts) > 1 and parts[0] == "nameserver" and "." in parts[1]:
+                yield parts[1]
+
+try:
+    resolver = next(resolvers())
+    servers = []
+    for ns in answers(query(resolver, zone, NS, True), NS):
+        servers += sorted({info[4][0] for info in socket.getaddrinfo(ns, 53, socket.AF_INET)})
+    if not servers:
+        raise OSError("no nameservers")
+    for server in servers:
+        try:
+            print(server, *answers(query(server, hostname, A, False), A))
+        except OSError:
+            pass
+except (OSError, StopIteration, IndexError, struct.error):
+    try:
+        print("resolver", *sorted(set(socket.gethostbyname_ex(hostname)[2])))
+    except OSError:
+        print("resolver")
+PY
+}
+
+# dns_points_here <hostname> <address> — every nameserver that answered gave
+# this address, and at least one did.
+dns_points_here() {
+    local line seen=false
+    while read -r line; do
+        [ -n "$line" ] || continue
+        [[ " ${line#* } " == *" $2 "* ]] || return 1
+        seen=true
+    done < <(dns_answers "$1" "$NAMES_ZONE")
+    [ "$seen" = true ]
+}
+
+case "${1:-}" in
+    claim)
+        [ $# -eq 1 ] || usage
+        require_name
+        claim
+        ;;
+    renew)
+        [ $# -eq 1 ] || usage
+        [ -n "$HOSTED_NAME" ] || exit 0
+        # One line for Cloud Logging either way: a name that stops renewing
+        # is gone in 30 days, so its failure is worth an alert.
+        if claim quiet; then
+            echo '{"event":"name_renewal","status":"ok"}' | logger -t pablo-name
+        else
+            printf '{"event":"name_renewal","status":"failed","http_status":%d}\n' "$((10#$CODE))" | logger -t pablo-name
+            exit 1
+        fi
+        ;;
+    wait)
+        [ $# -le 2 ] || usage
+        require_name
+        timeout="${2:-300}"
+        [[ "$timeout" =~ ^[0-9]+$ ]] || usage
+        hostname="${HOSTED_NAME}.${NAMES_ZONE}"
+        address="$(metadata network-interfaces/0/access-configs/0/external-ip)" \
+            || die "could not read this VM's external address from the metadata server"
+        deadline=$(($(date +%s) + timeout))
+        until dns_points_here "$hostname" "$address"; do
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+                log "${hostname} does not answer with ${address} yet: $(dns_answers "$hostname" "$NAMES_ZONE" | tr '\n' ';')"
+                exit 1
+            fi
+            sleep 10
+        done
+        log "${hostname} answers with ${address}"
+        ;;
+    status)
+        [ $# -le 2 ] || usage
+        name="${2:-$HOSTED_NAME}"
+        [ -n "$name" ] || require_name
+        valid_name "$name" || die "${name} is not a name the service accepts."
+        hostname="${name}.${NAMES_ZONE}"
+        address="$(metadata network-interfaces/0/access-configs/0/external-ip 2>/dev/null || true)"
+        request GET "/v1/names/${name}"
+        # The lookup has no identity, so a name held by this project reads
+        # as taken; the DNS lines below say whether it points here.
+        case "$CODE:$(json_field "$BODY" available)" in
+            200:False) service="held: $(json_field "$BODY" reason)" ;;
+            200:True) service="free; nobody holds it" ;;
+            *) service="unknown: $(refusal)" ;;
+        esac
+        echo "Name       ${hostname}"
+        echo "Service    ${service}"
+        while read -r source answer; do
+            [ "$source" = resolver ] && source="this VM's resolver"
+            echo "DNS        ${answer:-no address} (${source})"
+        done < <(dns_answers "$hostname" "$NAMES_ZONE")
+        echo "This VM    ${address:-unknown}"
+        ;;
+    release)
+        [ $# -eq 2 ] || usage
+        name="$2"
+        valid_name "$name" || die "${name} is not a name the service accepts."
+        # The next boot would only claim it back, after the site had gone.
+        [ "$name" != "$HOSTED_NAME" ] \
+            || die "This VM still uses ${name}.${NAMES_ZONE}. Run install.sh with another address first."
+        request DELETE "/v1/names/${name}"
+        case "$CODE" in
+            204) log "released ${name}.${NAMES_ZONE}" ;;
+            404) log "${name}.${NAMES_ZONE} is not registered; nothing to release" ;;
+            403) die "${name}.${NAMES_ZONE} belongs to another project." ;;
+            *) die "could not release ${name}.${NAMES_ZONE}: $(refusal)" ;;
+        esac
+        ;;
+    *)
+        usage
+        ;;
+esac

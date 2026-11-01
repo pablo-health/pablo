@@ -5,10 +5,10 @@
 #
 #   ./install.sh
 #
-# It asks a few questions first (your email, the project, your own domain if
-# you have one, Google sign-in, transcription), shows what it will create and
-# what it costs, and runs to the end once you say yes. Every question has a
-# flag, for a run with no questions at all.
+# It asks a few questions first (your email, the project, Pablo's address,
+# Google sign-in, transcription), shows what it will create and what it
+# costs, and runs to the end once you say yes. Every question has a flag, for
+# a run with no questions at all.
 #
 # Sets up the project — billing, APIs, a service account for the VM, buckets,
 # sign-in, secrets, the task queues and the HIPAA audit log sink — then
@@ -22,7 +22,18 @@
 #   --project ID        Google Cloud project, new or existing (default: a new one)
 #   --admin-email EMAIL The clinician who signs in first
 #   --hostname NAME     Your own domain, pointed at the VM's address with an A
-#                       record. Default: an sslip.io name for that address.
+#                       record.
+#   --hosted-name NAME  Or NAME.pablo.clinic, from an optional hosted-subdomain
+#                       service, which the VM points at itself. Without either:
+#                       an sslip.io name for the VM's address. A re-run keeps
+#                       the address it had unless given one of these.
+#   --reuse-hosted-name The --hosted-name is this project's from an earlier
+#                       install (a VM deleted and made again). The check here
+#                       can only say it is taken; the VM's own claim succeeds
+#                       because the name belongs to this project.
+#   --names-endpoint URL  The hosted-subdomain service
+#                       (default https://names.pablo.clinic)
+#   --names-zone ZONE   The domain its names are under (default pablo.clinic)
 #   --region REGION     Default us-central1
 #   --zone ZONE         Default <region>-a
 #   --machine-type T    Default e2-small (2 GB, about $12/month)
@@ -66,6 +77,8 @@ source "${DEPLOY_DIR}/lib/vm.sh"
 source "${DEPLOY_DIR}/lib/env.sh"
 # shellcheck source=deploy/vm/lib/local.sh
 source "${DEPLOY_DIR}/lib/local.sh"
+# shellcheck source=deploy/vm/lib/names.sh
+source "${DEPLOY_DIR}/lib/names.sh"
 
 BOLD='\033[1m'
 GREEN='\033[0;32m'
@@ -80,6 +93,10 @@ usage() { sed -n '3,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 PROJECT_ID=""
 ADMIN_EMAIL=""
 CUSTOM_HOSTNAME=""
+HOSTED_NAME=""
+REUSE_HOSTED_NAME=false
+NAMES_ENDPOINT=https://names.pablo.clinic
+NAMES_ZONE=pablo.clinic
 REGION=us-central1
 ZONE=""
 MACHINE_TYPE=e2-small
@@ -98,6 +115,10 @@ while [ $# -gt 0 ]; do
         --project) PROJECT_ID="$2"; shift 2 ;;
         --admin-email) ADMIN_EMAIL="$2"; shift 2 ;;
         --hostname) CUSTOM_HOSTNAME="$2"; shift 2 ;;
+        --hosted-name) HOSTED_NAME="$2"; shift 2 ;;
+        --reuse-hosted-name) REUSE_HOSTED_NAME=true; shift ;;
+        --names-endpoint) NAMES_ENDPOINT="$2"; shift 2 ;;
+        --names-zone) NAMES_ZONE="$2"; shift 2 ;;
         --region) REGION="$2"; shift 2 ;;
         --zone) ZONE="$2"; shift 2 ;;
         --machine-type) MACHINE_TYPE="$2"; shift 2 ;;
@@ -116,6 +137,14 @@ while [ $# -gt 0 ]; do
     esac
 done
 ZONE="${ZONE:-${REGION}-a}"
+NAMES_ENDPOINT="${NAMES_ENDPOINT%/}"
+HOSTED_NAME="$(tr '[:upper:]' '[:lower:]' <<<"$HOSTED_NAME")"
+[ "$REUSE_HOSTED_NAME" != true ] || [ -n "$HOSTED_NAME" ] \
+    || { echo "--reuse-hosted-name goes with --hosted-name." >&2; exit 2; }
+if [ -n "$CUSTOM_HOSTNAME" ] && [ -n "$HOSTED_NAME" ]; then
+    echo "Pass --hostname or --hosted-name, not both." >&2
+    exit 2
+fi
 
 # --- Preflight ---------------------------------------------------------------
 for tool in gcloud curl python3 openssl git; do
@@ -145,22 +174,108 @@ if [ -z "$PROJECT_ID" ]; then
     read -rp "Google Cloud project [new: ${suggested}]: " PROJECT_ID
     PROJECT_ID="${PROJECT_ID:-$suggested}"
 fi
-if gcloud projects describe "$PROJECT_ID" >/dev/null 2>&1 \
-    && ! gcloud iam service-accounts describe "pablo-vm@${PROJECT_ID}.iam.gserviceaccount.com" --project="$PROJECT_ID" >/dev/null 2>&1 \
-    && [ "$ASSUME_YES" != true ]; then
-    warn "${PROJECT_ID} already exists and has no Pablo install in it."
-    read -rp "Install Pablo into it anyway? [y/N] " answer
-    [[ "$answer" =~ ^[Yy] ]] || { echo "Run this again and press Enter for a new project." >&2; exit 1; }
+existing_install=false
+if gcloud projects describe "$PROJECT_ID" >/dev/null 2>&1; then
+    if gcloud iam service-accounts describe "pablo-vm@${PROJECT_ID}.iam.gserviceaccount.com" --project="$PROJECT_ID" >/dev/null 2>&1; then
+        existing_install=true
+    elif [ "$ASSUME_YES" != true ]; then
+        warn "${PROJECT_ID} already exists and has no Pablo install in it."
+        read -rp "Install Pablo into it anyway? [y/N] " answer
+        [[ "$answer" =~ ^[Yy] ]] || { echo "Run this again and press Enter for a new project." >&2; exit 1; }
+    fi
 fi
 
 [[ "$TARGET" == vm || "$TARGET" == local ]] || { echo "--target is vm or local" >&2; exit 2; }
 if [ "$TARGET" = local ]; then
+    [ -z "$HOSTED_NAME" ] || { echo "--hosted-name is for an install on a VM." >&2; exit 2; }
     command -v docker >/dev/null || { echo "Needs Docker Desktop." >&2; exit 1; }
     local_address
 fi
 
-if [ -z "$CUSTOM_HOSTNAME" ] && [ "$ASSUME_YES" != true ] && [ "$TARGET" = vm ]; then
-    read -rp "Your own domain for Pablo, if you have one [Enter for an automatic address]: " CUSTOM_HOSTNAME
+# The address an earlier run gave the VM, kept unless this run names one. A
+# hosted name it had is this project's already, so it is not checked again
+# (the service would only say it is taken), and one left behind is not
+# released: the summary at the end says how.
+PREVIOUS_HOSTED_NAME=""
+PREVIOUS_NAMES_ZONE=""
+if [ "$existing_install" = true ] && [ "$TARGET" = vm ]; then
+    previous_config="$(previous_vm_config)"
+    PREVIOUS_HOSTED_NAME="$(sed -n 's/^HOSTED_NAME=//p' <<<"$previous_config")"
+    PREVIOUS_NAMES_ZONE="$(sed -n 's/^NAMES_ZONE=//p' <<<"$previous_config")"
+    previous_host="$(sed -n 's/^PABLO_HOST=//p' <<<"$previous_config")"
+    if [ -z "$CUSTOM_HOSTNAME$HOSTED_NAME" ]; then
+        if [ -n "$PREVIOUS_HOSTED_NAME" ]; then
+            HOSTED_NAME="$PREVIOUS_HOSTED_NAME"
+            NAMES_ZONE="${PREVIOUS_NAMES_ZONE:-$NAMES_ZONE}"
+            previous_endpoint="$(sed -n 's/^NAMES_ENDPOINT=//p' <<<"$previous_config")"
+            NAMES_ENDPOINT="${previous_endpoint:-$NAMES_ENDPOINT}"
+        elif [ -n "$previous_host" ] && [[ "$previous_host" != *.sslip.io ]]; then
+            CUSTOM_HOSTNAME="$previous_host"
+        fi
+    fi
+fi
+
+# ask_hosted_name — until the name given can be claimed.
+ask_hosted_name() {
+    local reason status mine
+    while :; do
+        read -rp "Name, before .${NAMES_ZONE}: " HOSTED_NAME
+        HOSTED_NAME="$(tr '[:upper:]' '[:lower:]' <<<"$HOSTED_NAME")"
+        status=0
+        reason="$(check_hosted_name "$HOSTED_NAME")" || status=$?
+        case "$status" in
+            0) return ;;
+            1)
+                echo "$reason"
+                # Anyone asking sees a name as taken, its owner included.
+                if valid_hosted_name "$HOSTED_NAME"; then
+                    read -rp "Is it yours, from an earlier install in this project? [y/N] " mine
+                    [[ "$mine" =~ ^[Yy] ]] && return
+                fi
+                ;;
+            *)
+                echo "${reason} Try again later, or run this again and choose the automatic address." >&2
+                exit 1
+                ;;
+        esac
+    done
+}
+
+hosted_name_checked=false
+if [ -z "$CUSTOM_HOSTNAME$HOSTED_NAME" ] && [ "$ASSUME_YES" != true ] && [ "$TARGET" = vm ]; then
+    cat <<EOF
+
+Pablo's address, for you and your clients:
+  1  your own domain; you add one DNS record for it
+  2  a name you choose at ${NAMES_ZONE}, such as yourpractice.${NAMES_ZONE}
+  3  an automatic address made from the server's IP; it works, but looks odd
+EOF
+    read -rp "Choose 1, 2 or 3 [3]: " answer
+    case "$answer" in
+        1) read -rp "Your domain: " CUSTOM_HOSTNAME ;;
+        2) ask_hosted_name; hosted_name_checked=true ;;
+        "" | 3) ;;
+        *) echo "Choose 1, 2 or 3." >&2; exit 1 ;;
+    esac
+fi
+
+if [ "$REUSE_HOSTED_NAME" = true ] && ! valid_hosted_name "$HOSTED_NAME"; then
+    echo "${HOSTED_NAME}: use 3 to 40 lowercase letters, numbers and hyphens, not starting or ending with a hyphen." >&2
+    exit 1
+fi
+if [ -n "$HOSTED_NAME" ] && [ "$hosted_name_checked" != true ] && [ "$REUSE_HOSTED_NAME" != true ] \
+    && [ "$HOSTED_NAME" != "$PREVIOUS_HOSTED_NAME" ]; then
+    status=0
+    reason="$(check_hosted_name "$HOSTED_NAME")" || status=$?
+    case "$status" in
+        0) ;;
+        1)
+            echo "${HOSTED_NAME}.${NAMES_ZONE}: ${reason}" >&2
+            echo "If it is yours from an earlier install in this project, add --reuse-hosted-name." >&2
+            exit 1
+            ;;
+        *) echo "${reason} Try again later, or leave out --hosted-name for the automatic address." >&2; exit 1 ;;
+    esac
 fi
 
 if [ -z "$GOOGLE_SIGNIN" ]; then
@@ -189,6 +304,8 @@ echo -e "${BOLD}Ready to install${NC}"
 echo "  Project   ${PROJECT_ID}"
 if [ "$TARGET" = local ]; then
     echo "  Address   ${PUBLIC_ORIGIN} (Tailscale Funnel)"
+elif [ -n "$HOSTED_NAME" ]; then
+    echo "  Address   ${HOSTED_NAME}.${NAMES_ZONE}"
 else
     echo "  Address   ${CUSTOM_HOSTNAME:-an automatic *.sslip.io address}"
 fi
@@ -220,6 +337,9 @@ on_exit() {
     [ -z "$config_file" ] || rm -f "$config_file"
     local resume="./install.sh --project ${PROJECT_ID}"
     [ "$TARGET" = vm ] || resume="${resume} --target ${TARGET}"
+    [ -z "$CUSTOM_HOSTNAME" ] || resume="${resume} --hostname ${CUSTOM_HOSTNAME}"
+    [ -z "$HOSTED_NAME" ] || resume="${resume} --hosted-name ${HOSTED_NAME}"
+    [ "$REUSE_HOSTED_NAME" != true ] || resume="${resume} --reuse-hosted-name"
     [ "$status" -eq 0 ] || warn "\nStopped. To pick up where this left off:  ${resume}" >&2
 }
 trap on_exit EXIT
@@ -241,6 +361,10 @@ if [ -n "$CUSTOM_HOSTNAME" ]; then
     PABLO_HOST="$CUSTOM_HOSTNAME"
     warn "Point ${PABLO_HOST} at ${VM_IP} with an A record, if you have not yet."
     warn "The certificate is issued as soon as that record resolves."
+elif [ -n "$HOSTED_NAME" ]; then
+    # The VM claims it when it starts: only the VM can, since the record
+    # takes the address the claim comes from.
+    PABLO_HOST="${HOSTED_NAME}.${NAMES_ZONE}"
 else
     PABLO_HOST="${VM_IP//./-}.sslip.io"
 fi
@@ -325,6 +449,9 @@ RUN_ID=${RUN_ID}
 PROJECT_ID=${PROJECT_ID}
 REGION=${REGION}
 PABLO_HOST=${PABLO_HOST}
+HOSTED_NAME=${HOSTED_NAME}
+NAMES_ENDPOINT=${NAMES_ENDPOINT}
+NAMES_ZONE=${NAMES_ZONE}
 PABLO_VERSION=${PABLO_VERSION}
 DEPLOY_REF=${DEPLOY_REF:-$PABLO_VERSION}
 REPO_URL=${REPO_URL}
@@ -357,7 +484,8 @@ while :; do
     case "$state" in
         "ready ${RUN_ID}") break ;;
         "failed at: "*" ${RUN_ID}")
-            warn "The VM stopped while ${state% "${RUN_ID}"}."
+            failed_step="${state#failed at: }"
+            warn "The VM stopped while ${failed_step% "${RUN_ID}"}."
             warn "Its log: gcloud compute instances get-serial-port-output ${VM_NAME} --zone=${ZONE} | grep pablo-"
             exit 1
             ;;
@@ -375,6 +503,9 @@ echo "Sign in with ${ADMIN_EMAIL}. You will set up an authenticator app the firs
 echo
 echo "Updates:  gcloud compute ssh ${VM_NAME} --zone=${ZONE} --tunnel-through-iap -- sudo pablo-update vX.Y.Z"
 echo "Backups:  daily to gs://${BACKUP_BUCKET}, restore-tested monthly (sudo pablo-backup info)"
+if [ -n "$PREVIOUS_HOSTED_NAME" ] && [ "$PREVIOUS_HOSTED_NAME" != "$HOSTED_NAME" ]; then
+    echo "${PREVIOUS_HOSTED_NAME}.${PREVIOUS_NAMES_ZONE:-$NAMES_ZONE} is still yours. To release it:  gcloud compute ssh ${VM_NAME} --zone=${ZONE} --tunnel-through-iap -- sudo pablo-name release ${PREVIOUS_HOSTED_NAME}"
+fi
 # Shown once, the run that made it. Secret Manager holds the only other copy,
 # and it goes with the Google account, so the copy that matters is the one the
 # clinician keeps elsewhere. Not shown when the repository was written without
