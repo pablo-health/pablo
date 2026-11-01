@@ -231,9 +231,6 @@ class PatientResolverRegistry:
         """Drop every registered resolver. For test isolation."""
         self._by_kind.clear()
 
-    def resolvers_for(self, kind: str) -> tuple[PatientPrincipalResolver, ...]:
-        return tuple(self._by_kind.get(kind, ()))
-
     def resolve(self, credential: PatientCredential) -> PatientContext | None:
         """Return the first principal a registered resolver claims.
 
