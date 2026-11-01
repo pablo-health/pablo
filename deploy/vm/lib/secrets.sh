@@ -37,6 +37,40 @@ ensure_generated_secrets() {
     ensure_generated_secret GOOGLE_CALENDAR_ENCRYPTION_KEY _fernet_key
 }
 
+# 48 random bytes, URL-safe base64: 64 characters, nothing pgbackrest.conf
+# would need quoted.
+_passphrase() { openssl rand -base64 48 | tr '+/' '-_'; }
+
+# stanza-create writes archive.info and backup.info under the repository
+# path (repo1-path in bootstrap.sh), for the one stanza, pablo.
+_backup_repository_exists() {
+    local repo="gs://${BACKUP_BUCKET}/pgbackrest"
+    gcloud storage ls "${repo}/archive/pablo/archive.info" >/dev/null 2>&1 \
+        || gcloud storage ls "${repo}/backup/pablo/backup.info" >/dev/null 2>&1
+}
+
+# An info file pgBackRest wrote without encryption is text that opens with its
+# [backrest] section; an encrypted one is ciphertext. bootstrap.sh makes the
+# same check before it hands pgBackRest the passphrase.
+backup_repository_unencrypted() {
+    local header
+    header="$(gcloud storage cat --range=0-9 "gs://${BACKUP_BUCKET}/pgbackrest/archive/pablo/archive.info" 2>/dev/null \
+        | LC_ALL=C tr -d '\0' || true)"
+    [ "$header" = "[backrest]" ]
+}
+
+# The key pgBackRest encrypts backups with. Made only while the bucket holds
+# no repository: one written without encryption cannot be read with a
+# passphrase, so an install that already has backups keeps them unencrypted.
+# Sets BACKUP_PASSPHRASE_CREATED when this run made it.
+ensure_backup_passphrase() {
+    BACKUP_PASSPHRASE_CREATED=false
+    secret_exists pablo-backup-passphrase && return
+    _backup_repository_exists && return
+    ensure_generated_secret pablo-backup-passphrase _passphrase
+    BACKUP_PASSPHRASE_CREATED=true
+}
+
 # Sets GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, asking only the first time.
 # The OAuth client has no API, so it is made by hand in the console. Both
 # stay empty when sign-in is email and password only (GOOGLE_SIGNIN not true).

@@ -34,7 +34,7 @@ seven days.
 | Backend, frontend | containers from `ghcr.io/pablo-health/*:<release>` |
 | HTTPS | Caddy, with a Let's Encrypt certificate it renews itself |
 | Database | Postgres 16 on its own disk (`pablo-data`), kept if the VM is deleted |
-| Backups | pgBackRest to `gs://<project>-pablo-backups`: weekly full, daily differential, WAL continuously; daily disk snapshots too |
+| Backups | pgBackRest to `gs://<project>-pablo-backups`, encrypted with a passphrase the installer shows you once: weekly full, daily differential, WAL continuously; daily disk snapshots too |
 | Restore check | monthly: the latest backup is restored into a scratch copy and queried |
 | Short-lived state | Redis, in memory only: calendar-connect handshakes, passkey challenges, rate limits, the idle-session clock |
 | Scheduled jobs | `/etc/cron.d/pablo`: HIPAA log reviews, pipeline heartbeat, quarterly attestation |
@@ -68,13 +68,26 @@ sudo pablo-update v1.2.0         # move to a release: pull, migrate, restart
 sudo pablo-backup info           # what the backup bucket holds
 sudo pablo-backup restore-drill  # restore the latest backup into a scratch copy
 sudo pablo-job hipaa_log_review  # run a scheduled job now
+sudo pablo-config list           # the VM's settings, and where each comes from
 ```
 
 An update restarts the app in place, so expect about a minute of downtime.
 Two copies side by side do not fit in 2 GB next to Postgres.
 
+The VM's startup script is `boot-stub.sh`. It fetches the deploy files for
+the release the VM runs and hands over to that release's `bootstrap.sh`, so
+a change to the boot steps arrives with `pablo-update` like everything else.
+
+Settings live in `/etc/pablo/config.env`, which `install.sh` writes and every
+boot rewrites, so an edit there does not survive a reboot. A setting the VM
+keeps for itself goes in `/etc/pablo/local.env`, through `pablo-config set
+KEY=VALUE`; it is read after `config.env` and wins. `pablo-config` takes only
+the settings named in its own list, and nothing restarts when one changes:
+`sudo pablo-update` applies it.
+
 Running `install.sh` again is safe. It picks up where it stopped, updates the
-VM's settings and restarts it. It never touches the data disk.
+VM's settings and restarts it, on the release it already runs; `pablo-update`
+is what moves releases. It never touches the data disk or `local.env`.
 
 ## Cost
 
@@ -87,9 +100,10 @@ figures for memory, CPU and first boot belong here once they are taken
 
 - `../../install.sh`: the Cloud Shell half, with `lib/` (project, sign-in,
   secrets, VM)
-- `bootstrap.sh`: the VM's startup script, run on every boot
+- `boot-stub.sh`: the VM's startup script, which runs the release's
+  `bootstrap.sh` on every boot
 - `compose.yaml`, `Caddyfile`: the stack; `routes.caddy`: how the address splits
   between frontend and backend, shared with `deploy/workstation`
 - `lib/env.sh`: the backend and frontend env files, shared with the local target
-- `bin/`: `pablo-update`, `pablo-backup`, `pablo-job`
+- `bin/`: `pablo-update`, `pablo-backup`, `pablo-job`, `pablo-config`
 - `crontab`: backups and scheduled jobs

@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 #
-# The VM half of install.sh. Attached as the instance's startup script, so it
-# runs as root on every boot; each step checks before it acts, so a reboot or
-# a re-run of install.sh converges instead of repeating work.
+# The VM half of install.sh. Run as root on every boot by boot-stub.sh, the
+# instance's startup script, from the deploy files of the release this VM
+# runs. Each step checks before it acts, so a reboot or a re-run of
+# install.sh converges instead of repeating work.
 #
-#   1. Config from instance metadata (written by install.sh) → /etc/pablo
+#   1. Config: the stub's copy of instance metadata, then local.env
 #   2. Packages: Docker, Postgres 16 + pgaudit + pgBackRest (PGDG), Ops Agent
 #   3. The data disk, mounted at /mnt/disks/pablo (formatted only if blank)
 #   4. Postgres on that disk, reachable from the Compose network only
-#   5. pgBackRest to the backup bucket, with the VM's own identity
-#   6. The pablo-* commands, from the release's deploy files
+#   5. pgBackRest to the backup bucket, encrypted, with the VM's own identity
+#   6. The pablo-* commands, from these deploy files
 #   7. pablo-update: deploy files, env from Secret Manager, migrate, start
 #   8. The first clinician's email on the allowlist, and a first backup
 #
@@ -19,7 +20,6 @@
 
 set -euo pipefail
 
-readonly METADATA="http://metadata.google.internal/computeMetadata/v1/instance/attributes"
 readonly DATA_DEVICE="/dev/disk/by-id/google-pablo-data"
 readonly DATA_MOUNT="/mnt/disks/pablo"
 readonly PG_VERSION=16
@@ -40,10 +40,12 @@ trap 'report "failed at: ${STEP}"' ERR
 
 # --- 1. Config -------------------------------------------------------------
 mkdir -p /etc/pablo /var/lib/pablo/caddy /opt/pablo
-curl -fsS -H "Metadata-Flavor: Google" "${METADATA}/pablo-config" > /etc/pablo/config.env
-chmod 0644 /etc/pablo/config.env
+# config.env is install.sh's, rewritten by the stub on every boot; local.env
+# holds what was set on this VM with pablo-config, and wins.
 # shellcheck source=/dev/null
 source /etc/pablo/config.env
+# shellcheck source=/dev/null
+[ ! -f /etc/pablo/local.env ] || source /etc/pablo/local.env
 secret() { gcloud secrets versions access latest --secret="$1" --project="$PROJECT_ID"; }
 
 # --- 2. Packages -----------------------------------------------------------
@@ -161,6 +163,31 @@ unset DB_PASSWORD
 
 # --- 5. Backups ------------------------------------------------------------
 STEP="setting up backups"
+# Encrypted when install.sh made a passphrase, which it does only while the
+# bucket holds no repository. No secret means unencrypted; any other failure
+# stops here, since a config without the passphrase cannot read an encrypted
+# repository. One written without it, by a release from before backups were
+# encrypted, stays unencrypted: pgBackRest cannot read it with a passphrase.
+# In [global], so every pgbackrest run uses it, the restore drill included.
+cipher=""
+err="$(mktemp)"
+if passphrase="$(secret pablo-backup-passphrase 2>"$err")"; then
+    header="$(gcloud storage cat --range=0-9 "gs://${BACKUP_BUCKET}/pgbackrest/archive/pablo/archive.info" 2>/dev/null \
+        | LC_ALL=C tr -d '\0' || true)"
+    if [ "$header" = "[backrest]" ]; then
+        log "the backup repository predates its passphrase; it stays unencrypted"
+    else
+        cipher="repo1-cipher-type=aes-256-cbc"$'\n'"repo1-cipher-pass=${passphrase}"
+    fi
+elif ! grep -q NOT_FOUND "$err"; then
+    cat "$err" >&2
+    false
+fi
+rm -f "$err"
+unset passphrase
+
+# Created 0640 before anything is written to it: it can hold the passphrase.
+install -m 0640 -o postgres -g postgres /dev/null /etc/pgbackrest.conf
 cat > /etc/pgbackrest.conf <<CONF
 [global]
 repo1-type=gcs
@@ -168,6 +195,7 @@ repo1-gcs-bucket=${BACKUP_BUCKET}
 repo1-gcs-key-type=auto
 repo1-path=/pgbackrest
 repo1-retention-full=4
+${cipher}
 start-fast=y
 compress-type=zst
 log-level-console=info
@@ -175,21 +203,15 @@ log-level-console=info
 [pablo]
 pg1-path=${PG_DATA}
 CONF
-chmod 0640 /etc/pgbackrest.conf
-chown postgres:postgres /etc/pgbackrest.conf
+unset cipher
 sudo -u postgres pgbackrest --stanza=pablo stanza-create
 
 # --- 6-7. Deploy files, commands, the stack ---------------------------------
 STEP="starting Pablo"
-# The commands come fresh from the deploy ref on every boot, so a boot that
-# stopped halfway never leaves a broken pablo-update behind. pablo-update
-# then fetches the full deploy files and installs that release's commands.
-ref="$(cat /etc/pablo/ref 2>/dev/null || echo "${DEPLOY_REF:-$PABLO_VERSION}")"
-commands="$(mktemp -d)"
-git clone -q --depth 1 --branch "$ref" --filter=blob:none --sparse "$REPO_URL" "$commands"
-git -C "$commands" sparse-checkout set deploy/vm/bin
-install -m 0755 "$commands"/deploy/vm/bin/pablo-* /usr/local/bin/
-rm -rf "$commands"
+# The commands come fresh from the deploy ref on every boot: the stub fetched
+# it into the directory this script runs from. So a boot that stopped halfway
+# never leaves a broken pablo-update behind.
+install -m 0755 "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"/bin/pablo-* /usr/local/bin/
 /usr/local/bin/pablo-update
 PABLO_VERSION="$(cat /etc/pablo/version)"
 

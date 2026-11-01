@@ -1,11 +1,11 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 # shellcheck shell=bash
 #
-# The backend's and frontend's env files, from config.env values and Secret
-# Manager. Sourced by pablo-update on the VM and by install.sh --target local,
-# so the two run the same settings. Expects the config values (PROJECT_ID,
-# REGION, PABLO_HOST, the buckets, FIREBASE_*, GOOGLE_CLIENT_ID,
-# TRANSCRIPTION_*) and VERSION.
+# The backend's and frontend's env files, from config.env values (local.env's
+# where the VM has its own) and Secret Manager. Sourced by pablo-update on the
+# VM and by install.sh --target local, so the two run the same settings.
+# Expects the config values (PROJECT_ID, REGION, PABLO_HOST, the buckets,
+# FIREBASE_*, GOOGLE_CLIENT_ID, TRANSCRIPTION_*) and VERSION.
 
 secret() { gcloud secrets versions access latest --secret="$1" --project="$PROJECT_ID"; }
 optional_secret() { secret "$1" 2>/dev/null || true; }
