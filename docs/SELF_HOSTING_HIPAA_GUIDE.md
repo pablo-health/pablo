@@ -52,7 +52,6 @@ These are not oversights to hide; they are the lines where your work starts.
 | Not done | Where it is covered |
 |---|---|
 | Alerting of any kind: no email when a backup fails, the disk fills or the site goes down | [Operations: what to watch](self-hosting/operations.md#what-to-watch) |
-| Scheduled permanent deletion of records. Deleting a client hides the record; nothing removes it later | [Data retention and deletion](#data-retention-and-deletion) |
 | Outbound email. Portal invitations and booking confirmations stay off until you add an SMTP provider | [BAA chain](#business-associate-agreements) |
 | Customer-managed encryption keys. Disks and buckets use Google-managed keys | [Encryption](#encryption) |
 | A penetration test. The weekly pentest in this repository runs against Pablo Health's hosted service, not your VM | — |
