@@ -15,6 +15,7 @@ import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary"
 import { IdleTimeout } from "@/components/IdleTimeout"
 import { ThemeSync } from "@/components/theme/ThemeSync"
 import { DraftNotices } from "@/components/sessions/DraftNotices"
+import { UpdateNotice } from "@/components/layout/UpdateNotice"
 import { errorCode } from "@/lib/errors/errorCode"
 import { PeopleTermProvider } from "@/hooks/usePeopleTerm"
 import type { PeopleTerm } from "@/lib/peopleTerm"
@@ -31,6 +32,7 @@ export default async function DashboardLayout({
   let user
   let token: string | undefined
   let isAdmin = false
+  let isPracticeAdmin = false
   let peopleTerm: PeopleTerm | undefined
 
   if (IS_DEV_MODE) {
@@ -59,6 +61,7 @@ export default async function DashboardLayout({
         image: claims.picture,
       }
       isAdmin = userStatus.is_platform_admin
+      isPracticeAdmin = userStatus.is_practice_admin === true
       peopleTerm = userStatus.people_term
 
       // Disabled users cannot access the platform
@@ -140,6 +143,7 @@ export default async function DashboardLayout({
         <div className="flex flex-1 flex-col">
           <Header user={user} />
           <main id="main-content" className="flex-1 overflow-y-auto p-6 bg-neutral-50">
+            <UpdateNotice isPracticeAdmin={isPracticeAdmin} />
             <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
           </main>
         </div>
