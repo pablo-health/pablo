@@ -10,6 +10,7 @@
 
 import { redirect } from "next/navigation"
 import { getServerSession } from "@/lib/auth/server"
+import { needsEmailVerification, VERIFY_EMAIL_PATH } from "@/lib/auth/emailVerification"
 import { IdleTimeout } from "@/components/IdleTimeout"
 
 export const dynamic = "force-dynamic"
@@ -22,6 +23,11 @@ export default async function OnboardingLayout({
   const session = await getServerSession()
   if (!session) {
     redirect("/login")
+  }
+  // Same rule as the dashboard layout: the API refuses practice requests
+  // for an unverified email, so the steps would fail one by one.
+  if (needsEmailVerification(session.claims)) {
+    redirect(VERIFY_EMAIL_PATH)
   }
 
   return (

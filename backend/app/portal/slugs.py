@@ -62,6 +62,7 @@ RESERVED_SLUGS = frozenset(
         "mfa-step-up",
         "native-auth",
         "onboarding",
+        "verify-email",
         # Names a hosted domain's own hosts would use (see above).
         "sites",
         "dev",

@@ -82,6 +82,7 @@ export const CLINICIAN_ROUTE_SEGMENTS: ReadonlySet<string> = new Set([
   "mfa-step-up",
   "native-auth",
   "onboarding",
+  "verify-email",
 ])
 
 /**
