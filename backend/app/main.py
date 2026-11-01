@@ -127,6 +127,7 @@ from .routes import (
     scheduling,
     session_dictations,
     sessions,
+    software_update,
     superbills,
     supervision,
     telehealth,
@@ -334,6 +335,8 @@ app.include_router(patient_chart_history.router)
 app.include_router(practice_billing.router)
 app.include_router(practice_domains.router)
 app.include_router(practice_admins.router)
+# The single-VM install's update notice; answers 404 unless SELF_UPDATE_ENABLED.
+app.include_router(software_update.router)
 # The practice's website: managed in Settings > Website, served to its hosts.
 app.include_router(site_routes.router)
 app.include_router(site_public_routes.router)

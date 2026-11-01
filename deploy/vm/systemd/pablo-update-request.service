@@ -1,0 +1,17 @@
+# Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+#
+# Installs the latest release for an admin who asked in the app; see
+# pablo-update-request. Started by pablo-update-request.path, never enabled
+# on its own. The script removes the request whatever happens, so the path
+# unit does not start it again.
+
+[Unit]
+Description=Pablo: install the latest release, as asked in the app
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/pablo-update-request
+# A backup, a pull, migrations and perhaps a rollback.
+TimeoutStartSec=90min

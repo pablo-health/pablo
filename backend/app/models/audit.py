@@ -196,6 +196,10 @@ class AuditAction(StrEnum):
     PRACTICE_ADMIN_GRANTED = "practice_admin_granted"
     PRACTICE_ADMIN_REVOKED = "practice_admin_revoked"
 
+    # A practice admin asking the host to install the latest release. No PHI;
+    # ``changes`` carries the running and the requested version.
+    SOFTWARE_UPDATE_REQUESTED = "software_update_requested"
+
     # The authorisation letting Pablo apply to insurance panels on a
     # clinician's behalf: sign her name to a payer's form, and ring the payer
     # to chase it. Not a HIPAA event — no PHI is involved — but the moment

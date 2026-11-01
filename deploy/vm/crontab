@@ -21,3 +21,6 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 0 6 1 * *          root  pablo-job hipaa_log_review REVIEW_WINDOW_HOURS=720
 0 9 * * 1          root  pablo-job pipeline_heartbeat
 0 5 1 1,4,7,10 *   root  pablo-job hipaa_attestation
+
+# The latest published release, for the update notice admins see in the app.
+30 8 * * 1   root  pablo-update --check

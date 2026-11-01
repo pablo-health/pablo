@@ -375,6 +375,11 @@ const baseQueryKeys = {
     all: ["practiceAdmins"] as const,
   },
 
+  // The running and the latest release, on a deployment that updates itself
+  softwareUpdate: {
+    all: ["softwareUpdate"] as const,
+  },
+
   // Medication list query keys
   medications: {
     all: ["medications"] as const,

@@ -9,5 +9,15 @@
 }
 
 {$PABLO_HOST} {
+	# An update's progress, written by pablo-update-request, served from the
+	# host so the browser can follow it while the backend restarts. Versions
+	# and fixed messages only.
+	handle /update-status.json {
+		root * /srv/update
+		rewrite * /status.json
+		header Cache-Control no-store
+		file_server
+	}
+
 	import routes.caddy
 }

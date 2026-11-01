@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+#
+# Install the latest release because an admin asked for it in the app. Run by
+# pablo-update-request.service when the backend writes
+# /var/lib/pablo/update/requests/update.json; not meant to be run by hand
+# (`sudo pablo-update vX.Y.Z` is the manual way).
+#
+# The request only says that someone asked. Its contents are logged and
+# otherwise ignored: the version comes from GitHub, checked again here, and
+# must be a vX.Y.Z tag newer than the one running. Then:
+#
+#   1. a differential backup, stopping if it fails
+#   2. pablo-update to the new release
+#   3. the new release must be the one serving and answer /api/health
+#   4. otherwise pablo-update back to the previous release
+#
+# Progress goes to /var/lib/pablo/update/host/status.json, which Caddy serves
+# at /update-status.json so the browser can follow it while the backend is
+# down. Versions and fixed messages only; no PHI, no secrets.
+#
+# Migrations are not undone by going back. Every update already runs them
+# against the old code before restarting, so the old release works on the new
+# schema.
+#
+# Everything is inside main(), so bash has read the whole script before
+# pablo-update replaces this file with the new release's copy.
+
+set -euo pipefail
+
+readonly UPDATE_DIR=/var/lib/pablo/update
+readonly REQUEST="${UPDATE_DIR}/requests/update.json"
+readonly STATUS="${UPDATE_DIR}/host/status.json"
+readonly LATEST="${UPDATE_DIR}/host/latest.json"
+
+log() { echo "[pablo-update-request] $*"; }
+
+# write_status <state> <from> <to> <message>
+write_status() {
+    python3 -c '
+import datetime, json, sys
+state, before, after, message = sys.argv[1:]
+print(json.dumps({
+    "state": state, "from": before, "to": after, "message": message,
+    "at": datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+}))' "$@" > "${STATUS}.tmp"
+    chmod 0644 "${STATUS}.tmp"
+    mv -f "${STATUS}.tmp" "$STATUS"
+}
+
+# The request, printable and at most 512 bytes. The backend owns requests/,
+# so the file may be anything: a symlink or a FIFO is not followed or read.
+request_contents() {
+    python3 -c '
+import os, stat, sys
+try:
+    fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+except OSError as e:
+    sys.exit(f"(unreadable: {e.strerror})")
+if stat.S_ISREG(os.fstat(fd).st_mode):
+    print("".join(c for c in os.read(fd, 512).decode(errors="replace") if c.isprintable()))
+else:
+    print("(not a regular file)")' "$REQUEST" 2>&1 || true
+}
+
+# newer <candidate> <current>: both vX.Y.Z, candidate strictly newer.
+newer() {
+    python3 -c '
+import re, sys
+def parse(v):
+    m = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", v)
+    if not m:
+        sys.exit(1)
+    return tuple(map(int, m.groups()))
+sys.exit(0 if parse(sys.argv[1]) > parse(sys.argv[2]) else 1)' "$1" "$2"
+}
+
+# serving <version>: the backend container runs that release's image and the
+# app answers healthy through Caddy, for up to two minutes.
+serving() {
+    local version="$1" image health
+    for _ in $(seq 24); do
+        image="$(docker ps --filter label=com.docker.compose.project=pablo \
+            --filter label=com.docker.compose.service=backend --format '{{.Image}}')"
+        health="$(curl -fsS --max-time 10 --resolve "${PABLO_HOST}:443:127.0.0.1" \
+            "https://${PABLO_HOST}/api/health" 2>/dev/null || true)"
+        if [ "$image" = "ghcr.io/pablo-health/backend:${version}" ] \
+            && [ "$(cat /etc/pablo/version)" = "$version" ] \
+            && [[ "$health" == *'"status":"healthy"'* ]]; then
+            return 0
+        fi
+        sleep 5
+    done
+    return 1
+}
+
+main() {
+    exec 9>/run/lock/pablo-update.lock
+    trap 'rm -f "$REQUEST"' EXIT
+    log "request: $(request_contents)"
+
+    # shellcheck source=/dev/null
+    source /etc/pablo/config.env
+    # shellcheck source=/dev/null
+    [ ! -f /etc/pablo/local.env ] || source /etc/pablo/local.env
+    local current current_ref latest
+    current="$(cat /etc/pablo/version)"
+    current_ref="$(cat /etc/pablo/ref 2>/dev/null || echo "$current")"
+
+    if ! flock -n 9; then
+        log "another update is running"
+        write_status failed "$current" "" "Another update was already running."
+        return 1
+    fi
+    # pablo-update, run below, takes this lock as already held.
+    export PABLO_UPDATE_LOCKED=1
+
+    if ! /usr/local/bin/pablo-update --check || [ ! -f "$LATEST" ]; then
+        write_status failed "$current" "" "Could not find the latest release on GitHub."
+        return 1
+    fi
+    latest="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' "$LATEST")"
+    if ! newer "$latest" "$current"; then
+        # Nothing to do, and an earlier result in status.json stays as it was.
+        log "nothing to do: ${latest} is not newer than ${current}"
+        return 0
+    fi
+
+    write_status updating "$current" "$latest" "Taking a backup."
+    if ! /usr/local/bin/pablo-backup diff; then
+        write_status failed "$current" "$latest" "The backup failed, so nothing was changed."
+        return 1
+    fi
+
+    write_status updating "$current" "$latest" "Installing ${latest}."
+    if /usr/local/bin/pablo-update "$latest" && serving "$latest"; then
+        write_status "done" "$current" "$latest" "Pablo is running ${latest}."
+        log "updated from ${current} to ${latest}"
+        return 0
+    fi
+
+    log "${latest} did not come up; going back to ${current}"
+    write_status updating "$current" "$latest" "Going back to ${current}."
+    if /usr/local/bin/pablo-update "$current" "$current_ref" && serving "$current"; then
+        write_status rolled_back "$current" "$latest" "${latest} did not start, so Pablo is back on ${current}."
+    else
+        write_status failed "$current" "$latest" "Going back to ${current} did not finish. Run pablo-update over SSH."
+    fi
+    return 1
+}
+
+main "$@"; exit $?

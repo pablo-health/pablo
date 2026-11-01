@@ -75,6 +75,19 @@ def is_version_outdated(client_version: str, min_version: str) -> bool:
     return parse_semver(client_version) < parse_semver(min_version)
 
 
+def is_newer_release(candidate: str, current: str) -> bool:
+    """Whether release tag *candidate* is strictly newer than *current*.
+
+    Tags read ``v1.10.0``; the leading ``v`` is optional. A tag that is not
+    plain major.minor.patch (a pre-release, a branch build) is never newer,
+    and nothing is newer than a version that cannot be read.
+    """
+    try:
+        return parse_semver(candidate.removeprefix("v")) > parse_semver(current.removeprefix("v"))
+    except ValueError:
+        return False
+
+
 def check_client_version(request: Request) -> None:
     """Check X-Client-Version / X-Client-Platform headers and reject outdated clients.
 

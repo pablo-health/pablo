@@ -6,6 +6,11 @@
 # the env files from config.env, local.env and Secret Manager, pulls the
 # images, migrates, then restarts the stack in place.
 #
+# `pablo-update --check` only asks GitHub for the repository's latest
+# published release and records it in /var/lib/pablo/update/host/latest.json,
+# where the app reads it to tell an admin a newer release exists. The crontab
+# runs it weekly, and every update ends with it, so the notice clears.
+#
 # The version is the image tag; the deploy ref is the git ref the deploy files
 # come from, the same tag unless given. A branch ref (testing a change before
 # it is released) is re-fetched on every run, since a branch moves.
@@ -17,10 +22,66 @@
 
 set -euo pipefail
 
+readonly UPDATE_DIR=/var/lib/pablo/update
+# The backend image runs as uid 65532 (nonroot); requests/ is the one place
+# on the host it may write.
+readonly BACKEND_UID=65532
+
+log() { echo "[pablo-update] $*"; }
+
+# Writes latest.json for the newest published release (GitHub's "latest":
+# never a draft or a pre-release) of the repository in REPO_URL. A repository
+# not on GitHub has no such answer, so there is no file and no notice.
+check_latest() {
+    local pattern='^(https://|ssh://git@|git@)github\.com[:/]([^/]+)/([^/]+)$'
+    if [[ ! "$REPO_URL" =~ $pattern ]]; then
+        rm -f "${UPDATE_DIR}/host/latest.json"
+        return 0
+    fi
+    local repo="${BASH_REMATCH[2]}/${BASH_REMATCH[3]%.git}"
+    install -d -m 0755 "$UPDATE_DIR" "${UPDATE_DIR}/host"
+    local tmp="${UPDATE_DIR}/host/.latest.json.tmp"
+    # The notes link is built from the tag rather than taken from the answer.
+    # Explicit failure handling: callers run this under `||`, where set -e
+    # does not apply, and a failed check must leave the last answer in place.
+    if ! curl -fsS --max-time 30 -H "Accept: application/vnd.github+json" \
+        "https://api.github.com/repos/${repo}/releases/latest" \
+        | python3 -c '
+import datetime, json, re, sys
+repo, tag = sys.argv[1], json.load(sys.stdin)["tag_name"]
+if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
+    sys.exit(f"the latest release, {tag!r}, is not a vX.Y.Z tag")
+print(json.dumps({
+    "version": tag,
+    "notes_url": f"https://github.com/{repo}/releases/tag/{tag}",
+    "checked_at": datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+}))' "$repo" > "$tmp"; then
+        rm -f "$tmp"
+        return 1
+    fi
+    chmod 0644 "$tmp"
+    mv -f "$tmp" "${UPDATE_DIR}/host/latest.json"
+}
+
 # shellcheck source=/dev/null
 source /etc/pablo/config.env
 # shellcheck source=/dev/null
 [ ! -f /etc/pablo/local.env ] || source /etc/pablo/local.env
+
+if [ "${1:-}" = --check ]; then
+    check_latest
+    exit
+fi
+
+# One update at a time. The lock is inherited across the exec below, and by a
+# pablo-update run from pablo-update-request, which holds it for the update
+# and any rollback together.
+if [ -z "${PABLO_UPDATE_LOCKED:-}" ]; then
+    exec 9>/run/lock/pablo-update.lock
+    flock -n 9 || { echo "Another update is running." >&2; exit 1; }
+    export PABLO_UPDATE_LOCKED=1
+fi
+
 if [ $# -gt 0 ]; then
     VERSION="$1"
     REF="${2:-$1}"
@@ -29,8 +90,6 @@ else
     REF="$(cat /etc/pablo/ref 2>/dev/null || echo "${DEPLOY_REF:-$VERSION}")"
 fi
 RELEASE_DIR="/opt/pablo/deploy/${REF//\//_}"
-
-log() { echo "[pablo-update] $*"; }
 
 # --- Deploy files ------------------------------------------------------------
 if [ ! -d "${RELEASE_DIR}/.git" ]; then
@@ -53,12 +112,22 @@ if ! cmp -s /opt/pablo/current/bin/pablo-update "$0"; then
 fi
 install -m 0755 /opt/pablo/current/bin/pablo-* /usr/local/bin/
 
+# --- Updates asked for from the app ------------------------------------------
+# host/ holds latest.json and status.json: read-only to the backend, served to
+# the browser by Caddy. requests/ is the backend's to write; a file appearing
+# there starts pablo-update-request through the path unit.
+install -d -m 0755 "$UPDATE_DIR" "${UPDATE_DIR}/host"
+install -d -m 0700 -o "$BACKEND_UID" -g "$BACKEND_UID" "${UPDATE_DIR}/requests"
+install -m 0644 /opt/pablo/current/systemd/pablo-update-request.* /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now pablo-update-request.path
+
 # --- Env files (0600, root) -------------------------------------------------
 # shellcheck source=deploy/vm/lib/env.sh
 source /opt/pablo/current/lib/env.sh
 # The frontend's server reaches the backend through Caddy, by the app's own
 # hostname (compose.yaml maps it to Caddy inside the network).
-render_env_files /etc/pablo "https://${PABLO_HOST}" host.docker.internal "https://${PABLO_HOST}"
+render_env_files /etc/pablo "https://${PABLO_HOST}" host.docker.internal "https://${PABLO_HOST}" "$UPDATE_DIR"
 
 # --- Images, schema, restart -----------------------------------------------
 compose() {
@@ -83,3 +152,4 @@ echo "$VERSION" > /etc/pablo/version
 echo "$REF" > /etc/pablo/ref
 docker image prune -af --filter "until=168h" >/dev/null
 log "serving ${VERSION} (deploy files at ${REF}) at https://${PABLO_HOST}"
+check_latest || log "could not check GitHub for a newer release; the weekly check tries again"

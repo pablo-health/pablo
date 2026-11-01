@@ -85,6 +85,48 @@ KEY=VALUE`; it is read after `config.env` and wins. `pablo-config` takes only
 the settings named in its own list, and nothing restarts when one changes:
 `sudo pablo-update` applies it.
 
+## Updates from the app
+
+Once a week, and after every update, the VM asks GitHub for the latest
+published release of the repository it was installed from (`pablo-update
+--check`). When that release is newer than the one running, the practice's
+owner and admins see a notice in the app with the version, a link to its
+release notes and an **Update now** button. A repository not on GitHub gets
+no notice; `pablo-update vX.Y.Z` still works.
+
+The button can only ask for an update; it cannot choose one. The request the
+app writes says who asked and when, and nothing else is read from it. The VM
+then:
+
+1. asks GitHub again for the latest published release, and stops unless it is
+   a `vX.Y.Z` tag newer than the one running (drafts and pre-releases are
+   never "latest")
+2. takes a differential backup, and stops if that fails
+3. runs `pablo-update` to the new release
+4. checks the new release is the one serving and the app answers healthy
+5. if not, runs `pablo-update` back to the previous release
+
+The app shows "Updating" while this runs and reports what happened. To see
+it on the VM:
+
+```bash
+journalctl -u pablo-update-request          # the last update asked for in the app
+cat /var/lib/pablo/update/host/status.json  # its result
+```
+
+Going back does not undo migrations; every update already runs them against
+the old release before restarting, so the old release works on the new
+schema. Only one update runs at a time: `pablo-update` refuses to start
+while another is running, whichever way it was started.
+
+How the pieces meet, all under `/var/lib/pablo/update`:
+
+| Path | Written by | Read by |
+|---|---|---|
+| `host/latest.json` | `pablo-update --check` | the backend (read-only mount) |
+| `host/status.json` | `pablo-update-request` | the backend, and the browser at `/update-status.json` through Caddy |
+| `requests/update.json` | the backend, its only writable host path | `pablo-update-request.path`, which starts the update |
+
 Running `install.sh` again is safe. It picks up where it stopped, updates the
 VM's settings and restarts it, on the release it already runs; `pablo-update`
 is what moves releases. It never touches the data disk or `local.env`.
@@ -105,5 +147,6 @@ figures for memory, CPU and first boot belong here once they are taken
 - `compose.yaml`, `Caddyfile`: the stack; `routes.caddy`: how the address splits
   between frontend and backend, shared with `deploy/workstation`
 - `lib/env.sh`: the backend and frontend env files, shared with the local target
-- `bin/`: `pablo-update`, `pablo-backup`, `pablo-job`, `pablo-config`
-- `crontab`: backups and scheduled jobs
+- `bin/`: `pablo-update`, `pablo-update-request`, `pablo-backup`, `pablo-job`, `pablo-config`
+- `systemd/`: the path unit and service behind the app's **Update now**
+- `crontab`: backups, scheduled jobs and the weekly release check
