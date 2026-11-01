@@ -55,7 +55,7 @@ _backup_repository_exists() {
 backup_repository_unencrypted() {
     local header
     header="$(gcloud storage cat --range=0-9 "gs://${BACKUP_BUCKET}/pgbackrest/archive/pablo/archive.info" 2>/dev/null \
-        | tr -d '\0' || true)"
+        | LC_ALL=C tr -d '\0' || true)"
     [ "$header" = "[backrest]" ]
 }
 
