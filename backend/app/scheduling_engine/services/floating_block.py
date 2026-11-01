@@ -26,8 +26,10 @@ calendar. Buffers are not counted: a buffer is the gap kept between two
 sessions, and lunch can sit in it. Working hours are not counted either:
 time outside working hours is still the clinician's own.
 
-All minute arithmetic is minutes-of-day in the clinician's zone, the frame
-the rest of the engine uses.
+All minute arithmetic is on a :class:`~.local_day.LocalDay`'s axis — real
+minutes since the date began in the clinician's zone, the frame the rest of
+the engine uses — and every ``HH:MM`` a rule names reaches it through
+:meth:`~.local_day.LocalDay.minute_of`.
 """
 
 from __future__ import annotations
@@ -43,8 +45,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from ..models.availability import AvailabilityRule
-
-_DAY_MINUTES = 24 * 60
+    from .local_day import LocalDay
 
 
 class BlockState(StrEnum):
@@ -63,7 +64,7 @@ class BlockState(StrEnum):
 
 @dataclass(frozen=True)
 class DayBlock:
-    """One floating block on one date, in minutes-of-day.
+    """One floating block on one date, in the day's axis minutes.
 
     ``start`` and ``end`` are None when the block is skipped or unplaced.
     """
@@ -78,14 +79,9 @@ class DayBlock:
         return str(self.rule.params.get("label", ""))
 
 
-def _minutes(hhmm: str) -> int:
-    hours, mins = hhmm.split(":")
-    return int(hours) * 60 + int(mins)
-
-
-def window_of(rule: AvailabilityRule) -> tuple[int, int]:
-    """The rule's window as half-open minutes-of-day."""
-    return _minutes(rule.params["window_start"]), _minutes(rule.params["window_end"])
+def window_of(rule: AvailabilityRule, day: LocalDay) -> tuple[int, int]:
+    """The rule's window on ``day`` as half-open axis minutes."""
+    return day.span(rule.params["window_start"], rule.params["window_end"])
 
 
 def duration_of(rule: AvailabilityRule) -> int:
@@ -105,13 +101,13 @@ def exception_for(rule: AvailabilityRule, day: date) -> dict[str, Any] | None:
     return found if isinstance(found, dict) else None
 
 
-def pinned_span(rule: AvailabilityRule, day: date) -> tuple[int, int] | None:
+def pinned_span(rule: AvailabilityRule, day: LocalDay) -> tuple[int, int] | None:
     """The block's fixed minutes on ``day`` when it is pinned there, else None."""
-    exception = exception_for(rule, day)
+    exception = exception_for(rule, day.day)
     if not exception or not exception.get("start"):
         return None
-    start = _minutes(exception["start"])
-    return start, min(start + duration_of(rule), _DAY_MINUTES)
+    start = day.minute_of(exception["start"])
+    return start, min(start + duration_of(rule), day.minutes)
 
 
 def is_skipped(rule: AvailabilityRule, day: date) -> bool:
@@ -137,7 +133,9 @@ def leaves_room(occupied: set[int], window: tuple[int, int], duration: int) -> b
     return earliest_stretch(occupied, window, duration) is not None
 
 
-def day_blocks(rules: Iterable[AvailabilityRule], day: date, occupied: set[int]) -> list[DayBlock]:
+def day_blocks(
+    rules: Iterable[AvailabilityRule], day: LocalDay, occupied: set[int]
+) -> list[DayBlock]:
     """Where each floating block that covers ``day`` sits, given what is booked.
 
     A rule whose params cannot be read is left out, the stance the engine
@@ -146,9 +144,9 @@ def day_blocks(rules: Iterable[AvailabilityRule], day: date, occupied: set[int])
     blocks: list[DayBlock] = []
     for rule in rules:
         try:
-            if not applies_on(rule, day):
+            if not applies_on(rule, day.day):
                 continue
-            if is_skipped(rule, day):
+            if is_skipped(rule, day.day):
                 blocks.append(DayBlock(rule, BlockState.SKIPPED))
                 continue
             pinned = pinned_span(rule, day)
@@ -156,7 +154,7 @@ def day_blocks(rules: Iterable[AvailabilityRule], day: date, occupied: set[int])
                 blocks.append(DayBlock(rule, BlockState.PINNED, *pinned))
                 continue
             duration = duration_of(rule)
-            start = earliest_stretch(occupied, window_of(rule), duration)
+            start = earliest_stretch(occupied, window_of(rule, day), duration)
         except (KeyError, TypeError, ValueError, AttributeError):
             continue
         if start is None:
@@ -166,7 +164,7 @@ def day_blocks(rules: Iterable[AvailabilityRule], day: date, occupied: set[int])
     return blocks
 
 
-def breaks_block(rule: AvailabilityRule, day: date, occupied: set[int], span: set[int]) -> bool:
+def breaks_block(rule: AvailabilityRule, day: LocalDay, occupied: set[int], span: set[int]) -> bool:
     """Whether also booking ``span`` on ``day`` would break ``rule``'s block.
 
     ``occupied`` is what the day already holds. A pinned block is broken by
@@ -174,12 +172,12 @@ def breaks_block(rule: AvailabilityRule, day: date, occupied: set[int], span: se
     stretch of its length would be left inside the window. A skipped day,
     or a day the rule does not cover, is never broken.
     """
-    if not applies_on(rule, day) or is_skipped(rule, day):
+    if not applies_on(rule, day.day) or is_skipped(rule, day.day):
         return False
     pinned = pinned_span(rule, day)
     if pinned is not None:
         return bool(span & set(range(*pinned)))
-    window = window_of(rule)
+    window = window_of(rule, day)
     duration = duration_of(rule)
     if not leaves_room(occupied, window, duration):
         # Already broken by what is booked (a direct booking past the

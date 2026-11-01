@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import calendar
-import math
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from enum import StrEnum
 from typing import TYPE_CHECKING
@@ -15,6 +14,7 @@ from ..models.busy import BusyKind
 from ..models.conflict import Conflict, ConflictCheckResult, FreeSlotsResult, TimeSlot
 from ..models.floating_block import ResolvedFloatingBlock
 from . import floating_block
+from .local_day import LocalDay
 
 if TYPE_CHECKING:
     from ..models.appointment import Appointment
@@ -40,27 +40,6 @@ def _local(dt: datetime | str, tz: tzinfo) -> datetime:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=tz)
     return parsed.astimezone(tz)
-
-
-def _minute_to_utc_iso(day: date, minute: int, tz: tzinfo) -> str:
-    """Render a local (day, minute-of-day) slot boundary as a UTC instant."""
-    extra_days, minute_of_day = divmod(minute, 24 * 60)
-    hour, mins = divmod(minute_of_day, 60)
-    local_dt = datetime.combine(day + timedelta(days=extra_days), time(hour, mins), tzinfo=tz)
-    return local_dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _minute_to_utc(day: date, minute: int, tz: tzinfo) -> datetime:
-    """A local (day, minute-of-day) as an aware UTC instant."""
-    extra_days, minute_of_day = divmod(minute, 24 * 60)
-    hour, mins = divmod(minute_of_day, 60)
-    return datetime.combine(
-        day + timedelta(days=extra_days), time(hour, mins), tzinfo=tz
-    ).astimezone(UTC)
-
-
-def _hhmm(minute: int) -> str:
-    return f"{minute // 60:02d}:{minute % 60:02d}"
 
 
 def _time_to_minutes(t: str) -> int:
@@ -139,16 +118,8 @@ def _sets_up_availability(rules: list[AvailabilityRule]) -> bool:
     return any(r.rule_type != RuleType.FLOATING_BLOCK for r in rules)
 
 
-def _local_minutes(start: datetime, end: datetime, day: date) -> set[int]:
-    """The minutes-of-day ``[start, end)`` covers on ``day``, both already local."""
-    day_start = datetime.combine(day, time(0), tzinfo=start.tzinfo)
-    first = max(math.floor((start - day_start).total_seconds() / 60), 0)
-    last = min(math.ceil((end - day_start).total_seconds() / 60), 24 * 60)
-    return set(range(first, last))
-
-
 def _breaks_a_floating_block(
-    rules: list[AvailabilityRule], day: date, occupied: set[int], span: set[int]
+    rules: list[AvailabilityRule], day: LocalDay, occupied: set[int], span: set[int]
 ) -> bool:
     """Whether booking ``span`` would leave any floating block no room.
 
@@ -175,8 +146,10 @@ def _intersect_ranges(a: list[tuple[int, int]], b: list[tuple[int, int]]) -> lis
     return sorted(overlaps)
 
 
-def _window_minutes(rule: AvailabilityRule) -> set[int]:
-    """The minutes-of-day a working_hours rule covers."""
+def _window_minutes(rule: AvailabilityRule, day: LocalDay | None = None) -> set[int]:
+    """The minutes a working_hours rule covers: on ``day``'s axis, or wall-clock without one."""
+    if day is not None:
+        return set(range(*day.span(rule.params["start"], rule.params["end"])))
     return set(range(_time_to_minutes(rule.params["start"]), _time_to_minutes(rule.params["end"])))
 
 
@@ -420,28 +393,26 @@ class AvailabilityEngine:
         if not _sets_up_availability(all_rules):
             return FreeSlotsResult(configured=False, slots=[], duration_minutes=resolved_duration)
 
-        working_ranges = self._get_working_hours(rules, date_str, appointment_type_id)
+        # Every minute below is a real minute since the date began in ``tz``
+        # (see ``local_day``), so a daylight-saving day is 23 or 25 hours.
+        day = LocalDay.of(date.fromisoformat(date_str), tz)
+        working_ranges = self._get_working_hours(rules, day, appointment_type_id)
         if not working_ranges:
             return FreeSlotsResult(configured=True, slots=[], duration_minutes=resolved_duration)
 
         if self._is_date_blocked(rules, date_str):
             return FreeSlotsResult(configured=True, slots=[], duration_minutes=resolved_duration)
 
-        blocked_minutes = self._get_blocked_minutes(rules)
-        hard_claimed, soft_claimed = self._claimed_minutes(all_rules, date_str, appointment_type_id)
+        blocked_minutes = self._get_blocked_minutes(rules, day)
+        hard_claimed, soft_claimed = self._claimed_minutes(all_rules, day, appointment_type_id)
         blocked_minutes = blocked_minutes | hard_claimed
 
-        day = date.fromisoformat(date_str)
-        day_start = datetime.combine(day, time(0), tzinfo=tz)
-        day_end = day_start + timedelta(days=1)
-        existing = self._appt_repo.list_by_range(user_id, day_start, day_end)
+        existing = self._appt_repo.list_by_range(user_id, day.start, day.end)
         active = [a for a in existing if a.status != "cancelled"]
 
         buffer_before, buffer_after = self._get_buffers(rules)
 
-        appt_blocked = self._appointments_to_blocked_minutes(
-            active, buffer_before, buffer_after, tz
-        )
+        appt_blocked = _appointments_to_blocked_minutes(active, day, buffer_before, buffer_after)
         blocked_minutes = blocked_minutes | appt_blocked
 
         capped = self._day_cap_state(rules, active, appointment_type_id)
@@ -457,11 +428,11 @@ class AvailabilityEngine:
             # into it still counts.
             busy = self._busy_source.busy_between(
                 user_id,
-                day_start - timedelta(minutes=buffer_after),
-                day_end + timedelta(minutes=buffer_before),
+                day.start - timedelta(minutes=buffer_after),
+                day.end + timedelta(minutes=buffer_before),
             )
             blocked_minutes = blocked_minutes | _busy_to_blocked_minutes(
-                busy, day_start, tz, buffer_before, buffer_after
+                busy, day, buffer_before, buffer_after
             )
 
         # A floating block is checked per candidate: whether a slot breaks it
@@ -471,8 +442,7 @@ class AvailabilityEngine:
         # ``floating_block``).
         floating = [r for r in rules if r.rule_type == RuleType.FLOATING_BLOCK]
         occupied = (
-            self._appointments_to_blocked_minutes(active, 0, 0, tz)
-            | _busy_to_blocked_minutes(busy, day_start, tz)
+            _appointments_to_blocked_minutes(active, day) | _busy_to_blocked_minutes(busy, day)
             if floating
             else set()
         )
@@ -491,8 +461,8 @@ class AvailabilityEngine:
                     floating, day, occupied, slot_range
                 ):
                     slot = TimeSlot(
-                        start=_minute_to_utc_iso(day, minute, tz),
-                        end=_minute_to_utc_iso(day, minute + resolved_duration, tz),
+                        start=day.iso(minute),
+                        end=day.iso(minute + resolved_duration),
                         over_cap=over_cap or bool(slot_range & soft_claimed),
                     )
                     slots.append(slot)
@@ -760,22 +730,20 @@ class AvailabilityEngine:
             )
         return None
 
-    def _day_occupancy(self, user_id: str, day: date, tz: tzinfo) -> set[int]:
+    def _day_occupancy(self, user_id: str, day: LocalDay) -> set[int]:
         """The minutes of ``day`` appointments and busy time hold, without buffers.
 
         What a floating block counts as taken (see ``floating_block``).
         """
-        day_start = datetime.combine(day, time(0), tzinfo=tz)
-        day_end = day_start + timedelta(days=1)
         active = [
             a
-            for a in self._appt_repo.list_by_range(user_id, day_start, day_end)
+            for a in self._appt_repo.list_by_range(user_id, day.start, day.end)
             if a.status != "cancelled"
         ]
-        occupied = self._appointments_to_blocked_minutes(active, 0, 0, tz)
+        occupied = _appointments_to_blocked_minutes(active, day)
         if self._busy_source is not None:
-            busy = self._busy_source.busy_between(user_id, day_start, day_end)
-            occupied |= _busy_to_blocked_minutes(busy, day_start, tz)
+            busy = self._busy_source.busy_between(user_id, day.start, day.end)
+            occupied |= _busy_to_blocked_minutes(busy, day)
         return occupied
 
     def _check_floating_block(
@@ -792,18 +760,18 @@ class AvailabilityEngine:
         that books without that decision (no override) is refused by a HARD
         block, which is the default.
         """
-        day = proposed_start.date()
-        if not floating_block.applies_on(rule, day) or floating_block.is_skipped(rule, day):
+        on = proposed_start.date()
+        if not floating_block.applies_on(rule, on) or floating_block.is_skipped(rule, on):
             return None
-        tz = proposed_start.tzinfo or UTC
-        occupied = self._day_occupancy(user_id, day, tz)
-        span = _local_minutes(proposed_start, proposed_end, day)
+        day = LocalDay.of(on, proposed_start.tzinfo or UTC)
+        occupied = self._day_occupancy(user_id, day)
+        span = day.covered(proposed_start, proposed_end)
         if not floating_block.breaks_block(rule, day, occupied, span):
             return None
         label = rule.params["label"]
         pinned = floating_block.pinned_span(rule, day)
         if pinned is not None:
-            message = f"Overlaps {label} ({_hhmm(pinned[0])}-{_hhmm(pinned[1])})"
+            message = f"Overlaps {label} ({day.hhmm(pinned[0])}-{day.hhmm(pinned[1])})"
         else:
             message = (
                 f"Leaves no time for {label} between "
@@ -820,7 +788,7 @@ class AvailabilityEngine:
         stored, so it moves as the day fills and every reader sees the same
         answer. ``date_str`` is a local date in ``tz``.
         """
-        day = date.fromisoformat(date_str)
+        day = LocalDay.of(date.fromisoformat(date_str), tz)
         rules = [
             r
             for r in self._rule_repo.list_by_user(user_id)
@@ -828,7 +796,7 @@ class AvailabilityEngine:
         ]
         if not rules:
             return []
-        occupied = self._day_occupancy(user_id, day, tz)
+        occupied = self._day_occupancy(user_id, day)
         resolved: list[ResolvedFloatingBlock] = []
         for block in floating_block.day_blocks(rules, day, occupied):
             params = block.rule.params
@@ -836,13 +804,13 @@ class AvailabilityEngine:
                 ResolvedFloatingBlock(
                     rule_id=block.rule.id,
                     label=block.label,
-                    date=day,
+                    date=day.day,
                     state=block.state.value,
                     duration_minutes=int(params["duration_minutes"]),
                     window_start=params["window_start"],
                     window_end=params["window_end"],
-                    start=_minute_to_utc(day, block.start, tz) if block.start is not None else None,
-                    end=_minute_to_utc(day, block.end, tz) if block.end is not None else None,
+                    start=day.instant(block.start) if block.start is not None else None,
+                    end=day.instant(block.end) if block.end is not None else None,
                 )
             )
         return resolved
@@ -852,17 +820,17 @@ class AvailabilityEngine:
     def _get_working_hours(
         self,
         rules: list[AvailabilityRule],
-        date_str: str,
+        day: LocalDay,
         appointment_type_id: str | None = None,
     ) -> list[tuple[int, int]]:
-        """Get working hour ranges (in minutes) for a given date and type.
+        """Get working hour ranges (in ``day``'s axis minutes) for a date and type.
 
         A type-scoped window NARROWS the practice's own hours rather than
         adding to them — see :meth:`get_free_slots` for why the intersection
         is the defensible reading. With no type-scoped window for the day,
         the practice's hours stand as they always have.
         """
-        day_of_week = date.fromisoformat(date_str).weekday()
+        day_of_week = day.day.weekday()
         practice: list[tuple[int, int]] = []
         scoped: list[tuple[int, int]] = []
         for rule in rules:
@@ -871,7 +839,7 @@ class AvailabilityEngine:
                 or rule.params.get("day_of_week") != day_of_week
             ):
                 continue
-            span = (_time_to_minutes(rule.params["start"]), _time_to_minutes(rule.params["end"]))
+            span = day.span(rule.params["start"], rule.params["end"])
             if rule.appointment_type_id is None:
                 practice.append(span)
             elif rule.appointment_type_id == appointment_type_id:
@@ -899,14 +867,12 @@ class AvailabilityEngine:
                 return True
         return False
 
-    def _get_blocked_minutes(self, rules: list[AvailabilityRule]) -> set[int]:
-        """Get blocked minutes from block_time_range rules."""
+    def _get_blocked_minutes(self, rules: list[AvailabilityRule], day: LocalDay) -> set[int]:
+        """Get blocked minutes on ``day`` from block_time_range rules."""
         blocked: set[int] = set()
         for rule in rules:
             if rule.rule_type == RuleType.BLOCK_TIME_RANGE:
-                start = _time_to_minutes(rule.params["start"])
-                end = _time_to_minutes(rule.params["end"])
-                blocked.update(range(start, end))
+                blocked.update(range(*day.span(rule.params["start"], rule.params["end"])))
         return blocked
 
     def _get_buffers(self, rules: list[AvailabilityRule]) -> tuple[int, int]:
@@ -955,7 +921,7 @@ class AvailabilityEngine:
     def _claimed_minutes(
         self,
         rules: list[AvailabilityRule],
-        date_str: str,
+        day: LocalDay,
         appointment_type_id: str | None,
     ) -> tuple[set[int], set[int]]:
         """Minutes another type has claimed exclusively, split hard and soft.
@@ -968,7 +934,7 @@ class AvailabilityEngine:
         A listing with no type named loses all of them — it cannot promise
         the slot will be used by whoever claimed it.
         """
-        day_of_week = date.fromisoformat(date_str).weekday()
+        day_of_week = day.day.weekday()
         hard: set[int] = set()
         soft: set[int] = set()
         for rule in rules:
@@ -977,7 +943,7 @@ class AvailabilityEngine:
             if rule.params.get("day_of_week") != day_of_week:
                 continue
             claimed = soft if rule.enforcement == EnforcementLevel.SOFT else hard
-            claimed |= _window_minutes(rule)
+            claimed |= _window_minutes(rule, day)
         return hard, soft
 
     def _day_cap_state(
@@ -1087,53 +1053,43 @@ class AvailabilityEngine:
             enforcement = EnforcementLevel.HARD
         return result, enforcement
 
-    def _appointments_to_blocked_minutes(
-        self,
-        appointments: list[Appointment],
-        buffer_before: int,
-        buffer_after: int,
-        tz: tzinfo,
-    ) -> set[int]:
-        """Convert existing appointments (with buffers) to blocked minutes."""
-        blocked: set[int] = set()
-        for appt in appointments:
-            appt_start = _local(appt.start_at, tz)
-            appt_end = _local(appt.end_at, tz)
-            start_min = appt_start.hour * 60 + appt_start.minute - buffer_before
-            end_min = appt_end.hour * 60 + appt_end.minute + buffer_after
-            start_min = max(start_min, 0)
-            end_min = min(end_min, 24 * 60)
-            blocked.update(range(start_min, end_min))
-        return blocked
+
+def _appointments_to_blocked_minutes(
+    appointments: list[Appointment],
+    day: LocalDay,
+    buffer_before: int = 0,
+    buffer_after: int = 0,
+) -> set[int]:
+    """The minutes of ``day`` existing appointments hold, with the buffers round them."""
+    blocked: set[int] = set()
+    for appt in appointments:
+        blocked |= day.covered(
+            _local(appt.start_at, day.tz), _local(appt.end_at, day.tz), buffer_before, buffer_after
+        )
+    return blocked
 
 
 def _busy_to_blocked_minutes(
     windows: list[BusyInterval],
-    day_start: datetime,
-    tz: tzinfo,
+    day: LocalDay,
     buffer_before: int = 0,
     buffer_after: int = 0,
 ) -> set[int]:
-    """The minutes of the day starting at ``day_start`` that busy windows cover.
+    """The minutes of ``day`` that busy windows cover.
 
-    Read in ``tz``, the same frame appointments are read in, so a busy window
-    and an appointment at the same instant block the same minutes. Partial
-    minutes round outward: a window ending at 10:00:30 still holds 10:00.
+    Read on the same axis appointments are, so a busy window and an
+    appointment at the same instant block the same minutes. Partial minutes
+    round outward: a window ending at 10:00:30 still holds 10:00.
 
     The clinician's buffers go round each window exactly as they go round an
-    appointment (see :meth:`AvailabilityEngine._appointments_to_blocked_minutes`).
+    appointment (see :func:`_appointments_to_blocked_minutes`).
     A buffer is the gap kept around a commitment, whatever the commitment is
     — an outside session is a session, and a meeting on the calendar still
     needs the time before the next client.
     """
     blocked: set[int] = set()
     for window in windows:
-        start = _local(window.start, tz)
-        end = _local(window.end, tz)
-        # Same tzinfo on both sides, so the difference is wall-clock minutes,
-        # which is what the day's minute grid counts.
-        start_min = max(math.floor((start - day_start).total_seconds() / 60) - buffer_before, 0)
-        end_min = min(math.ceil((end - day_start).total_seconds() / 60) + buffer_after, 24 * 60)
-        if start_min < end_min:
-            blocked.update(range(start_min, end_min))
+        blocked |= day.covered(
+            _local(window.start, day.tz), _local(window.end, day.tz), buffer_before, buffer_after
+        )
     return blocked
