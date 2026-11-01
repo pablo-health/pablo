@@ -4,14 +4,11 @@
 
 import Link from "next/link"
 import { useFreeSlots } from "@/hooks/useAvailability"
+import { formatTime } from "@/lib/dates"
 
 function toTimeInputValue(iso: string): string {
   const d = new Date(iso)
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`
-}
-
-function formatSlotTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
 }
 
 interface AvailabilitySlotPickerProps {
@@ -88,7 +85,7 @@ export function AvailabilitySlotPicker({
               color: active ? "var(--ed-cta-fg)" : "var(--ed-ink-muted)",
             }}
           >
-            {formatSlotTime(slot.start)}
+            {formatTime(slot.start, { locale: "en-US" })}
           </button>
         )
       })}

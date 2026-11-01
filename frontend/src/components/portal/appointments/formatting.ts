@@ -15,7 +15,7 @@
  * printing a word that looks like a bug in the browser.
  */
 
-import { civilDate } from "@/lib/dates"
+import { civilDate, formatTime as formatClockTime } from "@/lib/dates"
 
 /** A day and a time: "Tue, 3 Mar at 2:00 PM". */
 export function formatWhen(iso: string, timeZone: string): string {
@@ -49,7 +49,7 @@ export function formatWhenLong(iso: string, timeZone: string): string {
 export function formatTime(iso: string, timeZone: string): string {
   const at = new Date(iso)
   if (Number.isNaN(at.getTime())) return iso
-  return at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", timeZone })
+  return formatClockTime(at, { timeZone })
 }
 
 /** The heading over a day's openings: "Tuesday, 3 March". */

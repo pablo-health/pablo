@@ -9,6 +9,7 @@ import {
   formatCivilDate,
   formatDate,
   formatDateOrRaw,
+  formatTime,
   LONG_DATE,
   MEDIUM_DATE,
   NUMERIC_DATE,
@@ -24,6 +25,21 @@ describe("formatDate", () => {
     expect(formatDate(ISO, LONG_DATE, "en-US")).toBe("March 4, 2026")
     expect(formatDate(ISO)).toBe(d.toLocaleDateString(undefined, MEDIUM_DATE))
     expect(formatDate(ISO, NUMERIC_DATE)).toBe(d.toLocaleDateString())
+  })
+})
+
+describe("formatTime", () => {
+  it("shows hour and minute in the given zone and locale", () => {
+    expect(formatTime(ISO, { locale: "en-US", timeZone: "UTC" })).toBe("12:00 PM")
+    expect(formatTime(new Date(ISO), { locale: "en-US", timeZone: "America/Chicago" })).toBe(
+      "6:00 AM"
+    )
+  })
+
+  it("defaults to the browser's zone and locale", () => {
+    expect(formatTime(ISO)).toBe(
+      new Date(ISO).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+    )
   })
 })
 

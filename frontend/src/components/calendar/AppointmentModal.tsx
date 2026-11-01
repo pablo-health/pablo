@@ -41,7 +41,7 @@ import { NoteInputFields } from "@/components/notes/NoteInputFields"
 import { ApiError } from "@/lib/api/client"
 import { isReviewInput } from "@/lib/mdm"
 import { filledInputs } from "@/lib/noteInputs"
-import { browserTimeZone } from "@/lib/dates"
+import { browserTimeZone, formatTime } from "@/lib/dates"
 import { isTelehealth } from "@/lib/telehealth"
 import type { EditorialTheme } from "./editorial/EditorialSidebar"
 import "./editorial/editorial.css"
@@ -196,10 +196,6 @@ function fromInputs(dateStr: string, timeStr: string): Date {
   const [y, mo, da] = dateStr.split("-").map(Number)
   const [h, mi] = timeStr.split(":").map(Number)
   return new Date(y, mo - 1, da, h, mi, 0, 0)
-}
-
-function formatTime(d: Date): string {
-  return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
 }
 
 function formatDay(d: Date): string {
@@ -602,7 +598,7 @@ function AppointmentForm({
     cancelMutation.mutate(appointment.id, { onSuccess: onClose })
   }
 
-  const headerHint = `${formatDay(start)} · ${formatTime(start)}`
+  const headerHint = `${formatDay(start)} · ${formatTime(start, { locale: "en-US" })}`
 
   return (
     <>
@@ -708,7 +704,7 @@ function AppointmentForm({
 
         {/* When */}
         <div>
-          <FieldLabel hint={`Ends ${formatTime(end)}`}>When</FieldLabel>
+          <FieldLabel hint={`Ends ${formatTime(end, { locale: "en-US" })}`}>When</FieldLabel>
           <div className="flex gap-2">
             <input
               type="date"

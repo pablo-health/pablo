@@ -10,6 +10,7 @@
 "use client"
 
 import { Loader2, CheckCircle, AlertCircle, Clock, FileText } from "lucide-react"
+import { formatDate } from "@/lib/dates"
 import { cn } from "@/lib/utils"
 import { useSession } from "@/hooks/useSessions"
 import type { SessionStatus } from "@/types/sessions"
@@ -76,14 +77,6 @@ const statusConfig: Record<string, { label: string; className: string; icon: typ
   },
 }
 
-function formatTimestamp(timestamp: string): string {
-  const date = new Date(timestamp)
-  return date.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-  })
-}
-
 export function SessionStatusBadge({
   status,
   sessionId,
@@ -126,7 +119,7 @@ export function SessionStatusBadge({
       <span>{config.label}</span>
       {currentStatus === "finalized" && timestamp && (
         <span className="text-xs opacity-75">
-          • {formatTimestamp(timestamp)}
+          • {formatDate(timestamp, { month: "short", day: "numeric" }, "en-US")}
         </span>
       )}
     </div>

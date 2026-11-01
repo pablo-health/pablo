@@ -8,6 +8,7 @@
  */
 
 import type { VisitTimes } from "@/types/visitTimes"
+import { formatTime } from "./dates"
 import type { PeopleWords } from "./peopleTerm"
 
 export const ADD_ON_MINIMUM_MINUTES = 16
@@ -43,11 +44,7 @@ export function pointInRecording(
 }
 
 export function clockTime(moment: Date | string, timeZone: string): string {
-  return new Date(moment).toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone,
-  })
+  return formatTime(moment, { locale: "en-US", timeZone })
 }
 
 /** "Started 11:00 AM · Ended 11:55 AM · 55 min", or nothing when either end is unknown. */
