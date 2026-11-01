@@ -382,6 +382,7 @@ class TestSchemaShipped:
             "rls_patient_self_read",
             "rls_patient_self_insert",
             "rls_patient_self_write",
+            "rls_patient_purge_read",
         }, names
 
     def test_the_patient_arm_carries_the_category_test(

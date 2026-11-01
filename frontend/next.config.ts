@@ -2,6 +2,9 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // Memoizes components and hooks at build time, so hand-written
+  // useMemo/useCallback is only needed where a value's identity is the point.
+  reactCompiler: true,
   allowedDevOrigins: ["127.0.0.1"],
   // Suppress X-Powered-By: Next.js — version disclosure aids fingerprinting.
   poweredByHeader: false,

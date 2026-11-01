@@ -5,23 +5,77 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, call, patch
 
 import pytest
 from app.jobs import hard_purge_cron
+from app.jobs.hard_purge_retention_stub import (
+    AuditOnlyRetentionStubWriter,
+    SqlComplianceRetentionStubWriter,
+    get_compliance_retention_stub_writer,
+    register_compliance_retention_stub_writer,
+)
 
 
-def test_run_exits_zero_when_no_stub_writer_registered() -> None:
-    with (
-        patch(
-            "app.jobs.hard_purge_cron.get_compliance_retention_stub_writer",
-            return_value=None,
-        ),
-        patch("app.jobs.hard_purge_cron.get_engine") as ge,
-    ):
-        assert hard_purge_cron.run([]) == 0
-        ge.assert_not_called()
+def test_default_writer_is_audit_only_when_nothing_is_registered() -> None:
+    register_compliance_retention_stub_writer(None)
+    writer = get_compliance_retention_stub_writer()
+    assert isinstance(writer, AuditOnlyRetentionStubWriter)
+    conn = MagicMock()
+    assert writer.is_supported(conn) is True
+    assert writer.stub_row_exists(conn, "pt-1") is False
+    writer.insert_stub(conn, MagicMock())
+    conn.execute.assert_not_called()
+
+
+def test_an_explicitly_registered_writer_wins() -> None:
+    hosted = SqlComplianceRetentionStubWriter()
+    register_compliance_retention_stub_writer(hosted)
+    try:
+        assert get_compliance_retention_stub_writer() is hosted
+    finally:
+        register_compliance_retention_stub_writer(None)
+
+
+def test_purge_audit_entry_carries_no_name_or_birth_date() -> None:
+    """The audit entry is the only record of a purge: internal ID and time only."""
+    conn = MagicMock()
+    hard_purge_cron._append_purge_audit(conn, "practice", "pt-1")
+    insert = next(
+        c for c in conn.execute.call_args_list if "INSERT INTO audit_logs" in str(c.args[0])
+    )
+    sql = str(insert.args[0])
+    params = insert.args[1]
+    for column in ("first_name", "last_name", "date_of_birth", "name", "dob"):
+        assert f" {column}," not in sql
+    assert params["rid"] == params["pid"] == "pt-1"
+    assert params["uid"] == "system:retention_job"
+    assert params["actor_type"] == "system"
+    assert params["changes"] == '{"source": "hard_purge_cron"}'
+
+
+def test_only_the_hard_purge_job_sets_the_purge_setting() -> None:
+    """The trust boundary for ``app.allow_patient_purge``: no request path sets it.
+
+    The policies live in ``app.db``; the checkin reset names it so a
+    session-level set cannot ride a pooled connection. Anything else in
+    ``app`` mentioning it is a new way in, and has to be looked at.
+    """
+    app_dir = Path(hard_purge_cron.__file__).resolve().parents[1]
+    mentions = {
+        path.relative_to(app_dir).as_posix()
+        for path in app_dir.rglob("*")
+        if path.suffix in {".py", ".sql"} and "app.allow_patient_purge" in path.read_text()
+    }
+    assert mentions == {"jobs/hard_purge_cron.py", "db/__init__.py", "db/tenant_template.sql"}
+    setters = [
+        line
+        for line in (app_dir / "db" / "__init__.py").read_text().splitlines()
+        if "allow_patient_purge" in line and ("SET " in line or "set_config" in line)
+    ]
+    assert setters == []
 
 
 def test_parse_purge_before_defaults_to_roughly_now_minus_30_days() -> None:
@@ -305,7 +359,9 @@ class _RecordingConn:
 
     def execute(self, stmt: Any, params: dict[str, Any] | None = None) -> _RecordingResult:
         sql = str(stmt)
-        if "SET search_path" in sql:
+        if "SET search_path" in sql or "SET LOCAL" in sql or "set_config" in sql:
+            if "allow_patient_purge" in sql:
+                self._events.append("arm_purge")
             return _RecordingResult()
         if "SELECT id, first_name" in sql:
             return _RecordingResult(
@@ -395,3 +451,42 @@ def test_hard_purge_cron_deletes_blobs_before_referencing_rows() -> None:
     assert max(blob_indices) < min(row_indices), (
         f"blob deletes must all precede row deletes, got order: {events}"
     )
+    # The per-patient transaction arms the purge setting before touching a row.
+    assert events[0] == "arm_purge", events
+
+
+def test_purge_runs_with_no_writer_registered() -> None:
+    """Self-hosted: nothing registered, and the purge still runs end to end."""
+    events: list[str] = []
+    fake_conn = _RecordingConn(events)
+
+    class _FakeEngine:
+        def connect(self) -> _RecordingConn:
+            return fake_conn
+
+        def begin(self) -> _RecordingConn:
+            return fake_conn
+
+    register_compliance_retention_stub_writer(None)
+    with (
+        patch("app.jobs.hard_purge_cron.get_engine", return_value=_FakeEngine()),
+        patch(
+            "app.jobs.hard_purge_cron.list_active_practice_registry",
+            return_value=[("practice_one", "practice-1")],
+        ),
+        patch(
+            "app.jobs.hard_purge_cron._fetch_purgeable_patient_ids",
+            return_value=["pt-1"],
+        ),
+        patch(
+            "app.jobs.hard_purge_cron._resolve_audio_storage",
+            return_value=(_RecordingStorage(events, "audio"), "audio-bucket"),
+        ),
+        patch(
+            "app.jobs.hard_purge_cron._resolve_documents_storage",
+            return_value=(_RecordingStorage(events, "docs"), "docs-bucket"),
+        ),
+    ):
+        assert hard_purge_cron.run([]) == 0
+
+    assert "row_delete:patients" in events

@@ -8,6 +8,10 @@ reset it rides the physical connection into whichever checkout draws it next,
 and that checkout starts out reading as somebody. The integration suite once
 did exactly this, and later modules started armed as a user from another one.
 
+The purge jobs' authorizations (``app.allow_audit_purge``,
+``app.allow_patient_purge``) get the same reset: a request must never start
+out able to see soft-deleted clients or delete audit rows.
+
 The engine here has ``pool_size=1, max_overflow=0``, so every checkout reuses
 one physical connection, and ``pg_backend_pid()`` is asserted equal across
 the two checkouts so the test cannot pass by being handed a fresh one. The
@@ -41,6 +45,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 _PRINCIPALS = ("app.current_user_id", "app.current_patient_id")
+_PURGE_SETTINGS = ("app.allow_audit_purge", "app.allow_patient_purge")
 _SOMEBODY = "5b0c1d7e-2f4a-4c3b-9e8d-7a6f5e4d3c2b"
 
 
@@ -56,7 +61,7 @@ def _pid(conn: Connection) -> int:
     return int(conn.execute(text("SELECT pg_backend_pid()")).scalar_one())
 
 
-@pytest.mark.parametrize("principal", _PRINCIPALS)
+@pytest.mark.parametrize("principal", _PRINCIPALS + _PURGE_SETTINGS)
 def test_a_session_level_principal_does_not_survive_checkin(pooled: Engine, principal: str) -> None:
     with pooled.connect() as conn:
         first_pid = _pid(conn)

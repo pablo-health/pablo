@@ -2,7 +2,7 @@
 
 """Tests for platform audit models, repository, and service."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from app.models.platform_audit import (
@@ -12,6 +12,8 @@ from app.models.platform_audit import (
 )
 from app.repositories.platform_audit import InMemoryPlatformAuditRepository
 from app.services.platform_audit_service import PlatformAuditService
+from app.settings import get_settings
+from starlette.datastructures import Headers
 
 
 class TestPlatformAuditLogEntry:
@@ -42,18 +44,23 @@ class TestPlatformAuditService:
         repo = InMemoryPlatformAuditRepository()
         service = PlatformAuditService(repo)
         mock_request = MagicMock()
-        mock_request.headers = {
-            "X-Forwarded-For": "10.0.0.1, 203.0.113.10",
-            "User-Agent": "pablo-pentest/1",
-        }
-
-        entry = service.log_tenant_action(
-            action=PlatformAuditAction.PENTEST_TENANT_PROVISIONED,
-            actor_user_id="pentest-runner",
-            tenant_schema="practice_pentest_a1b2c3",
-            tenant_id="pentest-a1b2c3",
-            request=mock_request,
+        mock_request.headers = Headers(
+            {
+                "X-Forwarded-For": "10.0.0.1, 203.0.113.10",
+                "User-Agent": "pablo-pentest/1",
+            }
         )
+        mock_request.client.host = "172.30.0.10"
+        behind_proxy = get_settings().model_copy(update={"trusted_proxy_ips": "172.30.0.10"})
+
+        with patch("app.settings.get_settings", return_value=behind_proxy):
+            entry = service.log_tenant_action(
+                action=PlatformAuditAction.PENTEST_TENANT_PROVISIONED,
+                actor_user_id="pentest-runner",
+                tenant_schema="practice_pentest_a1b2c3",
+                tenant_id="pentest-a1b2c3",
+                request=mock_request,
+            )
 
         assert entry.action == "pentest_tenant_provisioned"
         assert entry.resource_type == "tenant"
