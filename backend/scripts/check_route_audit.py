@@ -455,6 +455,9 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # practice_domains.py — the hosts the practice serves its portal and
         # website from; public hostnames. The writes are audited anyway, as a
         # record of who changed where clients are sent.
+        # software_update.py — release versions and update progress; the POST
+        # is audited as a record of who asked for an update.
+        ("get", "/api/software-update"),  # release versions; no patient data
         ("get", "/api/practice/domains"),  # practice hostnames; no patient data
         ("get", "/api/practice/domains/describe"),  # parses a typed hostname; reads nothing
         (

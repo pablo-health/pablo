@@ -482,6 +482,24 @@ class Settings(BaseSettings):
             "keeps doing that."
         ),
     )
+    self_update_enabled: bool = Field(
+        default=False,
+        description=(
+            "Offer a practice admin the latest published release, and let them "
+            "ask the host to install it (routes/software_update.py). Only the "
+            "single-VM install turns this on: its host checks for releases, "
+            "acts on the request and reports progress. Anywhere else the "
+            "routes answer 404."
+        ),
+    )
+    self_update_dir: str = Field(
+        default="/var/lib/pablo/update",
+        description=(
+            "Where the host and this process meet for an update. The host "
+            "writes host/latest.json and host/status.json, mounted read-only "
+            "here; this process writes only requests/update.json."
+        ),
+    )
     webauthn_attestation_roots_dir: str = Field(
         default="",
         description=(

@@ -42,7 +42,7 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, override
 
-from . import __version__
+from . import release_version
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -367,7 +367,7 @@ class JSONFormatter(logging.Formatter):
         self._service_context: dict[str, str] = {
             "service": env.get("K_SERVICE") or env.get("CLOUD_RUN_JOB") or _DEFAULT_SERVICE_NAME
         }
-        if version := env.get("PABLO_VERSION") or __version__:
+        if version := release_version():
             self._service_context["version"] = version
 
     def format(self, record: logging.LogRecord) -> str:
