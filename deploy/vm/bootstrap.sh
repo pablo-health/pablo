@@ -173,7 +173,7 @@ cipher=""
 err="$(mktemp)"
 if passphrase="$(secret pablo-backup-passphrase 2>"$err")"; then
     header="$(gcloud storage cat --range=0-9 "gs://${BACKUP_BUCKET}/pgbackrest/archive/pablo/archive.info" 2>/dev/null \
-        | tr -d '\0' || true)"
+        | LC_ALL=C tr -d '\0' || true)"
     if [ "$header" = "[backrest]" ]; then
         log "the backup repository predates its passphrase; it stays unencrypted"
     else
