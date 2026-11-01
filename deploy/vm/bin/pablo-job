@@ -16,6 +16,8 @@ for pair in "$@"; do ENV_ARGS+=(-e "$pair"); done
 
 # shellcheck source=/dev/null
 source /etc/pablo/config.env
+# shellcheck source=/dev/null
+[ ! -f /etc/pablo/local.env ] || source /etc/pablo/local.env
 VERSION="$(cat /etc/pablo/version)"
 
 started=$(date +%s)

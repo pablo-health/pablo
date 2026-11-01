@@ -55,9 +55,14 @@ _ensure_snapshot_schedule() {
 
 # ensure_vm <config file> — creates the VM, or updates its config and
 # reboots it so bootstrap.sh converges on the new one.
+#
+# The startup script is the boot stub, not bootstrap.sh: whatever is attached
+# here stays until install.sh runs again, and the stub runs the bootstrap.sh
+# of the release the VM is on, so boot steps follow pablo-update. Attaching
+# it to a VM from an older install moves that VM to the stub too.
 ensure_vm() {
     local config="$1"
-    local metadata="startup-script=${DEPLOY_DIR}/bootstrap.sh,pablo-config=${config}"
+    local metadata="startup-script=${DEPLOY_DIR}/boot-stub.sh,pablo-config=${config}"
     if gcloud compute instances describe "$VM_NAME" --zone="$ZONE" >/dev/null 2>&1; then
         gcloud compute instances add-metadata "$VM_NAME" --zone="$ZONE" --metadata-from-file="$metadata" \
             --metadata=enable-guest-attributes=TRUE >/dev/null

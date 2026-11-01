@@ -3,8 +3,8 @@
 #
 # Bring this VM to a release: `sudo pablo-update [vX.Y.Z [deploy-ref]]`
 # (default: the one it runs now). Fetches that release's deploy files, renders
-# the env files from config.env and Secret Manager, pulls the images,
-# migrates, then restarts the stack in place.
+# the env files from config.env, local.env and Secret Manager, pulls the
+# images, migrates, then restarts the stack in place.
 #
 # The version is the image tag; the deploy ref is the git ref the deploy files
 # come from, the same tag unless given. A branch ref (testing a change before
@@ -19,6 +19,8 @@ set -euo pipefail
 
 # shellcheck source=/dev/null
 source /etc/pablo/config.env
+# shellcheck source=/dev/null
+[ ! -f /etc/pablo/local.env ] || source /etc/pablo/local.env
 if [ $# -gt 0 ]; then
     VERSION="$1"
     REF="${2:-$1}"

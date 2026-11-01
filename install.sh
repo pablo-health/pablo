@@ -12,10 +12,11 @@
 #
 # Sets up the project — billing, APIs, a service account for the VM, buckets,
 # sign-in, secrets, the task queues and the HIPAA audit log sink — then
-# creates the VM, whose startup script (deploy/vm/bootstrap.sh) installs the
-# rest: Docker, Postgres with backups, Caddy for HTTPS, the scheduled jobs.
-# Safe to run again: it picks up where it stopped, and an existing VM is
-# updated and restarted rather than replaced. Its data disk is never deleted.
+# creates the VM, whose startup script (deploy/vm/boot-stub.sh, which runs the
+# release's deploy/vm/bootstrap.sh) installs the rest: Docker, Postgres with
+# backups, Caddy for HTTPS, the scheduled jobs. Safe to run again: it picks up
+# where it stopped, and an existing VM is updated and restarted rather than
+# replaced. Its data disk is never deleted.
 #
 # Options:
 #   --project ID        Google Cloud project, new or existing (default: a new one)

@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+#
+# Settings this VM keeps for itself.
+#
+#   pablo-config get KEY          the value in effect
+#   sudo pablo-config set KEY=VALUE
+#   sudo pablo-config unset KEY   back to config.env's value
+#   pablo-config list             every setting, and the file it comes from
+#
+# config.env is install.sh's, rewritten from instance metadata on every boot,
+# so an edit to it lasts until the next one. local.env is read after it
+# wherever config.env is read, and only this command writes it.
+#
+# Only keys in ALLOWED can be set. It is empty until a setting needs to be
+# changed on the VM; the change that starts reading a key adds it here, so a
+# key in local.env always means something. Unset takes any key, so one that
+# leaves the list can still be cleared.
+
+set -euo pipefail
+
+readonly CONFIG=/etc/pablo/config.env
+readonly LOCAL=/etc/pablo/local.env
+readonly -a ALLOWED=()
+
+usage() {
+    cat >&2 <<'EOF'
+usage: pablo-config get KEY | set KEY=VALUE | unset KEY | list
+
+Setting a value restarts nothing. sudo pablo-update applies it now;
+otherwise the next update or reboot does.
+EOF
+    exit 2
+}
+
+die() { echo "$*" >&2; exit 1; }
+
+valid_key() { [[ "$1" =~ ^[A-Z][A-Z0-9_]*$ ]] || die "Not a setting name: $1"; }
+
+allowed() {
+    local key
+    for key in ${ALLOWED[@]+"${ALLOWED[@]}"}; do
+        [ "$key" = "$1" ] && return 0
+    done
+    return 1
+}
+
+keys_in() { [ ! -f "$1" ] || sed -n 's/^\([A-Z][A-Z0-9_]*\)=.*/\1/p' "$1"; }
+
+# Read the way every script reads them, so the answer is what they see.
+effective() {
+    (
+        # shellcheck source=/dev/null
+        source "$CONFIG"
+        # shellcheck source=/dev/null
+        [ ! -f "$LOCAL" ] || source "$LOCAL"
+        [ -n "${!1+set}" ] || exit 1
+        printf '%s\n' "${!1}"
+    )
+}
+
+# write_local <key> [<line>] — drops the key's line, adds <line> if given.
+# Through a file beside it and a rename, so a reader never sees half of one.
+write_local() {
+    [ "$(id -u)" -eq 0 ] || die "Run it with sudo."
+    local tmp
+    tmp="$(mktemp /etc/pablo/.local.env.XXXXXX)"
+    {
+        [ ! -f "$LOCAL" ] || grep -v "^$1=" "$LOCAL" || true
+        [ -z "${2:-}" ] || printf '%s\n' "$2"
+    } > "$tmp"
+    chown root:root "$tmp"
+    chmod 0644 "$tmp"
+    mv -f "$tmp" "$LOCAL"
+}
+
+case "${1:-}" in
+    get)
+        [ $# -eq 2 ] || usage
+        valid_key "$2"
+        effective "$2"
+        ;;
+    set)
+        [ $# -eq 2 ] && [[ "$2" == *=* ]] || usage
+        key="${2%%=*}"
+        value="${2#*=}"
+        valid_key "$key"
+        [[ "$value" != *$'\n'* ]] || die "A value cannot span lines."
+        allowed "$key" || die "${key} is not a setting pablo-config can change. It can change: ${ALLOWED[*]:-none yet}."
+        write_local "$key" "$(printf '%s=%q' "$key" "$value")"
+        ;;
+    unset)
+        [ $# -eq 2 ] || usage
+        valid_key "$2"
+        write_local "$2"
+        ;;
+    list)
+        [ $# -eq 1 ] || usage
+        { keys_in "$CONFIG"; keys_in "$LOCAL"; } | sort -u | while read -r key; do
+            from=config.env
+            grep -q "^${key}=" "$LOCAL" 2>/dev/null && from=local.env
+            printf '%-24s %-10s %s\n' "$key" "$from" "$(effective "$key")"
+        done
+        ;;
+    *)
+        usage
+        ;;
+esac

@@ -20,8 +20,8 @@ Two companions carry the detail:
 ## What the installer builds
 
 One Compute Engine VM in a Google Cloud project you own. Sources:
-`install.sh`, `deploy/vm/lib/*.sh`, `deploy/vm/bootstrap.sh`,
-`deploy/vm/compose.yaml`.
+`install.sh`, `deploy/vm/lib/*.sh`, `deploy/vm/boot-stub.sh`,
+`deploy/vm/bootstrap.sh`, `deploy/vm/compose.yaml`.
 
 | Piece | What you get |
 |---|---|
