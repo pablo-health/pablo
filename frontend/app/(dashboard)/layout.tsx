@@ -8,6 +8,7 @@ import { ApiError } from "@/lib/api/client"
 import { getBAAStatus } from "@/lib/api/users"
 import { getCachedUserStatus } from "@/lib/api/users.server"
 import { getServerSession } from "@/lib/auth/server"
+import { needsEmailVerification, VERIFY_EMAIL_PATH } from "@/lib/auth/emailVerification"
 import { IS_DEV_MODE } from "@/lib/devMode"
 import { getOnboardingSurface } from "@/lib/onboarding/surface"
 import { firstIncompleteRequiredStep } from "@/lib/onboarding/types"
@@ -46,6 +47,12 @@ export default async function DashboardLayout({
 
     const { claims } = session
     token = session.token
+
+    // The API will not tie an unverified email to a practice, so every
+    // practice request would fail and the dashboard would render empty.
+    if (needsEmailVerification(claims)) {
+      redirect(VERIFY_EMAIL_PATH)
+    }
 
     // Check user status and MFA enrollment
     // Uses /api/users/me/status which does NOT require MFA (pre-enrollment check)

@@ -23,6 +23,7 @@ export async function getFirebaseServerSession(): Promise<ServerSession | null> 
       email: decodedToken.email,
       name: decodedToken.name,
       picture: decodedToken.picture,
+      emailVerified: decodedToken.email_verified,
     },
   }
 }

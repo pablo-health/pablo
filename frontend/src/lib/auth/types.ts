@@ -104,6 +104,12 @@ export interface ServerSessionClaims {
   email?: string
   name?: string
   picture?: string
+  /**
+   * The issuer's ``email_verified`` claim. ``false`` only when the issuer
+   * says so; ``undefined`` when it does not report one, which no gate should
+   * read as unverified.
+   */
+  emailVerified?: boolean
 }
 
 /** A resolved server-side session: the bearer token plus id-token claims. */
