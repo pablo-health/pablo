@@ -1,4 +1,4 @@
-.PHONY: help install lint format test test-integration test-all check clean export-schema
+.PHONY: help install lint format test test-integration test-all check clean export-schema api-schema
 .PHONY: e2e-up e2e e2e-hosted e2e-down
 .PHONY: docker-up docker-down docker-restart docker-logs docker-shell-backend docker-shell-frontend
 .PHONY: docker-test-backend docker-test-frontend docker-lint-backend docker-lint-frontend docker-check
@@ -22,6 +22,7 @@ help:
 	@echo "  make check             - Run lint + test (CI-style)"
 	@echo "  make clean             - Clean generated files"
 	@echo "  make export-schema     - Regenerate docs/reference/export-schema.json"
+	@echo "  make api-schema        - Regenerate the OpenAPI schema and the frontend API types"
 	@echo ""
 	@echo "Docker Development:"
 	@echo "  make docker-up         - Start all Docker services"
@@ -133,6 +134,11 @@ check: lint test
 # Regenerate the published export schema from the export models
 export-schema:
 	poetry run python backend/scripts/regen_export_schema.py
+
+# Regenerate the OpenAPI schema from the routes, then the frontend's API types from it
+api-schema:
+	poetry run python backend/scripts/regen_openapi_schema.py
+	cd frontend && npm run gen:api
 
 # Clean generated files
 clean:

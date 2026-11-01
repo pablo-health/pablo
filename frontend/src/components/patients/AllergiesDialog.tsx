@@ -23,7 +23,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { useToast } from "@/components/ui/Toast"
 import { useUpdateAllergies } from "@/hooks/usePatients"
-import type { AllergyEntry, AllergyStatus, PatientResponse } from "@/types/patients"
+import type { AllergyEntryInput, AllergyStatus, PatientResponse } from "@/types/patients"
 
 const CHOICES: { value: AllergyStatus; label: string }[] = [
   { value: "not_recorded", label: "Not recorded" },
@@ -31,7 +31,7 @@ const CHOICES: { value: AllergyStatus; label: string }[] = [
   { value: "recorded", label: "Allergies" },
 ]
 
-const BLANK: AllergyEntry = { substance: "", reaction: "" }
+const BLANK: AllergyEntryInput = { substance: "", reaction: "" }
 
 interface AllergiesDialogProps {
   patient: PatientResponse
@@ -44,7 +44,7 @@ export function AllergiesDialog({ patient, open, onOpenChange }: AllergiesDialog
   const { showToast } = useToast()
   // Mounted fresh each time it opens (see ChartFacts), so it starts from the chart.
   const [status, setStatus] = useState<AllergyStatus>(patient.allergy_status ?? "not_recorded")
-  const [entries, setEntries] = useState<AllergyEntry[]>(
+  const [entries, setEntries] = useState<AllergyEntryInput[]>(
     patient.allergies?.length ? patient.allergies : [BLANK],
   )
 
@@ -53,7 +53,7 @@ export function AllergiesDialog({ patient, open, onOpenChange }: AllergiesDialog
     .filter((e) => e.substance)
   const canSave = status !== "recorded" || filled.length > 0
 
-  function setEntry(index: number, change: Partial<AllergyEntry>) {
+  function setEntry(index: number, change: Partial<AllergyEntryInput>) {
     setEntries((current) => current.map((e, i) => (i === index ? { ...e, ...change } : e)))
   }
 

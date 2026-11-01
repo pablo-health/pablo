@@ -12,6 +12,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { ChartFacts, allergiesSummary } from "../ChartFacts"
 import { createMockPatient } from "@/test/factories"
+import type { AllergyEntry } from "@/types/patients"
+
+function allergy(fields: Pick<AllergyEntry, "substance"> & Partial<AllergyEntry>): AllergyEntry {
+  return { reaction: null, severity: null, note: null, source_note_id: null, ...fields }
+}
 
 const updateAllergies = vi.fn()
 
@@ -51,7 +56,7 @@ describe("ChartFacts", () => {
       allergiesSummary(
         createMockPatient({
           allergy_status: "recorded",
-          allergies: [{ substance: "Penicillin", reaction: "Hives" }, { substance: "Sulfa" }],
+          allergies: [allergy({ substance: "Penicillin", reaction: "Hives" }), allergy({ substance: "Sulfa" })],
         }),
       ),
     ).toBe("Penicillin (Hives), Sulfa")
@@ -63,11 +68,11 @@ describe("ChartFacts", () => {
         patient={createMockPatient({
           allergy_status: "recorded",
           allergies: [
-            {
+            allergy({
               substance: "Codeine",
               reaction: "Nausea",
               note: "Took it in February without a reaction.",
-            },
+            }),
           ],
         })}
       />,
