@@ -13,6 +13,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { PatientForm } from "../PatientForm"
 import * as patientsApi from "@/lib/api/patients"
 import type { PatientResponse } from "@/types/patients"
+import { createMockPatient } from "@/test/factories"
 import { peopleWords, type PeopleTerm } from "@/lib/peopleTerm"
 
 vi.mock("@/lib/api/patients")
@@ -78,7 +79,7 @@ const createWrapper = () => {
   return { Wrapper, queryClient }
 }
 
-const mockPatient: PatientResponse = {
+const mockPatient: PatientResponse = createMockPatient({
   id: "patient-123",
   first_name: "Jane",
   last_name: "Doe",
@@ -100,7 +101,7 @@ const mockPatient: PatientResponse = {
   state: null,
   postal_code: null,
   sex: null,
-}
+})
 
 describe("PatientForm", () => {
   beforeEach(() => {

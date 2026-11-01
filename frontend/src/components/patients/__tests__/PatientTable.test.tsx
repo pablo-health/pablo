@@ -13,6 +13,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { PatientTable } from "../PatientTable"
 import * as patientsApi from "@/lib/api/patients"
 import type { PatientResponse } from "@/types/patients"
+import { createMockPatient } from "@/test/factories"
 
 // Mock Next.js router
 const mockPush = vi.fn()
@@ -41,7 +42,7 @@ const createWrapper = () => {
 }
 
 const mockPatients: PatientResponse[] = [
-  {
+  createMockPatient({
     id: "patient-1",
     first_name: "Jane",
     last_name: "Doe",
@@ -63,8 +64,8 @@ const mockPatients: PatientResponse[] = [
     state: null,
     postal_code: null,
     sex: null,
-  },
-  {
+  }),
+  createMockPatient({
     id: "patient-2",
     first_name: "John",
     last_name: "Smith",
@@ -86,8 +87,8 @@ const mockPatients: PatientResponse[] = [
     state: null,
     postal_code: null,
     sex: null,
-  },
-  {
+  }),
+  createMockPatient({
     id: "patient-3",
     first_name: "Alice",
     last_name: "Johnson",
@@ -109,7 +110,7 @@ const mockPatients: PatientResponse[] = [
     state: null,
     postal_code: null,
     sex: null,
-  },
+  }),
 ]
 
 describe("PatientTable", () => {

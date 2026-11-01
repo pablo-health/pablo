@@ -61,6 +61,17 @@ export function useCreatePatient(token?: string) {
   })
 }
 
+/**
+ * The fields an update actually changes. The backend skips a field sent as
+ * null (it means "not provided"), so the optimistic copy skips it too rather
+ * than blanking a value the server keeps.
+ */
+function providedFields(data: UpdatePatientRequest): Partial<PatientResponse> {
+  return Object.fromEntries(
+    Object.entries(data).filter(([, value]) => value !== null && value !== undefined)
+  ) as Partial<PatientResponse>
+}
+
 export function useUpdatePatient(token?: string) {
   return useAuthMutation<
     PatientResponse,
@@ -74,7 +85,7 @@ export function useUpdatePatient(token?: string) {
     ],
     optimistic: {
       queryKey: ({ patientId }) => queryKeys.patients.detail(patientId),
-      updater: (previous, { data }) => ({ ...previous, ...data }),
+      updater: (previous, { data }) => ({ ...previous, ...providedFields(data) }),
     },
   })
 }

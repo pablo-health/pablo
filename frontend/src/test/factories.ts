@@ -128,6 +128,17 @@ export function createMockPatient(
     state: null,
     postal_code: null,
     sex: null,
+    preferred_name: null,
+    pronouns: null,
+    emergency_contact: null,
+    allergy_status: "not_recorded",
+    allergies: [],
+    needs_name: false,
+    superbill_includes_diagnosis: false,
+    rate_cents: null,
+    sliding_scale_note: null,
+    chart_closed_at: null,
+    chart_closure_reason: null,
     ...overrides,
   }
 }

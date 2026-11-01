@@ -3,148 +3,48 @@
 /**
  * Patient API Types
  *
- * TypeScript types matching backend Patient API contracts.
- * Field names use snake_case to match backend exactly.
+ * Generated from the backend's OpenAPI schema (`./api/schema.gen.ts`), so a
+ * field the backend adds, drops or retypes surfaces here as a type error.
+ * Regenerate with `make api-schema`.
  */
 
+import type { components, operations } from "./api/schema.gen"
+
+type Schemas = components["schemas"]
+
 /**
- * Patient response from API
- *
- * Represents a patient record with all metadata.
- *
- * `deleted_at` and `restore_deadline` are populated only when the row
- * comes from the recently-deleted listing
- * (`include_deleted=recent`, THERAPY-yg2). Live CRUD reads return
- * `null` for both fields.
+ * A patient record. `deleted_at` and `restore_deadline` are set only on rows
+ * from the recently-deleted listing (`include_deleted=recent`).
  */
-export interface PatientResponse {
-  id: string
-  first_name: string
-  last_name: string
-  email: string | null
-  phone: string | null
-  status: string
-  date_of_birth: string | null
-  /** The active problems as one line, derived from the problem list. */
-  diagnosis: string | null
-  allergy_status?: AllergyStatus
-  allergies?: AllergyEntry[]
-  session_count: number
-  last_session_date: string | null
-  next_session_date: string | null
-  created_at: string
-  updated_at: string
-  deleted_at: string | null
-  restore_deadline: string | null
-  address_line1: string | null
-  address_line2: string | null
-  city: string | null
-  state: string | null
-  postal_code: string | null
-  /** X12 DMG03 administrative sex code (M/F/U) — "Sex on insurance card". */
-  sex: string | null
-  /** What the person is called, when it is not their first name. */
-  preferred_name?: string | null
-  /** The pronouns the person uses, in their own words. */
-  pronouns?: string | null
-  /** Who to call in an emergency, as written. */
-  emergency_contact?: string | null
-  /** The chart has no first or no last name yet — for one added from a
-   * calendar event with the name left blank. Adding the name clears it. */
-  needs_name?: boolean
-  /** Whether this person's superbills print their diagnosis. Off unless turned on. */
-  superbill_includes_diagnosis?: boolean
-}
+export type PatientResponse = Schemas["PatientResponse"]
 
 /**
  * The allergy record. "nkda" (no known drug allergies) is its own state,
  * distinct from "not_recorded"; "recorded" always has at least one entry.
  */
-export type AllergyStatus = "not_recorded" | "nkda" | "recorded"
+export type AllergyStatus = Schemas["UpdateAllergiesRequest"]["status"]
 
-export interface AllergyEntry {
-  substance: string
-  reaction?: string | null
-  severity?: "mild" | "moderate" | "severe" | null
-  /** What has been said about it since (taken without a reaction, say); the entry stands. */
-  note?: string | null
-  /** The note the entry, or its note, was accepted from. */
-  source_note_id?: string | null
-}
+/** An allergy as the chart shows it; every field is sent. */
+export type AllergyEntry = Schemas["AllergyEntry-Output"]
 
-export interface UpdateAllergiesRequest {
-  status: AllergyStatus
-  allergies: AllergyEntry[]
-}
+/** An allergy as it is saved; only `substance` is required. */
+export type AllergyEntryInput = Schemas["AllergyEntry-Input"]
 
-/**
- * Paginated list of patients
- */
-export interface PatientListResponse {
-  data: PatientResponse[]
-  total: number
-  page: number
-  page_size: number
-}
+export type UpdateAllergiesRequest = Schemas["UpdateAllergiesRequest"]
+
+export type PatientListResponse = Schemas["PatientListResponse"]
+
+export type CreatePatientRequest = Schemas["CreatePatientRequest"]
+
+/** Only the fields provided are updated. */
+export type UpdatePatientRequest = Schemas["UpdatePatientRequest"]
+
+export type DeletePatientResponse = Schemas["DeletePatientResponse"]
 
 /**
- * Request payload for creating a new patient
+ * Query parameters for listing patients. `include_deleted: "recent"` lists
+ * soft-deleted patients still inside the 30-day undo window instead.
  */
-export interface CreatePatientRequest {
-  first_name: string
-  last_name: string
-  email?: string
-  phone?: string
-  status?: string
-  date_of_birth?: string
-  diagnosis?: string
-  address_line1?: string
-  address_line2?: string
-  city?: string
-  state?: string
-  postal_code?: string
-  sex?: string
-}
-
-/**
- * Request payload for updating a patient
- *
- * All fields are optional - only provided fields will be updated.
- */
-export interface UpdatePatientRequest {
-  first_name?: string
-  last_name?: string
-  email?: string
-  phone?: string
-  status?: string
-  date_of_birth?: string
-  address_line1?: string
-  address_line2?: string
-  city?: string
-  state?: string
-  postal_code?: string
-  sex?: string
-  superbill_includes_diagnosis?: boolean
-}
-
-/**
- * Response from deleting a patient
- */
-export interface DeletePatientResponse {
-  message: string
-}
-
-/**
- * Query parameters for listing patients
- *
- * `include_deleted: "recent"` switches the listing to soft-deleted
- * patients still inside the 30-day undo window (THERAPY-yg2). Default
- * (omitted) lists only live patients.
- */
-export interface PatientListParams {
-  /** Case-insensitive substring matched against both first and last name. */
-  search?: string
-  page?: number
-  page_size?: number
-  include_deleted?: "recent"
-}
+export type PatientListParams = NonNullable<
+  operations["list_patients_api_patients_get"]["parameters"]["query"]
+>
