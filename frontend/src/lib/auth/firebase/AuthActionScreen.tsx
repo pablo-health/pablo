@@ -106,10 +106,14 @@ function AuthActionContent() {
             // Someone verifying from the browser they signed up in is already
             // signed in. Refresh their user so the app sees the verified flag,
             // then send them straight back in rather than to the sign-in page.
+            // reload() leaves the cached ID token alone, and that token still
+            // says email_verified: false — the API refuses it until it is
+            // re-minted, so force one before the app starts using it.
             await auth.authStateReady()
             if (auth.currentUser) {
               try {
                 await auth.currentUser.reload()
+                await auth.currentUser.getIdToken(true)
               } catch (err) {
                 console.warn("verifyEmail user reload failed:", errorCode(err))
               }

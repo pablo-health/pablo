@@ -286,6 +286,15 @@ interface FetchOptions extends RequestInit {
 export const TOKEN_REFRESH_RETRY_CODES = new Set(["TOKEN_EXPIRED", "INVALID_TOKEN"])
 
 /**
+ * Backend 403 codes a fresh token can clear. ``EMAIL_NOT_VERIFIED`` is
+ * decided from the token's ``email_verified`` claim, and a token minted
+ * before the person verified keeps saying false until it is refreshed —
+ * which never happens on its own when they verified in another tab or on
+ * another device. One forced refresh and retry picks the new claim up.
+ */
+export const FORBIDDEN_REFRESH_RETRY_CODES = new Set(["EMAIL_NOT_VERIFIED"])
+
+/**
  * Backend auth 401 codes that mean the session is unrecoverable — the token is
  * expired (and a refresh didn't help), malformed/invalid, revoked, or the
  * account is disabled. These boot the user to /login rather than letting the
@@ -408,10 +417,17 @@ export async function apiClient<T>(
     // token refresh and retry the request once. Scoped to client-managed
     // tokens (no caller-supplied `token`) and to the token-error codes —
     // IDLE_TIMEOUT must stay terminal (a refresh would defeat the idle
-    // control) and is handled below.
-    if (response.status === 401 && !token && typeof window !== "undefined") {
+    // control) and is handled below. A 403 EMAIL_NOT_VERIFIED gets the same
+    // single retry: the claim it reads only changes in a fresh token.
+    if (
+      (response.status === 401 || response.status === 403) &&
+      !token &&
+      typeof window !== "undefined"
+    ) {
       const retryCode = (await peekErrorCode(response)) ?? ""
-      if (TOKEN_REFRESH_RETRY_CODES.has(retryCode)) {
+      const retryCodes =
+        response.status === 401 ? TOKEN_REFRESH_RETRY_CODES : FORBIDDEN_REFRESH_RETRY_CODES
+      if (retryCodes.has(retryCode)) {
         response = await doFetch(true)
       }
     }
