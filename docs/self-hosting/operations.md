@@ -26,7 +26,10 @@ Source: `deploy/vm/bootstrap.sh` (pgBackRest config), `deploy/vm/crontab`,
 | Disk snapshot of `pablo-data` | Daily 08:00 | 14 days; kept if the disk is deleted |
 
 Backups go to `gs://<project>-pablo-backups/pgbackrest`, compressed with
-zstd, written with the VM's own identity. The VM's service account can
+zstd, encrypted with AES-256 and written with the VM's own identity. The
+passphrase is the secret `pablo-backup-passphrase`; `install.sh` shows it
+once, and restoring anywhere needs it, so keep a copy outside the Google
+account. The VM's service account can
 write and delete objects in that bucket, so a compromised VM could remove
 backups; the disk snapshots are the line behind it, and they live outside
 the VM's reach.

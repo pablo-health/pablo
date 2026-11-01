@@ -34,7 +34,7 @@ seven days.
 | Backend, frontend | containers from `ghcr.io/pablo-health/*:<release>` |
 | HTTPS | Caddy, with a Let's Encrypt certificate it renews itself |
 | Database | Postgres 16 on its own disk (`pablo-data`), kept if the VM is deleted |
-| Backups | pgBackRest to `gs://<project>-pablo-backups`: weekly full, daily differential, WAL continuously; daily disk snapshots too |
+| Backups | pgBackRest to `gs://<project>-pablo-backups`, encrypted with a passphrase the installer shows you once: weekly full, daily differential, WAL continuously; daily disk snapshots too |
 | Restore check | monthly: the latest backup is restored into a scratch copy and queried |
 | Short-lived state | Redis, in memory only: calendar-connect handshakes, passkey challenges, rate limits, the idle-session clock |
 | Scheduled jobs | `/etc/cron.d/pablo`: HIPAA log reviews, pipeline heartbeat, quarterly attestation |

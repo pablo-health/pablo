@@ -264,6 +264,9 @@ done_ "Email and Google sign-in, 15-character passwords, authenticator-app MFA"
 # --- 5. Secrets ----------------------------------------------------------------
 step "5/7  Secrets"
 ensure_generated_secrets
+if [ "$TARGET" = vm ]; then
+    ensure_backup_passphrase
+fi
 ensure_oauth_client
 if [ -n "$GOOGLE_CLIENT_ID" ]; then
     register_google_idp "$GOOGLE_CLIENT_ID" "$GOOGLE_CLIENT_SECRET"
@@ -372,3 +375,21 @@ echo "Sign in with ${ADMIN_EMAIL}. You will set up an authenticator app the firs
 echo
 echo "Updates:  gcloud compute ssh ${VM_NAME} --zone=${ZONE} --tunnel-through-iap -- sudo pablo-update vX.Y.Z"
 echo "Backups:  daily to gs://${BACKUP_BUCKET}, restore-tested monthly (sudo pablo-backup info)"
+# Shown once, the run that made it. Secret Manager holds the only other copy,
+# and it goes with the Google account, so the copy that matters is the one the
+# clinician keeps elsewhere. Not shown when the repository was written without
+# it: a release from before backups were encrypted ignores the passphrase, and
+# bootstrap.sh keeps ignoring it for that repository.
+if secret_exists pablo-backup-passphrase && ! backup_repository_unencrypted; then
+    if [ "$BACKUP_PASSPHRASE_CREATED" = true ]; then
+        passphrase="$(read_secret pablo-backup-passphrase)"
+        echo
+        echo -e "${BOLD}Your backup passphrase${NC}"
+        echo "  ${passphrase}"
+        unset passphrase
+        echo "Your backups are encrypted with it, and restoring them needs it. Keep it"
+        echo "outside this Google account: in a password manager, or printed."
+    else
+        echo "          passphrase: gcloud secrets versions access latest --secret=pablo-backup-passphrase --project=${PROJECT_ID}"
+    fi
+fi
