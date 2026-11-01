@@ -199,7 +199,8 @@ class Settings(BaseSettings):
     trusted_proxy_ips: str = Field(
         default="",
         description=(
-            "Trusted proxy IPs for X-Forwarded-Proto/X-Forwarded-SSL headers. "
+            "Peers allowed to set X-Forwarded-For, X-Forwarded-Proto and "
+            "X-Forwarded-SSL; from anyone else those headers are ignored. "
             "Empty string (default): trust no proxies (secure default). "
             "'*': trust all proxies (use for Cloud Run/GKE). "
             "Comma-separated IPs: trust specific proxies."
