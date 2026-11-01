@@ -50,6 +50,12 @@ function err401(code: string): Response {
     headers: { "content-type": "application/json" },
   })
 }
+function err403(code: string): Response {
+  return new Response(JSON.stringify(ENVELOPES[envelope](code)), {
+    status: 403,
+    headers: { "content-type": "application/json" },
+  })
+}
 function ok200(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
@@ -166,6 +172,43 @@ describe.each(["nested", "flat"] as const)(
     expect(fetchMock).toHaveBeenCalledTimes(1) // retry + redirect are !token-scoped
     await Promise.resolve()
     expect(assignSpy).not.toHaveBeenCalled()
+  })
+
+  it("retries once with a fresh token on 403 EMAIL_NOT_VERIFIED, then succeeds", async () => {
+    const client = await freshClient()
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(err403("EMAIL_NOT_VERIFIED"))
+      .mockResolvedValueOnce(ok200({ ok: true }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await expect(client.get("/api/x")).resolves.toEqual({ ok: true })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(getIdToken).toHaveBeenNthCalledWith(2, true)
+    expect(assignSpy).not.toHaveBeenCalled()
+  })
+
+  it("surfaces EMAIL_NOT_VERIFIED when it survives the single retry", async () => {
+    const client = await freshClient()
+    const fetchMock = vi.fn().mockResolvedValue(err403("EMAIL_NOT_VERIFIED"))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await expect(client.get("/api/x")).rejects.toMatchObject({
+      code: "EMAIL_NOT_VERIFIED",
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    await Promise.resolve()
+    expect(assignSpy).not.toHaveBeenCalled()
+    expect(signOut).not.toHaveBeenCalled()
+  })
+
+  it("does not retry other 403s", async () => {
+    const client = await freshClient()
+    const fetchMock = vi.fn().mockResolvedValue(err403("FORBIDDEN"))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await expect(client.get("/api/x")).rejects.toMatchObject({ code: "FORBIDDEN" })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
   it("fires a single sign-out + redirect for a burst of terminal 401s", async () => {

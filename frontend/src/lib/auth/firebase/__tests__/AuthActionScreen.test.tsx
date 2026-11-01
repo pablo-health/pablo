@@ -35,7 +35,20 @@ vi.mock("firebase/auth", () => ({
 
 import { FirebaseAuthActionScreen } from "../AuthActionScreen"
 
-function fakeAuth(currentUser: { reload: () => Promise<void> } | null) {
+type FakeUser = {
+  reload: () => Promise<void>
+  getIdToken: (forceRefresh?: boolean) => Promise<string>
+}
+
+function fakeUser(overrides: Partial<FakeUser> = {}): FakeUser {
+  return {
+    reload: vi.fn().mockResolvedValue(undefined),
+    getIdToken: vi.fn().mockResolvedValue("token"),
+    ...overrides,
+  }
+}
+
+function fakeAuth(currentUser: FakeUser | null) {
   return { authStateReady: vi.fn().mockResolvedValue(undefined), currentUser }
 }
 
@@ -93,7 +106,7 @@ describe("FirebaseAuthActionScreen", () => {
 
   it("sends a signed-in verifier straight into the app", async () => {
     const reload = vi.fn().mockResolvedValue(undefined)
-    getFirebaseAuth.mockReturnValue(fakeAuth({ reload }))
+    getFirebaseAuth.mockReturnValue(fakeAuth(fakeUser({ reload })))
     searchParams.set("continueUrl", "https://app.test/login")
 
     render(<FirebaseAuthActionScreen />)
@@ -102,8 +115,29 @@ describe("FirebaseAuthActionScreen", () => {
     expect(reload).toHaveBeenCalled()
   })
 
+  // reload() refreshes the user but not the cached ID token, which still says
+  // email_verified: false — the API refuses it until a new one is minted.
+  it("mints a fresh ID token before sending a signed-in verifier into the app", async () => {
+    const calls: string[] = []
+    const getIdToken = vi.fn(async () => {
+      calls.push("getIdToken")
+      return "fresh"
+    })
+    const reload = vi.fn(async () => {
+      calls.push("reload")
+    })
+    replace.mockImplementation(() => calls.push("redirect"))
+    getFirebaseAuth.mockReturnValue(fakeAuth(fakeUser({ reload, getIdToken })))
+
+    render(<FirebaseAuthActionScreen />)
+
+    await waitFor(() => expect(replace).toHaveBeenCalled())
+    expect(getIdToken).toHaveBeenCalledWith(true)
+    expect(calls).toEqual(["reload", "getIdToken", "redirect"])
+  })
+
   it("returns a signed-in verifier to where the email asked, such as MFA enrollment", async () => {
-    getFirebaseAuth.mockReturnValue(fakeAuth({ reload: vi.fn().mockResolvedValue(undefined) }))
+    getFirebaseAuth.mockReturnValue(fakeAuth(fakeUser()))
     searchParams.set("continueUrl", "https://app.test/mfa-enrollment")
 
     render(<FirebaseAuthActionScreen />)
