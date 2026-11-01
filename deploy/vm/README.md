@@ -99,6 +99,12 @@ with `--hostname clinic.example.com`, then release the old name. The installer
 reminds you how; it never releases one on its own. A VM refuses to release the
 name it still uses, since the next boot would only claim it back.
 
+A name belongs to the Google Cloud project, not the VM. After deleting the VM
+and installing again in the same project, the installer's check sees the name
+as taken, because it cannot tell who is asking. Add `--reuse-hosted-name` (or
+answer yes when asked whether it is yours): the new VM's claim is a renewal for
+this project, and is refused for any other.
+
 ## Day to day
 
 ```bash

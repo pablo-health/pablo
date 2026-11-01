@@ -27,6 +27,10 @@
 #                       service, which the VM points at itself. Without either:
 #                       an sslip.io name for the VM's address. A re-run keeps
 #                       the address it had unless given one of these.
+#   --reuse-hosted-name The --hosted-name is this project's from an earlier
+#                       install (a VM deleted and made again). The check here
+#                       can only say it is taken; the VM's own claim succeeds
+#                       because the name belongs to this project.
 #   --names-endpoint URL  The hosted-subdomain service
 #                       (default https://names.pablo.clinic)
 #   --names-zone ZONE   The domain its names are under (default pablo.clinic)
@@ -90,6 +94,7 @@ PROJECT_ID=""
 ADMIN_EMAIL=""
 CUSTOM_HOSTNAME=""
 HOSTED_NAME=""
+REUSE_HOSTED_NAME=false
 NAMES_ENDPOINT=https://names.pablo.clinic
 NAMES_ZONE=pablo.clinic
 REGION=us-central1
@@ -111,6 +116,7 @@ while [ $# -gt 0 ]; do
         --admin-email) ADMIN_EMAIL="$2"; shift 2 ;;
         --hostname) CUSTOM_HOSTNAME="$2"; shift 2 ;;
         --hosted-name) HOSTED_NAME="$2"; shift 2 ;;
+        --reuse-hosted-name) REUSE_HOSTED_NAME=true; shift ;;
         --names-endpoint) NAMES_ENDPOINT="$2"; shift 2 ;;
         --names-zone) NAMES_ZONE="$2"; shift 2 ;;
         --region) REGION="$2"; shift 2 ;;
@@ -133,6 +139,8 @@ done
 ZONE="${ZONE:-${REGION}-a}"
 NAMES_ENDPOINT="${NAMES_ENDPOINT%/}"
 HOSTED_NAME="$(tr '[:upper:]' '[:lower:]' <<<"$HOSTED_NAME")"
+[ "$REUSE_HOSTED_NAME" != true ] || [ -n "$HOSTED_NAME" ] \
+    || { echo "--reuse-hosted-name goes with --hosted-name." >&2; exit 2; }
 if [ -n "$CUSTOM_HOSTNAME" ] && [ -n "$HOSTED_NAME" ]; then
     echo "Pass --hostname or --hosted-name, not both." >&2
     exit 2
@@ -209,7 +217,7 @@ fi
 
 # ask_hosted_name — until the name given can be claimed.
 ask_hosted_name() {
-    local reason status
+    local reason status mine
     while :; do
         read -rp "Name, before .${NAMES_ZONE}: " HOSTED_NAME
         HOSTED_NAME="$(tr '[:upper:]' '[:lower:]' <<<"$HOSTED_NAME")"
@@ -217,7 +225,14 @@ ask_hosted_name() {
         reason="$(check_hosted_name "$HOSTED_NAME")" || status=$?
         case "$status" in
             0) return ;;
-            1) echo "$reason" ;;
+            1)
+                echo "$reason"
+                # Anyone asking sees a name as taken, its owner included.
+                if valid_hosted_name "$HOSTED_NAME"; then
+                    read -rp "Is it yours, from an earlier install in this project? [y/N] " mine
+                    [[ "$mine" =~ ^[Yy] ]] && return
+                fi
+                ;;
             *)
                 echo "${reason} Try again later, or run this again and choose the automatic address." >&2
                 exit 1
@@ -244,12 +259,21 @@ EOF
     esac
 fi
 
-if [ -n "$HOSTED_NAME" ] && [ "$hosted_name_checked" != true ] && [ "$HOSTED_NAME" != "$PREVIOUS_HOSTED_NAME" ]; then
+if [ "$REUSE_HOSTED_NAME" = true ] && ! valid_hosted_name "$HOSTED_NAME"; then
+    echo "${HOSTED_NAME}: use 3 to 40 lowercase letters, numbers and hyphens, not starting or ending with a hyphen." >&2
+    exit 1
+fi
+if [ -n "$HOSTED_NAME" ] && [ "$hosted_name_checked" != true ] && [ "$REUSE_HOSTED_NAME" != true ] \
+    && [ "$HOSTED_NAME" != "$PREVIOUS_HOSTED_NAME" ]; then
     status=0
     reason="$(check_hosted_name "$HOSTED_NAME")" || status=$?
     case "$status" in
         0) ;;
-        1) echo "${HOSTED_NAME}.${NAMES_ZONE}: ${reason}" >&2; exit 1 ;;
+        1)
+            echo "${HOSTED_NAME}.${NAMES_ZONE}: ${reason}" >&2
+            echo "If it is yours from an earlier install in this project, add --reuse-hosted-name." >&2
+            exit 1
+            ;;
         *) echo "${reason} Try again later, or leave out --hosted-name for the automatic address." >&2; exit 1 ;;
     esac
 fi
@@ -315,6 +339,7 @@ on_exit() {
     [ "$TARGET" = vm ] || resume="${resume} --target ${TARGET}"
     [ -z "$CUSTOM_HOSTNAME" ] || resume="${resume} --hostname ${CUSTOM_HOSTNAME}"
     [ -z "$HOSTED_NAME" ] || resume="${resume} --hosted-name ${HOSTED_NAME}"
+    [ "$REUSE_HOSTED_NAME" != true ] || resume="${resume} --reuse-hosted-name"
     [ "$status" -eq 0 ] || warn "\nStopped. To pick up where this left off:  ${resume}" >&2
 }
 trap on_exit EXIT
