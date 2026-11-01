@@ -491,6 +491,7 @@ class TestGetCurrentUser:
             "uid": "new-user",
             "email": "allowed@example.com",
             "name": "New User",
+            "email_verified": True,
             "firebase": {},
         }
 
@@ -532,6 +533,7 @@ class TestGetCurrentUser:
             "uid": "ungated-user",
             "email": "Ungated@Example.com",
             "name": "Ungated User",
+            "email_verified": True,
             "firebase": {},
         }
 
@@ -571,6 +573,7 @@ class TestGetCurrentUser:
         mock_verify.return_value = {
             "uid": "blocked-user",
             "email": "notallowed@example.com",
+            "email_verified": True,
             "firebase": {},
         }
 
@@ -728,6 +731,7 @@ class TestGetCurrentUser:
             mock_verify.return_value = {
                 "uid": f"fake-{email}",
                 "email": email,
+                "email_verified": True,
                 "firebase": {},
             }
 
@@ -787,6 +791,7 @@ class TestGetCurrentUser:
         mock_verify.return_value = {
             "uid": "e2e-prod",
             "email": "e2etest-deadbeef@pablo.health",
+            "email_verified": True,
             "firebase": {},
         }
 
@@ -816,6 +821,7 @@ class TestGetCurrentUser:
         mock_verify.return_value = {
             "uid": "pentest-prod",
             "email": "pentestuser-cafebabe@pablo.health",
+            "email_verified": True,
             "firebase": {},
         }
 
@@ -840,6 +846,99 @@ class TestGetCurrentUser:
         assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
         assert exc_info.value.detail["error"]["code"] == "SIGNUP_NOT_ALLOWED"  # type: ignore[index]
 
+    def test_an_unverified_email_is_refused_before_the_allowlist_or_any_write(self) -> None:
+        """Allowlisted or not, an address the issuer has not verified identifies
+        nobody: no allowlist or mapping lookup, no identity link, no user row."""
+        decoded = {"uid": "unverified", "email": "invited@example.com", "firebase": {}}
+        user_repo = InMemoryUserRepository()
+        allowlist_repo = MagicMock(wraps=InMemoryAllowlistRepository())
+        identity_repo = _identity_repo_for()
+
+        with (
+            patch("app.auth.service.get_settings") as mock_settings,
+            patch("app.auth.service._email_has_tenant_mapping") as mock_mapping,
+            patch("app.auth.service._ensure_tenant_mapping") as mock_map,
+        ):
+            mock_settings.return_value.restrict_signups = True
+            mock_settings.return_value.is_prod_project = True
+            with pytest.raises(HTTPException) as exc_info:
+                get_current_user(_mock_request(), decoded, user_repo, allowlist_repo, identity_repo)
+
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+        assert exc_info.value.detail["error"]["code"] == "EMAIL_NOT_VERIFIED"  # type: ignore[index]
+        allowlist_repo.is_allowed.assert_not_called()
+        mock_mapping.assert_not_called()
+        mock_map.assert_not_called()
+        assert identity_repo.get_user_id("firebase", "unverified") is None
+        assert user_repo.get_by_email("invited@example.com") is None
+
+    def test_an_existing_user_with_an_unverified_email_is_refused(self) -> None:
+        user_repo = InMemoryUserRepository()
+        user_repo.update(
+            User(
+                id="existing",
+                email="existing@example.com",
+                name="Existing",
+                created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+            )
+        )
+        decoded = {"uid": "existing", "email": "existing@example.com", "firebase": {}}
+
+        with patch("app.auth.service.get_settings") as mock_settings:
+            mock_settings.return_value.is_prod_project = True
+            with pytest.raises(HTTPException) as exc_info:
+                get_current_user(
+                    _mock_request(),
+                    decoded,
+                    user_repo,
+                    InMemoryAllowlistRepository(),
+                    _identity_repo_for("existing"),
+                )
+
+        assert exc_info.value.detail["error"]["code"] == "EMAIL_NOT_VERIFIED"  # type: ignore[index]
+
+    def test_an_unverified_reserved_test_address_is_refused_in_prod(self) -> None:
+        decoded = {"uid": "e2e-prod", "email": "e2etest-deadbeef@pablo.health", "firebase": {}}
+
+        with patch("app.auth.service.get_settings") as mock_settings:
+            mock_settings.return_value.restrict_signups = True
+            mock_settings.return_value.is_prod_project = True
+            with pytest.raises(HTTPException) as exc_info:
+                get_current_user(
+                    _mock_request(),
+                    decoded,
+                    InMemoryUserRepository(),
+                    InMemoryAllowlistRepository(),
+                    _identity_repo_for(),
+                )
+
+        assert exc_info.value.detail["error"]["code"] == "EMAIL_NOT_VERIFIED"  # type: ignore[index]
+
+    def test_an_email_looked_up_from_the_provider_must_be_verified_too(self) -> None:
+        """A token without an email falls back to the provider's user record;
+        that address is held to the same rule."""
+        decoded = {"uid": "no-email-claim", "firebase": {}}
+        identity_repo = _identity_repo_for()
+
+        with (
+            patch("app.auth.service.get_settings") as mock_settings,
+            patch("app.auth.service.firebase_auth.get_user") as mock_get_user,
+        ):
+            mock_settings.return_value.restrict_signups = False
+            mock_settings.return_value.is_prod_project = True
+            mock_get_user.return_value = MagicMock(email="typed@example.com", email_verified=False)
+            with pytest.raises(HTTPException) as exc_info:
+                get_current_user(
+                    _mock_request(),
+                    decoded,
+                    InMemoryUserRepository(),
+                    InMemoryAllowlistRepository(),
+                    identity_repo,
+                )
+
+        assert exc_info.value.detail["error"]["code"] == "EMAIL_NOT_VERIFIED"  # type: ignore[index]
+        assert identity_repo.get_user_id("firebase", "no-email-claim") is None
+
     def test_rejects_disabled_user(self) -> None:
         user_repo = InMemoryUserRepository()
         allowlist_repo = InMemoryAllowlistRepository()
@@ -854,7 +953,12 @@ class TestGetCurrentUser:
         )
         user_repo.update(disabled_user)
 
-        decoded = {"uid": "disabled-user", "email": "disabled@example.com", "firebase": {}}
+        decoded = {
+            "uid": "disabled-user",
+            "email": "disabled@example.com",
+            "email_verified": True,
+            "firebase": {},
+        }
 
         with patch("app.auth.service.get_settings") as mock_settings:
             mock_settings.return_value.restrict_signups = False
@@ -1311,6 +1415,7 @@ class TestUserIdentityMapping:
             "uid": "fresh-firebase-uid",
             "email": "fresh@example.com",
             "name": "Fresh User",
+            "email_verified": True,
             "firebase": {},
         }
         decoded = mock_verify.return_value

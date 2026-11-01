@@ -569,6 +569,19 @@ def set_tenant_schema(session: Session, practice_schema: str = DEFAULT_PRACTICE_
     _current_tenant_schema.set(practice_schema)
 
 
+def clear_tenant_schema(session: Session) -> None:
+    """Point a session at no practice schema: the platform schema and ``public``.
+
+    For a signed-in request that resolves to no practice. Unqualified practice
+    tables then do not exist, so code that reaches for one fails loudly
+    instead of reading or writing the provisioning template. Clears the
+    ContextVar too, so a later pool checkout keeps the neutral path the checkin
+    listener left on the connection.
+    """
+    session.execute(text(f"SET search_path = {PLATFORM_SCHEMA}, public"))
+    _current_tenant_schema.set(None)
+
+
 def set_current_user_id(user_id: str) -> None:
     """Stash the request's clinician user id for transaction-local RLS.
 

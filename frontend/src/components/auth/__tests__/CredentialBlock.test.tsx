@@ -242,6 +242,51 @@ describe("CredentialBlock credential resolution", () => {
   })
 })
 
+describe("CredentialBlock email verification on sign-in", () => {
+  function passwordCredential(emailVerified: boolean) {
+    return {
+      user: {
+        uid: "u1",
+        email: "clinician@example.com",
+        emailVerified,
+        getIdToken: vi.fn().mockResolvedValue("id-token"),
+      },
+    } as unknown as UserCredential
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("shows the verify screen and opens no session for an unverified email", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+    signInWithEmailAndPassword.mockResolvedValue(passwordCredential(false))
+
+    const { onCredential, container } = renderBlock()
+    await signInWithPassword(container)
+
+    expect(await screen.findByText("Check Your Email")).not.toBeNull()
+    expect(screen.getByRole("button", { name: "Resend Verification Email" })).not.toBeNull()
+    expect(onCredential).not.toHaveBeenCalled()
+    expect(getUserStatus).not.toHaveBeenCalled()
+    expect(fetchSpy).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole("button", { name: "Back to Sign In" }))
+    expect(await screen.findByRole("button", { name: "Sign In" })).not.toBeNull()
+  })
+
+  it("signs a verified email straight in", async () => {
+    const credential = passwordCredential(true)
+    signInWithEmailAndPassword.mockResolvedValue(credential)
+
+    const { onCredential, container } = renderBlock()
+    await signInWithPassword(container)
+
+    await waitFor(() => expect(onCredential).toHaveBeenCalledWith(credential, "email"))
+    expect(screen.queryByText("Check Your Email")).toBeNull()
+  })
+})
+
 describe("CredentialBlock sign-up gating", () => {
   it("hides the 'Create account' toggle when allowSignUp is false", async () => {
     renderBlock({ allowSignUp: false })

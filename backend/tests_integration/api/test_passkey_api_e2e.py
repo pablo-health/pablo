@@ -54,7 +54,7 @@ from sqlalchemy import text
 from ._soft_webauthn import SoftWebAuthnAuthenticator
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -145,6 +145,18 @@ def _clean_passkey_tables(engine: Engine) -> None:
         )
 
 
+def _signed_in_as(user: Any) -> Callable[[], Any]:
+    """Stand in for ``get_current_user_no_mfa``: the user, armed for row security as it would be."""
+
+    def _resolve() -> Any:
+        from app.db import arm_current_user_id, get_db_session  # noqa: PLC0415
+
+        arm_current_user_id(get_db_session(), user.id)
+        return user
+
+    return _resolve
+
+
 @pytest.fixture
 def harness(
     fastapi_app: FastAPI,
@@ -165,6 +177,7 @@ def harness(
     verified assertion.
     """
     from app.auth.service import get_current_user_no_mfa  # noqa: PLC0415
+    from app.db import DEFAULT_PRACTICE_OWN_SCHEMA, middleware  # noqa: PLC0415
     from app.models.user import User  # noqa: PLC0415
     from app.rate_limit import require_rate_limit  # noqa: PLC0415
     from app.services import passkey_tokens as tokens  # noqa: PLC0415
@@ -177,8 +190,17 @@ def harness(
         name="Passkey E2E",
         created_at=utc_now(),
     )
-    fastapi_app.dependency_overrides[get_current_user_no_mfa] = lambda: user
+    fastapi_app.dependency_overrides[get_current_user_no_mfa] = _signed_in_as(user)
     fastapi_app.dependency_overrides[require_rate_limit] = lambda: None
+    # With the user dependency overridden, no credential reaches the schema
+    # middleware, which would leave the request on the template schema that
+    # new practices are built from — and the template refuses writes. Run it
+    # on the practice a signed-in clinician of this deployment resolves to.
+    monkeypatch.setattr(
+        middleware,
+        "_resolve_schema_from_request",
+        lambda _request: (DEFAULT_PRACTICE_OWN_SCHEMA, "resolved"),
+    )
 
     captured: dict[str, Any] = {}
 
@@ -541,7 +563,7 @@ class TestRecoveryCodeRedeem:
         other = User(
             id=str(uuid.uuid4()), email="other@example.com", name="B", created_at=utc_now()
         )
-        fastapi_app.dependency_overrides[get_current_user_no_mfa] = lambda: other
+        fastapi_app.dependency_overrides[get_current_user_no_mfa] = _signed_in_as(other)
 
         resp = harness.client.post(_REDEEM, json={"code": a_code})
         assert resp.status_code == 401, resp.text
