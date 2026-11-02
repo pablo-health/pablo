@@ -24,9 +24,11 @@ from . import (
     _current_tenant_schema,
     _current_user_id,
     _request_session,
+    clear_tenant_schema,
     get_session_factory,
     set_tenant_schema,
 )
+from .template_write_guard import guard_template_writes
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -177,9 +179,10 @@ def _verify_and_stash_clinician_identity(request: Request) -> None:
         logger.debug("Middleware identity verification skipped (token parse failed)")
 
 
-# Why a request ended up on the default schema. Coarse labels carrying no
+# Why a request has no practice schema. Coarse labels carrying no
 # identifiers — enough to tell the cases apart when reading logs, since they
-# have different causes. An unauthenticated request is the ordinary one.
+# have different causes. An unauthenticated request is the ordinary one, and
+# the only one left on the default schema.
 UNRESOLVED_UNAUTHENTICATED = "unauthenticated"
 UNRESOLVED_NO_EMAIL = "identity-carries-no-email"
 UNRESOLVED_EMAIL_UNVERIFIED = "identity-email-not-verified"
@@ -201,11 +204,10 @@ def _resolve_schema_from_request(request: Request) -> tuple[str | None, str]:
     (``get_tenant_context`` refuses the same token with a 403).
 
     Returns ``(schema, reason)``. The reason exists so the caller can say WHY
-    a request is running on the default schema. Deployments that keep their
-    practice data in per-practice schemas will not find those tables on the
-    default one, so an unqualified query there reports a missing relation —
-    an error that describes the symptom rather than the cause. Naming the
-    reason turns that into something a log can answer directly.
+    a signed-in request is running without a practice schema. An unqualified
+    query there reports a missing relation — an error that describes the
+    symptom rather than the cause. Naming the reason turns that into
+    something a log can answer directly.
 
     Errors are still swallowed here — dependencies validate the token
     afterwards, and a transient lookup failure should not become a 500 in the
@@ -286,6 +288,7 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         session = get_session_factory()()
+        guard_template_writes(session)
         _request_session.set(session)
         request.scope[_SCOPE_SESSION_KEY] = session
 
@@ -330,26 +333,26 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
                 # never request.url.path, which carries record ids.
                 #
                 # A lookup that RAISED is an ERROR: the caller may well have a
-                # practice, and this request ran without it. No mapping or no
-                # email stays a WARNING — that is also what an administrator
-                # without a practice, or an account mid-onboarding, looks like.
+                # practice, and this request ran without it. No mapping, no
+                # email or an unverified one stays a WARNING — that is also
+                # what an administrator without a practice, or an account
+                # before its first sign-in or verification, looks like.
                 route = request.scope.get("route")
                 lookup_raised = unresolved_reason.startswith(UNRESOLVED_LOOKUP_RAISED)
                 logger.log(
                     logging.ERROR if lookup_raised else logging.WARNING,
                     "tenant_schema_unresolved route=%s method=%s status=%s reason=%s "
-                    "fell_back_to=%s",
+                    "ran_without_practice_schema",
                     getattr(route, "path", "unmatched"),
                     request.method,
                     getattr(response, "status_code", "unknown"),
                     unresolved_reason,
-                    DEFAULT_PRACTICE_SCHEMA,
                     extra={"event": "tenant_schema_unresolved"},
                 )
             # Guard: refuse to commit if the session still points at the
-            # default 'practice' schema and multi-tenancy is on.  This
-            # catches any code path that forgot to call set_tenant_schema
-            # before writing tenant data — a HIPAA-grade safety net.
+            # default 'practice' schema with changes pending. A write that
+            # was already flushed is refused at the flush instead
+            # (``template_write_guard``) — this check never sees it.
             if session.dirty or session.new or session.deleted:
                 self._assert_tenant_isolation(session)
             session.commit()
@@ -374,7 +377,7 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
             _current_patient_id.set(None)
 
     @staticmethod
-    def _prepare(request: Request, session: Session) -> tuple[str, str | None]:
+    def _prepare(request: Request, session: Session) -> tuple[str | None, str | None]:
         """Verify the caller, resolve their practice schema, and arm the session.
 
         Runs in a worker thread (see ``dispatch``) because every step blocks:
@@ -385,6 +388,16 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
         the schema resolved, or when the request simply carried no credential
         — public routes read no practice data, so that case is ordinary and
         stays quiet; logging it would bury the cases worth reading.
+
+        Only an unauthenticated request runs on the default schema. A
+        signed-in one that resolves to no practice — an unverified email, no
+        mapping yet, a failed lookup — runs with no practice schema at all
+        (``schema`` is ``None``). The default schema is the template every new
+        practice is built from and carries no row security, so a signed-in
+        request on it could read or write data that belongs to nobody. The
+        auth dependencies refuse such a session with its specific code; this
+        makes sure that whatever runs before or without them cannot reach the
+        template either.
 
         Ordering here is load-bearing and must not be rearranged.
         """
@@ -397,15 +410,15 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
         # Resolve tenant schema from auth token before any dependencies run.
         # This prevents race conditions where repo factories query the DB
         # before get_tenant_context sets the schema.
-        schema = DEFAULT_PRACTICE_SCHEMA
-        unresolved_reason: str | None = None
         resolved, reason = _resolve_schema_from_request(request)
         if resolved:
-            schema = resolved
-        elif reason != UNRESOLVED_UNAUTHENTICATED:
-            unresolved_reason = reason
-        set_tenant_schema(session, schema)
-        return schema, unresolved_reason
+            set_tenant_schema(session, resolved)
+            return resolved, None
+        if reason == UNRESOLVED_UNAUTHENTICATED:
+            set_tenant_schema(session, DEFAULT_PRACTICE_SCHEMA)
+            return DEFAULT_PRACTICE_SCHEMA, None
+        clear_tenant_schema(session)
+        return None, reason
 
     @classmethod
     def _finish_after_response(cls, session: Session) -> None:

@@ -559,17 +559,8 @@ def get_tenant_context(
         # The mapping exists before the invitee has an account, and a
         # password account can be registered for any address — so an email
         # the issuer has not verified must not be looked up at all. The
-        # schema-resolving middleware applies the same rule.
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "error": {
-                    "code": "EMAIL_NOT_VERIFIED",
-                    "message": "Verify your email address to continue",
-                    "details": {},
-                }
-            },
-        )
+        # schema-resolving middleware and ``_resolve_user`` apply the same rule.
+        raise _email_not_verified_error()
     if email:
         practice = _resolve_practice_from_email(email)
         if practice:
@@ -623,6 +614,39 @@ def get_tenant_context(
             }
         },
     )
+
+
+def _email_not_verified_error() -> HTTPException:
+    """403 for a session whose email the issuer has not verified."""
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={
+            "error": {
+                "code": "EMAIL_NOT_VERIFIED",
+                "message": "Verify your email address to continue",
+                "details": {},
+            }
+        },
+    )
+
+
+def _is_reserved_test_email(email: str) -> bool:
+    """Whether *email* is a reserved pentest or e2e identity outside production.
+
+    Firebase does not verify the address at sign-up, so these shapes are
+    honoured only off the production project — an attacker could otherwise
+    mint a token for an arbitrary ``e2etest-<hex>@pablo.health`` address.
+    """
+    if not email or get_settings().is_prod_project:
+        return False
+    return bool(PENTEST_EMAIL_PATTERN.match(email) or E2E_EMAIL_PATTERN.match(email))
+
+
+def _refuse_unverified_email(email: str, email_verified: bool, subject_id: str) -> None:
+    """403 ``EMAIL_NOT_VERIFIED`` for an address the issuer has not verified."""
+    if email and not email_verified and not _is_reserved_test_email(email):
+        logger.info("Refused sign-in: email not verified: uid=%s", subject_id)
+        raise _email_not_verified_error()
 
 
 def _extract_email(decoded_token: dict[str, Any]) -> str:
@@ -790,6 +814,42 @@ def _ensure_tenant_mapping(email: str) -> None:
     logger.info("Mapped auto-provisioned identity onto practice '%s'", DEFAULT_PRACTICE_ID)
 
 
+def _keep_request_off_the_template(email: str) -> None:
+    """Make sure an authenticated request runs on its practice's schema or on none.
+
+    The schema middleware resolves the practice before any dependency runs. Two
+    signed-in requests reach here without one: a first sign-in, whose mapping
+    was only just written, and a request whose credential the middleware could
+    not verify but the auth dependency could, which the middleware treated as
+    anonymous and left on the template. The first is pointed at the practice it
+    now has, so the request that created the account can read it; anything else
+    is taken off the template, which every new practice is built from and which
+    a signed-in request must never read or write.
+
+    This runs in a dependency's worker thread, so the ContextVar
+    ``set_tenant_schema`` writes does not reach the route; the schema it
+    records on the session does, and survives a commit partway through
+    (``_reapply_tenant_schema_on_txn_begin``).
+    """
+    from ..db import (
+        DEFAULT_PRACTICE_SCHEMA,
+        _current_tenant_schema,
+        _request_session,
+        clear_tenant_schema,
+        set_tenant_schema,
+    )
+
+    session = _request_session.get()
+    current = _current_tenant_schema.get()
+    if session is None or current not in (None, DEFAULT_PRACTICE_SCHEMA):
+        return
+    practice = _resolve_practice_from_email(email) if email else None
+    if practice:
+        set_tenant_schema(session, practice[1])
+    elif current == DEFAULT_PRACTICE_SCHEMA:
+        clear_tenant_schema(session)
+
+
 def _email_has_tenant_mapping(email: str) -> bool:
     """True if `email` has an `EmailTenantMappingRow` in the platform schema.
 
@@ -892,6 +952,19 @@ def _resolve_user(
             },
         )
 
+    # An address the issuer has not verified is only what someone typed at
+    # sign-up. Everything below — the allowlist, the practice mapping, the
+    # account-conflict check, the stored ``user.email`` that routes resolve a
+    # practice from — would otherwise take it on trust, so it is refused here,
+    # before any of it runs and before a row is written. This holds for an
+    # existing user too: one created before this check is held to it on every
+    # request. The session-liveness peek does not come through here
+    # (``get_session_peek_claims``), so the idle timer keeps working while the
+    # clinician verifies.
+    email = identity.email or _extract_email(decoded_token)
+    email_verified = identity.email_verified
+    _refuse_unverified_email(email, email_verified, subject_id)
+
     # Lookup-only first: if a mapping exists, use it. If not, defer the
     # creation until after the allowlist gate so rejected users don't
     # leave stray rows.
@@ -905,8 +978,6 @@ def _resolve_user(
 
     user = user_repo.get(pablo_user_id)
     if not user:
-        email = identity.email or _extract_email(decoded_token)
-
         # Fallback: look up email from Firebase Auth if a Firebase token
         # lacked it. Only meaningful for the Firebase provider — an OIDC
         # token carries its own verified `email` claim.
@@ -914,6 +985,7 @@ def _resolve_user(
             try:
                 fb_user = firebase_auth.get_user(subject_id)
                 email = (fb_user.email or "").lower()
+                email_verified = bool(fb_user.email_verified)
                 logger.info("Resolved email from Firebase Auth: uid=%s", subject_id)
             except Exception as exc:
                 # ERROR: with no email the account cannot be mapped to a
@@ -924,24 +996,15 @@ def _resolve_user(
                     subject_id,
                     type(exc).__name__,
                 )
+            _refuse_unverified_email(email, email_verified, subject_id)
 
-        # Reserved test-identity prefixes bypass the allowlist in non-prod
-        # only (Firebase signup doesn't verify email — an attacker could
-        # otherwise mint a token for an arbitrary e2etest-<hex>@pablo.health
-        # address and ride this path into prod).
         settings = get_settings()
-        is_prod_project = settings.is_prod_project
-        is_pentest_user = not is_prod_project and bool(email and PENTEST_EMAIL_PATTERN.match(email))
-        is_e2e_user = not is_prod_project and bool(email and E2E_EMAIL_PATTERN.match(email))
         # A practice mapping vouches for the address only once the issuer
         # has confirmed the account holder controls it (see providers).
-        is_provisioned_tenant = bool(
-            email and identity.email_verified and _email_has_tenant_mapping(email)
-        )
+        is_provisioned_tenant = bool(email and email_verified and _email_has_tenant_mapping(email))
         if (
             settings.restrict_signups
-            and not is_pentest_user
-            and not is_e2e_user
+            and not _is_reserved_test_email(email)
             and not is_provisioned_tenant
             and (not email or not allowlist_repo.is_allowed(email))
         ):
@@ -1044,6 +1107,9 @@ def _resolve_user(
     # token-exchange / CLI callers pass ``request=None`` and have no
     # request-scoped session to arm.
     from ..db import _request_session, arm_current_user_id
+
+    if request is not None:
+        _keep_request_off_the_template(email if email_verified else "")
 
     db_session = _request_session.get()
     if db_session is not None:

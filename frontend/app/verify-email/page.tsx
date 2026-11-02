@@ -12,7 +12,6 @@
 
 import { redirect } from "next/navigation"
 import { getServerSession } from "@/lib/auth/server"
-import { needsEmailVerification } from "@/lib/auth/emailVerification"
 import { IS_DEV_MODE } from "@/lib/devMode"
 import { VerifyEmailForm } from "./VerifyEmailForm"
 
@@ -27,7 +26,10 @@ export default async function VerifyEmailPage() {
   if (!session) {
     redirect("/login")
   }
-  if (!needsEmailVerification(session.claims)) {
+  // Only a session the provider calls verified goes on. One whose claim is
+  // missing stays: the dashboard sends it here when the API refuses it, and
+  // sending it back would loop.
+  if (session.claims.emailVerified === true) {
     redirect("/dashboard")
   }
 

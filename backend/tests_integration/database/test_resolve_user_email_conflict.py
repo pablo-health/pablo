@@ -104,7 +104,9 @@ def test_a_new_uid_with_a_taken_email_is_a_conflict_and_writes_nothing(
 
     with Session(engine) as session:
         with pytest.raises(HTTPException) as exc_info:
-            _resolve(session, {"uid": new_uid, "email": email, "name": "Someone"})
+            _resolve(
+                session, {"uid": new_uid, "email": email, "email_verified": True, "name": "Someone"}
+            )
         # Commit whatever the refused call left pending: a refusal must not
         # have staged a write for the request to commit afterwards.
         session.commit()
@@ -133,5 +135,7 @@ def test_the_original_uid_still_signs_in(
     """The conflict check must not catch the email's own user."""
     user_id, old_uid, email = existing_user
     with Session(engine) as session:
-        user = _resolve(session, {"uid": old_uid, "email": email, "name": "Original"})
+        user = _resolve(
+            session, {"uid": old_uid, "email": email, "email_verified": True, "name": "Original"}
+        )
     assert user.id == user_id

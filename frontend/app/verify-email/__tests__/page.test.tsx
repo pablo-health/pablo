@@ -37,6 +37,14 @@ describe("VerifyEmailPage", () => {
     await expect(VerifyEmailPage()).rejects.toThrow("NEXT_REDIRECT /dashboard")
   })
 
+  it("renders for a session that does not say whether its email is verified", async () => {
+    // The dashboard sends such a session here when the API refuses it, so
+    // sending it back would loop.
+    getServerSession.mockResolvedValue(session({ email: "a@example.com" }))
+    await expect(VerifyEmailPage()).resolves.toBeTruthy()
+    expect(redirect).not.toHaveBeenCalled()
+  })
+
   it("renders for a session whose email is unverified", async () => {
     getServerSession.mockResolvedValue(session({ email: "a@example.com", emailVerified: false }))
     await expect(VerifyEmailPage()).resolves.toBeTruthy()

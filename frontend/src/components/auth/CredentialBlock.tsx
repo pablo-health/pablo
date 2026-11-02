@@ -191,6 +191,14 @@ export function CredentialBlock({
   )
 
   const resolveCredential = async (credential: UserCredential, method: AuthMethod) => {
+    // The API refuses an unverified email, so stop here as sign-up does
+    // rather than opening a session that cannot reach the practice.
+    if (credential.user.email && !credential.user.emailVerified) {
+      onEmailChange(credential.user.email)
+      setStep("verify-email")
+      setError("")
+      return
+    }
     // Prompt inline when a Firebase sign-in still needs Pablo's passkey.
     // Status failures fall through because the server-side dashboard gate is
     // authoritative and will route an unsatisfied session to step-up.
