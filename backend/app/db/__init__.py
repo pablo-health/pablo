@@ -431,10 +431,12 @@ def current_practice_schema(session: Session) -> str:
 
     Raises rather than falling back to the template schema: a caller that
     reaches here without a tenant is a caller about to write a row belonging to
-    nobody, and the cheapest place to stop that is here.
+    nobody, and the cheapest place to stop that is here. A session cleared to
+    ``platform, public`` (a signed-in caller with no practice) has no practice
+    either, though ``current_schema()`` then names ``platform``.
     """
     schema = session.execute(text("SELECT current_schema()")).scalar()
-    if not schema or schema == DEFAULT_PRACTICE_SCHEMA:
+    if not schema or schema in {DEFAULT_PRACTICE_SCHEMA, PLATFORM_SCHEMA, "public"}:
         msg = (
             "No practice schema on this session — refusing to resolve a "
             f"practice_id (current_schema() = {schema!r}). Call set_tenant_schema first."

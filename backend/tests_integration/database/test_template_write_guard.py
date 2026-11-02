@@ -118,6 +118,29 @@ def test_a_resolved_request_runs_on_its_practice(session: Session) -> None:
     assert _search_path(session).startswith(f"{DEFAULT_PRACTICE_OWN_SCHEMA},")
 
 
+@pytest.mark.parametrize("prepare", ["cleared", "default"])
+def test_a_session_with_no_practice_has_no_practice_id(session: Session, prepare: str) -> None:
+    from app.db import clear_tenant_schema, current_practice_schema  # noqa: PLC0415
+
+    if prepare == "cleared":
+        clear_tenant_schema(session)
+
+    with pytest.raises(RuntimeError, match="No practice schema"):
+        current_practice_schema(session)
+
+
+def test_a_resolved_session_names_its_practice(session: Session) -> None:
+    from app.db import (  # noqa: PLC0415
+        DEFAULT_PRACTICE_OWN_SCHEMA,
+        current_practice_schema,
+        set_tenant_schema,
+    )
+
+    set_tenant_schema(session, DEFAULT_PRACTICE_OWN_SCHEMA)
+
+    assert current_practice_schema(session) == DEFAULT_PRACTICE_OWN_SCHEMA
+
+
 _ROUTE = {"ehr_system": "guard", "route_name": "r"}
 
 
