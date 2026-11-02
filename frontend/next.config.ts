@@ -2,9 +2,12 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  // Memoizes components and hooks at build time, so hand-written
-  // useMemo/useCallback is only needed where a value's identity is the point.
-  reactCompiler: true,
+  // Memoizes at build time only the components and hooks that opt in with a
+  // "use memo" directive. Compiling everything added about 235 KB gzipped to
+  // the client bundle for no measured gain, and it can break code that unit
+  // tests and lint pass (tests run uncompiled). Opt a view in once it is
+  // measured to be limited by re-renders.
+  reactCompiler: { compilationMode: "annotation" },
   allowedDevOrigins: ["127.0.0.1"],
   // Suppress X-Powered-By: Next.js — version disclosure aids fingerprinting.
   poweredByHeader: false,
