@@ -10,6 +10,7 @@
  */
 
 import jsPDF from "jspdf"
+import { formatDate, LONG_DATE } from "@/lib/dates"
 import type { PeopleWords } from "@/lib/peopleTerm"
 import type { SOAPNoteModel } from "@/types/sessions"
 import { headsNextBlock, parseNarrativeBlocks } from "./narrativeParser"
@@ -63,15 +64,6 @@ const BULLET_MAX_WIDTH = 162
 const LINE_HEIGHT = 5
 const SECTION_GAP = 10
 const MARGIN_BOTTOM = 20
-
-function formatDate(dateString: string): string {
-  const date = new Date(dateString)
-  return date.toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  })
-}
 
 /**
  * Render a single content block into the PDF document.
@@ -192,7 +184,7 @@ export function exportNoteToPDF(meta: PDFExportMetadata, note: PDFNote, people: 
     doc.text(`Session #${meta.session_number}`, LEFT_MARGIN, yPosition)
     yPosition += 7
   }
-  doc.text(`Date: ${formatDate(meta.session_date)}`, LEFT_MARGIN, yPosition)
+  doc.text(`Date: ${formatDate(meta.session_date, LONG_DATE, "en-US")}`, LEFT_MARGIN, yPosition)
   yPosition += 7
   for (const line of meta.visit ?? []) {
     for (const wrapped of doc.splitTextToSize(line, MAX_WIDTH) as string[]) {

@@ -47,6 +47,17 @@ export function formatDateOrRaw(
   return Number.isNaN(date.getTime()) ? iso : date.toLocaleDateString(locale, options)
 }
 
+/**
+ * A clock time, "3:42 PM" in en-US. `timeZone` and `locale` are the
+ * browser's when omitted.
+ */
+export function formatTime(
+  at: Date | string,
+  { timeZone, locale }: { timeZone?: string; locale?: string } = {}
+): string {
+  return new Date(at).toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit", timeZone })
+}
+
 /** The zone the browser is running in, e.g. "America/Chicago". */
 export function browserTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone

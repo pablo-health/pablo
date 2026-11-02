@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
+import { formatTime } from "@/lib/dates"
+
 /**
  * When a calendar was last read, the way the rest of the app shows a time:
  * "3:42 PM" for today, "Oct 3, 3:42 PM" for an earlier day. `timeZone` is
@@ -11,7 +13,7 @@ export function formatLastRead(iso: string, now: Date = new Date(), timeZone?: s
   const zone = timeZone ? { timeZone } : {}
   const day = (d: Date) =>
     new Intl.DateTimeFormat("en-US", { year: "numeric", month: "numeric", day: "numeric", ...zone }).format(d)
-  const time = read.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", ...zone })
+  const time = formatTime(read, { locale: "en-US", timeZone })
   if (day(read) === day(now)) return time
   const date = read.toLocaleDateString("en-US", { month: "short", day: "numeric", ...zone })
   return `${date}, ${time}`

@@ -13,6 +13,7 @@ import { useDashboardSummary } from "@/hooks/useDashboard"
 import { useUserTimeZone } from "@/hooks/usePreferences"
 import { appointmentBadge } from "@/lib/appointmentBadge"
 import { isCompanionAvailable } from "@/lib/companion"
+import { formatTime } from "@/lib/dates"
 import { useCompanionAccess } from "@/lib/companion.extensions"
 import type { AppointmentResponse } from "@/types/scheduling"
 import { ChartUpdatesWaitingLink, PeopleWithChartUpdates } from "./ChartUpdatesLinks"
@@ -148,11 +149,7 @@ function AppointmentRow({
   onGetApp,
 }: AppointmentRowProps) {
   const start = new Date(appointment.start_at)
-  const time = start.toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone,
-  })
+  const time = formatTime(start, { locale: "en-US", timeZone })
   const badge = appointmentBadge(appointment)
   // Only confirmed, not-yet-recorded appointments are launchable.
   const launchable =

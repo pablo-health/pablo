@@ -4,6 +4,7 @@
 
 import { Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { formatTime } from "@/lib/dates"
 
 interface CheckNowProps {
   checking: boolean
@@ -26,7 +27,7 @@ export function CheckNow({ checking, resting, checkedAt, disabled, onCheck }: Ch
     : checkedAt && resting
       ? "Checked just now. You can check again in a moment."
       : checkedAt
-        ? `Last checked at ${checkedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`
+        ? `Last checked at ${formatTime(checkedAt)}.`
         : resting
           ? "You can check again in a moment."
           : "Looks up your DNS records."
