@@ -59,6 +59,13 @@ NO_CREDENTIALS = "NO_CREDENTIALS"
 #     ENTITLEMENT, not identity. The caller proved who they are and was told
 #     this feature is not theirs, which is a gate working, not a credential
 #     being guessed.
+#   - EMAIL_NOT_VERIFIED: a valid token for an address the provider has not
+#     verified yet. The person is who they say they are and is being asked
+#     to verify, the same first-login class as MFA_REQUIRED. Every practice
+#     route refuses the session with this code, so one dashboard load fans
+#     out enough parallel 403s (each retried once with a fresh token) to pass
+#     the per-IP spike threshold from a single browser: 38 in 90 seconds
+#     paged the brute-force alert on 2026-11-01.
 # Genuinely suspicious codes (INVALID_TOKEN, TOKEN_REVOKED, USER_DISABLED)
 # still count — those are the signal the alert exists to catch.
 _AUTH_FAILED_EXEMPT_CODES: frozenset[str] = frozenset(
@@ -69,6 +76,7 @@ _AUTH_FAILED_EXEMPT_CODES: frozenset[str] = frozenset(
         NO_CREDENTIALS,
         "FEATURE_NOT_ENABLED",
         "SUBSCRIPTION_REQUIRED",
+        "EMAIL_NOT_VERIFIED",
     }
 )
 

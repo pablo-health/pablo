@@ -110,6 +110,13 @@ def _build_app() -> FastAPI:
             detail={"error": {"code": "MFA_REQUIRED", "message": "...", "details": {}}},
         )
 
+    @app.get("/forbidden-email-not-verified")
+    def forbidden_email_not_verified() -> None:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": {"code": "EMAIL_NOT_VERIFIED", "message": "...", "details": {}}},
+        )
+
     @app.get("/notfound")
     def notfound() -> None:
         raise HTTPException(status_code=404, detail="nope")
@@ -274,6 +281,16 @@ def test_skips_mfa_required(auth_logs: io.StringIO) -> None:
     # Response is unchanged...
     assert response.json()["detail"]["error"]["code"] == "MFA_REQUIRED"
     # ...but the auth-failed counter is NOT incremented.
+    assert _lines(auth_logs) == []
+
+
+def test_skips_email_not_verified(auth_logs: io.StringIO) -> None:
+    # A valid token for an unverified address is a first-login state, not a
+    # guessed credential. Every practice route refuses it, so one dashboard
+    # load fans out enough 403s to trip the per-IP spike alert by itself.
+    response = TestClient(_build_app()).get("/forbidden-email-not-verified")
+    assert response.status_code == 403
+    assert response.json()["detail"]["error"]["code"] == "EMAIL_NOT_VERIFIED"
     assert _lines(auth_logs) == []
 
 
