@@ -14,6 +14,7 @@ import {
   type InboxList,
   type InboxView,
 } from "@/lib/api/inbox"
+import { pollingOptions } from "@/lib/query/polling"
 import { inboxKeys } from "./inboxKeys"
 import { messageInboxKeys } from "./useMessageInbox"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
@@ -25,21 +26,29 @@ const POLL_MS = 60_000
 const EVERYTHING = [inboxKeys.all, messageInboxKeys.all]
 
 export function useInboxItems(view: InboxView, kinds: readonly string[]) {
-  return useAuthQuery<InboxList>({
-    queryKey: inboxKeys.list(view, kinds),
-    queryFn: () => listInbox(view, [...kinds]),
-    refetchInterval: POLL_MS,
-  })
+  return useAuthQuery<InboxList>(
+    pollingOptions(
+      {
+        queryKey: inboxKeys.list(view, kinds),
+        queryFn: () => listInbox(view, [...kinds]),
+      },
+      POLL_MS,
+    ),
+  )
 }
 
 /** The nav badge. `retry: false`: a failed count shows no badge rather than a retry storm. */
 export function useInboxCount() {
-  return useAuthQuery<{ count: number }>({
-    queryKey: inboxKeys.count(),
-    queryFn: () => getInboxCount(),
-    refetchInterval: POLL_MS,
-    retry: false,
-  })
+  return useAuthQuery<{ count: number }>(
+    pollingOptions(
+      {
+        queryKey: inboxKeys.count(),
+        queryFn: () => getInboxCount(),
+        retry: false,
+      },
+      POLL_MS,
+    ),
+  )
 }
 
 interface ItemRef {

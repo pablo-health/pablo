@@ -13,6 +13,7 @@ import {
   uploadFileToStorage,
 } from "@/lib/api/patientDocuments"
 import { queryKeys } from "@/lib/api/queryKeys"
+import { pollingOptions } from "@/lib/query/polling"
 import type {
   DocumentCategory,
   PatientDocumentListResponse,
@@ -54,16 +55,20 @@ export function usePatientDocument(
   // changes on every resolved fetch) to detect "gave up polling" in
   // callers (see EXTRACTION_POLL_TIMEOUT_TICKS doc comment above).
   const [pollCount, setPollCount] = useState(0)
-  const query = useAuthQuery<PatientDocumentResponse>({
-    queryKey: queryKeys.patientDocuments.detail(documentId ?? ""),
-    queryFn: () => getPatientDocument(documentId!, token),
-    enabled: documentId !== null,
-    refetchInterval: (query) => {
-      if (query.state.data?.extraction_status !== "pending") return false
-      if (query.state.dataUpdateCount > EXTRACTION_POLL_TIMEOUT_TICKS) return false
-      return 3000
-    },
-  })
+  const query = useAuthQuery<PatientDocumentResponse>(
+    pollingOptions(
+      {
+        queryKey: queryKeys.patientDocuments.detail(documentId ?? ""),
+        queryFn: () => getPatientDocument(documentId!, token),
+        enabled: documentId !== null,
+      },
+      (query) => {
+        if (query.state.data?.extraction_status !== "pending") return false
+        if (query.state.dataUpdateCount > EXTRACTION_POLL_TIMEOUT_TICKS) return false
+        return 3000
+      },
+    ),
+  )
   const { dataUpdatedAt } = query
 
   useEffect(() => {

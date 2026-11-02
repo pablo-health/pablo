@@ -297,6 +297,7 @@ CORS_ALLOW_HEADERS = [
     "X-Client-App",
     "X-Client-Device",
     "X-Client-Browser",
+    "X-Pablo-Background",
 ]
 
 # Parse CORS origins (comma-separated string to list)

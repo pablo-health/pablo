@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
+import { pollingOptions } from "@/lib/query/polling"
+
 /**
  * How the calendar's own queries stay current with the server.
  *
@@ -15,12 +17,19 @@
  *   and switching straight back.
  * - Refetch every minute while the calendar is mounted. React Query pauses
  *   the interval while the tab is hidden (`refetchIntervalInBackground`
- *   false) and drops it when the calendar unmounts.
+ *   false) and drops it when the calendar unmounts. The minute poll goes
+ *   through `pollingOptions`, so an open calendar does not keep an
+ *   unattended screen signed in.
  */
 export const CALENDAR_REFETCH_INTERVAL_MS = 60 * 1000
 
-export const calendarFreshness = {
-  refetchOnWindowFocus: "always",
-  refetchInterval: CALENDAR_REFETCH_INTERVAL_MS,
-  refetchIntervalInBackground: false,
-} as const
+export function withCalendarFreshness<TOptions extends { queryFn?: unknown }>(options: TOptions) {
+  return pollingOptions(
+    {
+      ...options,
+      refetchOnWindowFocus: "always" as const,
+      refetchIntervalInBackground: false,
+    },
+    CALENDAR_REFETCH_INTERVAL_MS,
+  )
+}

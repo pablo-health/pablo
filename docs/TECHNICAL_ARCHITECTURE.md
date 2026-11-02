@@ -237,7 +237,10 @@ gating; there is no hidden configuration beyond these settings.
 - **Automatic idle logoff** - a backend-enforced idle session timeout
   (`backend/app/auth/idle_session.py`) rejects requests whose session has been
   idle past the configured window, so a restored tab or replayed token cannot
-  silently keep touching PHI. HIPAA §164.312(a)(2)(iii).
+  silently keep touching PHI. Requests the browser makes on a timer (polls,
+  sent with `X-Pablo-Background: 1`) are checked but do not count as
+  activity, so an open, untouched tab still times out.
+  HIPAA §164.312(a)(2)(iii).
 - **Application-level audit logging** - `AuditService`
   (`backend/app/services/audit_service.py`) records every PHI-touching request:
   who, what, when, source IP/user agent, and the change diff for mutations.

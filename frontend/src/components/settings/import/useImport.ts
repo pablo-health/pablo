@@ -10,6 +10,7 @@
 
 import { useQueryClient } from "@tanstack/react-query"
 import { useAuthQuery } from "@/hooks/useAuthQuery"
+import { pollingOptions } from "@/lib/query/polling"
 import {
   IMPORT_BUSY_STATES,
   getImportRun,
@@ -31,29 +32,33 @@ const POLL_LIMIT = 400
 
 export function useImportRun(runId: string | null) {
   const queryClient = useQueryClient()
-  return useAuthQuery<ImportRunDetail>({
-    queryKey: importKeys.run(runId ?? "none"),
-    queryFn: async () => {
-      const run = await getImportRun(runId as string)
-      if (!IMPORT_BUSY_STATES.has(run.state)) {
-        void queryClient.invalidateQueries({ queryKey: importKeys.runs() })
-      }
-      return run
-    },
-    enabled: runId !== null,
-    refetchInterval: (query) => {
-      const run = query.state.data
-      const state = run?.state
-      if (!state) return false
-      // Being read or landed; or landed, with the chart check that follows
-      // the import (client by client, after it applied) not yet reported.
-      const waiting =
-        IMPORT_BUSY_STATES.has(state) || (state === "applied" && !run?.report?.chart_updates)
-      if (!waiting) return false
-      if (query.state.dataUpdateCount > POLL_LIMIT) return false
-      return POLL_MS
-    },
-  })
+  return useAuthQuery<ImportRunDetail>(
+    pollingOptions(
+      {
+        queryKey: importKeys.run(runId ?? "none"),
+        queryFn: async () => {
+          const run = await getImportRun(runId as string)
+          if (!IMPORT_BUSY_STATES.has(run.state)) {
+            void queryClient.invalidateQueries({ queryKey: importKeys.runs() })
+          }
+          return run
+        },
+        enabled: runId !== null,
+      },
+      (query) => {
+        const run = query.state.data
+        const state = run?.state
+        if (!state) return false
+        // Being read or landed; or landed, with the chart check that follows
+        // the import (client by client, after it applied) not yet reported.
+        const waiting =
+          IMPORT_BUSY_STATES.has(state) || (state === "applied" && !run?.report?.chart_updates)
+        if (!waiting) return false
+        if (query.state.dataUpdateCount > POLL_LIMIT) return false
+        return POLL_MS
+      },
+    ),
+  )
 }
 
 export function useImportHistory() {

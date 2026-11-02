@@ -7,6 +7,7 @@ import { useQueries, useQueryClient } from "@tanstack/react-query"
 import { getSession } from "@/lib/api/sessions"
 import { queryKeys } from "@/lib/api/queryKeys"
 import { useConfig } from "@/lib/config"
+import { pollingOptions } from "@/lib/query/polling"
 import {
   draftOutcome,
   isDrafting,
@@ -47,7 +48,7 @@ export function useDraftNotices(): {
   const announced = useRef(new Set<string>())
   const [notices, setNotices] = useState<DraftNotice[]>([])
 
-  const { data: list } = useSessionList(undefined, { refetchInterval: LIST_POLL_MS })
+  const { data: list } = useSessionList(undefined, undefined, LIST_POLL_MS)
 
   useEffect(() => {
     if (!live || !list) return
@@ -60,13 +61,17 @@ export function useDraftNotices(): {
 
   const watched = useWatchedDrafts()
   const drafts = useQueries({
-    queries: watched.map((sessionId) => ({
-      queryKey: queryKeys.sessions.detail(sessionId),
-      queryFn: () => getSession(sessionId),
-      enabled: live,
-      staleTime: 0,
-      refetchInterval: DRAFT_POLL_MS,
-    })),
+    queries: watched.map((sessionId) =>
+      pollingOptions(
+        {
+          queryKey: queryKeys.sessions.detail(sessionId),
+          queryFn: () => getSession(sessionId),
+          enabled: live,
+          staleTime: 0,
+        },
+        DRAFT_POLL_MS,
+      ),
+    ),
   })
 
   useEffect(() => {
