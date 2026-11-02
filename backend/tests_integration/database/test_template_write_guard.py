@@ -216,3 +216,56 @@ def test_an_unguarded_session_may_build_the_template(engine: Engine) -> None:
         s.add(_route_row())
         s.flush()
         s.rollback()
+
+
+def test_a_schema_set_in_a_worker_thread_survives_a_mid_request_commit(engine: Engine) -> None:
+    """A sync dependency sets the schema in one worker thread; the route runs in another.
+
+    The ContextVar the pool listener reads does not cross threads, so after a
+    commit hands the connection back, the next transaction must still get the
+    schema from the session itself.
+    """
+    import threading  # noqa: PLC0415
+
+    from app.db import DEFAULT_PRACTICE_OWN_SCHEMA, set_tenant_schema  # noqa: PLC0415
+    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+
+    with OrmSession(engine) as s:
+        worker = threading.Thread(target=set_tenant_schema, args=(s, DEFAULT_PRACTICE_OWN_SCHEMA))
+        worker.start()
+        worker.join()
+        assert _search_path(s).startswith(f"{DEFAULT_PRACTICE_OWN_SCHEMA},")
+
+        s.commit()
+
+        assert _search_path(s).startswith(f"{DEFAULT_PRACTICE_OWN_SCHEMA},")
+
+
+def test_a_session_cleared_in_a_worker_thread_stays_off_the_template_after_a_commit(
+    engine: Engine,
+) -> None:
+    """The request's ContextVar still names the template; the session was taken off it.
+
+    After a commit hands the connection back, the next transaction must come
+    back with no practice schema, not on the template the ContextVar names.
+    """
+    import threading  # noqa: PLC0415
+
+    from app.db import (  # noqa: PLC0415
+        DEFAULT_PRACTICE_SCHEMA,
+        _current_tenant_schema,
+        clear_tenant_schema,
+        set_tenant_schema,
+    )
+    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+
+    with OrmSession(engine) as s:
+        set_tenant_schema(s, DEFAULT_PRACTICE_SCHEMA)
+        worker = threading.Thread(target=clear_tenant_schema, args=(s,))
+        worker.start()
+        worker.join()
+        assert _current_tenant_schema.get() == DEFAULT_PRACTICE_SCHEMA
+
+        s.commit()
+
+        assert _search_path(s) == "platform, public"

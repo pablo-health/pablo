@@ -821,6 +821,11 @@ def _keep_request_off_the_template(email: str) -> None:
     now has, so the request that created the account can read it; anything else
     is taken off the template, which every new practice is built from and which
     a signed-in request must never read or write.
+
+    This runs in a dependency's worker thread, so the ContextVar
+    ``set_tenant_schema`` writes does not reach the route; the schema it
+    records on the session does, and survives a commit partway through
+    (``_reapply_tenant_schema_on_txn_begin``).
     """
     from ..db import (
         DEFAULT_PRACTICE_SCHEMA,

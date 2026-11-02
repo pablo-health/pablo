@@ -83,6 +83,18 @@ _current_user_id: ContextVar[str | None] = ContextVar("_current_user_id", defaul
 # worker thread (see :func:`arm_current_user_id`).
 _RLS_USER_ID_KEY = "rls_current_user_id"
 
+# Key under which ``set_tenant_schema`` records the session's practice schema
+# on ``Session.info``. Same reasoning as ``_RLS_USER_ID_KEY``: the ContextVar
+# the pool's checkout listener reads is lost when the schema is set inside a
+# sync dependency's worker thread, but the Session is shared by reference, so
+# the ``after_begin`` listener can put the schema back after a mid-request
+# commit hands the connection back to the pool.
+_TENANT_SCHEMA_KEY = "tenant_search_path_schema"
+
+# What ``clear_tenant_schema`` records: deliberately no practice. Not the same
+# as an absent key, which means the session's schema was never set this way.
+_NO_PRACTICE_SCHEMA = ""
+
 # Request-scoped patient id, the patient analog of ``_current_user_id``
 # above. Patient-facing surfaces authenticate a *patient* principal (see
 # ``app.auth.patient_context``), not a clinician, so patient-scoped RLS
@@ -563,9 +575,15 @@ def set_tenant_schema(session: Session, practice_schema: str = DEFAULT_PRACTICE_
     session's first connection is returned to the pool and a later
     operation (e.g. a deferred task) checks out a fresh one whose
     server-side ``search_path`` is whatever a previous user left on it.
+
+    The schema is also recorded on the Session, and put back on every new
+    transaction that lost it. So this is the only way to switch a Session's
+    practice: a raw ``SET search_path`` would be undone after the next commit
+    (``tests/test_search_path_switch_guardrail.py``).
     """
     _validate_schema_name(practice_schema)
     session.execute(text(f"SET search_path = {practice_schema}, {PLATFORM_SCHEMA}, public"))
+    session.info[_TENANT_SCHEMA_KEY] = practice_schema
     _current_tenant_schema.set(practice_schema)
 
 
@@ -579,6 +597,7 @@ def clear_tenant_schema(session: Session) -> None:
     listener left on the connection.
     """
     session.execute(text(f"SET search_path = {PLATFORM_SCHEMA}, public"))
+    session.info[_TENANT_SCHEMA_KEY] = _NO_PRACTICE_SCHEMA
     _current_tenant_schema.set(None)
 
 
@@ -795,6 +814,40 @@ def read_once_as(
         return session.execute(statement).all()
     finally:
         savepoint.rollback()
+
+
+@event.listens_for(Session, "after_begin")
+def _reapply_tenant_schema_on_txn_begin(
+    session: Session, _transaction: Any, connection: Any
+) -> None:
+    """Keep a session on the practice schema it was set to, across commits.
+
+    ``set_tenant_schema`` sets the path on the current connection and in a
+    ContextVar the pool's checkout listener reads. When it runs in a sync
+    dependency's worker thread, that ContextVar is gone by the time the route
+    runs; a commit then returns the connection to the pool (checkin resets it
+    to the neutral path), and the next transaction's connection comes back
+    without the practice schema. The schema recorded on ``session.info``
+    rides the Session itself, so it is put back here.
+
+    Only when the two disagree: when they match, the checkout listener has
+    already applied it and this costs nothing. A session cleared with
+    ``clear_tenant_schema`` is put back on no practice, not on whatever the
+    ContextVar still names.
+
+    Because this restores the recorded schema, a raw ``SET search_path`` on a
+    Session would be undone after the next commit. Switch with
+    ``set_tenant_schema``; ``tests/test_search_path_switch_guardrail.py``
+    holds the line.
+    """
+    recorded = session.info.get(_TENANT_SCHEMA_KEY)
+    if recorded is None:
+        return
+    wanted = recorded or None
+    if wanted == _current_tenant_schema.get():
+        return
+    path = f"{wanted}, {PLATFORM_SCHEMA}, public" if wanted else f"{PLATFORM_SCHEMA}, public"
+    connection.exec_driver_sql(f"SET search_path = {path}")
 
 
 @event.listens_for(Session, "after_begin")

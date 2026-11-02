@@ -280,7 +280,7 @@ def test_pay_first_sign_up_then_verify_then_onboard(
 
 
 def test_a_first_sign_in_reads_the_practice_it_was_just_mapped_to(
-    fastapi_app: FastAPI, engine: Engine
+    fastapi_app: FastAPI, engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An ungated deployment maps a new account on its first request.
 
@@ -293,8 +293,10 @@ def test_a_first_sign_in_reads_the_practice_it_was_just_mapped_to(
         PlatformUserRow,
         UserIdentityRow,
     )
+    from app.settings import get_settings  # noqa: PLC0415
     from sqlalchemy.orm import Session  # noqa: PLC0415
 
+    monkeypatch.setattr(get_settings(), "restrict_signups", False)
     uid = _uid()
     email = f"first-{uuid.uuid4().hex[:8]}@example.invalid"
     try:

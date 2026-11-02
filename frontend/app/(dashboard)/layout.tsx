@@ -117,6 +117,12 @@ export default async function DashboardLayout({
       if (error instanceof ApiError && error.code === "ACCOUNT_CONFLICT") {
         redirect("/login?reason=account_conflict")
       }
+      // The API refused an unverified email that the session claims did not
+      // flag (a cookie from before they carried it, or an issuer that omits
+      // it). /login would bounce straight back here; verifying is the way out.
+      if (error instanceof ApiError && error.code === "EMAIL_NOT_VERIFIED") {
+        redirect(VERIFY_EMAIL_PATH)
+      }
       redirect("/login")
     }
 
