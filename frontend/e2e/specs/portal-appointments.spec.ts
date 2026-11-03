@@ -21,47 +21,15 @@
 
 import type { Locator, Page } from "@playwright/test"
 import { expect, test } from "../fixtures/auth"
-import type { ApiClient } from "../fixtures/api"
+import { givePortalInvitation, openPortalSection, signInToPortal } from "../fixtures/portal"
 import {
-  givePortalContactDetails,
-  givePortalInvitation,
-  openPortalSection,
-  signInToPortal,
-} from "../fixtures/portal"
-import {
+  diaryOnceItHolds,
+  givePortalPatient,
   giveSelfBookableType,
   giveWorkingHoursAllWeek,
   letExistingClientsSelfBook,
+  walkToAnOpening,
 } from "../fixtures/portal-appointments"
-import { givePatient, type Patient } from "../fixtures/scenarios"
-
-interface ClinicianAppointment {
-  id: string
-  start_at: string
-  status: string
-  patient_id: string | null
-}
-
-/**
- * This patient's appointments, as the clinician who owns the diary sees
- * them.
- *
- * The clinician route is a range query over the whole practice, so the range
- * is wide enough to cover anything a spec here books and the rows are
- * narrowed to the one patient afterwards. A worker shares its practice with
- * nothing else, but filtering by patient keeps the assertion about the
- * patient rather than about the worker.
- */
-/** A patient of this practice who can be invited into the portal. */
-async function givePortalPatient(api: ApiClient): Promise<{
-  patient: Patient
-  email: string
-  phone: string
-}> {
-  const { email, phone } = givePortalContactDetails()
-  const patient = await givePatient(api, { email, phone, date_of_birth: "1988-04-02" })
-  return { patient, email, phone }
-}
 
 /**
  * The upcoming list, and the list of what is over.
@@ -77,73 +45,6 @@ function upcomingRows(page: Page): Locator {
 
 function pastRows(page: Page): Locator {
   return page.getByTestId("appointments-past").getByTestId("appointments-row")
-}
-
-/**
- * This patient's appointments once the diary holds `count` of them.
- *
- * A booking is committed before the portal answers, but the clinician's range
- * query has been observed answering 200 with nothing in it immediately after —
- * so reading once turns a settling window into a failed assertion about the
- * wrong thing. Polling for the count this step expects keeps the assertions
- * that follow about what the appointments ARE.
- */
-async function diaryOnceItHolds(
-  api: ApiClient,
-  patientId: string,
-  count: number,
-): Promise<ClinicianAppointment[]> {
-  await expect.poll(async () => (await diaryFor(api, patientId)).length).toBe(count)
-  return diaryFor(api, patientId)
-}
-
-/** How far past the day the picker opens on the walk below will look. */
-const WALK_LIMIT_DAYS = 10
-
-/**
- * Walk the picker forward until a day offers an opening, and answer how many
- * days that took.
- *
- * Counting days to the practice's notice period instead would make the
- * journey depend on two things it is not about: a policy the practice is free
- * to change, and what time of day the run happens to start. Both have to be
- * right for a fixed number of clicks to land somewhere bookable, and when
- * they are not the failure arrives as an empty grid several steps later.
- *
- * Asking the picker keeps the assertion about the patient taking an opening
- * the engine really offered. `skipDays` walks past days the caller already
- * knows it does not want — the move below wants a day other than the one it
- * is giving up.
- */
-async function walkToAnOpening(page: Page, skipDays = 0): Promise<number> {
-  for (let day = 0; day < skipDays; day += 1) {
-    await page.getByTestId("appointments-slots-next").click()
-  }
-
-  for (let day = skipDays; day <= skipDays + WALK_LIMIT_DAYS; day += 1) {
-    const openings = page.getByTestId("appointments-slot")
-    // The day has answered when it says it is empty or draws a grid; until
-    // then it is still loading and counting openings would count nothing.
-    await expect(openings.first().or(page.getByTestId("appointments-slots-empty"))).toBeVisible()
-    if ((await openings.count()) > 0) return day
-    await page.getByTestId("appointments-slots-next").click()
-  }
-
-  throw new Error(
-    `No opening on any day from ${skipDays} to ${skipDays + WALK_LIMIT_DAYS} out. ` +
-      "The practice has hours on every day of the week and self-booking on, so " +
-      "either the notice period now reaches further than this walk, or the " +
-      "openings are being computed for a clinician other than the one seeded.",
-  )
-}
-
-async function diaryFor(api: ApiClient, patientId: string): Promise<ClinicianAppointment[]> {
-  const start = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
-  const end = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString()
-  const all = await api.get<{ data: ClinicianAppointment[] }>(
-    `/api/appointments?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
-  )
-  return all.data.filter((appointment) => appointment.patient_id === patientId)
 }
 
 test.describe("portal appointments", () => {
