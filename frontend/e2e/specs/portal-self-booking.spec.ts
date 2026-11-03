@@ -153,10 +153,13 @@ test.describe("portal self-booking limits", () => {
     expect(requested.status).toBe("pending")
 
     // --- the clinician accepts it -------------------------------------------
-    const accepted = await api.patch<{ status: string }>(`/api/appointments/${requested.id}`, {
-      status: "confirmed",
-    })
+    const accepted = await api.patch<{ status: string; pending_expires_at: string | null }>(
+      `/api/appointments/${requested.id}`,
+      { status: "confirmed" },
+    )
     expect(accepted.status).toBe("confirmed")
+    // An accepted request is an ordinary booking: nothing left to expire.
+    expect(accepted.pending_expires_at).toBeNull()
 
     // --- and the patient sees it confirmed ----------------------------------
     await page.reload()

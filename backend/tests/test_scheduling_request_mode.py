@@ -162,6 +162,77 @@ class TestConfirming:
             service.confirm_appointment(second.id, USER_ID)
 
 
+class TestConfirmingThroughAnUpdate:
+    """A clinician accepts a request by setting its status from the calendar.
+
+    That arrives as a field update rather than ``confirm_appointment``, and has
+    to mean the same thing — otherwise the calendar's accept is a weaker
+    confirm than the one the email link performs.
+    """
+
+    def test_accepting_a_request_clears_the_expiry(
+        self, repo: InMemoryAppointmentRepository, service: SchedulingService
+    ) -> None:
+        repo.grant_access(PATIENT_ID, USER_ID)
+        appt = service.create_appointment(
+            USER_ID, data=_appt_data(status="pending", pending_expires_at=FAR_FUTURE)
+        )
+
+        accepted = service.update_appointment(appt.id, USER_ID, status=AppointmentStatus.CONFIRMED)
+
+        assert accepted.status == AppointmentStatus.CONFIRMED
+        assert accepted.pending_expires_at is None
+
+    def test_accepting_a_request_that_now_collides_is_refused(
+        self, repo: InMemoryAppointmentRepository, service: SchedulingService
+    ) -> None:
+        repo.grant_access(PATIENT_ID, USER_ID)
+        first = service.create_appointment(USER_ID, data=_appt_data())
+        racing = repo.create(
+            Appointment(
+                id="racing-request",
+                user_id=USER_ID,
+                patient_id=PATIENT_ID,
+                title="Session",
+                start_at=first.start_at,
+                end_at=first.end_at,
+                duration_minutes=50,
+                status=AppointmentStatus.PENDING,
+                session_type="individual",
+                pending_expires_at=FAR_FUTURE,
+            )
+        )
+
+        with pytest.raises(AppointmentConflictError):
+            service.update_appointment(racing.id, USER_ID, status=AppointmentStatus.CONFIRMED)
+        assert repo.get(racing.id, USER_ID).status == AppointmentStatus.PENDING
+
+    def test_declining_a_request_clears_the_expiry(
+        self, repo: InMemoryAppointmentRepository, service: SchedulingService
+    ) -> None:
+        repo.grant_access(PATIENT_ID, USER_ID)
+        appt = service.create_appointment(
+            USER_ID, data=_appt_data(status="pending", pending_expires_at=FAR_FUTURE)
+        )
+
+        declined = service.update_appointment(appt.id, USER_ID, status=AppointmentStatus.CANCELLED)
+
+        assert declined.pending_expires_at is None
+
+    def test_an_unrelated_edit_leaves_a_request_pending_with_its_expiry(
+        self, repo: InMemoryAppointmentRepository, service: SchedulingService
+    ) -> None:
+        repo.grant_access(PATIENT_ID, USER_ID)
+        appt = service.create_appointment(
+            USER_ID, data=_appt_data(status="pending", pending_expires_at=FAR_FUTURE)
+        )
+
+        edited = service.update_appointment(appt.id, USER_ID, notes="Prefers mornings")
+
+        assert edited.status == AppointmentStatus.PENDING
+        assert edited.pending_expires_at == FAR_FUTURE
+
+
 class TestExpiring:
     def _pending(self, service: SchedulingService, expires_at: datetime) -> Any:
         return service.create_appointment(
