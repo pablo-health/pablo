@@ -137,6 +137,10 @@ from ..services.note_import_service import (
 )
 from ..services.patient_documents_service import PatientDocumentsService
 from ..services.recording_consent import RecordingConsentGate, get_recording_consent_gate
+from ..services.session_audio_failure import (
+    UPLOAD_STARTS_BEFORE_ALERT,
+    session_audio_failure_extra,
+)
 from ..services.session_generation_worker import (
     UnknownTenantError,
     resolve_tenant_schema_for_user,
@@ -486,6 +490,11 @@ def generate_soap_job(
     except SOAPGenerationFailedError:
         # Session already marked FAILED + committed inside the service. Don't
         # 5xx — a deterministic generation failure must not loop the queue.
+        logger.error(
+            "generate-soap job: note generation failed for session %s",
+            payload.session_id,
+            extra=session_audio_failure_extra("note", payload.user_id),
+        )
         return {"status": "failed"}
 
     # Audit the PHI write at its creation point, in the tenant now in scope.
@@ -1794,6 +1803,40 @@ def _existing_object_bytes(storage: Any, bucket: str, object_name: str) -> int |
     return meta[0] if meta is not None else None
 
 
+#: Statuses in which a session's audio has not reached transcription yet.
+_AWAITING_AUDIO_STATUSES = frozenset(
+    {SessionStatus.IN_PROGRESS, SessionStatus.RECORDING_COMPLETE, SessionStatus.FAILED}
+)
+
+
+def _count_upload_start(
+    session: TherapySession, session_repo: TherapySessionRepository, user_id: str
+) -> None:
+    """Record one more upload start, and log when the recording looks stuck.
+
+    A recorder retries a failed upload by starting it again, so starts that
+    never reach ``finalize`` are the only server-side trace of a recording
+    that cannot be delivered: the upload itself goes straight to storage and
+    fails there. The count lives in ``transcription_job_metadata``, which
+    ``finalize`` replaces, so a successful upload clears it. Logged once, on
+    the start that reaches the threshold, not on every start after it.
+    """
+    if session.status not in _AWAITING_AUDIO_STATUSES:
+        return
+    metadata = dict(session.transcription_job_metadata or {})
+    starts = int(metadata.get("upload_starts", 0)) + 1
+    metadata["upload_starts"] = starts
+    session.transcription_job_metadata = metadata
+    session_repo.update(session)
+    if starts == UPLOAD_STARTS_BEFORE_ALERT:
+        logger.error(
+            "Session %s audio upload started %d times without finishing",
+            session.id,
+            starts,
+            extra=session_audio_failure_extra("upload", user_id),
+        )
+
+
 @router.post(
     "/api/sessions/{session_id}/upload-audio/init",
     status_code=status.HTTP_201_CREATED,
@@ -1861,6 +1904,7 @@ def init_audio_upload(
             "transport": "signed_url",
         },
     )
+    _count_upload_start(session, session_repo, user.id)
 
     return _AudioInitResponse(
         session_id=session_id,

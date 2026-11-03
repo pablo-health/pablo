@@ -81,6 +81,7 @@ from ..services.assemblyai_transcription_service import (
 )
 from ..services.cloud_tasks_service import enqueue_cloud_task
 from ..services.file_storage import FileStorageProvider, file_storage_from_settings
+from ..services.session_audio_failure import session_audio_failure_extra
 from ..services.session_service import SessionService
 from ..services.transcription_keyterms import session_keyterms
 from ..services.transcription_profile import transcription_profile_for_user
@@ -565,6 +566,7 @@ def _resolve_submit_target(
         logger.error(
             "assemblyai-submit: session %s has no dual-channel audio path",
             session_id,
+            extra=session_audio_failure_extra("transcription_submit", user_id),
         )
         session_row.status = SessionStatus.FAILED.value
         session_row.error = "Audio upload incomplete; cannot transcribe."
@@ -685,7 +687,11 @@ def assemblyai_submit(
             # Fail hard rather than loop the queue: mark the session failed and
             # answer 200. failed is a retryable upload status, so the client can
             # re-upload to try again.
-            logger.exception("assemblyai-submit failed for session %s", request.session_id)
+            logger.exception(
+                "assemblyai-submit failed for session %s",
+                request.session_id,
+                extra=session_audio_failure_extra("transcription_submit", request.user_id),
+            )
             session_row.status = SessionStatus.FAILED.value
             session_row.error = f"Transcription submit failed: {exc}"
             db.commit()
@@ -906,7 +912,12 @@ def transcription_poll(
         }
 
         if error_msg:
-            logger.error("Transcription poll failed: session=%s %s", request.session_id, error_msg)
+            logger.error(
+                "Transcription poll failed: session=%s %s",
+                request.session_id,
+                error_msg,
+                extra=session_audio_failure_extra("transcription", request.user_id),
+            )
             session_row.status = "failed"
             session_row.error = f"Transcription failed: {error_msg}"
             db.commit()
@@ -924,6 +935,7 @@ def transcription_poll(
                     total - pending,
                     total,
                     poll_cycles,
+                    extra=session_audio_failure_extra("transcription", request.user_id),
                 )
                 session_row.status = "failed"
                 session_row.error = "Transcription timed out. Please retry the upload."
