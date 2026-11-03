@@ -111,10 +111,13 @@ def site_file_route(
     folder = SiteFolder(
         files, site_storage(), bucket, version_prefix(found.practice_id, found.live_version)
     )
-    # A file's address carries no version, so it is the version that names
-    # what a visitor already holds.
+    # A file's address carries no version, so it is the version — and the
+    # "Book a session" link added to its pages — that names what a visitor
+    # already holds.
+    button = found.book_button
+    etag = f'"v{found.live_version}-b{button.tag}"' if button else f'"v{found.live_version}"'
     return site_file_response(
-        folder, path, etag=f'"v{found.live_version}"', if_none_match=if_none_match
+        folder, path, etag=etag, if_none_match=if_none_match, book_button=button
     )
 
 

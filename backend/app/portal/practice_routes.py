@@ -43,6 +43,7 @@ from ..rate_limit import require_portal_practice_resolve_rate_limit
 # so it cannot live in a TYPE_CHECKING block.
 from ..services.captcha import CaptchaVerifier, get_captcha_verifier
 from ..utcnow import utc_now
+from .booking_button import booking_button_url
 from .portal_settings import portal_enabled_in
 from .slugs import MAX_SLUG_LENGTH, MIN_SLUG_LENGTH, is_mintable_slug
 
@@ -77,6 +78,9 @@ class PortalPracticeResolution(BaseModel):
     #: Not a fact about the practice, so it does not narrow the 404 above:
     #: it is the same value for every slug this deployment serves.
     captcha_site_key: str | None = None
+    #: Where the practice's "Book a session" link in the portal goes, when it
+    #: shows one (:mod:`app.portal.booking_button`); ``None`` for no link.
+    booking_url: str | None = None
 
 
 class PortalPracticeSlugResponse(BaseModel):
@@ -121,6 +125,11 @@ def resolve_portal_practice(
     try:
         row = session.get(PortalPracticeSlugRow, slug)
         offered = row is not None and portal_enabled_in(session, row.practice_id)
+        booking_url = (
+            booking_button_url(session, row.practice_id, "portal")
+            if row is not None and offered
+            else None
+        )
     finally:
         session.close()
 
@@ -130,6 +139,7 @@ def resolve_portal_practice(
         slug=row.slug,
         display_name=row.display_name,
         captcha_site_key=verifier.site_key,
+        booking_url=booking_url,
     )
 
 

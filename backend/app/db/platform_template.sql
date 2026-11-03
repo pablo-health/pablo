@@ -489,6 +489,17 @@ CREATE TABLE platform.portal_welcome_messages (
     updated_at timestamp with time zone NOT NULL
 );
 
+CREATE TABLE platform.practice_booking_buttons (
+    practice_id character varying(128) NOT NULL,
+    booking_link_id uuid,
+    outside_url character varying(2048),
+    on_website boolean DEFAULT false NOT NULL,
+    in_portal boolean DEFAULT false NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    updated_by character varying(128) NOT NULL,
+    CONSTRAINT ck_practice_booking_buttons_one_target CHECK (((booking_link_id IS NULL) OR (outside_url IS NULL)))
+);
+
 CREATE TABLE platform.practice_domain_apexes (
     apex character varying(253) NOT NULL,
     practice_id character varying(128) NOT NULL,
@@ -779,6 +790,9 @@ ALTER TABLE ONLY platform.portal_invite_templates
 ALTER TABLE ONLY platform.portal_welcome_messages
     ADD CONSTRAINT portal_welcome_messages_pkey PRIMARY KEY (practice_id);
 
+ALTER TABLE ONLY platform.practice_booking_buttons
+    ADD CONSTRAINT practice_booking_buttons_pkey PRIMARY KEY (practice_id);
+
 ALTER TABLE ONLY platform.practice_domain_apexes
     ADD CONSTRAINT practice_domain_apexes_pkey PRIMARY KEY (apex);
 
@@ -954,6 +968,12 @@ ALTER TABLE ONLY platform.contracted_rates
 
 ALTER TABLE ONLY platform.payer_participation_events
     ADD CONSTRAINT payer_participation_events_participation_id_fkey FOREIGN KEY (participation_id) REFERENCES platform.payer_participations(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY platform.practice_booking_buttons
+    ADD CONSTRAINT practice_booking_buttons_booking_link_id_fkey FOREIGN KEY (booking_link_id) REFERENCES platform.booking_links(id) ON DELETE SET NULL;
+
+ALTER TABLE ONLY platform.practice_booking_buttons
+    ADD CONSTRAINT practice_booking_buttons_practice_id_fkey FOREIGN KEY (practice_id) REFERENCES platform.practices(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY platform.practice_site_versions
     ADD CONSTRAINT practice_site_versions_practice_id_fkey FOREIGN KEY (practice_id) REFERENCES platform.practice_sites(practice_id) ON DELETE CASCADE;

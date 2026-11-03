@@ -18,6 +18,7 @@ import { ApiError, buildApiUrl } from "@/lib/api/client"
 import { canManageDomains } from "../domains/canManageDomains"
 import { SettingsCard } from "../ui"
 import { useSettingsUserStatus } from "../useSettingsPreferences"
+import { BookSessionCard } from "../website/BookSessionCard"
 import { DraftCard } from "../website/DraftCard"
 import { LiveStatus } from "../website/LiveStatus"
 import { SearchEnginesCard } from "../website/SearchEnginesCard"
@@ -26,7 +27,8 @@ import { VersionHistory } from "../website/VersionHistory"
 /**
  * Practice > Website. The practice's static website: upload a zip as a draft,
  * preview it, publish it, and put an earlier version back, and choose whether
- * search engines are asked not to list it. It is served at the practice's
+ * search engines are asked not to list it, and whether it and the client
+ * portal show a "Book a session" button. It is served at the practice's
  * website domains (Practice > Domains) once one of them works.
  */
 export function WebsitePage() {
@@ -66,9 +68,12 @@ export function WebsitePage() {
   }
   if (!site.enabled) {
     return (
-      <SettingsCard>
-        <p className="text-sm text-muted-foreground">Publishing a website isn&apos;t turned on for this deployment.</p>
-      </SettingsCard>
+      <>
+        <SettingsCard>
+          <p className="text-sm text-muted-foreground">Publishing a website isn&apos;t turned on for this deployment.</p>
+        </SettingsCard>
+        <BookSessionCard canManage={canManage} showWebsite={false} />
+      </>
     )
   }
 
@@ -92,6 +97,7 @@ export function WebsitePage() {
       <SettingsCard title="Your website">
         <LiveStatus site={site} />
       </SettingsCard>
+      <BookSessionCard canManage={canManage} showWebsite />
       <SearchEnginesCard
         hidden={site.hide_from_search}
         canManage={canManage}

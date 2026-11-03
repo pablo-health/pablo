@@ -1378,6 +1378,48 @@ class BookingLinkRow(PlatformBase):
     __table_args__ = {"schema": PLATFORM_SCHEMA}
 
 
+class PracticeBookingButtonRow(PlatformBase):
+    """A practice's "Book a session" link on its website and in its portal.
+
+    Where the link goes is one of the practice's booking links, or an outside
+    booking address the practice already uses; at most one of the two is set.
+    Each surface is switched on on its own. **No row means off**, and so does a
+    row whose booking link has been deleted or turned off: nothing appears
+    until the practice chooses it, and nothing points at a link that no longer
+    takes bookings (:mod:`app.portal.booking_button`).
+
+    No PHI: a link id, a public address and two switches.
+    """
+
+    __tablename__ = "practice_booking_buttons"
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
+        CheckConstraint(
+            "booking_link_id IS NULL OR outside_url IS NULL",
+            name="ck_practice_booking_buttons_one_target",
+        ),
+        {"schema": PLATFORM_SCHEMA},
+    )
+
+    practice_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey(f"{PLATFORM_SCHEMA}.practices.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    booking_link_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey(f"{PLATFORM_SCHEMA}.booking_links.id", ondelete="SET NULL"),
+    )
+    outside_url: Mapped[str | None] = mapped_column(String(2048))
+    on_website: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    in_portal: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_by: Mapped[str] = mapped_column(String(128), nullable=False)
+
+
 class ProcessedPaymentEventRow(PlatformBase):
     """One row per card-processor webhook event this deployment has handled.
 

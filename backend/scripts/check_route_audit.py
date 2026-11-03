@@ -323,6 +323,7 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # hostname in, a slug and a hostname out; no chart is opened.
         ("get", "/api/portal/hosts/{host}"),  # host to slug, no PHI
         ("get", "/api/portal/hosts/{host}/booking-links/{slug}"),  # host + link slug, no PHI
+        ("get", "/api/practice/booking-button"),  # a link id, an address and two switches
         # invite_template_routes.py — the practice's own invitation wording.
         # Text the practice wrote about itself; the preview uses an example
         # client, never a chart. The per-client preview is audited.

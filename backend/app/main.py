@@ -42,6 +42,7 @@ from .outcome_measures.router import (
     patient_outcome_measures_router,
 )
 from .portal import account_routes as portal_account_routes
+from .portal import booking_button_routes
 from .portal import host_routes as portal_host_routes
 from .portal import invite_template_routes as portal_invite_template_routes
 from .portal import practice_routes as portal_practice_routes
@@ -572,6 +573,8 @@ if settings.enable_launch_intent:
 # always mounted; the unauthenticated /api/public/* surface only when the
 # deployment opts in.
 app.include_router(booking_links.router)
+# Where a practice's "Book a session" link goes, on its website and in its portal.
+app.include_router(booking_button_routes.router)
 if settings.public_booking_enabled:
     app.include_router(public_booking.router)
 # Patient portal sign-in. Mounting it publishes a surface that mints

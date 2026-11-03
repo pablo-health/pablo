@@ -62,6 +62,7 @@ import {
 import { portalLocation } from "@/lib/portal-shell/paths"
 import { bootstrapSession, redeemAndStore, signOutAndForget } from "@/lib/portal-shell/session"
 import { type CapabilitiesState, type PortalView, PortalViewProvider } from "./context"
+import { BookSessionLink } from "./BookSessionLink"
 import { EmailSignIn } from "./EmailSignIn"
 import { OtpCard, ResolvingCard, UnknownPracticeCard } from "./PortalAuthCards"
 import { PortalFooter } from "./PortalFooter"
@@ -95,6 +96,7 @@ export function PortalShell({ slug, children }: { slug: string; children?: React
   const [phase, setPhase] = useState<Phase>("resolving")
   const [displayName, setDisplayName] = useState<string | null>(null)
   const [captchaSiteKey, setCaptchaSiteKey] = useState<string | null>(null)
+  const [bookingUrl, setBookingUrl] = useState<string | null>(null)
   const [sessionToken, setSessionToken] = useState<string | null>(null)
   const [invitation, setInvitation] = useState<string | null>(null)
   const [otp, setOtp] = useState("")
@@ -127,6 +129,7 @@ export function PortalShell({ slug, children }: { slug: string; children?: React
       }
       setDisplayName(resolved.data.display_name)
       setCaptchaSiteKey(resolved.data.captcha_site_key ?? null)
+      setBookingUrl(resolved.data.booking_url ?? null)
 
       const bootstrap = await bootstrapSession(slug)
       if (cancelled) return
@@ -295,6 +298,7 @@ export function PortalShell({ slug, children }: { slug: string; children?: React
               </div>
             </PortalViewProvider>
           )}
+          {bookingUrl && (signedOut || signedIn) && <BookSessionLink href={bookingUrl} />}
         </div>
       </main>
       <PortalFooter displayName={displayName} />
