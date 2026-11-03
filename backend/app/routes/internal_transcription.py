@@ -72,12 +72,15 @@ from ..services import (
     get_audit_service,
 )
 from ..services.assemblyai_transcription_service import (
+    AUDIO_CONTAINER_HEAD_BYTES,
     AssemblyAiTranscriptionService,
+    RemoteAudio,
     is_one_sided,
+    is_self_describing_audio,
     sniff_audio_container,
 )
 from ..services.cloud_tasks_service import enqueue_cloud_task
-from ..services.file_storage import file_storage_from_settings
+from ..services.file_storage import FileStorageProvider, file_storage_from_settings
 from ..services.session_service import SessionService
 from ..services.transcription_keyterms import session_keyterms
 from ..services.transcription_profile import transcription_profile_for_user
@@ -475,6 +478,38 @@ def _find_segment(metadata: dict[str, Any], segment_index: int) -> dict[str, Any
     return None
 
 
+def _channel_audio(
+    storage: FileStorageProvider, bucket: str, object_name: str, inline_max_bytes: int
+) -> bytes | RemoteAudio:
+    """One channel for the submit step: its bytes, or a URL when it is too large.
+
+    Preparing a channel in memory (silence trimming, downmixing) holds the whole
+    recording plus several working copies, so peak memory is a multiple of the
+    channel's size. Above ``inline_max_bytes`` the channel is handed to the
+    provider by signed URL as stored instead, which needs only its first bytes
+    read here. That only works for a self-describing container; a headerless
+    channel that large is refused rather than loaded.
+    """
+    meta = storage.fetch_metadata(bucket=bucket, object_name=object_name)
+    if meta is None or meta[0] <= inline_max_bytes:
+        return storage.download_bytes(bucket=bucket, object_name=object_name)
+    size = meta[0]
+    head = storage.download_head(
+        bucket=bucket, object_name=object_name, length=AUDIO_CONTAINER_HEAD_BYTES
+    )
+    if not is_self_describing_audio(head):
+        raise ValueError(
+            f"a {size}-byte audio channel has no WAV or AAC header and is too large "
+            "to prepare in memory"
+        )
+    logger.info("assemblyai-submit: %d-byte channel submitted by URL, untrimmed", size)
+    return RemoteAudio(
+        storage.make_download_url(
+            bucket=bucket, object_name=object_name, ttl_seconds=_SPEECH_AUDIO_URL_TTL_SECONDS
+        )
+    )
+
+
 def _resolve_submit_target(
     db: Session,
     session_row: TherapySessionRow,
@@ -632,14 +667,15 @@ def assemblyai_submit(
             len(keyterms),
         )
         try:
-            therapist_bytes = storage.download_bytes(bucket=bucket, object_name=therapist_object)
-            client_bytes = storage.download_bytes(bucket=bucket, object_name=client_object)
+            inline_max = settings.transcription_inline_audio_max_bytes
+            therapist_audio = _channel_audio(storage, bucket, therapist_object, inline_max)
+            client_audio = _channel_audio(storage, bucket, client_object, inline_max)
             service = AssemblyAiTranscriptionService(settings)
             transcription_profile = transcription_profile_for_user(db, request.user_id)
             jobs = asyncio.run(
                 service.submit_dual_channel(
-                    therapist_audio=therapist_bytes,
-                    client_audio=client_bytes,
+                    therapist_audio=therapist_audio,
+                    client_audio=client_audio,
                     audio_url_factory=_stage_prepared_audio,
                     keyterms=keyterms,
                     transcription_profile=transcription_profile,

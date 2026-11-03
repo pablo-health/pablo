@@ -22,6 +22,7 @@ import io
 import logging
 import wave
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import Any, Literal
 
 import httpx
@@ -119,6 +120,31 @@ def _is_adts_aac(audio_data: bytes) -> bool:
         and audio_data[0] == _ADTS_SYNC_BYTE0
         and (audio_data[1] & _ADTS_BYTE1_LAYER_MASK) == _ADTS_BYTE1_LAYER_MATCH
     )
+
+
+#: Bytes needed to recognise a self-describing container (``RIFF`` or an ADTS sync).
+AUDIO_CONTAINER_HEAD_BYTES = 4
+
+
+def is_self_describing_audio(head: bytes) -> bool:
+    """True if ``head`` starts a RIFF WAV or an ADTS AAC stream.
+
+    Such a file can go to AssemblyAI exactly as stored. Headerless PCM cannot:
+    it has to be wrapped in memory first.
+    """
+    return head[:4] == b"RIFF" or _is_adts_aac(head)
+
+
+@dataclass(frozen=True)
+class RemoteAudio:
+    """A channel AssemblyAI fetches itself, from a URL, exactly as stored.
+
+    Used for a channel too large to prepare in memory. It skips speech-only
+    trimming, so the job transcribes (and is billed for) the full recording,
+    and its offset map is the identity.
+    """
+
+    url: str
 
 
 def sniff_audio_container(audio_data: bytes) -> tuple[str, str]:
@@ -354,8 +380,8 @@ class AssemblyAiTranscriptionService:
 
     async def submit_dual_channel(
         self,
-        therapist_audio: bytes,
-        client_audio: bytes,
+        therapist_audio: bytes | RemoteAudio,
+        client_audio: bytes | RemoteAudio,
         *,
         audio_url_factory: Callable[[str, bytes], str] | None = None,
         keyterms: Sequence[str] = (),
@@ -365,7 +391,9 @@ class AssemblyAiTranscriptionService:
 
         ``audio_url_factory(speaker, wav_bytes)`` returns a URL AssemblyAI
         can fetch the prepared speech-only audio from; when omitted the
-        bytes are pushed through AssemblyAI's /upload endpoint. ``keyterms``
+        bytes are pushed through AssemblyAI's /upload endpoint. A channel given
+        as :class:`RemoteAudio` skips preparation and is submitted from its URL
+        as stored, with an identity offset map. ``keyterms``
         is the session's vocabulary (``app.drug_names.keyterms``), sent as
         ``keyterms_prompt`` on both channels when there is any. Returns job
         metadata ``[{transcript_id, speaker, offset_map, diarized}, ...]``
@@ -382,18 +410,12 @@ class AssemblyAiTranscriptionService:
                 ("Client", client_audio, 2),
             )
             for speaker, audio, n_channels in channels:
-                # VAD needs decodable PCM samples; compressed uploads (AAC) are
-                # always submitted whole. So the speech-only path runs only when
-                # VAD is enabled AND the payload isn't already a compressed
-                # container — otherwise the whole file goes with an identity map.
-                if self._vad_enabled and not _is_adts_aac(audio):
-                    prepared, offset_map = _prepare_speech_audio(audio, n_channels=n_channels)
+                if isinstance(audio, RemoteAudio):
+                    audio_url, offset_map = audio.url, [[0.0, 0.0]]
                 else:
-                    prepared, offset_map = _prepare_whole_audio(audio, n_channels=n_channels)
-                if audio_url_factory is not None:
-                    audio_url = audio_url_factory(speaker, prepared)
-                else:
-                    audio_url = await self._upload_audio(client, prepared)
+                    audio_url, offset_map = await self._prepare_and_stage(
+                        client, speaker, audio, n_channels, audio_url_factory
+                    )
                 diarized = speaker in self._speaker_labels_channels
                 transcript_id = await self._submit_transcription(
                     client,
@@ -413,6 +435,27 @@ class AssemblyAiTranscriptionService:
 
         logger.info("Submitted %d AssemblyAI jobs (one per channel)", len(jobs))
         return jobs
+
+    async def _prepare_and_stage(
+        self,
+        client: httpx.AsyncClient,
+        speaker: str,
+        audio: bytes,
+        n_channels: int,
+        audio_url_factory: Callable[[str, bytes], str] | None,
+    ) -> tuple[str, list[list[float]]]:
+        """Prepare one in-memory channel and return ``(audio_url, offset_map)``."""
+        # VAD needs decodable PCM samples; compressed uploads (AAC) are
+        # always submitted whole. So the speech-only path runs only when
+        # VAD is enabled AND the payload isn't already a compressed
+        # container — otherwise the whole file goes with an identity map.
+        if self._vad_enabled and not _is_adts_aac(audio):
+            prepared, offset_map = _prepare_speech_audio(audio, n_channels=n_channels)
+        else:
+            prepared, offset_map = _prepare_whole_audio(audio, n_channels=n_channels)
+        if audio_url_factory is not None:
+            return audio_url_factory(speaker, prepared), offset_map
+        return await self._upload_audio(client, prepared), offset_map
 
     @staticmethod
     def shift_job_offsets(jobs: list[_JsonDict], offset_seconds: float) -> list[_JsonDict]:

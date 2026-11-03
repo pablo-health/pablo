@@ -878,6 +878,17 @@ class Settings(BaseSettings):
             "size), so size the service's memory to match before raising it."
         ),
     )
+    transcription_inline_audio_max_bytes: int = Field(
+        default=256 * 1024 * 1024,
+        ge=1,
+        description=(
+            "Largest session-audio channel the transcription submit step loads "
+            "into memory to trim silence (default 256 MiB, about 23 minutes of "
+            "48 kHz stereo). A larger channel in a WAV or AAC container is "
+            "handed to AssemblyAI by signed URL and transcribed whole, so peak "
+            "memory no longer grows with recording length."
+        ),
+    )
     transcription_audio_upload_url_ttl_seconds: int = Field(
         default=3600,
         description=(

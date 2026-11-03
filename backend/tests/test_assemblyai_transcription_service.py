@@ -27,6 +27,7 @@ from app.services import assemblyai_transcription_service
 from app.services import assemblyai_transcription_service as _svc
 from app.services.assemblyai_transcription_service import (
     AssemblyAiTranscriptionService,
+    RemoteAudio,
     _ensure_wav,
     _format_timestamp,
     _is_adts_aac,
@@ -333,6 +334,30 @@ class TestSubmitDualChannel:
         submit_calls = [c for c in calls if c.url.path.endswith("/transcript")]
         assert len(upload_calls) == 2
         assert len(submit_calls) == 2
+
+    @pytest.mark.anyio
+    async def test_a_remote_channel_is_submitted_from_its_url_untouched(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A channel too large to prepare in memory arrives as a URL. It is never
+        # uploaded or trimmed: AssemblyAI fetches it as stored, on its own timeline.
+        calls: list[httpx.Request] = []
+        _install_mock_transport(monkeypatch, _channel_handler(calls))
+        service = AssemblyAiTranscriptionService(_settings(assemblyai_vad_enabled=True))
+        url = "https://storage.example/signed/s1/client.pcm"
+
+        jobs = await service.submit_dual_channel(
+            therapist_audio=_SILENCE_PCM, client_audio=RemoteAudio(url)
+        )
+
+        client_job = next(job for job in jobs if job["speaker"] == "Client")
+        assert client_job["offset_map"] == [[0.0, 0.0]]
+        upload_calls = [c for c in calls if c.url.path.endswith("/upload")]
+        assert len(upload_calls) == 1  # the therapist channel only
+        submitted_urls = [
+            json.loads(c.content)["audio_url"] for c in calls if c.url.path.endswith("/transcript")
+        ]
+        assert url in submitted_urls
 
     @pytest.mark.anyio
     async def test_aac_is_submitted_whole_even_with_vad_enabled(
