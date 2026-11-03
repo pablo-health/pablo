@@ -16,7 +16,6 @@ import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 
 import { BalanceTab } from "../BalanceTab"
-import { ApiError } from "@/lib/api/client"
 import type {
   BalanceResponse,
   CardOnFileResponse,
@@ -27,6 +26,7 @@ import type {
 const mockUsePatientBalance = vi.fn()
 const mockUsePatientCharges = vi.fn()
 const mockUsePatientCard = vi.fn()
+const mockUseCardPaymentsConfigured = vi.fn()
 const mockChargeBalance = vi.fn()
 const mockFetchStatement = vi.fn()
 const mockCreateWriteOff = vi.fn()
@@ -36,6 +36,7 @@ vi.mock("@/hooks/usePayments", () => ({
   usePatientBalance: (...args: unknown[]) => mockUsePatientBalance(...args),
   usePatientCharges: (...args: unknown[]) => mockUsePatientCharges(...args),
   usePatientCard: (...args: unknown[]) => mockUsePatientCard(...args),
+  useCardPaymentsConfigured: () => mockUseCardPaymentsConfigured(),
   useChargeBalance: () => ({
     mutateAsync: mockChargeBalance,
     isPending: false,
@@ -127,11 +128,12 @@ function setup({
   balanceData = balance(),
   charges = [] as ChargeResponse[],
   card = CARD as CardOnFileResponse | null,
-  cardError = null as unknown,
+  takesCards = true as boolean | undefined,
 } = {}) {
+  mockUseCardPaymentsConfigured.mockReturnValue(takesCards)
   mockUsePatientBalance.mockReturnValue({ data: balanceData, isLoading: false, error: null })
   mockUsePatientCharges.mockReturnValue({ data: charges, isLoading: false, error: null })
-  mockUsePatientCard.mockReturnValue({ data: card, isLoading: false, error: cardError })
+  mockUsePatientCard.mockReturnValue({ data: card, isLoading: false, error: null })
   render(<BalanceTab patientId="patient-1" />)
 }
 
@@ -279,7 +281,7 @@ describe("BalanceTab", () => {
       setup({
         balanceData: balance({ owed_cents: 4000, balance_cents: 4000 }),
         card: null,
-        cardError: new ApiError("UNAVAILABLE", "not configured", undefined, 503),
+        takesCards: false,
       })
 
       expect(screen.getByTestId("balance-total")).toHaveTextContent("Owes $40.00")

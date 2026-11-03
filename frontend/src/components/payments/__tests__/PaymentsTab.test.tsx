@@ -5,23 +5,24 @@
  *
  * Covers the states a practice actually meets: no card yet, a stored card
  * rendered from the three display fields that exist, a declined row that keeps
- * its reason, and a deployment with no card processing configured, which is a
- * fact to state rather than an error to report.
+ * its reason, and a practice that takes no cards, which is a fact to state
+ * rather than an error to report.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen } from "@testing-library/react"
 
 import { PaymentsTab } from "../PaymentsTab"
-import { ApiError } from "@/lib/api/client"
 import type { CardOnFileResponse, ChargeResponse } from "@/types/payments"
 
 const mockUsePatientCard = vi.fn()
 const mockUsePatientCharges = vi.fn()
+const mockUseCardPaymentsConfigured = vi.fn()
 
 vi.mock("@/hooks/usePayments", () => ({
   usePatientCard: (...args: unknown[]) => mockUsePatientCard(...args),
   usePatientCharges: (...args: unknown[]) => mockUsePatientCharges(...args),
+  useCardPaymentsConfigured: () => mockUseCardPaymentsConfigured(),
 }))
 
 vi.mock("../AddCardDialog", () => ({
@@ -60,6 +61,7 @@ function charge(overrides: Partial<ChargeResponse> = {}): ChargeResponse {
 describe("PaymentsTab", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockUseCardPaymentsConfigured.mockReturnValue(true)
     mockUsePatientCard.mockReturnValue({ data: CARD, isLoading: false, error: null })
     mockUsePatientCharges.mockReturnValue({
       data: [charge()],
@@ -106,13 +108,8 @@ describe("PaymentsTab", () => {
   })
 
   it("says card payments are not set up rather than reporting an error", () => {
-    const unconfigured = new ApiError(
-      "SERVICE_UNAVAILABLE",
-      "Card payments are not configured.",
-      undefined,
-      503,
-    )
-    mockUsePatientCard.mockReturnValue({ data: null, isLoading: false, error: unconfigured })
+    mockUseCardPaymentsConfigured.mockReturnValue(false)
+    mockUsePatientCard.mockReturnValue({ data: undefined, isLoading: false, error: null })
     // The ledger read needs no processor, so it answers with an empty list.
     mockUsePatientCharges.mockReturnValue({ data: [], isLoading: false, error: null })
 
@@ -127,13 +124,8 @@ describe("PaymentsTab", () => {
   })
 
   it("still shows past charges after card payments are disconnected", () => {
-    const unconfigured = new ApiError(
-      "SERVICE_UNAVAILABLE",
-      "Card payments are not configured.",
-      undefined,
-      503,
-    )
-    mockUsePatientCard.mockReturnValue({ data: null, isLoading: false, error: unconfigured })
+    mockUseCardPaymentsConfigured.mockReturnValue(false)
+    mockUsePatientCard.mockReturnValue({ data: undefined, isLoading: false, error: null })
 
     render(<PaymentsTab patientId="patient-1" />)
 

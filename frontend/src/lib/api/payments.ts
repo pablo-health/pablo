@@ -21,16 +21,6 @@ import type {
 } from "@/types/payments"
 import { ApiError, buildApiUrl, get, getAuthHeader, post } from "./client"
 
-/**
- * True for the one failure that is a deployment fact rather than a fault: this
- * practice has no card processing configured, which every payment route
- * reports as a 503. Surfaces differently from a real error — there is nothing
- * for the clinician to retry.
- */
-export function isPaymentsUnconfigured(error: unknown): boolean {
-  return error instanceof ApiError && error.status === 503
-}
-
 export async function startCardSetup(
   patientId: string,
   token?: string,

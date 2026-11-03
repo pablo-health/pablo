@@ -25,10 +25,14 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
-import { isPaymentsUnconfigured } from "@/lib/api/payments"
 import { dollarsToCents, formatCents } from "@/lib/money"
 import { declineReason, formatCard } from "@/lib/paymentDisplay"
-import { useChargeAmount, useCreateCharge, usePatientCard } from "@/hooks/usePayments"
+import {
+  useCardPaymentsConfigured,
+  useChargeAmount,
+  useCreateCharge,
+  usePatientCard,
+} from "@/hooks/usePayments"
 import type { ChargeResponse } from "@/types/payments"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { AddCardDialog } from "./AddCardDialog"
@@ -38,6 +42,7 @@ interface ChargeCardSectionProps {
 }
 
 export function ChargeCardSection({ patientId }: ChargeCardSectionProps) {
+  const takesCards = useCardPaymentsConfigured()
   const card = usePatientCard(patientId)
   const amount = useChargeAmount(patientId)
   const people = usePeopleTerm()
@@ -49,8 +54,9 @@ export function ChargeCardSection({ patientId }: ChargeCardSectionProps) {
   const [result, setResult] = useState<ChargeResponse | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
 
-  // Nothing to say on a signed note in a deployment that does not take cards.
-  if (isPaymentsUnconfigured(card.error) || isPaymentsUnconfigured(amount.error)) return null
+  // Nothing to say on a signed note in a practice that does not take cards,
+  // and nothing until that is known, so no card prompt flashes up first.
+  if (!takesCards) return null
   if (readOnly) return null
 
   if (card.isLoading || amount.isLoading) {

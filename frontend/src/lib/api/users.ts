@@ -133,6 +133,12 @@ export interface UserStatusBase {
    * server's default when there is none.
    */
   books_sessions_named_in_title?: boolean
+  /**
+   * Whether this practice takes card payments. The chart asks for a card or a
+   * charge amount only when this is true, so a practice that takes no cards
+   * never sends those reads at all.
+   */
+  card_payments_configured?: boolean
 }
 
 /**

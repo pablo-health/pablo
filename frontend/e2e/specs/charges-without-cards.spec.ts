@@ -7,7 +7,9 @@
  * Billing tab. That read used to answer 503 when no card processor was
  * configured, so every chart open in such a practice logged a server error.
  * The server-error guard deliberately lets 503 through, so nothing noticed —
- * which is why this spec watches the response itself.
+ * which is why this spec watches the response itself. The card-on-file and
+ * charge-amount reads did the same; the chart now asks whether the practice
+ * takes cards first and does not send them at all.
  *
  * This stack runs with no card processor configured (docker-compose.e2e.yml),
  * so it is exactly that practice.
@@ -39,6 +41,13 @@ test("the payments section says cards are not set up, and nothing else", async (
   api,
 }) => {
   const patient = await givePatient(api)
+  const cardReads: string[] = []
+  page.on("request", (request) => {
+    const path = new URL(request.url()).pathname
+    if (path.endsWith("/payment-method") || path.endsWith("/charge-amount")) {
+      cardReads.push(path)
+    }
+  })
 
   await page.goto(`/dashboard/patients/${patient.id}`)
   await page.getByRole("tab", { name: /Billing/ }).click()
@@ -48,6 +57,8 @@ test("the payments section says cards are not set up, and nothing else", async (
   await expect(page.getByRole("button", { name: /add a card/i })).toHaveCount(0)
   // An empty list under "not set up" would read as if charging were possible.
   await expect(payments.getByText("No charges yet.")).toHaveCount(0)
+  // A practice that takes no cards is never asked for one.
+  expect(cardReads).toEqual([])
 })
 
 test("a payment recorded without cards shows in the charge history", async ({
