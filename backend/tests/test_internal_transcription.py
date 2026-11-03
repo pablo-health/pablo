@@ -26,7 +26,18 @@ def _submit_settings(*, chart_keyterms: bool = False) -> types.SimpleNamespace:
         transcription_audio_bucket="bucket",
         transcription_task_queue="queue",
         assemblyai_chart_keyterms=chart_keyterms,
+        transcription_inline_audio_max_bytes=_INLINE_MAX,
     )
+
+
+_INLINE_MAX = 256 * 1024 * 1024
+
+
+def _small_channel_storage() -> MagicMock:
+    """Storage whose channel objects are small enough to prepare in memory."""
+    storage = MagicMock()
+    storage.fetch_metadata.return_value = (15, "application/octet-stream")
+    return storage
 
 
 def _fake_session_db(session_row: object) -> tuple[MagicMock, MagicMock]:
@@ -49,7 +60,7 @@ class TestAssemblyAiSubmitWorker:
             error=None,
         )
         cm, _db = _fake_session_db(session_row)
-        fake_storage = MagicMock()
+        fake_storage = _small_channel_storage()
         fake_storage.download_bytes.side_effect = [b"therapist-bytes", b"client-bytes"]
         service = MagicMock()
         service.submit_dual_channel = AsyncMock(return_value=[_JOB])
@@ -102,7 +113,7 @@ class TestAssemblyAiSubmitWorker:
             error=None,
         )
         cm, db = _fake_session_db(session_row)
-        fake_storage = MagicMock()
+        fake_storage = _small_channel_storage()
         fake_storage.download_bytes.side_effect = [b"therapist-bytes", b"client-bytes"]
         service = MagicMock()
         service.submit_dual_channel = AsyncMock(return_value=[_JOB])
@@ -231,7 +242,7 @@ class TestAssemblyAiSubmitWorker:
             error=None,
         )
         cm, _db = _fake_session_db(session_row)
-        fake_storage = MagicMock()
+        fake_storage = _small_channel_storage()
         fake_storage.download_bytes.side_effect = [b"therapist-bytes", b"client-bytes"]
         submitted_job = {
             "transcript_id": "t1",
@@ -302,7 +313,7 @@ class TestAssemblyAiSubmitWorker:
             error=None,
         )
         cm, _db = _fake_session_db(session_row)
-        fake_storage = MagicMock()
+        fake_storage = _small_channel_storage()
         fake_storage.download_bytes.side_effect = [b"therapist-bytes", b"client-bytes"]
         submitted_job = {"transcript_id": "t1", "speaker": "Therapist", "diarized": False}
         service = MagicMock()
@@ -330,6 +341,73 @@ class TestAssemblyAiSubmitWorker:
         assert [job.get("segment_index") for job in jobs] == [0, 1]
         # Both manifest segments now have a job and the manifest is final.
         mock_enqueue.assert_called_once()
+
+
+class TestLargeChannelSubmit:
+    """A channel too large to prepare in memory goes to the provider by URL.
+
+    A raw 48 kHz recording past about 45 minutes holds hundreds of megabytes per
+    channel, and preparing it holds several copies, so loading it would exhaust
+    the worker. These pin that a large channel is never downloaded whole.
+    """
+
+    @staticmethod
+    def _run(head: bytes) -> tuple[types.SimpleNamespace, MagicMock, MagicMock]:
+        session_row = types.SimpleNamespace(
+            video_platform=None,
+            transcription_job_metadata=None,
+            audio_gcs_path="signed/s1/therapist.pcm,signed/s1/client.pcm",
+            status="transcribing",
+            error=None,
+        )
+        cm, _db = _fake_session_db(session_row)
+        storage = MagicMock()
+        sizes = {"signed/s1/therapist.pcm": 15, "signed/s1/client.pcm": _INLINE_MAX + 1}
+        storage.fetch_metadata.side_effect = lambda *, bucket, object_name: (  # noqa: ARG005
+            sizes[object_name],
+            "application/octet-stream",
+        )
+        storage.download_bytes.return_value = b"therapist-bytes"
+        storage.download_head.return_value = head
+        storage.make_download_url.return_value = "https://signed.example/client"
+        service = MagicMock()
+        service.submit_dual_channel = AsyncMock(return_value=[_JOB])
+
+        with (
+            patch.object(it, "_resolve_schema_for_user", return_value=None),
+            patch.object(it, "create_standalone_session", return_value=cm),
+            patch.object(it, "file_storage_from_settings", return_value=storage),
+            patch.object(it, "AssemblyAiTranscriptionService", return_value=service),
+            patch.object(it, "get_settings", return_value=_submit_settings()),
+            patch.object(it, "enqueue_cloud_task"),
+        ):
+            it.assemblyai_submit(
+                it.AssemblyAiSubmitRequest(session_id="s1", user_id="u1"), _invoker=None
+            )
+        return session_row, storage, service
+
+    def test_a_large_wav_channel_is_submitted_by_url_without_downloading_it(self) -> None:
+        session_row, storage, service = self._run(head=b"RIFF")
+
+        # Only the small channel was downloaded; the large one was only sniffed.
+        storage.download_bytes.assert_called_once_with(
+            bucket="bucket", object_name="signed/s1/therapist.pcm"
+        )
+        storage.download_head.assert_called_once_with(
+            bucket="bucket", object_name="signed/s1/client.pcm", length=4
+        )
+        kwargs = service.submit_dual_channel.await_args.kwargs
+        assert kwargs["therapist_audio"] == b"therapist-bytes"
+        assert kwargs["client_audio"] == it.RemoteAudio("https://signed.example/client")
+        assert session_row.transcription_job_metadata == {"provider": "assemblyai", "jobs": [_JOB]}
+
+    def test_a_large_headerless_channel_fails_the_session_instead_of_loading_it(self) -> None:
+        session_row, storage, service = self._run(head=b"\x00\x01\x02\x03")
+
+        assert storage.download_bytes.call_count == 1  # the small channel only
+        service.submit_dual_channel.assert_not_awaited()
+        assert session_row.status == "failed"
+        assert "no WAV or AAC header" in session_row.error
 
 
 def _poll_settings() -> types.SimpleNamespace:
