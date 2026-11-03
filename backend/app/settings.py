@@ -865,6 +865,19 @@ class Settings(BaseSettings):
             "Bucket for encrypted audio uploads, on the provider selected by file_storage_provider."
         ),
     )
+    transcription_audio_max_bytes: int = Field(
+        default=500 * 1024 * 1024,
+        ge=1,
+        description=(
+            "Largest accepted session-audio channel, in bytes (default 500 MiB). "
+            "The recorder captures raw 48 kHz 16-bit PCM, and its stereo "
+            "system-audio channel reaches 500 MiB at about 45 minutes; a longer "
+            "recording is rejected at upload on every retry. Raising this also "
+            "raises the transcription submit worker's peak memory, which holds "
+            "both channels plus working copies (several times the channel "
+            "size), so size the service's memory to match before raising it."
+        ),
+    )
     transcription_audio_upload_url_ttl_seconds: int = Field(
         default=3600,
         description=(
