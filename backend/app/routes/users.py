@@ -214,8 +214,19 @@ def get_user_status(
     }
 
     from ..auth.service import _resolve_practice_from_email
+    from ..payments.provider import get_payment_credential_provider
 
     practice = _resolve_practice_from_email(user.email)
+    # Whether this practice takes cards, so the chart never asks for a card
+    # or a charge amount in a practice that cannot take one. Resolved for the
+    # same practice the payment routes resolve, through the same provider;
+    # only the yes/no leaves the server.
+    result["card_payments_configured"] = (
+        get_payment_credential_provider().credentials_for_practice(
+            practice[0] if practice else None
+        )
+        is not None
+    )
     if practice:
         result["practice_id"] = practice[0]
 

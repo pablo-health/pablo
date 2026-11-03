@@ -13,9 +13,8 @@
 
 import { Skeleton } from "@/components/ui/skeleton"
 import { formatCents } from "@/lib/money"
-import { isPaymentsUnconfigured } from "@/lib/api/payments"
 import { chargeStatusBadge, declineReason, formatChargeDate } from "@/lib/paymentDisplay"
-import { usePatientCard, usePatientCharges } from "@/hooks/usePayments"
+import { useCardPaymentsConfigured, usePatientCharges } from "@/hooks/usePayments"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 
 interface ChargeHistoryProps {
@@ -24,14 +23,13 @@ interface ChargeHistoryProps {
 
 export function ChargeHistory({ patientId }: ChargeHistoryProps) {
   const { data: charges, isLoading, error } = usePatientCharges(patientId)
-  // The same query the card section above makes, so this costs no request.
-  // The ledger reads fine without a card processor; the card route is what
-  // says whether this practice takes cards at all.
-  const card = usePatientCard(patientId)
+  // The ledger reads fine without a card processor; this only decides
+  // whether an empty ledger is worth a "No charges yet."
+  const takesCards = useCardPaymentsConfigured()
   const people = usePeopleTerm()
   const empty = !charges || charges.length === 0
 
-  if (isLoading || (empty && card.isLoading)) {
+  if (isLoading || (empty && takesCards === undefined)) {
     return (
       <div className="space-y-2">
         <Skeleton className="h-10 w-full" />
@@ -53,7 +51,7 @@ export function ChargeHistory({ patientId }: ChargeHistoryProps) {
     // "No charges yet." under it would read as if charging were possible.
     // A practice that took cards and has since disconnected still sees its
     // history, because that list is not empty.
-    if (isPaymentsUnconfigured(card.error)) return null
+    if (!takesCards) return null
     return <p className="text-sm text-neutral-500">No charges yet.</p>
   }
 

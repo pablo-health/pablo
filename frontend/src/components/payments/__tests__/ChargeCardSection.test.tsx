@@ -16,17 +16,18 @@ import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 
 import { ChargeCardSection } from "../ChargeCardSection"
-import { ApiError } from "@/lib/api/client"
 import type { CardOnFileResponse, ChargeResponse } from "@/types/payments"
 
 const mockUsePatientCard = vi.fn()
 const mockUseChargeAmount = vi.fn()
+const mockUseCardPaymentsConfigured = vi.fn()
 const mockCharge = vi.fn()
 const mockUseCreateCharge = vi.fn()
 
 vi.mock("@/hooks/usePayments", () => ({
   usePatientCard: (...args: unknown[]) => mockUsePatientCard(...args),
   useChargeAmount: (...args: unknown[]) => mockUseChargeAmount(...args),
+  useCardPaymentsConfigured: () => mockUseCardPaymentsConfigured(),
   useCreateCharge: (...args: unknown[]) => mockUseCreateCharge(...args),
 }))
 
@@ -66,6 +67,7 @@ function charge(overrides: Partial<ChargeResponse> = {}): ChargeResponse {
 describe("ChargeCardSection", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockUseCardPaymentsConfigured.mockReturnValue(true)
     mockUsePatientCard.mockReturnValue({ data: CARD, isLoading: false, error: null })
     mockUseChargeAmount.mockReturnValue({
       data: { amount_cents: 15000, currency: "usd" },
@@ -161,14 +163,18 @@ describe("ChargeCardSection", () => {
     })
   })
 
-  it("renders nothing when the practice has no card processing configured", () => {
-    const unconfigured = new ApiError(
-      "SERVICE_UNAVAILABLE",
-      "Card payments are not configured.",
-      undefined,
-      503,
-    )
-    mockUsePatientCard.mockReturnValue({ data: null, isLoading: false, error: unconfigured })
+  it("renders nothing when the practice takes no cards", () => {
+    mockUseCardPaymentsConfigured.mockReturnValue(false)
+
+    const { container } = render(<ChargeCardSection patientId="patient-1" />)
+
+    expect(container).toBeEmptyDOMElement()
+  })
+
+  it("renders nothing until it is known whether the practice takes cards", () => {
+    mockUseCardPaymentsConfigured.mockReturnValue(undefined)
+    // A disabled query is not loading, so this is what the card read looks like.
+    mockUsePatientCard.mockReturnValue({ data: undefined, isLoading: false, error: null })
 
     const { container } = render(<ChargeCardSection patientId="patient-1" />)
 

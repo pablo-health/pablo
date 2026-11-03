@@ -30,7 +30,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
-import { isPaymentsUnconfigured, fetchStatement, STATEMENT_FILENAME } from "@/lib/api/payments"
+import { fetchStatement, STATEMENT_FILENAME } from "@/lib/api/payments"
 import { formatCents } from "@/lib/money"
 import {
   chargeKindLabel,
@@ -41,6 +41,7 @@ import {
   paymentMethodLabel,
 } from "@/lib/paymentDisplay"
 import {
+  useCardPaymentsConfigured,
   useChargeBalance,
   usePatientBalance,
   usePatientCard,
@@ -62,6 +63,7 @@ const UNATTRIBUTED = "Other charges"
 export function BalanceTab({ patientId }: BalanceTabProps) {
   const balance = usePatientBalance(patientId)
   const charges = usePatientCharges(patientId)
+  const takesCards = useCardPaymentsConfigured()
   const card = usePatientCard(patientId)
   const chargeBalance = useChargeBalance()
   const { readOnly } = useReadOnlyMode()
@@ -97,10 +99,10 @@ export function BalanceTab({ patientId }: BalanceTabProps) {
   const owed = balance.data.balance_cents
   const outcomeKnown = balance.data.outcome_known
   const line = formatBalanceLine(owed, "usd", outcomeKnown)
-  // The card routes 503 on a deployment that takes no cards at all. The
-  // balance itself still totals — a practice that only bills insurance has
-  // clients who owe it money — so only the charge action goes away.
-  const cardsUnavailable = isPaymentsUnconfigured(card.error)
+  // A practice that takes no cards still totals a balance — one that only
+  // bills insurance has clients who owe it money — so only the charge action
+  // goes away, and stays away until it is known that cards are taken.
+  const cardsUnavailable = !takesCards
   const canCharge =
     !readOnly && !cardsUnavailable && owed > 0 && Boolean(card.data?.chargeable)
 

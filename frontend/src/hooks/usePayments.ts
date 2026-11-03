@@ -25,20 +25,39 @@ import {
   startCardSetup,
 } from "@/lib/api/payments"
 import { queryKeys } from "@/lib/api/queryKeys"
+import { getUserStatus } from "@/lib/api/users"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
+import { USER_STATUS_QUERY_KEY } from "./useProfessionalInfo"
+
+/**
+ * Whether this practice takes card payments: `undefined` while that is still
+ * being read, then `true` or `false`.
+ *
+ * Read from the user-status response the dashboard and chart already load, so
+ * it costs no request of its own. Every card read below waits on it, and the
+ * card UI renders nothing until it is `true`.
+ */
+export function useCardPaymentsConfigured(): boolean | undefined {
+  const { data } = useAuthQuery({
+    queryKey: USER_STATUS_QUERY_KEY,
+    queryFn: () => getUserStatus(),
+    staleTime: 5 * 60 * 1000,
+  })
+  return data === undefined ? undefined : data.card_payments_configured === true
+}
 
 /**
  * The card on file for a client, or `null` when there is none.
  *
- * Not retried: the two things that go wrong here are "no card" (already a
- * `null`, not an error) and "this deployment has no card processing
- * configured", which is a settled fact rather than a blip.
+ * Not sent at all for a practice that takes no cards. Not retried: "no card"
+ * is already a `null`, not an error.
  */
 export function usePatientCard(patientId: string | undefined, token?: string) {
+  const takesCards = useCardPaymentsConfigured()
   return useAuthQuery<CardOnFileResponse | null>({
     queryKey: queryKeys.payments.card(patientId ?? ""),
     queryFn: () => fetchCardOnFile(patientId!, token),
-    enabled: !!patientId,
+    enabled: !!patientId && takesCards === true,
     retry: false,
   })
 }
@@ -46,16 +65,18 @@ export function usePatientCard(patientId: string | undefined, token?: string) {
 /**
  * What a charge would come to, so the clinician sees the figure before
  * authorising it. `amount_cents` is `null` when no rate is set anywhere.
+ * Not sent at all for a practice that takes no cards.
  */
 export function useChargeAmount(
   patientId: string | undefined,
   appointmentId?: string,
   token?: string,
 ) {
+  const takesCards = useCardPaymentsConfigured()
   return useAuthQuery<ChargeAmountResponse>({
     queryKey: queryKeys.payments.amount(patientId ?? "", appointmentId),
     queryFn: () => fetchChargeAmount(patientId!, appointmentId, token),
-    enabled: !!patientId,
+    enabled: !!patientId && takesCards === true,
     retry: false,
   })
 }
@@ -70,11 +91,9 @@ export function usePatientCharges(patientId: string | undefined, token?: string)
 }
 
 /**
- * What the client owes, totalled on the server from their ledger.
- *
- * Retried, unlike the card reads beside it: this route is not gated on the
- * card processor, so a failure here is a real failure rather than the settled
- * fact that a deployment takes no cards.
+ * What the client owes, totalled on the server from their ledger. Read
+ * whether or not the practice takes cards: a practice that only bills
+ * insurance still has clients who owe it money.
  */
 export function usePatientBalance(patientId: string | undefined, token?: string) {
   return useAuthQuery<BalanceResponse>({

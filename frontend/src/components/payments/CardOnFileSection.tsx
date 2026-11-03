@@ -17,9 +17,8 @@ import { CreditCard } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
-import { isPaymentsUnconfigured } from "@/lib/api/payments"
 import { formatCard, formatCardExpiry } from "@/lib/paymentDisplay"
-import { usePatientCard } from "@/hooks/usePayments"
+import { useCardPaymentsConfigured, usePatientCard } from "@/hooks/usePayments"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { AddCardDialog } from "./AddCardDialog"
 
@@ -28,14 +27,15 @@ interface CardOnFileSectionProps {
 }
 
 export function CardOnFileSection({ patientId }: CardOnFileSectionProps) {
+  const takesCards = useCardPaymentsConfigured()
   const { data: card, isLoading, error } = usePatientCard(patientId)
   const people = usePeopleTerm()
   const { readOnly } = useReadOnlyMode()
   const [dialogOpen, setDialogOpen] = useState(false)
 
-  if (isLoading) return <Skeleton className="h-16 w-full" />
+  if (takesCards === undefined || isLoading) return <Skeleton className="h-16 w-full" />
 
-  if (isPaymentsUnconfigured(error)) {
+  if (!takesCards) {
     return (
       <p className="text-sm text-neutral-600">
         Card payments are not set up for this practice.
