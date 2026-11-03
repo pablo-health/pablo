@@ -66,6 +66,15 @@ OPERATION_TIMEOUT_SECONDS = 120.0
 #: How many times a URL-map edit is retried after another edit changed the
 #: map between our read and our write.
 URL_MAP_EDIT_ATTEMPTS = 5
+#: Google's limit on one URL map's size, which cannot be raised. Every practice
+#: website shares this map, so it bounds the whole deployment, not one site.
+URL_MAP_MAX_BYTES = 1024 * 1024
+#: An edit that would grow the map past this is refused, keeping headroom under
+#: the limit for removals and for the wire form differing from ours.
+URL_MAP_BUDGET_BYTES = 900 * 1024
+#: Most route rules one practice's website matcher may carry: the catch-all,
+#: and later its folder redirects and the practice's own redirects.
+MAX_SITE_ROUTE_RULES = 100
 
 _TRANSIENT = (
     # Another run created the same resource between our read and our create;
@@ -354,6 +363,12 @@ class GoogleDomainServing:
                 raise DomainServingError(msg, transient=False)
             return False
         wanted = self._site_matcher(route) if route.kind == "site" else self._alias_matcher(route)
+        if len(wanted.route_rules) > MAX_SITE_ROUTE_RULES:
+            msg = (
+                f"path matcher {name} would have {len(wanted.route_rules)} route rules, "
+                f"more than the {MAX_SITE_ROUTE_RULES} one website may use"
+            )
+            raise DomainServingError(msg, transient=False)
         if current is not None and _same_matcher(current, wanted):
             return False
         if current is not None:
@@ -423,8 +438,17 @@ class GoogleDomainServing:
         with _calls(f"URL map ({what})"):
             for _ in range(URL_MAP_EDIT_ATTEMPTS):
                 url_map = self._url_maps.get(project=project, url_map=name)
+                before = url_map_bytes(url_map)
                 if not change(url_map):
                     return
+                after = url_map_bytes(url_map)
+                if after > before and after > URL_MAP_BUDGET_BYTES:
+                    msg = (
+                        f"URL map ({what}): would grow to {after} bytes, past the "
+                        f"{URL_MAP_BUDGET_BYTES}-byte budget under Google's "
+                        f"{URL_MAP_MAX_BYTES}-byte limit"
+                    )
+                    raise DomainServingError(msg, transient=False)
                 try:
                     self._url_maps.update(
                         project=project, url_map=name, url_map_resource=url_map
@@ -432,10 +456,16 @@ class GoogleDomainServing:
                 except api_exceptions.PreconditionFailed:
                     logger.info("practice_domain_serving URL map changed under the edit; retrying")
                     continue
-                logger.info("practice_domain_serving %s", what)
+                logger.info("practice_domain_serving %s (URL map %d bytes)", what, after)
                 return
         msg = f"URL map ({what}): it kept changing under the edit"
         raise DomainServingError(msg, transient=True)
+
+
+def url_map_bytes(url_map: compute_v1.UrlMap) -> int:
+    """The map's size as compact JSON: what counts against Google's limit,
+    near enough to budget by."""
+    return len(compute_v1.UrlMap.to_json(url_map, indent=None).encode())
 
 
 def _same_matcher(current: compute_v1.PathMatcher, wanted: compute_v1.PathMatcher) -> bool:
