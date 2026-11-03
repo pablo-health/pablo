@@ -15,6 +15,18 @@ import { type PracticeHost, appHostsFromEnv, classifyHost } from "./practice-hos
 import { type PracticeHostLookup, lookupPracticeHost } from "./practice-host-lookup"
 import { portalHostsFromEnv } from "./routing"
 
+/** What the practice's own host reached with `host` serves; `null` off one. */
+export async function practiceHostOf(
+  host: string | null,
+  lookup: PracticeHostLookup = lookupPracticeHost,
+  env: Record<string, string | undefined> = process.env,
+): Promise<PracticeHost | null> {
+  const hostClass = classifyHost(host, appHostsFromEnv(env), portalHostsFromEnv(env))
+  if (hostClass.kind !== "practice") return null
+  const found = await lookup(hostClass.hostname)
+  return found === null || found === "unavailable" ? null : found
+}
+
 /** What the practice's own host serves, for the portal of `slug` reached with `host`; `null` off one. */
 export async function portalPracticeHost(
   host: string | null,
@@ -22,9 +34,6 @@ export async function portalPracticeHost(
   lookup: PracticeHostLookup = lookupPracticeHost,
   env: Record<string, string | undefined> = process.env,
 ): Promise<PracticeHost | null> {
-  const hostClass = classifyHost(host, appHostsFromEnv(env), portalHostsFromEnv(env))
-  if (hostClass.kind !== "practice") return null
-  const found = await lookup(hostClass.hostname)
-  if (found === null || found === "unavailable" || found.slug !== slug) return null
-  return found
+  const found = await practiceHostOf(host, lookup, env)
+  return found?.slug === slug ? found : null
 }

@@ -62,6 +62,7 @@ from ..models.booking_link import (
 )
 from ..models.enums import PracticeEdition
 from ..models.scheduling import FreeSlotsResponse, TimeSlotResponse
+from ..portal.booking_hosts import booking_page_origin
 from ..rate_limit import (
     get_client_ip,
     require_public_booking_rate_limit,
@@ -627,6 +628,11 @@ def _patient_for_instant_booking(
     return patient
 
 
+def _link_page_url(ctx: PublicBookingContext, path: str = "") -> str:
+    """A page of this link's, on the practice's own host when it serves them."""
+    return f"{booking_page_origin(ctx.link.practice_id)}/book/{ctx.link.slug}{path}"
+
+
 def _manage_url(ctx: PublicBookingContext, token: str) -> str:
     """The booker's own capability link to view or cancel this booking.
 
@@ -634,13 +640,13 @@ def _manage_url(ctx: PublicBookingContext, token: str) -> str:
     see docs/design/public-booking.md. A capability, not an id, so handing
     it back on every response that carries a token is not a disclosure.
     """
-    return f"{get_settings().app_url}/book/{ctx.link.slug}/manage?token={token}"
+    return _link_page_url(ctx, f"/manage?token={token}")
 
 
 def _confirmation_email(
     ctx: PublicBookingContext, to: str, slot: TimeSlot, token: str
 ) -> OutboundEmail:
-    confirm_url = f"{get_settings().app_url}/book/{ctx.link.slug}/confirm?token={token}"
+    confirm_url = _link_page_url(ctx, f"/confirm?token={token}")
     return OutboundEmail(
         to=to,
         subject=f"Confirm your {ctx.link.title} with {ctx.link.host_name}",
@@ -1233,7 +1239,7 @@ def get_managed_booking(
 def _cancellation_notice_email(
     ctx: PublicBookingContext, to: str, appt: Appointment
 ) -> OutboundEmail:
-    book_again_url = f"{get_settings().app_url}/book/{ctx.link.slug}"
+    book_again_url = _link_page_url(ctx)
     start_iso = _slot_start_iso(appt)
     return OutboundEmail(
         to=to,

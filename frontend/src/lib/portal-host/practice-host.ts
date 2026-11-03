@@ -18,6 +18,10 @@
  *     permanently redirect to the slug-less path, so an old link still lands;
  *     `/portal/...` for any other practice answers 404 — a practice's host
  *     only ever serves that practice;
+ *   - `/book/{link}` (and its `confirm` and `manage` pages) is the practice's
+ *     public booking page, in the practice's theme — served only once the
+ *     backend says the link is the practice's and on (`./practice-host-lookup`),
+ *     so another practice's link answers 404 like any other path;
  *   - a host that is not active, not a portal host, or nobody's answers 404:
  *     never another practice's portal, and never the clinician app.
  *
@@ -179,6 +183,23 @@ function withoutOwnSlug(pathname: string, slug: string): string | null | undefin
   return undefined
 }
 
+const BOOKING_PREFIX = "/book"
+/** The pages a booking link has beneath its own (`app/book/[slug]`). */
+const BOOKING_PAGES: ReadonlySet<string> = new Set(["confirm", "manage"])
+/** A booking link's slug, as the backend mints one (`SLUG_PATTERN`, backend/app/models/booking_link.py). */
+const BOOKING_SLUG = /^[a-z0-9][a-z0-9-]{2,63}$/
+
+/**
+ * The booking link a path is a page of, `null` when it is under `/book` but no
+ * booking page, or `undefined` when it is not under `/book` at all.
+ */
+function bookingLinkOf(pathname: string): string | null | undefined {
+  if (!isUnder(pathname, BOOKING_PREFIX)) return undefined
+  const [, , slug = "", page, ...rest] = pathname.split("/")
+  if (!BOOKING_SLUG.test(slug) || rest.length > 0) return null
+  return page === undefined || BOOKING_PAGES.has(page) ? slug : null
+}
+
 /** Decide how a request on a practice's own host is served, given the lookup's answer. */
 export function routePracticeHost(request: PracticeHostRequest, found: PracticeHostAnswer): PortalHostDecision {
   if (found === "unavailable") return { kind: "unavailable" }
@@ -193,6 +214,16 @@ export function routePracticeHost(request: PracticeHostRequest, found: PracticeH
   if (isUnder(pathname, "/_next")) return { kind: "pass" }
   if (pathname === "/favicon.ico" || hasFileExtension(pathname)) return { kind: "pass" }
 
+  const elsewhere = found.primaryHost !== null && found.primaryHost !== request.hostname
+  const primaryOrigin = `https://${found.primaryHost}`
+
+  const bookingSlug = bookingLinkOf(pathname)
+  if (bookingSlug === null) return { kind: "not-found" }
+  if (bookingSlug !== undefined) {
+    if (elsewhere) return { kind: "redirect", location: `${primaryOrigin}${pathname}${search}` }
+    return { kind: "book", slug: bookingSlug }
+  }
+
   const stripped = withoutOwnSlug(pathname, found.slug)
   if (stripped === null) return { kind: "not-found" }
   // Only the portal's own pages are anything here. A clinician page, a
@@ -200,11 +231,10 @@ export function routePracticeHost(request: PracticeHostRequest, found: PracticeH
   // any redirect, so an alias does not send it on to the primary first.
   if (!isPortalPage(stripped ?? pathname)) return { kind: "not-found" }
 
-  const elsewhere = found.primaryHost !== null && found.primaryHost !== request.hostname
   if (stripped !== undefined || elsewhere) {
     // A practice's host is https wherever it is served for real; a request
     // that stays on this host keeps whatever it came in on.
-    const origin = elsewhere ? `https://${found.primaryHost}` : `${request.protocol}//${request.host}`
+    const origin = elsewhere ? primaryOrigin : `${request.protocol}//${request.host}`
     return { kind: "redirect", location: `${origin}${stripped ?? pathname}${search}` }
   }
 

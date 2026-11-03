@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { authProviderMiddleware } from "@/lib/auth/middleware"
 import { appHostsFromEnv, classifyHost, routePracticeHost } from "@/lib/portal-host/practice-host"
 import { browserScheme } from "@/lib/portal-host/practice-host-api"
-import { lookupPracticeHost } from "@/lib/portal-host/practice-host-lookup"
+import { lookupBookingLink, lookupPracticeHost } from "@/lib/portal-host/practice-host-lookup"
 import {
   HIDDEN_FROM_SEARCH_HEADERS,
   SITE_METHODS,
@@ -81,19 +81,9 @@ export default async function proxy(request: NextRequest) {
     case "pass":
       return NextResponse.next()
     case "not-found":
-      return new NextResponse("Not Found", {
-        status: 404,
-        headers: { "Content-Type": "text/plain; charset=utf-8", "X-Content-Type-Options": "nosniff" },
-      })
+      return new NextResponse("Not Found", { status: 404, headers: NOT_FOUND_HEADERS })
     case "unavailable":
-      return new NextResponse("Service Unavailable", {
-        status: 503,
-        headers: {
-          "Content-Type": "text/plain; charset=utf-8",
-          "X-Content-Type-Options": "nosniff",
-          "Retry-After": "5",
-        },
-      })
+      return serviceUnavailable()
     case "redirect":
       return NextResponse.redirect(decision.location, 301)
     case "rewrite": {
@@ -102,6 +92,13 @@ export default async function proxy(request: NextRequest) {
       if (hostClass.kind === "practice") return servePortalAt(request, decision.pathname)
       const checked = await checkPortalPractice(request, decision.pathname)
       return servePortalAt(checked.request, decision.pathname, checked.unknown ? UNKNOWN_PRACTICE_PATH : undefined)
+    }
+    case "book": {
+      // Only a practice's own host decides "book", and only for that practice's links.
+      const owned = hostClass.kind === "practice" ? await lookupBookingLink(hostClass.hostname, decision.slug) : null
+      if (owned === "unavailable") return serviceUnavailable()
+      if (owned === null) return new NextResponse("Not Found", { status: 404, headers: NOT_FOUND_HEADERS })
+      return servePortalAt(request, pathname)
     }
     case "portal":
       return servePortalRoute(request)
@@ -131,6 +128,13 @@ async function servePortalRoute(request: NextRequest): Promise<Response> {
 }
 
 const NOT_FOUND_HEADERS = { "Content-Type": "text/plain; charset=utf-8", "X-Content-Type-Options": "nosniff" }
+
+function serviceUnavailable(): NextResponse {
+  return new NextResponse("Service Unavailable", {
+    status: 503,
+    headers: { ...NOT_FOUND_HEADERS, "Retry-After": "5" },
+  })
+}
 
 /**
  * Next's own redirect of `/path/` to `/path`, which next.config.ts turns off
@@ -179,10 +183,7 @@ async function serveSiteHost(request: NextRequest, host: string, hostname: strin
     case "method-not-allowed":
       return new NextResponse(null, { status: 405, headers: { ...searchHeaders, Allow: SITE_METHODS.join(", ") } })
     case "unavailable":
-      return new NextResponse("Service Unavailable", {
-        status: 503,
-        headers: { ...NOT_FOUND_HEADERS, "Retry-After": "5" },
-      })
+      return serviceUnavailable()
     case "not-found":
       return new NextResponse("Not Found", { status: 404, headers: NOT_FOUND_HEADERS })
   }

@@ -20,17 +20,31 @@ most a few primary-key reads a minute per host, and the
 number of hosts kept is bounded. There is no per-address limit: the caller is
 the web app's server, one address for every visitor, and a limit there would
 let anyone sending made-up hostnames switch every practice's host off.
+
+* ``GET /api/portal/hosts/{host}/booking-links/{slug}`` — UNAUTHENTICATED. Asked
+  before the web app serves ``/book/{slug}`` on a practice's own host: ``{slug}`` when
+  the host serves that practice's portal and the link is the practice's and on
+  (:mod:`app.portal.booking_hosts`), and the same 404 otherwise. Kept and
+  limited the same way, per host and link.
 """
 
 from __future__ import annotations
 
+import re
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 from pydantic import BaseModel
 
 from ..auth.route_security import truly_public
+from ..models.booking_link import SLUG_PATTERN
 from ..sites.theme import PracticeTheme  # noqa: TC001 — pydantic resolves it at runtime
+from .booking_hosts import (
+    BookingHostCache,
+    booking_host_key,
+    get_booking_host_cache,
+    load_books_on_host,
+)
 from .practice_hosts import (
     PortalHostCache,
     get_portal_host_cache,
@@ -39,6 +53,8 @@ from .practice_hosts import (
 )
 
 router = APIRouter(tags=["patient-portal"])
+
+_BOOKING_SLUG = re.compile(SLUG_PATTERN)
 
 
 class PortalHostResponse(BaseModel):
@@ -79,3 +95,30 @@ def resolve_portal_host_route(
         theme=found.theme,
         site_host=found.site_host,
     )
+
+
+class BookingLinkOnHostResponse(BaseModel):
+    """The link the host serves the booking page of."""
+
+    slug: str
+
+
+@router.get(
+    "/api/portal/hosts/{host}/booking-links/{slug}", response_model=BookingLinkOnHostResponse
+)
+def booking_link_on_host_route(
+    host: Annotated[str, Path(max_length=512)],
+    slug: Annotated[str, Path(max_length=64)],
+    cache: Annotated[BookingHostCache, Depends(get_booking_host_cache)],
+    _public: None = Depends(truly_public),
+) -> BookingLinkOnHostResponse:
+    """The link when *host* serves the booking page of the link at *slug*, else 404."""
+    normalized = normalize_request_host(host)
+    serves = (
+        normalized is not None
+        and _BOOKING_SLUG.match(slug) is not None
+        and cache.get_or_load(booking_host_key(normalized, slug), load_books_on_host)
+    )
+    if not serves:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found.")
+    return BookingLinkOnHostResponse(slug=slug)
