@@ -17,6 +17,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+
+# Before any app module is imported, and so before google.auth is: importing
+# this hides the workstation's gcloud credentials from the run. On CI there are
+# none, so a model call a test forgot to stub fails quietly; with ADC present
+# the same call is a real request to gcloud's default project. See the module.
+import tests.ambient_credentials  # noqa: F401
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine

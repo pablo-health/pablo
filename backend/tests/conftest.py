@@ -4,6 +4,9 @@
 
 import os
 
+# First, before anything imports google.auth: importing this module hides the
+# workstation's gcloud credentials from the run, as CI has none. See the module.
+import tests.ambient_credentials  # noqa: F401
 from tests.placeholder_db import plant_placeholder_database_url
 
 # Set environment to development for all tests
