@@ -1266,7 +1266,18 @@ def upload_transcript_to_session(
 
 # --- Audio upload for server-side transcription ---
 
-_MAX_AUDIO_SIZE = 500 * 1024 * 1024  # 500 MB
+
+def _max_audio_bytes() -> int:
+    """Per-channel audio ceiling, from ``transcription_audio_max_bytes``.
+
+    Read per request rather than captured at import, so a deployment can change
+    it with an environment variable and a restart. It is the size limit signed
+    into each PUT URL, so object storage itself enforces it on the
+    direct-to-storage path.
+    """
+    return get_settings().transcription_audio_max_bytes
+
+
 _AUDIO_CHUNK_SIZE = 1 * 1024 * 1024  # 1 MiB
 _ALLOWED_AUDIO_TYPES = {
     "audio/wav",
@@ -1338,10 +1349,10 @@ async def _read_bounded(upload: UploadFile, label: str) -> bytes:
         if not chunk:
             break
         total += len(chunk)
-        if total > _MAX_AUDIO_SIZE:
+        if total > _max_audio_bytes():
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=f"{label} too large. Max {_MAX_AUDIO_SIZE // (1024 * 1024)} MB.",
+                detail=f"{label} too large. Max {_max_audio_bytes() // (1024 * 1024)} MB.",
             )
         chunks.append(chunk)
     return b"".join(chunks)
@@ -1387,12 +1398,12 @@ async def _stream_audio_to_storage(
             object_name=object_name,
             fileobj=upload.file,
             content_type=upload.content_type or "application/octet-stream",
-            max_bytes=_MAX_AUDIO_SIZE,
+            max_bytes=_max_audio_bytes(),
         )
     except FileTooLargeError as exc:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"{label} too large. Max {_MAX_AUDIO_SIZE // (1024 * 1024)} MB.",
+            detail=f"{label} too large. Max {_max_audio_bytes() // (1024 * 1024)} MB.",
         ) from exc
 
 
@@ -1828,14 +1839,14 @@ def init_audio_upload(
         bucket=bucket,
         object_name=therapist_path,
         content_type=content_type,
-        max_bytes=_MAX_AUDIO_SIZE,
+        max_bytes=_max_audio_bytes(),
         ttl_seconds=settings.transcription_audio_upload_url_ttl_seconds,
     )
     client_target = storage.make_upload_target(
         bucket=bucket,
         object_name=client_path,
         content_type=content_type,
-        max_bytes=_MAX_AUDIO_SIZE,
+        max_bytes=_max_audio_bytes(),
         ttl_seconds=settings.transcription_audio_upload_url_ttl_seconds,
     )
 
@@ -1863,7 +1874,7 @@ def init_audio_upload(
             gcs_path=client_path,
             existing_bytes=_existing_object_bytes(storage, bucket, client_path),
         ),
-        max_bytes=_MAX_AUDIO_SIZE,
+        max_bytes=_max_audio_bytes(),
     )
 
 

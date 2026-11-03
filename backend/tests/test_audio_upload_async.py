@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 
 from app.models import SessionStatus, TherapySession, Transcript
 from app.services.file_storage import UploadTarget
+from app.settings import Settings
 
 
 def _seed_recording_complete(
@@ -45,6 +46,7 @@ def _assemblyai_settings(**overrides: object) -> types.SimpleNamespace:
         "transcription_task_queue": "test-transcription-queue",
         "patient_documents_upload_url_ttl_seconds": 900,
         "transcription_audio_upload_url_ttl_seconds": 3600,
+        "transcription_audio_max_bytes": 500 * 1024 * 1024,
         "pablo_edition": "solo",
         "is_development": False,
     }
@@ -190,6 +192,43 @@ class TestSignedUrlAssemblyAi:
         for call in fake_storage.make_upload_target.call_args_list:
             assert call.kwargs["ttl_seconds"] == 3600
             assert call.kwargs["ttl_seconds"] != 900
+
+    def test_init_signs_the_configured_size_ceiling(
+        self, client: object, mock_session_repo: object, mock_user_id: str
+    ) -> None:
+        # The ceiling is signed into each PUT URL, so storage rejects anything
+        # larger. A recording past ~45 minutes of raw 48 kHz stereo is over the
+        # 500 MiB default; raising the setting has to reach the signed URL.
+        session = _seed_recording_complete(mock_session_repo, mock_user_id)
+        fake_storage = MagicMock()
+        fake_storage.make_upload_target.return_value = UploadTarget(
+            url="https://storage.example/put", method="PUT"
+        )
+        fake_storage.fetch_metadata.return_value = None
+        raised = 2 * 1024 * 1024 * 1024
+
+        with (
+            patch(
+                "app.routes.sessions.get_settings",
+                return_value=_assemblyai_settings(transcription_audio_max_bytes=raised),
+            ),
+            patch(
+                "app.services.file_storage.file_storage_from_settings",
+                return_value=fake_storage,
+            ),
+        ):
+            resp = client.post(  # type: ignore[attr-defined]
+                f"/api/sessions/{session.id}/upload-audio/init",
+            )
+
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["max_bytes"] == raised
+        assert fake_storage.make_upload_target.call_count == 2
+        for call in fake_storage.make_upload_target.call_args_list:
+            assert call.kwargs["max_bytes"] == raised
+
+    def test_the_default_ceiling_is_unchanged(self) -> None:
+        assert Settings.model_fields["transcription_audio_max_bytes"].default == 500 * 1024 * 1024
 
     def _init_with_existing(
         self,
