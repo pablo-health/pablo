@@ -573,11 +573,14 @@ class RegistryNoteGenerationService(NoteGenerationService):
 
         An answer that fills none of the fields asked for is asked once more:
         the coercion would otherwise turn an answer it cannot read into
-        sections that are present and empty. A second empty answer is
-        returned as it is; whether the note as a whole has anything in it is
-        decided once the calls beside the draft are in and the dictated time
-        is placed (:func:`_refuse_empty`, from :meth:`generate_note`), since
-        they may fill the rest.
+        sections that are present and empty. After a second empty answer the
+        first configured fallback model for note generation, if there is one,
+        is asked once: the fallbacks otherwise step in only when the model
+        errors or is slow, and an answer that arrives on time with nothing in
+        it is neither. A last empty answer is returned as it is; whether the
+        note as a whole has anything in it is decided once the calls beside
+        the draft are in and the dictated time is placed (:func:`_refuse_empty`,
+        from :meth:`generate_note`), since they may fill the rest.
         """
         asks_fields = any(section.fields for section in definition.sections)
         for attempt in (1, 2):
@@ -601,7 +604,46 @@ class RegistryNoteGenerationService(NoteGenerationService):
                 completion.output_tokens,
                 completion.finish_reason,
             )
+        fallback = self._empty_answer_fallback()
+        if fallback is not None:
+            logger.warning(
+                "Draft for note_type=%s filled no field twice; asking the fallback model %s once",
+                definition.key,
+                fallback,
+            )
+            completion = self._complete_structured_with_retry(
+                note_key=definition.key,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_schema=response_schema,
+                model=fallback,
+            )
+            asked = _coerce_registry_response(definition, completion.data)
+            if not _has_content(asked):
+                logger.warning(
+                    "Draft for note_type=%s filled no field on the fallback model either (%s; "
+                    "output_tokens=%s finish_reason=%s)",
+                    definition.key,
+                    _answer_shape(definition, completion.data),
+                    completion.output_tokens,
+                    completion.finish_reason,
+                )
         return completion, asked
+
+    def _empty_answer_fallback(self) -> str | None:
+        """The model to ask after two empty drafts: the first configured
+        fallback for note generation that is not the model already asked.
+
+        ``None`` for a service built with a pinned model, which callers use to
+        say exactly which model answers, and when no fallback is configured.
+        """
+        if self._model is not None:
+            return None
+        primary = self._resolve_model()
+        for candidate in get_settings().fallbacks_for(AIFeature.NOTE_GENERATION):
+            if candidate != primary:
+                return candidate
+        return None
 
     def _start_extraction(
         self,
@@ -814,8 +856,11 @@ class RegistryNoteGenerationService(NoteGenerationService):
         max_output_tokens: int | None = None,
         thinking_budget: int | None = None,
         call: str | None = None,
+        model: str | None = None,
     ) -> StructuredCompletion:
         """Run a structured note completion, retrying once if truncated.
+
+        ``model`` overrides the model ``call`` would resolve to.
 
         The output budget comes from ``note_max_output_tokens`` (env-tunable,
         generous by default). Thinking models spend part of that budget on
@@ -845,7 +890,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
         for budget in budgets:
             try:
                 return self._llm_gateway.complete_structured(
-                    model=self._resolve_model(call),
+                    model=model or self._resolve_model(call),
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
                     response_schema=response_schema,
