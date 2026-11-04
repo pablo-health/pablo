@@ -186,3 +186,25 @@ export function createPortalSlugLookup(options: PracticeHostLookupOptions): Host
 
 /** The process-wide slug lookup the proxy uses. */
 export const lookupPortalSlug: HostLookup<true> = createPortalSlugLookup({ apiUrl: serverApiUrl })
+
+/** Whether a practice's host serves a booking link's page: `true`, `null` (no), or `"unavailable"`. */
+export type BookingLinkLookup = (hostname: string, slug: string) => Promise<true | null | "unavailable">
+
+/**
+ * Whether the practice whose portal `hostname` serves holds the booking link
+ * `slug`, and has it on: `GET {API_URL}/api/portal/hosts/{host}/booking-links/{slug}`.
+ * Kept like a host's answer, one entry per host and link.
+ */
+export function createBookingLinkLookup(options: PracticeHostLookupOptions): BookingLinkLookup {
+  const lookup = createHostLookup(options, {
+    path: (key) => {
+      const [hostname, slug] = key.split(" ")
+      return `/api/portal/hosts/${encodeURIComponent(hostname)}/booking-links/${encodeURIComponent(slug)}`
+    },
+    parse: () => true as const,
+  })
+  return (hostname, slug) => lookup(`${hostname} ${slug}`)
+}
+
+/** The process-wide booking link lookup the proxy uses. */
+export const lookupBookingLink: BookingLinkLookup = createBookingLinkLookup({ apiUrl: serverApiUrl })

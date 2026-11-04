@@ -205,8 +205,30 @@ describe("routePracticeHost", () => {
     expect(on(PRIMARY, path)).toEqual({ kind: "pass" })
   })
 
+  it.each(["/book/intro-call", "/book/intro-call/confirm", "/book/intro-call/manage"])(
+    "asks whether %s is the practice's booking link before serving it",
+    (path) => {
+      expect(on(PRIMARY, `${path}?token=abc`)).toEqual({ kind: "book", slug: "intro-call" })
+    },
+  )
+
+  it("sends an alias's booking page to the primary", () => {
+    expect(on(ALIAS, "/book/intro-call/manage?token=abc")).toEqual({
+      kind: "redirect",
+      location: `https://${PRIMARY}/book/intro-call/manage?token=abc`,
+    })
+  })
+
+  it.each(["/book", "/book/intro-call/other", "/book/intro-call/confirm/x", "/book/No_Slug", "/book/ab"])(
+    "answers 404 for %s, which no booking page serves",
+    (path) => {
+      expect(on(PRIMARY, path)).toEqual({ kind: "not-found" })
+      expect(on(ALIAS, path)).toEqual({ kind: "not-found" })
+    },
+  )
+
   it("answers 404 for a host that serves nothing, whatever the path", () => {
-    for (const path of ["/", "/portal/acme", "/api/config", "/dashboard"]) {
+    for (const path of ["/", "/portal/acme", "/api/config", "/dashboard", "/book/intro-call"]) {
       expect(on(PRIMARY, path, null)).toEqual({ kind: "not-found" })
     }
   })

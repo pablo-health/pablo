@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { createPortalSlugLookup, createPracticeHostLookup } from "../practice-host-lookup"
+import { createBookingLinkLookup, createPortalSlugLookup, createPracticeHostLookup } from "../practice-host-lookup"
 
 const API = "http://backend.internal:8000"
 
@@ -227,6 +227,34 @@ describe("createPortalSlugLookup", () => {
 
     await lookup("../patients")
     expect(fetch).toHaveBeenCalledWith(`${API}/api/portal/practices/..%2Fpatients`, expect.anything())
+  })
+})
+
+describe("createBookingLinkLookup", () => {
+  function bookingSetup(answer: (url: string) => Response) {
+    const fetch = vi.fn(async (input: RequestInfo | URL) => answer(String(input)))
+    const lookup = createBookingLinkLookup({ apiUrl: () => API, fetch: fetch as unknown as typeof globalThis.fetch })
+    return { lookup, fetch }
+  }
+
+  it("asks whether the host serves the link, one entry per host and link", async () => {
+    const { lookup, fetch } = bookingSetup((url) =>
+      url.endsWith("/intro-call") ? json(200, { slug: "intro-call" }) : json(404, { detail: "Not found." }),
+    )
+
+    expect(await lookup("portal.example.com", "intro-call")).toBe(true)
+    expect(await lookup("portal.example.com", "theirs")).toBeNull()
+    expect(await lookup("portal.example.com", "intro-call")).toBe(true)
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(fetch).toHaveBeenCalledWith(
+      `${API}/api/portal/hosts/portal.example.com/booking-links/intro-call`,
+      expect.anything(),
+    )
+  })
+
+  it("is unavailable when the backend cannot say", async () => {
+    const { lookup } = bookingSetup(() => json(500, {}))
+    expect(await lookup("portal.example.com", "intro-call")).toBe("unavailable")
   })
 })
 

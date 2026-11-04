@@ -40,6 +40,8 @@ export type PortalHostDecision =
   | { kind: "not-found" }
   /** Off a portal host: the portal moved; send the visitor there. */
   | { kind: "redirect"; location: string }
+  /** On a practice's own host: the booking link `slug`'s page, served only when the link is the practice's. */
+  | { kind: "book"; slug: string }
   /** On a practice's own host: whether the host serves anything could not be found out. */
   | { kind: "unavailable" }
 

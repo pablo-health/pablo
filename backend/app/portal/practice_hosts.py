@@ -124,6 +124,28 @@ def active_primary_portal_host(session: Session, practice_id: str) -> str | None
     return session.execute(stmt).scalar_one_or_none()
 
 
+def practice_serving_portal(session: Session, host: str) -> tuple[str, str] | None:
+    """``(practice_id, slug)`` of the practice whose portal *host* serves, or ``None``.
+
+    The rule :func:`resolve_portal_host` answers by, kept on its own so other
+    questions about a practice's host (:mod:`app.portal.booking_hosts`) start
+    from the same one.
+    """
+    row = session.get(PracticeDomainRow, host)
+    if row is not None:
+        if row.purpose != "portal" or row.status != "active":
+            return None
+        practice_id: str | None = row.practice_id
+    else:
+        practice_id = hosted_practice_id(session, host, "portal")
+    if practice_id is None:
+        return None
+    slug = practice_slug(session, practice_id)
+    if slug is None or not portal_enabled_in(session, practice_id):
+        return None
+    return practice_id, slug
+
+
 def resolve_portal_host(session: Session, host: str) -> PortalHost | None:
     """The portal *host* serves, or ``None`` when it serves none.
 
@@ -138,18 +160,10 @@ def resolve_portal_host(session: Session, host: str) -> PortalHost | None:
     practice has a working primary, the answer names it and visitors are sent
     there.
     """
-    row = session.get(PracticeDomainRow, host)
-    if row is not None:
-        if row.purpose != "portal" or row.status != "active":
-            return None
-        practice_id: str | None = row.practice_id
-    else:
-        practice_id = hosted_practice_id(session, host, "portal")
-    if practice_id is None:
+    found = practice_serving_portal(session, host)
+    if found is None:
         return None
-    slug = practice_slug(session, practice_id)
-    if slug is None or not portal_enabled_in(session, practice_id):
-        return None
+    practice_id, slug = found
     return PortalHost(
         slug=slug,
         primary_host=active_primary_portal_host(session, practice_id),

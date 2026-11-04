@@ -130,6 +130,9 @@ DPOP_UNCOVERABLE: dict[str, str] = {
     # slug in, a practice's own display name out. ---
     "GET /api/portal/practices/{slug}": "public: resolves a practice slug to its display name",
     "GET /api/portal/hosts/{host}": "public: resolves a practice's own host to its portal slug",
+    "GET /api/portal/hosts/{host}/booking-links/{slug}": (
+        "public: whether a practice's own host serves one of its booking links"
+    ),
     # --- A practice's website: public files, asked for by the web app's
     # server on a visitor's behalf, and the draft behind a preview token. ---
     "GET /api/sites/hosts/{host}": "public: resolves a practice's website host to its primary",
