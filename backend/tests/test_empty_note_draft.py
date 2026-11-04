@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import pytest
 from app.models import Patient, Transcript
@@ -30,6 +30,10 @@ from app.services.structured_llm_gateway import (
     StructuredCompletion,
     decode_json_encoded_fields,
 )
+from app.settings import get_settings
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 _SONNET = "bedrock:us.anthropic.claude-sonnet-4-6"
 _WHEN = datetime.fromisoformat("2024-06-01T00:00:00+00:00")
@@ -297,3 +301,83 @@ class TestEmptyDraft:
 
         assert result.content == {"note": {"body": ""}}
         assert len(gateway.calls) == 1
+
+
+_FALLBACK = "bedrock:us.anthropic.claude-sonnet-4-6"
+
+
+@pytest.fixture
+def note_fallback(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
+    """A fallback model configured for note generation, as a deployment names one."""
+    monkeypatch.setenv("AI_FALLBACKS", json.dumps({"note_generation": _FALLBACK}))
+    get_settings.cache_clear()
+    yield _FALLBACK
+    get_settings.cache_clear()
+
+
+class TestEmptyDraftFallback:
+    """Two empty answers from the note model are not the end when a fallback exists.
+
+    The fallbacks otherwise step in only when the model errors or is slow; an
+    answer that arrives on time with every field empty is neither.
+    """
+
+    def test_the_fallback_drafts_the_note_after_two_empty_answers(
+        self, registry: NoteTypeRegistry, patient: Patient, note_fallback: str
+    ) -> None:
+        gateway = FakeStructuredLLMGateway(
+            responses=[
+                StructuredCompletion(data=_EMPTY_SOAP, output_tokens=13),
+                StructuredCompletion(data=_EMPTY_SOAP, output_tokens=13),
+                StructuredCompletion(data=_SOAP),
+                StructuredCompletion(data={"attributions": []}),
+            ]
+        )
+        service = RegistryNoteGenerationService(registry=registry, llm_gateway=gateway)
+
+        result = service.generate_note("soap", _TRANSCRIPT, patient, _WHEN)
+
+        assert result.soap_note is not None
+        assert result.soap_note.subjective.chief_complaint.text == "Follow-up on anxiety."
+        models = [call["model"] for call in gateway.calls]
+        assert models[2] == note_fallback
+        assert models[0] != note_fallback
+        assert models[1] == models[0]
+        # Same request each time: only the model changes.
+        assert gateway.calls[2]["user_prompt"] == gateway.calls[0]["user_prompt"]
+
+    def test_an_empty_fallback_still_fails_the_note(
+        self,
+        registry: NoteTypeRegistry,
+        patient: Patient,
+        note_fallback: str,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        gateway = FakeStructuredLLMGateway(
+            default_response=StructuredCompletion(data=_EMPTY_SOAP, output_tokens=13)
+        )
+        service = RegistryNoteGenerationService(registry=registry, llm_gateway=gateway)
+
+        with caplog.at_level("WARNING"), pytest.raises(EmptyNoteGenerationError):
+            service.generate_note("soap", _TRANSCRIPT, patient, _WHEN)
+
+        assert gateway.calls[2]["model"] == note_fallback
+        assert len(gateway.calls) == 3
+        assert "on the fallback model either" in caplog.text
+        assert "anxiety" not in caplog.text
+
+    def test_a_pinned_model_is_not_switched(
+        self, registry: NoteTypeRegistry, patient: Patient, note_fallback: str
+    ) -> None:
+        gateway = FakeStructuredLLMGateway(
+            default_response=StructuredCompletion(data=_EMPTY_SOAP, output_tokens=13)
+        )
+        service = RegistryNoteGenerationService(
+            registry=registry, llm_gateway=gateway, model="google:pinned-model"
+        )
+
+        with pytest.raises(EmptyNoteGenerationError):
+            service.generate_note("soap", _TRANSCRIPT, patient, _WHEN)
+
+        assert {call["model"] for call in gateway.calls} == {"google:pinned-model"}
+        assert len(gateway.calls) == 2
