@@ -19,6 +19,8 @@ export interface BookingButton extends BookingButtonSettings {
   website_url: string | null
   /** Where the link in the portal goes now; null when it shows nothing. */
   portal_url: string | null
+  /** Whether this deployment can show the link on a website. */
+  website_available: boolean
 }
 
 const PATH = "/api/practice/booking-button"

@@ -26,7 +26,9 @@ interface BookSessionCardProps {
  * portal (backend/app/portal/booking_button.py). It goes to one of the
  * practice's booking links or to a booking page the practice already uses
  * elsewhere — linking there is a good outcome, so the copy offers it plainly
- * and never as a lesser choice. Off until the practice turns a surface on; a
+ * and never as a lesser choice. On the website it fills in a link the
+ * practice marks on its own pages (backend/app/sites/book_button.py); in the
+ * portal it is the header's button. Off until the practice turns a surface on; a
  * booking link that is turned off hides the button everywhere, which the card
  * says when it is the case.
  */
@@ -48,7 +50,7 @@ export function BookSessionCard({ canManage, showWebsite }: BookSessionCardProps
       save={save}
       flash={flash}
       canManage={canManage}
-      showWebsite={showWebsite}
+      showWebsite={showWebsite && button.website_available}
     />
   )
 }
@@ -119,7 +121,14 @@ function BookSessionForm({ saved, links, save, flash, canManage, showWebsite }: 
         </p>
       )}
       {showWebsite && (
-        <SettingsRow label="On your website">
+        <SettingsRow
+          label="On your website"
+          description={
+            <>
+              Fills in each link on your pages marked <code>data-pablo=&quot;book&quot;</code>.
+            </>
+          }
+        >
           <Toggle label="On your website" checked={onWebsite} disabled={disabled || !hasTarget} onChange={setOnWebsite} />
         </SettingsRow>
       )}

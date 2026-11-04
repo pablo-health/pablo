@@ -1,20 +1,20 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""The "Book a session" link a practice can show on its website.
+"""The "Book a session" link on a practice's website.
 
-A website is a folder the practice uploaded, so the link is added as each page
-is served rather than written into the practice's files: a small link fixed to
-the corner of every HTML page, just before ``</body>``. Turning it off, or the
-booking link it points at being turned off, takes it off every page on the
-next load, with nothing to re-upload (:mod:`app.portal.booking_button`).
+A website is a folder the practice uploaded, so Pablo does not place the link:
+the practice does, by marking a link of its own ``<a data-pablo="book">``,
+wherever and however its pages want it. As each page is served, a marked link
+is given the booking address the practice chose, or is taken out of the page
+when the practice shows none — its own choice, or the booking link it points
+at being turned off (:mod:`app.portal.booking_button`). Nothing to re-upload
+either way, and a page with no marked link is served as it was uploaded.
 
-It wears the accent of the website's ``theme.json`` when that gives one and the
-text color to go on it — a pair already held to WCAG AA there — and a dark
-button with white text otherwise. Its styles are inline and ``!important`` so
-the page's own CSS cannot hide or restyle it, and it is a plain link: no
-script.
+Only the opening tag's ``href`` changes; the link's text, classes and other
+attributes are the practice's. Removed, a link goes with its text, up to its
+``</a>`` (links do not nest).
 
-No PHI: a public address and two colors.
+No PHI: a public address.
 """
 
 from __future__ import annotations
@@ -23,71 +23,64 @@ import hashlib
 import re
 from dataclasses import dataclass
 from html import escape
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from ..sites.theme import PracticeTheme
+#: The marker, on an ``<a>`` of the practice's own.
+MARK_ATTR = b"data-pablo"
+MARK_VALUE = b"book"
 
-LABEL = "Book a session"
-DEFAULT_BACKGROUND = "#1f2937"
-DEFAULT_TEXT = "#ffffff"
-
-_BODY_CLOSE = re.compile(rb"</body\s*>", re.IGNORECASE)
+_OPEN_A = re.compile(rb"""<a(?=[\s/>])(?:[^>"']|"[^"]*"|'[^']*')*>""", re.IGNORECASE)
+_CLOSE_A = re.compile(rb"</a\s*>", re.IGNORECASE)
+_ATTR = re.compile(rb"""[\s/]+([^\s"'>/=]+)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s"'>]+))?""")
 
 
 @dataclass(frozen=True)
-class BookButton:
-    """The link to add: where it goes, and its colors (checked hex)."""
+class BookLink:
+    """Where a website's marked link goes: *url*, or out of the page when ``None``."""
 
-    url: str
-    background: str = DEFAULT_BACKGROUND
-    color: str = DEFAULT_TEXT
-
-    @property
-    def tag(self) -> str:
-        """A short name for this exact button, for the pages' ETag."""
-        digest = hashlib.sha256(f"{self.url} {self.background} {self.color}".encode()).hexdigest()
-        return digest[:12]
+    url: str | None
 
 
-def book_button_for(url: str | None, theme: PracticeTheme | None) -> BookButton | None:
-    """The button for *url* in *theme*'s colors, or ``None`` for no link."""
-    if url is None:
-        return None
-    colors = theme.colors if theme is not None else None
-    if colors is not None and colors.accent and colors.accent_text:
-        return BookButton(url=url, background=colors.accent, color=colors.accent_text)
-    return BookButton(url=url)
+def book_link_tag(url: str) -> str:
+    """A short name for the pages served with their link going to *url*, for their ETag."""
+    return hashlib.sha256(url.encode()).hexdigest()[:12]
 
 
-def _markup(button: BookButton) -> bytes:
-    style = ";".join(
-        f"{prop}:{value} !important"
-        for prop, value in (
-            ("position", "fixed"),
-            ("right", "20px"),
-            ("bottom", "20px"),
-            ("z-index", "2147483000"),
-            ("display", "inline-block"),
-            ("padding", "12px 20px"),
-            ("border-radius", "999px"),
-            ("background", button.background),
-            ("color", button.color),
-            ("font", "600 16px/1.2 system-ui, -apple-system, 'Segoe UI', sans-serif"),
-            ("text-decoration", "none"),
-            ("box-shadow", "0 2px 10px rgba(0, 0, 0, 0.2)"),
-        )
-    )
-    return (
-        f'<a href="{escape(button.url, quote=True)}" data-pablo-book-session style="{style}">'
-        f"{LABEL}</a>"
-    ).encode()
+def _attrs(tag: bytes) -> list[tuple[bytes, bytes | None, re.Match[bytes]]]:
+    inner = tag[2:-1]
+    return [
+        (m.group(1).lower(), m.group(2).strip(b"\"'") if m.group(2) else None, m)
+        for m in _ATTR.finditer(inner)
+    ]
 
 
-def with_book_button(page: bytes, button: BookButton) -> bytes:
-    """*page* with the link added just before its last ``</body>``, or at its end."""
-    closes = list(_BODY_CLOSE.finditer(page))
-    if not closes:
-        return page + _markup(button)
-    at = closes[-1].start()
-    return page[:at] + _markup(button) + page[at:]
+def _is_marked(tag: bytes) -> bool:
+    return any(name == MARK_ATTR and value == MARK_VALUE for name, value, _ in _attrs(tag))
+
+
+def _with_href(tag: bytes, url: str) -> bytes:
+    """*tag* with its ``href`` set to *url*, added when it has none."""
+    href = b' href="' + escape(url, quote=True).encode("ascii", "xmlcharrefreplace") + b'"'
+    attrs = _attrs(tag)
+    kept = b"".join(m.group(0) for name, _, m in attrs if name != b"href")
+    tail = tag[2:-1][attrs[-1][2].end() :] if attrs else b""
+    return b"<a" + href + kept + tail + b">"
+
+
+def with_book_link(page: bytes, url: str | None) -> bytes:
+    """*page* with each marked link going to *url*, or taken out when *url* is ``None``."""
+    if MARK_ATTR not in page.lower():
+        return page
+    out: list[bytes] = []
+    at = 0
+    for opening in _OPEN_A.finditer(page):
+        if opening.start() < at or not _is_marked(opening.group(0)):
+            continue
+        out.append(page[at : opening.start()])
+        if url is not None:
+            out.append(_with_href(opening.group(0), url))
+            at = opening.end()
+        else:
+            closing = _CLOSE_A.search(page, opening.end())
+            at = closing.end() if closing else opening.end()
+    out.append(page[at:])
+    return b"".join(out)

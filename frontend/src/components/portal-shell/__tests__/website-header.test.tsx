@@ -113,6 +113,26 @@ describe("the website's header in the portal", () => {
     expect(within(banner).getByRole("button", { name: "Sign out" })).toBeVisible()
   })
 
+  it("puts the practice's Book a session link in the call to action's place, so there is one", () => {
+    const booking = "https://portal.riverside.example/book/first-session"
+    render(
+      onPracticeHost(
+        <ShellHeader
+          displayName="Riverside Counseling, PLLC"
+          slots={SLOTS}
+          base="/"
+          section={null}
+          signingOut={false}
+          bookingUrl={booking}
+        />,
+      ),
+    )
+
+    const banner = screen.getByRole("banner", { name: "Riverside Counseling, PLLC" })
+    expect(within(banner).getByRole("link", { name: "Book a session" })).toHaveAttribute("href", booking)
+    expect(within(banner).queryByRole("link", { name: "Schedule a visit" })).not.toBeInTheDocument()
+  })
+
   it("shows the name once when the wordmark is the practice's name", () => {
     render(signedIn("riverside  counseling"))
 

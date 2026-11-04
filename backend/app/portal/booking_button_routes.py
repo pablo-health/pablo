@@ -14,6 +14,11 @@ audited, and forgets this process's website host answers once it has
 committed, so the website follows at once; another process notices within the
 minute it keeps answers. The portal asks afresh on every load.
 
+The website's link is filled in as its pages are served, so a deployment that
+serves websites straight from a storage bucket (``practice_site_live_bucket``)
+cannot show it yet; ``website_available`` says so and the card leaves the
+website out (PABLO-ub7w).
+
 No PHI: a link id, a public address and two switches.
 """
 
@@ -30,6 +35,7 @@ from ..models.audit import AuditAction, ResourceType
 from ..routes._deps import practice_id_or_404
 from ..routes.practice_domains import _manageable_practice_id
 from ..services import AuditService, get_audit_service
+from ..settings import get_settings
 from ..sites.hosts import get_site_host_cache
 from ..utcnow import utc_now
 from .booking_button import (
@@ -61,6 +67,8 @@ class BookingButtonResponse(BaseModel):
     website_url: str | None
     #: Where the link in the portal goes now; ``None`` when it shows nothing.
     portal_url: str | None
+    #: Whether this deployment can show the link on a website.
+    website_available: bool
 
 
 def _response(practice_id: str) -> BookingButtonResponse:
@@ -73,6 +81,7 @@ def _response(practice_id: str) -> BookingButtonResponse:
         in_portal=button.in_portal,
         website_url=booking_button_url(session, practice_id, "website"),
         portal_url=booking_button_url(session, practice_id, "portal"),
+        website_available=not (get_settings().practice_site_live_bucket or "").strip(),
     )
 
 

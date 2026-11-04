@@ -40,6 +40,7 @@ from ..db import create_standalone_session
 from ..portal.practice_hosts import normalize_request_host
 from ..settings import get_settings
 from ..utcnow import utc_now
+from .book_button import BookLink, book_link_tag
 from .hosts import SiteHost, SiteHostCache, get_site_host_cache, load_site_host
 from .service import draft_prefix, preview_token_hash, version_prefix
 from .serving import SiteFolder, plain_not_found, site_file_response
@@ -111,13 +112,18 @@ def site_file_route(
     folder = SiteFolder(
         files, site_storage(), bucket, version_prefix(found.practice_id, found.live_version)
     )
-    # A file's address carries no version, so it is the version — and the
-    # "Book a session" link added to its pages — that names what a visitor
-    # already holds.
-    button = found.book_button
-    etag = f'"v{found.live_version}-b{button.tag}"' if button else f'"v{found.live_version}"'
+    # A file's address carries no version, so it is the version — and where
+    # its pages' "Book a session" link goes — that names what a visitor
+    # already holds. With no link to give, pages are the version's own,
+    # less any marked link.
+    url = found.book_url
+    etag = f'"v{found.live_version}-b{book_link_tag(url)}"' if url else f'"v{found.live_version}"'
     return site_file_response(
-        folder, path, etag=etag, if_none_match=if_none_match, book_button=button
+        folder,
+        path,
+        etag=etag,
+        if_none_match=if_none_match,
+        book_link=BookLink(url),
     )
 
 

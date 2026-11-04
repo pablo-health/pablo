@@ -27,6 +27,7 @@ const OFF: BookingButton = {
   in_portal: false,
   website_url: null,
   portal_url: null,
+  website_available: true,
 }
 
 function link(overrides: Partial<BookingLink> = {}): BookingLink {
@@ -92,6 +93,14 @@ describe("BookSessionCard", () => {
     expect(screen.getByTestId("book-session-link-off").textContent).toBe(
       "This booking link is off, so the button is hidden.",
     )
+  })
+
+  it("leaves the website out where this deployment cannot show the link there", () => {
+    saved = { ...OFF, website_available: false }
+    render(<BookSessionCard canManage showWebsite />)
+
+    expect(screen.queryByRole("switch", { name: "On your website" })).toBeNull()
+    expect(screen.getByRole("switch", { name: "In your client portal" })).toBeTruthy()
   })
 
   it("leaves the website out where websites are not published, and is read-only for others", () => {

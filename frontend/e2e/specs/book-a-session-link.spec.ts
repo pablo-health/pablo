@@ -8,9 +8,10 @@
  * owner chooses where the link goes and which surfaces show it. What only the
  * real stack can prove:
  *
- *   1. Pointed at one of the practice's booking links, the website's pages
- *      carry the link to the booking page on the practice's own host, and so
- *      does the portal; turning the booking link off takes it off both.
+ *   1. Pointed at one of the practice's booking links, the link the website
+ *      marks data-pablo="book" goes to the booking page on the practice's own
+ *      host, and the portal's header shows it; turning the booking link off
+ *      takes it off both.
  *   2. Pointed at a booking page the practice uses elsewhere and shown on the
  *      website only, the website links there and the portal shows nothing;
  *      switched off, the website shows nothing either.
@@ -46,7 +47,11 @@ async function domainsPractice(api: ApiClient): Promise<string> {
 
 async function publishSite(page: Page): Promise<void> {
   const zip = new JSZip()
-  zip.file("index.html", `<!doctype html><html><body><h1>Book ${Date.now()}</h1></body></html>`)
+  zip.file(
+    "index.html",
+    `<!doctype html><html><body><h1>Book ${Date.now()}</h1>` +
+      `<a class="button" href="#contact" data-pablo="book">Book a visit</a></body></html>`,
+  )
   await page.goto(SETTINGS_PATH)
   await page.getByLabel("Website zip").setInputFiles({
     name: "site.zip",
@@ -58,14 +63,14 @@ async function publishSite(page: Page): Promise<void> {
   await expect(page.getByTestId("website-draft")).toHaveText("No draft yet.")
 }
 
-/** Where the website's home page links "Book a session", or null for no link. */
+/** Where the website's marked link goes, or null when it is taken out. */
 async function websiteLink(request: APIRequestContext): Promise<string | null> {
   const home = await request.get(`${BALANCER_URL}/`, {
     headers: { Host: `${SITE}:${PRACTICE_HOST_PORT}` },
     maxRedirects: 0,
     failOnStatusCode: false,
   })
-  const match = /<a href="([^"]*)" data-pablo-book-session/.exec(await home.text())
+  const match = /<a href="([^"]*)" class="button" data-pablo="book">Book a visit<\/a>/.exec(await home.text())
   return match ? match[1] : null
 }
 
