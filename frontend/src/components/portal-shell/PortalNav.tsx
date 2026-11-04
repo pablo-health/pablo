@@ -7,7 +7,8 @@
  * Where the website's theme.json declares a header (`./WebsiteHeader`), the
  * practice's own host shows it instead of the plain link back: the wordmark
  * and subtitle linking to the website, its call to action, and its links in
- * a row of their own above the portal's sections. Signed in or out, the
+ * a row of their own above the portal's sections. The practice's "Book a
+ * session" link, when on, takes the call to action's place. Signed in or out, the
  * header is the same.
  *
  * The navigation is real links — Home, then one per section this practice
@@ -24,6 +25,7 @@ import { Button } from "@/components/ui/button"
 import { portalSectionHref } from "@/lib/portal-shell/paths"
 import { usePortalHost } from "./portal-host-context"
 import type { PortalSlot } from "./slots"
+import { BookSessionLink } from "./BookSessionLink"
 import { PracticeBrand, WebsiteCta, WebsiteLinks } from "./WebsiteHeader"
 
 const LINK_CLASS =
@@ -36,6 +38,7 @@ export function ShellHeader({
   section,
   onSignOut,
   signingOut,
+  bookingUrl = null,
 }: {
   displayName: string | null
   slots: PortalSlot[]
@@ -44,6 +47,8 @@ export function ShellHeader({
   section: string | null
   onSignOut?: () => void
   signingOut: boolean
+  /** The practice's "Book a session" address, when it shows one here. */
+  bookingUrl?: string | null
 }) {
   // Only slots that asked for a label appear in the navigation; a slot
   // without one still has a tile and a page of its own.
@@ -67,7 +72,7 @@ export function ShellHeader({
         ) : (
           <div className="h-5 w-40 animate-pulse rounded bg-neutral-200" aria-hidden="true" />
         )}
-        {header && <WebsiteCta header={header} />}
+        {bookingUrl ? <BookSessionLink href={bookingUrl} /> : header && <WebsiteCta header={header} />}
         {siteHost && !header && (
           // The visible text stays short and the hostname stays out of it; a
           // screen reader also hears whose website. The accessible name starts

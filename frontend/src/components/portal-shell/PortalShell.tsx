@@ -95,6 +95,7 @@ export function PortalShell({ slug, children }: { slug: string; children?: React
   const [phase, setPhase] = useState<Phase>("resolving")
   const [displayName, setDisplayName] = useState<string | null>(null)
   const [captchaSiteKey, setCaptchaSiteKey] = useState<string | null>(null)
+  const [bookingUrl, setBookingUrl] = useState<string | null>(null)
   const [sessionToken, setSessionToken] = useState<string | null>(null)
   const [invitation, setInvitation] = useState<string | null>(null)
   const [otp, setOtp] = useState("")
@@ -127,6 +128,7 @@ export function PortalShell({ slug, children }: { slug: string; children?: React
       }
       setDisplayName(resolved.data.display_name)
       setCaptchaSiteKey(resolved.data.captcha_site_key ?? null)
+      setBookingUrl(resolved.data.booking_url ?? null)
 
       const bootstrap = await bootstrapSession(slug)
       if (cancelled) return
@@ -246,6 +248,7 @@ export function PortalShell({ slug, children }: { slug: string; children?: React
         section={section}
         onSignOut={signedIn ? handleSignOut : undefined}
         signingOut={signingOut}
+        bookingUrl={signedOut || signedIn ? bookingUrl : null}
       />
       <main
         className={`flex flex-1 items-start justify-center px-4 ${signedOut ? "py-10 sm:py-16" : "py-8 sm:py-12"}`}

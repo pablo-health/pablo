@@ -26,7 +26,12 @@ from unittest.mock import patch
 
 import pytest
 from app.auth.service import require_active_subscription
-from app.db.platform_models import PortalPracticeSlugRow, PracticePortalSettingsRow, PracticeRow
+from app.db.platform_models import (
+    PortalPracticeSlugRow,
+    PracticeBookingButtonRow,
+    PracticePortalSettingsRow,
+    PracticeRow,
+)
 from app.portal.factory import build_invite_link
 from app.portal.practice_routes import _slugify, router
 from app.portal.slugs import RESERVED_SLUGS
@@ -106,6 +111,9 @@ class _FakeSession:
             return self.slugs.get(key)
         if model is PracticePortalSettingsRow:
             return self.portal_settings.get(key)
+        if model is PracticeBookingButtonRow:
+            # No practice here has turned its "Book a session" link on.
+            return None
         raise AssertionError(f"unexpected model {model!r}")
 
     def execute(self, stmt: Any) -> _FakeResult:
@@ -212,7 +220,7 @@ def client(app: FastAPI, fake_db: _FakeSession) -> Iterator[TestClient]:
 def test_resolve_returns_the_slug_the_name_and_the_captcha_key_only(
     client: TestClient, fake_db: _FakeSession
 ) -> None:
-    """Three fields, and none of them is a fact about this practice.
+    """Four fields, and none of them is a fact about the practice's identity.
 
     The slug and the display name are what the shell puts in its header.
     ``captcha_site_key`` is the deployment's, not the practice's — it is
@@ -234,6 +242,8 @@ def test_resolve_returns_the_slug_the_name_and_the_captcha_key_only(
         # No CAPTCHA provider is configured in this test's settings, which
         # is the default a bare deployment gets.
         "captcha_site_key": None,
+        # Off until the practice turns its "Book a session" link on.
+        "booking_url": None,
     }
     raw = response.text
     assert PRACTICE_ID not in raw

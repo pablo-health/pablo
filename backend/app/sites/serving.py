@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import Response
 
+from .book_button import BookLink, with_book_link
 from .files import content_type_for
 from .paths import resolve_site_path
 
@@ -75,11 +76,14 @@ def site_file_response(
     *,
     etag: str | None = None,
     if_none_match: str | None = None,
+    book_link: BookLink | None = None,
 ) -> Response:
     """The answer to *request_path* (percent-encoded, as sent) from *folder*.
 
     *etag* names the folder's contents; a request already holding it is
-    answered 304 without reading the file.
+    answered 304 without reading the file. With *book_link*, every HTML page's
+    marked "Book a session" link goes where it says, or is taken out
+    (:mod:`app.sites.book_button`); the caller's *etag* must name it.
     """
     files = folder.cache.files_in(folder.storage, folder.bucket, folder.prefix)
     answer = resolve_site_path(request_path, files)
@@ -92,9 +96,8 @@ def site_file_response(
         headers["ETag"] = etag
         if answer.status == HTTPStatus.OK and _etag_matches(if_none_match, etag):
             return Response(status_code=304, headers=headers)
-    return Response(
-        folder.cache.read(folder.storage, folder.bucket, f"{folder.prefix}{answer.file}"),
-        status_code=answer.status,
-        media_type=content_type_for(answer.file),
-        headers=headers,
-    )
+    body = folder.cache.read(folder.storage, folder.bucket, f"{folder.prefix}{answer.file}")
+    media_type = content_type_for(answer.file)
+    if book_link is not None and (media_type or "").startswith("text/html"):
+        body = with_book_link(body, book_link.url)
+    return Response(body, status_code=answer.status, media_type=media_type, headers=headers)

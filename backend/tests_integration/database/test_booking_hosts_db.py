@@ -8,6 +8,9 @@
   the same 404.
 * A booking email's links go to the practice's working primary portal host, and
   to the app's address otherwise.
+* The practice's "Book a session" link goes to the booking link it chose, on the
+  same host, or to its outside address — and nowhere once it is off, or the
+  booking link is off, deleted or not the practice's.
 """
 
 from __future__ import annotations
@@ -19,11 +22,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 from app.portal import host_routes
+from app.portal.booking_button import booking_button_url
 from app.portal.booking_hosts import BookingHostCache, booking_page_origin, get_booking_host_cache
 from app.settings import get_settings
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -149,6 +154,30 @@ class _Rows:
                 {"a": active, "s": slug},
             )
 
+    def button(
+        self,
+        practice_id: str,
+        *,
+        link: str | None = None,
+        outside: str | None = None,
+        website: bool = False,
+        portal: bool = False,
+    ) -> None:
+        """The practice's "Book a session" link; *link* is a booking link's slug."""
+        with self.engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO platform.practice_booking_buttons (practice_id, booking_link_id,"
+                    " outside_url, on_website, in_portal, updated_at, updated_by)"
+                    " VALUES (:p, (SELECT id FROM platform.booking_links WHERE slug = :l),"
+                    " :o, :w, :i, now(), 'owner')"
+                    " ON CONFLICT (practice_id) DO UPDATE SET booking_link_id ="
+                    " EXCLUDED.booking_link_id, outside_url = EXCLUDED.outside_url,"
+                    " on_website = EXCLUDED.on_website, in_portal = EXCLUDED.in_portal"
+                ),
+                {"p": practice_id, "l": link, "o": outside, "w": website, "i": portal},
+            )
+
     def set_status(self, host: str, status: str) -> None:
         with self.engine.begin() as conn:
             conn.execute(
@@ -163,6 +192,7 @@ class _Rows:
                 {"h": self.hosts},
             )
             for table in (
+                "practice_booking_buttons",
                 "booking_links",
                 "companion_practice_slugs",
                 "practice_portal_settings",
@@ -299,3 +329,63 @@ def test_booking_emails_use_the_app_without_a_host_that_serves_them(
     assert booking_page_origin(no_host) == app_url
     assert booking_page_origin(portal_off) == app_url
     assert booking_page_origin(None) == app_url
+
+
+def _urls(engine: Engine, practice_id: str) -> tuple[str | None, str | None]:
+    with Session(engine) as session:
+        return (
+            booking_button_url(session, practice_id, "website"),
+            booking_button_url(session, practice_id, "portal"),
+        )
+
+
+def test_the_book_link_is_off_until_the_practice_turns_it_on(engine: Engine, rows: _Rows) -> None:
+    practice_id = rows.practice()
+    slug = rows.link(practice_id)
+    assert _urls(engine, practice_id) == (None, None)
+
+    rows.button(practice_id, link=slug)
+    assert _urls(engine, practice_id) == (None, None)
+
+
+def test_the_book_link_goes_to_the_chosen_link_on_the_practices_own_host(
+    engine: Engine, rows: _Rows, app_url: str
+) -> None:
+    practice_id = rows.practice()
+    slug = rows.link(practice_id)
+    rows.button(practice_id, link=slug, website=True)
+    assert _urls(engine, practice_id) == (f"{app_url}/book/{slug}", None)
+
+    host = rows.host(practice_id)
+    rows.button(practice_id, link=slug, website=True, portal=True)
+    assert _urls(engine, practice_id) == (f"https://{host}/book/{slug}",) * 2
+
+
+def test_the_book_link_goes_to_an_outside_address_as_given(engine: Engine, rows: _Rows) -> None:
+    practice_id = rows.practice()
+    rows.button(practice_id, outside="https://book.example.net/riverside", portal=True)
+    assert _urls(engine, practice_id) == (None, "https://book.example.net/riverside")
+
+
+def test_a_booking_link_turned_off_or_deleted_takes_the_book_link_away_everywhere(
+    engine: Engine, rows: _Rows
+) -> None:
+    practice_id = rows.practice()
+    rows.host(practice_id)
+    slug = rows.link(practice_id)
+    rows.button(practice_id, link=slug, website=True, portal=True)
+    assert None not in _urls(engine, practice_id)
+
+    rows.set_active(slug, False)
+    assert _urls(engine, practice_id) == (None, None)
+
+    deleted = rows.link(practice_id, deleted=True)
+    rows.button(practice_id, link=deleted, website=True, portal=True)
+    assert _urls(engine, practice_id) == (None, None)
+
+
+def test_another_practices_booking_link_is_never_linked(engine: Engine, rows: _Rows) -> None:
+    practice_id = rows.practice()
+    other_id = rows.practice()
+    rows.button(practice_id, link=rows.link(other_id), website=True, portal=True)
+    assert _urls(engine, practice_id) == (None, None)

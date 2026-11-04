@@ -25,6 +25,8 @@ export interface PortalPracticeResolution {
    * the same value for every slug, so it says nothing about the practice.
    */
   captcha_site_key?: string | null
+  /** Where the practice's "Book a session" link goes, when it shows one in the portal. */
+  booking_url?: string | null
 }
 
 export type ResolvePracticeResult = { ok: true; data: PortalPracticeResolution } | { ok: false }

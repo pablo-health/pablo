@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 
 from ..db import create_standalone_session
 from ..db.platform_models import PracticeDomainRow
+from ..portal.booking_button import booking_button_url
 from ..portal.hosted import hosted_portal_host, hosted_practice_id, practice_slug
 from ..portal.practice_hosts import HostAnswerCache, active_primary_portal_host
 from .store import PracticeSiteStore
@@ -50,6 +51,8 @@ class SiteHost:
     portal_host: str | None = None
     #: The practice asks search engines not to list its website.
     hide_from_search: bool = False
+    #: Where its pages' "Book a session" link goes, or ``None`` to take it out.
+    book_url: str | None = None
 
 
 def resolve_site_host(session: Session, host: str) -> SiteHost | None:
@@ -83,6 +86,7 @@ def resolve_site_host(session: Session, host: str) -> SiteHost | None:
         primary_host=primary,
         portal_host=portal_host,
         hide_from_search=site.hide_from_search,
+        book_url=booking_button_url(session, practice_id, "website"),
     )
 
 

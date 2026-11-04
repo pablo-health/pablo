@@ -371,6 +371,10 @@ class AuditAction(StrEnum):
     PRACTICE_SITE_PUBLISHED = "practice_site_published"
     PRACTICE_SITE_ROLLED_BACK = "practice_site_rolled_back"
     PRACTICE_SITE_SEARCH_VISIBILITY_CHANGED = "practice_site_search_visibility_changed"
+    # The practice's "Book a session" link: where it goes and where it shows.
+    # The payload is the booking link's id, whether an outside address is
+    # set, and the two switches; never the address itself.
+    PRACTICE_BOOKING_BUTTON_CHANGED = "practice_booking_button_changed"
 
     # A patient signed themselves out. The mirror image of
     # PATIENT_PORTAL_SESSION_REDEEMED and recorded for the same reason:

@@ -122,6 +122,33 @@ describe("PortalShell", () => {
     expect(screen.queryByTestId("portal-shell-expired-note")).toBeNull()
   })
 
+  it("shows the practice's Book a session link signed out and signed in, and only when it is on", async () => {
+    const booking = "https://portal.example.com/book/first-session"
+    resolvePortalPractice.mockResolvedValue({
+      ok: true,
+      data: { slug: "example-therapy", display_name: "Example Therapy", booking_url: booking },
+    })
+    bootstrapSession.mockResolvedValue({ status: "none" })
+    const signedOut = render(<PortalShell slug="example-therapy"><PortalHome /></PortalShell>)
+    expect(await screen.findByTestId("portal-shell-no-session")).toBeTruthy()
+    expect(screen.getByTestId("portal-book-session").getAttribute("href")).toBe(booking)
+    signedOut.unmount()
+
+    bootstrapSession.mockResolvedValue({ status: "active", sessionToken: "session-1" })
+    const signedIn = render(<PortalShell slug="example-therapy"><PortalHome /></PortalShell>)
+    expect(await screen.findByTestId("portal-shell-active")).toBeTruthy()
+    expect(screen.getByRole("link", { name: "Book a session" }).getAttribute("href")).toBe(booking)
+    signedIn.unmount()
+
+    resolvePortalPractice.mockResolvedValue({
+      ok: true,
+      data: { slug: "example-therapy", display_name: "Example Therapy", booking_url: null },
+    })
+    render(<PortalShell slug="example-therapy"><PortalHome /></PortalShell>)
+    expect(await screen.findByTestId("portal-shell-active")).toBeTruthy()
+    expect(screen.queryByTestId("portal-book-session")).toBeNull()
+  })
+
   it("renders the code form when the URL carries an invitation and there is no session", async () => {
     arriveWithInvitation("tok-1")
     resolvePortalPractice.mockResolvedValue({
