@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useBookingButton, useSetBookingButton } from "@/hooks/useBookingButton"
 import { useBookingLinks } from "@/hooks/useBookingLinks"
+import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { ApiError } from "@/lib/api/client"
 import type { BookingButton } from "@/lib/api/bookingButton"
 import type { BookingLink } from "@/types/bookingLinks"
@@ -63,6 +64,8 @@ interface BookSessionFormProps extends BookSessionCardProps {
 }
 
 function BookSessionForm({ saved, links, save, flash, canManage, showWebsite }: BookSessionFormProps) {
+  const people = usePeopleTerm()
+  const portalLabel = `In your ${people.one} portal`
   const [target, setTarget] = useState(saved.outside_url !== null ? OUTSIDE : (saved.booking_link_id ?? ""))
   const [outsideUrl, setOutsideUrl] = useState(saved.outside_url ?? "")
   const [onWebsite, setOnWebsite] = useState(saved.on_website)
@@ -85,7 +88,7 @@ function BookSessionForm({ saved, links, save, flash, canManage, showWebsite }: 
     )
 
   return (
-    <SettingsCard title="Book a session" description="A button clients can use to book a time with you." flush>
+    <SettingsCard title="Book a session" description={`A button ${people.many} can use to book a time with you.`} flush>
       <SettingsRow label="Where it goes">
         <Select value={target || undefined} onValueChange={setTarget} disabled={disabled}>
           <SelectTrigger aria-label="Where it goes" className="w-64">
@@ -132,8 +135,8 @@ function BookSessionForm({ saved, links, save, flash, canManage, showWebsite }: 
           <Toggle label="On your website" checked={onWebsite} disabled={disabled || !hasTarget} onChange={setOnWebsite} />
         </SettingsRow>
       )}
-      <SettingsRow label="In your client portal">
-        <Toggle label="In your client portal" checked={inPortal} disabled={disabled || !hasTarget} onChange={setInPortal} />
+      <SettingsRow label={portalLabel}>
+        <Toggle label={portalLabel} checked={inPortal} disabled={disabled || !hasTarget} onChange={setInPortal} />
       </SettingsRow>
       <div className="flex items-center justify-end gap-3 border-t border-border px-[22px] py-3">
         {error && (

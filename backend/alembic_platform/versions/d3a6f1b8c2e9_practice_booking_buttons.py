@@ -4,7 +4,9 @@
 
 Where the link on the practice's website and in its portal goes — one of its
 booking links, or an outside booking address — and whether each surface shows
-it. No row means off.
+it. No row means off. ``booking_link_id`` carries no foreign key: booking_links
+is still built and dropped by the tenant chain, whose downgrade could not drop
+it past a reference from here; reads check the link instead.
 
 Idempotent, like the rest of this chain: the platform template already carries
 the table on a fresh install.
@@ -37,8 +39,7 @@ def upgrade() -> None:
         CREATE TABLE IF NOT EXISTS platform.practice_booking_buttons (
             practice_id VARCHAR(128) NOT NULL
                 REFERENCES platform.practices (id) ON DELETE CASCADE,
-            booking_link_id UUID
-                REFERENCES platform.booking_links (id) ON DELETE SET NULL,
+            booking_link_id UUID,
             outside_url VARCHAR(2048),
             on_website BOOLEAN NOT NULL DEFAULT false,
             in_portal BOOLEAN NOT NULL DEFAULT false,

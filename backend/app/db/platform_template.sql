@@ -970,9 +970,6 @@ ALTER TABLE ONLY platform.payer_participation_events
     ADD CONSTRAINT payer_participation_events_participation_id_fkey FOREIGN KEY (participation_id) REFERENCES platform.payer_participations(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY platform.practice_booking_buttons
-    ADD CONSTRAINT practice_booking_buttons_booking_link_id_fkey FOREIGN KEY (booking_link_id) REFERENCES platform.booking_links(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY platform.practice_booking_buttons
     ADD CONSTRAINT practice_booking_buttons_practice_id_fkey FOREIGN KEY (practice_id) REFERENCES platform.practices(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY platform.practice_site_versions

@@ -1405,10 +1405,12 @@ class PracticeBookingButtonRow(PlatformBase):
         ForeignKey(f"{PLATFORM_SCHEMA}.practices.id", ondelete="CASCADE"),
         primary_key=True,
     )
-    booking_link_id: Mapped[str | None] = mapped_column(
-        Uuid(as_uuid=False),
-        ForeignKey(f"{PLATFORM_SCHEMA}.booking_links.id", ondelete="SET NULL"),
-    )
+    # No foreign key to booking_links: that table is still built and dropped by
+    # the tenant chain (PABLO-k7it), whose downgrade could not drop it past a
+    # reference from here. A link is tombstoned rather than deleted, and every
+    # read checks it is this practice's, live and on (owned_booking_link), so
+    # a stale id shows nothing.
+    booking_link_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
     outside_url: Mapped[str | None] = mapped_column(String(2048))
     on_website: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
