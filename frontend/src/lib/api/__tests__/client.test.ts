@@ -269,6 +269,107 @@ describe.each(["nested", "flat"] as const)(
   })
 })
 
+/**
+ * A 401 with no envelope at all. FastAPI renders a plain-detail
+ * `HTTPException` as `{"detail": "..."}`, and an edge layer answering before
+ * the backend may send nothing readable; both resolve to UNKNOWN_ERROR here.
+ * That used to boot nothing — the observed shape of a session gone stale
+ * overnight: every call 401s this way while the signed-in shell stays up.
+ */
+describe("apiClient bare-body 401s", () => {
+  function bare401(): Response {
+    return new Response(JSON.stringify({ detail: "Not authenticated" }), {
+      status: 401,
+      headers: { "content-type": "application/json" },
+    })
+  }
+
+  it("boots to /login?reason=session_expired from the session peek", async () => {
+    const client = await freshClient()
+    const fetchMock = vi.fn().mockResolvedValue(bare401())
+    vi.stubGlobal("fetch", fetchMock)
+
+    await expect(client.get("/api/auth/session")).rejects.toMatchObject({
+      code: "UNKNOWN_ERROR",
+      status: 401,
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1) // no refresh-retry for an unclassified 401
+    await vi.waitFor(() => {
+      expect(signOut).toHaveBeenCalledWith({ wipePersisted: true })
+      expect(assignSpy).toHaveBeenCalledWith("/login?reason=session_expired")
+    })
+  })
+
+  it("boots from any client-managed request, not only the session peek", async () => {
+    const client = await freshClient()
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(bare401()))
+
+    await expect(client.get("/api/patients")).rejects.toMatchObject({ code: "UNKNOWN_ERROR" })
+    await vi.waitFor(() =>
+      expect(assignSpy).toHaveBeenCalledWith("/login?reason=session_expired"),
+    )
+  })
+
+  it("boots on a 401 with no body to read at all", async () => {
+    const client = await freshClient()
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 401 })))
+
+    await expect(client.get("/api/x")).rejects.toMatchObject({ code: "UNKNOWN_ERROR" })
+    await vi.waitFor(() =>
+      expect(assignSpy).toHaveBeenCalledWith("/login?reason=session_expired"),
+    )
+  })
+
+  it("does NOT boot when the caller supplied its own token", async () => {
+    const client = await freshClient()
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(bare401()))
+
+    await expect(client.get("/api/x", "caller-token")).rejects.toMatchObject({
+      code: "UNKNOWN_ERROR",
+    })
+    await Promise.resolve()
+    expect(assignSpy).not.toHaveBeenCalled()
+    expect(signOut).not.toHaveBeenCalled()
+  })
+
+  it("fires a single sign-out + redirect for a burst of bare 401s", async () => {
+    const client = await freshClient()
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => bare401()))
+
+    await Promise.allSettled([
+      client.get("/api/a"),
+      client.get("/api/b"),
+      client.get("/api/c"),
+    ])
+    await vi.waitFor(() => expect(assignSpy).toHaveBeenCalled())
+    expect(assignSpy).toHaveBeenCalledTimes(1)
+    expect(signOut).toHaveBeenCalledTimes(1)
+  })
+
+  it("boots a download the same way", async () => {
+    const client = await freshClient()
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(bare401()))
+
+    await expect(client.getBlob("/api/download")).rejects.toMatchObject({
+      code: "UNKNOWN_ERROR",
+    })
+    await vi.waitFor(() =>
+      expect(assignSpy).toHaveBeenCalledWith("/login?reason=session_expired"),
+    )
+  })
+
+  it("does NOT boot a download when the caller supplied its own token", async () => {
+    const client = await freshClient()
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(bare401()))
+
+    await expect(client.getBlob("/api/download", "caller-token")).rejects.toMatchObject({
+      code: "UNKNOWN_ERROR",
+    })
+    await Promise.resolve()
+    expect(assignSpy).not.toHaveBeenCalled()
+  })
+})
+
 describe("handleTerminalAuthLogout", () => {
   afterEach(() => {
     vi.useRealTimers()

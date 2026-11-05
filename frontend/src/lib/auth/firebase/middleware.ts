@@ -10,6 +10,7 @@ import { type NextRequest, NextResponse } from "next/server"
 import { authMiddleware, redirectToLogin, redirectToHome } from "next-firebase-auth-edge"
 import { authConfig, loginPath, logoutPath } from "@/lib/auth-config"
 import { isForcedLogoutArrival } from "@/lib/auth/forced-logout"
+import { isLogoutNavigation, loginRedirectAfterLogout } from "@/lib/auth/logout-navigation"
 import { builtInPublicPaths, extraPublicPaths } from "@/lib/auth/public-paths"
 import {
   browserApiOrigin,
@@ -76,13 +77,23 @@ function addSecurityHeaders(response: NextResponse, nonce: string): NextResponse
 export default async function firebaseAuthMiddleware(request: NextRequest) {
   const nonce = generateNonce()
 
-  // Dev mode: skip auth, just add security headers
+  // A navigation to the logout path (the account menu's Sign out) lands on
+  // /login; a fetch() to it keeps the library's JSON answer. See
+  // `@/lib/auth/logout-navigation`.
+  const logoutNavigation =
+    request.nextUrl.pathname === logoutPath && isLogoutNavigation(request.headers)
+
+  // Dev mode: skip auth, just add security headers. There are no session
+  // cookies to clear, but no page at the logout path either.
   if (IS_DEV_MODE) {
+    if (logoutNavigation) {
+      return addSecurityHeaders(loginRedirectAfterLogout(request, []), nonce)
+    }
     const headers = requestHeadersWithNonce(request, buildCsp(nonce), nonce)
     return addSecurityHeaders(NextResponse.next({ request: { headers } }), nonce)
   }
 
-  return authMiddleware(request, {
+  const response = await authMiddleware(request, {
     loginPath,
     logoutPath,
     ...authConfig,
@@ -132,4 +143,15 @@ export default async function firebaseAuthMiddleware(request: NextRequest) {
       )
     },
   })
+
+  // The library answers the logout path before verifying anything, with the
+  // cookie-expiry headers on a JSON 200. Those headers are carried onto the
+  // redirect as they are.
+  if (logoutNavigation) {
+    return addSecurityHeaders(
+      loginRedirectAfterLogout(request, response.headers.getSetCookie()),
+      nonce
+    )
+  }
+  return response
 }
