@@ -193,6 +193,25 @@ def test_a_practice_registered_under_no_email_takes_its_first_account(
     assert registry.owner_of(practice_id) == first_id
 
 
+def test_an_account_with_no_identity_row_yet_records_nothing(registry: _Registry) -> None:
+    """A first request can arrive before the account has an identity row, and
+    the resolve path then knows it only by the provider's subject id. The
+    column is uuid, so that id must never reach the statement: nothing is
+    recorded, nothing raises, and the sign-in with the row in place records it.
+    """
+    from app.db.practice_owner import record_owner_on_sign_in  # noqa: PLC0415
+
+    owner_id, owner_email = registry.account("owner")
+    practice_id = registry.practice("declared", owner_email)
+
+    assert record_owner_on_sign_in(practice_id, owner_email, "") is False
+    assert record_owner_on_sign_in(practice_id, owner_email, "firebase-uid") is False
+    assert registry.owner_of(practice_id) is None
+
+    assert record_owner_on_sign_in(practice_id, owner_email, owner_id) is True
+    assert registry.owner_of(practice_id) == owner_id
+
+
 # --- the one-off reconcile -------------------------------------------------
 
 
