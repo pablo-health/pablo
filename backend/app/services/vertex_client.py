@@ -68,10 +68,13 @@ def anthropic_vertex_client(
 ) -> Any:
     """Return a new anthropic client bound to Claude on Vertex AI.
 
-    Project comes from ``GOOGLE_CLOUD_PROJECT``; the region defaults to
-    ``ANTHROPIC_VERTEX_REGION`` (``global``) rather than the Gemini location, since
-    the Anthropic publisher models are served from a different endpoint. Imported
-    lazily so units that never touch Claude don't pay the import cost.
+    Project comes from ``ANTHROPIC_VERTEX_PROJECT_ID`` when set, else
+    ``GOOGLE_CLOUD_PROJECT``. The separate variable lets a deployment serve Claude
+    from a different project than the one Gemini, Document AI and logging use,
+    without redirecting those. The region defaults to ``ANTHROPIC_VERTEX_REGION``
+    (``global``) rather than the Gemini location, since the Anthropic publisher
+    models are served from a different endpoint. Imported lazily so units that
+    never touch Claude don't pay the import cost.
 
     Raises:
         RuntimeError: the anthropic package is not installed.
@@ -82,7 +85,9 @@ def anthropic_vertex_client(
         raise RuntimeError("anthropic package is required for Claude on Vertex AI access") from exc
     # project_id/region take a NotGiven sentinel (not None) when unset; with no
     # project the client falls back to the ambient GOOGLE_CLOUD_PROJECT itself.
-    project = os.environ.get("GOOGLE_CLOUD_PROJECT")
+    project = os.environ.get("ANTHROPIC_VERTEX_PROJECT_ID") or os.environ.get(
+        "GOOGLE_CLOUD_PROJECT"
+    )
     return AnthropicVertex(
         project_id=project or NOT_GIVEN,
         region=region or _ANTHROPIC_VERTEX_REGION,

@@ -39,6 +39,36 @@ def test_anthropic_vertex_client_disables_sdk_internal_retries() -> None:
     assert client.max_retries == 0
 
 
+def test_anthropic_vertex_client_uses_the_claude_project_when_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deployment can serve Claude from a project other than the ambient one."""
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "ambient-project")
+    monkeypatch.setenv("ANTHROPIC_VERTEX_PROJECT_ID", "claude-project")
+    client = anthropic_vertex_client()
+    assert client.project_id == "claude-project"
+
+
+def test_anthropic_vertex_client_falls_back_to_the_ambient_project(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no Claude-specific project, behaviour is unchanged."""
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "ambient-project")
+    monkeypatch.delenv("ANTHROPIC_VERTEX_PROJECT_ID", raising=False)
+    client = anthropic_vertex_client()
+    assert client.project_id == "ambient-project"
+
+
+def test_anthropic_vertex_client_treats_an_empty_claude_project_as_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty variable (a blank env entry) must not select an empty project."""
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "ambient-project")
+    monkeypatch.setenv("ANTHROPIC_VERTEX_PROJECT_ID", "")
+    client = anthropic_vertex_client()
+    assert client.project_id == "ambient-project"
+
+
 def test_default_client_bound_fits_the_request_preset_twice() -> None:
     """Every request-path caller on the default client (chat, agent, embedding,
     navigation) can retry an attempt that failed at its bound."""
