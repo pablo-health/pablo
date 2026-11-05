@@ -3,11 +3,12 @@
 """Tests for the retry/backoff engine (``call_with_retry``/``acall_with_retry``).
 
 All hermetic — no network, no real sleeping (``sleep=`` is always
-injected). Covers: attempt counting and exhaustion for both the sync
-and async entry points, non-retryable passthrough, deadline
-enforcement, idempotency-gated retryability (the ``UNSAFE`` pre-
-dispatch-only rule), the ``Retry-After`` override, and a thin
-integration test driving the engine through a real ``httpx``
+injected), and a fake clock where elapsed time matters. Covers: attempt
+counting and exhaustion for both the sync and async entry points,
+non-retryable passthrough, deadline enforcement, idempotency-gated
+retryability (the ``UNSAFE`` pre-dispatch-only rule), the ``Retry-After``
+override, the request preset's room for a slow failure's retry, and a
+thin integration test driving the engine through a real ``httpx``
 ``MockTransport``.
 """
 
@@ -15,11 +16,18 @@ from __future__ import annotations
 
 import asyncio
 import random
+import time
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import httpx
 import pytest
 from app.reliability import (
+    HTTP_JOB,
+    HTTP_REQUEST,
+    LLM_JOB,
+    LLM_REQUEST,
+    SINGLE_ATTEMPT,
     Idempotency,
     RetryExhaustedError,
     RetryPolicy,
@@ -388,3 +396,173 @@ class TestHttpxIntegration:
                     sleep=lambda _d: None,
                 )
         assert calls == 1
+
+
+# ---------------------------------------------------------------------------
+# The request preset: room for a slow failure's retry
+# ---------------------------------------------------------------------------
+
+
+def _status_error(status: int, headers: dict[str, str] | None = None) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "https://example.test")
+    response = httpx.Response(status, request=request, headers=headers)
+    return httpx.HTTPStatusError(str(status), request=request, response=response)
+
+
+class _SlowFailure:
+    """Each call advances the fake clock by its cost, then fails or answers."""
+
+    def __init__(
+        self, clock: list[float], costs: list[float], failures: list[BaseException]
+    ) -> None:
+        self.clock = clock
+        self.costs = costs
+        self.failures = failures
+        self.calls = 0
+
+    def __call__(self) -> str:
+        self.calls += 1
+        self.clock[0] += self.costs[self.calls - 1]
+        if self.calls <= len(self.failures):
+            raise self.failures[self.calls - 1]
+        return "ok"
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """A fake monotonic clock the engine reads; tests advance it by hand."""
+    now = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    return now
+
+
+class TestRequestPathPolicy:
+    def test_a_failure_after_the_old_budget_is_still_retried(self, clock: list[float]) -> None:
+        # The preset's deadline used to be 25 s, so a provider answering 504
+        # after 30 s could never be retried: the first attempt alone had
+        # spent the budget.
+        fn = _SlowFailure(clock, [30.0, 10.0], [_status_error(504)])
+        sleeps: list[float] = []
+
+        result = call_with_retry(
+            fn, policy=LLM_REQUEST, idempotency=Idempotency.SAFE, sleep=_sleeps(sleeps)
+        )
+
+        assert result == "ok"
+        assert fn.calls == 2
+
+    def test_a_failure_at_the_attempt_bound_is_still_retried(self, clock: list[float]) -> None:
+        assert LLM_REQUEST.attempt_timeout is not None
+        assert LLM_REQUEST.deadline is not None
+        fn = _SlowFailure(
+            clock, [LLM_REQUEST.attempt_timeout, LLM_REQUEST.attempt_timeout], [TimeoutError()]
+        )
+
+        result = call_with_retry(
+            fn, policy=LLM_REQUEST, idempotency=Idempotency.SAFE, sleep=lambda _d: None
+        )
+
+        assert result == "ok"
+        assert fn.calls == 2
+        assert clock[0] - 1000.0 <= LLM_REQUEST.deadline
+
+    def test_a_retry_past_the_deadline_is_not_started(self, clock: list[float]) -> None:
+        assert LLM_REQUEST.deadline is not None
+        fn = _SlowFailure(clock, [LLM_REQUEST.deadline, 1.0], [_status_error(504)])
+
+        with pytest.raises(RetryExhaustedError) as caught:
+            call_with_retry(
+                fn, policy=LLM_REQUEST, idempotency=Idempotency.SAFE, sleep=lambda _d: None
+            )
+
+        assert caught.value.attempts == 1
+        assert fn.calls == 1
+
+    def test_consecutive_rate_limits_back_off_at_least_the_base_delay(self) -> None:
+        # Jitter alone could retry a rate limit a fraction of a second later.
+        # Three attempts, so two backoffs are observed; many runs, so the
+        # jitter's whole range is.
+        policy = replace(LLM_REQUEST, max_attempts=3)
+        for seed in range(50):
+            random.seed(seed)
+            flaky = _Flaky([_status_error(429), _status_error(429)])
+            sleeps: list[float] = []
+
+            call_with_retry(
+                flaky, policy=policy, idempotency=Idempotency.SAFE, sleep=_sleeps(sleeps)
+            )
+
+            assert len(sleeps) == 2
+            assert all(delay >= 2.0 for delay in sleeps), sleeps
+            assert all(delay <= policy.max_delay for delay in sleeps), sleeps
+
+    def test_a_rate_limit_waits_the_retry_after_it_was_given(self) -> None:
+        flaky = _Flaky([_status_error(429, {"Retry-After": "6"})])
+        sleeps: list[float] = []
+
+        call_with_retry(
+            flaky, policy=LLM_REQUEST, idempotency=Idempotency.SAFE, sleep=_sleeps(sleeps)
+        )
+
+        assert sleeps == [6.0]
+
+    def test_a_long_retry_after_is_capped_at_the_max_delay(self) -> None:
+        flaky = _Flaky([_status_error(429, {"Retry-After": "300"})])
+        sleeps: list[float] = []
+
+        call_with_retry(
+            flaky, policy=LLM_REQUEST, idempotency=Idempotency.SAFE, sleep=_sleeps(sleeps)
+        )
+
+        assert sleeps == [LLM_REQUEST.max_delay]
+
+    def test_a_rate_limit_under_a_tight_preset_waits_what_it_can(self) -> None:
+        # The floor is the base delay, never more than the preset's ceiling.
+        policy = RetryPolicy(max_attempts=2, base_delay=5.0, max_delay=1.0, jitter=True)
+        flaky = _Flaky([_status_error(429)])
+        sleeps: list[float] = []
+
+        call_with_retry(flaky, policy=policy, idempotency=Idempotency.SAFE, sleep=_sleeps(sleeps))
+
+        assert sleeps == [1.0]
+
+    @pytest.mark.parametrize("status", [400, 401, 403, 404])
+    def test_client_errors_are_not_retried(self, status: int) -> None:
+        flaky = _Flaky([_status_error(status), _status_error(status)])
+
+        with pytest.raises(httpx.HTTPStatusError):
+            call_with_retry(
+                flaky, policy=LLM_REQUEST, idempotency=Idempotency.SAFE, sleep=lambda _d: None
+            )
+
+        assert flaky.calls == 1
+
+
+_PRESETS = {
+    "LLM_REQUEST": LLM_REQUEST,
+    "LLM_JOB": LLM_JOB,
+    "HTTP_REQUEST": HTTP_REQUEST,
+    "HTTP_JOB": HTTP_JOB,
+    "SINGLE_ATTEMPT": SINGLE_ATTEMPT,
+}
+
+
+class TestPresets:
+    def test_the_request_preset_names_its_attempt_bound(self) -> None:
+        # The invariant below is vacuous for a preset that names no bound;
+        # the request preset must, since its call sites hand the bound on.
+        assert LLM_REQUEST.deadline is not None
+        assert LLM_REQUEST.attempt_timeout is not None
+
+    @pytest.mark.parametrize(("name", "policy"), _PRESETS.items())
+    def test_a_deadline_holds_every_attempt_and_the_backoff_between(
+        self, name: str, policy: RetryPolicy
+    ) -> None:
+        """A first attempt that runs to its bound must leave room for a second
+        one, or a slow failure is never retried: that is how the request
+        preset once spent a 25 s deadline on a single 180 s attempt."""
+        if policy.deadline is None or policy.attempt_timeout is None:
+            pytest.skip(f"{name} names no deadline or no attempt bound")
+        attempts = policy.max_attempts * policy.attempt_timeout
+        backoff = (policy.max_attempts - 1) * policy.max_delay
+        assert attempts + backoff <= policy.deadline, name

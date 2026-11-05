@@ -22,7 +22,7 @@ import pytest
 from app.reliability import SINGLE_ATTEMPT, RetryExhaustedError
 from app.reliability.classify import is_pre_dispatch, is_transient
 from app.reliability.hedge import INTERACTIVE_STALL_AFTER, FailureKind
-from app.reliability.retry import LLM_REQUEST
+from app.reliability.retry import LLM_JOB, LLM_REQUEST
 from app.services.availability_parse_service import AvailabilityRuleParseService
 from app.services.bedrock_structured_llm_gateway import (
     BedrockCallError,
@@ -368,8 +368,9 @@ class TestTimeouts:
             clock[0] += module._MAX_CLIENT_IDLE_SECONDS / 2
         assert built == [15.0]
 
-    def test_with_no_bound_given_the_retry_deadline_does_not_cut_the_attempt(self) -> None:
-        """A long draft on Bedrock as the only model keeps the full default bound."""
+    def test_with_no_bound_given_the_attempt_takes_the_policys_bound(self) -> None:
+        """The request preset's own bound; a long draft on Bedrock as the only
+        model passes the job preset and keeps the full default bound."""
         built: list[float] = []
         client = _StubClient(_response({"proposals": []}))
 
@@ -379,8 +380,9 @@ class TestTimeouts:
 
         gw = BedrockStructuredLLMGateway(client_factory=factory)
         _call(gw, retry_policy=None)
+        _call(gw, retry_policy=LLM_JOB)
         _call(gw, retry_policy=None, timeout_seconds=40.0)
-        assert built == [180.0, 25.0]
+        assert built == [LLM_REQUEST.attempt_timeout, 180.0, 40.0]
 
     def test_a_real_client_carries_the_bound_and_no_retries_of_its_own(
         self, monkeypatch: pytest.MonkeyPatch

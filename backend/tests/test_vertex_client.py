@@ -6,7 +6,12 @@ import builtins
 
 import pytest
 
-from backend.app.services.vertex_client import anthropic_vertex_client, vertex_genai_client
+from backend.app.reliability import LLM_REQUEST
+from backend.app.services.vertex_client import (
+    DEFAULT_VERTEX_TIMEOUT_SECONDS,
+    anthropic_vertex_client,
+    vertex_genai_client,
+)
 
 
 def test_runtime_error_when_genai_missing(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -27,8 +32,15 @@ def test_anthropic_vertex_client_disables_sdk_internal_retries() -> None:
 
     Without ``max_retries=0``, a persistent 429 would stack 2 engine
     attempts against up to 3 SDK-internal tries each (6 total HTTP
-    calls), and the SDK's own backoff could run past ``LLM_REQUEST``'s
-    25s deadline from inside a single engine attempt.
+    calls), and the SDK's own backoff could run one engine attempt past
+    ``LLM_REQUEST``'s attempt bound and into its deadline.
     """
     client = anthropic_vertex_client()
     assert client.max_retries == 0
+
+
+def test_default_client_bound_fits_the_request_preset_twice() -> None:
+    """Every request-path caller on the default client (chat, agent, embedding,
+    navigation) can retry an attempt that failed at its bound."""
+    assert LLM_REQUEST.attempt_timeout is not None
+    assert LLM_REQUEST.attempt_timeout >= DEFAULT_VERTEX_TIMEOUT_SECONDS

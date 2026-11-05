@@ -5,9 +5,11 @@
 Adopting this at a call site is a two-part change: (a) plumb the SDK's
 own per-attempt deadline (genai ``HttpOptions``, httpx ``timeout=``,
 gax ``timeout=``) — this module does not and cannot enforce a timeout
-on a call it doesn't control the transport for; (b) wrap the call in
-``call_with_retry``/``acall_with_retry`` for attempt count, backoff,
-and (for async callers) an optional overall wall-clock budget.
+on a call it doesn't control the transport for, but a policy names the
+bound its call sites should hand over (``RetryPolicy.attempt_timeout``);
+(b) wrap the call in ``call_with_retry``/``acall_with_retry`` for
+attempt count, backoff, and (for async callers) an optional overall
+wall-clock budget.
 
 A thunk, not a decorator: callers bind their own arguments, so the
 engine stays SDK-agnostic across sync google-genai calls, gRPC (gax),
@@ -27,7 +29,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from .classify import is_pre_dispatch, is_transient, retry_after_seconds
+from .classify import is_pre_dispatch, is_transient, retry_after_seconds, status_code
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -77,6 +79,18 @@ class RetryPolicy:
     spent.
     """
 
+    attempt_timeout: float | None = None
+    """The per-attempt bound a call site hands its SDK under this policy, in seconds.
+
+    The engine does not enforce it (see ``deadline``); it is the number the
+    call site plumbs into the SDK's own timeout, kept here so the two stay
+    sized together. With a ``deadline``, every attempt and the longest
+    backoff between them must fit inside it:
+    ``max_attempts * attempt_timeout + (max_attempts - 1) * max_delay <=
+    deadline``. Otherwise a slow failure can never be retried: the first
+    attempt runs to its bound, and by then the deadline refuses a second.
+    """
+
     jitter: bool = True
     """Full jitter (``random.uniform(0, delay)``) on the backoff."""
 
@@ -116,12 +130,19 @@ def _is_retryable(
     return True
 
 
+_RATE_LIMITED = 429
+
+
 def _backoff_seconds(attempt: int, exc: BaseException, policy: RetryPolicy) -> float:
     """Compute the sleep before the next attempt, honoring Retry-After.
 
     The hint is capped at ``policy.max_delay`` — for deadline-free
     presets (``LLM_JOB``/``HTTP_JOB``) an absurd or misconfigured
     ``Retry-After`` would otherwise sleep unbounded.
+
+    A rate limit with no hint waits at least ``base_delay``: jitter would
+    otherwise retry it a fraction of a second later, which the limit will
+    not have cleared.
     """
     hinted = retry_after_seconds(exc)
     if hinted is not None:
@@ -129,6 +150,8 @@ def _backoff_seconds(attempt: int, exc: BaseException, policy: RetryPolicy) -> f
     delay: float = min(policy.max_delay, policy.base_delay * (2 ** (attempt - 1)))
     if policy.jitter:
         delay = random.uniform(0, delay)  # noqa: S311 — backoff jitter, not cryptographic use
+    if status_code(exc) == _RATE_LIMITED:
+        delay = max(delay, min(policy.base_delay, policy.max_delay))
     return delay
 
 
@@ -208,11 +231,21 @@ async def acall_with_retry[T](
 # Preset policies
 # ---------------------------------------------------------------------------
 
-LLM_REQUEST = RetryPolicy(max_attempts=2, base_delay=0.5, max_delay=4.0, deadline=25.0)
-"""One retry, tight budget — the request path of an interactive call."""
+LLM_REQUEST = RetryPolicy(
+    max_attempts=2, base_delay=2.0, max_delay=8.0, deadline=140.0, attempt_timeout=60.0
+)
+"""One retry — the request path of an interactive call.
+
+The deadline holds two full attempts and the longest backoff between them
+(60 + 8 + 60 = 128 s), so an attempt that fails at its bound is still
+retried. A rate limit waits whole seconds, not the fraction a tighter
+preset would give it.
+"""
 
 LLM_JOB = RetryPolicy(max_attempts=4, base_delay=1.0, max_delay=30.0, deadline=None)
-"""More attempts, no overall deadline — batch/cron work bounded by the job timeout."""
+"""More attempts, no overall deadline — batch/cron work, and a long generation
+on a request path, bounded by the job's or the request's own timeout. Names no
+attempt bound: the call site keeps its client's long default."""
 
 HTTP_REQUEST = RetryPolicy(max_attempts=2, base_delay=0.3, max_delay=3.0, deadline=20.0)
 """Request-path HTTP calls other than LLM generation."""

@@ -81,6 +81,7 @@ from ..notes.visit_times import (
     client_present_turns,
     dictated_time_text,
 )
+from ..reliability import LLM_JOB
 from ..settings import get_settings
 from . import history_section_call, hpi_section_call, psychotherapy_section_call, risk_section_call
 from .ai_features import AIFeature
@@ -824,6 +825,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
             max_output_tokens=settings.note_source_attribution_max_output_tokens,
             thinking_budget=settings.note_source_attribution_thinking_budget,
             temperature=0.0,
+            retry_policy=LLM_JOB,
         ).data
 
     def chart_proposal_completion(self) -> CompleteStructured:
@@ -841,6 +843,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
                 max_output_tokens=settings.note_source_attribution_max_output_tokens,
                 thinking_budget=settings.note_source_attribution_thinking_budget,
                 temperature=0.0,
+                retry_policy=LLM_JOB,
             ).data
 
         return complete
@@ -897,6 +900,11 @@ class RegistryNoteGenerationService(NoteGenerationService):
                     max_output_tokens=budget,
                     temperature=temp,
                     thinking_budget=thinking,
+                    # Every call this service makes works a whole transcript,
+                    # and a reasoning model drafting from one routinely runs
+                    # past the request preset's 60 s attempt bound: keep the
+                    # client's long bound, on a worker and on a request alike.
+                    retry_policy=LLM_JOB,
                 )
             except StructuredOutputTruncatedError as exc:
                 last_truncation = exc
@@ -946,6 +954,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
                 system_prompt=_ATTRIBUTION_SYSTEM_PROMPT,
                 user_prompt=prompt,
                 response_schema=_SOAP_ATTRIBUTION_SCHEMA,
+                retry_policy=LLM_JOB,
                 # The output budget is shared between reasoning and output on a
                 # thinking model. On a long indexed transcript the reasoning
                 # alone could exhaust a small budget and truncate with zero

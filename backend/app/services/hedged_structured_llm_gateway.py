@@ -18,8 +18,8 @@ A fallback is named by model string alone. ``resolve`` (by default
 so a new provider joins by registering a gateway for its prefix, with no
 change to the policy.
 
-Every call ends within 25 s, the deadline of the ``LLM_REQUEST`` retry
-this replaces: a leg that starts late is given what is left of it.
+Every call ends within 25 s, the interactive budget: a leg that starts late
+is given what is left of it.
 
 A long call (drafting, importing or deriving a note) uses the same legs,
 built by :func:`generation_gateway` from the feature's entry in
@@ -92,8 +92,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: Every call, retries included, ends within this long: the deadline of the
-#: one-retry ``LLM_REQUEST`` preset these legs replace.
+#: Every call, retries included, ends within this long. An interactive call
+#: answers in seconds and is given fallbacks beside a stalled leg, so it keeps
+#: a tighter budget than the one-retry ``LLM_REQUEST`` preset these legs
+#: replace, whose deadline holds two full attempts of a single model.
 _BUDGET_SECONDS = 25.0
 
 #: A long call's whole sequence of attempts ends within this long. Each

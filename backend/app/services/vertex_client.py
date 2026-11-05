@@ -25,11 +25,13 @@ from typing import Any
 _ANTHROPIC_VERTEX_REGION = os.environ.get("ANTHROPIC_VERTEX_REGION", "global")
 
 # Per-call deadline for a single Vertex request, both request-path and
-# job/cron callers. Generous relative to the request-path retry presets
-# (``reliability.LLM_REQUEST`` budgets 25s across all attempts) because a
-# streaming chat completion or a large structured extraction can
-# legitimately run long; this exists to fail a truly hung connection, not
-# to shape p99 latency.
+# job/cron callers. The same 60 s the request-path preset names as its own
+# per-attempt bound (``reliability.LLM_REQUEST.attempt_timeout``), of which
+# two fit inside that preset's deadline with the backoff between them, so a
+# request-path caller on this default can retry a call that failed at its
+# bound. Generous for an ordinary answer because a streaming chat completion
+# or a large structured extraction can legitimately run long; this exists to
+# fail a truly hung connection, not to shape p99 latency.
 DEFAULT_VERTEX_TIMEOUT_SECONDS = 60.0
 
 
@@ -87,8 +89,9 @@ def anthropic_vertex_client(
         timeout=timeout_seconds,
         # The SDK's own retry loop (default 2) would otherwise stack with
         # the reliability engine's attempts — up to 3x SDK tries per engine
-        # attempt, with the SDK's internal backoff able to blow LLM_REQUEST's
-        # 25s deadline from inside a single attempt. Mirrors `retry=None` on
-        # the Document AI gax client: this module owns the retry policy.
+        # attempt, with the SDK's internal backoff and retried reads able to
+        # run one engine attempt past LLM_REQUEST's attempt bound and eat the
+        # deadline from inside it. Mirrors `retry=None` on the Document AI
+        # gax client: this module owns the retry policy.
         max_retries=0,
     )
