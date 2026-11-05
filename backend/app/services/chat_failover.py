@@ -26,9 +26,10 @@ answer runs this sequence once more, and that is the most an answer ever
 costs: two passes over the configured models.
 
 Every model, the primary included, is named by model string: ``bedrock:``
-models stream through Bedrock, and any other through the feature's own
-gateway. So a feature whose primary is a Bedrock model (``ai_models``) can
-fall back to the tier default on Vertex, and the other way round.
+models stream through Bedrock, ``anthropic:`` models through Claude on
+Vertex, and any other through the feature's own gateway. So a feature whose
+primary is a Bedrock model (``ai_models``) can fall back to the tier default
+on Vertex, and the other way round.
 
 Each answer that needed a fallback logs one line: the model that
 answered and the error code of each that did not. Each answer in which a
@@ -58,6 +59,12 @@ def _bedrock_gateway() -> ChatLLMGateway:
     return get_bedrock_chat_llm_gateway()
 
 
+def _anthropic_vertex_gateway() -> ChatLLMGateway:
+    from .anthropic_vertex_chat_llm_gateway import get_anthropic_vertex_chat_llm_gateway
+
+    return get_anthropic_vertex_chat_llm_gateway()
+
+
 class FailoverChatLLMGateway(ChatLLMGateway):
     """Stream from the first model in order that does not fail before answering."""
 
@@ -80,6 +87,8 @@ class FailoverChatLLMGateway(ChatLLMGateway):
         provider, sep, _ = model.partition(":")
         if sep and provider == LLMProvider.BEDROCK:
             return _bedrock_gateway()
+        if sep and provider == LLMProvider.ANTHROPIC:
+            return _anthropic_vertex_gateway()
         return self._gateway
 
     def _hands_over(self, event: StreamEvent) -> bool:
