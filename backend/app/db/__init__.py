@@ -818,9 +818,23 @@ def read_once_as(
         savepoint.rollback()
 
 
+def _is_savepoint(transaction: Any) -> bool:
+    """Whether an ``after_begin`` is for a ``begin_nested`` savepoint, not a new transaction.
+
+    The two ``after_begin`` listeners below restore what a *new* transaction
+    lacks: transaction-local settings a commit cleared, and a search path a
+    pool round trip reset. A savepoint lacks neither. It runs on the root
+    transaction's connection, sees the root's ``set_config(..., true)``
+    values and search path, and on rollback reverts only what was changed
+    inside it. So they skip it rather than re-issue the same settings once
+    per savepoint.
+    """
+    return bool(getattr(transaction, "nested", False))
+
+
 @event.listens_for(Session, "after_begin")
 def _reapply_tenant_schema_on_txn_begin(
-    session: Session, _transaction: Any, connection: Any
+    session: Session, transaction: Any, connection: Any
 ) -> None:
     """Keep a session on the practice schema it was set to, across commits.
 
@@ -841,7 +855,14 @@ def _reapply_tenant_schema_on_txn_begin(
     Session would be undone after the next commit. Switch with
     ``set_tenant_schema``; ``tests/test_search_path_switch_guardrail.py``
     holds the line.
+
+    Not on a savepoint: ``after_begin`` also fires for ``begin_nested``, but a
+    savepoint runs on the connection and inside the transaction its root
+    began, so the path is already whatever the root was given (see
+    :func:`_is_savepoint`).
     """
+    if _is_savepoint(transaction):
+        return
     recorded = session.info.get(_TENANT_SCHEMA_KEY)
     if recorded is None:
         return
@@ -854,7 +875,7 @@ def _reapply_tenant_schema_on_txn_begin(
 
 @event.listens_for(Session, "after_begin")
 def _rearm_rls_principal_gucs_on_txn_begin(
-    session: Session, _transaction: Any, connection: Any
+    session: Session, transaction: Any, connection: Any
 ) -> None:
     """Re-apply the RLS ``app.current_user_id`` GUC on every txn begin.
 
@@ -907,6 +928,18 @@ def _rearm_rls_principal_gucs_on_txn_begin(
     has one, it does not impose a principal on a transaction that has
     none.
 
+    **Not on a savepoint.** ``after_begin`` fires for ``begin_nested`` too,
+    and re-arming there would cost a ``set_config`` round trip per savepoint
+    to put back values the savepoint already has: a transaction-local
+    setting made in the root transaction is visible inside every savepoint
+    under it, and a savepoint's rollback only reverts what was set inside
+    that savepoint. Every arming path (:func:`arm_current_user_id`,
+    :func:`arm_current_patient_id`, ``tenant_db_session``) issues its own
+    ``set_config`` on the open transaction, so nothing depends on a later
+    savepoint to arm it. The refusal below is therefore checked once per
+    transaction, as each arming path already checks its own. See
+    :func:`_is_savepoint`.
+
     **Both principals visible at once is refused, loudly.** The arming
     functions make it unreachable — each clears the other's carriers — but
     they clear them on the ``Session`` they are handed, and this listener
@@ -922,6 +955,8 @@ def _rearm_rls_principal_gucs_on_txn_begin(
     legitimate producer, so a 500 naming it is strictly better than either
     guess.
     """
+    if _is_savepoint(transaction):
+        return
     user_id = session.info.get(_RLS_USER_ID_KEY) or _current_user_id.get()
     patient_id = session.info.get(_RLS_PATIENT_ID_KEY) or _current_patient_id.get()
     if user_id is None and patient_id is None:
