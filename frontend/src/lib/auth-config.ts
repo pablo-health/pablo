@@ -56,5 +56,4 @@ export const authConfig = {
   enableMultipleCookies: true,
 }
 
-export const loginPath = "/api/login"
-export const logoutPath = "/api/logout"
+export { loginPath, logoutPath } from "./auth/paths"
