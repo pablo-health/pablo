@@ -121,7 +121,7 @@ describe("Session API Functions", () => {
 
       vi.mocked(client.get).mockResolvedValue(mockResponse)
 
-      await listSessions("test-token")
+      await listSessions(undefined, "test-token")
 
       expect(client.get).toHaveBeenCalledWith("/api/sessions", "test-token")
     })

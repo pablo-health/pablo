@@ -8,7 +8,7 @@ Thin HTTP handlers that delegate business logic to SessionService.
 
 import contextvars
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import partial
 from typing import Any
 
@@ -152,6 +152,7 @@ from ..services.transcription_queue_service import (
     TranscriptionQueueService,
 )
 from ..settings import get_settings
+from ..undo_window import UNDO_WINDOW_DAYS, IncludeDeletedMode
 from ..uploads import read_bounded
 from ..utcnow import utc_now
 from .notes import get_audio_on_signing, get_note_generation_service, get_registry
@@ -841,6 +842,14 @@ def list_sessions(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+    patient_id: str | None = Query(None, description="Only this patient's sessions"),
+    include_deleted: IncludeDeletedMode | None = Query(
+        None,
+        description=(
+            "If 'recent', return sessions soft-deleted on their own within the "
+            "30-day undo window instead of live sessions. Default lists only live sessions."
+        ),
+    ),
     user: User = Depends(require_baa_acceptance),
     session_repo: TherapySessionRepository = Depends(get_session_repository),
     patient_repo: PatientRepository = Depends(get_patient_repository),
@@ -852,10 +861,47 @@ def list_sessions(
 
     - **page**: Page number (default 1)
     - **page_size**: Items per page (default 20, max 100)
+    - **patient_id**: Narrow the listing to one patient
+    - **include_deleted**: ``recent`` switches to the 30-day soft-delete
+      undo window (PABLO-ocvu). Default lists only live sessions.
 
     Returns sessions sorted by session_date descending (newest first).
     """
-    sessions, total = session_repo.list_by_user(user.id, page=page, page_size=page_size)
+    if include_deleted is IncludeDeletedMode.RECENT:
+        # Recently-deleted slice: pagination intentionally does not apply,
+        # for the same reason as the patient listing — the window is
+        # bounded by 30 days of soft-deletes per user, and the hard-purge
+        # cron (THERAPY-cgy) caps the upper bound. Notes are not embedded:
+        # the note was tombstoned with the session and comes back with it.
+        deleted_pairs = session_repo.list_recently_deleted(
+            user.id, patient_id=patient_id, window_days=UNDO_WINDOW_DAYS
+        )
+        deleted_patients = patient_repo.get_multiple(
+            list({s.patient_id for s, _stamp in deleted_pairs}), user.id
+        )
+        responses = []
+        with audit.batched():
+            for s, stamp in deleted_pairs:
+                patient = deleted_patients.get(s.patient_id)
+                responses.append(
+                    SessionResponse.from_session(
+                        s,
+                        patient.display_name if patient else "Unknown",
+                        deleted_at=stamp,
+                        restore_deadline=stamp + timedelta(days=UNDO_WINDOW_DAYS),
+                    )
+                )
+                audit.log_session_action(AuditAction.SESSION_VIEWED, user, request, s, patient)
+        return SessionListResponse(
+            data=responses,
+            total=len(responses),
+            page=1,
+            page_size=len(responses),
+        )
+
+    sessions, total = session_repo.list_by_user(
+        user.id, page=page, page_size=page_size, patient_id=patient_id
+    )
 
     patient_ids = list({s.patient_id for s in sessions})
     patients = patient_repo.get_multiple(patient_ids, user.id)
@@ -982,6 +1028,61 @@ def get_session(
     audit.log_session_action(AuditAction.SESSION_VIEWED, user, request, session, patient)
 
     return SessionResponse.from_session(session, patient_name, _embed_note(note))
+
+
+@router.post("/api/sessions/{session_id}/restore")
+def restore_session(
+    session_id: str,
+    request: Request,
+    user: User = Depends(require_baa_acceptance),
+    session_repo: TherapySessionRepository = Depends(get_session_repository),
+    patient_repo: PatientRepository = Depends(get_patient_repository),
+    notes_repo: NotesRepository = Depends(get_notes_repository),
+    audit: AuditService = Depends(get_audit_service),
+) -> SessionResponse:
+    """Reverse a session's soft-delete inside the 30-day undo window (PABLO-ocvu).
+
+    Mirrors ``restore_patient``. Returns 404 if the session is not
+    soft-deleted, is not on a patient the caller is granted on, or its
+    ``deleted_at`` is past the window — the same status as a missing
+    session, so the lifecycle state of rows the caller can no longer act
+    on does not leak. Once the hard-purge cron has run the row is gone and
+    the same 404 applies.
+
+    A session whose patient is also soft-deleted is refused with 409
+    ``PATIENT_DELETED``: it comes back with the patient, through
+    ``POST /api/patients/{id}/restore``, and reviving it alone would leave a
+    live session on a tombstoned chart.
+
+    The note tombstoned together with the session comes back with it.
+    ``session_number`` is preserved (THERAPY-nyb).
+    """
+    found = session_repo.get_recently_deleted(session_id, user.id, window_days=UNDO_WINDOW_DAYS)
+    if found is None:
+        raise NotFoundError("Session not found", {"session_id": session_id})
+    deleted, _stamp = found
+
+    # ``get`` hides a soft-deleted patient, and the grant check already
+    # passed on the session, so a miss here means the patient is deleted.
+    patient = patient_repo.get(deleted.patient_id, user.id)
+    if patient is None:
+        raise ConflictError(
+            "Restore the client first; this session comes back with them.",
+            {"session_id": session_id, "patient_id": deleted.patient_id},
+            code="PATIENT_DELETED",
+        )
+
+    restored = session_repo.restore(session_id, user.id, window_days=UNDO_WINDOW_DAYS)
+    if restored is None:
+        raise NotFoundError("Session not found", {"session_id": session_id})
+
+    # Restore first, then audit: an audit-write failure propagates out of
+    # the handler, the middleware rolls the transaction back, and
+    # ``deleted_at`` is a tombstone again. Same order as delete_patient.
+    audit.log_session_action(AuditAction.SESSION_RESTORED, user, request, restored, patient)
+
+    note = notes_repo.get_by_session_id(restored.id, user.id)
+    return SessionResponse.from_session(restored, patient.display_name, _embed_note(note))
 
 
 @router.patch("/api/sessions/{session_id}/finalize")

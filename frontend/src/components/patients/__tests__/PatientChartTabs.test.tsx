@@ -22,6 +22,7 @@ import * as documentsApi from "@/lib/api/patientDocuments"
 import * as noteTypesApi from "@/lib/api/noteTypes"
 import * as paymentsApi from "@/lib/api/payments"
 import * as coverageApi from "@/lib/api/coverage"
+import * as sessionsApi from "@/lib/api/sessions"
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn() }),
@@ -41,6 +42,7 @@ vi.mock("@/lib/api/payments", async (importOriginal) => ({
   fetchPatientBalance: vi.fn(),
 }))
 vi.mock("@/lib/api/coverage")
+vi.mock("@/lib/api/sessions")
 
 const createWrapper = () => {
   const queryClient = new QueryClient({
@@ -59,6 +61,13 @@ describe("PatientChartTabs", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     authLoading = false
+    // The notes tab also asks for the chart's recently deleted sessions.
+    vi.mocked(sessionsApi.listSessions).mockResolvedValue({
+      data: [],
+      total: 0,
+      page: 1,
+      page_size: 0,
+    })
     vi.mocked(notesApi.listNotesForPatient).mockResolvedValue({
       data: [
         createMockNote({

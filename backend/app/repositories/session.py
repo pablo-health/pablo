@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from ..models import TherapySession
+from ..utcnow import utc_now
 
 
 class TherapySessionRepository(ABC):
@@ -44,11 +45,17 @@ class TherapySessionRepository(ABC):
 
     @abstractmethod
     def list_by_user(
-        self, user_id: str, *, page: int = 1, page_size: int = 20
+        self,
+        user_id: str,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        patient_id: str | None = None,
     ) -> tuple[list[TherapySession], int]:
         """List therapy sessions for a user with pagination.
 
-        Returns a tuple of (paginated_sessions, total_count).
+        ``patient_id`` narrows the listing to one patient; the access gate
+        is unchanged. Returns a tuple of (paginated_sessions, total_count).
         """
         pass
 
@@ -108,6 +115,65 @@ class TherapySessionRepository(ABC):
         """Get the next session number for a patient."""
         pass
 
+    @abstractmethod
+    def delete(self, session_id: str, user_id: str) -> bool:
+        """Soft-delete one session and the note written for it (THERAPY-nyb).
+
+        Stamps ``deleted_at`` on the session and, with the same stamp, on
+        its note, so :meth:`restore` can tell the pair apart from rows a
+        later patient delete cascaded onto. Returns ``False`` if the row is
+        gone, already soft-deleted, or ``user_id`` has no grant on the
+        patient.
+        """
+        pass
+
+    @abstractmethod
+    def get_recently_deleted(
+        self, session_id: str, user_id: str, *, window_days: int = 30
+    ) -> tuple[TherapySession, datetime] | None:
+        """Fetch one soft-deleted session still inside the undo window.
+
+        ``None`` if the row is live, absent, past the window, or not
+        accessible to ``user_id`` — indistinguishable on purpose, the same
+        contract as :meth:`get`. ``deleted_at`` is returned out-of-band
+        because it does not live on the ``TherapySession`` dataclass.
+        """
+        pass
+
+    @abstractmethod
+    def list_recently_deleted(
+        self,
+        user_id: str,
+        *,
+        patient_id: str | None = None,
+        window_days: int = 30,
+    ) -> list[tuple[TherapySession, datetime]]:
+        """Soft-deleted sessions inside the undo window, newest first.
+
+        Returns ``(session, deleted_at)`` pairs for sessions on patients
+        ``user_id`` is granted on, optionally narrowed to one patient. Only
+        the session's own tombstone is consulted: a session whose patient is
+        also soft-deleted is listed too, and the restore route is what
+        refuses it (restore the patient first). After ``window_days`` the
+        rows stay on disk until the hard-purge cron (THERAPY-cgy) removes
+        them, but they no longer appear here.
+        """
+        pass
+
+    @abstractmethod
+    def restore(
+        self, session_id: str, user_id: str, *, window_days: int = 30
+    ) -> TherapySession | None:
+        """Undo a session's soft-delete by clearing ``deleted_at`` (PABLO-ocvu).
+
+        Returns the restored session, or ``None`` under the same conditions
+        :meth:`get_recently_deleted` returns ``None``. Clears the note whose
+        stamp matches the session's — the one :meth:`delete` tombstoned with
+        it — and leaves every other tombstone alone. The session keeps its
+        ``session_number``: numbering ignores ``deleted_at`` (THERAPY-nyb).
+        """
+        pass
+
 
 def _compute_day_boundaries(tz_name: str) -> tuple[datetime, datetime]:
     """Compute start/end of today in the given timezone, returned as UTC datetimes."""
@@ -130,6 +196,11 @@ class InMemoryTherapySessionRepository(TherapySessionRepository):
     def __init__(self) -> None:
         self._sessions: dict[str, TherapySession] = {}
         self._access: set[tuple[str, str]] = set()  # (patient_id, user_id)
+        # Sessions soft-deleted on their own (PABLO-ocvu), keyed by id with
+        # their tombstone. Kept out of ``_sessions`` so every live read path
+        # hides them without a filter of its own, matching the Postgres
+        # ``deleted_at IS NULL`` contract.
+        self._deleted: dict[str, tuple[TherapySession, datetime]] = {}
 
     def grant_access(self, patient_id: str, user_id: str) -> None:
         """Test helper: record that ``user_id`` can access ``patient_id``'s sessions."""
@@ -163,7 +234,12 @@ class InMemoryTherapySessionRepository(TherapySessionRepository):
         }
 
     def list_by_user(
-        self, user_id: str, *, page: int = 1, page_size: int = 20
+        self,
+        user_id: str,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        patient_id: str | None = None,
     ) -> tuple[list[TherapySession], int]:
         """List sessions for any patient the user has access to.
 
@@ -172,7 +248,12 @@ class InMemoryTherapySessionRepository(TherapySessionRepository):
         the user is granted on, not sessions the user personally
         recorded.
         """
-        sessions = [s for s in self._sessions.values() if self._can_access(s.patient_id, user_id)]
+        sessions = [
+            s
+            for s in self._sessions.values()
+            if self._can_access(s.patient_id, user_id)
+            and (patient_id is None or s.patient_id == patient_id)
+        ]
         sessions.sort(key=lambda s: s.session_date, reverse=True)
         total = len(sessions)
         offset = (page - 1) * page_size
@@ -246,8 +327,70 @@ class InMemoryTherapySessionRepository(TherapySessionRepository):
         return min(candidates) if candidates else None
 
     def get_session_number_for_patient(self, patient_id: str) -> int:
-        """Get the next session number for a patient."""
+        """Get the next session number for a patient.
+
+        Counts soft-deleted sessions too, so a restored session never
+        collides with one numbered while it was tombstoned (THERAPY-nyb).
+        """
         patient_sessions = [s for s in self._sessions.values() if s.patient_id == patient_id]
+        patient_sessions.extend(
+            s for s, _stamp in self._deleted.values() if s.patient_id == patient_id
+        )
         if not patient_sessions:
             return 1
         return max(s.session_number for s in patient_sessions) + 1
+
+    def delete(self, session_id: str, user_id: str) -> bool:
+        """Soft-delete one session.
+
+        The in-memory notes repository does not track tombstones, so the
+        note cascade is proven against Postgres
+        (``tests_integration/database/test_soft_delete.py``), not here.
+        """
+        session = self._sessions.get(session_id)
+        if session is None or not self._can_access(session.patient_id, user_id):
+            return False
+        self._deleted[session_id] = (self._sessions.pop(session_id), utc_now())
+        return True
+
+    def get_recently_deleted(
+        self, session_id: str, user_id: str, *, window_days: int = 30
+    ) -> tuple[TherapySession, datetime] | None:
+        found = self._deleted.get(session_id)
+        if found is None:
+            return None
+        session, stamp = found
+        if not self._can_access(session.patient_id, user_id):
+            return None
+        if stamp <= utc_now() - timedelta(days=window_days):
+            return None
+        return session, stamp
+
+    def list_recently_deleted(
+        self,
+        user_id: str,
+        *,
+        patient_id: str | None = None,
+        window_days: int = 30,
+    ) -> list[tuple[TherapySession, datetime]]:
+        cutoff = utc_now() - timedelta(days=window_days)
+        rows = [
+            (s, stamp)
+            for s, stamp in self._deleted.values()
+            if self._can_access(s.patient_id, user_id)
+            and (patient_id is None or s.patient_id == patient_id)
+            and stamp > cutoff
+        ]
+        rows.sort(key=lambda pair: pair[0].session_date, reverse=True)
+        return rows
+
+    def restore(
+        self, session_id: str, user_id: str, *, window_days: int = 30
+    ) -> TherapySession | None:
+        found = self.get_recently_deleted(session_id, user_id, window_days=window_days)
+        if found is None:
+            return None
+        session, _stamp = found
+        del self._deleted[session_id]
+        self._sessions[session_id] = session
+        return session

@@ -685,3 +685,166 @@ class TestChartClosure:
         row = pg_session.get(PatientRow, patient.id)
         assert row is not None
         assert row.deleted_at is None  # Purge cron keys off this — must stay NULL.
+
+
+# ─── 7. Restore a session soft-deleted on its own (PABLO-ocvu) ────────────
+
+
+_OTHER_USER_ID = "88888888-8888-4888-8888-888888888888"
+
+
+class TestSessionRestore:
+    """``PostgresTherapySessionRepository.delete`` and ``restore`` are a pair:
+    the note is tombstoned with the session's stamp and comes back with it,
+    while rows stamped at any other moment are left alone."""
+
+    def test_delete_tombstones_note_with_the_same_stamp(self, pg_session: Session) -> None:
+        _seed_patient(pg_session)
+        session_obj = _seed_session(pg_session)
+        _seed_note(pg_session)
+        pg_session.commit()
+        pg_session.expire_all()
+
+        assert PostgresTherapySessionRepository(pg_session).delete(session_obj.id, _USER_ID)
+        pg_session.commit()
+        pg_session.expire_all()
+
+        s_row = pg_session.get(TherapySessionRow, session_obj.id)
+        n_row = pg_session.get(NoteRow, "cccccccc-cccc-4ccc-8ccc-cccccccccccc")
+        assert s_row is not None
+        assert n_row is not None
+        assert s_row.deleted_at is not None
+        assert n_row.deleted_at == s_row.deleted_at
+        # The patient is untouched: only the session and its note went.
+        p_row = pg_session.get(PatientRow, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+        assert p_row is not None
+        assert p_row.deleted_at is None
+
+    def test_restore_brings_session_and_note_back(self, pg_session: Session) -> None:
+        _seed_patient(pg_session)
+        session_obj = _seed_session(pg_session)
+        _seed_note(pg_session)
+        pg_session.commit()
+        pg_session.expire_all()
+
+        s_repo = PostgresTherapySessionRepository(pg_session)
+        s_repo.delete(session_obj.id, _USER_ID)
+        pg_session.commit()
+        pg_session.expire_all()
+
+        found = s_repo.get_recently_deleted(session_obj.id, _USER_ID, window_days=30)
+        assert found is not None
+        assert found[0].id == session_obj.id
+        assert found[1] is not None
+
+        restored = s_repo.restore(session_obj.id, _USER_ID, window_days=30)
+        assert restored is not None
+        assert restored.session_number == session_obj.session_number
+        pg_session.commit()
+        pg_session.expire_all()
+
+        s_row = pg_session.get(TherapySessionRow, session_obj.id)
+        n_row = pg_session.get(NoteRow, "cccccccc-cccc-4ccc-8ccc-cccccccccccc")
+        assert s_row is not None
+        assert n_row is not None
+        assert s_row.deleted_at is None
+        assert n_row.deleted_at is None
+        # Live reads see both again.
+        assert s_repo.get(session_obj.id, _USER_ID) is not None
+        assert PostgresNotesRepository(pg_session).get_by_session_id(session_obj.id, _USER_ID)
+        # And it has left the recently-deleted listing.
+        assert s_repo.list_recently_deleted(_USER_ID, window_days=30) == []
+
+    def test_restore_leaves_a_note_stamped_on_its_own_tombstoned(self, pg_session: Session) -> None:
+        """A note deleted earlier on its own carries a different stamp and
+        stays hidden when the session comes back."""
+        _seed_patient(pg_session)
+        session_obj = _seed_session(pg_session)
+        _seed_note(pg_session)
+        pg_session.commit()
+        pg_session.expire_all()
+
+        n_repo = PostgresNotesRepository(pg_session)
+        n_repo.delete("cccccccc-cccc-4ccc-8ccc-cccccccccccc", _USER_ID)
+        pg_session.commit()
+        pg_session.expire_all()
+        n_row = pg_session.get(NoteRow, "cccccccc-cccc-4ccc-8ccc-cccccccccccc")
+        assert n_row is not None
+        note_stamp = n_row.deleted_at
+        assert note_stamp is not None
+
+        s_repo = PostgresTherapySessionRepository(pg_session)
+        s_repo.delete(session_obj.id, _USER_ID)
+        pg_session.commit()
+        pg_session.expire_all()
+        assert s_repo.restore(session_obj.id, _USER_ID, window_days=30) is not None
+        pg_session.commit()
+        pg_session.expire_all()
+
+        n_row = pg_session.get(NoteRow, "cccccccc-cccc-4ccc-8ccc-cccccccccccc")
+        assert n_row is not None
+        assert n_row.deleted_at == note_stamp
+
+    def test_listing_filters_window_and_patient(self, pg_session: Session) -> None:
+        _seed_patient(pg_session)
+        _seed_patient(pg_session, "dddddddd-dddd-4ddd-8ddd-dddddddddddd")
+        recent = _seed_session(pg_session)
+        old = _seed_session(pg_session, session_id="11111111-2222-4333-8444-555555555555")
+        other_chart = _seed_session(
+            pg_session,
+            session_id="22222222-2222-4222-8222-222222222222",
+            patient_id="dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        )
+        pg_session.commit()
+        pg_session.expire_all()
+
+        s_repo = PostgresTherapySessionRepository(pg_session)
+        for sid in (recent.id, old.id, other_chart.id):
+            assert s_repo.delete(sid, _USER_ID)
+        pg_session.commit()
+        pg_session.expire_all()
+        old_row = pg_session.get(TherapySessionRow, old.id)
+        assert old_row is not None
+        old_row.deleted_at = datetime.now(UTC) - timedelta(days=31)
+        pg_session.commit()
+        pg_session.expire_all()
+
+        listed = s_repo.list_recently_deleted(_USER_ID, window_days=30)
+        assert {s.id for s, _stamp in listed} == {recent.id, other_chart.id}
+        on_chart = s_repo.list_recently_deleted(
+            _USER_ID, patient_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", window_days=30
+        )
+        assert [s.id for s, _stamp in on_chart] == [recent.id]
+        # Past the window: not listed, not fetchable, not restorable.
+        assert s_repo.get_recently_deleted(old.id, _USER_ID, window_days=30) is None
+        assert s_repo.restore(old.id, _USER_ID, window_days=30) is None
+        old_row = pg_session.get(TherapySessionRow, old.id)
+        assert old_row is not None
+        assert old_row.deleted_at is not None
+
+    def test_restore_is_scoped_to_the_patients_clinicians(self, pg_session: Session) -> None:
+        _seed_patient(pg_session)
+        session_obj = _seed_session(pg_session)
+        pg_session.commit()
+        pg_session.expire_all()
+        s_repo = PostgresTherapySessionRepository(pg_session)
+        s_repo.delete(session_obj.id, _USER_ID)
+        pg_session.commit()
+        pg_session.expire_all()
+
+        assert s_repo.list_recently_deleted(_OTHER_USER_ID, window_days=30) == []
+        assert s_repo.get_recently_deleted(session_obj.id, _OTHER_USER_ID, window_days=30) is None
+        assert s_repo.restore(session_obj.id, _OTHER_USER_ID, window_days=30) is None
+        row = pg_session.get(TherapySessionRow, session_obj.id)
+        assert row is not None
+        assert row.deleted_at is not None
+
+    def test_restore_of_live_or_unknown_session_is_none(self, pg_session: Session) -> None:
+        _seed_patient(pg_session)
+        session_obj = _seed_session(pg_session)
+        pg_session.commit()
+        pg_session.expire_all()
+        s_repo = PostgresTherapySessionRepository(pg_session)
+        assert s_repo.restore(session_obj.id, _USER_ID, window_days=30) is None
+        assert s_repo.restore("not-a-uuid", _USER_ID, window_days=30) is None
+        assert s_repo.get_recently_deleted("not-a-uuid", _USER_ID, window_days=30) is None

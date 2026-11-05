@@ -8,6 +8,7 @@
 
 import type {
   FinalizeSessionRequest,
+  SessionListParams,
   SessionListResponse,
   SessionResponse,
   UpdateSessionMetadataRequest,
@@ -106,8 +107,38 @@ export async function importNote(
  * const sessions = await listSessions()
  * // Returns all sessions ordered by session_date (newest first)
  */
-export async function listSessions(token?: string): Promise<SessionListResponse> {
-  return get<SessionListResponse>("/api/sessions", token)
+export async function listSessions(
+  params?: SessionListParams,
+  token?: string
+): Promise<SessionListResponse> {
+  const queryParams = new URLSearchParams()
+  if (params?.patient_id) {
+    queryParams.append("patient_id", params.patient_id)
+  }
+  if (params?.include_deleted) {
+    queryParams.append("include_deleted", params.include_deleted)
+  }
+
+  const endpoint = queryParams.toString()
+    ? `/api/sessions?${queryParams.toString()}`
+    : "/api/sessions"
+
+  return get<SessionListResponse>(endpoint, token)
+}
+
+/**
+ * Restore a session that was deleted on its own within the last 30 days
+ * (PABLO-ocvu). The note deleted with it comes back too.
+ *
+ * @throws ApiError with code "NOT_FOUND" once the window has passed, and
+ *   "PATIENT_DELETED" while the session's client is still deleted — restore
+ *   the client first and the session comes back with them.
+ */
+export async function restoreSession(
+  sessionId: string,
+  token?: string
+): Promise<SessionResponse> {
+  return post<SessionResponse>(`/api/sessions/${sessionId}/restore`, undefined, token)
 }
 
 /**
