@@ -13,6 +13,7 @@
 import { useState, useCallback, useEffect, useRef } from "react"
 import { useSearchParams } from "next/navigation"
 import { useConfig } from "@/lib/config"
+import { getUserStatus } from "@/lib/api/users"
 import {
   AuthCard,
   AuthFooter,
@@ -82,6 +83,17 @@ export function FirebaseNativeAuthScreen() {
           })
           const errorCode = data?.detail?.error?.code ?? data?.error?.code
           if (res.status === 403 && errorCode === "MFA_REQUIRED") {
+            // The shared block asks for an enrolled passkey before handing
+            // over a credential, so this is reached by a passkey account only
+            // when that status read failed. Keep such an account here, where
+            // the passkey button and the recovery-code link are, rather than
+            // sending it to enroll an authenticator app it does not use.
+            const status = await getUserStatus(idToken).catch(() => null)
+            if (status?.has_passkey) {
+              setNotice("Your account has a passkey. Use it to finish signing in.")
+              setRedirecting(false)
+              return
+            }
             const returnParams = new URLSearchParams({ redirect_uri: redirectUri! })
             if (state) returnParams.set("state", state)
             const returnUrl = `/native-auth?${returnParams.toString()}`

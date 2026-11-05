@@ -105,6 +105,11 @@ class TestNativeCodeGate:
         # pablo_amr present, no sign_in_second_factor — must NOT be rejected.
         self._call({"uid": "fb-uid", "pablo_amr": ["webauthn"]})
 
+    def test_recovery_code_token_is_accepted(self) -> None:
+        # A lost passkey is replaced by a spent recovery code on the same
+        # handoff page; the gate must take that factor too.
+        self._call({"uid": "fb-uid", "pablo_amr": ["recovery"]})
+
     def test_first_factor_only_is_rejected(self) -> None:
         with pytest.raises(ForbiddenError):
             self._call({"uid": "fb-uid", "firebase": {}})
