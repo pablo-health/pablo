@@ -47,6 +47,11 @@ class DirectAnthropicGateway(AnthropicStructuredLLMGateway):
         model = model.removeprefix("strict:")
         auto_tool = model.startswith("auto:")
         model = model.removeprefix("auto:")
+        policy = retry_policy or LLM_REQUEST
+        # The caller's bound, else the policy's own; the client's 180 s
+        # default would outlast the request preset's deadline.
+        bound = timeout_seconds if timeout_seconds is not None else policy.attempt_timeout
+        timeout = {"timeout": bound} if bound is not None else {}
         if strict_output:
             del temperature, thinking_budget
             wire_schema = _strict_output_schema(response_schema)
@@ -68,9 +73,9 @@ class DirectAnthropicGateway(AnthropicStructuredLLMGateway):
                             "schema": wire_schema,
                         }
                     },
-                    **({"timeout": timeout_seconds} if timeout_seconds is not None else {}),
+                    **timeout,
                 ),
-                policy=retry_policy or LLM_REQUEST,
+                policy=policy,
                 idempotency=Idempotency.SAFE,
             )
             if response.stop_reason == "max_tokens":
@@ -134,9 +139,9 @@ class DirectAnthropicGateway(AnthropicStructuredLLMGateway):
                         "content": f"{user_prompt}\n\nCall {self._TOOL_NAME} with the result.",
                     }
                 ],
-                **({"timeout": timeout_seconds} if timeout_seconds is not None else {}),
+                **timeout,
             ),
-            policy=retry_policy or LLM_REQUEST,
+            policy=policy,
             idempotency=Idempotency.SAFE,
         )
         if response.stop_reason == "max_tokens":

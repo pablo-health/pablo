@@ -11,13 +11,14 @@ exceptions, falls back to ``default_response``, and records calls.
 from __future__ import annotations
 
 import json
+import random
 import time
 from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
 
-from backend.app.reliability import LLM_REQUEST
+from backend.app.reliability import LLM_JOB, LLM_LONG_REQUEST, LLM_REQUEST
 from backend.app.services.structured_llm_gateway import (
     AnthropicStructuredLLMGateway,
     FakeStructuredLLMGateway,
@@ -310,7 +311,7 @@ class TestAnthropicStructuredLLMGateway:
 
 
 class TestAnthropicAttemptTimeout:
-    def test_timeout_reaches_the_request_only_when_set(self) -> None:
+    def test_the_request_takes_the_callers_bound_else_the_policys(self) -> None:
         client = _FakeAnthropic(_tool_response())
         gw = AnthropicStructuredLLMGateway(client=client)
         call = {
@@ -322,10 +323,17 @@ class TestAnthropicAttemptTimeout:
         }
 
         gw.complete_structured(**call)
-        assert "timeout" not in client.captured
+        assert client.captured["timeout"] == LLM_REQUEST.attempt_timeout
 
         gw.complete_structured(**call, timeout_seconds=10.0)
         assert client.captured["timeout"] == 10.0
+
+        # A long generation names no bound and keeps the client's own.
+        client = _FakeAnthropic(_tool_response())
+        AnthropicStructuredLLMGateway(client=client).complete_structured(
+            **call, retry_policy=LLM_JOB
+        )
+        assert "timeout" not in client.captured
 
 
 class _GeminiResponse:
@@ -349,6 +357,11 @@ class _StallingGeminiModels:
 
 
 class TestGeminiAttemptTimeout:
+    @pytest.fixture(autouse=True)
+    def _no_backoff(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The gateway retries with the preset's real jittered sleep.
+        monkeypatch.setattr(random, "uniform", lambda _low, _high: 0.0)
+
     def _gateway(self, stalls: int) -> tuple[GeminiStructuredLLMGateway, _StallingGeminiModels]:
         models = _StallingGeminiModels(stalls)
         gw = GeminiStructuredLLMGateway()
@@ -379,9 +392,26 @@ class TestGeminiAttemptTimeout:
         self._complete(gw, timeout_seconds=10.0)
         assert models.configs[0].http_options.headers == {"X-Server-Timeout": "180"}
 
-    def test_no_timeout_keeps_the_client_default(self) -> None:
+    def test_no_timeout_takes_the_policys_bound(self) -> None:
+        """The request preset's own bound, of which two fit its deadline, so
+        an attempt that fails at the bound is still retried."""
         gw, models = self._gateway(stalls=0)
         self._complete(gw)
+        assert LLM_REQUEST.attempt_timeout is not None
+        http_options = models.configs[0].http_options
+        assert http_options.timeout == int(LLM_REQUEST.attempt_timeout * 1000)
+        assert http_options.headers == {"X-Server-Timeout": "180"}
+
+    def test_a_long_generation_takes_the_long_presets_bound(self) -> None:
+        gw, models = self._gateway(stalls=0)
+        self._complete(gw, retry_policy=LLM_LONG_REQUEST)
+        http_options = models.configs[0].http_options
+        assert http_options.timeout == 180_000
+        assert http_options.headers == {"X-Server-Timeout": "180"}
+
+    def test_background_work_keeps_the_client_default(self) -> None:
+        gw, models = self._gateway(stalls=0)
+        self._complete(gw, retry_policy=LLM_JOB)
         assert models.configs[0].http_options is None
 
     def test_structured_json_disables_unused_automatic_function_calling(self) -> None:
@@ -467,11 +497,16 @@ class _ClockedGeminiModels:
 
 class TestGeminiCallDeadline:
     """A stalled first attempt and a retry fit inside LLM_REQUEST's deadline
-    together, not 15 s apiece."""
+    together; a caller's bound is cut to what is left, the preset's own
+    never needs to be."""
 
-    def _run(self, monkeypatch: pytest.MonkeyPatch, costs: list[float]) -> tuple[float, list[int]]:
+    def _run(
+        self, monkeypatch: pytest.MonkeyPatch, costs: list[float], **extra: Any
+    ) -> tuple[float, list[int]]:
         clock = _FakeClock()
         monkeypatch.setattr(time, "monotonic", clock)
+        # No jitter, no real sleep: the backoff is then exactly zero.
+        monkeypatch.setattr(random, "uniform", lambda _low, _high: 0.0)
         models = _ClockedGeminiModels(clock, costs)
         gw = GeminiStructuredLLMGateway()
         gw._client = type("_Client", (), {"models": models})()
@@ -483,20 +518,31 @@ class TestGeminiCallDeadline:
                 user_prompt="u",
                 response_schema={"type": "object"},
                 max_output_tokens=64,
-                timeout_seconds=15.0,
+                **extra,
             )
         return clock.now - started, models.timeouts_ms
 
-    def test_two_stalls_end_at_the_deadline(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        elapsed, timeouts_ms = self._run(monkeypatch, costs=[60.0, 60.0])
+    def test_two_stalls_at_the_presets_bound_both_get_the_full_bound(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        elapsed, timeouts_ms = self._run(monkeypatch, costs=[180.0, 180.0])
 
-        assert timeouts_ms == [15_000, 10_000]
+        assert timeouts_ms == [60_000, 60_000]
+        assert elapsed == 120.0
+        assert elapsed <= _DEADLINE
+
+    def test_a_callers_long_bound_is_cut_to_what_the_deadline_has_left(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        elapsed, timeouts_ms = self._run(monkeypatch, costs=[180.0, 180.0], timeout_seconds=100.0)
+
+        assert timeouts_ms == [100_000, 40_000]
         assert elapsed <= _DEADLINE
 
     def test_a_fast_failure_leaves_the_retry_its_full_bound(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        elapsed, timeouts_ms = self._run(monkeypatch, costs=[2.0, 60.0])
+        elapsed, timeouts_ms = self._run(monkeypatch, costs=[2.0, 60.0], timeout_seconds=15.0)
 
         assert timeouts_ms == [15_000, 15_000]
         assert elapsed <= _DEADLINE

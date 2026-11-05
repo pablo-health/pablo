@@ -48,12 +48,15 @@ from .vertex_client import (
 
 logger = logging.getLogger(__name__)
 
-# Structured generation runs off the request thread (a Cloud Tasks worker, well
-# inside the 300s request budget), and a reasoning model working a real
-# multi-turn transcript into a full SOAP note routinely spends more than the
-# 60s default client read timeout — long enough to trip an httpcore.ReadTimeout
-# and fail the note. Give these one-shot structured calls a generous read
-# timeout so genuine generation completes instead of timing out.
+# The long bound: what an attempt gets under a policy that names no bound of
+# its own (``LLM_JOB``, a hedged leg's ``SINGLE_ATTEMPT``). A reasoning model
+# working a real multi-turn transcript into a full note routinely spends more
+# than the 60 s default client read timeout, long enough to trip an
+# httpcore.ReadTimeout and fail the draft, so a long call keeps this generous
+# bound. A request-path call takes its shorter bound from its policy instead
+# (``LLM_REQUEST.attempt_timeout``, sized so two attempts fit the deadline):
+# under this bound a slow failure could never be retried, because the first
+# attempt alone outlasted the deadline.
 _STRUCTURED_LLM_TIMEOUT_SECONDS = 180.0
 
 # Mistral publisher models on Vertex are reached via the regional rawPredict
@@ -68,14 +71,24 @@ _GEMINI_THINKING_LOW_MAX_BUDGET = 2_048
 _GEMINI_THINKING_MEDIUM_MAX_BUDGET = 8_192
 
 
+def _attempt_bound(timeout_seconds: float | None, policy: RetryPolicy) -> float | None:
+    """The bound each attempt starts from: the caller's, else the policy's own.
+
+    ``None`` when neither names one: the attempt then runs under the client's
+    long default, as a long generation under ``LLM_JOB`` should.
+    """
+    return timeout_seconds if timeout_seconds is not None else policy.attempt_timeout
+
+
 def _attempt_timeout(timeout_seconds: float, started: float, policy: RetryPolicy) -> float:
-    """This attempt's bound: the caller's, cut to what the policy has left.
+    """This attempt's bound, cut to what the policy has left.
 
     ``call_with_retry`` checks the policy's deadline only before it backs
     off, never against the attempt it is about to start, so a stalled first
     attempt followed by a full-length second one would run past it. Shrinking
     the second attempt to the time remaining keeps the whole call, retry
-    included, inside the deadline.
+    included, inside the deadline. A policy's own bound already fits twice
+    (see ``RetryPolicy.attempt_timeout``); this matters for a caller's.
     """
     deadline = policy.deadline
     if deadline is None:
@@ -251,15 +264,20 @@ class StructuredLLMGateway(ABC):
         reasoning is doing the work.
 
         ``timeout_seconds`` bounds each attempt when set, in place of the
-        client's generous default. An interactive caller that would rather
-        retry a stalled call than wait out the default passes a short one;
-        a timed-out attempt is retried like any other transient failure, and
+        retry policy's own bound (``LLM_REQUEST`` names one that fits its
+        deadline twice) or, under a policy that names none, the client's
+        generous default. An interactive caller that would rather retry a
+        stalled call than wait out the default passes a short one; a
+        timed-out attempt is retried like any other transient failure, and
         the retry is cut to whatever is left of the retry policy's deadline,
         so the call as a whole never outlasts it.
 
-        ``retry_policy`` replaces the implementation's own retry preset.
-        A caller that runs its own attempts (a hedged run, where a retry
-        is another leg) passes ``SINGLE_ATTEMPT``.
+        ``retry_policy`` replaces the implementation's own retry preset,
+        ``LLM_REQUEST``. A long generation behind a request passes
+        ``LLM_LONG_REQUEST`` (the client's long bound, twice, inside a
+        deadline); background work passes ``LLM_JOB``; a caller that runs
+        its own attempts (a hedged run, where a retry is another leg)
+        passes ``SINGLE_ATTEMPT``.
 
         Raises:
             ValueError: model returned invalid JSON or violated the schema.
@@ -329,10 +347,11 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
             thinking_config=thinking_config,
         )
         policy = retry_policy or LLM_REQUEST
+        bound = _attempt_bound(timeout_seconds, policy)
         started = time.monotonic()
 
         def attempt() -> Any:
-            if timeout_seconds is None:
+            if bound is None:
                 return client.models.generate_content(
                     model=normalized_model, contents=user_prompt, config=config
                 )
@@ -346,7 +365,7 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
                 update={
                     "http_options": types.HttpOptions(
                         timeout=seconds_to_genai_timeout_ms(
-                            _attempt_timeout(timeout_seconds, started, policy)
+                            _attempt_timeout(bound, started, policy)
                         ),
                         headers={"X-Server-Timeout": str(int(_STRUCTURED_LLM_TIMEOUT_SECONDS))},
                     )
@@ -468,6 +487,15 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
             "description": "Return the result as structured output.",
             "input_schema": response_schema,
         }
+        policy = retry_policy or LLM_REQUEST
+        bound = _attempt_bound(timeout_seconds, policy)
+        started = time.monotonic()
+
+        def timeout() -> dict[str, float]:
+            # Per attempt: the second is cut to what the deadline has left.
+            if bound is None:
+                return {}
+            return {"timeout": _attempt_timeout(bound, started, policy)}
 
         with llm_span(LLMSpanRequest(operation="structured", model=normalized_model)) as span:
             try:
@@ -486,9 +514,9 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
                         tools=[tool],
                         tool_choice={"type": "tool", "name": self._TOOL_NAME},
                         messages=[{"role": "user", "content": user_prompt}],
-                        **({"timeout": timeout_seconds} if timeout_seconds is not None else {}),
+                        **timeout(),
                     ),
-                    policy=retry_policy or LLM_REQUEST,
+                    policy=policy,
                     idempotency=Idempotency.SAFE,
                 )
             except Exception as exc:

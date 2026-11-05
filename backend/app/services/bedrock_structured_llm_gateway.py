@@ -62,6 +62,7 @@ from .structured_llm_gateway import (
     StructuredCompletion,
     StructuredLLMGateway,
     StructuredOutputTruncatedError,
+    _attempt_bound,
     _attempt_timeout,
     tool_input_completion,
 )
@@ -331,8 +332,12 @@ class BedrockStructuredLLMGateway(StructuredLLMGateway):
         # the forced tool call is a single non-thinking completion.
         del thinking_budget
 
-        bound = timeout_seconds if timeout_seconds is not None else _STRUCTURED_LLM_TIMEOUT_SECONDS
         policy = retry_policy or LLM_REQUEST
+        # As on the Gemini path: the caller's bound, else the policy's own,
+        # else the long default a draft on this model as the only model needs.
+        bound = _attempt_bound(timeout_seconds, policy)
+        if bound is None:
+            bound = _STRUCTURED_LLM_TIMEOUT_SECONDS
         normalized_model = strip_provider_prefix(model)
         request: dict[str, Any] = {
             "modelId": normalized_model,
@@ -355,13 +360,9 @@ class BedrockStructuredLLMGateway(StructuredLLMGateway):
         started = time.monotonic()
 
         def attempt() -> dict[str, Any]:
-            # As on the Gemini path, only a caller's own bound is cut to the
-            # policy's deadline. With none given, each attempt keeps the full
-            # default: a note drafted on this model as the primary takes far
-            # longer than the request preset's 25 s.
-            attempt_bound = (
-                bound if timeout_seconds is None else _attempt_timeout(bound, started, policy)
-            )
+            # The second attempt is cut to what the policy's deadline has left;
+            # a deadline-free policy leaves every attempt its full bound.
+            attempt_bound = _attempt_timeout(bound, started, policy)
             try:
                 response: dict[str, Any] = self._client(attempt_bound).converse(**request)
             except Exception as exc:
