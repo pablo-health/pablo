@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import pytest
 
-from backend.app.reliability import LLM_JOB, LLM_REQUEST
+from backend.app.reliability import LLM_JOB, LLM_LONG_REQUEST, LLM_REQUEST
 from backend.app.services.structured_llm_gateway import (
     AnthropicStructuredLLMGateway,
     FakeStructuredLLMGateway,
@@ -402,7 +402,14 @@ class TestGeminiAttemptTimeout:
         assert http_options.timeout == int(LLM_REQUEST.attempt_timeout * 1000)
         assert http_options.headers == {"X-Server-Timeout": "180"}
 
-    def test_a_long_generation_keeps_the_client_default(self) -> None:
+    def test_a_long_generation_takes_the_long_presets_bound(self) -> None:
+        gw, models = self._gateway(stalls=0)
+        self._complete(gw, retry_policy=LLM_LONG_REQUEST)
+        http_options = models.configs[0].http_options
+        assert http_options.timeout == 180_000
+        assert http_options.headers == {"X-Server-Timeout": "180"}
+
+    def test_background_work_keeps_the_client_default(self) -> None:
         gw, models = self._gateway(stalls=0)
         self._complete(gw, retry_policy=LLM_JOB)
         assert models.configs[0].http_options is None

@@ -242,10 +242,22 @@ retried. A rate limit waits whole seconds, not the fraction a tighter
 preset would give it.
 """
 
+LLM_LONG_REQUEST = RetryPolicy(
+    max_attempts=2, base_delay=2.0, max_delay=8.0, deadline=368.0, attempt_timeout=180.0
+)
+"""One retry of a long generation driven by a request.
+
+A draft or a derivation reasons over a whole transcript or several whole
+notes and routinely needs more than ``LLM_REQUEST``'s 60 s, so each attempt
+gets the structured client's long bound. The deadline holds two of them and
+the backoff between (180 + 8 + 180 s), so a hung provider or a rate-limit
+storm holds the request for a bounded time, never ``LLM_JOB``'s open-ended
+attempts. The platform's own request timeout may cut it first.
+"""
+
 LLM_JOB = RetryPolicy(max_attempts=4, base_delay=1.0, max_delay=30.0, deadline=None)
-"""More attempts, no overall deadline — batch/cron work, and a long generation
-on a request path, bounded by the job's or the request's own timeout. Names no
-attempt bound: the call site keeps its client's long default."""
+"""More attempts, no overall deadline — batch/cron work bounded by the job
+timeout. Names no attempt bound: the call site keeps its client's long default."""
 
 HTTP_REQUEST = RetryPolicy(max_attempts=2, base_delay=0.3, max_delay=3.0, deadline=20.0)
 """Request-path HTTP calls other than LLM generation."""
@@ -261,6 +273,7 @@ __all__ = [
     "HTTP_JOB",
     "HTTP_REQUEST",
     "LLM_JOB",
+    "LLM_LONG_REQUEST",
     "LLM_REQUEST",
     "SINGLE_ATTEMPT",
     "Idempotency",

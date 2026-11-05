@@ -273,9 +273,11 @@ class StructuredLLMGateway(ABC):
         so the call as a whole never outlasts it.
 
         ``retry_policy`` replaces the implementation's own retry preset,
-        ``LLM_REQUEST``. A long generation passes ``LLM_JOB`` to keep the
-        client's long bound; a caller that runs its own attempts (a hedged
-        run, where a retry is another leg) passes ``SINGLE_ATTEMPT``.
+        ``LLM_REQUEST``. A long generation behind a request passes
+        ``LLM_LONG_REQUEST`` (the client's long bound, twice, inside a
+        deadline); background work passes ``LLM_JOB``; a caller that runs
+        its own attempts (a hedged run, where a retry is another leg)
+        passes ``SINGLE_ATTEMPT``.
 
         Raises:
             ValueError: model returned invalid JSON or violated the schema.

@@ -26,6 +26,7 @@ from app.reliability import (
     HTTP_JOB,
     HTTP_REQUEST,
     LLM_JOB,
+    LLM_LONG_REQUEST,
     LLM_REQUEST,
     SINGLE_ATTEMPT,
     Idempotency,
@@ -540,6 +541,7 @@ class TestRequestPathPolicy:
 
 _PRESETS = {
     "LLM_REQUEST": LLM_REQUEST,
+    "LLM_LONG_REQUEST": LLM_LONG_REQUEST,
     "LLM_JOB": LLM_JOB,
     "HTTP_REQUEST": HTTP_REQUEST,
     "HTTP_JOB": HTTP_JOB,
@@ -548,11 +550,15 @@ _PRESETS = {
 
 
 class TestPresets:
-    def test_the_request_preset_names_its_attempt_bound(self) -> None:
+    @pytest.mark.parametrize("policy", [LLM_REQUEST, LLM_LONG_REQUEST])
+    def test_a_request_preset_names_its_deadline_and_attempt_bound(
+        self, policy: RetryPolicy
+    ) -> None:
         # The invariant below is vacuous for a preset that names no bound;
-        # the request preset must, since its call sites hand the bound on.
-        assert LLM_REQUEST.deadline is not None
-        assert LLM_REQUEST.attempt_timeout is not None
+        # a request preset must, since its call sites hand the bound on and
+        # a request must not be held open.
+        assert policy.deadline is not None
+        assert policy.attempt_timeout is not None
 
     @pytest.mark.parametrize(("name", "policy"), _PRESETS.items())
     def test_a_deadline_holds_every_attempt_and_the_backoff_between(
