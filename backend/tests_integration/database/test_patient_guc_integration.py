@@ -50,13 +50,16 @@ _CLINICIAN = "4bd6452f-45bf-53d0-9680-693205fde295"
 # ---------------------------------------------------------------------------
 
 from app.db import (  # noqa: E402
+    _RLS_PATIENT_ID_KEY,
     _current_patient_id,
     _current_tenant_schema,
     _current_user_id,
     arm_current_patient_id,
     arm_current_user_id,
+    clear_tenant_schema,
     create_standalone_session,
     get_engine,
+    set_tenant_schema,
 )
 from app.db.tenant_session import tenant_db_session  # noqa: E402
 
@@ -443,6 +446,85 @@ class TestSavepointsKeepTheTransactionsPrincipal:
             assert settings_issued.count == 0
         finally:
             _current_tenant_schema.set(prior)
+            session.rollback()
+            session.close()
+
+
+_ARMING_INSIDE_A_SAVEPOINT = {
+    "arm_current_user_id": lambda s: arm_current_user_id(s, _CLINICIAN),
+    "arm_current_patient_id": lambda s: arm_current_patient_id(s, _PATIENT_A),
+    "set_tenant_schema": lambda s: set_tenant_schema(s, _SCHEMA),
+    "clear_tenant_schema": clear_tenant_schema,
+}
+
+
+@pytest.mark.usefixtures("_schema")
+class TestArmingInsideASavepointIsRefused:
+    """The listeners skip savepoints, so nothing may arm inside one.
+
+    A savepoint's rollback reverts the GUC or search path set inside it and
+    leaves ``session.info`` and the ContextVars as they were written. With no
+    savepoint re-arm to put them back in step, the session's record and the
+    database would disagree for the rest of the transaction. The arming
+    functions refuse instead.
+    """
+
+    @pytest.mark.parametrize("name", sorted(_ARMING_INSIDE_A_SAVEPOINT))
+    def test_each_arming_function_refuses_inside_a_savepoint(self, name: str) -> None:
+        session = create_standalone_session(_SCHEMA)
+        try:
+            _reset_principal_gucs(session)
+            info_before = dict(session.info)
+            with (
+                session.begin_nested(),
+                pytest.raises(RuntimeError, match="inside a savepoint"),
+            ):
+                _ARMING_INSIDE_A_SAVEPOINT[name](session)
+            # Refused before anything was written, to either side.
+            assert dict(session.info) == info_before
+            assert _current_user_id.get() is None
+            assert _current_patient_id.get() is None
+            assert _read(session, "app.current_user_id") == ""
+            assert _read(session, "app.current_patient_id") == ""
+            path = session.execute(text("SHOW search_path")).scalar() or ""
+            assert path.split(",")[0].strip() == _SCHEMA
+        finally:
+            session.rollback()
+            session.close()
+
+    def test_a_rolled_back_arm_cannot_leave_the_root_principal_under_another_name(
+        self,
+    ) -> None:
+        """The trace that made the guard necessary, ending in the refusal at step 2.
+
+        1. The root transaction is armed as a clinician.
+        2. Inside a savepoint, a patient is armed. Without the guard the GUC
+           and the carriers become the patient.
+        3. The savepoint rolls back. Postgres restores the clinician; the
+           carriers would still say patient.
+        4. A second savepoint would read with the clinician's grants on a
+           request that believes it is the patient.
+
+        With the guard, step 2 raises and writes nothing, so after step 3 the
+        GUC and the carriers both still say clinician.
+        """
+        session = create_standalone_session(_SCHEMA)
+        try:
+            _reset_principal_gucs(session)
+            arm_current_user_id(session, _CLINICIAN)  # step 1
+
+            savepoint = session.begin_nested()
+            with pytest.raises(RuntimeError, match="inside a savepoint"):
+                arm_current_patient_id(session, _PATIENT_A)  # step 2
+            savepoint.rollback()  # step 3
+
+            with session.begin_nested():  # step 4
+                assert _read(session, "app.current_user_id") == _CLINICIAN
+                assert _read(session, "app.current_patient_id") == ""
+            assert _current_user_id.get() == _CLINICIAN
+            assert _current_patient_id.get() is None
+            assert session.info.get(_RLS_PATIENT_ID_KEY) is None
+        finally:
             session.rollback()
             session.close()
 
