@@ -13,6 +13,10 @@ The project comes from ``ANTHROPIC_VERTEX_PROJECT_ID``, else
 rejects are left out of the request (see :mod:`.claude_models`). A read
 timeout bounds the wait for each streamed chunk, not the whole answer.
 
+An error the server sends after the stream has opened is read by its error
+type (see ``_STREAM_ERROR_STATUS``), so an overloaded model hands over to the
+fallback like one that failed to open.
+
 Logging. Only the exception class, the HTTP status and the model id are
 logged. Prompts, answers and service error messages never are.
 """
@@ -98,9 +102,45 @@ def to_anthropic_messages(
     ]
 
 
+#: The HTTP status an error sent inside an open stream stands for, by its
+#: Anthropic error type. Once a stream has opened its response is a 200, and
+#: the SDK raises ``event: error`` with that 200, which reads as neither a
+#: failure of the service nor one worth another attempt. The Bedrock gateway's
+#: ``_STREAM_ERROR_STATUS`` does the same for ConverseStream. 529 is
+#: Anthropic's status for an overloaded service. A type not listed keeps the
+#: response's status.
+_STREAM_ERROR_STATUS: dict[str, int] = {
+    "overloaded_error": 529,
+    "api_error": 500,
+    "rate_limit_error": 429,
+    "timeout_error": 504,
+}
+
+#: Statuses worth asking again, here or on the next model: the shared LLM
+#: retry statuses plus Anthropic's 529. Kept local so that only this gateway
+#: reads 529 as transient; the shared retry policy is unchanged.
+_TRANSIENT_STATUS = frozenset({429, 500, 502, 503, 504, 529})
+
+
 def _status(exc: BaseException) -> int | None:
+    """The HTTP status ``exc`` stands for: its own, or its in-stream error type's."""
+    import anthropic  # only reached once a call has already failed
+
     status = getattr(exc, "status_code", None)
-    return status if isinstance(status, int) else None
+    if not isinstance(status, int):
+        return None
+    if isinstance(exc, anthropic.APIStatusError) and status < 400:  # noqa: PLR2004
+        # The stream opened, then the server sent ``event: error``.
+        body = exc.body
+        error = body.get("error") if isinstance(body, dict) else None
+        error_type = error.get("type") if isinstance(error, dict) else None
+        if isinstance(error_type, str) and error_type in _STREAM_ERROR_STATUS:
+            return _STREAM_ERROR_STATUS[error_type]
+    return status
+
+
+def _is_transient(exc: BaseException) -> bool:
+    return is_transient_failure(exc) or _status(exc) in _TRANSIENT_STATUS
 
 
 def _error_code(exc: BaseException) -> str:
@@ -189,7 +229,7 @@ class AnthropicVertexChatLLMGateway(ChatLLMGateway):
                     finish_reason="error",
                     error_code=code,
                     error_message=type(exc).__name__,
-                    transient=is_transient_failure(exc),
+                    transient=_is_transient(exc),
                 )
                 return
 

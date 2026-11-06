@@ -140,6 +140,15 @@ def _status_error(status: int) -> anthropic.APIStatusError:
     )
 
 
+def _stream_error(error_type: str) -> anthropic.APIStatusError:
+    """What the SDK raises for ``event: error`` once the stream has opened with a 200."""
+    return anthropic.APIStatusError(
+        "service said no",
+        response=httpx.Response(200, request=_REQUEST),
+        body={"type": "error", "error": {"type": error_type, "message": "service said no"}},
+    )
+
+
 class TestAnswering:
     def test_words_stream_in_order_and_the_answer_ends_with_its_token_count(self) -> None:
         events, _ = _run(_FakeStream(["Hel", "lo ", "there"], usage=_usage(output_tokens=9)))
@@ -276,6 +285,12 @@ class TestFailing:
             (_status_error(401), "auth_denied", False),
             (_status_error(404), "llm_error", False),
             (_status_error(400), "llm_error", False),
+            (_status_error(529), "service_unavailable", True),
+            (_stream_error("overloaded_error"), "service_unavailable", True),
+            (_stream_error("api_error"), "service_unavailable", True),
+            (_stream_error("timeout_error"), "service_unavailable", True),
+            (_stream_error("rate_limit_error"), "llm_error", True),
+            (_stream_error("invalid_request_error"), "llm_error", False),
             (anthropic.APITimeoutError(request=_REQUEST), "timeout", True),
             (anthropic.APIConnectionError(request=_REQUEST), "service_unavailable", True),
         ],
@@ -328,6 +343,33 @@ _CAPTURES = json.loads(
 )
 
 
+def gateway_replaying(
+    capture: str, seen: list[httpx.Request] | None = None
+) -> AnthropicVertexChatLLMGateway:
+    """A gateway on the real SDK whose network answers every request with ``capture``.
+
+    Build it inside the event loop that streams from it.
+    """
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if seen is not None:
+            seen.append(request)
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=_CAPTURES[capture]["sse"].encode(),
+        )
+
+    client = AsyncAnthropicVertex(
+        project_id="test-project",
+        region="global",
+        access_token="test-token",  # noqa: S106 — a placeholder; the network is mocked
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+    )
+    return AnthropicVertexChatLLMGateway(client=client)
+
+
 def _through_the_real_sdk(
     capture: str, *, model: str
 ) -> tuple[list[StreamEvent], list[httpx.Request]]:
@@ -339,23 +381,8 @@ def _through_the_real_sdk(
     """
     seen: list[httpx.Request] = []
 
-    def respond(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        return httpx.Response(
-            200,
-            headers={"content-type": "text/event-stream"},
-            content=_CAPTURES[capture]["sse"].encode(),
-        )
-
     async def collect() -> list[StreamEvent]:
-        client = AsyncAnthropicVertex(
-            project_id="test-project",
-            region="global",
-            access_token="test-token",  # noqa: S106 — a placeholder; the network is mocked
-            max_retries=0,
-            http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
-        )
-        gateway = AnthropicVertexChatLLMGateway(client=client)
+        gateway = gateway_replaying(capture, seen)
         return [
             event
             async for event in gateway.stream_completion(
@@ -419,6 +446,65 @@ class TestCapturedStreams:
         assert "temperature" not in body
         assert body["system"][0]["cache_control"] == {"type": "ephemeral"}
         assert "cache_control" not in body["system"][1]
+
+
+class TestErrorsInsideTheStream:
+    """An ``event: error`` after the stream has opened, read by the real SDK.
+
+    The ``authored_*`` entries in the fixture are written by hand, not
+    captured: the opening ``message_start`` is copied from a capture and the
+    error event follows Anthropic's documented shape. No error event has been
+    captured from Vertex yet; one should replace these when it is.
+    """
+
+    def test_an_overloaded_model_is_a_transient_failure_of_the_service(self) -> None:
+        events, _ = _through_the_real_sdk(
+            "authored_overloaded_mid_stream", model="anthropic:claude-sonnet-5-5"
+        )
+
+        assert events == [
+            StreamEvent(
+                finish_reason="error",
+                error_code="service_unavailable",
+                error_message="APIStatusError",
+                transient=True,
+            )
+        ]
+
+    def test_the_log_names_the_overloaded_status_not_the_streams_200(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.DEBUG, logger=module.__name__):
+            _through_the_real_sdk(
+                "authored_overloaded_mid_stream", model="anthropic:claude-sonnet-5-5"
+            )
+
+        logged = [r.getMessage() for r in caplog.records if r.name == module.__name__]
+        assert logged == [
+            "Claude on Vertex chat stream failed: APIStatusError, HTTP 529"
+            " (model=claude-sonnet-5-5)"
+        ]
+        assert "Overloaded" not in caplog.text, "the service's own message is never logged"
+
+    def test_an_error_type_not_mapped_keeps_the_streams_status(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.DEBUG, logger=module.__name__):
+            events, _ = _through_the_real_sdk(
+                "authored_invalid_request_mid_stream", model="anthropic:claude-sonnet-5-5"
+            )
+
+        assert events == [
+            StreamEvent(
+                finish_reason="error",
+                error_code="llm_error",
+                error_message="APIStatusError",
+                transient=False,
+            )
+        ]
+        logged = "\n".join(r.getMessage() for r in caplog.records)
+        assert "HTTP 200" in logged
+        assert "service said no" not in caplog.text
 
 
 class TestClient:
