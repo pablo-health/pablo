@@ -57,7 +57,7 @@ jobs:
 
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Check models ship with migrations (guardrail #4)
         run: python .claude/skills/migration-lint/check.py --base origin/${{ github.base_ref }}
@@ -78,7 +78,7 @@ jobs:
 
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Check public content
         run: python backend/scripts/check_public_content.py --diff-base origin/${{ github.base_ref }}
@@ -108,7 +108,7 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         if: steps.classify.outputs.substantive != 'false'
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install Poetry
         if: steps.classify.outputs.substantive != 'false'
@@ -188,7 +188,7 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         if: steps.classify.outputs.substantive != 'false'
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install Poetry
         if: steps.classify.outputs.substantive != 'false'
@@ -282,7 +282,7 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         if: steps.classify.outputs.substantive != 'false'
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install Poetry
         if: steps.classify.outputs.substantive != 'false'
