@@ -36,6 +36,7 @@ from app.services.chat_turn_service import ChatTurnService
 from app.settings import get_settings
 from botocore.exceptions import ClientError, ReadTimeoutError
 
+from .test_anthropic_vertex_chat_llm_gateway import gateway_replaying
 from .test_chat_turn_service import _drain, _make_context, _make_conversation, _no_sleep
 
 if TYPE_CHECKING:
@@ -108,6 +109,34 @@ class TestFailover:
         assert [c["model"] for c in fake.calls] == ["primary", FALLBACK]
         assert "model=test:fallback failures=primary:service_unavailable" in caplog.text
         assert "lighthouse" not in caplog.text
+
+    def test_claude_overloaded_inside_its_stream_moves_to_the_fallback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The real SDK raises ``event: error`` with the stream's 200; it still hands over."""
+        _no_db_guard(monkeypatch)
+        fallback = FakeChatLLMGateway(scripts=[list(_ANSWER)])
+
+        async def run() -> list[StreamEvent]:
+            claude = gateway_replaying("authored_overloaded_mid_stream")
+            gateway = FailoverChatLLMGateway(
+                claude,
+                [FALLBACK],
+                resolve=lambda m: claude if m.startswith("anthropic:") else fallback,
+            )
+            return [
+                e
+                async for e in gateway.stream_completion(
+                    model="anthropic:claude-sonnet-5-5",
+                    system_prompt="You help.",
+                    prior_turns=[],
+                    new_user_text=SAID,
+                    max_output_tokens=64,
+                )
+            ]
+
+        assert asyncio.run(run()) == _ANSWER
+        assert [c["model"] for c in fallback.calls] == [FALLBACK]
 
     def test_a_failure_after_the_first_word_is_never_stitched_to_another_model(self) -> None:
         cut = [StreamEvent(delta="Half an "), _DOWN]
