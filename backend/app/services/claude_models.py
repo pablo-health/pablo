@@ -22,6 +22,23 @@ claude-opus-5-5       rejected (400)   rejected (400)
 
 ``tool_choice: auto`` was accepted by all three.
 
+``output_config.effort`` was accepted by all three at ``low``, ``medium`` and
+``high`` (the API also lists ``xhigh`` and ``max``, not measured). The default
+behaves like ``high``. Streamed, with a ~9k-token prompt in a reply's shape
+(2026-11-06), time to first text and output tokens billed for the visible text:
+
+====================  ==============  ==============  ===================
+model / effort        first text      billed tokens   visible tokens
+====================  ==============  ==============  ===================
+haiku-5-5 default     2.11 s          321             75
+haiku-5-5 low         0.67 s          114             90
+sonnet-5-5 default    3.01 s          389             99
+sonnet-5-5 low        1.08 s          215             161
+====================  ==============  ==============  ===================
+
+``thinking: {"type": "between_tools"}`` switches reasoning off on Sonnet 5.5
+but is rejected on Haiku 5.5, so effort is the control that works on both.
+
 What is measured and what is inferred:
 
 - The table above is measured, on Vertex. Nothing was measured on Bedrock,
@@ -76,6 +93,12 @@ class ClaudeCapabilities:
     """Whether ``tool_choice`` may name a tool (or be ``any``). When False,
     ask for the tool with ``auto`` and say so in the prompt."""
 
+    accepts_effort: bool = False
+    """Whether ``output_config.effort`` may be sent. The 5 family reasons before
+    it answers, at the highest effort unless told otherwise, and bills that
+    reasoning as output; earlier models do not reason unless asked, and are
+    never sent an effort."""
+
 
 def capabilities_for(model: str) -> ClaudeCapabilities:
     """The capabilities of ``model``, given as any provider's id for it."""
@@ -97,12 +120,31 @@ def capabilities_for(model: str) -> ClaudeCapabilities:
         accepts_temperature=False,
         # Haiku 5.5 accepts a forced tool call; Sonnet 5.5 and Opus 5.5 do not.
         forces_tool_choice=match["tier"].lower() == "haiku",
+        accepts_effort=True,
     )
 
 
 def sampling_kwargs(model: str, temperature: float) -> dict[str, float]:
     """``{"temperature": temperature}``, or ``{}`` for a model that rejects it."""
     return {"temperature": temperature} if capabilities_for(model).accepts_temperature else {}
+
+
+def effort_config(model: str, effort: str | None) -> dict[str, str]:
+    """``{"effort": effort}``, or ``{}`` for no effort or a model without one.
+
+    For a caller that builds its own ``output_config`` and merges this in.
+    A model before the 5 family is never sent an effort, so naming one for a
+    feature whose model is later swapped for an older one is harmless.
+    """
+    if effort and capabilities_for(model).accepts_effort:
+        return {"effort": effort}
+    return {}
+
+
+def effort_kwargs(model: str, effort: str | None) -> dict[str, dict[str, str]]:
+    """``{"output_config": {"effort": effort}}``, or ``{}`` when :func:`effort_config` is empty."""
+    config = effort_config(model, effort)
+    return {"output_config": config} if config else {}
 
 
 def tool_description(model: str) -> str:
@@ -133,6 +175,8 @@ __all__ = [
     "REQUESTED_TOOL_DESCRIPTION",
     "ClaudeCapabilities",
     "capabilities_for",
+    "effort_config",
+    "effort_kwargs",
     "sampling_kwargs",
     "tool_description",
     "tool_instruction",

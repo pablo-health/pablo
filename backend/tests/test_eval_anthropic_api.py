@@ -64,9 +64,23 @@ class _Messages:
         )
 
 
-def _sent_for(model: str) -> dict[str, Any]:
-    messages = _Messages()
-    gateway = DirectAnthropicGateway(client=SimpleNamespace(messages=messages))
+class _TextMessages(_Messages):
+    """The strict-output form returns JSON text, not a tool call."""
+
+    def create(self, **kwargs: Any) -> SimpleNamespace:
+        self.sent = kwargs
+        return SimpleNamespace(
+            content=[SimpleNamespace(type="text", text='{"a": "b"}')],
+            stop_reason="end_turn",
+            usage=SimpleNamespace(output_tokens=1),
+        )
+
+
+def _sent_for(
+    model: str, *, effort: str | None = None, messages: _Messages | None = None
+) -> dict[str, Any]:
+    messages = messages or _Messages()
+    gateway = DirectAnthropicGateway(client=SimpleNamespace(messages=messages), effort=effort)
     gateway.complete_structured(
         model=model,
         system_prompt="s",
@@ -178,3 +192,45 @@ def test_strict_output_schema_uses_empty_string_but_nullable_number() -> None:
 
 def test_drop_null_properties_restores_omitted_optional_fields() -> None:
     assert _drop_null_properties({"kept": [1, {"gone": None}], "gone": None}) == {"kept": [1, {}]}
+
+
+class TestEffort:
+    """A run can measure a reasoning effort before it is configured for a feature."""
+
+    def test_the_gateway_is_built_with_the_effort_asked_for(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "eval-key")
+        with patch("evals.anthropic_api.Anthropic"):
+            assert direct_anthropic_gateway(effort="low")._effort == "low"  # type: ignore[attr-defined]
+            assert direct_anthropic_gateway()._effort is None  # type: ignore[attr-defined]
+
+    @pytest.mark.parametrize("model", ["claude-haiku-5-5", "claude-sonnet-5-5"])
+    def test_a_5_family_model_is_sent_it(self, model: str) -> None:
+        assert _sent_for(model, effort="low")["output_config"] == {"effort": "low"}
+
+    def test_none_is_sent_when_none_is_asked_for(self) -> None:
+        assert "output_config" not in _sent_for("claude-haiku-5-5")
+
+    def test_an_earlier_model_is_never_sent_it(self) -> None:
+        assert "output_config" not in _sent_for("claude-sonnet-4-6", effort="low")
+
+    def test_the_auto_form_carries_it_on_a_model_that_takes_one(self) -> None:
+        sent = _sent_for("auto:claude-sonnet-5-5", effort="medium")
+
+        assert sent["tool_choice"] == {"type": "auto"}
+        assert sent["output_config"] == {"effort": "medium"}
+
+    def test_the_auto_form_leaves_it_out_for_an_earlier_model(self) -> None:
+        assert "output_config" not in _sent_for("auto:claude-sonnet-4-6", effort="medium")
+
+    def test_the_strict_form_merges_it_with_its_json_format(self) -> None:
+        sent = _sent_for("strict:claude-haiku-5-5", effort="low", messages=_TextMessages())
+
+        assert sent["output_config"]["effort"] == "low"
+        assert sent["output_config"]["format"]["type"] == "json_schema"
+
+    def test_the_strict_form_keeps_only_its_format_without_an_effort(self) -> None:
+        sent = _sent_for("strict:claude-haiku-5-5", messages=_TextMessages())
+
+        assert set(sent["output_config"]) == {"format"}

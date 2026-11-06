@@ -16,7 +16,12 @@ from typing import TYPE_CHECKING, Any
 
 from anthropic import Anthropic
 from app.reliability import LLM_REQUEST, Idempotency, call_with_retry
-from app.services.claude_models import REQUESTED_TOOL_DESCRIPTION, tool_instruction
+from app.services.claude_models import (
+    REQUESTED_TOOL_DESCRIPTION,
+    effort_config,
+    effort_kwargs,
+    tool_instruction,
+)
 from app.services.structured_llm_gateway import (
     AnthropicStructuredLLMGateway,
     StructuredCompletion,
@@ -69,10 +74,11 @@ class DirectAnthropicGateway(AnthropicStructuredLLMGateway):
                     ],
                     messages=[{"role": "user", "content": user_prompt}],
                     output_config={
+                        **effort_config(model, self._effort),
                         "format": {
                             "type": "json_schema",
                             "schema": wire_schema,
-                        }
+                        },
                     },
                     **timeout,
                 ),
@@ -144,6 +150,7 @@ class DirectAnthropicGateway(AnthropicStructuredLLMGateway):
                         "content": tool_instruction(user_prompt, self._TOOL_NAME),
                     }
                 ],
+                **effort_kwargs(model, self._effort),
                 **timeout,
             ),
             policy=policy,
@@ -173,13 +180,17 @@ class DirectAnthropicGateway(AnthropicStructuredLLMGateway):
         )
 
 
-def direct_anthropic_gateway() -> StructuredLLMGateway:
-    """Build the eval-only direct gateway from ``ANTHROPIC_API_KEY``."""
+def direct_anthropic_gateway(effort: str | None = None) -> StructuredLLMGateway:
+    """Build the eval-only direct gateway from ``ANTHROPIC_API_KEY``.
+
+    ``effort`` is the reasoning effort every call asks for, where the model
+    takes one, so a run can measure a setting before it is configured.
+    """
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
         raise RuntimeError("anthropic-api: evals need ANTHROPIC_API_KEY set")
 
-    return DirectAnthropicGateway(client=Anthropic(api_key=api_key, timeout=180.0))
+    return DirectAnthropicGateway(client=Anthropic(api_key=api_key, timeout=180.0), effort=effort)
 
 
 def direct_anthropic_model(model: str) -> str:

@@ -8,11 +8,22 @@ import logging
 
 import pytest
 from app.services import claude_models
-from app.services.claude_models import ClaudeCapabilities, capabilities_for, sampling_kwargs
+from app.services.claude_models import (
+    ClaudeCapabilities,
+    capabilities_for,
+    effort_config,
+    effort_kwargs,
+    sampling_kwargs,
+)
 
 _ACCEPTS_ALL = ClaudeCapabilities(accepts_temperature=True, forces_tool_choice=True)
-_NO_TEMPERATURE_FORCED_TOOL = ClaudeCapabilities(accepts_temperature=False, forces_tool_choice=True)
-_NO_TEMPERATURE_AUTO_TOOL = ClaudeCapabilities(accepts_temperature=False, forces_tool_choice=False)
+# The 5 family also takes a reasoning effort; earlier models never do.
+_NO_TEMPERATURE_FORCED_TOOL = ClaudeCapabilities(
+    accepts_temperature=False, forces_tool_choice=True, accepts_effort=True
+)
+_NO_TEMPERATURE_AUTO_TOOL = ClaudeCapabilities(
+    accepts_temperature=False, forces_tool_choice=False, accepts_effort=True
+)
 
 
 @pytest.mark.parametrize(
@@ -61,6 +72,35 @@ def test_sampling_kwargs_carries_temperature_only_where_it_is_accepted() -> None
 def test_a_zero_temperature_is_still_sent_where_accepted() -> None:
     """0.0 is a real setting (the deterministic calls), not an absent one."""
     assert sampling_kwargs("claude-haiku-4-5", 0.0) == {"temperature": 0.0}
+
+
+@pytest.mark.parametrize("effort", ["low", "medium", "high"])
+def test_a_5_family_model_is_sent_the_effort_asked_for(effort: str) -> None:
+    for model in ("claude-haiku-5-5", "anthropic:claude-sonnet-5-5", "claude-opus-5-5"):
+        assert effort_kwargs(model, effort) == {"output_config": {"effort": effort}}
+        assert effort_config(model, effort) == {"effort": effort}
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "claude-sonnet-4-6",
+        "bedrock:us.anthropic.claude-sonnet-4-6",
+        "claude-haiku-4-5@20251001",
+        "gemini-3.5-flash",
+        "",
+    ],
+)
+def test_a_model_without_an_effort_is_never_sent_one(model: str) -> None:
+    """Naming an effort for a feature whose model is swapped for an older one is harmless."""
+    assert effort_kwargs(model, "low") == {}
+    assert effort_config(model, "low") == {}
+
+
+@pytest.mark.parametrize("effort", [None, ""])
+def test_no_effort_is_sent_when_none_is_asked_for(effort: str | None) -> None:
+    assert effort_kwargs("claude-haiku-5-5", effort) == {}
+    assert effort_config("claude-haiku-5-5", effort) == {}
 
 
 def test_ids_are_read_whatever_their_case() -> None:

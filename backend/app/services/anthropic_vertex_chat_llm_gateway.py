@@ -36,7 +36,7 @@ from .chat_llm_gateway import (
     alternating_turns,
     is_transient_failure,
 )
-from .claude_models import sampling_kwargs
+from .claude_models import effort_kwargs, sampling_kwargs
 from .llm_provider import LLMProvider, strip_provider_prefix
 from .llm_telemetry import LLMSpanRecorder, LLMSpanRequest, llm_span
 from .vertex_client import async_anthropic_vertex_client
@@ -162,7 +162,10 @@ def _error_code(exc: BaseException) -> str:
 class AnthropicVertexChatLLMGateway(ChatLLMGateway):
     """Streams one chat answer from Claude on Vertex AI."""
 
-    def __init__(self, client: Any = None) -> None:
+    def __init__(self, client: Any = None, *, effort: str | None = None) -> None:
+        # The reasoning effort every answer from this gateway asks for, when the
+        # model takes one (see ``claude_models.effort_kwargs``).
+        self._effort = effort
         # A client passed in is used as given (tests). Otherwise one is built on
         # first use for the running event loop: an async client keeps its
         # connections on the loop that opened them, and a job that runs
@@ -201,6 +204,7 @@ class AnthropicVertexChatLLMGateway(ChatLLMGateway):
             "max_tokens": max_output_tokens,
             "messages": to_anthropic_messages(prior_turns, new_user_text),
             **sampling_kwargs(normalized_model, temperature),
+            **effort_kwargs(normalized_model, self._effort),
         }
         if system := system_blocks(system_prompt):
             request["system"] = system
@@ -267,14 +271,18 @@ def _record_usage(span: LLMSpanRecorder, usage: Any, output_tokens: int | None) 
     )
 
 
-_anthropic_vertex_chat_holder: list[AnthropicVertexChatLLMGateway] = []
+#: One gateway per effort, built on first use, so a feature asking for ``low`` and
+#: one asking for nothing do not share a setting.
+_anthropic_vertex_chat_gateways: dict[str | None, AnthropicVertexChatLLMGateway] = {}
 
 
-def get_anthropic_vertex_chat_llm_gateway() -> AnthropicVertexChatLLMGateway:
-    """The process-wide Claude-on-Vertex chat gateway, built on first use."""
-    if not _anthropic_vertex_chat_holder:
-        _anthropic_vertex_chat_holder.append(AnthropicVertexChatLLMGateway())
-    return _anthropic_vertex_chat_holder[0]
+def get_anthropic_vertex_chat_llm_gateway(
+    effort: str | None = None,
+) -> AnthropicVertexChatLLMGateway:
+    """The process-wide Claude-on-Vertex chat gateway for ``effort``."""
+    if effort not in _anthropic_vertex_chat_gateways:
+        _anthropic_vertex_chat_gateways[effort] = AnthropicVertexChatLLMGateway(effort=effort)
+    return _anthropic_vertex_chat_gateways[effort]
 
 
 __all__ = [

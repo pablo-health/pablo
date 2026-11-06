@@ -38,8 +38,10 @@ if TYPE_CHECKING:
     from ..reliability import RetryPolicy
 
 from ..reliability import LLM_JOB, LLM_REQUEST, Idempotency, call_with_retry
+from ..settings import get_settings
 from .claude_models import (
     capabilities_for,
+    effort_kwargs,
     sampling_kwargs,
     tool_description,
     with_tool_instruction,
@@ -454,9 +456,12 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
 
     _TOOL_NAME = "emit_structured_output"
 
-    def __init__(self, client: Any = None) -> None:
+    def __init__(self, client: Any = None, *, effort: str | None = None) -> None:
         # Injectable for tests; lazily built from the shared factory otherwise.
         self._client = client
+        # The reasoning effort every call from this gateway asks for, when the
+        # model takes one (see ``claude_models.effort_kwargs``).
+        self._effort = effort
 
     def _get_client(self) -> Any:
         if self._client is None:
@@ -535,6 +540,7 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
                             }
                         ],
                         **sampling_kwargs(normalized_model, temperature),
+                        **effort_kwargs(normalized_model, self._effort),
                         **timeout(),
                     ),
                     policy=policy,
@@ -876,16 +882,18 @@ def get_default_structured_llm_gateway() -> StructuredLLMGateway:
     return _default_gateway_holder[0]
 
 
-_anthropic_gateway_holder: list[StructuredLLMGateway] = []
+#: One Claude-on-Vertex gateway per effort, so a feature asking for ``low`` and
+#: one asking for nothing do not share a client's settings.
+_anthropic_gateways: dict[str | None, StructuredLLMGateway] = {}
 _mistral_gateway_holder: list[StructuredLLMGateway] = []
 _bedrock_gateway_holder: list[StructuredLLMGateway] = []
 
 
-def _get_anthropic_structured_llm_gateway() -> StructuredLLMGateway:
-    """Return the process-wide :class:`AnthropicStructuredLLMGateway`."""
-    if not _anthropic_gateway_holder:
-        _anthropic_gateway_holder.append(AnthropicStructuredLLMGateway())
-    return _anthropic_gateway_holder[0]
+def _get_anthropic_structured_llm_gateway(effort: str | None = None) -> StructuredLLMGateway:
+    """Return the process-wide :class:`AnthropicStructuredLLMGateway` for ``effort``."""
+    if effort not in _anthropic_gateways:
+        _anthropic_gateways[effort] = AnthropicStructuredLLMGateway(effort=effort)
+    return _anthropic_gateways[effort]
 
 
 def _get_mistral_structured_llm_gateway() -> StructuredLLMGateway:
@@ -924,7 +932,9 @@ def register_structured_llm_provider(
     _registered_providers[prefix] = gateway
 
 
-def resolve_structured_llm_gateway(model: str) -> StructuredLLMGateway:
+def resolve_structured_llm_gateway(
+    model: str, *, feature: str | None = None
+) -> StructuredLLMGateway:
     """Pick the structured gateway for a (possibly provider-prefixed) model id.
 
     A prefix registered with :func:`register_structured_llm_provider` →
@@ -934,12 +944,15 @@ def resolve_structured_llm_gateway(model: str) -> StructuredLLMGateway:
     caller target any provider by model string alone, the same way
     :func:`strip_provider_prefix` already lets the prefix ride through
     config.
+
+    ``feature`` is the AI feature the call serves, when the caller knows it:
+    Claude on Vertex asks for that feature's ``ai_efforts`` entry.
     """
     provider, sep, _rest = model.partition(":")
     if sep and provider in _registered_providers:
         return _registered_providers[provider]()
     if sep and provider == LLMProvider.ANTHROPIC:
-        return _get_anthropic_structured_llm_gateway()
+        return _get_anthropic_structured_llm_gateway(get_settings().effort_for(feature))
     if sep and provider == LLMProvider.MISTRALAI:
         return _get_mistral_structured_llm_gateway()
     return get_default_structured_llm_gateway()
