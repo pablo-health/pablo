@@ -80,7 +80,7 @@ describe("useSessions hooks", () => {
       await waitFor(() => expect(result.current.isSuccess).toBe(true))
 
       expect(result.current.data).toEqual(mockData)
-      expect(sessionsApi.listSessions).toHaveBeenCalledWith(undefined)
+      expect(sessionsApi.listSessions).toHaveBeenCalledWith(undefined, undefined)
     })
 
     it("passes token when provided", async () => {
@@ -98,7 +98,7 @@ describe("useSessions hooks", () => {
       })
 
       await waitFor(() =>
-        expect(sessionsApi.listSessions).toHaveBeenCalledWith("test-token")
+        expect(sessionsApi.listSessions).toHaveBeenCalledWith(undefined, "test-token")
       )
     })
 

@@ -32,6 +32,7 @@ import { PaymentsTab } from "@/components/payments/PaymentsTab"
 import { BalanceTab } from "@/components/payments/BalanceTab"
 import { InsuranceCard } from "@/components/insurance/InsuranceCard"
 import { IntakeCard } from "@/components/patients/IntakeCard"
+import { RecentlyDeletedSessions } from "@/components/sessions/RecentlyDeletedSessions"
 import { usePatientNotes } from "@/hooks/useNotes"
 import { useNoteTypeLabel } from "@/hooks/useNoteTypes"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
@@ -281,6 +282,9 @@ export function PatientChartTabs({ patientId, initialTab }: PatientChartTabsProp
         </TabsList>
         <TabsContent value="notes" className="pt-4">
           <NotesTab patientId={patientId} />
+          {/* Outside NotesTab so a chart whose only session was deleted
+              shows the undo beneath the empty state too. */}
+          <RecentlyDeletedSessions patientId={patientId} />
         </TabsContent>
         <TabsContent value="intake" className="pt-4">
           <IntakeCard patientId={patientId} />

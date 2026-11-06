@@ -40,6 +40,11 @@ class AuditAction(StrEnum):
     SESSION_LISTED = "session_listed"
     SESSION_VIEWED = "session_viewed"
     SESSION_UPDATED = "session_updated"
+    # A session soft-deleted on its own brought back inside the undo window
+    # (PABLO-ocvu), with the note that was tombstoned alongside it. Mirrors
+    # PATIENT_RESTORED; a session that came back with its patient is covered
+    # by that row, not this one.
+    SESSION_RESTORED = "session_restored"
     SESSION_FINALIZED = "session_finalized"
     SESSION_RATING_UPDATED = "session_rating_updated"
     SESSION_TRANSCRIPT_UPLOADED = "session_transcript_uploaded"

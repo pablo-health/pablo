@@ -129,6 +129,10 @@ const baseQueryKeys = {
     // Patient-specific sessions (for future use)
     byPatient: (patientId: string) =>
       [...baseQueryKeys.sessions.all, "byPatient", patientId] as const,
+    // Sessions deleted on their own inside the undo window, per chart
+    // (PABLO-ocvu). Under `all` so a restore or delete refreshes it.
+    recentlyDeleted: (patientId: string) =>
+      [...baseQueryKeys.sessions.all, "recentlyDeleted", patientId] as const,
     allDictations: () => [...baseQueryKeys.sessions.all, "dictations"] as const,
     dictations: (sessionId: string) =>
       [...baseQueryKeys.sessions.allDictations(), sessionId] as const,

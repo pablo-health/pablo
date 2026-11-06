@@ -18,6 +18,7 @@ import {
   getSession,
   listSessions,
   redraftSessionNote,
+  restoreSession,
   updateSessionMetadata,
   updateSessionRating,
   uploadSession,
@@ -28,7 +29,7 @@ import { useConfig } from "@/lib/config"
 import { pollingOptions, type PollInterval } from "@/lib/query/polling"
 import { watchDraft } from "@/lib/draftWatch"
 import { withDashboard } from "./dashboardFreshness"
-import { useAuthMutation } from "./useAuthQuery"
+import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
 
 // Query hooks — mock-aware, so they use raw useQuery instead of useAuthQuery.
 // Each takes an optional poll interval; a query given one polls through
@@ -52,7 +53,7 @@ export function useSessionList(
         const { mockSessionListResponse } = await import("@/lib/mockData")
         return mockSessionListResponse
       }
-      return listSessions(token)
+      return listSessions(undefined, token)
     },
     staleTime: isMock ? Infinity : 60 * 1000,
     enabled: (options?.enabled ?? true) && (isMock || !loading),
@@ -270,5 +271,36 @@ export function useUpdateSessionMetadata(token?: string) {
           ? { ...previous, session_date: data.session_date }
           : previous,
     },
+  })
+}
+
+/**
+ * Sessions deleted on their own inside the 30-day undo window, for one
+ * chart (PABLO-ocvu). Sessions that went with a deleted client are not
+ * here; they come back with the client.
+ */
+export function useRecentlyDeletedSessions(patientId: string | undefined, token?: string) {
+  return useAuthQuery<SessionListResponse>({
+    queryKey: queryKeys.sessions.recentlyDeleted(patientId ?? ""),
+    queryFn: () => listSessions({ patient_id: patientId!, include_deleted: "recent" }, token),
+    enabled: !!patientId,
+  })
+}
+
+/**
+ * Restore a session deleted on its own (PABLO-ocvu).
+ *
+ * Invalidates every session query (the live list and the recently-deleted
+ * slice both live under `sessions.all`) and the chart's notes, since the
+ * note deleted with the session comes back with it.
+ */
+export function useRestoreSession(token?: string) {
+  return useAuthMutation({
+    mutationFn: (sessionId: string) => restoreSession(sessionId, token),
+    invalidateKeys: (_sessionId, data) =>
+      withDashboard([
+        queryKeys.sessions.all,
+        ...(data ? [queryKeys.notes.byPatient(data.patient_id)] : []),
+      ]),
   })
 }
