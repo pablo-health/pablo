@@ -59,10 +59,10 @@ def _bedrock_gateway() -> ChatLLMGateway:
     return get_bedrock_chat_llm_gateway()
 
 
-def _anthropic_vertex_gateway() -> ChatLLMGateway:
+def _anthropic_vertex_gateway(effort: str | None = None) -> ChatLLMGateway:
     from .anthropic_vertex_chat_llm_gateway import get_anthropic_vertex_chat_llm_gateway
 
-    return get_anthropic_vertex_chat_llm_gateway()
+    return get_anthropic_vertex_chat_llm_gateway(effort=effort)
 
 
 class FailoverChatLLMGateway(ChatLLMGateway):
@@ -88,7 +88,8 @@ class FailoverChatLLMGateway(ChatLLMGateway):
         if sep and provider == LLMProvider.BEDROCK:
             return _bedrock_gateway()
         if sep and provider == LLMProvider.ANTHROPIC:
-            return _anthropic_vertex_gateway()
+            # Claude on Vertex reasons at the effort this feature's settings name.
+            return _anthropic_vertex_gateway(get_settings().effort_for(self._feature))
         return self._gateway
 
     def _hands_over(self, event: StreamEvent) -> bool:

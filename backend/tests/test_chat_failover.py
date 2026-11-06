@@ -238,7 +238,8 @@ class TestFailover:
         vertex_claude = FakeChatLLMGateway(scripts=[])
         monkeypatch.setattr("app.services.chat_failover._bedrock_gateway", lambda: bedrock)
         monkeypatch.setattr(
-            "app.services.chat_failover._anthropic_vertex_gateway", lambda: vertex_claude
+            "app.services.chat_failover._anthropic_vertex_gateway",
+            lambda _effort=None: vertex_claude,
         )
         failover = FailoverChatLLMGateway(own, [])
 

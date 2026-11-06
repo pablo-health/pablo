@@ -1788,6 +1788,23 @@ class Settings(BaseSettings):
             "ai_hedge_after_seconds and long calls unraced."
         ),
     )
+    ai_efforts: dict[str, Literal["low", "medium", "high", "xhigh", "max"]] = Field(
+        default_factory=dict,
+        description=(
+            "The reasoning effort per AI feature, as a JSON object from "
+            "feature key (the keys listed on ai_fallbacks) to ``low``, "
+            '``medium``, ``high``, ``xhigh`` or ``max``, e.g. ``{"chat": '
+            '"low"}``. It applies to a Claude model on Vertex AI '
+            "(``anthropic:``) of the 5 family, which reasons before it "
+            "answers and bills that reasoning as output; at the default, "
+            "which behaves like ``high``, a short reply can bill several "
+            "times its visible length and wait on that reasoning before the "
+            "first word. ``low`` removes most of both: on a streamed reply "
+            "Haiku 5.5 went from 2.1 s to 0.7 s to first text. A feature not "
+            "named here, and any model that takes no effort, is unchanged. A "
+            "value outside the list fails at startup. Empty by default."
+        ),
+    )
 
     # Amazon Bedrock, for ``bedrock:``-prefixed models (most usefully as an
     # entry in ai_model_flash_fallbacks or ai_fallbacks, a second provider
@@ -1828,6 +1845,10 @@ class Settings(BaseSettings):
     def model_for(self, feature: str, default: str) -> str:
         """``feature``'s primary model: its ``ai_models`` entry, else ``default``."""
         return (self.ai_models.get(feature) or "").strip() or default
+
+    def effort_for(self, feature: str | None) -> str | None:
+        """``feature``'s reasoning effort: its ``ai_efforts`` entry, else ``None``."""
+        return self.ai_efforts.get(feature) if feature else None
 
     def fallbacks_for(self, feature: str) -> tuple[str, ...]:
         """The fallback models ``ai_fallbacks`` names for ``feature``, in order.
