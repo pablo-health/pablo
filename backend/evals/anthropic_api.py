@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from anthropic import Anthropic
 from app.reliability import LLM_REQUEST, Idempotency, call_with_retry
+from app.services.claude_models import REQUESTED_TOOL_DESCRIPTION, tool_instruction
 from app.services.structured_llm_gateway import (
     AnthropicStructuredLLMGateway,
     StructuredCompletion,
@@ -100,7 +101,9 @@ class DirectAnthropicGateway(AnthropicStructuredLLMGateway):
                 output_tokens=getattr(response.usage, "output_tokens", None),
                 finish_reason="safety" if response.stop_reason == "refusal" else "stop",
             )
-        if not auto_tool and not model.startswith("claude-sonnet-5-5"):
+        if not auto_tool:
+            # The app's gateway asks ``claude_models`` what the model accepts,
+            # so every 5.5 model is handled there, not by name here.
             return super().complete_structured(
                 model=model,
                 system_prompt=system_prompt,
@@ -113,11 +116,13 @@ class DirectAnthropicGateway(AnthropicStructuredLLMGateway):
                 retry_policy=retry_policy,
             )
 
-        # Sonnet 5.5 rejects forced tool choice and sampling controls.
+        # The ``auto:`` form asks for the tool and never forces it or sets
+        # sampling, on any model: the way results were first recorded for the
+        # models that reject both. Its wording is the app's own.
         del temperature, thinking_budget
         tool = {
             "name": self._TOOL_NAME,
-            "description": "Always call this tool to return the requested structured result.",
+            "description": REQUESTED_TOOL_DESCRIPTION,
             "input_schema": response_schema,
         }
         response = call_with_retry(
@@ -136,7 +141,7 @@ class DirectAnthropicGateway(AnthropicStructuredLLMGateway):
                 messages=[
                     {
                         "role": "user",
-                        "content": f"{user_prompt}\n\nCall {self._TOOL_NAME} with the result.",
+                        "content": tool_instruction(user_prompt, self._TOOL_NAME),
                     }
                 ],
                 **timeout,

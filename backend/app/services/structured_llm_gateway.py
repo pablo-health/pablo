@@ -38,6 +38,12 @@ if TYPE_CHECKING:
     from ..reliability import RetryPolicy
 
 from ..reliability import LLM_JOB, LLM_REQUEST, Idempotency, call_with_retry
+from .claude_models import (
+    capabilities_for,
+    sampling_kwargs,
+    tool_description,
+    with_tool_instruction,
+)
 from .llm_provider import LLMProvider, strip_provider_prefix
 from .llm_telemetry import LLMSpanRequest, llm_span, usage_detail_tokens, usage_tokens
 from .vertex_client import (
@@ -482,9 +488,17 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
 
         client = self._get_client()
         normalized_model = strip_provider_prefix(model)
+        # A model that rejects a forced tool call is asked for the tool with
+        # ``auto`` and told to call it; one that rejects ``temperature`` is sent
+        # none (see ``claude_models``).
+        tool_choice: dict[str, str] = (
+            {"type": "tool", "name": self._TOOL_NAME}
+            if capabilities_for(normalized_model).forces_tool_choice
+            else {"type": "auto"}
+        )
         tool = {
             "name": self._TOOL_NAME,
-            "description": "Return the result as structured output.",
+            "description": tool_description(normalized_model),
             "input_schema": response_schema,
         }
         policy = retry_policy or LLM_REQUEST
@@ -503,7 +517,6 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
                     lambda: client.messages.create(
                         model=normalized_model,
                         max_tokens=max_output_tokens,
-                        temperature=temperature,
                         system=[
                             {
                                 "type": "text",
@@ -512,8 +525,16 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
                             }
                         ],
                         tools=[tool],
-                        tool_choice={"type": "tool", "name": self._TOOL_NAME},
-                        messages=[{"role": "user", "content": user_prompt}],
+                        tool_choice=tool_choice,
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": with_tool_instruction(
+                                    normalized_model, user_prompt, self._TOOL_NAME
+                                ),
+                            }
+                        ],
+                        **sampling_kwargs(normalized_model, temperature),
                         **timeout(),
                     ),
                     policy=policy,
@@ -531,12 +552,15 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
                 if prompt_tokens is not None or output_tokens is not None
                 else None
             )
-            # Anthropic reports cache reads apart from input_tokens; fold them
-            # into the prompt so it means the whole prompt on every provider.
+            # Anthropic reports cache reads and cache writes apart from
+            # input_tokens; fold both into the prompt so it means the whole
+            # prompt on every provider. Only the reads were served from cache.
             cached_tokens = getattr(usage, "cache_read_input_tokens", None)
-            if prompt_tokens is not None and cached_tokens:
-                prompt_tokens += cached_tokens
-                total = (total or 0) + cached_tokens
+            written_tokens = getattr(usage, "cache_creation_input_tokens", None)
+            if prompt_tokens is not None and (cached_tokens or written_tokens):
+                folded = (cached_tokens or 0) + (written_tokens or 0)
+                prompt_tokens += folded
+                total = (total or 0) + folded
             span.set_token_usage(
                 prompt_tokens=prompt_tokens,
                 completion_tokens=output_tokens,

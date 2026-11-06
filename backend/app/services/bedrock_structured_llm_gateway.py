@@ -55,6 +55,12 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from ..reliability import LLM_REQUEST, Idempotency, RetryExhaustedError, call_with_retry
+from .claude_models import (
+    capabilities_for,
+    sampling_kwargs,
+    tool_description,
+    with_tool_instruction,
+)
 from .llm_provider import LLMProvider, strip_provider_prefix
 from .llm_telemetry import LLMSpanRequest, llm_span
 from .structured_llm_gateway import (
@@ -339,22 +345,41 @@ class BedrockStructuredLLMGateway(StructuredLLMGateway):
         if bound is None:
             bound = _STRUCTURED_LLM_TIMEOUT_SECONDS
         normalized_model = strip_provider_prefix(model)
+        # A model that rejects a forced tool call is asked for the tool with
+        # ``auto`` and told to call it; one that rejects ``temperature`` is sent
+        # none (see ``claude_models``). Measured on Vertex; applied here on its
+        # strength, since the 5.5 models could not be called on Bedrock.
+        tool_choice: dict[str, Any] = (
+            {"tool": {"name": _TOOL_NAME}}
+            if capabilities_for(normalized_model).forces_tool_choice
+            else {"auto": {}}
+        )
         request: dict[str, Any] = {
             "modelId": normalized_model,
             "system": system_content(system_prompt, normalized_model),
-            "messages": [{"role": "user", "content": [{"text": user_prompt}]}],
-            "inferenceConfig": {"maxTokens": max_output_tokens, "temperature": temperature},
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"text": with_tool_instruction(normalized_model, user_prompt, _TOOL_NAME)}
+                    ],
+                }
+            ],
+            "inferenceConfig": {
+                "maxTokens": max_output_tokens,
+                **sampling_kwargs(normalized_model, temperature),
+            },
             "toolConfig": {
                 "tools": [
                     {
                         "toolSpec": {
                             "name": _TOOL_NAME,
-                            "description": "Return the result as structured output.",
+                            "description": tool_description(normalized_model),
                             "inputSchema": {"json": to_json_schema(response_schema)},
                         }
                     }
                 ],
-                "toolChoice": {"tool": {"name": _TOOL_NAME}},
+                "toolChoice": tool_choice,
             },
         }
         started = time.monotonic()

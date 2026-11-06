@@ -207,15 +207,21 @@ class AnthropicVertexChatLLMGateway(ChatLLMGateway):
 def _record_usage(span: LLMSpanRecorder, usage: Any, output_tokens: int | None) -> None:
     """Put a stream's token counts on the span.
 
-    Anthropic reports cache reads apart from ``input_tokens``; they are folded
-    into the prompt so it means the whole prompt on every provider.
+    Anthropic reports cache reads and cache writes apart from ``input_tokens``;
+    both are folded into the prompt so it means the whole prompt on every
+    provider. Only the reads were served from cache.
     """
     input_tokens = getattr(usage, "input_tokens", None)
     cached_tokens = getattr(usage, "cache_read_input_tokens", None)
+    written_tokens = getattr(usage, "cache_creation_input_tokens", None)
     if not output_tokens and input_tokens is None:
         return
     span.set_token_usage(
-        prompt_tokens=None if input_tokens is None else input_tokens + (cached_tokens or 0),
+        prompt_tokens=(
+            None
+            if input_tokens is None
+            else input_tokens + (cached_tokens or 0) + (written_tokens or 0)
+        ),
         completion_tokens=output_tokens,
         cached_tokens=cached_tokens or None,
     )

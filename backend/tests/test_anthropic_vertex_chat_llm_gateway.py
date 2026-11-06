@@ -421,6 +421,35 @@ class TestCapturedStreams:
         assert "cache_control" not in body["system"][1]
 
 
+class _SpanProbe:
+    def __init__(self) -> None:
+        self.usage: dict[str, Any] = {}
+
+    def set_token_usage(self, **usage: Any) -> None:
+        self.usage = usage
+
+
+class TestUsage:
+    def test_cache_reads_and_writes_both_count_toward_the_prompt(self) -> None:
+        """Anthropic reports both apart from input_tokens; only the reads came from cache."""
+        span = _SpanProbe()
+        usage = _usage(input_tokens=20, output_tokens=9, cache_read=100)
+        usage.cache_creation_input_tokens = 50
+
+        module._record_usage(span, usage, 9)  # type: ignore[arg-type]
+
+        assert span.usage == {"prompt_tokens": 170, "completion_tokens": 9, "cached_tokens": 100}
+
+    def test_a_turn_with_no_cache_activity_reports_the_plain_prompt(self) -> None:
+        span = _SpanProbe()
+        usage = _usage(input_tokens=20, output_tokens=9)
+        usage.cache_creation_input_tokens = None
+
+        module._record_usage(span, usage, 9)  # type: ignore[arg-type]
+
+        assert span.usage == {"prompt_tokens": 20, "completion_tokens": 9, "cached_tokens": None}
+
+
 class TestClient:
     def test_one_gateway_serves_the_process(self) -> None:
         assert get_anthropic_vertex_chat_llm_gateway() is get_anthropic_vertex_chat_llm_gateway()
