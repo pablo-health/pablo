@@ -94,9 +94,20 @@ class ArchiveStore:
 
     # ------------------------------------------------------------------- put
 
-    def put(self, practice_key: str, archive: Path | bytes, password: str | None = None) -> str:
+    def put(
+        self,
+        practice_key: str,
+        archive: Path | bytes,
+        password: str | None = None,
+        *,
+        check: Callable[[Path], None] | None = None,
+    ) -> str:
         """Unpack an upload into the local cache, keep a plain copy in the object
-        store when one is configured, and return the run's reference."""
+        store when one is configured, and return the run's reference.
+
+        ``check`` sees the unpacked tree before anything is copied to the
+        object store; raising there refuses the upload with nothing kept
+        anywhere, so an archive no reader takes is never uploaded."""
         root = practice_archive_dir(self._local_base, practice_key)
         root.mkdir(parents=True, exist_ok=True)
         ref = uuid.uuid4().hex
@@ -104,6 +115,8 @@ class ArchiveStore:
         target.mkdir()
         try:
             extract_zip(archive, target, password)
+            if check is not None:
+                check(target)
             if self.remote:
                 self._upload(practice_key, ref, target)
         except Exception:

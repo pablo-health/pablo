@@ -29,10 +29,12 @@ from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 
 from ..db.models import ImportRecordRow, ImportRunRow
 from ..utcnow import utc_now
+from .readers.calendar_folder import CALENDAR_DIR
+from .readers.simplepractice_calendar import CALENDAR_CLIENT
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -170,7 +172,7 @@ def client_records_for_run(session: Session, run_id: str) -> list[ImportRecordRo
     """
     stmt = select(ImportRecordRow).where(
         ImportRecordRow.run_id == run_id,
-        ImportRecordRow.record_type == "contact",
+        ImportRecordRow.record_type.in_(("contact", CALENDAR_CLIENT)),
         ImportRecordRow.target_table == "patients",
         ImportRecordRow.state != "undone",
     )
@@ -235,6 +237,28 @@ def new_run(
     session.add(run)
     session.flush()
     return run
+
+
+def later_run_stands(session: Session, run: ImportRunRow) -> bool:
+    """Whether the same clinician applied another import after ``run`` that
+    is still in place. Ordered by when runs were applied, not uploaded: a run
+    applied later reads what this one landed."""
+    if run.finished_at is None:
+        return False
+    stmt = select(ImportRunRow.id).where(
+        ImportRunRow.id != run.id,
+        ImportRunRow.started_by == run.started_by,
+        ImportRunRow.state == "applied",
+        or_(
+            ImportRunRow.finished_at > run.finished_at,
+            # Applied in the same instant: the later upload is the later run.
+            and_(
+                ImportRunRow.finished_at == run.finished_at,
+                ImportRunRow.started_at > run.started_at,
+            ),
+        ),
+    )
+    return session.execute(stmt.limit(1)).first() is not None
 
 
 def get_run(session: Session, run_id: str) -> ImportRunRow | None:
@@ -406,9 +430,13 @@ def extract_zip(source: Path | bytes, target: Path, password: str | None = None)
                 raise ArchiveError("The zip archive is too large.")
         # An export zipped from its folder usually has one top-level directory
         # ("Export - Complete - ..."); unwrap it so the reader sees the tree.
+        # A zip of the saved calendar folder alone is already the tree, so
+        # that one top-level directory is kept.
         tops = {Path(m.filename).parts[0] for m in members if "__MACOSX" not in m.filename}
         nested = all(len(Path(m.filename).parts) > 1 for m in members)
         strip = next(iter(tops)) if len(tops) == 1 and nested else None
+        if strip is not None and strip.lower() == CALENDAR_DIR:
+            strip = None
         for member in members:
             if "__MACOSX" in member.filename:
                 continue

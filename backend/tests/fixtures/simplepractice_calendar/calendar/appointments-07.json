@@ -1,0 +1,202 @@
+{
+  "data": [
+    {
+      "id": "3793470566",
+      "type": "appointments",
+      "links": {
+        "self": "https://secure.simplepractice.com/frontend/appointments/3793470566"
+      },
+      "attributes": {
+        "permissions": "{\"billing\":true,\"showDetails\":true,\"edit\":true,\"editScheduling\":true,\"editDetails\":false,\"editTime\":true,\"editStatus\":false,\"editTeamMember\":true,\"treatment\":true,\"destroy\":true,\"showOnCalendar\":true,\"showAllClients\":true,\"treatmentProgress\":true,\"createTreatmentProgress\":true,\"adminStaffDocsAccess\":false,\"showNotes\":true,\"noteTaker\":false,\"viewDraftAiNote\":false,\"postSessionSummary\":false}",
+        "hasNote": "false",
+        "hasNoteSignature": "false",
+        "clinicianId": 2156935,
+        "officeId": 57887567,
+        "officeName": "Video Office",
+        "fullDay": "false",
+        "duration": 50,
+        "attendanceStatus": "Show",
+        "thisType": "Appointment",
+        "title": "Blake Client",
+        "startTime": "2026-10-13T10:00:00-04:00",
+        "endTime": "2026-10-13T10:50:00-04:00",
+        "isRecurring": "false",
+        "clientConfirmationStatus": null
+      },
+      "relationships": {
+        "practice": {
+          "data": {
+            "type": "practices",
+            "id": "1374130"
+          }
+        },
+        "clinician": {
+          "data": {
+            "type": "teamMembers",
+            "id": "2156935"
+          }
+        },
+        "office": {
+          "data": {
+            "type": "addresses",
+            "id": "57887567"
+          }
+        },
+        "recurringAppointment": {
+          "data": null
+        },
+        "pendingAppointmentConfirmation": {
+          "data": null
+        },
+        "globalMonarchChannel": {
+          "data": null
+        },
+        "userEventColor": {
+          "data": null
+        },
+        "appointmentClients": {
+          "data": [
+            {
+              "type": "appointmentClients",
+              "id": "1635772867"
+            }
+          ]
+        },
+        "globalMonarchSubchannel": {
+          "data": null
+        }
+      },
+      "meta": {
+        "hasMemo": false
+      }
+    },
+    {
+      "id": "3793478974",
+      "type": "appointments",
+      "links": {
+        "self": "https://secure.simplepractice.com/frontend/appointments/3793478974"
+      },
+      "attributes": {
+        "permissions": "{\"billing\":true,\"showDetails\":true,\"edit\":true,\"editScheduling\":true,\"editDetails\":false,\"editTime\":true,\"editStatus\":false,\"editTeamMember\":true,\"treatment\":true,\"destroy\":true,\"showOnCalendar\":true,\"showAllClients\":true,\"treatmentProgress\":true,\"createTreatmentProgress\":true,\"adminStaffDocsAccess\":false,\"showNotes\":true,\"noteTaker\":false,\"viewDraftAiNote\":false,\"postSessionSummary\":false}",
+        "hasNote": "false",
+        "hasNoteSignature": "false",
+        "clinicianId": 2156935,
+        "officeId": 57887567,
+        "officeName": "Video Office",
+        "fullDay": "false",
+        "duration": 50,
+        "attendanceStatus": "Show",
+        "thisType": "Appointment",
+        "title": "Casey Client",
+        "startTime": "2026-10-14T10:00:00-04:00",
+        "endTime": "2026-10-14T10:50:00-04:00",
+        "isRecurring": "false",
+        "clientConfirmationStatus": null
+      },
+      "relationships": {
+        "practice": {
+          "data": {
+            "type": "practices",
+            "id": "1374130"
+          }
+        },
+        "clinician": {
+          "data": {
+            "type": "teamMembers",
+            "id": "2156935"
+          }
+        },
+        "office": {
+          "data": {
+            "type": "addresses",
+            "id": "57887567"
+          }
+        },
+        "recurringAppointment": {
+          "data": null
+        },
+        "pendingAppointmentConfirmation": {
+          "data": null
+        },
+        "globalMonarchChannel": {
+          "data": null
+        },
+        "userEventColor": {
+          "data": null
+        },
+        "appointmentClients": {
+          "data": [
+            {
+              "type": "appointmentClients",
+              "id": "1635778768"
+            }
+          ]
+        },
+        "globalMonarchSubchannel": {
+          "data": null
+        }
+      },
+      "meta": {
+        "hasMemo": false
+      }
+    }
+  ],
+  "included": [
+    {
+      "id": "1635772867",
+      "type": "appointmentClients",
+      "links": {
+        "self": "https://secure.simplepractice.com/frontend/appointment-clients/1635772867"
+      },
+      "attributes": {
+        "permissions": "{\"billing\":true,\"edit\":true,\"editScheduling\":true,\"editTime\":true,\"editBilling\":true,\"treatment\":true,\"show\":true,\"editStatus\":true,\"destroy\":true,\"printSession\":true}"
+      },
+      "relationships": {
+        "client": {
+          "data": {
+            "type": "clients",
+            "id": "112230081"
+          }
+        }
+      }
+    },
+    {
+      "id": "1635778768",
+      "type": "appointmentClients",
+      "links": {
+        "self": "https://secure.simplepractice.com/frontend/appointment-clients/1635778768"
+      },
+      "attributes": {
+        "permissions": "{\"billing\":true,\"edit\":true,\"editScheduling\":true,\"editTime\":true,\"editBilling\":true,\"treatment\":true,\"show\":true,\"editStatus\":true,\"destroy\":true,\"printSession\":true}"
+      },
+      "relationships": {
+        "client": {
+          "data": {
+            "type": "clients",
+            "id": "112230132"
+          }
+        }
+      }
+    },
+    {
+      "id": "112230081",
+      "type": "clients",
+      "links": {
+        "self": "https://secure.simplepractice.com/frontend/clients/112230081"
+      },
+      "attributes": {
+        "isMinor": "false"
+      }
+    },
+    {
+      "id": "112230132",
+      "type": "clients",
+      "links": {
+        "self": "https://secure.simplepractice.com/frontend/clients/112230132"
+      },
+      "attributes": {
+        "isMinor": "false"
+      }
+    }
+  ]
+}

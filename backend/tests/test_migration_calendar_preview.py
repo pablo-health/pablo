@@ -1,0 +1,359 @@
+# Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+
+"""The calendar preview over the captured feed fixture, and how an upload is
+told apart as an archive, a calendar folder, or neither."""
+
+from __future__ import annotations
+
+import io
+import json
+import zipfile
+from datetime import UTC, datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+import pytest
+
+from backend.app.migration.ledger import LedgerEntry, extract_zip
+from backend.app.migration.preview import (
+    Clock,
+    ExistingPatient,
+    PreviewInputs,
+    build_calendar_preview,
+    build_preview,
+    decisions_complete,
+)
+from backend.app.migration.readers import detect_layout
+from backend.app.migration.readers.simplepractice import read_simplepractice_archive
+from backend.app.migration.readers.simplepractice_calendar import (
+    SimplePracticeCalendar,
+    read_simplepractice_calendar,
+)
+
+FIXTURE = Path(__file__).parent / "fixtures" / "simplepractice_calendar"
+ARCHIVE_FIXTURE = Path(__file__).parent / "fixtures" / "simplepractice_export"
+AVERY, BLAKE, CASEY, DANA = "112230097", "112230081", "112230132", "112230150"
+ET = ZoneInfo("America/New_York")
+#: The preview is judged on the day before the fixture's 2026-10-20 visit.
+CLOCK = Clock(datetime(2026, 10, 19, 16, 0, tzinfo=UTC), ET)
+#: The fixture's past No Show and past Cancelled appointments.
+MISSED = ("3793480002", "3793480003")
+
+
+@pytest.fixture(scope="module")
+def calendar() -> SimplePracticeCalendar:
+    return read_simplepractice_calendar(FIXTURE)
+
+
+def _preview(
+    calendar: SimplePracticeCalendar,
+    *,
+    ledger: dict[tuple[str, str], LedgerEntry] | None = None,
+    existing_patients: list[ExistingPatient] | None = None,
+    clock: Clock = CLOCK,
+) -> dict:
+    inputs = PreviewInputs(ledger=ledger or {}, existing_patients=existing_patients or [])
+    return build_calendar_preview(calendar, inputs, clock=clock)
+
+
+def test_first_run_is_all_new(calendar: SimplePracticeCalendar) -> None:
+    p = _preview(calendar)
+    assert p["source_system"] == "simplepractice"
+    assert p["layout"] == "calendar"
+    assert [c["card_id"] for c in p["clients"]] == [BLAKE, AVERY, CASEY, DANA]
+    assert p["counts"]["contact"] == {"new": 4}
+    # Two past visits marked attended, today's-or-later two, two past misses.
+    assert p["counts"]["appointment"] == {"new": 4, "skipped": 2}
+    assert p["providers"] == []
+    assert p["non_client_contacts"] == []
+    assert p["questions"] == {"same_name": [], "duplicates": [], "providers": []}
+    assert decisions_complete(p, {}) == []
+
+
+def test_each_appointment_says_how_it_lands(calendar: SimplePracticeCalendar) -> None:
+    by_id = {r["source_id"]: r for r in _preview(calendar)["records"]}
+    assert {k: r["lands_as"] for k, r in by_id.items()} == {
+        "3793470566": "completed",  # 2026-10-13, Show
+        "3793472377": "scheduled",  # 2026-10-20
+        "3793478974": "completed",  # 2026-10-14, Show
+        "3793480001": "scheduled",  # 2026-11-02
+        "3793480002": "no_show",  # 2026-10-06, No Show
+        "3793480003": "cancelled",  # 2026-10-07, Cancelled
+    }
+    for record in by_id.values():
+        assert record["record_type"] == "appointment"
+        assert record["kind"] == "appointment"
+        assert record["label"] == "Session"
+        # Nothing earlier landed, so only a booked or attended visit lands.
+        assert record["landable"] is (record["lands_as"] in {"scheduled", "completed"})
+        assert record["candidates"] == [record["card_id"]]
+    assert by_id["3793472377"]["when"] == "2026-10-20"
+    assert by_id["3793472377"]["start_at"] == "2026-10-20T10:00:00-04:00"
+    assert by_id["3793480002"]["reason"]
+
+
+def test_todays_appointment_is_still_scheduled_in_the_practice_zone(
+    calendar: SimplePracticeCalendar,
+) -> None:
+    """At 23:30 Eastern on the 20th the 10:00 visit is today's and stays
+    scheduled, whatever the clock says; the same instant is already the 21st
+    in UTC, where the visit was an earlier day's attended one."""
+    late_that_night = Clock(datetime(2026, 10, 21, 3, 30, tzinfo=UTC), ET)
+    records = {r["source_id"]: r for r in _preview(calendar, clock=late_that_night)["records"]}
+    assert records["3793472377"]["lands_as"] == "scheduled"
+    in_utc = Clock(late_that_night.now, UTC)
+    records = {r["source_id"]: r for r in _preview(calendar, clock=in_utc)["records"]}
+    assert records["3793472377"]["lands_as"] == "completed"
+
+
+def test_group_and_external_entries_are_reported_not_landed(
+    calendar: SimplePracticeCalendar,
+) -> None:
+    what = {c["what"]: c["count"] for c in _preview(calendar)["cannot_land"]}
+    assert what == {"group_appointment": 1, "external_event": 1, "cancelled": 2}
+
+
+def test_preview_carries_no_feed_content(calendar: SimplePracticeCalendar) -> None:
+    text = json.dumps(_preview(calendar))
+    assert "permissions" not in text
+    assert "Staff meeting" not in text  # the outside event's title
+    assert "Skills group" not in text  # the group appointment's title
+    assert "f3a9c1d2e4b5" not in text  # a client's hashed id
+    # Names sit on the client cards, as they do for an archive; never on a record.
+    for record in _preview(calendar)["records"]:
+        assert "Client" not in json.dumps(record)
+
+
+def test_protected_clients_are_flagged_for_the_screen(calendar: SimplePracticeCalendar) -> None:
+    flags = {c["card_id"]: c["protected"] for c in _preview(calendar)["clients"]}
+    assert flags == {BLAKE: False, AVERY: False, CASEY: False, DANA: False}
+    dana = next(c for c in _preview(calendar)["clients"] if c["card_id"] == DANA)
+    assert dana["display_name"] == "Dana Client"
+    assert dana["preferred_name"] == "Dee"
+
+
+def test_a_same_named_patient_is_a_question_never_a_merge(
+    calendar: SimplePracticeCalendar,
+) -> None:
+    existing = [ExistingPatient("p-1", "avery", "CLIENT", None, None)]
+    p = _preview(calendar, existing_patients=existing)
+    avery = next(c for c in p["clients"] if c["card_id"] == AVERY)
+    assert avery["existing_patient_id"] is None
+    assert avery["match_evidence"] is None
+    assert avery["possible_duplicates"] == ["p-1"]
+    assert p["questions"]["duplicates"] == [{"card_id": AVERY, "possible_duplicates": ["p-1"]}]
+    assert p["counts"]["contact"] == {"new": 4, "unresolved": 1}
+    assert decisions_complete(p, {}) == [f"duplicate decision for client {AVERY}"]
+    assert decisions_complete(p, {"duplicates": {AVERY: "create"}}) == []
+
+
+def test_a_preferred_name_matching_a_patient_is_also_a_question(
+    calendar: SimplePracticeCalendar,
+) -> None:
+    existing = [ExistingPatient("p-2", "Dee", "Client", None, None)]
+    p = _preview(calendar, existing_patients=existing)
+    dana = next(c for c in p["clients"] if c["card_id"] == DANA)
+    assert dana["possible_duplicates"] == ["p-2"]
+
+
+def test_second_run_reads_as_a_delta(calendar: SimplePracticeCalendar) -> None:
+    landed = {
+        ("calendar_appointment", a.source_id): LedgerEntry(
+            "calendar_appointment",
+            a.source_id,
+            "appointments",
+            f"a-{a.source_id}",
+            a.digest,
+            "landed",
+            "r-1",
+        )
+        for a in calendar.appointments
+        if a.source_id not in MISSED
+    }
+    landed.update(
+        {
+            ("contact", c.source_id): LedgerEntry(
+                "contact", c.source_id, "patients", f"p-{c.source_id}", c.digest, "landed", "r-1"
+            )
+            for c in calendar.clients
+        }
+    )
+    p = _preview(calendar, ledger=landed)
+    assert p["counts"]["appointment"] == {"unchanged": 4, "skipped": 2}
+    assert p["counts"]["contact"] == {"unchanged": 4}
+    assert {c["match_evidence"] for c in p["clients"]} == {"ledger"}
+    assert {c["existing_patient_id"] for c in p["clients"]} == {
+        f"p-{c}" for c in (AVERY, BLAKE, CASEY, DANA)
+    }
+
+    # One appointment moved in the feed since: its digest no longer matches.
+    moved = ("calendar_appointment", "3793472377")
+    landed[moved] = LedgerEntry(
+        "calendar_appointment",
+        "3793472377",
+        "appointments",
+        "a-3793472377",
+        "stale",
+        "landed",
+        "r-1",
+    )
+    p = _preview(calendar, ledger=landed)
+    states = {r["source_id"]: r["state"] for r in p["records"]}
+    assert states["3793472377"] == "changed"
+    assert p["counts"]["appointment"] == {"unchanged": 3, "changed": 1, "skipped": 2}
+
+    # Undone, an earlier landing counts for nothing.
+    landed[moved] = LedgerEntry(
+        "calendar_appointment",
+        "3793472377",
+        "appointments",
+        "a-3793472377",
+        "stale",
+        "undone",
+        "r-1",
+    )
+    states = {r["source_id"]: r["state"] for r in _preview(calendar, ledger=landed)["records"]}
+    assert states["3793472377"] == "new"
+
+
+def test_a_cancellation_never_lands_as_a_new_appointment(tmp_path: Path) -> None:
+    """A future appointment the client cancelled is not added to the calendar;
+    once one landed, a cancellation reaching it is a change to land."""
+    source = json.loads((FIXTURE / "calendar" / "appointments-06.json").read_text())
+    appointment = source["data"][0]
+    appointment["attributes"]["attendanceStatus"] = "Cancelled"
+    folder = tmp_path / "calendar"
+    folder.mkdir()
+    (folder / "a.json").write_text(json.dumps(source))
+    feed = read_simplepractice_calendar(tmp_path)
+    (record,) = _preview(feed)["records"]
+    assert (record["lands_as"], record["landable"]) == ("cancelled", False)
+
+    landed = {
+        ("calendar_appointment", appointment["id"]): LedgerEntry(
+            "calendar_appointment",
+            appointment["id"],
+            "appointments",
+            "a-1",
+            "earlier",
+            "landed",
+            "r-1",
+        )
+    }
+    (record,) = _preview(feed, ledger=landed)["records"]
+    assert (record["lands_as"], record["landable"], record["state"]) == (
+        "cancelled",
+        True,
+        "changed",
+    )
+
+
+def test_a_calendar_landed_client_is_matched_under_its_own_record_type(
+    calendar: SimplePracticeCalendar,
+) -> None:
+    """The calendar ledgers its clients apart from an export's cards, and reads
+    either: its own landing by digest, an export's as the patient to use."""
+    blake = next(c for c in calendar.clients if c.source_id == BLAKE)
+    own = {
+        ("calendar_client", BLAKE): LedgerEntry(
+            "calendar_client", BLAKE, "patients", "p-cal", blake.digest, "landed", "r-1"
+        )
+    }
+    by_id = {c["card_id"]: c for c in _preview(calendar, ledger=own)["clients"]}
+    assert (by_id[BLAKE]["existing_patient_id"], by_id[BLAKE]["state"]) == ("p-cal", "unchanged")
+
+    export = {
+        ("contact", BLAKE): LedgerEntry(
+            "contact", BLAKE, "patients", "p-card", "card-digest", "landed", "r-0"
+        )
+    }
+    by_id = {c["card_id"]: c for c in _preview(calendar, ledger=export)["clients"]}
+    assert by_id[BLAKE]["existing_patient_id"] == "p-card"
+    assert (by_id[BLAKE]["match_evidence"], by_id[BLAKE]["state"]) == ("ledger", "unchanged")
+
+
+# --------------------------------------------------------------------------- layout
+
+
+def test_detect_layout_tells_the_two_apart(tmp_path: Path) -> None:
+    assert detect_layout(FIXTURE) == "calendar"
+    assert detect_layout(ARCHIVE_FIXTURE) == "archive"
+    assert detect_layout(tmp_path) is None
+    (tmp_path / "calendar").mkdir()
+    assert detect_layout(tmp_path) is None  # an empty calendar folder holds nothing to read
+    (tmp_path / "calendar" / "a.json").write_text("{}")
+    assert detect_layout(tmp_path) == "calendar"
+    (tmp_path / "Contacts").mkdir()
+    assert detect_layout(tmp_path) == "mixed"
+
+
+def _zipped(entries: dict[str, bytes]) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, data in entries.items():
+            zf.writestr(name, data)
+    return buf.getvalue()
+
+
+def test_a_zip_of_the_calendar_folder_alone_keeps_its_folder(tmp_path: Path) -> None:
+    """Zipping the saved folder gives one top-level ``calendar/`` directory;
+    the unwrap that serves an export must not flatten it."""
+    data = (FIXTURE / "calendar" / "appointments-07.json").read_bytes()
+    extract_zip(_zipped({"calendar/appointments-07.json": data}), tmp_path / "bare")
+    assert detect_layout(tmp_path / "bare") == "calendar"
+    extract_zip(
+        _zipped({"My saved feed/calendar/appointments-07.json": data}), tmp_path / "wrapped"
+    )
+    assert detect_layout(tmp_path / "wrapped") == "calendar"
+
+
+def test_a_status_this_version_does_not_know_never_books(tmp_path: Path) -> None:
+    source = json.loads((FIXTURE / "calendar" / "appointments-06.json").read_text())
+    source["data"][0]["attributes"]["attendanceStatus"] = "Clinician Canceled"
+    folder = tmp_path / "calendar"
+    folder.mkdir()
+    (folder / "a.json").write_text(json.dumps(source))
+    p = _preview(read_simplepractice_calendar(tmp_path))
+    (record,) = p["records"]
+    assert (record["lands_as"], record["landable"]) == ("cancelled", False)
+    # Its client has nothing that lands, so no chart is proposed for them.
+    assert p["clients"] == []
+    assert p["counts"].get("contact") is None
+    assert [c["what"] for c in p["cannot_land"]] == ["cancelled"]
+
+
+def test_the_preview_records_the_day_it_was_judged_on(calendar: SimplePracticeCalendar) -> None:
+    assert _preview(calendar)["judged_on"] == "2026-10-19"
+
+
+def test_a_restricted_client_is_left_out_with_the_reason(tmp_path: Path) -> None:
+    source = json.loads(
+        (FIXTURE / "calendar" / "appointments-edge-group-external.json").read_text()
+    )
+    dana = next(e for e in source["included"] if e["id"] == DANA)
+    dana["attributes"]["enhancedDataProtection"] = "true"
+    folder = tmp_path / "calendar"
+    folder.mkdir()
+    (folder / "a.json").write_text(json.dumps(source))
+    p = _preview(read_simplepractice_calendar(tmp_path))
+    assert DANA not in {c["card_id"] for c in p["clients"]}
+    dana_records = [r for r in p["records"] if r["card_id"] == DANA]
+    assert dana_records
+    assert all(r["why"] == "protected" and not r["landable"] for r in dana_records)
+    assert {c["what"]: c["count"] for c in p["cannot_land"]}["protected"] == len(dana_records)
+
+
+def test_an_export_lands_on_the_patient_a_calendar_import_made() -> None:
+    """The same SimplePractice client, brought in by a calendar import with a
+    name only: the export's card lands on that patient instead of a new one."""
+    archive = read_simplepractice_archive(ARCHIVE_FIXTURE)
+    card_id = build_preview(archive, PreviewInputs())["clients"][0]["card_id"]
+    ledger = {
+        ("calendar_client", card_id): LedgerEntry(
+            "calendar_client", card_id, "patients", "p-cal", "d", "landed", "r-1"
+        )
+    }
+    p = build_preview(archive, PreviewInputs(ledger=ledger))
+    client = next(c for c in p["clients"] if c["card_id"] == card_id)
+    assert (client["existing_patient_id"], client["match_evidence"]) == ("p-cal", "calendar")
+    assert client["possible_duplicates"] == []

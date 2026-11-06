@@ -1,0 +1,104 @@
+{
+  "data": [
+    {
+      "id": "3793472377",
+      "type": "appointments",
+      "links": {
+        "self": "https://secure.simplepractice.com/frontend/appointments/3793472377"
+      },
+      "attributes": {
+        "permissions": "{\"billing\":true,\"showDetails\":true,\"edit\":true,\"editScheduling\":true,\"editDetails\":false,\"editTime\":false,\"editStatus\":true,\"editTeamMember\":true,\"treatment\":true,\"destroy\":false,\"showOnCalendar\":true,\"showAllClients\":true,\"treatmentProgress\":true,\"createTreatmentProgress\":false,\"adminStaffDocsAccess\":false,\"showNotes\":true,\"noteTaker\":false,\"viewDraftAiNote\":false,\"postSessionSummary\":false}",
+        "hasNote": "true",
+        "hasNoteSignature": "true",
+        "clinicianId": 2156935,
+        "officeId": 57887567,
+        "officeName": "Video Office",
+        "fullDay": "false",
+        "duration": 50,
+        "attendanceStatus": "Show",
+        "thisType": "Appointment",
+        "title": "Avery Client",
+        "startTime": "2026-10-20T10:00:00-04:00",
+        "endTime": "2026-10-20T10:50:00-04:00",
+        "isRecurring": "false",
+        "clientConfirmationStatus": null
+      },
+      "relationships": {
+        "practice": {
+          "data": {
+            "type": "practices",
+            "id": "1374130"
+          }
+        },
+        "clinician": {
+          "data": {
+            "type": "teamMembers",
+            "id": "2156935"
+          }
+        },
+        "office": {
+          "data": {
+            "type": "addresses",
+            "id": "57887567"
+          }
+        },
+        "recurringAppointment": {
+          "data": null
+        },
+        "pendingAppointmentConfirmation": {
+          "data": null
+        },
+        "globalMonarchChannel": {
+          "data": null
+        },
+        "userEventColor": {
+          "data": null
+        },
+        "appointmentClients": {
+          "data": [
+            {
+              "type": "appointmentClients",
+              "id": "1635774151"
+            }
+          ]
+        },
+        "globalMonarchSubchannel": {
+          "data": null
+        }
+      },
+      "meta": {
+        "hasMemo": false
+      }
+    }
+  ],
+  "included": [
+    {
+      "id": "1635774151",
+      "type": "appointmentClients",
+      "links": {
+        "self": "https://secure.simplepractice.com/frontend/appointment-clients/1635774151"
+      },
+      "attributes": {
+        "permissions": "{\"billing\":true,\"edit\":true,\"editScheduling\":true,\"editTime\":true,\"editBilling\":true,\"treatment\":true,\"show\":true,\"editStatus\":true,\"destroy\":false,\"printSession\":true}"
+      },
+      "relationships": {
+        "client": {
+          "data": {
+            "type": "clients",
+            "id": "112230097"
+          }
+        }
+      }
+    },
+    {
+      "id": "112230097",
+      "type": "clients",
+      "links": {
+        "self": "https://secure.simplepractice.com/frontend/clients/112230097"
+      },
+      "attributes": {
+        "isMinor": "false"
+      }
+    }
+  ]
+}

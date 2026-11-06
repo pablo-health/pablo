@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import select
 
@@ -29,6 +30,7 @@ from ..repositories import (
     get_medication_repository,
     get_notes_repository,
     get_patient_repository,
+    get_user_repository,
 )
 from ..services.note_generation_factory import note_generation_service
 from ..services.note_service import NoteService
@@ -38,7 +40,8 @@ from .apply import ArchiveApplier, edited_since
 from .archive_store import ArchiveStore, archive_store_from_settings
 from .chart_seed import ChartSeeder, SeedReport
 from .ledger import get_run, ledger_snapshot
-from .preview import ExistingPatient, PreviewInputs, build_preview
+from .preview import Clock, ExistingPatient, PreviewInputs, build_calendar_preview, build_preview
+from .readers import detect_layout, read_simplepractice_calendar
 from .readers.simplepractice import SOURCE_SYSTEM, read_simplepractice_archive
 
 if TYPE_CHECKING:
@@ -84,6 +87,21 @@ def _edited_targets(session: Session) -> set[tuple[str, str]]:
     }
 
 
+#: The zone a clinician's "today" falls back to, as their preferences default to.
+DEFAULT_ZONE = "America/New_York"
+
+
+def _clock(user_id: str) -> Clock:
+    """Now, in the zone a calendar feed's "today" is judged in: the clinician's own."""
+    name = get_user_repository().get_preferences(user_id).timezone
+    try:
+        zone = ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        # A zone the server cannot read must not stop every calendar import.
+        zone = ZoneInfo(DEFAULT_ZONE)
+    return Clock(utc_now(), zone)
+
+
 def _fail(run: Any, reason: str) -> None:
     run.state = "failed"
     run.error = reason
@@ -103,17 +121,21 @@ def run_preview(schema: str, user_id: str, run_id: str) -> None:
             _fail(run, "The uploaded archive is no longer available. Upload it again.")
             return
         try:
-            archive = read_simplepractice_archive(path)
-            if not archive.contacts and not archive.notes:
-                _fail(run, "This does not look like a SimplePractice export.")
-                return
             inputs = PreviewInputs(
                 ledger=ledger_snapshot(session, SOURCE_SYSTEM),
                 existing_patients=_existing_patients(user_id),
                 edited_targets=_edited_targets(session),
                 scope=run.scope,
             )
-            run.preview = build_preview(archive, inputs)
+            if detect_layout(path) == "calendar":
+                calendar = read_simplepractice_calendar(path)
+                run.preview = build_calendar_preview(calendar, inputs, clock=_clock(user_id))
+            else:
+                archive = read_simplepractice_archive(path)
+                if not archive.contacts and not archive.notes:
+                    _fail(run, "This does not look like a SimplePractice export.")
+                    return
+                run.preview = build_preview(archive, inputs)
             run.counts = run.preview["counts"]
             run.state = "previewed"
         except Exception:  # a preview must end in a state, whatever the archive held
@@ -133,7 +155,6 @@ def run_apply(schema: str, user_id: str, run_id: str, practice_id: str | None) -
             _fail(run, "The uploaded archive is no longer available. Upload it again.")
             return
         try:
-            archive = read_simplepractice_archive(path)
             applier = ArchiveApplier(
                 session=session,
                 settings=get_settings(),
@@ -141,12 +162,21 @@ def run_apply(schema: str, user_id: str, run_id: str, practice_id: str | None) -
                 practice_id=practice_id,
                 archive_dir=path,
             )
-            report = applier.apply(
-                run_id=run.id,
-                archive=archive,
-                preview=run.preview,
-                decisions=run.decisions or {},
-            )
+            calendar_layout = (run.preview or {}).get("layout") == "calendar"
+            if calendar_layout:
+                report = applier.apply_calendar(
+                    run_id=run.id,
+                    calendar=read_simplepractice_calendar(path),
+                    preview=run.preview,
+                    decisions=run.decisions or {},
+                )
+            else:
+                report = applier.apply(
+                    run_id=run.id,
+                    archive=read_simplepractice_archive(path),
+                    preview=run.preview,
+                    decisions=run.decisions or {},
+                )
             run.report = report.as_dict()
             run.counts = run.report["counts"]
             run.state = "applied"
@@ -163,6 +193,8 @@ def run_apply(schema: str, user_id: str, run_id: str, practice_id: str | None) -
         run.archive_ref = None
         run.archive_expires_at = None
         landed = sorted(set(report.patients.values()))
+    if calendar_layout:
+        return  # a calendar feed carries no notes, so there is nothing to propose from
     # The import is applied and committed. What its notes say about each
     # client's chart is proposed afterwards, one client per transaction, so
     # a model call never holds the import open and a failure costs nothing
