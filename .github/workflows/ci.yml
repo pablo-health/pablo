@@ -169,7 +169,7 @@ jobs:
 
       - name: Test (pytest)
         if: steps.classify.outputs.substantive != 'false'
-        run: cd backend && poetry run pytest tests/ -m "not spacy" --cov=app --cov-report=term-missing --cov-report=html --cov-fail-under=67
+        run: cd backend && poetry run pytest tests/ --cov=app --cov-report=term-missing --cov-report=html --cov-fail-under=67
 
   backend-integration:
     name: Backend integration (Postgres)
