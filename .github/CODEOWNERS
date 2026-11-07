@@ -1,45 +1,56 @@
 # CODEOWNERS — Pablo
 #
-# This file gates review on safety-critical paths. The intent is *not* to slow
-# every PR; it's to make sure rules and guardrails can't be quietly weakened.
+# This file gates review on the paths where a quiet change is hard to notice
+# and expensive to get wrong: the agent rules, CI, the audit-logging surface,
+# the schema, and the deploy surface. The intent is *not* to review every PR.
+# Ordinary code merges once the required checks pass; a gate that fires on
+# every change trains rubber-stamping and is worse than no gate.
 #
 # GitHub matches the LAST entry that matches a path. More-specific paths go
 # below more-general ones.
 #
-# Owner: @kurtn718 (solo maintainer). Promote to a team
-# (e.g. `@kurtn718`) once there's more than one approver.
-
-# Default fallback — all other paths.
-*                                           @kurtn718
+# OWNER: @kurtn-pablo. The maintainer's day-to-day account and the project's
+# automation both author pull requests, and GitHub will not let an author
+# approve their own pull request, so the owner is a separate account that
+# authors nothing. Landing a change below takes a deliberate switch to it.
+# Never make an authoring account an owner here: it would deadlock its own
+# pull requests on these paths.
+#
+# NO `*` FALLBACK, on purpose. With "Require review from Code Owners" on, a
+# `*` entry would force a manual approval on every pull request, Dependabot's
+# included, and nothing could merge on green.
 
 # ---- Agent rules and skills (load-bearing, see CLAUDE.md guardrails) -------
-/CLAUDE.md                                  @kurtn718
-/AGENTS.md                                  @kurtn718
-/.claude/                                   @kurtn718
-/.claude/skills/                            @kurtn718
-/.claude/settings.json                      @kurtn718
+/CLAUDE.md                                  @kurtn-pablo
+/AGENTS.md                                  @kurtn-pablo
+/.claude/                                   @kurtn-pablo
+/.claude/skills/                            @kurtn-pablo
+/.claude/settings.json                      @kurtn-pablo
 
 # ---- Pre-commit + CI guardrail enforcement --------------------------------
-/.pre-commit-config.yaml                    @kurtn718
-/scripts/check_audit_params.py              @kurtn718
-/.github/workflows/                         @kurtn718
-/.github/CODEOWNERS                         @kurtn718
+# Workflows run from main with the repository's secrets, so a change here is
+# a change to what every later run is allowed to do.
+/.pre-commit-config.yaml                    @kurtn-pablo
+/scripts/check_audit_params.py              @kurtn-pablo
+/.github/                                   @kurtn-pablo
+/.github/workflows/                         @kurtn-pablo
+/.github/CODEOWNERS                         @kurtn-pablo
 
 # ---- HIPAA / audit-logging surface ----------------------------------------
-/backend/app/services/audit_service.py              @kurtn718
-/backend/app/services/platform_audit_service.py     @kurtn718
-/backend/app/services/audit_review_service.py       @kurtn718
-/backend/tests/test_route_audit_guardrails.py       @kurtn718
-/docs/HIPAA_AUDIT_LOGS.md                           @kurtn718
-/docs/HIPAA_SECURITY.md                             @kurtn718
-/docs/SELF_HOSTING_HIPAA_GUIDE.md                   @kurtn718
-/docs/compliance/                                   @kurtn718
+/backend/app/services/audit_service.py              @kurtn-pablo
+/backend/app/services/platform_audit_service.py     @kurtn-pablo
+/backend/app/services/audit_review_service.py       @kurtn-pablo
+/backend/tests/test_route_audit_guardrails.py       @kurtn-pablo
+/docs/HIPAA_AUDIT_LOGS.md                           @kurtn-pablo
+/docs/HIPAA_SECURITY.md                             @kurtn-pablo
+/docs/SELF_HOSTING_HIPAA_GUIDE.md                   @kurtn-pablo
+/docs/compliance/                                   @kurtn-pablo
 
 # ---- Database models + migrations (guardrail #4) --------------------------
-/backend/app/db/models.py                   @kurtn718
-/backend/app/db/platform_models.py          @kurtn718
-/backend/alembic/                           @kurtn718
+/backend/app/db/models.py                   @kurtn-pablo
+/backend/app/db/platform_models.py          @kurtn-pablo
+/backend/alembic/                           @kurtn-pablo
 
 # ---- Deploy + secrets surface ---------------------------------------------
-/run.sh                                     @kurtn718
-/SECURITY.md                                @kurtn718
+/run.sh                                     @kurtn-pablo
+/SECURITY.md                                @kurtn-pablo
