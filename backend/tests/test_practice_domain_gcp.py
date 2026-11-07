@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from app.services import practice_domain_gcp as gcp
 from app.services.practice_domain_cloud import (
     DomainServingError,
     HostRoute,
@@ -35,6 +36,7 @@ from app.services.practice_domain_gcp import (
     GoogleDomainServing,
     cert_auth_value,
     certificate_status,
+    url_map_bytes,
 )
 from google.api_core import exceptions as api_exceptions
 from google.cloud import certificate_manager_v1 as cm
@@ -663,3 +665,58 @@ def test_a_backend_bucket_in_another_project_is_named_by_its_path(
     assert matcher.default_service == expected
     (rule,) = matcher.route_rules
     assert rule.service == expected
+
+
+# --- the URL map's size budget -------------------------------------------------
+
+
+def test_the_size_is_the_compact_wire_form(url_maps: StubUrlMaps) -> None:
+    stored = url_maps.stored
+    assert url_map_bytes(stored) == len(compute_v1.UrlMap.to_json(stored, indent=None).encode())
+    assert url_map_bytes(stored) < len(compute_v1.UrlMap.to_json(stored).encode())
+
+
+def test_an_edit_growing_the_map_past_the_budget_is_refused_and_writes_nothing(
+    static: GoogleDomainServing, url_maps: StubUrlMaps, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gcp, "URL_MAP_BUDGET_BYTES", url_map_bytes(url_maps.stored))
+
+    with pytest.raises(DomainServingError, match="budget") as raised:
+        static.ensure_host_rule(SITE, HostRoute.site(PRACTICE, 3))
+
+    assert raised.value.transient is False
+    assert SITE in str(raised.value)
+    assert url_maps.writes == []
+
+
+def test_an_edit_shrinking_a_map_already_past_the_budget_goes_through(
+    static: GoogleDomainServing, url_maps: StubUrlMaps, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    static.ensure_host_rule(SITE, HostRoute.site(PRACTICE, 3))
+    monkeypatch.setattr(gcp, "URL_MAP_BUDGET_BYTES", 0)
+
+    static.remove_host_rule(SITE)
+
+    assert _hosts(url_maps.stored) == {HOST: "sites-paths"}
+
+
+def test_a_successful_edit_logs_the_map_size(
+    static: GoogleDomainServing, url_maps: StubUrlMaps, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level("INFO", logger=gcp.__name__):
+        static.ensure_host_rule(SITE, HostRoute.site(PRACTICE, 3))
+
+    size = url_map_bytes(url_maps.stored)
+    assert any(f"(URL map {size} bytes)" in r.getMessage() for r in caplog.records)
+
+
+def test_a_website_matcher_past_the_rule_cap_is_refused(
+    static: GoogleDomainServing, url_maps: StubUrlMaps, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gcp, "MAX_SITE_ROUTE_RULES", 0)
+
+    with pytest.raises(DomainServingError, match="route rules") as raised:
+        static.ensure_host_rule(SITE, HostRoute.site(PRACTICE, 3))
+
+    assert raised.value.transient is False
+    assert url_maps.writes == []
