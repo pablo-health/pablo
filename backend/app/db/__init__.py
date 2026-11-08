@@ -888,10 +888,13 @@ def _reapply_tenant_schema_on_txn_begin(
     without the practice schema. The schema recorded on ``session.info``
     rides the Session itself, so it is put back here.
 
-    Only when the two disagree: when they match, the checkout listener has
-    already applied it and this costs nothing. A session cleared with
-    ``clear_tenant_schema`` is put back on no practice, not on whatever the
-    ContextVar still names.
+    Only when the two disagree: when they match on a practice, the checkout
+    listener has already applied it and this costs nothing. A session cleared
+    with ``clear_tenant_schema`` is put back on no practice, not on whatever
+    the ContextVar still names, and is always set here: the checkout listener
+    applies nothing for an empty ContextVar, and a connection the pool has
+    just created has never been through the checkin reset, so it carries the
+    server's default path rather than the platform schema and ``public``.
 
     Because this restores the recorded schema, a raw ``SET search_path`` on a
     Session would be undone after the next commit. Switch with
@@ -909,7 +912,7 @@ def _reapply_tenant_schema_on_txn_begin(
     if recorded is None:
         return
     wanted = recorded or None
-    if wanted == _current_tenant_schema.get():
+    if wanted is not None and wanted == _current_tenant_schema.get():
         return
     path = f"{wanted}, {PLATFORM_SCHEMA}, public" if wanted else f"{PLATFORM_SCHEMA}, public"
     connection.exec_driver_sql(f"SET search_path = {path}")
