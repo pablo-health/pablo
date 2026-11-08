@@ -1856,7 +1856,14 @@ PATIENT_PURGE_TABLES: dict[str, frozenset[str]] = {
     "session_dictations": frozenset({"read"}),
 }
 
-_PATIENT_PURGE_ARMED = "current_setting('app.allow_patient_purge', true) = 'on'"
+#: ``coalesce`` because a connection that never set the setting reads it as
+#: NULL, not ``''``, and ``NULL = 'on'`` is NULL. ``NULL AND EXISTS (...)``
+#: cannot short-circuit (it is false if the EXISTS is false), so the purge
+#: arm ran its ``patients`` subquery, row security and all, for every row of
+#: every ordinary read of these tables: about half the cost of counting a
+#: clinician's open notes. A NULL policy result already grants nothing, so
+#: who can read what is unchanged; the subquery just stops running.
+_PATIENT_PURGE_ARMED = "coalesce(current_setting('app.allow_patient_purge', true), '') = 'on'"
 
 
 def _patient_purge_policy_statements(schema_name: str, table_name: str) -> list[str]:

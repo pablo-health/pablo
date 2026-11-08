@@ -311,6 +311,52 @@ def test_the_setting_reaches_soft_deleted_clients_only(engine: Engine, tenant_sc
     assert appointments == {old["patient"], recent["patient"]}
 
 
+def _executed_patient_subplans(plan: dict[str, Any]) -> list[int]:
+    """``Actual Loops`` of every subplan that reads ``patients``, anywhere in ``plan``."""
+    loops: list[int] = []
+    if plan.get("Subplan Name") and plan.get("Relation Name") == "patients":
+        loops.append(int(plan.get("Actual Loops", 0)))
+    for child in plan.get("Plans", ()):
+        loops.extend(_executed_patient_subplans(child))
+    return loops
+
+
+def test_an_ordinary_read_never_runs_the_purge_subquery(engine: Engine, tenant_schema: str) -> None:
+    """A connection that never set the purge setting skips the purge arm's subquery.
+
+    The setting reads as NULL there, not ``''``. ``NULL = 'on' AND EXISTS (...)``
+    cannot short-circuit, so the arm used to look each row's client up in
+    ``patients`` (row security and all) on every ordinary read of these
+    tables: about half the cost of a clinician counting their open notes.
+    """
+    from sqlalchemy import create_engine  # noqa: PLC0415
+    from sqlalchemy.pool import NullPool  # noqa: PLC0415
+
+    for hour in (9, 11, 13):
+        _seed_client(
+            engine, tenant_schema, clinician=_CLINICIAN_A, deleted_days_ago=None, hour=hour
+        )
+
+    # A connection of its own: a pooled one may have had the setting defined
+    # by an earlier test, after which it reads as '' and the bug cannot show.
+    fresh = create_engine(engine.url, poolclass=NullPool)
+    try:
+        with fresh.begin() as conn:
+            _as(conn, tenant_schema, user_id=_CLINICIAN_A)
+            unset = conn.execute(text("SELECT current_setting('app.allow_patient_purge', true)"))
+            assert unset.scalar_one() is None, "precondition: the setting is NULL here"
+            for table in ("notes", "therapy_sessions"):
+                (plan,) = conn.execute(
+                    text(f"EXPLAIN (ANALYZE, FORMAT JSON) SELECT count(*) FROM {table}")  # noqa: S608
+                ).scalar_one()
+                assert conn.execute(text(f"SELECT count(*) FROM {table}")).scalar_one() == 3  # noqa: S608
+                loops = _executed_patient_subplans(plan["Plan"])
+                assert loops, f"{table}: the purge arm's subplan is in the plan"
+                assert loops == [0] * len(loops), f"{table}: purge subquery ran {loops} times"
+    finally:
+        fresh.dispose()
+
+
 def test_the_setting_does_not_widen_a_clinicians_session(
     engine: Engine, tenant_schema: str
 ) -> None:
