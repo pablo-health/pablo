@@ -312,7 +312,9 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
         # OperationalError raised by a handler is a real failure mid-request
         # and propagates as one.
         try:
-            schema, unresolved_reason = await run_in_threadpool(self._prepare, request, session)
+            schema, unresolved_reason = await run_in_threadpool(
+                self._prepare_outside_transaction, request, session
+            )
         except (OperationalError, PoolTimeoutError) as exc:
             session.close()
             _request_session.set(None)
@@ -375,6 +377,30 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
             # after_begin listener, so a leaked slot reads as "a patient
             # is calling" on a request that has no patient at all.
             _current_patient_id.set(None)
+
+    @classmethod
+    def _prepare_outside_transaction(
+        cls, request: Request, session: Session
+    ) -> tuple[str | None, str | None]:
+        """Run ``_prepare``, then end the transaction its ``SET search_path`` began.
+
+        Arming the session issues ``SET search_path``, which opens a
+        transaction. Left open, it lasted until the route returned, so a route
+        that waits on something other than the database before its first
+        query (a model call, a request to another service) held the
+        connection idle inside a transaction the whole time. Past
+        ``idle_in_transaction_session_timeout`` the server terminated it, and
+        the commit at the end of the request failed on a closed connection.
+
+        Ending it here loses nothing: the schema stays recorded on the session
+        and in the ContextVar ``dispatch`` re-sets, and the pool checkout and
+        ``after_begin`` listeners put it on whichever connection the route's
+        first query begins on. Nothing is written in the prelude, so the
+        commit only closes the transaction.
+        """
+        result = cls._prepare(request, session)
+        session.commit()
+        return result
 
     @staticmethod
     def _prepare(request: Request, session: Session) -> tuple[str | None, str | None]:
