@@ -28,6 +28,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -73,6 +74,24 @@ def short_timeout_sessions(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         pool_pre_ping=True,
         connect_args={"options": f"-c idle_in_transaction_session_timeout={IDLE_TIMEOUT_MS}"},
     )
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    monkeypatch.setattr(middleware, "get_session_factory", lambda: factory)
+    yield
+    engine.dispose()
+
+
+@pytest.fixture
+def new_connection_sessions(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Request sessions whose every checkout opens a connection the pool never had.
+
+    A new connection has never been through the checkin reset, so it carries
+    the server's default path, not ``platform, public``. Under load the route's
+    first query often lands on one: an overflow connection, a recycle, a
+    pre-ping reconnect.
+    """
+    from app.db import middleware  # noqa: PLC0415
+
+    engine = create_engine(_db_url, poolclass=NullPool)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     monkeypatch.setattr(middleware, "get_session_factory", lambda: factory)
     yield
@@ -152,15 +171,19 @@ def test_unauthenticated_route_starts_outside_a_transaction(
     assert seen["search_path"].split(",")[0].strip() == DEFAULT_PRACTICE_SCHEMA
 
 
+@pytest.mark.usefixtures("new_connection_sessions")
 def test_unresolved_route_starts_outside_a_transaction_on_no_practice(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """No practice means exactly the platform schema and ``public``, on a new connection too."""
+    from app.db import PLATFORM_SCHEMA  # noqa: PLC0415
+
     application, seen = _app(monkeypatch, _arm_no_practice)
     with TestClient(application) as client:
         response = client.get("/probe")
     assert response.status_code == 200
     assert seen["in_transaction_on_entry"] is False
-    assert "practice" not in seen["search_path"]
+    assert seen["search_path"] == f"{PLATFORM_SCHEMA}, public"
 
 
 @pytest.mark.usefixtures("probe_schema", "short_timeout_sessions")

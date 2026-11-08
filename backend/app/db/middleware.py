@@ -395,7 +395,10 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
         Ending it here loses nothing: the schema stays recorded on the session
         and in the ContextVar ``dispatch`` re-sets, and the pool checkout and
         ``after_begin`` listeners put it on whichever connection the route's
-        first query begins on. Nothing is written in the prelude, so the
+        first query begins on, including a connection the pool has just
+        created. A session with no practice is set to the platform schema and
+        ``public`` by ``after_begin`` every time, since the checkout listener
+        has nothing to apply for it. Nothing is written in the prelude, so the
         commit only closes the transaction.
         """
         result = cls._prepare(request, session)
