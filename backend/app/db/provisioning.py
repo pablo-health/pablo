@@ -402,8 +402,18 @@ def create_practice_schema(engine: Engine, schema_name: str) -> None:
     # itself, a double-clicked signup fires two requests, or any other
     # concurrent caller appears -- the second caller sees a populated
     # schema and takes the idempotent legacy-reconcile path.
+    #
+    # The lock is session-level, so it outlives a commit. Commit straight
+    # after taking it: ``pg_advisory_lock`` autobegins a transaction, and a
+    # connection left inside one for the whole build is "idle in
+    # transaction". Past ``idle_in_transaction_session_timeout`` the server
+    # terminates it, and the lock goes with the session -- so a slow build
+    # silently lost its serialization, and anything waiting on this key
+    # (a schema drop, a second build) went ahead mid-build. Committed, the
+    # connection is merely idle, which no timeout here touches.
     with engine.connect() as lock_conn:
         lock_conn.execute(text("SELECT pg_advisory_lock(hashtext(:s))"), {"s": schema_name})
+        lock_conn.commit()
         try:
             _create_practice_schema_locked(engine, schema_name)
         finally:
@@ -413,10 +423,10 @@ def create_practice_schema(engine: Engine, schema_name: str) -> None:
 def _release_schema_lock(lock_conn: Connection, schema_name: str) -> None:
     """Release the provisioning lock without letting the release decide the outcome.
 
-    The lock connection sits idle for the whole build, and an idle
-    connection can be closed under it. When that happens the build has
-    already committed, and the lock went with the server session that held
-    it, so there is nothing left to release. Raising here would report a
+    The lock connection sits idle (outside a transaction) for the whole
+    build, and an idle connection can still be closed under it -- a network
+    drop, a server restart. When that happens the lock went with the server
+    session that held it, so there is nothing left to release. Raising here would report a
     finished schema as failed, and from inside ``finally`` it would also
     replace whatever error the build itself raised.
 
