@@ -32,7 +32,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import timedelta
+from enum import StrEnum
 from typing import TYPE_CHECKING, ClassVar, Final, Protocol, runtime_checkable
+
+from ..models.scheduling import is_telehealth
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -276,6 +279,27 @@ def resolve_provider_id(
     return None
 
 
+def wants_a_room(appointment: Appointment, *, requested_provider: str | None) -> bool:
+    """Whether this appointment should be given a video room at all.
+
+    The same rule that decides whether a visit is telehealth everywhere else
+    (:func:`app.models.scheduling.is_telehealth`, which the client mirrors):
+    a video service asked for by name, a link the clinician pasted, or a
+    telehealth place of service. Asked of the booking rather than of the room
+    the appointment already holds, so an edit to in person is not kept on
+    video by the very room it is giving up.
+
+    An appointment with no place of service and no service named gets no
+    room. A default video service says which room to make for a video visit;
+    it does not make every visit a video one.
+    """
+    return is_telehealth(
+        provider=normalise_provider(requested_provider),
+        video_link=appointment.video_link,
+        place_of_service=appointment.place_of_service,
+    )
+
+
 def provision_meeting(
     appointment: Appointment,
     *,
@@ -288,17 +312,20 @@ def provision_meeting(
     """Give the appointment a room, and return it with the room recorded.
 
     Returns the appointment unchanged when there is nothing to do, which is
-    the common case: an in-person appointment, or one the clinician pasted a
-    URL onto. A provider failure is also unchanged plus a raise, so the caller
-    decides whether a missing room is worth failing a booking over — it is
-    not, and :mod:`app.routes.scheduling` treats it the same way it treats a
-    calendar push that did not go through.
+    the common case: an in-person appointment (see :func:`wants_a_room`), or
+    one the clinician pasted a URL onto. A provider failure is also unchanged
+    plus a raise, so the caller decides whether a missing room is worth
+    failing a booking over — it is not, and :mod:`app.routes.scheduling`
+    treats it the same way it treats a calendar push that did not go through.
     """
     if appointment.video_link:
         # A pasted URL is the clinician's decision about this one appointment
         # and outranks every preference. Recorded as MANUAL so the cancel path
         # knows there is no vendor to tell.
         return replace(appointment, provider=MANUAL)
+
+    if not wants_a_room(appointment, requested_provider=requested_provider):
+        return appointment
 
     provider_id = resolve_provider_id(
         requested=requested_provider,
@@ -320,6 +347,74 @@ def provision_meeting(
         provider=link.provider,
         video_link=link.url,
         meeting_external_id=link.external_id,
+    )
+
+
+class RoomChange(StrEnum):
+    """What an edit to an appointment means for its video room."""
+
+    #: Nothing room-related changed, or the room it has is still the right one.
+    KEEP = "keep"
+    #: The clinician pasted a link. It becomes the room; any vendor room goes.
+    MANUAL = "manual"
+    #: The visit is no longer by video. The room goes and nothing replaces it.
+    RELEASE = "release"
+    #: The visit is now by video and has no room yet.
+    PROVISION = "provision"
+    #: A different service was asked for. The old room goes, a new one is made.
+    REPLACE = "replace"
+
+
+def room_change(
+    previous: Appointment,
+    edited: Appointment,
+    *,
+    requested_provider: str | None,
+    clinician: Clinician,
+    registry: MeetingProviderRegistry,
+) -> RoomChange:
+    """Decide what an edit does to the room, from the appointment before and after.
+
+    Only what the edit itself changed is read: the place of service, a pasted
+    link, or a service asked for by name. An edit that moves the time or fixes
+    a title leaves the room exactly as it was, whatever the rule would say
+    about an appointment booked before the rule existed.
+
+    A link the clinician pasted is never replaced and never cleared by
+    anything here. A new paste wins outright; an existing one is kept even
+    when the visit moves to in person, because the clinician typed it and
+    only the clinician takes it off.
+    """
+    if edited.video_link and edited.video_link != previous.video_link:
+        return RoomChange.MANUAL
+    requested = normalise_provider(requested_provider)
+    if _holds_a_pasted_link(edited) or (
+        requested is None and edited.place_of_service == previous.place_of_service
+    ):
+        return RoomChange.KEEP
+    current = edited.provider
+    if not wants_a_room(replace(edited, video_link=None), requested_provider=requested):
+        return RoomChange.RELEASE if current else RoomChange.KEEP
+    if current is None:
+        return RoomChange.PROVISION
+    # Still by video. Only a service asked for by name changes the room: a move
+    # between the two telehealth places keeps the link the client already has.
+    target = (
+        resolve_provider_id(
+            requested=requested,
+            clinician=clinician,
+            offered=registry.offered_to(clinician),
+        )
+        if requested is not None
+        else None
+    )
+    return RoomChange.KEEP if target in (None, current) else RoomChange.REPLACE
+
+
+def _holds_a_pasted_link(appointment: Appointment) -> bool:
+    """A link the clinician typed: recorded MANUAL, or from before providers were recorded."""
+    return appointment.provider == MANUAL or bool(
+        appointment.video_link and appointment.provider is None
     )
 
 

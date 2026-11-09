@@ -106,14 +106,31 @@ class BusyCalendars(NamedTuple):
 
 
 def _conference_request_id(appointment: Appointment) -> str:
-    """A stable idempotency key for the conference this appointment asks for.
+    """The idempotency key for the conference this write of the appointment asks for.
 
-    Derived from the appointment id so re-writing the same event re-uses the
-    conference instead of making a second one. It goes to Google and nowhere
-    near a patient, so the appointment id itself is the right value — unlike
-    the handle in a room URL, which a patient is sent.
+    Google ignores a ``createRequest`` whose id it has already answered, and
+    hands back no conference for it: "Clients should regenerate this ID for
+    every new request. If an ID provided is the same as for the previous
+    request, the request is ignored." So the key has to change each time the
+    appointment asks for a NEW conference — booked by video, then in person,
+    then by video again; or Meet, then Zoom, then Meet — and stay the same for
+    retries of one push, so a retried write re-uses the conference instead of
+    making a second one.
+
+    The row's ``updated_at`` does both. Every write to the appointment moves
+    it, and asking for a room again is always a write (the provider and link
+    are recorded before the push); a retry of one push carries the same row.
+    A row from before ``updated_at`` was kept falls back to the appointment id
+    alone, which is what every key was before.
+
+    It goes to Google and nowhere near a patient, so the appointment id itself
+    is the right value, unlike the handle in a room URL, which a patient is
+    sent.
+    https://developers.google.com/workspace/calendar/api/v3/reference/events
     """
-    return f"pablo-{appointment.id}"
+    if appointment.updated_at is None:
+        return f"pablo-{appointment.id}"
+    return f"pablo-{appointment.id}-{appointment.updated_at:%Y%m%dT%H%M%S%f}"
 
 
 def conference_url(event: Mapping[str, Any]) -> str | None:
@@ -2137,9 +2154,10 @@ class GoogleCalendarService:
           ``conferenceDataVersion=1``, and whose link is read back onto the
           appointment afterwards.
 
-        The request id is derived from the appointment so a retry of the same
-        write re-uses the same conference instead of making a second one.
-        Google documents it as the caller's idempotency key for exactly this.
+        The request id is derived from the appointment and the version of it
+        being written (see :func:`_conference_request_id`), so a retry of the
+        same write re-uses the same conference, and asking again after the room
+        was given up makes a new one rather than being ignored.
         https://developers.google.com/workspace/calendar/api/v3/reference/events
         """
         event: dict[str, Any] = {

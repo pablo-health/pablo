@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -65,6 +66,28 @@ class TestWhatWeAskGoogleFor:
             first["conferenceData"]["createRequest"]["requestId"]
             == second["conferenceData"]["createRequest"]["requestId"]
         )
+
+    def test_asking_again_after_a_later_write_is_a_new_request(self) -> None:
+        # Google ignores a requestId it has already answered and returns no
+        # conference, so an appointment that gives its room up and asks again
+        # (video, in person, video) must not send the first key twice.
+        first_ask = an_appointment(provider=GOOGLE_MEET, updated_at=START)
+        asked_again = replace(first_ask, updated_at=START + timedelta(minutes=5))
+
+        first = GoogleCalendarService._appointment_to_event(first_ask)
+        second = GoogleCalendarService._appointment_to_event(asked_again)
+
+        assert (
+            first["conferenceData"]["createRequest"]["requestId"]
+            != second["conferenceData"]["createRequest"]["requestId"]
+        )
+
+    def test_a_row_with_no_updated_at_still_asks(self) -> None:
+        event = GoogleCalendarService._appointment_to_event(
+            an_appointment(id="a-1", provider=GOOGLE_MEET, updated_at=None)
+        )
+
+        assert event["conferenceData"]["createRequest"]["requestId"] == "pablo-a-1"
 
     def test_two_appointments_ask_for_two_conferences(self) -> None:
         first = GoogleCalendarService._appointment_to_event(an_appointment(provider=GOOGLE_MEET))
