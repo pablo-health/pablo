@@ -329,11 +329,7 @@ export async function resignBAA(version: string, token?: string): Promise<BAASta
 }
 
 export interface UserPreferences {
-  /**
-   * The video service a session uses when the appointment does not say. Null
-   * until there is one: connecting Google Calendar makes it Google Meet.
-   */
-  default_video_platform: string | null
+  default_video_platform: string
   /**
    * Your own permanent video room, for a service that gives you one rather
    * than a meeting per appointment. Null until you paste it in settings.

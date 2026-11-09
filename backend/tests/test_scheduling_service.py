@@ -512,7 +512,7 @@ class TestUserPreferences:
         repo = InMemoryUserRepository()
         prefs = repo.get_preferences("unknown-user")
 
-        assert prefs.default_video_platform is None
+        assert prefs.default_video_platform == "zoom"
         assert prefs.default_session_type == "individual"
         assert prefs.default_duration_minutes == 50
         assert prefs.auto_transcribe is True

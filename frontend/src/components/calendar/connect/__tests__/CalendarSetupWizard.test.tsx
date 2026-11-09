@@ -1494,6 +1494,39 @@ describe("CalendarSetupWizard saying where video sessions go", () => {
     expect(setDefaultVideo).not.toHaveBeenCalled()
   })
 
+  it("asks again after Back, and Continue from the return still makes Meet the default", async () => {
+    const user = userEvent.setup()
+    listProviders.mockResolvedValue(providersWith({ stored_default: "zoom" }))
+
+    await connected()
+    await screen.findByTestId("video-default-line")
+    await user.click(screen.getByRole("button", { name: "Back" }))
+    expect(screen.queryByTestId("video-default-line")).not.toBeInTheDocument()
+    expect(setDefaultVideo).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole("button", { name: "Continue" }))
+    await screen.findByText("Choose a calendar")
+    expect(await screen.findByTestId("video-default-keep")).toHaveTextContent("Keep Zoom")
+    await user.click(screen.getByRole("button", { name: "Continue" }))
+
+    await waitFor(() => expect(setDefaultVideo).toHaveBeenCalledWith("google_meet"))
+  })
+
+  it("does not repeat the Meet line on a later visit to the step", async () => {
+    const user = userEvent.setup()
+    listProviders.mockResolvedValue(
+      providersWith({ default_provider: "google_meet", stored_default: "google_meet" }),
+    )
+
+    await connected()
+    await screen.findByTestId("video-default-line")
+    await user.click(screen.getByRole("button", { name: "Back" }))
+    await user.click(screen.getByRole("button", { name: "Continue" }))
+    await screen.findByText("Choose a calendar")
+
+    expect(screen.queryByTestId("video-default-line")).not.toBeInTheDocument()
+  })
+
   it("stays on the step and says so when Meet does not save", async () => {
     const user = userEvent.setup()
     listProviders.mockResolvedValue(providersWith({ stored_default: "zoom" }))
@@ -1503,7 +1536,7 @@ describe("CalendarSetupWizard saying where video sessions go", () => {
     await screen.findByTestId("video-default-line")
     await user.click(screen.getByRole("button", { name: "Continue" }))
 
-    expect(await screen.findByText("Couldn't save that. Try again.")).toBeInTheDocument()
+    expect(await screen.findByText("That didn't save. Try again.")).toBeInTheDocument()
     expect(screen.getByText("Choose a calendar")).toBeInTheDocument()
   })
 })

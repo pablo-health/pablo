@@ -18,7 +18,7 @@ class TestGetPreferences:
         assert response.status_code == 200
         body = response.json()
         assert body["default_duration_minutes"] == 50
-        assert body["default_video_platform"] is None
+        assert body["default_video_platform"] == "zoom"
         assert body["auto_transcribe"] is True
         assert body["therapist_display_name"] is None
         assert body["calendar_density"] == "balanced"
@@ -106,7 +106,7 @@ class TestSavePreferences:
         assert response.status_code == 200
         body = response.json()
         assert body["default_duration_minutes"] == 30
-        assert body["default_video_platform"] is None
+        assert body["default_video_platform"] == "zoom"
         assert body["default_session_type"] == "individual"
         assert body["auto_transcribe"] is True
         assert body["therapist_display_name"] is None
@@ -133,7 +133,7 @@ class TestSavePreferences:
         other_user_prefs = mock_user_repo.get_preferences("someone-else")
 
         assert other_user_prefs.default_duration_minutes == 50
-        assert other_user_prefs.default_video_platform is None
+        assert other_user_prefs.default_video_platform == "zoom"
 
 
 class TestHowSheIsPaid:

@@ -8,7 +8,7 @@ import contextlib
 import dataclasses
 import logging
 import uuid
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection, Sequence
 from datetime import UTC, datetime, tzinfo
 from datetime import date as date_cls
 from typing import TYPE_CHECKING, Any, TypedDict
@@ -2292,6 +2292,16 @@ def _parse_incremental_capability(value: str) -> CalendarCapability:
         raise BadRequestError("Unsupported capability") from exc
 
 
+def get_savepoint() -> Callable[[], contextlib.AbstractContextManager[object]]:
+    """Opens a savepoint on the request session, for a write allowed to fail alone.
+
+    A database error aborts the whole Postgres transaction, and the commit at
+    the end of the request then quietly rolls back everything before it too.
+    Inside a savepoint only the savepoint's own work is lost.
+    """
+    return lambda: get_db_session().begin_nested()
+
+
 @router.get("/api/google-calendar/callback")
 def google_calendar_callback(
     code: str = Query(..., description="OAuth authorization code"),
@@ -2318,6 +2328,8 @@ def google_calendar_callback(
     ctx: TenantContext = Depends(get_tenant_context),
     service: GoogleCalendarService = Depends(get_google_calendar_service),
     user_repo: UserRepository = Depends(get_user_repository),
+    meeting_registry: MeetingProviderRegistry = Depends(get_meeting_registry),
+    savepoint: Callable[[], contextlib.AbstractContextManager[object]] = Depends(get_savepoint),
 ) -> dict[str, str]:
     """Handle Google OAuth callback — exchange code for tokens.
 
@@ -2382,22 +2394,29 @@ def google_calendar_callback(
         logger.exception("Google Calendar OAuth callback failed")
         raise BadRequestError("OAuth callback failed") from e
     if capability is None:
-        _default_to_meet(user_repo, ctx.user_id)
+        _default_to_meet(user_repo, ctx.user_id, registry=meeting_registry, savepoint=savepoint)
     return {"status": "connected"}
 
 
-def _default_to_meet(user_repo: UserRepository, user_id: str) -> None:
-    """Give a clinician with no video default Google Meet, now that Meet works.
+def _default_to_meet(
+    user_repo: UserRepository,
+    user_id: str,
+    *,
+    registry: MeetingProviderRegistry,
+    savepoint: Callable[[], contextlib.AbstractContextManager[object]],
+) -> None:
+    """Give a clinician with no working video default Google Meet, now that Meet works.
 
     Never fails the connect: the calendar is connected either way, and a
-    default left unset is what every clinician had before this existed.
+    default left as it was is what every clinician had before this existed.
+    The savepoint is what makes that true. The token row this request has
+    just written is in the same transaction, and without it a lock or
+    statement timeout here would take the connection down with the default
+    while the route still answered "connected".
     """
     try:
-        default_to_meet_on_calendar_connect(
-            user_repo,
-            user_id,
-            enabled_providers=get_settings().telehealth_provider_names,
-        )
+        with savepoint():
+            default_to_meet_on_calendar_connect(user_repo, user_id, registry=registry)
     except Exception:
         logger.warning("Could not set the video default after a calendar connect", exc_info=True)
 

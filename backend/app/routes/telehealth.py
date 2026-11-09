@@ -48,6 +48,7 @@ from ..repositories import get_google_calendar_token_repository as _gcal_token_r
 from ..repositories import get_zoom_connection_store as _zoom_store_factory
 from ..services.telehealth import Clinician, MeetingProviderRegistry
 from ..services.token_encryption import derive_subkey
+from ..services.video_default import has_stored_video_default
 from ..settings import get_settings
 
 if TYPE_CHECKING:
@@ -161,7 +162,9 @@ def list_providers(
         default_provider=preferences.default_video_platform
         if preferences.default_video_platform in offered
         else None,
-        stored_default=preferences.default_video_platform,
+        stored_default=preferences.default_video_platform
+        if has_stored_video_default(preferences)
+        else None,
         room_url=preferences.telehealth_room_url,
         join_window_before_minutes=settings.telehealth_join_window_before_minutes,
     )

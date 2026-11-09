@@ -642,11 +642,19 @@ export function CalendarSetupWizard({
   // asked. Once the hours are in, it is an ordinary step with the usual nav.
   const onHoursStep = withHoursStep && activeIndex === 0
   const askingHours = onHoursStep && !hoursSaved
-  const showConnected = justConnected && activeIndex === sessionsIndex
-  const videoOffer = useVideoDefaultOffer(showConnected)
+  const onSessionsStep = activeIndex === sessionsIndex
+  const showConnected = justConnected && onSessionsStep
+  const videoOffer = useVideoDefaultOffer(onSessionsStep)
+  // The Meet line shows right after a connect, to say where video sessions go.
+  // The offer over a saved default that is not connected shows on this step
+  // whenever it stands, not only after a connect: Continue is the only exit
+  // that answers it, so a clinician who went Back, jumped away or chose Finish
+  // later is asked again on return rather than left with a line that said Meet.
+  const showVideoLine =
+    onSessionsStep && (videoOffer.kind === "offer" || (showConnected && videoOffer.kind === "meet"))
   // The line said Meet and the clinician did not keep their saved default, so
   // continuing is their answer: Meet becomes the default before moving on.
-  const meetOnContinue = showConnected && videoOffer.kind === "offer" && !keptVideoDefault
+  const meetOnContinue = onSessionsStep && videoOffer.kind === "offer" && !keptVideoDefault
   const stepNumber = (index: number) => index + 1
 
   const continueStep = async () => {
@@ -657,7 +665,7 @@ export function CalendarSetupWizard({
         await setDefaultVideoService("google_meet")
         await queryClient.invalidateQueries({ queryKey: TELEHEALTH_PROVIDERS_QUERY_KEY })
       } catch {
-        setVideoDefaultError("Couldn't save that. Try again.")
+        setVideoDefaultError("That didn't save. Try again.")
         return
       } finally {
         setSavingVideoDefault(false)
@@ -721,7 +729,7 @@ export function CalendarSetupWizard({
           Google Calendar is connected.
         </p>
       ) : null}
-      {showConnected ? (
+      {showVideoLine ? (
         <VideoDefaultLine
           offer={videoOffer}
           kept={keptVideoDefault}
