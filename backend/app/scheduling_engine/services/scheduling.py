@@ -277,6 +277,7 @@ class SchedulingService:
             appointment_type_id=data.get("appointment_type_id"),
             video_link=data.get("video_link"),
             video_platform=data.get("video_platform"),
+            place_of_service=data.get("place_of_service"),
             notes=data.get("notes"),
             note_type=str(data.get("note_type") or "soap"),
             note_inputs=_note_inputs(data.get("note_inputs")),

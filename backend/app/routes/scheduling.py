@@ -176,13 +176,16 @@ from ..services.http_structured_llm_gateway import HttpStructuredLLMGateway
 from ..services.recording_consent import RecordingConsentGate, get_recording_consent_gate
 from ..services.telehealth import (
     GOOGLE_MEET,
+    MANUAL,
     Attendee,
     Clinician,
     MeetingProviderRegistry,
     Practice,
+    RoomChange,
     TelehealthError,
     provision_meeting,
     release_meeting,
+    room_change,
 )
 from ..services.video_default import default_to_meet_on_calendar_connect
 from ..settings import get_settings
@@ -491,6 +494,62 @@ def _release_meeting(
         release_meeting(appt, clinician=Clinician(id=user.id), registry=registry)
     except Exception:
         logger.exception("Failed to release the telehealth meeting")
+
+
+#: The fields an edit can carry that bear on the video room.
+_ROOM_FIELDS = frozenset({"place_of_service", "video_link"})
+
+
+def _reconcile_meeting(
+    service: SchedulingService,
+    registry: MeetingProviderRegistry,
+    user_repo: UserRepository,
+    patient_repo: PatientRepository,
+    user: User,
+    previous: Appointment,
+    appt: Appointment,
+    *,
+    requested_provider: str | None,
+) -> Appointment:
+    """Bring an edited appointment's room in line with the edit, and record it.
+
+    :func:`room_change` decides; this carries it out. Giving up a room is
+    best-effort on the vendor's side, as cancelling is, and always clears the
+    row: a link to a meeting being released must not stay where a client can
+    find it. For Google Meet, clearing is the whole release — the calendar
+    push that follows writes the event without a conference, which takes the
+    conference off. A new room is made the way a booking makes one, so a
+    vendor that refuses leaves the appointment without a room rather than
+    failing the edit.
+    """
+    change = room_change(
+        previous,
+        appt,
+        requested_provider=requested_provider,
+        clinician=_clinician_view(user_repo, user.id),
+        registry=registry,
+    )
+    if change is RoomChange.KEEP:
+        return appt
+    _release_meeting(registry, user, previous)
+    if change is RoomChange.MANUAL:
+        return service.update_appointment(
+            appt.id, user.id, provider=MANUAL, meeting_external_id=None
+        )
+    appt = service.update_appointment(
+        appt.id, user.id, provider=None, video_link=None, meeting_external_id=None
+    )
+    if change is RoomChange.RELEASE:
+        return appt
+    return _provision_meeting(
+        service,
+        registry,
+        user_repo,
+        patient_repo,
+        user,
+        appt,
+        requested_provider=requested_provider,
+    )
 
 
 def _sync_appointment_to_google(
@@ -859,11 +918,16 @@ def update_appointment(
     audit: AuditService = Depends(get_audit_service),
     gcal_service: GoogleCalendarService = Depends(get_google_calendar_service),
     patient_repo: PatientRepository = Depends(get_patient_repository),
+    registry: MeetingProviderRegistry = Depends(get_meeting_registry),
+    user_repo: UserRepository = Depends(get_user_repository),
     tz: tzinfo = Depends(get_owner_timezone),
 ) -> AppointmentResponse:
     """Update an appointment."""
     payload = request.model_dump()
     rule_override = bool(payload.pop("rule_override", False))
+    # As on create, a service asked for is a request, not a column: the row
+    # records who actually made the room, which is decided after the write.
+    requested_provider = payload.pop("provider", None)
     updates = {k: v for k, v in payload.items() if v is not None}
     if request.note_inputs is not None:
         # Checked against the note type the appointment will have after this
@@ -877,6 +941,14 @@ def update_appointment(
         updates["note_inputs"] = _checked_note_inputs(note_type, request.note_inputs)
     if _FOLLOWED_TIME_FIELDS & updates.keys():
         _refuse_moving_a_followed_session(service, appointment_id, user.id)
+    # The room is decided from the appointment before and after the write, so
+    # read the before — only when the edit could bear on the room at all.
+    previous: Appointment | None = None
+    if requested_provider is not None or _ROOM_FIELDS & updates.keys():
+        try:
+            previous = service.get_appointment(appointment_id, user.id)
+        except AppointmentNotFoundError as e:
+            raise NotFoundError(str(e)) from e
     try:
         appt = service.update_appointment(
             appointment_id, user.id, tz=tz, rule_override=rule_override, **updates
@@ -899,10 +971,25 @@ def update_appointment(
         appt.id,
         patient_id=appt.patient_id,
         changes={
-            "changed_fields": sorted(updates.keys()),
+            "changed_fields": sorted(
+                {*updates.keys(), *(["provider"] if requested_provider else [])}
+            ),
             **(_override_record(service.overridden_rules) or {}),
         },
     )
+    # Before the calendar push, for the same reason as on create: the push is
+    # what puts a Meet conference on the event, or takes one off.
+    if previous is not None:
+        appt = _reconcile_meeting(
+            service,
+            registry,
+            user_repo,
+            patient_repo,
+            user,
+            previous,
+            appt,
+            requested_provider=requested_provider,
+        )
     appt = _sync_appointment_to_google(service, gcal_service, user, appt)
     return _to_response(
         appt,
