@@ -245,17 +245,24 @@ class RecordingCalendar:
 
     The event body is built by the real ``_appointment_to_event``, so a test
     reading ``conferenceData`` here reads what Google would have been sent.
-    Like Google, it answers a conference ``createRequest`` with a Meet link.
+    Like Google, it answers a conference ``createRequest`` with a Meet link,
+    and, like Google, it ignores a ``requestId`` it has already answered and
+    hands back no conference for it.
     """
 
     def __init__(self) -> None:
         self.events: list[dict[str, Any]] = []
+        self.request_ids: list[str] = []
 
     def push_appointment_event(self, _user_id: str, appt: Appointment) -> PushedEvent:
         event = GoogleCalendarService._appointment_to_event(appt)
         self.events.append(event)
-        asked = "createRequest" in event.get("conferenceData", {})
-        return PushedEvent(event_id="evt-1", conference_url=MEET_LINK if asked else None)
+        request = event.get("conferenceData", {}).get("createRequest")
+        if request is None:
+            return PushedEvent(event_id="evt-1", conference_url=None)
+        answered = request["requestId"] in self.request_ids
+        self.request_ids.append(request["requestId"])
+        return PushedEvent(event_id="evt-1", conference_url=None if answered else MEET_LINK)
 
     def push_appointment(self, user_id: str, appt: Appointment) -> str:
         return self.push_appointment_event(user_id, appt).event_id
@@ -461,6 +468,53 @@ class TestEditingWhereTheVisitHappens:
         assert conference is not None
         assert "createRequest" not in conference
         assert [p["uri"] for p in conference["entryPoints"]] == ["https://z.test/81"]
+
+    def test_video_in_person_video_gets_a_fresh_meet_room(
+        self,
+        write_client: TestClient,
+        calendar: RecordingCalendar,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _connected(RecordingProvider(GOOGLE_MEET, link=None))
+        _prefers(monkeypatch, GOOGLE_MEET)
+        created = write_client.post(
+            "/api/appointments", json=_create_payload(place_of_service="10")
+        )
+        appointment_id = created.json()["id"]
+        write_client.patch(f"/api/appointments/{appointment_id}", json={"place_of_service": "11"})
+
+        back = write_client.patch(
+            f"/api/appointments/{appointment_id}", json={"place_of_service": "10"}
+        )
+
+        assert back.status_code == 200, back.text
+        assert back.json()["provider"] == GOOGLE_MEET
+        assert back.json()["video_link"] == MEET_LINK
+        assert len(calendar.request_ids) == 2
+        assert len(set(calendar.request_ids)) == 2
+
+    def test_meet_zoom_meet_gets_a_fresh_meet_room(
+        self,
+        write_client: TestClient,
+        calendar: RecordingCalendar,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _connected(RecordingProvider(GOOGLE_MEET, link=None), _zoom())
+        _prefers(monkeypatch, GOOGLE_MEET)
+        created = write_client.post(
+            "/api/appointments", json=_create_payload(place_of_service="10")
+        )
+        appointment_id = created.json()["id"]
+        write_client.patch(f"/api/appointments/{appointment_id}", json={"provider": ZOOM})
+
+        back = write_client.patch(
+            f"/api/appointments/{appointment_id}", json={"provider": GOOGLE_MEET}
+        )
+
+        assert back.status_code == 200, back.text
+        assert back.json()["provider"] == GOOGLE_MEET
+        assert back.json()["video_link"] == MEET_LINK
+        assert len(set(calendar.request_ids)) == 2
 
     def test_a_pasted_link_replaces_the_vendor_room_and_is_recorded_manual(
         self,
