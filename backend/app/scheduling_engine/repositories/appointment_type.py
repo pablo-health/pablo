@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from ..exceptions import AppointmentTypeNameTakenError
 
 if TYPE_CHECKING:
-    from ..models.appointment_type import AppointmentType
+    from ..models.appointment_type import AppointmentType, Modality
 
 
 class AppointmentTypeRepository(ABC):
@@ -45,6 +45,16 @@ class AppointmentTypeRepository(ABC):
     @abstractmethod
     def delete(self, appointment_type_id: str, user_id: str) -> bool:
         """Delete an appointment type. Returns True if deleted."""
+
+    @abstractmethod
+    def record_modality(self, appointment_type_id: str, user_id: str, modality: Modality) -> None:
+        """Remember where this type was last booked.
+
+        Learned from a booking, not an edit, so ``updated_at`` is left alone.
+        A type that is not this clinician's, or no longer exists, is left
+        untouched rather than raising: the booking that taught it has already
+        been made and must not fail over it.
+        """
 
 
 class InMemoryAppointmentTypeRepository(AppointmentTypeRepository):
@@ -88,3 +98,8 @@ class InMemoryAppointmentTypeRepository(AppointmentTypeRepository):
             return False
         del self._types[appointment_type_id]
         return True
+
+    def record_modality(self, appointment_type_id: str, user_id: str, modality: Modality) -> None:
+        appointment_type = self.get(appointment_type_id, user_id)
+        if appointment_type is not None:
+            appointment_type.modality = modality

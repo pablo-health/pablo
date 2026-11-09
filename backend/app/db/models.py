@@ -2924,6 +2924,12 @@ class AppointmentTypeRow(Base):
     #: On by default — a type that exists is normally one you want offered.
     offerable: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
 
+    #: Where this type was last booked: ``in_person`` or ``video``. Learned
+    #: from bookings, never set in an editor; ``None`` means never booked
+    #: with either. A booking of this type that names no place of service
+    #: takes it from here.
+    modality: Mapped[str | None] = mapped_column(String(10))
+
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -2943,6 +2949,10 @@ class AppointmentTypeRow(Base):
         CheckConstraint("horizon > 0", name="ck_appointment_types_horizon"),
         CheckConstraint(
             "horizon_unit IN ('business', 'days')", name="ck_appointment_types_horizon_unit"
+        ),
+        CheckConstraint(
+            "modality IS NULL OR modality IN ('in_person', 'video')",
+            name="ck_appointment_types_modality",
         ),
     )
 

@@ -13,6 +13,7 @@ from ...money import DollarAmount, cents_to_dollars, dollars_to_cents, format_mo
 
 Audience = Literal["new", "existing", "both"]
 HorizonUnit = Literal["business", "days"]
+Modality = Literal["in_person", "video"]
 
 
 @dataclass
@@ -52,6 +53,9 @@ class AppointmentType:
     horizon_unit: HorizonUnit = "business"
     self_bookable: bool = False
     offerable: bool = True
+    #: Where this type was last booked, learned from bookings rather than set
+    #: by anyone. ``None`` means never booked in person or by video.
+    modality: Modality | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -69,6 +73,7 @@ class AppointmentType:
         "horizon_unit",
         "self_bookable",
         "offerable",
+        "modality",
         "created_at",
         "updated_at",
     )

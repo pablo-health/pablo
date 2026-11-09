@@ -141,12 +141,14 @@ CREATE TABLE __TENANT_SCHEMA__.appointment_types (
     self_bookable boolean DEFAULT false NOT NULL,
     offerable boolean DEFAULT true NOT NULL,
     cpt character varying(10),
+    modality character varying(10),
     CONSTRAINT ck_appointment_types_audience CHECK (((audience)::text = ANY ((ARRAY['new'::character varying, 'existing'::character varying, 'both'::character varying])::text[]))),
     CONSTRAINT ck_appointment_types_duration CHECK (((duration_minutes >= 5) AND (duration_minutes <= 480))),
     CONSTRAINT ck_appointment_types_earliest_offer CHECK ((earliest_offer_business_days >= 0)),
     CONSTRAINT ck_appointment_types_horizon CHECK ((horizon > 0)),
     CONSTRAINT ck_appointment_types_horizon_unit CHECK (((horizon_unit)::text = ANY ((ARRAY['business'::character varying, 'days'::character varying])::text[]))),
-    CONSTRAINT ck_appointment_types_min_notice CHECK (((min_notice_hours IS NULL) OR (min_notice_hours >= 0)))
+    CONSTRAINT ck_appointment_types_min_notice CHECK (((min_notice_hours IS NULL) OR (min_notice_hours >= 0))),
+    CONSTRAINT ck_appointment_types_modality CHECK (((modality IS NULL) OR ((modality)::text = ANY ((ARRAY['in_person'::character varying, 'video'::character varying])::text[]))))
 );
 
 

@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 
 from ...db.models import AppointmentTypeRow
 from ...scheduling_engine.exceptions import AppointmentTypeNameTakenError
-from ...scheduling_engine.models.appointment_type import AppointmentType
+from ...scheduling_engine.models.appointment_type import AppointmentType, Modality
 from ...scheduling_engine.repositories.appointment_type import AppointmentTypeRepository
 
 if TYPE_CHECKING:
@@ -71,6 +71,13 @@ class PostgresAppointmentTypeRepository(AppointmentTypeRepository):
         self._session.flush()
         return True
 
+    def record_modality(self, appointment_type_id: str, user_id: str, modality: Modality) -> None:
+        row = self._session.get(AppointmentTypeRow, appointment_type_id)
+        if row is None or row.user_id != user_id or row.modality == modality:
+            return
+        row.modality = modality
+        self._session.flush()
+
     @contextmanager
     def _name_must_be_free(self, name: str) -> Iterator[None]:
         """Turn a name collision into a domain error, undoing only this write.
@@ -106,6 +113,7 @@ _SCHEDULING_FIELDS = (
     "horizon_unit",
     "self_bookable",
     "offerable",
+    "modality",
     "created_at",
     "updated_at",
 )

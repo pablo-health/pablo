@@ -62,6 +62,7 @@ from ..models.enums import (
     video_platform_from_label,
 )
 from ..models.scheduling import (
+    TELEHEALTH_PLACES,
     AppointmentListResponse,
     AppointmentResponse,
     AppointmentTypeListResponse,
@@ -147,7 +148,12 @@ from ..scheduling_engine.exceptions import (
     RuleViolationError,
 )
 from ..scheduling_engine.models.appointment import AppointmentStatus
-from ..scheduling_engine.models.appointment_type import AppointmentType, Audience, HorizonUnit
+from ..scheduling_engine.models.appointment_type import (
+    AppointmentType,
+    Audience,
+    HorizonUnit,
+    Modality,
+)
 from ..scheduling_engine.models.availability import AvailabilityRule, EnforcementLevel, RuleType
 from ..scheduling_engine.services import floating_block
 from ..scheduling_engine.services.availability import AvailabilityEngine
@@ -255,18 +261,44 @@ def get_appointment_type_repository(
     return _appt_type_repo_factory()
 
 
+#: The place of service a type's learned modality stands for, when a booking
+#: of it says nothing about where it happens.
+_PLACE_FOR_MODALITY: dict[Modality, str] = {"video": "02", "in_person": "11"}
+
+
+def _modality_of(place_of_service: str | None) -> Modality | None:
+    """What a place of service says about where a visit happens, if anything.
+
+    Only office (11) and the telehealth places count. Any other place says
+    something more specific than in person or video, and teaches the type
+    nothing.
+    """
+    if place_of_service == "11":
+        return "in_person"
+    if place_of_service in TELEHEALTH_PLACES:
+        return "video"
+    return None
+
+
 def _apply_appointment_type(
     data: dict[str, object],
     *,
     user_id: str,
     type_repo: AppointmentTypeRepository,
+    requested_provider: str | None = None,
 ) -> None:
     """Let a chosen appointment type speak for the appointment's label.
 
     When the caller names a type, that type is authoritative: ``session_type``
     is overwritten with its name so the id and the label cannot drift apart.
-    Nothing else is inferred — the caller still sends its own duration, because
-    a clinician may legitimately book a longer-than-usual session of a type.
+    The caller still sends its own duration, because a clinician may
+    legitimately book a longer-than-usual session of a type.
+
+    Where the visit happens is the one other thing a type supplies, and only
+    when the booking says nothing about it: no place of service, no video
+    service asked for, no link. Then the place the type was last booked at is
+    used, so a type last booked by video books by video again. A type never
+    booked either way leaves it unset.
 
     Mutates ``data`` in place. Raises ``NotFoundError`` for a type that is not
     this clinician's, which also stops one clinician booking against another's
@@ -279,6 +311,19 @@ def _apply_appointment_type(
     if appointment_type is None:
         raise NotFoundError(f"Appointment type not found: {appointment_type_id}")
     data["session_type"] = appointment_type.name
+    says_where = data.get("place_of_service") or data.get("video_link") or requested_provider
+    if not says_where and appointment_type.modality is not None:
+        data["place_of_service"] = _PLACE_FOR_MODALITY[appointment_type.modality]
+
+
+def _learn_modality(type_repo: AppointmentTypeRepository, user_id: str, appt: Appointment) -> None:
+    """Remember on the appointment's type where it was booked, if it says.
+
+    Called after the write succeeded, so a refused booking teaches nothing.
+    """
+    modality = _modality_of(appt.place_of_service)
+    if appt.appointment_type_id and modality is not None:
+        type_repo.record_modality(appt.appointment_type_id, user_id, modality)
 
 
 def _owner_timezone(user_repo: UserRepository, user_id: str) -> tzinfo:
@@ -886,7 +931,9 @@ def create_appointment(
     # Which video service to ask is a request, not a column: the row records
     # who actually made the room, which is decided below.
     requested_provider = data.pop("provider", None)
-    _apply_appointment_type(data, user_id=user.id, type_repo=type_repo)
+    _apply_appointment_type(
+        data, user_id=user.id, type_repo=type_repo, requested_provider=requested_provider
+    )
     try:
         appt = service.create_appointment(
             user.id,
@@ -904,6 +951,7 @@ def create_appointment(
     # own update_appointment for linking, which resets rule_warnings).
     warnings = service.rule_warnings
     overridden = service.overridden_rules
+    _learn_modality(type_repo, user.id, appt)
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_CREATED,
         user,
@@ -1049,6 +1097,7 @@ def update_appointment(
     patient_repo: PatientRepository = Depends(get_patient_repository),
     registry: MeetingProviderRegistry = Depends(get_meeting_registry),
     user_repo: UserRepository = Depends(get_user_repository),
+    type_repo: AppointmentTypeRepository = Depends(get_appointment_type_repository),
     tz: tzinfo = Depends(get_owner_timezone),
     follow_up: MeetLinkFollowUp = Depends(get_meet_link_follow_up),
 ) -> AppointmentResponse:
@@ -1094,6 +1143,10 @@ def update_appointment(
     # Captured before any further service calls (Google sync below issues its
     # own update_appointment for linking, which resets rule_warnings).
     warnings = service.rule_warnings
+    # Only an edit that says where the visit happens teaches the type; an
+    # edit of something else is not a fresh choice of place.
+    if "place_of_service" in updates:
+        _learn_modality(type_repo, user.id, appt)
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_UPDATED,
         user,
@@ -2080,6 +2133,7 @@ def _appointment_type_to_response(appointment_type: AppointmentType) -> Appointm
         horizon_unit=appointment_type.horizon_unit,
         self_bookable=appointment_type.self_bookable,
         offerable=appointment_type.offerable,
+        modality=appointment_type.modality,
         created_at=appointment_type.created_at,
         updated_at=appointment_type.updated_at,
     )

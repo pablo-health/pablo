@@ -563,6 +563,9 @@ class AppointmentTypeResponse(BaseModel):
     horizon_unit: str = "business"
     self_bookable: bool = False
     offerable: bool = True
+    #: Where this type was last booked, ``in_person`` or ``video``; ``None``
+    #: if never. Read-only: it is learned from bookings, not set here.
+    modality: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
