@@ -54,6 +54,7 @@ function providers(zoomConnected: boolean): TelehealthProviders {
   return {
     providers: [{ id: "zoom", display_name: "Zoom", connected: zoomConnected }],
     default_provider: zoomConnected ? "zoom" : null,
+    stored_default: zoomConnected ? "zoom" : null,
     room_url: null,
     join_window_before_minutes: 15,
   }

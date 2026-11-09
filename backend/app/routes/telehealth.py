@@ -93,6 +93,10 @@ class TelehealthProvidersResponse(BaseModel):
     #: The clinician's current default, or None when they have not chosen one
     #: this deployment offers.
     default_provider: str | None = None
+    #: What the clinician has saved as their default, offered or not, so a
+    #: screen can tell "chose a service that is not connected" from "never
+    #: chose". None when nothing is saved.
+    stored_default: str | None = None
     #: Their own permanent room, for a service that works that way.
     room_url: str | None = None
     join_window_before_minutes: int
@@ -157,6 +161,7 @@ def list_providers(
         default_provider=preferences.default_video_platform
         if preferences.default_video_platform in offered
         else None,
+        stored_default=preferences.default_video_platform,
         room_url=preferences.telehealth_room_url,
         join_window_before_minutes=settings.telehealth_join_window_before_minutes,
     )

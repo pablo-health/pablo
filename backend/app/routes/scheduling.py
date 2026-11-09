@@ -184,6 +184,7 @@ from ..services.telehealth import (
     provision_meeting,
     release_meeting,
 )
+from ..services.video_default import default_to_meet_on_calendar_connect
 from ..settings import get_settings
 from ..utcnow import utc_now
 
@@ -2229,6 +2230,7 @@ def google_calendar_callback(
     ),
     ctx: TenantContext = Depends(get_tenant_context),
     service: GoogleCalendarService = Depends(get_google_calendar_service),
+    user_repo: UserRepository = Depends(get_user_repository),
 ) -> dict[str, str]:
     """Handle Google OAuth callback — exchange code for tokens.
 
@@ -2292,7 +2294,25 @@ def google_calendar_callback(
     except Exception as e:
         logger.exception("Google Calendar OAuth callback failed")
         raise BadRequestError("OAuth callback failed") from e
+    if capability is None:
+        _default_to_meet(user_repo, ctx.user_id)
     return {"status": "connected"}
+
+
+def _default_to_meet(user_repo: UserRepository, user_id: str) -> None:
+    """Give a clinician with no video default Google Meet, now that Meet works.
+
+    Never fails the connect: the calendar is connected either way, and a
+    default left unset is what every clinician had before this existed.
+    """
+    try:
+        default_to_meet_on_calendar_connect(
+            user_repo,
+            user_id,
+            enabled_providers=get_settings().telehealth_provider_names,
+        )
+    except Exception:
+        logger.warning("Could not set the video default after a calendar connect", exc_info=True)
 
 
 @router.delete("/api/google-calendar/disconnect")

@@ -9,7 +9,7 @@
  * room that never arrives.
  */
 
-import { del, get, put } from "@/lib/api/client"
+import { del, get, patch, put } from "@/lib/api/client"
 
 /** One video service, as settings and the appointment form show it. */
 export interface TelehealthProvider {
@@ -21,7 +21,13 @@ export interface TelehealthProvider {
 
 export interface TelehealthProviders {
   providers: TelehealthProvider[]
+  /** The default in use: null when none is saved or the saved one is not connected. */
   default_provider: string | null
+  /**
+   * What is saved as the default, connected or not. Tells "chose a service
+   * that is not connected" apart from "never chose".
+   */
+  stored_default: string | null
   room_url: string | null
   join_window_before_minutes: number
 }
@@ -40,6 +46,14 @@ export async function setTelehealthRoomUrl(
   roomUrl: string | null,
 ): Promise<{ room_url: string | null }> {
   return put<{ room_url: string | null }>("/api/telehealth/room-url", { room_url: roomUrl })
+}
+
+/**
+ * Make one of your connected services the one sessions use when the
+ * appointment does not say. Changes that preference and nothing else.
+ */
+export async function setDefaultVideoService(providerId: string): Promise<void> {
+  await patch("/api/users/me/preferences", { default_video_platform: providerId })
 }
 
 export async function getZoomStatus(): Promise<ZoomStatus> {
