@@ -107,6 +107,10 @@ class CreateAppointmentRequest(BaseModel):
     #: Ignored when ``video_link`` is set: a link the clinician typed is the
     #: room, whatever any preference says.
     provider: str | None = None
+    #: Where the visit happens. 02 or 10 is a video visit and gets a room from
+    #: the clinician's default service; anything else gets none unless a
+    #: ``provider`` or ``video_link`` says otherwise.
+    place_of_service: PlaceOfServiceCode | None = None
     notes: str | None = None
     note_type: str | None = None
     #: Values for the note type's declared inputs.
@@ -172,6 +176,10 @@ class UpdateAppointmentRequest(VisitCodingFields):
     session_type: str | None = None
     video_link: str | None = None
     video_platform: str | None = None
+    #: Move the appointment to a different video service. Its old room is
+    #: released and the new service makes one. Ignored when the appointment
+    #: has a link the clinician pasted.
+    provider: str | None = None
     notes: str | None = None
     note_type: str | None = None
     #: Values for the note type's declared inputs.
