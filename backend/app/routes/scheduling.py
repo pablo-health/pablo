@@ -5,16 +5,18 @@
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import dataclasses
 import logging
+import time
 import uuid
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Iterator, Sequence
 from datetime import UTC, datetime, tzinfo
 from datetime import date as date_cls
 from typing import TYPE_CHECKING, Any, TypedDict
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request, status
 
 from ..api_errors import (
     BadRequestError,
@@ -41,6 +43,7 @@ from ..calendar_providers.event_titles import (
 from ..calendar_providers.oauth_state import OAuthStateError
 from ..calendar_providers.pkce_store import PkceStoreDownError, PkceStoreUnavailableError
 from ..db import get_db_session, release_db_connection
+from ..db.tenant_session import tenant_db_session
 from ..models import (
     AuditAction,
     ScheduleSessionRequest,
@@ -143,6 +146,7 @@ from ..scheduling_engine.exceptions import (
     InvalidRecurrenceError,
     RuleViolationError,
 )
+from ..scheduling_engine.models.appointment import AppointmentStatus
 from ..scheduling_engine.models.appointment_type import AppointmentType, Audience, HorizonUnit
 from ..scheduling_engine.models.availability import AvailabilityRule, EnforcementLevel, RuleType
 from ..scheduling_engine.services import floating_block
@@ -170,6 +174,7 @@ from ..services.google_calendar_service import (
     GoogleCalendarService,
     RetitleOutcome,
     google_consent_surface,
+    wait_for_conference,
 )
 from ..services.hedged_structured_llm_gateway import HedgedStructuredLLMGateway
 from ..services.http_structured_llm_gateway import HttpStructuredLLMGateway
@@ -328,12 +333,59 @@ def get_google_calendar_service(
     _ctx: TenantContext = Depends(get_tenant_context),
 ) -> GoogleCalendarService:
     """Get Google Calendar service with injected dependencies."""
+    return _build_google_calendar_service()
+
+
+def _build_google_calendar_service() -> GoogleCalendarService:
+    """The calendar service over whatever tenant session is current."""
     return GoogleCalendarService.from_surface(
         google_consent_surface(get_settings()),
         token_repo=_gcal_token_repo_factory(),
         appointment_repo=_appt_repo_factory(),
         patient_repo=_patient_repo_factory(),
     )
+
+
+class MeetLinkFollowUp:
+    """The one late read of a Meet link that a save could not wait for.
+
+    Runs after the response, so it cannot use anything the request built: the
+    request's database session is being torn down on another thread by then.
+    It opens a session of its own on the practice the save was made in.
+    """
+
+    #: How long after the save the link is read. Google usually finishes a
+    #: conference within seconds, and the save has already waited its budget.
+    delay_seconds: float = 10.0
+
+    def __init__(self, practice_schema: str | None) -> None:
+        self._schema = practice_schema
+
+    def run(self, user_id: str, appointment_id: str, event_id: str) -> None:
+        time.sleep(self.delay_seconds)
+        contextvars.Context().run(self._run, user_id, appointment_id, event_id)
+
+    def _run(self, user_id: str, appointment_id: str, event_id: str) -> None:
+        try:
+            with self.services(user_id) as (service, gcal_service):
+                _fill_meet_link(service, gcal_service, user_id, appointment_id, event_id)
+        except Exception:
+            logger.exception("The late read of a Google Meet link failed")
+
+    @contextlib.contextmanager
+    def services(self, user_id: str) -> Iterator[tuple[SchedulingService, GoogleCalendarService]]:
+        """The scheduling and calendar services, on a session of the follow-up's own."""
+        if self._schema is None:
+            raise RuntimeError("no practice schema to read the appointment from")
+        with tenant_db_session(self._schema, user_id):
+            yield SchedulingService(_appt_repo_factory()), _build_google_calendar_service()
+
+
+def get_meet_link_follow_up(
+    ctx: TenantContext = Depends(get_tenant_context),
+) -> MeetLinkFollowUp:
+    """The late Meet-link read, bound to the practice this request is for."""
+    return MeetLinkFollowUp(ctx.practice_schema)
 
 
 def get_outside_session_repository(
@@ -556,6 +608,9 @@ def _sync_appointment_to_google(
     gcal_service: GoogleCalendarService,
     user: User,
     appt: Appointment,
+    *,
+    background: BackgroundTasks | None = None,
+    follow_up: MeetLinkFollowUp | None = None,
 ) -> Appointment:
     """Best-effort push of an appointment create/update to Google Calendar.
 
@@ -568,17 +623,26 @@ def _sync_appointment_to_google(
     URL only exists on the way back from this call — and it is asked for only
     on an appointment whose provider is Meet, so every other appointment's
     push is exactly the call it has always been.
+
+    Google sometimes answers that it is still making the conference. Then the
+    event is read back for up to ``google_meet_link_wait_seconds``, so the
+    save still returns with the link; past that, the save returns without it
+    and ``follow_up`` reads it once more after the response. A caller that
+    passes no ``follow_up`` neither waits nor reads again, and the next push
+    picks the link up as before.
     """
     if appt.outside_event_id:
         # Already on a calendar another service keeps; a Pablo event would
         # put it there twice.
         return appt
     wants_conference = appt.provider == GOOGLE_MEET and not appt.video_link
+    pending = False
     try:
         if wants_conference:
             pushed = gcal_service.push_appointment_event(user.id, appt)
             event_id = pushed.event_id if pushed else None
             conference = pushed.conference_url if pushed else None
+            pending = pushed.conference_pending if pushed else False
         else:
             event_id = gcal_service.push_appointment(user.id, appt)
             conference = None
@@ -587,6 +651,10 @@ def _sync_appointment_to_google(
         return service.update_appointment(appt.id, user.id, google_sync_status="error")
     if event_id is None:
         return appt
+    if pending and background is not None and follow_up is not None:
+        conference, still_pending = _await_meet_link(gcal_service, user, event_id)
+        if still_pending and not conference:
+            background.add_task(follow_up.run, user.id, appt.id, event_id)
     updates: dict[str, Any] = {
         "google_event_id": event_id,
         "google_sync_status": "synced",
@@ -594,6 +662,63 @@ def _sync_appointment_to_google(
     if conference:
         updates["video_link"] = conference
     return service.update_appointment(appt.id, user.id, **updates)
+
+
+def _await_meet_link(
+    gcal_service: GoogleCalendarService,
+    user: User,
+    event_id: str,
+) -> tuple[str | None, bool]:
+    """Wait, within the budget, for a pending conference's link.
+
+    Returns the link if it came, and whether it is still worth reading for
+    later: yes while Google says pending, or when no read got an answer at
+    all; no once Google has given up on the conference.
+
+    The request's connection is released first, as before any slow outside
+    call, so the wait never holds a pooled connection idle.
+    """
+    budget = get_settings().google_meet_link_wait_seconds
+    release_db_connection()
+    settled = wait_for_conference(
+        lambda: gcal_service.read_appointment_event(user.id, event_id),
+        budget_seconds=budget,
+    )
+    if settled is None:
+        return None, True
+    return settled.conference_url, settled.conference_pending
+
+
+def _fill_meet_link(
+    service: SchedulingService,
+    gcal_service: GoogleCalendarService,
+    user_id: str,
+    appointment_id: str,
+    event_id: str,
+) -> None:
+    """Read a Meet link that was still being made, and put it on the appointment.
+
+    Only onto the appointment as it was left: still on Meet, still without a
+    link, still on this event. An edit in the meantime (in person now, or a
+    link pasted in) wins over a conference it no longer wants. A row that does
+    not come back is not this clinician's to write, so nothing is written.
+    """
+    pushed = gcal_service.read_appointment_event(user_id, event_id)
+    link = pushed.conference_url if pushed else None
+    if not link:
+        return
+    try:
+        appt = service.get_appointment(appointment_id, user_id)
+    except AppointmentNotFoundError:
+        return
+    if (
+        appt.provider != GOOGLE_MEET
+        or appt.video_link
+        or appt.google_event_id != event_id
+        or appt.status == AppointmentStatus.CANCELLED
+    ):
+        return
+    service.update_appointment(appointment_id, user_id, video_link=link)
 
 
 def _push_cancellation_to_google(
@@ -741,6 +866,7 @@ def _to_response(
 def create_appointment(
     request: CreateAppointmentRequest,
     http_request: Request,
+    background: BackgroundTasks,
     _ctx: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
@@ -751,6 +877,7 @@ def create_appointment(
     registry: MeetingProviderRegistry = Depends(get_meeting_registry),
     user_repo: UserRepository = Depends(get_user_repository),
     tz: tzinfo = Depends(get_owner_timezone),
+    follow_up: MeetLinkFollowUp = Depends(get_meet_link_follow_up),
 ) -> AppointmentResponse:
     """Create a new appointment."""
     data = request.model_dump()
@@ -796,7 +923,9 @@ def create_appointment(
         appt,
         requested_provider=requested_provider,
     )
-    appt = _sync_appointment_to_google(service, gcal_service, user, appt)
+    appt = _sync_appointment_to_google(
+        service, gcal_service, user, appt, background=background, follow_up=follow_up
+    )
     return _to_response(
         appt,
         patient_name=_patient_name_map(patient_repo, user.id, [appt]).get(appt.patient_id),
@@ -911,6 +1040,7 @@ def update_appointment(
     appointment_id: str,
     request: UpdateAppointmentRequest,
     http_request: Request,
+    background: BackgroundTasks,
     _ctx: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
@@ -920,6 +1050,7 @@ def update_appointment(
     registry: MeetingProviderRegistry = Depends(get_meeting_registry),
     user_repo: UserRepository = Depends(get_user_repository),
     tz: tzinfo = Depends(get_owner_timezone),
+    follow_up: MeetLinkFollowUp = Depends(get_meet_link_follow_up),
 ) -> AppointmentResponse:
     """Update an appointment."""
     payload = request.model_dump()
@@ -989,7 +1120,9 @@ def update_appointment(
             appt,
             requested_provider=requested_provider,
         )
-    appt = _sync_appointment_to_google(service, gcal_service, user, appt)
+    appt = _sync_appointment_to_google(
+        service, gcal_service, user, appt, background=background, follow_up=follow_up
+    )
     return _to_response(
         appt,
         patient_name=_patient_name_map(patient_repo, user.id, [appt]).get(appt.patient_id),
