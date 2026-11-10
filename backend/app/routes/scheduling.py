@@ -192,6 +192,7 @@ from ..services.telehealth import (
     provision_meeting,
     release_meeting,
     room_change,
+    wants_a_room,
 )
 from ..services.video_default import default_to_meet_on_calendar_connect
 from ..settings import get_settings
@@ -466,13 +467,19 @@ class _LazyZoomStore:
 def get_meeting_registry(
     _ctx: TenantContext = Depends(get_tenant_context),
 ) -> MeetingProviderRegistry:
-    """The video services this deployment can offer, for this request.
+    """The video services this deployment can offer, for this request."""
+    return build_meeting_registry()
+
+
+def build_meeting_registry() -> MeetingProviderRegistry:
+    """The video services this deployment can offer, over the current session.
 
     Google Meet is offered only to a clinician whose calendar is connected,
     because the conference lives on the calendar event. The check is passed in
     as a callable so the Meet adapter never holds a calendar service — and so
     that nothing here reads the database until a provider that needs it is
-    both configured and asked.
+    both configured and asked. That is also what lets a public booking build
+    it before its session has entered the link's practice.
     """
     from ..meeting_providers.registry import build_registry
 
@@ -584,7 +591,8 @@ def _reconcile_meeting(
     push that follows writes the event without a conference, which takes the
     conference off. A new room is made the way a booking makes one, so a
     vendor that refuses leaves the appointment without a room rather than
-    failing the edit.
+    failing the edit. Agreeing to a client's request is also an edit that can
+    owe a room (see :func:`_confirms_a_request_without_a_room`).
     """
     change = room_change(
         previous,
@@ -594,7 +602,17 @@ def _reconcile_meeting(
         registry=registry,
     )
     if change is RoomChange.KEEP:
-        return appt
+        if not _confirms_a_request_without_a_room(previous, appt, requested_provider):
+            return appt
+        return _provision_meeting(
+            service,
+            registry,
+            user_repo,
+            patient_repo,
+            user,
+            appt,
+            requested_provider=requested_provider,
+        )
     _release_meeting(registry, user, previous)
     if change is RoomChange.MANUAL:
         return service.update_appointment(
@@ -614,6 +632,68 @@ def _reconcile_meeting(
         appt,
         requested_provider=requested_provider,
     )
+
+
+def _confirms_a_request_without_a_room(
+    previous: Appointment, appt: Appointment, requested_provider: str | None
+) -> bool:
+    """Whether this edit agreed to a client's request that is owed a room.
+
+    A request a client made through a booking link waits pending, and its room
+    is made when it is agreed to, never before: a request turned down must not
+    leave a meeting behind at the vendor. Agreeing in the app is that moment,
+    the same as the client confirming a hold. An appointment that already has
+    a room (a pending Meet, a pasted link) is
+    left as it is.
+    """
+    return (
+        previous.status == AppointmentStatus.PENDING
+        and appt.status == AppointmentStatus.CONFIRMED
+        and appt.provider is None
+        and not appt.video_link
+        and wants_a_room(appt, requested_provider=requested_provider)
+    )
+
+
+@dataclasses.dataclass
+class ClientBookingRoom:
+    """Gives a booking a client made its video room, then puts it on the calendar.
+
+    The clinician create path does the same two steps in the same order; a
+    client booking never names a video service, so the clinician's default
+    one is used, and only when the booking is a video visit (its place of
+    service, which came from its type). Best-effort like that path: a vendor
+    that will not make a room leaves the booking in place without a link.
+    """
+
+    registry: MeetingProviderRegistry
+    user_repo: UserRepository
+    patient_repo: PatientRepository
+    gcal_service: GoogleCalendarService
+    background: BackgroundTasks
+    follow_up: MeetLinkFollowUp
+
+    def settle(self, service: SchedulingService, owner: User, appt: Appointment) -> Appointment:
+        # Asked first so an in-person booking reads no preferences and no
+        # chart: it was never going to get a room.
+        if wants_a_room(appt, requested_provider=None):
+            appt = _provision_meeting(
+                service,
+                self.registry,
+                self.user_repo,
+                self.patient_repo,
+                owner,
+                appt,
+                requested_provider=None,
+            )
+        return _sync_appointment_to_google(
+            service,
+            self.gcal_service,
+            owner,
+            appt,
+            background=self.background,
+            follow_up=self.follow_up,
+        )
 
 
 def _sync_appointment_to_google(
@@ -1091,7 +1171,8 @@ def update_appointment(
     # The room is decided from the appointment before and after the write, so
     # read the before — only when the edit could bear on the room at all.
     previous: Appointment | None = None
-    if requested_provider is not None or _ROOM_FIELDS & updates.keys():
+    confirming = updates.get("status") == AppointmentStatus.CONFIRMED
+    if requested_provider is not None or _ROOM_FIELDS & updates.keys() or confirming:
         try:
             previous = service.get_appointment(appointment_id, user.id)
         except AppointmentNotFoundError as e:
