@@ -4,7 +4,8 @@
 
 Sent when a video appointment becomes real (a clinician books it, a client's
 booking is confirmed, a request is agreed to) and again when its time or its
-link changes. A cancellation sends nothing from here.
+link changes. A cancellation sends nothing from here, and nor does anything
+about a session that is already over.
 
 **Whether a link may go out at all** is not decided here: it is
 :func:`app.services.telehealth.client_join_link`, which every message to a
@@ -17,6 +18,15 @@ of its start time and the link (``client_link_notice``). A save that leaves
 both alone finds the same digest and sends nothing, so a retry or a re-save of
 some other field never mails the client twice. The digest is written only after
 the send succeeds: a send that fails leaves the next save free to try again.
+
+**Only a session still to come.** Once its end has passed, nothing is sent: a
+finished session stays confirmed, and an edit to it afterwards (a late note, a
+code, a session logged after the fact) must not mail the client a room for it.
+A session under way still sends, because the link is still the way in.
+
+**Appointments made before this message existed** have no digest, so the first
+change to one that is still ahead sends the "booked" message. It carries the
+right time and link, so that is the message they are owed.
 
 **What the message carries.** The practice's name, the date and time in the
 practice's zone, the link, and the portal where the practice has one. Never
@@ -39,6 +49,7 @@ from typing import TYPE_CHECKING
 from fastapi import Depends
 
 from ..scheduling_engine.models.appointment import AppointmentStatus
+from ..utcnow import utc_now
 from .email_sender import EmailSender, OutboundEmail, get_email_sender
 from .telehealth import client_join_link
 
@@ -182,11 +193,13 @@ def compose(
 class ClientVideoLinkNotifier:
     """Sends the client their video link when it is new to them.
 
-    ``practice_facts`` is a seam for tests; production reads the platform rows.
+    ``practice_facts`` and ``now`` are seams for tests; production reads the
+    platform rows and the clock.
     """
 
     sender: EmailSender
     practice_facts: Callable[[str | None], PracticeFacts | None] = read_practice_facts
+    now: Callable[[], datetime] = utc_now
 
     def notify(
         self,
@@ -245,10 +258,12 @@ class ClientVideoLinkNotifier:
     ) -> tuple[OutboundEmail, str] | None:
         """The message the client is owed and its digest, or None when nothing is."""
         # Asked first, so an appointment that can carry no link reads nothing,
-        # and nor does a deployment with no mail to send it by.
+        # and nor does a session already over or a deployment with no mail to
+        # send it by.
         if (
             appointment.status != AppointmentStatus.CONFIRMED
             or not appointment.video_link
+            or appointment.end_at <= self.now()
             or not self.sender.can_deliver
         ):
             return None

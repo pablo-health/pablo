@@ -10,7 +10,7 @@ facts and the mail are fakes; whether the link may go out at all is the real
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
@@ -63,6 +63,11 @@ DOXY_ROOM = "https://doxy.me/riverside?username=Jane&pid=7"
 DOXY_SENT = "https://doxy.me/riverside?pid=7"
 NEW_ROOM = "https://doxy.me/riverside-2"
 EASTERN = ZoneInfo("America/New_York")
+#: The clock the clinician-route tests run at: before every session they book
+#: (``_create_payload`` books 2026-04-15 14:00-14:50Z).
+BEFORE_THE_SESSION = datetime(2026, 4, 1, 12, 0, tzinfo=UTC)
+SESSION_START = datetime(2026, 4, 15, 14, 0, tzinfo=UTC)
+SESSION_END = datetime(2026, 4, 15, 14, 50, tzinfo=UTC)
 
 
 class FailingSender:
@@ -85,6 +90,13 @@ def _facts(*, sends: bool = True, portal: str | None = PORTAL) -> Any:
 
 def _use(target: Any, notifier: ClientVideoLinkNotifier) -> None:
     target.dependency_overrides[get_client_video_link_notifier] = lambda: notifier
+
+
+def _at_clock(
+    sender: Any, facts: Any = None, *, now: datetime = BEFORE_THE_SESSION
+) -> ClientVideoLinkNotifier:
+    """A notifier whose clock reads *now*, for the clinician routes' fixed dates."""
+    return ClientVideoLinkNotifier(sender=sender, practice_facts=facts or _facts(), now=lambda: now)
 
 
 # ------------------------------------------------------------- the message
@@ -181,7 +193,7 @@ def clinician(write_client: TestClient, mock_user_id: str) -> tuple[TestClient, 
     app.dependency_overrides[get_scheduling_service] = lambda: SchedulingService(appointments)
     app.dependency_overrides[get_patient_repository] = lambda: patients
     app.dependency_overrides[get_owner_timezone] = lambda: EASTERN
-    _use(app, ClientVideoLinkNotifier(sender=sent, practice_facts=facts))
+    _use(app, _at_clock(sent, facts))
     write_client.sent = sent  # type: ignore[attr-defined]  # test-only stash
     write_client.facts = facts  # type: ignore[attr-defined]  # test-only stash
     write_client.patients = patients  # type: ignore[attr-defined]  # test-only stash
@@ -314,7 +326,7 @@ class TestNothingIsSent:
         self, clinician: tuple[TestClient, InMemoryEmailSender]
     ) -> None:
         client, sent = clinician
-        _use(app, ClientVideoLinkNotifier(sender=sent, practice_facts=_facts(sends=False)))
+        _use(app, _at_clock(sent, _facts(sends=False)))
 
         _book(client)
 
@@ -346,11 +358,81 @@ class TestNothingIsSent:
     ) -> None:
         client, _sent = clinician
         facts = _facts()
-        _use(app, ClientVideoLinkNotifier(sender=NoneEmailSender(), practice_facts=facts))
+        _use(app, _at_clock(NoneEmailSender(), facts))
 
         _book(client)
 
         assert facts.asked == []
+
+
+class TestASessionAlreadyOver:
+    """A finished session stays confirmed; nothing about it may mail the client."""
+
+    def test_booking_it_after_the_fact_sends_nothing_and_reads_nothing(
+        self, clinician: tuple[TestClient, InMemoryEmailSender]
+    ) -> None:
+        client, sent = clinician
+        facts = _facts()
+        _use(app, _at_clock(sent, facts, now=SESSION_END + timedelta(days=3)))
+
+        _book(client)
+
+        assert sent.sent == []
+        assert facts.asked == []
+
+    def test_editing_it_afterwards_sends_nothing(
+        self, clinician: tuple[TestClient, InMemoryEmailSender], mock_user_id: str
+    ) -> None:
+        """Tom's probe: a past video session with no digest, then a late note."""
+        client, sent = clinician
+        past = client.appointments.create(  # type: ignore[attr-defined]
+            _appointment(user_id=mock_user_id, start_at=SESSION_START, end_at=SESSION_END)
+        )
+        _use(app, _at_clock(sent, now=SESSION_END + timedelta(days=3)))
+
+        _edit(client, past.id, notes="late note after the session")
+        _edit(client, past.id, start_at="2026-04-15T15:00:00Z", end_at="2026-04-15T15:50:00Z")
+
+        assert sent.sent == []
+
+    def test_the_moment_it_ends_it_is_over(
+        self, clinician: tuple[TestClient, InMemoryEmailSender]
+    ) -> None:
+        client, sent = clinician
+        _use(app, _at_clock(sent, now=SESSION_END))
+
+        _book(client)
+
+        assert sent.sent == []
+
+    def test_a_session_under_way_still_sends_the_link(
+        self, clinician: tuple[TestClient, InMemoryEmailSender]
+    ) -> None:
+        """Booked ten minutes in: the link is still the way in."""
+        client, sent = clinician
+        _use(app, _at_clock(sent, now=SESSION_START + timedelta(minutes=10)))
+
+        _book(client)
+
+        [message] = sent.sent
+        assert message.kind == KIND_BOOKED
+
+
+class TestAnAppointmentFromBeforeThisMessage:
+    def test_its_first_edit_while_still_ahead_sends_the_booked_message(
+        self, clinician: tuple[TestClient, InMemoryEmailSender], mock_user_id: str
+    ) -> None:
+        """No digest yet: the client is sent the message they never had, once."""
+        client, sent = clinician
+        ahead = client.appointments.create(  # type: ignore[attr-defined]
+            _appointment(user_id=mock_user_id, start_at=SESSION_START, end_at=SESSION_END)
+        )
+
+        _edit(client, ahead.id, notes="Bring the intake form")
+        _edit(client, ahead.id, notes="saved again")
+
+        [message] = sent.sent
+        assert message.kind == KIND_BOOKED
 
 
 class TestAFailedSend:
@@ -358,10 +440,10 @@ class TestAFailedSend:
         self, clinician: tuple[TestClient, InMemoryEmailSender]
     ) -> None:
         client, sent = clinician
-        _use(app, ClientVideoLinkNotifier(sender=FailingSender(), practice_facts=_facts()))
+        _use(app, _at_clock(FailingSender()))
 
         booked = _book(client)
-        _use(app, ClientVideoLinkNotifier(sender=sent, practice_facts=_facts()))
+        _use(app, _at_clock(sent))
         _edit(client, booked["id"], notes="saved again")
 
         # The failed send recorded nothing, so the re-save is a first message.
@@ -464,7 +546,17 @@ class TestTheLateMeetRead:
     ) -> None:
         repo = InMemoryAppointmentRepository()
         service = SchedulingService(repo)
-        appt = repo.create(_appointment(provider=GOOGLE_MEET, video_link=MEET_LINK))
+        # On the real clock, since the follow-up builds its own notifier: a
+        # session tomorrow, whenever this runs.
+        tomorrow = datetime.now(UTC) + timedelta(days=1)
+        appt = repo.create(
+            _appointment(
+                provider=GOOGLE_MEET,
+                video_link=MEET_LINK,
+                start_at=tomorrow,
+                end_at=tomorrow + timedelta(minutes=50),
+            )
+        )
         patients = InMemoryPatientRepository()
         patients.create(
             Patient(
