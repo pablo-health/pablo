@@ -3,6 +3,7 @@
 """Common validation helpers for models."""
 
 from datetime import datetime
+from urllib.parse import urlsplit
 
 # Phone number validation constants
 MIN_PHONE_DIGITS = 10  # Standard US phone number length
@@ -192,3 +193,33 @@ def normalize_service_code(value: str | None) -> str | None:
         return None
     normalized = value.strip().upper()
     return normalized or None
+
+
+_ZOOM_DOMAIN = "zoom.us"
+
+
+def is_zoom_room_url(value: str) -> bool:
+    """Whether ``value`` is an ``https`` address on Zoom's own domain.
+
+    ``zoom.us`` itself or any subdomain of it, which covers the vanity
+    addresses an account can have (``yourpractice.zoom.us``). A look-alike
+    such as ``zoom.us.example.com`` or ``notzoom.us`` is refused: a Zoom room
+    is handed to patients to click.
+    """
+    try:
+        parts = urlsplit(value.strip())
+        port = parts.port
+    except ValueError:
+        return False
+    if parts.scheme != "https" or parts.username or parts.password or port:
+        return False
+    host = (parts.hostname or "").rstrip(".")
+    return host == _ZOOM_DOMAIN or host.endswith(f".{_ZOOM_DOMAIN}")
+
+
+def validate_zoom_room_url(value: str | None) -> str | None:
+    """A pasted Zoom room, trimmed; empty means none. Raises on anything else."""
+    cleaned = (value or "").strip() or None
+    if cleaned is not None and not is_zoom_room_url(cleaned):
+        raise ValueError("must be an https:// address on zoom.us")
+    return cleaned

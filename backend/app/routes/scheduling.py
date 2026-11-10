@@ -189,6 +189,7 @@ from ..services.telehealth import (
     Practice,
     RoomChange,
     TelehealthError,
+    clinician_from_preferences,
     provision_meeting,
     release_meeting,
     room_change,
@@ -485,12 +486,7 @@ def get_meeting_registry(
 
 def _clinician_view(user_repo: UserRepository, user_id: str) -> Clinician:
     """The clinician's telehealth preferences, as a provider sees them."""
-    preferences = user_repo.get_preferences(user_id)
-    return Clinician(
-        id=user_id,
-        preferred_provider=preferences.default_video_platform,
-        room_url=preferences.telehealth_room_url,
-    )
+    return clinician_from_preferences(user_id, user_repo.get_preferences(user_id))
 
 
 def _practice_view() -> Practice:

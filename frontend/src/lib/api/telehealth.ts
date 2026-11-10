@@ -24,6 +24,13 @@ export interface TelehealthProviders {
   /** The default in use: null when none is saved or the saved one is not connected. */
   default_provider: string | null
   room_url: string | null
+  /** Your own Zoom room, pasted once. */
+  zoom_room_url: string | null
+  /**
+   * Whether this deployment has a Zoom app, so connecting Zoom makes a meeting
+   * per appointment. Without one, Zoom means the room you paste.
+   */
+  zoom_app: boolean
   join_window_before_minutes: number
 }
 
@@ -41,6 +48,36 @@ export async function setTelehealthRoomUrl(
   roomUrl: string | null,
 ): Promise<{ room_url: string | null }> {
   return put<{ room_url: string | null }>("/api/telehealth/room-url", { room_url: roomUrl })
+}
+
+/**
+ * An https address on zoom.us or one of its subdomains, the same rule the
+ * deployment applies. A look-alike host is refused: patients click this.
+ */
+export function isZoomRoomUrl(value: string): boolean {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    return false
+  }
+  if (url.protocol !== "https:" || url.username || url.password || url.port) return false
+  const host = url.hostname.replace(/\.$/, "")
+  return host === "zoom.us" || host.endsWith(".zoom.us")
+}
+
+/**
+ * Save your own Zoom room. Pass null to remove it.
+ *
+ * The deployment accepts only an https address on zoom.us and refuses
+ * anything else as a field error.
+ */
+export async function setZoomRoomUrl(
+  zoomRoomUrl: string | null,
+): Promise<{ zoom_room_url: string | null }> {
+  return put<{ zoom_room_url: string | null }>("/api/telehealth/zoom-room-url", {
+    zoom_room_url: zoomRoomUrl,
+  })
 }
 
 /**
