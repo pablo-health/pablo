@@ -759,19 +759,38 @@ def create_standalone_note(
     if appointment is not None:
         visit_codes = _visit_codes(request, appointment, problems)
         if visit_codes:
-            coded = scheduling_service.update_appointment(appointment.id, user.id, **visit_codes)
-            if "place_of_service" in visit_codes:
-                remember_place(type_repo, user.id, coded)
-            audit.log_appointment_action(
-                AuditAction.APPOINTMENT_UPDATED,
-                user,
-                http_request,
-                appointment.id,
-                patient_id=appointment.patient_id,
-                changes={"changed_fields": sorted(visit_codes.keys())},
+            _code_the_visit(
+                appointment, visit_codes, user, http_request, scheduling_service, type_repo, audit
             )
 
     return NoteResponse.from_note(note)
+
+
+def _code_the_visit(
+    appointment: Appointment,
+    visit_codes: dict[str, Any],
+    user: User,
+    http_request: Request,
+    scheduling_service: SchedulingService,
+    type_repo: AppointmentTypeRepository,
+    audit: AuditService,
+) -> None:
+    """Write the codes entered with a note onto the visit it documents.
+
+    A place of service coded here teaches the visit's type, the same as one
+    entered on the appointment (``remember_place``).
+    """
+    coded = scheduling_service.update_appointment(appointment.id, user.id, **visit_codes)
+    if "place_of_service" in visit_codes:
+        remember_place(type_repo, user.id, coded)
+    audit.log_appointment_action(
+        AuditAction.APPOINTMENT_UPDATED,
+        user,
+        http_request,
+        appointment.id,
+        patient_id=appointment.patient_id,
+        changes={"changed_fields": sorted(visit_codes.keys())},
+    )
 
 
 def _from_chart(

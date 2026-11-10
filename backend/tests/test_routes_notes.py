@@ -44,10 +44,10 @@ from app.routes.notes import (
     generate_standalone_note_job,
 )
 from app.routes.notes import (
-    get_notes_repository as get_notes_route_notes_repository,
+    get_appointment_type_repository as get_notes_appointment_type_repository,
 )
 from app.routes.notes import (
-    get_appointment_type_repository as get_notes_appointment_type_repository,
+    get_notes_repository as get_notes_route_notes_repository,
 )
 from app.routes.notes import (
     get_scheduling_service as get_notes_scheduling_service,

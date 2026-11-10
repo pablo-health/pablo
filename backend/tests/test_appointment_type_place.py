@@ -418,7 +418,9 @@ class TestTheRule:
         assert data["place_of_service"] == place
 
     @pytest.mark.parametrize(("place", "expected"), [("12", None), (None, None), ("10", "10")])
-    def test_only_11_02_and_10_are_remembered(self, place: str | None, expected: str | None) -> None:
+    def test_only_11_02_and_10_are_remembered(
+        self, place: str | None, expected: str | None
+    ) -> None:
         repo = InMemoryAppointmentTypeRepository()
         repo.create(AppointmentType(id="t", user_id=USER, name="Session"))
         visit = SimpleNamespace(appointment_type_id="t", place_of_service=place)
