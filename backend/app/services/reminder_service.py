@@ -10,11 +10,11 @@ sending does not. A reminder carries the time and the practice's name: it is
 read on a lock screen, forwarded, and seen by whoever is holding the phone,
 so the less it says about why the person has an appointment the better.
 
-The join link is the one thing a practice may add to that, and it is off by
-default. It is not neutral — it names the video service, and it says an
-appointment exists — so the decision belongs to the practice rather than to
-whichever dispatcher happens to build the message. :meth:`reminder_fields` is
-where that decision is applied, once, so two dispatchers cannot answer it
+The join link is the one thing a message adds to that, for a video
+appointment. It goes out by default; a practice turns it off in Settings, and
+a deployment can turn it off for everyone. Whether it goes is decided in
+:func:`app.services.telehealth.client_join_link`, which every message to a
+client asks, so a reminder and a booking message cannot answer it
 differently.
 """
 
@@ -22,8 +22,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..settings import get_settings
-from .telehealth import reminder_join_link
+from .telehealth import client_join_link
 
 if TYPE_CHECKING:
     from ..scheduling_engine.models.appointment import Appointment
@@ -50,16 +49,13 @@ class ReminderService:
         return {"24h_sent": 0, "1h_sent": 0}
 
     @staticmethod
-    def reminder_fields(appointment: Appointment) -> dict[str, str]:
+    def reminder_fields(appointment: Appointment, *, practice_sends_link: bool) -> dict[str, str]:
         """What a dispatcher may put in this appointment's reminder.
 
-        Empty when the practice has not turned the join link on, which is the
-        default — so a dispatcher that merges this into its message says
-        exactly what it says today until somebody decides otherwise. Never
-        carries a name, a reason, or anything else off the chart.
+        ``practice_sends_link`` is the practice's own answer, from
+        :func:`app.services.telehealth.practice_sends_client_video_link`. The
+        link is the only field, and only for a video appointment that has one.
+        Never carries a name, a reason, or anything else off the chart.
         """
-        link = reminder_join_link(
-            appointment,
-            include_join_link=get_settings().telehealth_include_join_link_in_reminders,
-        )
+        link = client_join_link(appointment, practice_sends_link=practice_sends_link)
         return {"join_url": link} if link else {}

@@ -370,6 +370,11 @@ const baseQueryKeys = {
     all: ["audioRetention"] as const,
   },
 
+  // Whether the practice sends clients their video link
+  clientVideoLink: {
+    all: ["clientVideoLink"] as const,
+  },
+
   // Who besides the owner may change practice-wide settings
   practiceAdmins: {
     all: ["practiceAdmins"] as const,

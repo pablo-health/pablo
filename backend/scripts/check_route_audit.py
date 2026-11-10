@@ -561,6 +561,9 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # practice_ai_notes_consent.py — one practice preference + retention days, no PHI
         ("get", "/api/users/me/practice/ai-notes-consent"),  # reads the practice preference
         ("put", "/api/users/me/practice/ai-notes-consent"),  # owner turns it on or off
+        # practice_client_video_link.py — one practice preference, no PHI
+        ("get", "/api/users/me/practice/client-video-link"),  # reads the practice preference
+        ("put", "/api/users/me/practice/client-video-link"),  # owner turns it on or off
         # supervision.py — clinician's own oversight relationships + accrued hours (no patient PHI)
         ("get", "/api/supervision"),  # lists clinician's own supervision relationships
         ("post", "/api/supervision"),  # creates a clinician supervision relationship
