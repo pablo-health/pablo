@@ -14,9 +14,11 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from app.db.platform_models import PracticeRow
+from app.meeting_providers.doxy import compose_room_url
 from app.scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from app.services.reminder_service import ReminderService
 from app.services.telehealth import client_join_link, practice_sends_client_video_link
@@ -149,3 +151,65 @@ class TestReadingThePractice:
         session = a_session_holding(SimpleNamespace(send_clients_video_link=True))
         assert practice_sends_client_video_link(session, None) is False
         session.get.assert_not_called()
+
+
+class TestTheLinkCarriesNoName:
+    """A message to a client can sit on a lock screen or be forwarded: no name in it."""
+
+    def a_doxy_appointment(self, display_name: str) -> Appointment:
+        """The link exactly as the Doxy provider stores it with clinic features on."""
+        room = compose_room_url(
+            "https://doxy.me/drsmith",
+            handle="64MHO85_THBnifdk",
+            display_name=display_name,
+            clinic_features=True,
+        )
+        return an_appointment(video_link=room)
+
+    @pytest.mark.parametrize("name", ["Siobhán", "Mary Anne", "Ana+Lu"])
+    def test_a_doxy_room_goes_out_without_the_client_name(self, name: str) -> None:
+        appointment = self.a_doxy_appointment(name)
+        assert "username=" in (appointment.video_link or "")
+
+        link = client_join_link(appointment, practice_sends_link=True)
+
+        assert link is not None
+        assert "username" not in link
+        assert parse_qs(urlsplit(link).query) == {
+            "autocheckin": ["true"],
+            "pid": ["64MHO85_THBnifdk"],
+        }
+        assert urlsplit(link).path == "/drsmith"
+
+    def test_the_reminder_fields_carry_no_name_either(self) -> None:
+        fields = ReminderService.reminder_fields(
+            self.a_doxy_appointment("Siobhán"), practice_sends_link=True
+        )
+
+        assert fields == {
+            "join_url": "https://doxy.me/drsmith?autocheckin=true&pid=64MHO85_THBnifdk"
+        }
+
+    @pytest.mark.parametrize("key", ["username", "UserName", "user%6Eame"])
+    def test_any_link_loses_a_username_however_it_is_spelled(self, key: str) -> None:
+        appointment = an_appointment(video_link=f"https://v.test/r?{key}=Siobh%C3%A1n&pwd=a%2Bb")
+
+        assert (
+            client_join_link(appointment, practice_sends_link=True) == "https://v.test/r?pwd=a%2Bb"
+        )
+
+    def test_a_link_with_only_a_name_loses_the_question_mark_too(self) -> None:
+        appointment = an_appointment(video_link="https://v.test/r?username=Siobh%C3%A1n")
+
+        assert client_join_link(appointment, practice_sends_link=True) == "https://v.test/r"
+
+    def test_every_other_parameter_goes_out_as_stored(self) -> None:
+        stored = "https://z.test/j/81?pwd=a%2Bb%3D&uname=&room=a%20b&flag&x=1#frag"
+        appointment = an_appointment(video_link=stored)
+
+        assert client_join_link(appointment, practice_sends_link=True) == stored
+
+
+def test_an_empty_stored_link_is_none_not_an_empty_string() -> None:
+    """A later caller (the booking message) reads client_join_link directly, not via the fields."""
+    assert client_join_link(an_appointment(video_link=""), practice_sends_link=True) is None

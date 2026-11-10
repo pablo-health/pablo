@@ -34,6 +34,7 @@ from dataclasses import dataclass, replace
 from datetime import timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, ClassVar, Final, Protocol, runtime_checkable
+from urllib.parse import unquote_plus, urlsplit, urlunsplit
 
 from ..models.scheduling import TELEHEALTH_PLACES, is_telehealth
 from ..settings import get_settings
@@ -484,13 +485,43 @@ def client_join_link(appointment: Appointment, *, practice_sends_link: bool) -> 
     the office should not also be sent somewhere to join. An appointment with
     no place of service keeps its link, because that is how every appointment
     booked before places were recorded looks.
+
+    The link goes out without the client's name. A Doxy room is stored with
+    ``username=<first name>`` so the clinician's waiting room checks the right
+    person in, but a message can be read on a lock screen, forwarded, or passed
+    through a mail vendor's link tracking: see :func:`_without_client_name`.
     """
     if not (practice_sends_link and get_settings().telehealth_include_join_link_in_reminders):
         return None
     place = appointment.place_of_service
     if place and place not in TELEHEALTH_PLACES:
         return None
-    return appointment.video_link or None
+    if not appointment.video_link:
+        return None
+    return _without_client_name(appointment.video_link)
+
+
+#: Query keys that name the person joining. ``username`` is the one Doxy
+#: reads (``meeting_providers.doxy.compose_room_url``); it is stripped
+#: from any link, whatever service stored it, so a new provider that copies
+#: the convention cannot put a name in a client message by accident.
+_NAME_QUERY_KEYS: Final = frozenset({"username"})
+
+
+def _without_client_name(link: str) -> str:
+    """``link`` with every query parameter that names the client taken off.
+
+    Works on the raw ``&``-separated pairs rather than parsing and re-encoding,
+    so every other parameter (Doxy's ``pid`` and ``autocheckin``, a Zoom
+    password) goes out byte for byte as stored.
+    """
+    parts = urlsplit(link)
+    kept = [
+        pair
+        for pair in parts.query.split("&")
+        if unquote_plus(pair.partition("=")[0]).lower() not in _NAME_QUERY_KEYS
+    ]
+    return urlunsplit(parts._replace(query="&".join(kept)))
 
 
 def practice_sends_client_video_link(session: Session, practice_id: str | None) -> bool:

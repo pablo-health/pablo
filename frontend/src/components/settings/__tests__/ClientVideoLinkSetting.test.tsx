@@ -39,7 +39,7 @@ describe("ClientVideoLinkSetting", () => {
     render(<ClientVideoLinkSetting />)
     const toggle = screen.getByRole("switch", { name: LABEL })
     expect(toggle).toHaveAttribute("aria-checked", "true")
-    expect(screen.getByText("Adds the link to join to their appointment reminders.")).toBeInTheDocument()
+    expect(screen.getByText("Messages to your clients about a video session include the link to join.")).toBeInTheDocument()
 
     await userEvent.click(toggle)
     expect(mockMutate).toHaveBeenCalledWith(false, expect.anything())

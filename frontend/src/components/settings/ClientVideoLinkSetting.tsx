@@ -11,9 +11,11 @@
  * a switch that changes nothing would say the link goes out when it does not.
  * Not shown before the setting has loaded either, for the same reason.
  *
- * The description names reminders only, because that is the message that
- * carries it today. Widen it when another message starts asking
- * `client_join_link`.
+ * The description names no particular message. No message to a client
+ * carries the link yet: reminders are not sent, and the booking message
+ * (PABLO-en9h.9) is still to come. So it says what happens when one is sent,
+ * which is true today and stays true as each message starts asking
+ * `client_join_link`. Never name a message here that does not ask it.
  */
 
 "use client"
@@ -39,7 +41,7 @@ export function ClientVideoLinkSetting() {
           <div className="text-sm font-semibold text-foreground">{label}</div>
           <div className="mt-0.5 text-[12.5px] leading-relaxed text-muted-foreground">
             {setting.can_change
-              ? "Adds the link to join to their appointment reminders."
+              ? `Messages to your ${people.many} about a video session include the link to join.`
               : "Only the practice owner can change this."}
           </div>
         </div>
