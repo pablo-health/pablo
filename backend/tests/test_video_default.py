@@ -9,17 +9,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from app.main import app
+from app.meeting_providers.doxy import DoxyMeProvider
 from app.meeting_providers.manual import ManualProvider
 from app.meeting_providers.meet import GoogleMeetProvider
+from app.models import UserPreferences
 from app.repositories import InMemoryUserRepository
-from app.routes import telehealth
 from app.routes.scheduling import get_google_calendar_service, get_meeting_registry, get_savepoint
 from app.services.telehealth import Clinician, MeetingProviderRegistry
-from app.services.video_default import (
-    default_to_meet_on_calendar_connect,
-    has_stored_video_default,
-)
-from app.settings import get_settings
+from app.services.video_default import default_to_meet_on_calendar_connect
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -45,7 +42,7 @@ class FakeZoom:
 
 def _registry(*, meet: bool = True, zoom: bool | None = None) -> MeetingProviderRegistry:
     """The providers a deployment registers; ``zoom`` is whether it is connected."""
-    providers: list[object] = [ManualProvider()]
+    providers: list[object] = [ManualProvider(), DoxyMeProvider()]
     if meet:
         providers.append(GoogleMeetProvider(lambda _user_id: True))
     if zoom is not None:
@@ -53,80 +50,77 @@ def _registry(*, meet: bool = True, zoom: bool | None = None) -> MeetingProvider
     return MeetingProviderRegistry(providers)  # type: ignore[arg-type]
 
 
-def test_a_new_account_reads_zoom_but_has_not_saved_it() -> None:
-    """The model default is unchanged; whether it was saved is a separate question."""
-    prefs = InMemoryUserRepository().get_preferences(USER)
-
-    assert prefs.default_video_platform == "zoom"
-    assert has_stored_video_default(prefs) is False
+def _connect(repo: InMemoryUserRepository, *, meet: bool = True, zoom: bool | None = None) -> bool:
+    return default_to_meet_on_calendar_connect(repo, USER, registry=_registry(meet=meet, zoom=zoom))
 
 
-def test_a_saved_default_reads_as_saved_after_other_writes() -> None:
-    repo = InMemoryUserRepository()
-    repo.update_preferences(USER, {"default_video_platform": "zoom"})
-    repo.update_preferences(USER, {"default_duration_minutes": 75})
-
-    assert has_stored_video_default(repo.get_preferences(USER)) is True
+def _default(repo: InMemoryUserRepository) -> str | None:
+    return repo.get_preferences(USER).default_video_platform
 
 
-def test_another_preference_does_not_save_a_video_default() -> None:
-    repo = InMemoryUserRepository()
-    repo.update_preferences(USER, {"default_duration_minutes": 75})
-
-    assert has_stored_video_default(repo.get_preferences(USER)) is False
+def test_a_new_account_has_no_video_default() -> None:
+    assert UserPreferences().default_video_platform is None
 
 
 @pytest.mark.parametrize("zoom", [None, False])
-def test_meet_becomes_the_default_when_none_is_stored_and_zoom_is_not_connected(
-    zoom: bool | None,
-) -> None:
+def test_meet_becomes_the_default_when_none_is_stored(zoom: bool | None) -> None:
     repo = InMemoryUserRepository()
 
-    changed = default_to_meet_on_calendar_connect(repo, USER, registry=_registry(zoom=zoom))
-
-    assert changed is True
-    assert repo.get_preferences(USER).default_video_platform == "google_meet"
+    assert _connect(repo, zoom=zoom) is True
+    assert _default(repo) == "google_meet"
 
 
-def test_an_unsaved_zoom_default_with_zoom_connected_is_left_alone() -> None:
-    """A clinician who connected Zoom and never touched the setting gets Zoom
-    rooms from the unsaved default, so a calendar connect must not move them."""
+@pytest.mark.parametrize("zoom", [None, False, True])
+def test_a_stored_zoom_is_never_changed(zoom: bool | None) -> None:
+    """Kurt, 2026-11-09: a stored "zoom" stays, connected or not."""
     repo = InMemoryUserRepository()
-    repo.update_preferences(USER, {"default_duration_minutes": 75})
+    repo.update_preferences(USER, {"default_video_platform": "zoom"})
 
-    changed = default_to_meet_on_calendar_connect(repo, USER, registry=_registry(zoom=True))
-
-    assert changed is False
-    prefs = repo.get_preferences(USER)
-    assert prefs.default_video_platform == "zoom"
-    assert has_stored_video_default(prefs) is False
+    assert _connect(repo, zoom=zoom) is False
+    assert _default(repo) == "zoom"
 
 
-@pytest.mark.parametrize("stored", ["zoom", "doxy_me", "google_meet"])
-def test_a_stored_default_is_never_changed(stored: str) -> None:
+def test_nothing_changes_for_a_clinician_with_zoom_connected() -> None:
+    """The design's acceptance: connect with Zoom connected, unchanged."""
     repo = InMemoryUserRepository()
-    repo.update_preferences(USER, {"default_video_platform": stored})
 
-    changed = default_to_meet_on_calendar_connect(repo, USER, registry=_registry(zoom=False))
+    assert _connect(repo, zoom=True) is False
+    assert _default(repo) is None
 
-    assert changed is False
-    assert repo.get_preferences(USER).default_video_platform == stored
+
+def test_a_stored_service_that_is_not_offered_becomes_meet() -> None:
+    """doxy.me with no room pasted gives no link; it is not zoom, so Meet."""
+    repo = InMemoryUserRepository()
+    repo.update_preferences(USER, {"default_video_platform": "doxy_me"})
+
+    assert _connect(repo) is True
+    assert _default(repo) == "google_meet"
+
+
+@pytest.mark.parametrize("stored", ["doxy_me", "google_meet"])
+def test_a_stored_default_that_works_is_left_alone(stored: str) -> None:
+    repo = InMemoryUserRepository()
+    repo.update_preferences(
+        USER,
+        {"default_video_platform": stored, "telehealth_room_url": "https://doxy.me/dr-test"},
+    )
+
+    assert _connect(repo) is False
+    assert _default(repo) == stored
 
 
 def test_nothing_is_set_where_the_deployment_does_not_offer_meet() -> None:
     repo = InMemoryUserRepository()
 
-    changed = default_to_meet_on_calendar_connect(repo, USER, registry=_registry(meet=False))
-
-    assert changed is False
-    assert has_stored_video_default(repo.get_preferences(USER)) is False
+    assert _connect(repo, meet=False) is False
+    assert _default(repo) is None
 
 
 def test_other_preferences_survive_the_default_being_set() -> None:
     repo = InMemoryUserRepository()
     repo.update_preferences(USER, {"default_duration_minutes": 75})
 
-    default_to_meet_on_calendar_connect(repo, USER, registry=_registry())
+    _connect(repo)
 
     prefs = repo.get_preferences(USER)
     assert prefs.default_duration_minutes == 75
@@ -193,7 +187,7 @@ def test_an_incremental_grant_does_not_set_a_default(
     )
 
     assert response.status_code == 200, response.text
-    assert has_stored_video_default(mock_user_repo.get_preferences(USER)) is False
+    assert mock_user_repo.get_preferences(USER).default_video_platform is None
 
 
 @pytest.mark.usefixtures("meet_offered")
@@ -205,7 +199,7 @@ def test_a_failed_connect_sets_nothing(
     response = client.get("/api/google-calendar/callback", params=_CONNECT)
 
     assert response.status_code == 400
-    assert has_stored_video_default(mock_user_repo.get_preferences(USER)) is False
+    assert mock_user_repo.get_preferences(USER).default_video_platform is None
 
 
 @pytest.mark.usefixtures("gcal", "meet_offered")
@@ -216,56 +210,3 @@ def test_the_connect_still_succeeds_when_the_default_cannot_be_saved(
         response = client.get("/api/google-calendar/callback", params=_CONNECT)
 
     assert response.status_code == 200, response.text
-
-
-@pytest.fixture
-def providers_client(client: TestClient) -> Iterator[TestClient]:
-    """The providers route with Meet offered and the calendar connected."""
-    settings = get_settings().model_copy(update={"telehealth_providers_enabled": "google_meet"})
-    tokens = MagicMock()
-    tokens.exists.return_value = True
-    zoom_store = MagicMock()
-    app.dependency_overrides[telehealth.get_zoom_store] = lambda: zoom_store
-    with (
-        patch.object(telehealth, "get_settings", return_value=settings),
-        patch.object(telehealth, "_gcal_token_repo_factory", return_value=tokens),
-    ):
-        yield client
-    app.dependency_overrides.pop(telehealth.get_zoom_store, None)
-
-
-def test_providers_report_a_stored_default_that_is_not_offered(
-    providers_client: TestClient, mock_user_repo: InMemoryUserRepository
-) -> None:
-    """A stored zoom with no Zoom connected: no usable default, but the screen
-    can still tell it from a clinician who never chose."""
-    mock_user_repo.update_preferences(USER, {"default_video_platform": "zoom"})
-
-    response = providers_client.get("/api/telehealth/providers")
-    assert response.status_code == 200, response.text
-    body = response.json()
-
-    assert body["default_provider"] is None
-    assert body["stored_default"] == "zoom"
-
-
-def test_providers_report_meet_once_it_is_the_default(
-    providers_client: TestClient, mock_user_repo: InMemoryUserRepository
-) -> None:
-    mock_user_repo.update_preferences(USER, {"default_video_platform": "google_meet"})
-
-    response = providers_client.get("/api/telehealth/providers")
-    assert response.status_code == 200, response.text
-    body = response.json()
-
-    assert body["default_provider"] == "google_meet"
-    assert body["stored_default"] == "google_meet"
-
-
-def test_providers_report_nothing_stored_for_a_new_account(providers_client: TestClient) -> None:
-    response = providers_client.get("/api/telehealth/providers")
-    assert response.status_code == 200, response.text
-    body = response.json()
-
-    assert body["default_provider"] is None
-    assert body["stored_default"] is None

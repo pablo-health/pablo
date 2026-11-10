@@ -23,11 +23,6 @@ export interface TelehealthProviders {
   providers: TelehealthProvider[]
   /** The default in use: null when none is saved or the saved one is not connected. */
   default_provider: string | null
-  /**
-   * What is saved as the default, connected or not. Tells "chose a service
-   * that is not connected" apart from "never chose".
-   */
-  stored_default: string | null
   room_url: string | null
   join_window_before_minutes: number
 }

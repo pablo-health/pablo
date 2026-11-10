@@ -48,7 +48,6 @@ from ..repositories import get_google_calendar_token_repository as _gcal_token_r
 from ..repositories import get_zoom_connection_store as _zoom_store_factory
 from ..services.telehealth import Clinician, MeetingProviderRegistry
 from ..services.token_encryption import derive_subkey
-from ..services.video_default import has_stored_video_default
 from ..settings import get_settings
 
 if TYPE_CHECKING:
@@ -94,10 +93,6 @@ class TelehealthProvidersResponse(BaseModel):
     #: The clinician's current default, or None when they have not chosen one
     #: this deployment offers.
     default_provider: str | None = None
-    #: What the clinician has saved as their default, offered or not, so a
-    #: screen can tell "chose a service that is not connected" from "never
-    #: chose". None when nothing is saved.
-    stored_default: str | None = None
     #: Their own permanent room, for a service that works that way.
     room_url: str | None = None
     join_window_before_minutes: int
@@ -161,9 +156,6 @@ def list_providers(
         providers=providers,
         default_provider=preferences.default_video_platform
         if preferences.default_video_platform in offered
-        else None,
-        stored_default=preferences.default_video_platform
-        if has_stored_video_default(preferences)
         else None,
         room_url=preferences.telehealth_room_url,
         join_window_before_minutes=settings.telehealth_join_window_before_minutes,

@@ -22,11 +22,7 @@ import { CalendarHoursStep } from "./CalendarHoursStep"
 import { CalendarSessionsStep } from "./CalendarSessionsStep"
 import { CalendarClientsStep, alreadyComingIn } from "./CalendarClientsStep"
 import { CalendarReviewStep } from "./CalendarReviewStep"
-import {
-  TELEHEALTH_PROVIDERS_QUERY_KEY,
-  VideoDefaultLine,
-  useVideoDefaultOffer,
-} from "./VideoDefaultLine"
+import { VideoDefaultLine, useMeetIsDefault } from "./VideoDefaultLine"
 import { newClientName, newClientNameFields, type NewClientName } from "./NewClientNameFields"
 import { seenElsewhere } from "./WhichClientsList"
 import {
@@ -36,7 +32,6 @@ import {
 } from "./importConsent"
 import { listFollowableCalendars, setFollowedCalendar } from "@/lib/api/outsideSessions"
 import { browserTimeZone } from "@/lib/dates"
-import { setDefaultVideoService } from "@/lib/api/telehealth"
 import {
   completeGoogleCalendarConnect,
   completeGoogleCalendarImportConsent,
@@ -202,10 +197,6 @@ export function CalendarSetupWizard({
   // Set when Google has just finished a connect, so the step it lands on
   // can say so; gone once the therapist moves off that step.
   const [justConnected, setJustConnected] = useState(false)
-  // "Keep Zoom" (or whatever the saved default is) tapped on that step.
-  const [keptVideoDefault, setKeptVideoDefault] = useState(false)
-  const [videoDefaultError, setVideoDefaultError] = useState<string | null>(null)
-  const [savingVideoDefault, setSavingVideoDefault] = useState(false)
   const [selection, setSelection] = useState<GoogleCalendarSelection>(DEFAULT_SELECTION)
   const [attested, setAttested] = useState(false)
   const [applying, setApplying] = useState(false)
@@ -642,39 +633,11 @@ export function CalendarSetupWizard({
   // asked. Once the hours are in, it is an ordinary step with the usual nav.
   const onHoursStep = withHoursStep && activeIndex === 0
   const askingHours = onHoursStep && !hoursSaved
-  const onSessionsStep = activeIndex === sessionsIndex
-  const showConnected = justConnected && onSessionsStep
-  const videoOffer = useVideoDefaultOffer(onSessionsStep)
-  // The Meet line shows right after a connect, to say where video sessions go.
-  // The offer over a saved default that is not connected shows on this step
-  // whenever it stands, not only after a connect: Continue is the only exit
-  // that answers it, so a clinician who went Back, jumped away or chose Finish
-  // later is asked again on return rather than left with a line that said Meet.
-  const showVideoLine =
-    onSessionsStep && (videoOffer.kind === "offer" || (showConnected && videoOffer.kind === "meet"))
-  // The line said Meet and the clinician did not keep their saved default, so
-  // continuing is their answer: Meet becomes the default before moving on.
-  const meetOnContinue = onSessionsStep && videoOffer.kind === "offer" && !keptVideoDefault
+  const showConnected = justConnected && activeIndex === sessionsIndex
+  // The connect made Meet the default when there was none that works; this
+  // only reports it, and only when it is so.
+  const meetIsDefault = useMeetIsDefault(showConnected)
   const stepNumber = (index: number) => index + 1
-
-  const continueStep = async () => {
-    if (meetOnContinue) {
-      setSavingVideoDefault(true)
-      setVideoDefaultError(null)
-      try {
-        await setDefaultVideoService("google_meet")
-        await queryClient.invalidateQueries({ queryKey: TELEHEALTH_PROVIDERS_QUERY_KEY })
-      } catch {
-        setVideoDefaultError("That didn't save. Try again.")
-        return
-      } finally {
-        setSavingVideoDefault(false)
-      }
-    }
-    setJustConnected(false)
-    if (isLastStep) finishWizard()
-    else setActiveIndex(activeIndex + 1)
-  }
 
   return (
     <SetupWizardShell
@@ -703,11 +666,13 @@ export function CalendarSetupWizard({
                   }
                 : undefined
             }
-            onContinue={() => void continueStep()}
+            onContinue={() => {
+              setJustConnected(false)
+              if (isLastStep) finishWizard()
+              else setActiveIndex(activeIndex + 1)
+            }}
             canContinue={
-              savingVideoDefault
-                ? false
-                : activeIndex === connectIndex || onHoursStep
+              activeIndex === connectIndex || onHoursStep
                 ? true
                 : importSkipped
                   ? !followSaving
@@ -729,14 +694,7 @@ export function CalendarSetupWizard({
           Google Calendar is connected.
         </p>
       ) : null}
-      {showVideoLine ? (
-        <VideoDefaultLine
-          offer={videoOffer}
-          kept={keptVideoDefault}
-          onKeep={() => setKeptVideoDefault(true)}
-          error={videoDefaultError}
-        />
-      ) : null}
+      {showConnected && meetIsDefault ? <VideoDefaultLine /> : null}
       {askingHours ? (
         <CalendarHoursStep
           step={stepNumber(0)}

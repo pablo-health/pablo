@@ -49,7 +49,6 @@ beforeEach(() => {
       { id: "manual", display_name: "A link I'll paste in", connected: true },
     ],
     default_provider: null,
-    stored_default: null,
     room_url: null,
     join_window_before_minutes: 15,
   })
@@ -86,7 +85,6 @@ describe("what the card shows", () => {
     vi.mocked(api.listTelehealthProviders).mockResolvedValue({
       providers: [{ id: "zoom", display_name: "Zoom", connected: true }],
       default_provider: "zoom",
-      stored_default: "zoom",
       room_url: null,
       join_window_before_minutes: 15,
     })
@@ -100,7 +98,6 @@ describe("what the card shows", () => {
     vi.mocked(api.listTelehealthProviders).mockResolvedValue({
       providers: [{ id: "manual", display_name: "A link I'll paste in", connected: true }],
       default_provider: null,
-      stored_default: null,
       room_url: null,
       join_window_before_minutes: 15,
     })
@@ -117,7 +114,6 @@ describe("the clinician's own room", () => {
     vi.mocked(api.listTelehealthProviders).mockResolvedValue({
       providers: [{ id: "doxy_me", display_name: "Doxy.me", connected: true }],
       default_provider: "doxy_me",
-      stored_default: "doxy_me",
       room_url: "https://clinic.example.test/me",
       join_window_before_minutes: 15,
     })
@@ -160,7 +156,6 @@ describe("the clinician's own room", () => {
     vi.mocked(api.listTelehealthProviders).mockResolvedValue({
       providers: [{ id: "doxy_me", display_name: "Doxy.me", connected: true }],
       default_provider: "doxy_me",
-      stored_default: "doxy_me",
       room_url: "https://clinic.example.test/me",
       join_window_before_minutes: 15,
     })
@@ -186,7 +181,6 @@ describe("the default video service", () => {
         { id: "manual", display_name: "A link I'll paste in", connected: true },
       ],
       default_provider: defaultProvider,
-      stored_default: defaultProvider,
       room_url: null,
       join_window_before_minutes: 15,
     })

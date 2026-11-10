@@ -94,7 +94,6 @@ function providersWith(
       { id: "zoom", display_name: "Zoom", connected: zoomConnected },
     ],
     default_provider: null,
-    stored_default: null,
     room_url: null,
     join_window_before_minutes: 15,
     ...overrides,
@@ -106,7 +105,6 @@ beforeEach(() => {
   listProviders.mockResolvedValue({
     providers: [],
     default_provider: null,
-    stored_default: null,
     room_url: null,
     join_window_before_minutes: 15,
   })
@@ -1433,24 +1431,19 @@ describe("CalendarSetupWizard saying where video sessions go", () => {
     await screen.findByText("Choose a calendar")
   }
 
-  it("says Meet when the connect made Meet the default", async () => {
-    listProviders.mockResolvedValue(
-      providersWith({ default_provider: "google_meet", stored_default: "google_meet" }),
-    )
+  it("says Meet when the connect made Meet the default, and asks nothing", async () => {
+    listProviders.mockResolvedValue(providersWith({ default_provider: "google_meet" }))
 
     await connected()
 
     expect(await screen.findByTestId("video-default-line")).toHaveTextContent(
       "Video sessions get a Google Meet link.",
     )
-    // Nothing to keep, nothing to answer.
-    expect(screen.queryByTestId("video-default-keep")).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /keep/i })).not.toBeInTheDocument()
   })
 
   it("says nothing when a connected Zoom is the default", async () => {
-    listProviders.mockResolvedValue(
-      providersWith({ default_provider: "zoom", stored_default: "zoom" }, true),
-    )
+    listProviders.mockResolvedValue(providersWith({ default_provider: "zoom" }, true))
 
     await connected()
 
@@ -1458,35 +1451,13 @@ describe("CalendarSetupWizard saying where video sessions go", () => {
     expect(screen.queryByTestId("video-default-line")).not.toBeInTheDocument()
   })
 
-  it("offers to keep a saved Zoom that is not connected, and changes nothing until asked", async () => {
-    listProviders.mockResolvedValue(providersWith({ stored_default: "zoom" }))
-
-    await connected()
-
-    expect(await screen.findByTestId("video-default-line")).toHaveTextContent(
-      "Video sessions get a Google Meet link.",
-    )
-    expect(screen.getByTestId("video-default-keep")).toHaveTextContent("Keep Zoom")
-    expect(setDefaultVideo).not.toHaveBeenCalled()
-  })
-
-  it("makes Meet the default when the clinician continues past the line", async () => {
+  it("says nothing over a stored Zoom that is not connected, and continuing changes nothing", async () => {
     const user = userEvent.setup()
-    listProviders.mockResolvedValue(providersWith({ stored_default: "zoom" }))
+    // The server left the stored zoom alone, so no default is in use.
+    listProviders.mockResolvedValue(providersWith({ default_provider: null }))
 
     await connected()
-    await screen.findByTestId("video-default-line")
-    await user.click(screen.getByRole("button", { name: "Continue" }))
-
-    await waitFor(() => expect(setDefaultVideo).toHaveBeenCalledWith("google_meet"))
-  })
-
-  it("keeps Zoom when the clinician taps Keep Zoom", async () => {
-    const user = userEvent.setup()
-    listProviders.mockResolvedValue(providersWith({ stored_default: "zoom" }))
-
-    await connected()
-    await user.click(await screen.findByTestId("video-default-keep"))
+    await waitFor(() => expect(listProviders).toHaveBeenCalled())
     expect(screen.queryByTestId("video-default-line")).not.toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Continue" }))
 
@@ -1494,29 +1465,9 @@ describe("CalendarSetupWizard saying where video sessions go", () => {
     expect(setDefaultVideo).not.toHaveBeenCalled()
   })
 
-  it("asks again after Back, and Continue from the return still makes Meet the default", async () => {
+  it("does not repeat the line on a later visit to the step", async () => {
     const user = userEvent.setup()
-    listProviders.mockResolvedValue(providersWith({ stored_default: "zoom" }))
-
-    await connected()
-    await screen.findByTestId("video-default-line")
-    await user.click(screen.getByRole("button", { name: "Back" }))
-    expect(screen.queryByTestId("video-default-line")).not.toBeInTheDocument()
-    expect(setDefaultVideo).not.toHaveBeenCalled()
-
-    await user.click(screen.getByRole("button", { name: "Continue" }))
-    await screen.findByText("Choose a calendar")
-    expect(await screen.findByTestId("video-default-keep")).toHaveTextContent("Keep Zoom")
-    await user.click(screen.getByRole("button", { name: "Continue" }))
-
-    await waitFor(() => expect(setDefaultVideo).toHaveBeenCalledWith("google_meet"))
-  })
-
-  it("does not repeat the Meet line on a later visit to the step", async () => {
-    const user = userEvent.setup()
-    listProviders.mockResolvedValue(
-      providersWith({ default_provider: "google_meet", stored_default: "google_meet" }),
-    )
+    listProviders.mockResolvedValue(providersWith({ default_provider: "google_meet" }))
 
     await connected()
     await screen.findByTestId("video-default-line")
@@ -1525,18 +1476,5 @@ describe("CalendarSetupWizard saying where video sessions go", () => {
     await screen.findByText("Choose a calendar")
 
     expect(screen.queryByTestId("video-default-line")).not.toBeInTheDocument()
-  })
-
-  it("stays on the step and says so when Meet does not save", async () => {
-    const user = userEvent.setup()
-    listProviders.mockResolvedValue(providersWith({ stored_default: "zoom" }))
-    setDefaultVideo.mockRejectedValue(new Error("down"))
-
-    await connected()
-    await screen.findByTestId("video-default-line")
-    await user.click(screen.getByRole("button", { name: "Continue" }))
-
-    expect(await screen.findByText("That didn't save. Try again.")).toBeInTheDocument()
-    expect(screen.getByText("Choose a calendar")).toBeInTheDocument()
   })
 })

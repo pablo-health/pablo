@@ -104,9 +104,7 @@ class InMemoryUserRepository(UserRepository):
         return prefs
 
     def update_preferences(self, user_id: str, changes: dict[str, Any]) -> UserPreferences:
-        # Only what was set, as the Postgres row holds only the keys written:
-        # a default nobody saved must still read as not saved afterwards.
-        saved = self.get_preferences(user_id).model_dump(exclude_unset=True)
+        saved = self.get_preferences(user_id).model_dump()
         for key, value in changes.items():
             if value is None:
                 saved.pop(key, None)
