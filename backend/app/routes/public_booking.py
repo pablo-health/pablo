@@ -96,7 +96,6 @@ from ..services.google_calendar_service import (
     google_consent_surface,
 )
 from ..services.slot_link_booking import SlotTakenError, book_slot_link, is_slot_gone, slot_window
-from ..services.telehealth import place_for_modality
 from ..settings import get_settings
 from ..utcnow import utc_now
 from .scheduling import (
@@ -748,7 +747,7 @@ def _place_hold(
                 "duration_minutes": ctx.appointment_type.duration_minutes,
                 "session_type": ctx.appointment_type.name,
                 "appointment_type_id": ctx.appointment_type.id,
-                "place_of_service": place_for_modality(ctx.appointment_type.modality),
+                "place_of_service": ctx.appointment_type.last_place_of_service,
                 "notes": "\n".join(note_lines),
                 "status": "pending",
                 "pending_expires_at": now + timedelta(minutes=HOLD_TTL_MINUTES),
@@ -978,7 +977,7 @@ def create_public_booking(
                 "duration_minutes": ctx.appointment_type.duration_minutes,
                 "session_type": ctx.appointment_type.name,
                 "appointment_type_id": ctx.appointment_type.id,
-                "place_of_service": place_for_modality(ctx.appointment_type.modality),
+                "place_of_service": ctx.appointment_type.last_place_of_service,
                 "notes": "\n".join(note_lines),
             },
         )

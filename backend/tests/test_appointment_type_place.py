@@ -1,13 +1,14 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""An appointment type remembers whether it was last booked in person or by video.
+"""An appointment type remembers the place of service it was last booked with.
 
 A type had a name and a length and nothing about where the session happens,
 so a booking made from it could not know whether it needed a video room. The
-type now learns that from use: a booking that says in person (place of
-service 11) or video (02, 10) writes it onto the type, and a later booking of
-the type that says nothing about where takes it from there. Nobody sets it in
-an editor, and a booking can always say otherwise.
+type now learns that from use: a booking that names place of service 11, 02
+or 10 writes that exact code onto the type, and a later booking of the type
+that says nothing about where takes the same code. The code reaches the
+claim, so it is never translated: a type taught with 10 fills 10, not 02.
+Nobody sets it in an editor, and a booking can always say otherwise.
 
 These go through the route, with Zoom as the clinician's connected service,
 so "gets a room" means the room was actually made.
@@ -15,6 +16,7 @@ so "gets a room" means the room was actually made.
 Bug classes these cover:
   * the learned value not reaching the next booking, or reaching one that
     said where it happens and overriding it;
+  * the remembered code translated on the way back (10 filled as 02);
   * an in-person type taking the room off a booking that asked for a video
     service or pasted a link;
   * one clinician's booking teaching another clinician's type;
@@ -24,14 +26,15 @@ Bug classes these cover:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
+from unittest.mock import MagicMock
 
 import pytest
 from app.main import app
 from app.routes import scheduling
 from app.routes.scheduling import (
     _apply_appointment_type,
-    _modality_of,
     get_appointment_type_repository,
     get_availability_rule_repository,
     get_meeting_registry,
@@ -47,6 +50,7 @@ from app.scheduling_engine.repositories.availability_rule import (
 )
 from app.scheduling_engine.services.availability import AvailabilityEngine
 from app.scheduling_engine.services.scheduling import SchedulingService
+from app.scheduling_engine.services.type_place import remember_place
 from app.services.telehealth import (
     ZOOM,
     Attendee,
@@ -156,6 +160,67 @@ def _modality(types: InMemoryAppointmentTypeRepository, type_id: str = TYPE_ID) 
     found = types.get(type_id, USER)
     assert found is not None
     return found.modality
+
+
+def _place(types: InMemoryAppointmentTypeRepository, type_id: str = TYPE_ID) -> str | None:
+    found = types.get(type_id, USER)
+    assert found is not None
+    return found.last_place_of_service
+
+
+class TestTheExactCodeComesBack:
+    """Teach with a code, book again saying nothing, read the same code back.
+
+    The first case is Tom's probe from round 1 of pablo#1928: a type taught
+    with 10 used to fill 02, and 02 went on the claim.
+    """
+
+    def test_taught_with_10_the_next_booking_is_10_and_gets_a_room(
+        self, booking_client: TestClient, types: InMemoryAppointmentTypeRepository
+    ) -> None:
+        _book(booking_client, place_of_service="10")
+
+        nothing_said = _book(booking_client)
+
+        assert nothing_said["place_of_service"] == "10"
+        assert nothing_said["provider"] == ZOOM
+        assert nothing_said["video_link"] is not None
+        assert _place(types) == "10"
+
+    def test_taught_with_02_the_next_booking_is_02_and_gets_a_room(
+        self, booking_client: TestClient, types: InMemoryAppointmentTypeRepository
+    ) -> None:
+        _book(booking_client, place_of_service="02")
+
+        nothing_said = _book(booking_client)
+
+        assert nothing_said["place_of_service"] == "02"
+        assert nothing_said["provider"] == ZOOM
+        assert _place(types) == "02"
+
+    def test_taught_with_11_the_next_booking_is_11_and_gets_no_room(
+        self, booking_client: TestClient, types: InMemoryAppointmentTypeRepository, zoom: Zoom
+    ) -> None:
+        _book(booking_client, place_of_service="11")
+
+        nothing_said = _book(booking_client)
+
+        assert nothing_said["place_of_service"] == "11"
+        assert nothing_said["provider"] is None
+        assert nothing_said["video_link"] is None
+        assert zoom.made == 0
+        assert _place(types) == "11"
+
+    def test_the_last_code_wins_between_the_two_telehealth_codes(
+        self, booking_client: TestClient, types: InMemoryAppointmentTypeRepository
+    ) -> None:
+        _book(booking_client, place_of_service="02")
+        _book(booking_client, place_of_service="10")
+
+        nothing_said = _book(booking_client)
+
+        assert nothing_said["place_of_service"] == "10"
+        assert _place(types) == "10"
 
 
 class TestTheTypeLearnsFromBookings:
@@ -276,14 +341,14 @@ class TestEditsTeachOnlyWhenTheyMovePlace:
         self, booking_client: TestClient, types: InMemoryAppointmentTypeRepository
     ) -> None:
         booked = _book(booking_client, place_of_service="11")
-        types.record_modality(TYPE_ID, USER, "video")
+        types.record_place(TYPE_ID, USER, "02")
 
         edited = booking_client.patch(
             f"/api/appointments/{booked['id']}", json={"title": "Renamed"}
         )
 
         assert edited.status_code == 200, edited.text
-        assert _modality(types) == "video"
+        assert _place(types) == "02"
 
 
 class TestPerClinician:
@@ -302,11 +367,11 @@ class TestPerClinician:
         repo = InMemoryAppointmentTypeRepository()
         repo.create(AppointmentType(id="theirs", user_id=OTHER, name="Session"))
 
-        repo.record_modality("theirs", USER, "video")
+        repo.record_place("theirs", USER, "10")
 
         theirs = repo.get("theirs", OTHER)
         assert theirs is not None
-        assert theirs.modality is None
+        assert theirs.last_place_of_service is None
 
 
 class TestTheEditorCannotSetIt:
@@ -316,27 +381,60 @@ class TestTheEditorCannotSetIt:
         _book(booking_client, place_of_service="02")
 
         response = booking_client.patch(
-            f"/api/appointment-types/{TYPE_ID}", json={"modality": "in_person"}
+            f"/api/appointment-types/{TYPE_ID}",
+            json={"modality": "in_person", "last_place_of_service": "11"},
         )
 
         assert response.status_code in (200, 422), response.text
-        assert _modality(types) == "video"
+        assert _place(types) == "02"
 
 
-class TestTheMapping:
+class TestTheRule:
     @pytest.mark.parametrize(
-        ("place", "expected"),
-        [("11", "in_person"), ("02", "video"), ("10", "video"), ("12", None), (None, None)],
+        ("place", "expected"), [("11", "in_person"), ("02", "video"), ("10", "video"), (None, None)]
     )
-    def test_place_of_service_to_modality(self, place: str | None, expected: str | None) -> None:
-        assert _modality_of(place) == expected
+    def test_modality_reads_from_the_remembered_place(
+        self, place: str | None, expected: str | None
+    ) -> None:
+        appointment_type = AppointmentType(
+            id="t",
+            user_id=USER,
+            name="Session",
+            last_place_of_service=place,  # type: ignore[arg-type]
+        )
 
-    @pytest.mark.parametrize(("modality", "place"), [("video", "02"), ("in_person", "11")])
-    def test_a_learned_type_fills_an_unset_place(self, modality: str, place: str) -> None:
+        assert appointment_type.modality == expected
+
+    @pytest.mark.parametrize("place", ["11", "02", "10"])
+    def test_a_type_fills_an_unset_place_with_its_exact_code(self, place: str) -> None:
         repo = InMemoryAppointmentTypeRepository()
-        repo.create(AppointmentType(id="t", user_id=USER, name="Session", modality=modality))  # type: ignore[arg-type]
+        repo.create(
+            AppointmentType(id="t", user_id=USER, name="Session", last_place_of_service=place)  # type: ignore[arg-type]
+        )
         data: dict[str, object] = {"appointment_type_id": "t", "place_of_service": None}
 
         _apply_appointment_type(data, user_id=USER, type_repo=repo)
 
         assert data["place_of_service"] == place
+
+    @pytest.mark.parametrize(("place", "expected"), [("12", None), (None, None), ("10", "10")])
+    def test_only_11_02_and_10_are_remembered(
+        self, place: str | None, expected: str | None
+    ) -> None:
+        repo = InMemoryAppointmentTypeRepository()
+        repo.create(AppointmentType(id="t", user_id=USER, name="Session"))
+        visit = SimpleNamespace(appointment_type_id="t", place_of_service=place)
+
+        remember_place(repo, USER, visit)  # type: ignore[arg-type]
+
+        found = repo.get("t", USER)
+        assert found is not None
+        assert found.last_place_of_service == expected
+
+    def test_a_visit_with_no_type_teaches_nothing(self) -> None:
+        repo = MagicMock()
+        visit = SimpleNamespace(appointment_type_id=None, place_of_service="10")
+
+        remember_place(repo, USER, visit)  # type: ignore[arg-type]
+
+        repo.record_place.assert_not_called()

@@ -32,14 +32,6 @@ const DURATIONS = [
   { value: "90", label: "90 min" },
 ]
 
-const PLATFORMS = [
-  { value: "zoom", label: "Zoom" },
-  { value: "google_meet", label: "Google Meet" },
-  { value: "teams", label: "Microsoft Teams" },
-  { value: "doxy", label: "Doxy.me" },
-  { value: "other", label: "Other" },
-]
-
 export function SessionDefaults({ preferences, onSave, isSaving }: SessionDefaultsProps) {
   const handleChange = (field: keyof UserPreferences, value: string | number) => {
     onSave({ [field]: value })
@@ -78,24 +70,6 @@ export function SessionDefaults({ preferences, onSave, isSaving }: SessionDefaul
           <SelectContent>
             {DURATIONS.map((d) => (
               <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      <div className="grid gap-2 sm:col-span-2 sm:max-w-[calc(50%-0.5rem)]">
-        <Label htmlFor="default-platform">Video Platform</Label>
-        <Select
-          value={preferences.default_video_platform}
-          onValueChange={(v) => handleChange("default_video_platform", v)}
-          disabled={isSaving}
-        >
-          <SelectTrigger id="default-platform">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {PLATFORMS.map((p) => (
-              <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
             ))}
           </SelectContent>
         </Select>

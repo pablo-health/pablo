@@ -10,7 +10,7 @@ import dataclasses
 import logging
 import time
 import uuid
-from collections.abc import Collection, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterator, Sequence
 from datetime import UTC, datetime, tzinfo
 from datetime import date as date_cls
 from typing import TYPE_CHECKING, Any, TypedDict
@@ -62,7 +62,6 @@ from ..models.enums import (
     video_platform_from_label,
 )
 from ..models.scheduling import (
-    TELEHEALTH_PLACES,
     AppointmentListResponse,
     AppointmentResponse,
     AppointmentTypeListResponse,
@@ -148,17 +147,13 @@ from ..scheduling_engine.exceptions import (
     RuleViolationError,
 )
 from ..scheduling_engine.models.appointment import AppointmentStatus
-from ..scheduling_engine.models.appointment_type import (
-    AppointmentType,
-    Audience,
-    HorizonUnit,
-    Modality,
-)
+from ..scheduling_engine.models.appointment_type import AppointmentType, Audience, HorizonUnit
 from ..scheduling_engine.models.availability import AvailabilityRule, EnforcementLevel, RuleType
 from ..scheduling_engine.services import floating_block
 from ..scheduling_engine.services.availability import AvailabilityEngine
 from ..scheduling_engine.services.scheduling import SchedulingService
 from ..scheduling_engine.services.scheduling_policy import load_policy, update_policy
+from ..scheduling_engine.services.type_place import remember_place
 from ..services import (
     AuditService,
     NoteService,
@@ -194,12 +189,12 @@ from ..services.telehealth import (
     Practice,
     RoomChange,
     TelehealthError,
-    place_for_modality,
     provision_meeting,
     release_meeting,
     room_change,
     wants_a_room,
 )
+from ..services.video_default import default_to_meet_on_calendar_connect
 from ..settings import get_settings
 from ..utcnow import utc_now
 
@@ -263,20 +258,6 @@ def get_appointment_type_repository(
     return _appt_type_repo_factory()
 
 
-def _modality_of(place_of_service: str | None) -> Modality | None:
-    """What a place of service says about where a visit happens, if anything.
-
-    Only office (11) and the telehealth places count. Any other place says
-    something more specific than in person or video, and teaches the type
-    nothing.
-    """
-    if place_of_service == "11":
-        return "in_person"
-    if place_of_service in TELEHEALTH_PLACES:
-        return "video"
-    return None
-
-
 def _apply_appointment_type(
     data: dict[str, object],
     *,
@@ -293,9 +274,10 @@ def _apply_appointment_type(
 
     Where the visit happens is the one other thing a type supplies, and only
     when the booking says nothing about it: no place of service, no video
-    service asked for, no link. Then the place the type was last booked at is
-    used, so a type last booked by video books by video again. A type never
-    booked either way leaves it unset.
+    service asked for, no link. Then the exact place of service the type was
+    last booked with is used (11, 02 or 10, the clinician's own code, never
+    translated), so a type last booked by video books by video again. A type
+    never booked with one leaves it unset.
 
     Mutates ``data`` in place. Raises ``NotFoundError`` for a type that is not
     this clinician's, which also stops one clinician booking against another's
@@ -309,19 +291,8 @@ def _apply_appointment_type(
         raise NotFoundError(f"Appointment type not found: {appointment_type_id}")
     data["session_type"] = appointment_type.name
     says_where = data.get("place_of_service") or data.get("video_link") or requested_provider
-    place = place_for_modality(appointment_type.modality)
-    if not says_where and place is not None:
-        data["place_of_service"] = place
-
-
-def _learn_modality(type_repo: AppointmentTypeRepository, user_id: str, appt: Appointment) -> None:
-    """Remember on the appointment's type where it was booked, if it says.
-
-    Called after the write succeeded, so a refused booking teaches nothing.
-    """
-    modality = _modality_of(appt.place_of_service)
-    if appt.appointment_type_id and modality is not None:
-        type_repo.record_modality(appt.appointment_type_id, user_id, modality)
+    if not says_where and appointment_type.last_place_of_service is not None:
+        data["place_of_service"] = appointment_type.last_place_of_service
 
 
 def _owner_timezone(user_repo: UserRepository, user_id: str) -> tzinfo:
@@ -1028,7 +999,7 @@ def create_appointment(
     # own update_appointment for linking, which resets rule_warnings).
     warnings = service.rule_warnings
     overridden = service.overridden_rules
-    _learn_modality(type_repo, user.id, appt)
+    remember_place(type_repo, user.id, appt)
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_CREATED,
         user,
@@ -1224,7 +1195,7 @@ def update_appointment(
     # Only an edit that says where the visit happens teaches the type; an
     # edit of something else is not a fresh choice of place.
     if "place_of_service" in updates:
-        _learn_modality(type_repo, user.id, appt)
+        remember_place(type_repo, user.id, appt)
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_UPDATED,
         user,
@@ -2556,6 +2527,16 @@ def _parse_incremental_capability(value: str) -> CalendarCapability:
         raise BadRequestError("Unsupported capability") from exc
 
 
+def get_savepoint() -> Callable[[], contextlib.AbstractContextManager[object]]:
+    """Opens a savepoint on the request session, for a write allowed to fail alone.
+
+    A database error aborts the whole Postgres transaction, and the commit at
+    the end of the request then quietly rolls back everything before it too.
+    Inside a savepoint only the savepoint's own work is lost.
+    """
+    return lambda: get_db_session().begin_nested()
+
+
 @router.get("/api/google-calendar/callback")
 def google_calendar_callback(
     code: str = Query(..., description="OAuth authorization code"),
@@ -2581,6 +2562,9 @@ def google_calendar_callback(
     ),
     ctx: TenantContext = Depends(get_tenant_context),
     service: GoogleCalendarService = Depends(get_google_calendar_service),
+    user_repo: UserRepository = Depends(get_user_repository),
+    meeting_registry: MeetingProviderRegistry = Depends(get_meeting_registry),
+    savepoint: Callable[[], contextlib.AbstractContextManager[object]] = Depends(get_savepoint),
 ) -> dict[str, str]:
     """Handle Google OAuth callback — exchange code for tokens.
 
@@ -2644,7 +2628,32 @@ def google_calendar_callback(
     except Exception as e:
         logger.exception("Google Calendar OAuth callback failed")
         raise BadRequestError("OAuth callback failed") from e
+    if capability is None:
+        _default_to_meet(user_repo, ctx.user_id, registry=meeting_registry, savepoint=savepoint)
     return {"status": "connected"}
+
+
+def _default_to_meet(
+    user_repo: UserRepository,
+    user_id: str,
+    *,
+    registry: MeetingProviderRegistry,
+    savepoint: Callable[[], contextlib.AbstractContextManager[object]],
+) -> None:
+    """Give a clinician with no working video default Google Meet, now that Meet works.
+
+    Never fails the connect: the calendar is connected either way, and a
+    default left as it was is what every clinician had before this existed.
+    The savepoint is what makes that true. The token row this request has
+    just written is in the same transaction, and without it a lock or
+    statement timeout here would take the connection down with the default
+    while the route still answered "connected".
+    """
+    try:
+        with savepoint():
+            default_to_meet_on_calendar_connect(user_repo, user_id, registry=registry)
+    except Exception:
+        logger.warning("Could not set the video default after a calendar connect", exc_info=True)
 
 
 @router.delete("/api/google-calendar/disconnect")

@@ -170,3 +170,64 @@ describe("the clinician's own room", () => {
     await waitFor(() => expect(api.setTelehealthRoomUrl).toHaveBeenCalledWith(null))
   })
 })
+
+describe("the default video service", () => {
+  function withMeetAndZoom(defaultProvider: string | null) {
+    vi.mocked(api.listTelehealthProviders).mockResolvedValue({
+      providers: [
+        { id: "google_meet", display_name: "Google Meet", connected: true },
+        { id: "zoom", display_name: "Zoom", connected: true },
+        { id: "doxy_me", display_name: "Doxy.me", connected: false },
+        { id: "manual", display_name: "A link I'll paste in", connected: true },
+      ],
+      default_provider: defaultProvider,
+      room_url: null,
+      join_window_before_minutes: 15,
+    })
+  }
+
+  it("marks the default", async () => {
+    withMeetAndZoom("google_meet")
+    renderCard()
+
+    expect(await screen.findByTestId("telehealth-provider-google_meet-default")).toHaveTextContent(
+      "Default",
+    )
+    expect(screen.queryByTestId("telehealth-provider-zoom-default")).not.toBeInTheDocument()
+  })
+
+  it("offers another connected service as the default, and not the one in use", async () => {
+    withMeetAndZoom("google_meet")
+    renderCard()
+
+    expect(await screen.findByTestId("telehealth-provider-zoom-make-default")).toBeInTheDocument()
+    expect(
+      screen.queryByTestId("telehealth-provider-google_meet-make-default"),
+    ).not.toBeInTheDocument()
+    // Not connected, and a pasted link is per appointment: neither can be the default.
+    expect(screen.queryByTestId("telehealth-provider-doxy_me-make-default")).not.toBeInTheDocument()
+    expect(screen.queryByTestId("telehealth-provider-manual-make-default")).not.toBeInTheDocument()
+  })
+
+  it("saves the one the clinician picks", async () => {
+    withMeetAndZoom("google_meet")
+    vi.mocked(api.setDefaultVideoService).mockResolvedValue(undefined)
+    renderCard()
+
+    await userEvent.click(await screen.findByTestId("telehealth-provider-zoom-make-default"))
+
+    await waitFor(() => expect(api.setDefaultVideoService).toHaveBeenCalledWith("zoom"))
+  })
+
+  it("says so when the default does not save", async () => {
+    withMeetAndZoom("google_meet")
+    vi.mocked(api.setDefaultVideoService).mockRejectedValue(new Error("down"))
+    renderCard()
+
+    await userEvent.click(await screen.findByTestId("telehealth-provider-zoom-make-default"))
+
+    expect(await screen.findByTestId("telehealth-settings-error")).toHaveTextContent(
+      "That didn't save. Try again.",
+    )
+  })
+})

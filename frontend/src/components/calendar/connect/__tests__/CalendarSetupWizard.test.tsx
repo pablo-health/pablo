@@ -11,6 +11,7 @@ import type {
   ImportConsentRequired,
   ImportProposal,
 } from "@/lib/api/scheduling"
+import type { TelehealthProviders } from "@/lib/api/telehealth"
 import { CalendarSetupWizard } from "../CalendarSetupWizard"
 
 const searchParams = new URLSearchParams()
@@ -72,6 +73,41 @@ vi.mock("@/lib/api/scheduling", async () => {
     completeGoogleCalendarImportConsent: (...args: unknown[]) => completeImportConsent(...args),
     confirmCalendarImport: (...args: unknown[]) => confirmImport(...args),
   }
+})
+
+const listProviders = vi.fn<() => Promise<TelehealthProviders>>()
+const setDefaultVideo = vi.fn()
+
+vi.mock("@/lib/api/telehealth", () => ({
+  listTelehealthProviders: () => listProviders(),
+  setDefaultVideoService: (...args: unknown[]) => setDefaultVideo(...args),
+}))
+
+/** The video services after a connect: Meet connected, Zoom offered. */
+function providersWith(
+  overrides: Partial<TelehealthProviders> = {},
+  zoomConnected = false,
+): TelehealthProviders {
+  return {
+    providers: [
+      { id: "google_meet", display_name: "Google Meet", connected: true },
+      { id: "zoom", display_name: "Zoom", connected: zoomConnected },
+    ],
+    default_provider: null,
+    room_url: null,
+    join_window_before_minutes: 15,
+    ...overrides,
+  }
+}
+
+// Nothing to say about video unless a test sets it up.
+beforeEach(() => {
+  listProviders.mockResolvedValue({
+    providers: [],
+    default_provider: null,
+    room_url: null,
+    join_window_before_minutes: 15,
+  })
 })
 
 const setFollowed = vi.fn()
@@ -1364,5 +1400,81 @@ describe("CalendarSetupWizard choosing the calendar to follow", () => {
     expect(screen.getByText("Import recurring sessions")).toBeInTheDocument()
     expect(routerReplace).not.toHaveBeenCalledWith("/dashboard/settings/calendars")
     expect(routerReplace).toHaveBeenCalledWith("/dashboard/settings/calendar")
+  })
+})
+
+describe("CalendarSetupWizard saying where video sessions go", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    window.sessionStorage.clear()
+    getStatus.mockResolvedValue(CONNECTED)
+    getConsentOptions.mockResolvedValue(CONSENT_OPTIONS)
+    getBusyWindows.mockResolvedValue({ windows: [] })
+    completeConnect.mockResolvedValue({ status: "connected" })
+    setDefaultVideo.mockResolvedValue(undefined)
+    searchParams.set("code", "auth-code")
+    searchParams.set("state", "state-from-google")
+    Object.defineProperty(window, "location", {
+      value: { origin: "https://app.example.test", assign: vi.fn() },
+      writable: true,
+    })
+  })
+
+  afterEach(() => {
+    searchParams.delete("code")
+    searchParams.delete("state")
+  })
+
+  async function connected() {
+    renderWizard()
+    await waitFor(() => expect(completeConnect).toHaveBeenCalled())
+    await screen.findByText("Choose a calendar")
+  }
+
+  it("says Meet when the connect made Meet the default, and asks nothing", async () => {
+    listProviders.mockResolvedValue(providersWith({ default_provider: "google_meet" }))
+
+    await connected()
+
+    expect(await screen.findByTestId("video-default-line")).toHaveTextContent(
+      "Video sessions get a Google Meet link.",
+    )
+    expect(screen.queryByRole("button", { name: /keep/i })).not.toBeInTheDocument()
+  })
+
+  it("says nothing when a connected Zoom is the default", async () => {
+    listProviders.mockResolvedValue(providersWith({ default_provider: "zoom" }, true))
+
+    await connected()
+
+    await waitFor(() => expect(listProviders).toHaveBeenCalled())
+    expect(screen.queryByTestId("video-default-line")).not.toBeInTheDocument()
+  })
+
+  it("says nothing over a stored Zoom that is not connected, and continuing changes nothing", async () => {
+    const user = userEvent.setup()
+    // The server left the stored zoom alone, so no default is in use.
+    listProviders.mockResolvedValue(providersWith({ default_provider: null }))
+
+    await connected()
+    await waitFor(() => expect(listProviders).toHaveBeenCalled())
+    expect(screen.queryByTestId("video-default-line")).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Continue" }))
+
+    await screen.findByText("Import recurring sessions")
+    expect(setDefaultVideo).not.toHaveBeenCalled()
+  })
+
+  it("does not repeat the line on a later visit to the step", async () => {
+    const user = userEvent.setup()
+    listProviders.mockResolvedValue(providersWith({ default_provider: "google_meet" }))
+
+    await connected()
+    await screen.findByTestId("video-default-line")
+    await user.click(screen.getByRole("button", { name: "Back" }))
+    await user.click(screen.getByRole("button", { name: "Continue" }))
+    await screen.findByText("Choose a calendar")
+
+    expect(screen.queryByTestId("video-default-line")).not.toBeInTheDocument()
   })
 })

@@ -2924,11 +2924,11 @@ class AppointmentTypeRow(Base):
     #: On by default — a type that exists is normally one you want offered.
     offerable: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
 
-    #: Where this type was last booked: ``in_person`` or ``video``. Learned
-    #: from bookings, never set in an editor; ``None`` means never booked
-    #: with either. A booking of this type that names no place of service
-    #: takes it from here.
-    modality: Mapped[str | None] = mapped_column(String(10))
+    #: The place of service this type was last booked with: 11, 02 or 10,
+    #: the clinician's own code. Learned from bookings, never set in an
+    #: editor; ``None`` means never booked with one. A booking of this type
+    #: that says nothing about where it happens takes this exact code.
+    last_place_of_service: Mapped[str | None] = mapped_column(String(2))
 
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -2951,8 +2951,8 @@ class AppointmentTypeRow(Base):
             "horizon_unit IN ('business', 'days')", name="ck_appointment_types_horizon_unit"
         ),
         CheckConstraint(
-            "modality IS NULL OR modality IN ('in_person', 'video')",
-            name="ck_appointment_types_modality",
+            "last_place_of_service IS NULL OR last_place_of_service IN ('11', '02', '10')",
+            name="ck_appointment_types_last_place_of_service",
         ),
     )
 

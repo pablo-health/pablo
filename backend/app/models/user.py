@@ -128,7 +128,11 @@ BOOK_SESSIONS_NAMED_IN_TITLE_BY_DEFAULT = True
 class UserPreferences(BaseModel):
     """User preferences for the companion app."""
 
-    default_video_platform: str = "zoom"
+    #: The video service a session uses when the appointment does not say.
+    #: None until the clinician has one: connecting Google Calendar makes it
+    #: Google Meet (app.services.video_default). A stored "zoom" is never
+    #: changed for them.
+    default_video_platform: str | None = None
     #: The clinician's own permanent video room, for a service that gives them
     #: one rather than a meeting per appointment (doxy.me). Pasted once, in
     #: settings. None until they do, which is why doxy.me is not offered to a

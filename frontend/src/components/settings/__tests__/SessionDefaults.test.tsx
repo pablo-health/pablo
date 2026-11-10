@@ -23,14 +23,16 @@ function createPreferences(overrides: Partial<UserPreferences> = {}): UserPrefer
 }
 
 describe("SessionDefaults", () => {
-  it("renders all three settings labels", () => {
+  it("renders the session type and duration, and no video platform", () => {
     render(
       <SessionDefaults preferences={createPreferences()} onSave={vi.fn()} isSaving={false} />
     )
 
     expect(screen.getByText("Session Type")).toBeInTheDocument()
     expect(screen.getByText("Duration")).toBeInTheDocument()
-    expect(screen.getByText("Video Platform")).toBeInTheDocument()
+    // The video service is chosen in the Video sessions card, from what is connected.
+    expect(screen.queryByText("Video Platform")).not.toBeInTheDocument()
+    expect(screen.getAllByRole("combobox")).toHaveLength(2)
   })
 
   it("displays current session type", () => {

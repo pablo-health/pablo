@@ -33,7 +33,6 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from ..scheduling_engine.exceptions import AppointmentConflictError
-from .telehealth import place_for_modality
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -97,8 +96,8 @@ def book_slot_link(
         "session_type": appointment_type.name,
         "appointment_type_id": appointment_type.id,
         # Where the visit happens is the type's, as for any booking that says
-        # nothing about it; a video type's booking is a video visit.
-        "place_of_service": place_for_modality(appointment_type.modality),
+        # nothing about it: the exact code it was last booked with.
+        "place_of_service": appointment_type.last_place_of_service,
         "notes": notes,
     }
     if policy.get("self_book_mode") != "auto":

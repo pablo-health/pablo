@@ -41,7 +41,6 @@ from app.services.telehealth import (
     Clinician,
     MeetingLink,
     MeetingProviderRegistry,
-    place_for_modality,
 )
 from app.settings import get_settings
 from app.utcnow import utc_now
@@ -125,13 +124,13 @@ def _client(
     link_repo: InMemoryBookingLinkRepository,
     monkeypatch: pytest.MonkeyPatch,
     *,
-    modality: str | None,
+    place: str | None,
     provider: RecordingProvider,
     calendar: RecordingCalendar | None = None,
 ) -> tuple[Any, Rooms]:
     client = _public_app(link_repo)
-    if modality is not None:
-        client.type_repo.record_modality(TYPE_ID, OWNER_ID, modality)
+    if place is not None:
+        client.type_repo.record_place(TYPE_ID, OWNER_ID, place)
     rooms = Rooms(client, monkeypatch, provider=provider, calendar=calendar or RecordingCalendar())
     return client, rooms
 
@@ -207,7 +206,7 @@ class TestAVideoTypeGetsARoom:
     def test_meet_is_on_the_first_push_and_the_link_is_saved(
         self, book: Any, link_repo: InMemoryBookingLinkRepository, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        client, rooms = _client(link_repo, monkeypatch, modality="video", provider=_meet())
+        client, rooms = _client(link_repo, monkeypatch, place="02", provider=_meet())
 
         appt = book(client, link_repo)
 
@@ -222,7 +221,7 @@ class TestAVideoTypeGetsARoom:
     def test_zoom_as_the_default_makes_a_zoom_meeting(
         self, book: Any, link_repo: InMemoryBookingLinkRepository, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        client, rooms = _client(link_repo, monkeypatch, modality="video", provider=_zoom())
+        client, rooms = _client(link_repo, monkeypatch, place="02", provider=_zoom())
 
         appt = book(client, link_repo)
 
@@ -232,18 +231,29 @@ class TestAVideoTypeGetsARoom:
         # The room is for the client who booked, by first name only.
         assert [a.display_name for a in rooms.provider.attendees] == ["Jane"]
 
+    def test_a_type_taught_with_10_books_the_client_as_10_with_a_room(
+        self, book: Any, link_repo: InMemoryBookingLinkRepository, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The client's booking takes the type's exact code; 10 never becomes 02."""
+        client, _rooms = _client(link_repo, monkeypatch, place="10", provider=_zoom())
+
+        appt = book(client, link_repo)
+
+        assert appt.place_of_service == "10"
+        assert appt.provider == ZOOM
+        assert appt.video_link == ZOOM_LINK
+
 
 class TestNoRoomUnlessTheTypeSaysVideo:
-    @pytest.mark.parametrize(("modality", "place"), [("in_person", "11"), (None, None)])
+    @pytest.mark.parametrize("place", ["11", None])
     def test_in_person_or_never_booked_gets_no_room(
         self,
         book: Any,
         link_repo: InMemoryBookingLinkRepository,
         monkeypatch: pytest.MonkeyPatch,
-        modality: str | None,
         place: str | None,
     ) -> None:
-        client, rooms = _client(link_repo, monkeypatch, modality=modality, provider=_zoom())
+        client, rooms = _client(link_repo, monkeypatch, place=place, provider=_zoom())
 
         appt = book(client, link_repo)
 
@@ -260,9 +270,7 @@ class TestAVendorFailureKeepsTheBooking:
     def test_the_booking_stands_without_a_link(
         self, book: Any, link_repo: InMemoryBookingLinkRepository, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        client, _rooms = _client(
-            link_repo, monkeypatch, modality="video", provider=_zoom(raises=True)
-        )
+        client, _rooms = _client(link_repo, monkeypatch, place="02", provider=_zoom(raises=True))
 
         appt = book(client, link_repo)
 
@@ -289,7 +297,7 @@ class TestAPendingMeetAnswerIsReadLater:
     ) -> None:
         calendar = SlowMeetCalendar(None, later=MEET_LINK)
         client, rooms = _client(
-            link_repo, monkeypatch, modality="video", provider=_meet(), calendar=calendar
+            link_repo, monkeypatch, place="02", provider=_meet(), calendar=calendar
         )
 
         appt = book(client, link_repo)
@@ -303,7 +311,7 @@ class TestNothingIsMadeBeforeTheBookingIsConfirmed:
     def test_a_hold_waiting_for_its_email_has_no_room(
         self, link_repo: InMemoryBookingLinkRepository, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        client, rooms = _client(link_repo, monkeypatch, modality="video", provider=_zoom())
+        client, rooms = _client(link_repo, monkeypatch, place="02", provider=_zoom())
         link_repo.create(_link())
         date_str = _bookable_date()
         client.rule_repo.create(_working_hours_rule(date_str))
@@ -319,7 +327,7 @@ class TestNothingIsMadeBeforeTheBookingIsConfirmed:
     def test_a_single_slot_request_has_no_room(
         self, link_repo: InMemoryBookingLinkRepository, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        client, rooms = _client(link_repo, monkeypatch, modality="video", provider=_zoom())
+        client, rooms = _client(link_repo, monkeypatch, place="02", provider=_zoom())
 
         appt = _book_slot_link(client, link_repo, mode="request")
 
@@ -510,10 +518,3 @@ class TestNoRoomWithoutAgreeing:
 
         assert body["video_link"] is None
         assert inbox.provider.attendees == []
-
-
-@pytest.mark.parametrize(
-    ("modality", "place"), [("video", "02"), ("in_person", "11"), (None, None)]
-)
-def test_place_for_modality(modality: str | None, place: str | None) -> None:
-    assert place_for_modality(modality) == place  # type: ignore[arg-type]  # the Literal, by value

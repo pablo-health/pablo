@@ -48,8 +48,14 @@ class VisitCodingFields(BaseModel):
     Shared between the two surfaces that write them — a standalone edit on
     the appointment (:class:`UpdateAppointmentRequest`) and note creation
     (``CreateStandaloneNoteRequest``) — so both validate identically and
-    converge on the same stored fields. Every field is optional: nothing
-    infers or defaults a code, so an unset visit stays unset.
+    converge on the same stored fields. Every field is optional, and an unset
+    field leaves the visit's code as it was.
+
+    One code is ever filled in for the clinician: a booking that names an
+    appointment type and says nothing about where the session happens takes
+    the place of service that type was last booked with, the exact code
+    (``app.scheduling_engine.services.type_place``). Nothing else infers or
+    defaults a code, so an unset visit otherwise stays unset.
     """
 
     service_code: str | None = Field(default=None, max_length=10)
@@ -563,8 +569,9 @@ class AppointmentTypeResponse(BaseModel):
     horizon_unit: str = "business"
     self_bookable: bool = False
     offerable: bool = True
-    #: Where this type was last booked, ``in_person`` or ``video``; ``None``
-    #: if never. Read-only: it is learned from bookings, not set here.
+    #: Where this type was last booked, ``in_person`` or ``video``, read from
+    #: the place of service it remembers; ``None`` if never. Read-only: it is
+    #: learned from bookings, not set here.
     modality: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None

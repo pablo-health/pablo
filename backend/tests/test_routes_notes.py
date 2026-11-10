@@ -44,6 +44,9 @@ from app.routes.notes import (
     generate_standalone_note_job,
 )
 from app.routes.notes import (
+    get_appointment_type_repository as get_notes_appointment_type_repository,
+)
+from app.routes.notes import (
     get_notes_repository as get_notes_route_notes_repository,
 )
 from app.routes.notes import (
@@ -56,7 +59,11 @@ from app.routes.sessions import (
     get_notes_repository as get_sessions_notes_repository,
 )
 from app.scheduling_engine.models.appointment import Appointment
+from app.scheduling_engine.models.appointment_type import AppointmentType
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
+from app.scheduling_engine.repositories.appointment_type import (
+    InMemoryAppointmentTypeRepository,
+)
 from app.scheduling_engine.services.scheduling import SchedulingService
 from app.services import (
     GeneratedNote,
@@ -836,10 +843,14 @@ def _seed_appointment(
     user_id: str,
     patient_id: str,
     appt_id: str = "appt-1",
+    appointment_type_id: str | None = None,
+    place_of_service: str | None = None,
 ) -> Appointment:
     now = datetime.now(UTC)
     appt = Appointment(
         id=appt_id,
+        appointment_type_id=appointment_type_id,
+        place_of_service=place_of_service,
         user_id=user_id,
         patient_id=patient_id,
         title="Weekly check-in",
@@ -963,6 +974,63 @@ class TestVisitCodingAtNoteCreation:
 
         # ...and the change is visible back through the same record.
         assert appt_repo.get("appt-1", mock_user_id).service_code == "90834"
+
+
+class TestCodingThePlaceWithTheNoteTeachesTheType:
+    """A place of service coded with the note teaches the visit's type.
+
+    The note is where a clinician mostly enters it, so the type learns there
+    the same way it learns from a booking: the exact code (PABLO-en9h.4, F2
+    of Tom's round 1 on pablo#1928).
+    """
+
+    def _wire(
+        self, mock_repo: InMemoryPatientRepository, user_id: str, **visit: str | None
+    ) -> tuple[str, InMemoryAppointmentTypeRepository]:
+        patient = seed_patient(mock_repo, user_id)
+        appt_repo = InMemoryAppointmentRepository()
+        types = InMemoryAppointmentTypeRepository()
+        types.create(AppointmentType(id="type-1", user_id=user_id, name="Session"))
+        _seed_appointment(
+            appt_repo, user_id=user_id, patient_id=patient.id, appointment_type_id="type-1", **visit
+        )
+        app.dependency_overrides[get_notes_scheduling_service] = lambda: SchedulingService(
+            appt_repo
+        )
+        app.dependency_overrides[get_notes_appointment_type_repository] = lambda: types
+        return patient.id, types
+
+    def test_a_place_coded_with_the_note_is_remembered_on_the_type(
+        self, client: TestClient, mock_repo: InMemoryPatientRepository, mock_user_id: str
+    ) -> None:
+        patient_id, types = self._wire(mock_repo, mock_user_id)
+
+        response = client.post(
+            f"/api/patients/{patient_id}/notes",
+            json={"note_type": "soap", "appointment_id": "appt-1", "place_of_service": "10"},
+        )
+
+        assert response.status_code == 201, response.text
+        remembered = types.get("type-1", mock_user_id)
+        assert remembered is not None
+        assert remembered.last_place_of_service == "10"
+
+    def test_a_note_that_codes_something_else_teaches_nothing(
+        self, client: TestClient, mock_repo: InMemoryPatientRepository, mock_user_id: str
+    ) -> None:
+        """The visit's old place is not a fresh choice, so it does not re-teach."""
+        patient_id, types = self._wire(mock_repo, mock_user_id, place_of_service="11")
+        types.record_place("type-1", mock_user_id, "10")
+
+        response = client.post(
+            f"/api/patients/{patient_id}/notes",
+            json={"note_type": "soap", "appointment_id": "appt-1", "service_code": "90837"},
+        )
+
+        assert response.status_code == 201, response.text
+        remembered = types.get("type-1", mock_user_id)
+        assert remembered is not None
+        assert remembered.last_place_of_service == "10"
 
 
 def _list_problems(repo: InMemoryPatientProblemRepository, patient_id: str, user_id: str) -> None:
