@@ -62,7 +62,6 @@ from ..models.enums import (
     video_platform_from_label,
 )
 from ..models.scheduling import (
-    TELEHEALTH_PLACES,
     AppointmentListResponse,
     AppointmentResponse,
     AppointmentTypeListResponse,
@@ -148,17 +147,13 @@ from ..scheduling_engine.exceptions import (
     RuleViolationError,
 )
 from ..scheduling_engine.models.appointment import AppointmentStatus
-from ..scheduling_engine.models.appointment_type import (
-    AppointmentType,
-    Audience,
-    HorizonUnit,
-    Modality,
-)
+from ..scheduling_engine.models.appointment_type import AppointmentType, Audience, HorizonUnit
 from ..scheduling_engine.models.availability import AvailabilityRule, EnforcementLevel, RuleType
 from ..scheduling_engine.services import floating_block
 from ..scheduling_engine.services.availability import AvailabilityEngine
 from ..scheduling_engine.services.scheduling import SchedulingService
 from ..scheduling_engine.services.scheduling_policy import load_policy, update_policy
+from ..scheduling_engine.services.type_place import remember_place
 from ..services import (
     AuditService,
     NoteService,
@@ -261,25 +256,6 @@ def get_appointment_type_repository(
     return _appt_type_repo_factory()
 
 
-#: The place of service a type's learned modality stands for, when a booking
-#: of it says nothing about where it happens.
-_PLACE_FOR_MODALITY: dict[Modality, str] = {"video": "02", "in_person": "11"}
-
-
-def _modality_of(place_of_service: str | None) -> Modality | None:
-    """What a place of service says about where a visit happens, if anything.
-
-    Only office (11) and the telehealth places count. Any other place says
-    something more specific than in person or video, and teaches the type
-    nothing.
-    """
-    if place_of_service == "11":
-        return "in_person"
-    if place_of_service in TELEHEALTH_PLACES:
-        return "video"
-    return None
-
-
 def _apply_appointment_type(
     data: dict[str, object],
     *,
@@ -296,9 +272,10 @@ def _apply_appointment_type(
 
     Where the visit happens is the one other thing a type supplies, and only
     when the booking says nothing about it: no place of service, no video
-    service asked for, no link. Then the place the type was last booked at is
-    used, so a type last booked by video books by video again. A type never
-    booked either way leaves it unset.
+    service asked for, no link. Then the exact place of service the type was
+    last booked with is used (11, 02 or 10, the clinician's own code, never
+    translated), so a type last booked by video books by video again. A type
+    never booked with one leaves it unset.
 
     Mutates ``data`` in place. Raises ``NotFoundError`` for a type that is not
     this clinician's, which also stops one clinician booking against another's
@@ -312,18 +289,8 @@ def _apply_appointment_type(
         raise NotFoundError(f"Appointment type not found: {appointment_type_id}")
     data["session_type"] = appointment_type.name
     says_where = data.get("place_of_service") or data.get("video_link") or requested_provider
-    if not says_where and appointment_type.modality is not None:
-        data["place_of_service"] = _PLACE_FOR_MODALITY[appointment_type.modality]
-
-
-def _learn_modality(type_repo: AppointmentTypeRepository, user_id: str, appt: Appointment) -> None:
-    """Remember on the appointment's type where it was booked, if it says.
-
-    Called after the write succeeded, so a refused booking teaches nothing.
-    """
-    modality = _modality_of(appt.place_of_service)
-    if appt.appointment_type_id and modality is not None:
-        type_repo.record_modality(appt.appointment_type_id, user_id, modality)
+    if not says_where and appointment_type.last_place_of_service is not None:
+        data["place_of_service"] = appointment_type.last_place_of_service
 
 
 def _owner_timezone(user_repo: UserRepository, user_id: str) -> tzinfo:
@@ -951,7 +918,7 @@ def create_appointment(
     # own update_appointment for linking, which resets rule_warnings).
     warnings = service.rule_warnings
     overridden = service.overridden_rules
-    _learn_modality(type_repo, user.id, appt)
+    remember_place(type_repo, user.id, appt)
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_CREATED,
         user,
@@ -1146,7 +1113,7 @@ def update_appointment(
     # Only an edit that says where the visit happens teaches the type; an
     # edit of something else is not a fresh choice of place.
     if "place_of_service" in updates:
-        _learn_modality(type_repo, user.id, appt)
+        remember_place(type_repo, user.id, appt)
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_UPDATED,
         user,

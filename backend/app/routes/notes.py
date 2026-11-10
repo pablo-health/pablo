@@ -80,6 +80,9 @@ from ..repositories import (
     get_appointment_repository as _appt_repo_factory,
 )
 from ..repositories import (
+    get_appointment_type_repository as _appt_type_repo_factory,
+)
+from ..repositories import (
     get_chart_history_repository as _history_repo_factory,
 )
 from ..repositories import (
@@ -99,6 +102,7 @@ from ..repositories import (
 )
 from ..scheduling_engine.exceptions import AppointmentNotFoundError
 from ..scheduling_engine.services.scheduling import SchedulingService
+from ..scheduling_engine.services.type_place import remember_place
 from ..services import (
     AuditService,
     NoteAlreadyFinalizedError,
@@ -127,6 +131,7 @@ if TYPE_CHECKING:
     from ..problems.service import ProblemService
     from ..scheduling_engine.models.appointment import Appointment
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
+    from ..scheduling_engine.repositories.appointment_type import AppointmentTypeRepository
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +178,17 @@ def get_appointment_repository(
 ) -> AppointmentRepository:
     """Get appointment repository scoped to the tenant's database."""
     return _appt_repo_factory()
+
+
+def get_appointment_type_repository(
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> AppointmentTypeRepository:
+    """Get appointment type repository scoped to the tenant's database.
+
+    Used so a place of service coded with the note teaches the visit's type,
+    the same as one entered on the appointment.
+    """
+    return _appt_type_repo_factory()
 
 
 def get_scheduling_service(
@@ -612,6 +628,7 @@ def create_standalone_note(
     registry: NoteTypeRegistry = Depends(get_registry),
     authorizer: NoteTypeAuthorizer = Depends(get_note_type_authorizer),
     scheduling_service: SchedulingService = Depends(get_scheduling_service),
+    type_repo: AppointmentTypeRepository = Depends(get_appointment_type_repository),
     problems: ProblemService = Depends(get_problem_service),
     proposal_step: ChartProposalStep = Depends(get_chart_proposal_step),
     audit: AuditService = Depends(get_audit_service),
@@ -742,7 +759,9 @@ def create_standalone_note(
     if appointment is not None:
         visit_codes = _visit_codes(request, appointment, problems)
         if visit_codes:
-            scheduling_service.update_appointment(appointment.id, user.id, **visit_codes)
+            coded = scheduling_service.update_appointment(appointment.id, user.id, **visit_codes)
+            if "place_of_service" in visit_codes:
+                remember_place(type_repo, user.id, coded)
             audit.log_appointment_action(
                 AuditAction.APPOINTMENT_UPDATED,
                 user,

@@ -1,11 +1,11 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Real-Postgres tests for the modality an appointment type learns from bookings.
+"""Real-Postgres tests for the place of service an appointment type learns from bookings.
 
 The route tests prove the rule over the in-memory repository; these prove the
 column the template and the revision add: that the value round-trips, that
 recording it is per clinician, that it does not touch ``updated_at`` (it is
-learned, not edited), and that the CHECK refuses anything but the two values.
+learned, not edited), and that the CHECK refuses anything but 11, 02 and 10.
 
 Run: ``make test-integration``.
 """
@@ -47,7 +47,7 @@ _NOW = datetime(2026, 6, 1, 10, 0, tzinfo=UTC)
 def tenant_schema(engine: Engine) -> Iterator[str]:
     from app.db.provisioning import create_practice_schema  # noqa: PLC0415
 
-    schema = f"practice_test_type_modality_{uuid.uuid4().hex[:8]}"
+    schema = f"practice_test_type_place_{uuid.uuid4().hex[:8]}"
     create_practice_schema(engine, schema)
     yield schema
     with engine.connect() as conn:
@@ -88,7 +88,7 @@ def test_a_new_type_has_never_been_booked(session: Session) -> None:
     found = repo.get(created.id, user_id)
 
     assert found is not None
-    assert found.modality is None
+    assert found.last_place_of_service is None
 
 
 def test_recording_round_trips_and_leaves_updated_at_alone(session: Session) -> None:
@@ -96,20 +96,21 @@ def test_recording_round_trips_and_leaves_updated_at_alone(session: Session) -> 
     repo = PostgresAppointmentTypeRepository(session)
     created = repo.create(_type(user_id))
 
-    repo.record_modality(created.id, user_id, "video")
+    repo.record_place(created.id, user_id, "10")
     session.commit()
     session.expire_all()
     arm_current_user_id(session, user_id)
 
     found = repo.get(created.id, user_id)
     assert found is not None
+    assert found.last_place_of_service == "10"
     assert found.modality == "video"
     assert found.updated_at == _NOW
 
-    repo.record_modality(created.id, user_id, "in_person")
+    repo.record_place(created.id, user_id, "11")
     found = repo.get(created.id, user_id)
     assert found is not None
-    assert found.modality == "in_person"
+    assert found.last_place_of_service == "11"
 
 
 def test_another_clinician_s_same_named_type_is_unaffected(session: Session) -> None:
@@ -120,21 +121,21 @@ def test_another_clinician_s_same_named_type_is_unaffected(session: Session) -> 
 
     user_b = _clinician(session)
     mine = repo.create(_type(user_b))
-    repo.record_modality(mine.id, user_b, "video")
-    repo.record_modality(theirs.id, user_b, "video")
+    repo.record_place(mine.id, user_b, "02")
+    repo.record_place(theirs.id, user_b, "02")
     session.commit()
 
     arm_current_user_id(session, user_a)
     found = repo.get(theirs.id, user_a)
     assert found is not None
-    assert found.modality is None
+    assert found.last_place_of_service is None
 
 
 def test_an_editor_update_keeps_what_was_learned(session: Session) -> None:
     user_id = _clinician(session)
     repo = PostgresAppointmentTypeRepository(session)
     created = repo.create(_type(user_id))
-    repo.record_modality(created.id, user_id, "video")
+    repo.record_place(created.id, user_id, "10")
 
     edited = repo.get(created.id, user_id)
     assert edited is not None
@@ -143,17 +144,17 @@ def test_an_editor_update_keeps_what_was_learned(session: Session) -> None:
 
     found = repo.get(created.id, user_id)
     assert found is not None
-    assert found.modality == "video"
+    assert found.last_place_of_service == "10"
 
 
-def test_the_column_refuses_anything_but_the_two_values(session: Session) -> None:
+def test_the_column_refuses_anything_but_the_three_codes(session: Session) -> None:
     user_id = _clinician(session)
     repo = PostgresAppointmentTypeRepository(session)
     created = repo.create(_type(user_id))
     session.commit()
 
-    with pytest.raises(IntegrityError, match="ck_appointment_types_modality"):
+    with pytest.raises(IntegrityError, match="ck_appointment_types_last_place_of_service"):
         session.execute(
-            text("UPDATE appointment_types SET modality = 'phone' WHERE id = :id"),
+            text("UPDATE appointment_types SET last_place_of_service = '12' WHERE id = :id"),
             {"id": created.id},
         )
