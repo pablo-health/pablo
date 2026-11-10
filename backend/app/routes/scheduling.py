@@ -620,7 +620,8 @@ def _reconcile_meeting(
     push that follows writes the event without a conference, which takes the
     conference off. A new room is made the way a booking makes one, so a
     vendor that refuses leaves the appointment without a room rather than
-    failing the edit.
+    failing the edit. Agreeing to a client's request is also an edit that can
+    owe a room (see :func:`_confirms_a_request_without_a_room`).
     """
     change = room_change(
         previous,
@@ -630,7 +631,17 @@ def _reconcile_meeting(
         registry=registry,
     )
     if change is RoomChange.KEEP:
-        return appt
+        if not _confirms_a_request_without_a_room(previous, appt, requested_provider):
+            return appt
+        return _provision_meeting(
+            service,
+            registry,
+            user_repo,
+            patient_repo,
+            user,
+            appt,
+            requested_provider=requested_provider,
+        )
     _release_meeting(registry, user, previous)
     if change is RoomChange.MANUAL:
         return service.update_appointment(
@@ -649,6 +660,27 @@ def _reconcile_meeting(
         user,
         appt,
         requested_provider=requested_provider,
+    )
+
+
+def _confirms_a_request_without_a_room(
+    previous: Appointment, appt: Appointment, requested_provider: str | None
+) -> bool:
+    """Whether this edit agreed to a client's request that is owed a room.
+
+    A request a client made through a booking link waits pending, and its room
+    is made when it is agreed to, never before: a request turned down must not
+    leave a meeting behind at the vendor. Agreeing in the app is that moment,
+    the same as the client confirming a hold. An appointment that already has
+    a room (a pending Meet, a pasted link) is
+    left as it is.
+    """
+    return (
+        previous.status == AppointmentStatus.PENDING
+        and appt.status == AppointmentStatus.CONFIRMED
+        and appt.provider is None
+        and not appt.video_link
+        and wants_a_room(appt, requested_provider=requested_provider)
     )
 
 
@@ -1168,7 +1200,8 @@ def update_appointment(
     # The room is decided from the appointment before and after the write, so
     # read the before — only when the edit could bear on the room at all.
     previous: Appointment | None = None
-    if requested_provider is not None or _ROOM_FIELDS & updates.keys():
+    confirming = updates.get("status") == AppointmentStatus.CONFIRMED
+    if requested_provider is not None or _ROOM_FIELDS & updates.keys() or confirming:
         try:
             previous = service.get_appointment(appointment_id, user.id)
         except AppointmentNotFoundError as e:

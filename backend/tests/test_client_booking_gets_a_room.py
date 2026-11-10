@@ -1,12 +1,13 @@
 """A video session a client books gets a video room (PABLO-en9h.6).
 
 Every path that turns a client's booking-link booking into a confirmed
-appointment: the instant booking, a hold the client confirms, and a
-single-slot link under ``auto``. Each takes where the visit happens from the
-type's remembered In person / Video, makes the room the clinician's default
-service makes, and only then pushes to the calendar, so a Meet conference
-rides on the first push. The registry, the calendar and the late Meet read
-are fakes; everything between the route and them is the real code.
+appointment: the instant booking, a hold the client confirms, a single-slot
+link under ``auto``, and a request the clinician agrees to in the app. Each
+takes where the visit happens from the type's remembered In person / Video,
+makes the room the clinician's default service makes, and only then pushes to
+the calendar, so a Meet conference rides on the first push. The registry, the
+calendar and the late Meet read are fakes; everything between the route and
+them is the real code.
 """
 
 from __future__ import annotations
@@ -15,14 +16,27 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from app.main import app
 from app.repositories.booking_link import InMemoryBookingLinkRepository
 from app.routes import public_booking as public_booking_module
 from app.routes import scheduling
 from app.routes.public_booking import get_public_gcal_service
+from app.routes.scheduling import (
+    get_google_calendar_service,
+    get_meet_link_follow_up,
+    get_meeting_registry,
+    get_scheduling_service,
+)
 from app.scheduling_engine.models.appointment import Appointment, AppointmentStatus
+from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
+from app.scheduling_engine.repositories.availability_rule import (
+    InMemoryAvailabilityRuleRepository,
+)
+from app.scheduling_engine.services.availability import AvailabilityEngine
 from app.scheduling_engine.services.scheduling import SchedulingService
 from app.services.telehealth import (
     GOOGLE_MEET,
+    MANUAL,
     ZOOM,
     Clinician,
     MeetingLink,
@@ -52,6 +66,8 @@ from .test_telehealth_on_the_write_path import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from fastapi.testclient import TestClient
 
 PRACTICE = "practice_room_test"
 ZOOM_LINK = "https://z.test/81"
@@ -311,6 +327,189 @@ class TestNothingIsMadeBeforeTheBookingIsConfirmed:
         assert appt.place_of_service == "02"
         assert appt.video_link is None
         assert rooms.provider.attendees == []
+
+
+class AgreeingInTheApp:
+    """The clinician's PATCH over the real SchedulingService, holding one request."""
+
+    def __init__(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+        user_id: str,
+        *,
+        provider: RecordingProvider,
+        also: tuple[RecordingProvider, ...] = (),
+    ) -> None:
+        self.client = client
+        self.user_id = user_id
+        self.provider = provider
+        self.calendar = RecordingCalendar()
+        self.appt_repo = InMemoryAppointmentRepository()
+        engine = AvailabilityEngine(InMemoryAvailabilityRuleRepository(), self.appt_repo)
+        service = SchedulingService(self.appt_repo, engine)
+        app.dependency_overrides[get_scheduling_service] = lambda: service
+        app.dependency_overrides[get_meeting_registry] = lambda: MeetingProviderRegistry(
+            [provider, *also]
+        )
+        app.dependency_overrides[get_google_calendar_service] = lambda: self.calendar
+        follow_up = InlineFollowUp(service, self.calendar)
+        app.dependency_overrides[get_meet_link_follow_up] = lambda: follow_up
+        monkeypatch.setattr(
+            scheduling,
+            "_clinician_view",
+            lambda _repo, uid: Clinician(id=uid, preferred_provider=provider.provider_id),
+        )
+
+    def request(
+        self,
+        *,
+        place: str | None = "02",
+        status: str = AppointmentStatus.PENDING,
+        video_link: str | None = None,
+        provider: str | None = None,
+    ) -> Appointment:
+        """A request as a single-slot link under ``request`` leaves it: no room yet."""
+        start = _slot_start()
+        return self.appt_repo.create(
+            Appointment(
+                id="appt-request",
+                user_id=self.user_id,
+                patient_id="patient-1",
+                title="Intro call",
+                start_at=start,
+                end_at=start + timedelta(minutes=30),
+                duration_minutes=30,
+                status=status,
+                session_type="Intro call",
+                place_of_service=place,
+                video_link=video_link,
+                provider=MANUAL if video_link else provider,
+            )
+        )
+
+    def patch(self, **body: Any) -> dict[str, Any]:
+        resp = self.client.patch("/api/appointments/appt-request", json=body)
+        assert resp.status_code == 200, resp.text
+        result: dict[str, Any] = resp.json()
+        return result
+
+
+@pytest.fixture
+def agree(client: TestClient, monkeypatch: pytest.MonkeyPatch, mock_user_id: str) -> Any:
+    def make(
+        provider: RecordingProvider, also: tuple[RecordingProvider, ...] = ()
+    ) -> AgreeingInTheApp:
+        return AgreeingInTheApp(client, monkeypatch, mock_user_id, provider=provider, also=also)
+
+    return make
+
+
+class TestARequestAgreedToInTheAppGetsItsRoom:
+    def test_zoom_room_is_made_when_the_request_is_confirmed(self, agree: Any) -> None:
+        inbox = agree(_zoom())
+        inbox.request()
+
+        body = inbox.patch(status="confirmed")
+
+        assert body["status"] == "confirmed"
+        assert body["provider"] == ZOOM
+        assert body["video_link"] == ZOOM_LINK
+        assert body["meeting_external_id"] == "81"
+        # Made once, and the one push carries the link.
+        assert len(inbox.provider.attendees) == 1
+        assert len(inbox.calendar.events) == 1
+
+    def test_meet_is_on_the_push_that_follows(self, agree: Any) -> None:
+        inbox = agree(_meet())
+        inbox.request()
+
+        body = inbox.patch(status="confirmed")
+
+        assert body["provider"] == GOOGLE_MEET
+        assert body["video_link"] == MEET_LINK
+        assert len(inbox.calendar.events) == 1
+        assert inbox.calendar.last_conference is not None
+
+    def test_an_in_person_request_gets_no_room(self, agree: Any) -> None:
+        inbox = agree(_zoom())
+        inbox.request(place="11")
+
+        body = inbox.patch(status="confirmed")
+
+        assert body["status"] == "confirmed"
+        assert body["provider"] is None
+        assert body["video_link"] is None
+        assert inbox.provider.attendees == []
+        assert inbox.calendar.last_conference is None
+
+    def test_a_pasted_link_is_kept_and_no_vendor_is_asked(self, agree: Any) -> None:
+        inbox = agree(_zoom())
+        inbox.request(video_link="https://practice.test/r")
+
+        body = inbox.patch(status="confirmed")
+
+        assert body["video_link"] == "https://practice.test/r"
+        assert body["provider"] == MANUAL
+        assert inbox.provider.attendees == []
+
+    def test_a_meet_room_already_asked_for_is_not_replaced(self, agree: Any) -> None:
+        # The request already holds a Meet room whose link Google has not
+        # handed back yet; the clinician's default is now Zoom. Agreeing to
+        # the request keeps the room it has rather than making a second one.
+        meet = _meet()
+        inbox = agree(_zoom(), also=(meet,))
+        inbox.request(provider=GOOGLE_MEET)
+
+        body = inbox.patch(status="confirmed")
+
+        assert body["provider"] == GOOGLE_MEET
+        assert inbox.provider.attendees == []
+
+    def test_a_vendor_failure_still_confirms(self, agree: Any) -> None:
+        inbox = agree(_zoom(raises=True))
+        inbox.request()
+
+        body = inbox.patch(status="confirmed")
+
+        assert body["status"] == "confirmed"
+        assert body["video_link"] is None
+        assert body["provider"] is None
+
+
+class TestNoRoomWithoutAgreeing:
+    def test_editing_a_request_that_stays_pending_makes_no_room(self, agree: Any) -> None:
+        inbox = agree(_zoom())
+        inbox.request()
+
+        body = inbox.patch(title="Intro call (moved)")
+
+        assert body["status"] == "pending"
+        assert body["video_link"] is None
+        assert inbox.provider.attendees == []
+
+    def test_re_saving_where_a_pending_request_happens_makes_no_room(self, agree: Any) -> None:
+        # The edit form sends the place back unchanged; the request is still
+        # waiting for an answer, so it still has no room.
+        inbox = agree(_zoom())
+        inbox.request()
+
+        body = inbox.patch(place_of_service="02")
+
+        assert body["status"] == "pending"
+        assert body["video_link"] is None
+        assert inbox.provider.attendees == []
+
+    def test_confirming_a_confirmed_appointment_makes_no_room(self, agree: Any) -> None:
+        # Not a request agreed to: a confirmed visit with no room is one the
+        # clinician left that way, and saving it again does not change that.
+        inbox = agree(_zoom())
+        inbox.request(status=AppointmentStatus.CONFIRMED)
+
+        body = inbox.patch(status="confirmed")
+
+        assert body["video_link"] is None
+        assert inbox.provider.attendees == []
 
 
 @pytest.mark.parametrize(
