@@ -1935,3 +1935,262 @@ def test_google_busy_time_is_not_offered(
     assert busy not in offered
     assert _at(10) in offered
     assert _at(12) in offered
+
+
+# ---------------------------------------------------------------------------
+# The clinician's calendar
+# ---------------------------------------------------------------------------
+
+
+class _FakeGoogle:
+    """Google Calendar at the service boundary: what was pushed and deleted.
+
+    Patched onto ``GoogleCalendarService`` so the route builds its own service
+    over its own session, as in production, and only the call to Google is
+    stood in for. ``fail`` makes every push raise, as a Google outage does.
+    """
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, *, fail: bool = False) -> None:
+        from app.services.google_calendar_service import (  # noqa: PLC0415
+            GoogleCalendarService,
+        )
+
+        self.pushed: list[tuple[str, str, datetime]] = []
+        self.deleted: list[tuple[str, str]] = []
+        fake = self
+
+        def _push(_self: GoogleCalendarService, user_id: str, appt: Any) -> str:
+            if fail:
+                raise RuntimeError("Google is down")
+            fake.pushed.append((user_id, appt.id, appt.start_at))
+            return f"evt-{appt.id}"
+
+        def _delete(_self: GoogleCalendarService, user_id: str, event_id: str) -> bool:
+            fake.deleted.append((user_id, event_id))
+            return True
+
+        monkeypatch.setattr(GoogleCalendarService, "push_appointment", _push)
+        monkeypatch.setattr(GoogleCalendarService, "delete_event", _delete)
+
+
+def _sync_of(engine: Engine, appointment_id: str) -> tuple[str | None, str | None]:
+    """``(google_event_id, google_sync_status)``, read as the clinician."""
+    with engine.begin() as conn:
+        conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
+        conn.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _CLINICIAN})
+        row = conn.execute(
+            text(
+                "SELECT google_event_id, google_sync_status FROM appointments "
+                "WHERE id = CAST(:i AS uuid)"
+            ),
+            {"i": appointment_id},
+        ).one()
+    return row[0], row[1]
+
+
+def _seed_synced_appointment(engine: Engine, patient_id: str, start: datetime) -> str:
+    """An appointment already on the clinician's calendar, as an in-app save leaves it."""
+    appointment_id = _seed_appointment(engine, patient_id, start)
+    with engine.begin() as conn:
+        conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
+        conn.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _CLINICIAN})
+        conn.execute(
+            text(
+                "UPDATE appointments SET google_event_id = :e, google_sync_status = 'synced' "
+                "WHERE id = CAST(:i AS uuid)"
+            ),
+            {"e": f"evt-{appointment_id}", "i": appointment_id},
+        )
+    return appointment_id
+
+
+def test_a_booking_the_practice_takes_goes_on_the_clinicians_calendar(
+    engine: Engine,
+    practice: dict[str, Any],
+    patient_a_client: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    google = _FakeGoogle(monkeypatch)
+    _open_policy(engine)
+    _clear_appointments(engine)
+
+    response = patient_a_client.post(
+        "/api/patient/booking",
+        json={"start_at": _at(11).isoformat(), "session_type": _SESSION_TYPE},
+    )
+
+    assert response.status_code == 201, response.text
+    appointment_id = response.json()["id"]
+    # The clinician's calendar, never the patient's.
+    assert google.pushed == [(_CLINICIAN, appointment_id, _at(11))]
+    assert _sync_of(engine, appointment_id) == (f"evt-{appointment_id}", "synced")
+
+
+def test_a_booking_request_waits_for_the_clinician_before_the_calendar(
+    engine: Engine,
+    practice: dict[str, Any],
+    patient_a_client: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pending request is pushed when the clinician confirms it in-app."""
+    google = _FakeGoogle(monkeypatch)
+    _set_policy(
+        engine,
+        self_book_existing=True,
+        self_book_mode="request",
+        min_notice_hours=1,
+        max_horizon_days=60,
+    )
+    _clear_appointments(engine)
+
+    response = patient_a_client.post(
+        "/api/patient/booking",
+        json={"start_at": _at(11).isoformat(), "session_type": _SESSION_TYPE},
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["status"] == "pending"
+    assert google.pushed == []
+    assert _sync_of(engine, response.json()["id"]) == (None, None)
+
+
+def test_a_calendar_outage_never_fails_the_booking(
+    engine: Engine,
+    practice: dict[str, Any],
+    patient_a_client: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The booking stands, and the row says the calendar push failed."""
+    _FakeGoogle(monkeypatch, fail=True)
+    _open_policy(engine)
+    _clear_appointments(engine)
+
+    response = patient_a_client.post(
+        "/api/patient/booking",
+        json={"start_at": _at(11).isoformat(), "session_type": _SESSION_TYPE},
+    )
+
+    assert response.status_code == 201, response.text
+    appointment_id = response.json()["id"]
+    assert _status_of(engine, appointment_id) == "confirmed"
+    assert _sync_of(engine, appointment_id) == (None, "error")
+
+
+def test_a_reschedule_moves_the_event_on_the_clinicians_calendar(
+    engine: Engine,
+    practice: dict[str, Any],
+    patient_a_client: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The old time's event comes off and the new time goes on, never one alone."""
+    google = _FakeGoogle(monkeypatch)
+    _open_policy(engine)
+    _clear_appointments(engine)
+    original_id = _seed_synced_appointment(engine, practice["a"], _at(10))
+
+    response = patient_a_client.post(
+        f"/api/patient/booking/{original_id}/reschedule",
+        json={"start_at": _at(14).isoformat()},
+    )
+
+    assert response.status_code == 200, response.text
+    new_id = response.json()["id"]
+    assert google.deleted == [(_CLINICIAN, f"evt-{original_id}")]
+    assert google.pushed == [(_CLINICIAN, new_id, _at(14))]
+    assert _sync_of(engine, new_id) == (f"evt-{new_id}", "synced")
+
+
+def test_a_calendar_outage_never_fails_a_reschedule(
+    engine: Engine,
+    practice: dict[str, Any],
+    patient_a_client: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeGoogle(monkeypatch, fail=True)
+    _open_policy(engine)
+    _clear_appointments(engine)
+    original_id = _seed_appointment(engine, practice["a"], _at(10))
+
+    response = patient_a_client.post(
+        f"/api/patient/booking/{original_id}/reschedule",
+        json={"start_at": _at(14).isoformat()},
+    )
+
+    assert response.status_code == 200, response.text
+    new_id = response.json()["id"]
+    assert _status_of(engine, new_id) == "confirmed"
+    assert _sync_of(engine, new_id) == (None, "error")
+
+
+def test_a_cancellation_takes_the_event_off_the_clinicians_calendar(
+    engine: Engine,
+    practice: dict[str, Any],
+    patient_a_client: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    google = _FakeGoogle(monkeypatch)
+    _open_policy(engine)
+    _clear_appointments(engine)
+    appointment_id = _seed_synced_appointment(engine, practice["a"], _at(10))
+
+    response = patient_a_client.post(f"/api/patient/booking/{appointment_id}/cancel")
+
+    assert response.status_code == 200, response.text
+    assert google.deleted == [(_CLINICIAN, f"evt-{appointment_id}")]
+    assert google.pushed == []
+
+
+def test_a_calendar_outage_never_fails_a_cancellation(
+    engine: Engine,
+    practice: dict[str, Any],
+    patient_a_client: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.google_calendar_service import (  # noqa: PLC0415
+        GoogleCalendarService,
+    )
+
+    def _down(_self: GoogleCalendarService, _user_id: str, _event_id: str) -> bool:
+        raise RuntimeError("Google is down")
+
+    monkeypatch.setattr(GoogleCalendarService, "delete_event", _down)
+    _open_policy(engine)
+    _clear_appointments(engine)
+    appointment_id = _seed_synced_appointment(engine, practice["a"], _at(10))
+
+    response = patient_a_client.post(f"/api/patient/booking/{appointment_id}/cancel")
+
+    assert response.status_code == 200, response.text
+    assert _status_of(engine, appointment_id) == "cancelled"
+
+
+def test_a_failure_around_the_push_never_fails_the_booking(
+    engine: Engine,
+    practice: dict[str, Any],
+    patient_a_client: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Not only Google: anything the push touches after the booking committed.
+
+    The booking is already in the diary by then, so a 5xx would tell the
+    client it was not.
+    """
+    from app.routes import patient_booking  # noqa: PLC0415
+
+    google = _FakeGoogle(monkeypatch)
+
+    def _broken(_self: Any, _user_id: str) -> None:
+        raise RuntimeError("lookup failed")
+
+    monkeypatch.setattr(patient_booking.PostgresUserRepository, "get", _broken)
+    _open_policy(engine)
+    _clear_appointments(engine)
+
+    response = patient_a_client.post(
+        "/api/patient/booking",
+        json={"start_at": _at(11).isoformat(), "session_type": _SESSION_TYPE},
+    )
+
+    assert response.status_code == 201, response.text
+    assert _status_of(engine, response.json()["id"]) == "confirmed"
+    assert google.pushed == []
