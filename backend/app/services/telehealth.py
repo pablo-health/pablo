@@ -600,9 +600,14 @@ class LinkTrail:
 
 
 #: Statuses where a missing link is expected. A request gets its room when it
-#: is agreed to, and nobody joins a cancelled or missed session.
+#: is agreed to, and nobody joins a cancelled, missed or finished session.
 _NO_LINK_EXPECTED: Final = frozenset(
-    {AppointmentStatus.PENDING, AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW}
+    {
+        AppointmentStatus.PENDING,
+        AppointmentStatus.CANCELLED,
+        AppointmentStatus.NO_SHOW,
+        AppointmentStatus.COMPLETED,
+    }
 )
 
 

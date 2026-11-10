@@ -180,6 +180,7 @@ from ..services.google_calendar_service import (
     DEFAULT_EVENT_TITLING,
     DEFAULT_WRITE_TARGET,
     GoogleCalendarService,
+    PushedEvent,
     RetitleOutcome,
     google_consent_surface,
     wait_for_conference,
@@ -868,7 +869,15 @@ def _fill_meet_link(
     not come back is not this clinician's to write, so nothing is written.
     Returns the appointment with its link, or None when nothing was written.
     """
-    pushed = gcal_service.read_appointment_event(user_id, event_id)
+    try:
+        pushed = gcal_service.read_appointment_event(user_id, event_id)
+    except Exception:
+        # One read and no retry, so a 429, a 5xx or a deleted event ends here.
+        # The appointment still has no link, and that still has to be said.
+        logger.exception("The late read of a Google Meet link failed")
+        pushed, read_failed = None, True
+    else:
+        read_failed = False
     link = pushed.conference_url if pushed else None
     try:
         appt = service.get_appointment(appointment_id, user_id)
@@ -884,17 +893,25 @@ def _fill_meet_link(
     if not link:
         # The last read there will be. The save logged nothing because this
         # read was still to come, so this is where the missing link is said.
-        gave_up = pushed is not None and not pushed.conference_pending
-        log_missing_link(
-            appt,
-            trail=LinkTrail(
-                MissingLinkReason.PROVIDER_FAILED
-                if gave_up
-                else MissingLinkReason.CONFERENCE_PENDING_TIMEOUT
-            ),
-        )
+        log_missing_link(appt, trail=LinkTrail(_late_read_reason(pushed, read_failed=read_failed)))
         return None
     return service.update_appointment(appointment_id, user_id, video_link=link)
+
+
+def _late_read_reason(pushed: PushedEvent | None, *, read_failed: bool) -> MissingLinkReason:
+    """Why the late read of a Meet link came back without one.
+
+    A read that failed never learned what Google made, so the conference is
+    still the pending one the save left. A read that answered None found no
+    calendar connection, which the save calls a disconnect too.
+    """
+    if read_failed:
+        return MissingLinkReason.CONFERENCE_PENDING_TIMEOUT
+    if pushed is None:
+        return MissingLinkReason.CALENDAR_DISCONNECTED
+    if not pushed.conference_pending:
+        return MissingLinkReason.PROVIDER_FAILED
+    return MissingLinkReason.CONFERENCE_PENDING_TIMEOUT
 
 
 def _push_cancellation_to_google(

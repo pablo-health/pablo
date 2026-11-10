@@ -254,6 +254,56 @@ class TestEachReasonOnTheClinicianSave:
         assert follow_up.runs == 1
         assert _only_reason(warnings) == MissingLinkReason.PROVIDER_FAILED
 
+    @pytest.mark.usefixtures("wait_budget")
+    def test_a_late_read_that_raises_is_conference_pending_timeout(
+        self,
+        client: TestClient,
+        warnings: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Google busy on the one late read (a 429, a 5xx): the reason is still said."""
+        calendar = SlowMeetCalendar(None)
+        follow_up = _meet_booking(client, monkeypatch, calendar)
+        original = calendar.read_appointment_event
+
+        def read(user_id: str, event_id: str) -> PushedEvent:
+            if calendar.following_up:
+                raise RuntimeError("google is busy")
+            return original(user_id, event_id)
+
+        monkeypatch.setattr(calendar, "read_appointment_event", read)
+
+        response = client.post("/api/appointments", json=_video())
+
+        assert response.status_code == 201, response.text
+        assert follow_up.runs == 1
+        assert _only_reason(warnings) == MissingLinkReason.CONFERENCE_PENDING_TIMEOUT
+
+    @pytest.mark.usefixtures("wait_budget")
+    def test_a_late_read_that_finds_no_calendar_is_calendar_disconnected(
+        self,
+        client: TestClient,
+        warnings: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The clinician disconnected between the save and the late read."""
+        calendar = SlowMeetCalendar(None)
+        follow_up = _meet_booking(client, monkeypatch, calendar)
+        original = calendar.read_appointment_event
+
+        def read(user_id: str, event_id: str) -> PushedEvent | None:
+            if calendar.following_up:
+                return None
+            return original(user_id, event_id)
+
+        monkeypatch.setattr(calendar, "read_appointment_event", read)
+
+        response = client.post("/api/appointments", json=_video())
+
+        assert response.status_code == 201, response.text
+        assert follow_up.runs == 1
+        assert _only_reason(warnings) == MissingLinkReason.CALENDAR_DISCONNECTED
+
     def test_never_provisioned_on_an_edit_that_asks_for_no_room(
         self,
         write_client: TestClient,  # noqa: F811
@@ -274,6 +324,28 @@ class TestEachReasonOnTheClinicianSave:
 
         assert updated.status_code == 200, updated.text
         assert _only_reason(warnings) == MissingLinkReason.NEVER_PROVISIONED
+
+    def test_marking_a_video_visit_completed_logs_nothing(
+        self,
+        write_client: TestClient,  # noqa: F811
+        warnings: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Charting a session that already happened is not a missing link."""
+        _calendar(RecordingCalendar())
+        app.dependency_overrides[get_meeting_registry] = lambda: MeetingProviderRegistry([])
+        _prefers(monkeypatch, ZOOM)
+        created = write_client.post("/api/appointments", json=_video())
+        assert created.status_code == 201, created.text
+        warnings.clear()
+
+        updated = write_client.patch(
+            f"/api/appointments/{created.json()['id']}", json={"status": "completed"}
+        )
+
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["status"] == "completed"
+        assert _missing(warnings) == []
 
     def test_an_edit_to_video_with_nothing_connected_is_no_offered_service(
         self,
@@ -561,12 +633,18 @@ def _appointment(**overrides: Any) -> Appointment:
 class TestTheHelperOnItsOwn:
     @pytest.mark.parametrize(
         "status",
-        [AppointmentStatus.PENDING, AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW],
+        [
+            AppointmentStatus.PENDING,
+            AppointmentStatus.CANCELLED,
+            AppointmentStatus.NO_SHOW,
+            AppointmentStatus.COMPLETED,
+        ],
     )
     def test_an_appointment_not_going_ahead_logs_nothing(
         self, status: AppointmentStatus, warnings: pytest.LogCaptureFixture
     ) -> None:
-        """A request gets its room when it is agreed to; nobody joins a cancelled one."""
+        """A request gets its room when it is agreed to; nobody joins a cancelled,
+        missed or finished one."""
         logged = log_missing_link(
             _appointment(place_of_service="02", status=status), trail=LinkTrail()
         )
