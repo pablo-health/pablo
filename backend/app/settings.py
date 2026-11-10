@@ -2236,6 +2236,18 @@ class Settings(BaseSettings):
             "Unset (the ordinary case) means Google itself."
         ),
     )
+    google_meet_link_wait_seconds: float = Field(
+        default=2.0,
+        ge=0,
+        le=10,
+        description=(
+            "How long saving a Google Meet appointment may wait for the Meet "
+            "link when Google is still making the conference, so the link is "
+            "on the appointment the save returns. Past this the save returns "
+            "without it and the link is read once more shortly after. 0 never "
+            "waits."
+        ),
+    )
     calendar_sync_rate_per_min: int = Field(
         default=2,
         ge=1,
