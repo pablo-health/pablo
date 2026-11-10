@@ -194,9 +194,11 @@ from ..services.telehealth import (
     Practice,
     RoomChange,
     TelehealthError,
+    place_for_modality,
     provision_meeting,
     release_meeting,
     room_change,
+    wants_a_room,
 )
 from ..settings import get_settings
 from ..utcnow import utc_now
@@ -261,11 +263,6 @@ def get_appointment_type_repository(
     return _appt_type_repo_factory()
 
 
-#: The place of service a type's learned modality stands for, when a booking
-#: of it says nothing about where it happens.
-_PLACE_FOR_MODALITY: dict[Modality, str] = {"video": "02", "in_person": "11"}
-
-
 def _modality_of(place_of_service: str | None) -> Modality | None:
     """What a place of service says about where a visit happens, if anything.
 
@@ -312,8 +309,9 @@ def _apply_appointment_type(
         raise NotFoundError(f"Appointment type not found: {appointment_type_id}")
     data["session_type"] = appointment_type.name
     says_where = data.get("place_of_service") or data.get("video_link") or requested_provider
-    if not says_where and appointment_type.modality is not None:
-        data["place_of_service"] = _PLACE_FOR_MODALITY[appointment_type.modality]
+    place = place_for_modality(appointment_type.modality)
+    if not says_where and place is not None:
+        data["place_of_service"] = place
 
 
 def _learn_modality(type_repo: AppointmentTypeRepository, user_id: str, appt: Appointment) -> None:
@@ -498,13 +496,19 @@ class _LazyZoomStore:
 def get_meeting_registry(
     _ctx: TenantContext = Depends(get_tenant_context),
 ) -> MeetingProviderRegistry:
-    """The video services this deployment can offer, for this request.
+    """The video services this deployment can offer, for this request."""
+    return build_meeting_registry()
+
+
+def build_meeting_registry() -> MeetingProviderRegistry:
+    """The video services this deployment can offer, over the current session.
 
     Google Meet is offered only to a clinician whose calendar is connected,
     because the conference lives on the calendar event. The check is passed in
     as a callable so the Meet adapter never holds a calendar service — and so
     that nothing here reads the database until a provider that needs it is
-    both configured and asked.
+    both configured and asked. That is also what lets a public booking build
+    it before its session has entered the link's practice.
     """
     from ..meeting_providers.registry import build_registry
 
@@ -646,6 +650,47 @@ def _reconcile_meeting(
         appt,
         requested_provider=requested_provider,
     )
+
+
+@dataclasses.dataclass
+class ClientBookingRoom:
+    """Gives a booking a client made its video room, then puts it on the calendar.
+
+    The clinician create path does the same two steps in the same order; a
+    client booking never names a video service, so the clinician's default
+    one is used, and only when the booking is a video visit (its place of
+    service, which came from its type). Best-effort like that path: a vendor
+    that will not make a room leaves the booking in place without a link.
+    """
+
+    registry: MeetingProviderRegistry
+    user_repo: UserRepository
+    patient_repo: PatientRepository
+    gcal_service: GoogleCalendarService
+    background: BackgroundTasks
+    follow_up: MeetLinkFollowUp
+
+    def settle(self, service: SchedulingService, owner: User, appt: Appointment) -> Appointment:
+        # Asked first so an in-person booking reads no preferences and no
+        # chart: it was never going to get a room.
+        if wants_a_room(appt, requested_provider=None):
+            appt = _provision_meeting(
+                service,
+                self.registry,
+                self.user_repo,
+                self.patient_repo,
+                owner,
+                appt,
+                requested_provider=None,
+            )
+        return _sync_appointment_to_google(
+            service,
+            self.gcal_service,
+            owner,
+            appt,
+            background=self.background,
+            follow_up=self.follow_up,
+        )
 
 
 def _sync_appointment_to_google(

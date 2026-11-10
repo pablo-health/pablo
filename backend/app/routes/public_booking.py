@@ -96,9 +96,15 @@ from ..services.google_calendar_service import (
     google_consent_surface,
 )
 from ..services.slot_link_booking import SlotTakenError, book_slot_link, is_slot_gone, slot_window
+from ..services.telehealth import place_for_modality
 from ..settings import get_settings
 from ..utcnow import utc_now
-from .scheduling import _push_cancellation_to_google, _sync_appointment_to_google
+from .scheduling import (
+    ClientBookingRoom,
+    MeetLinkFollowUp,
+    _push_cancellation_to_google,
+    build_meeting_registry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -288,6 +294,31 @@ def get_public_gcal_service(
         google_consent_surface(get_settings()),
         token_repo=token_repo,
         appointment_repo=appt_repo,
+    )
+
+
+def get_public_client_booking_room(
+    background: BackgroundTasks,
+    ctx: PublicBookingContext = Depends(get_public_booking_context),
+    gcal_service: GoogleCalendarService = Depends(get_public_gcal_service),
+    user_repo: UserRepository = Depends(get_user_repository),
+    patient_repo: PatientRepository = Depends(get_patient_repository),
+) -> ClientBookingRoom:
+    """The video room and calendar push for a client's booking, in the link's practice.
+
+    Nothing here reads the database when built: the registry asks for the
+    owner's calendar and Zoom connections only when a room is being made,
+    by which time the session is inside the link's practice. The late Meet
+    read opens its own session on the link's practice, since a public request
+    has no tenant context to borrow one from.
+    """
+    return ClientBookingRoom(
+        registry=build_meeting_registry(),
+        user_repo=user_repo,
+        patient_repo=patient_repo,
+        gcal_service=gcal_service,
+        background=background,
+        follow_up=MeetLinkFollowUp(ctx.link.practice_schema),
     )
 
 
@@ -717,6 +748,7 @@ def _place_hold(
                 "duration_minutes": ctx.appointment_type.duration_minutes,
                 "session_type": ctx.appointment_type.name,
                 "appointment_type_id": ctx.appointment_type.id,
+                "place_of_service": place_for_modality(ctx.appointment_type.modality),
                 "notes": "\n".join(note_lines),
                 "status": "pending",
                 "pending_expires_at": now + timedelta(minutes=HOLD_TTL_MINUTES),
@@ -773,7 +805,7 @@ class SingleSlotDeps:
     scheduling: SchedulingService
     patient_repo: PatientRepository
     coverage: CoverageRepos
-    gcal_service: GoogleCalendarService
+    room: ClientBookingRoom
     load_policy: Callable[[], dict[str, object]]
 
 
@@ -837,7 +869,7 @@ def _book_single_slot(
     )
     confirmed = appt.status == AppointmentStatus.CONFIRMED
     if confirmed:
-        _sync_appointment_to_google(deps.scheduling, deps.gcal_service, ctx.owner, appt)
+        deps.room.settle(deps.scheduling, ctx.owner, appt)
 
     return PublicBookingConfirmation(
         host_name=ctx.link.host_name,
@@ -867,7 +899,7 @@ def create_public_booking(
     scheduling: SchedulingService = Depends(get_public_scheduling_service),
     patient_repo: PatientRepository = Depends(get_patient_repository),
     repos: CoverageRepos = Depends(get_public_coverage_repos),
-    gcal_service: GoogleCalendarService = Depends(get_public_gcal_service),
+    room: ClientBookingRoom = Depends(get_public_client_booking_room),
     sender: EmailSender = Depends(get_email_sender),
     audit: AuditService = Depends(get_audit_service),
     link_repo: BookingLinkRepository = Depends(get_booking_link_repository),
@@ -893,7 +925,7 @@ def create_public_booking(
                 scheduling=scheduling,
                 patient_repo=patient_repo,
                 coverage=repos,
-                gcal_service=gcal_service,
+                room=room,
                 load_policy=load_policy,
             ),
             http_request,
@@ -946,6 +978,7 @@ def create_public_booking(
                 "duration_minutes": ctx.appointment_type.duration_minutes,
                 "session_type": ctx.appointment_type.name,
                 "appointment_type_id": ctx.appointment_type.id,
+                "place_of_service": place_for_modality(ctx.appointment_type.modality),
                 "notes": "\n".join(note_lines),
             },
         )
@@ -968,10 +1001,10 @@ def create_public_booking(
         actor_type=ACTOR_TYPE_ANONYMOUS,
     )
 
-    # Called for its side effect only — it persists google_event_id on the
+    # Called for its side effects only — the room, and google_event_id on the
     # appointment. The confirmation below is built from the link and the
-    # booked slot, so the synced copy it returns has nothing to add here.
-    _sync_appointment_to_google(scheduling, gcal_service, ctx.owner, appt)
+    # booked slot, so the copy it returns has nothing to add here.
+    room.settle(scheduling, ctx.owner, appt)
 
     return PublicBookingConfirmation(
         host_name=ctx.link.host_name,
@@ -1120,7 +1153,7 @@ def confirm_public_booking(
     appt_repo: AppointmentRepository = Depends(get_public_appointment_repository),
     patient_repo: PatientRepository = Depends(get_patient_repository),
     repos: CoverageRepos = Depends(get_public_coverage_repos),
-    gcal_service: GoogleCalendarService = Depends(get_public_gcal_service),
+    room: ClientBookingRoom = Depends(get_public_client_booking_room),
     audit: AuditService = Depends(get_audit_service),
 ) -> PublicBookingConfirmation:
     """Finish a hold: confirm it, or revive it if it already lapsed.
@@ -1170,7 +1203,9 @@ def confirm_public_booking(
         raise NotFoundError(_CONFIRMATION_INVALID)
 
     appt = _promote_pending_patient(appt, ctx, patient_repo, repos, scheduling, http_request, audit)
-    appt = _sync_appointment_to_google(scheduling, gcal_service, ctx.owner, appt)
+    # The room is made only now: a hold that lapses unconfirmed never had one
+    # to give back.
+    appt = room.settle(scheduling, ctx.owner, appt)
 
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_UPDATED,

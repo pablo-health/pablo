@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from ..scheduling_engine.models.appointment import Appointment
+    from ..scheduling_engine.models.appointment_type import Modality
 
 #: Provider ids, which are also the registry keys and the value stored in
 #: ``appointments.provider``. Short and stable: the column is VARCHAR(16) and
@@ -298,6 +299,20 @@ def wants_a_room(appointment: Appointment, *, requested_provider: str | None) ->
         video_link=appointment.video_link,
         place_of_service=appointment.place_of_service,
     )
+
+
+#: The place of service an appointment type's remembered In person or Video
+#: stands for, when a booking of the type says nothing about where it happens.
+_PLACE_FOR_MODALITY: Final[dict[str, str]] = {"video": "02", "in_person": "11"}
+
+
+def place_for_modality(modality: Modality | None) -> str | None:
+    """The place of service a type's remembered modality stands for.
+
+    None for a type never booked either way, which leaves the booking with no
+    place of service and so, by :func:`wants_a_room`, with no room.
+    """
+    return _PLACE_FOR_MODALITY.get(modality) if modality is not None else None
 
 
 def provision_meeting(
