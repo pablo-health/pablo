@@ -661,6 +661,10 @@ class PracticeSiteRow(PlatformBase):
     #: address stops working. Only the hash is kept.
     preview_token_hash: Mapped[str | None] = mapped_column(String(64))
     preview_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: When a draft was last previewed: set when a preview address is made,
+    #: and when the preview serves a draft's ``index.html`` (at most once a
+    #: minute). History, not state: a new draft or a publish leaves it.
+    last_previewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     #: The last publish or roll back.
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     published_by: Mapped[str | None] = mapped_column(String(128))

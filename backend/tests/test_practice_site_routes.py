@@ -44,6 +44,7 @@ if TYPE_CHECKING:
 PRACTICE_ID = "practice-1"
 URL = "/api/practice/website"
 WHEN = datetime(2026, 9, 1, tzinfo=UTC)
+PREVIEWED = datetime(2026, 9, 3, 14, 30, tzinfo=UTC)
 DRAFT_THEME = read_theme(
     b'{"colors": {"accent": "#24504c", "accentText": "#ffffff"}, "radius": "huge"}'
 )
@@ -59,6 +60,8 @@ class _StubService:
         self.calls: list[tuple[str, Any]] = []
         self.refusal: Exception | None = None
         self.hide_from_search = False
+        self.last_previewed_at: datetime | None = PREVIEWED
+        self.live_published_at: datetime | None = WHEN
 
     def _call(self, name: str, *args: Any) -> None:
         self.calls.append((name, args))
@@ -76,6 +79,8 @@ class _StubService:
                 SiteVersion(1, 2, 80, WHEN, "u"),
             ],
             hide_from_search=self.hide_from_search,
+            last_previewed_at=self.last_previewed_at,
+            live_published_at=self.live_published_at,
         )
 
     def set_hide_from_search(self, practice_id: str, hide: bool, *_: Any) -> None:
@@ -167,6 +172,21 @@ class TestTheOwner:
         assert body["live_host"] == "www.example.com"
         assert [(v["version"], v["is_live"]) for v in body["versions"]] == [(2, True), (1, False)]
         assert body["draft"]["file_count"] == 3
+
+    def test_reads_when_the_draft_was_last_previewed_and_since_when_the_site_is_live(
+        self, client: TestClient
+    ) -> None:
+        body = client.get(URL).json()
+        assert body["last_previewed_at"] == "2026-09-03T14:30:00Z"
+        assert body["live_published_at"] == "2026-09-01T00:00:00Z"
+
+    def test_a_site_never_previewed_or_published_reads_both_as_null(
+        self, client: TestClient, service: _StubService
+    ) -> None:
+        service.last_previewed_at = None
+        service.live_published_at = None
+        body = client.get(URL).json()
+        assert (body["last_previewed_at"], body["live_published_at"]) == (None, None)
 
     def test_reads_what_the_draft_gives_the_portal_and_what_it_skips(
         self, client: TestClient

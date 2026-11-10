@@ -15,6 +15,10 @@ Proven here on committed rows, through the code's own sessions:
   injected), and which file each request path gets: ``/``, a folder, a folder
   without its slash, a missing file and a traversal attempt;
 * the draft's preview address, while its token works and not after;
+* when a draft was last previewed: set by a new preview address, refreshed by
+  serving the draft's ``index.html`` at most once a minute (the clock is
+  frozen) and never by its other files, kept across a new draft and a publish,
+  and never audited; and when the live version went live;
 * the setting that asks search engines not to list the website: kept, audited
   once per change, and carried on the host answer.
 
@@ -29,7 +33,7 @@ import json
 import os
 import uuid
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -693,3 +697,144 @@ def test_an_expired_preview_address_serves_nothing(
         )
 
     assert client.get(f"/api/practice/website/preview/{token}/").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# When a draft was last previewed, and since when the live version is up
+# ---------------------------------------------------------------------------
+
+MINTED_AT = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+
+
+class _FrozenTime:
+    """A settable ``utc_now`` for the preview route and the service."""
+
+    def __init__(self, now: datetime) -> None:
+        self.now = now
+
+    def __call__(self) -> datetime:
+        return self.now
+
+
+@pytest.fixture
+def route_time(monkeypatch: pytest.MonkeyPatch) -> _FrozenTime:
+    """The preview route's clock, frozen at the real now: a preview address
+    works for the hour from when it was made, on the real clock."""
+    time = _FrozenTime(utc_now())
+    monkeypatch.setattr(public_routes, "utc_now", time)
+    return time
+
+
+def _last_previewed(engine: Engine, practice_id: str) -> datetime | None:
+    with engine.connect() as conn:
+        return conn.execute(
+            text("SELECT last_previewed_at FROM platform.practice_sites WHERE practice_id = :p"),
+            {"p": practice_id},
+        ).scalar_one()
+
+
+def _minted(
+    session: Session, bucket: str, practice_id: str, time: _FrozenTime, audit: RecordingAudit
+) -> str:
+    """A draft with a preview address minted at *time*'s now; its token."""
+    service = PracticeSiteService(
+        PracticeSiteStore(session), LocalFileStorage(), bucket, audit, clock=time
+    )
+    service.save_draft_files(practice_id, SITE, PUBLISHER)
+    audit.entries.clear()
+    token, _expires = service.mint_preview(practice_id)
+    session.commit()
+    return token
+
+
+def test_making_a_preview_address_records_it_and_audits_nothing(
+    session: Session, bucket: str, rows: _Rows, engine: Engine
+) -> None:
+    practice_id = rows.practice()
+    audit = RecordingAudit()
+    assert _service(session, bucket).status(practice_id).last_previewed_at is None
+
+    _minted(session, bucket, practice_id, _FrozenTime(MINTED_AT), audit)
+
+    assert _last_previewed(engine, practice_id) == MINTED_AT
+    assert _service(session, bucket).status(practice_id).last_previewed_at == MINTED_AT
+    assert audit.entries == []
+
+
+def test_serving_the_drafts_index_records_a_preview_at_most_once_a_minute(
+    client: TestClient,
+    session: Session,
+    bucket: str,
+    rows: _Rows,
+    route_time: _FrozenTime,
+) -> None:
+    practice_id = rows.practice()
+    engine = rows.engine
+    audit = RecordingAudit()
+    time = route_time
+    minted = time.now
+    base = f"/api/practice/website/preview/{_minted(session, bucket, practice_id, time, audit)}"
+
+    # Within the minute: the index writes nothing.
+    time.now = minted + timedelta(seconds=59)
+    assert client.get(f"{base}/").status_code == 200
+    assert _last_previewed(engine, practice_id) == minted
+
+    # A minute on, the page's own files still write nothing...
+    time.now = minted + timedelta(seconds=60)
+    for path in ("css/site.css", "about/", "nope"):
+        assert client.get(f"{base}/{path}").status_code in (200, 404)
+    assert _last_previewed(engine, practice_id) == minted
+
+    # ...and its index does, by either of its names, once a minute.
+    assert client.get(f"{base}/").content == b"<h1>Home</h1>"
+    assert _last_previewed(engine, practice_id) == minted + timedelta(seconds=60)
+    time.now = minted + timedelta(seconds=90)
+    assert client.get(f"{base}/index.html").status_code == 200
+    assert _last_previewed(engine, practice_id) == minted + timedelta(seconds=60)
+    time.now = minted + timedelta(seconds=120)
+    assert client.get(f"{base}/index.html").status_code == 200
+    assert _last_previewed(engine, practice_id) == minted + timedelta(seconds=120)
+    assert audit.entries == []
+
+
+def test_a_preview_is_history_a_new_draft_or_a_publish_leaves_it(
+    session: Session, bucket: str, rows: _Rows, engine: Engine
+) -> None:
+    practice_id = rows.practice()
+    _minted(session, bucket, practice_id, _FrozenTime(MINTED_AT), RecordingAudit())
+    service = _service(session, bucket)
+
+    service.save_draft_files(practice_id, {"index.html": b"<h1>Again</h1>"}, PUBLISHER)
+    session.commit()
+    assert _last_previewed(engine, practice_id) == MINTED_AT
+
+    service.publish_draft(practice_id, PUBLISHER)
+    session.commit()
+    status = _service(session, bucket).status(practice_id)
+    assert status.draft is None
+    assert status.last_previewed_at == MINTED_AT
+
+
+def test_the_live_version_says_when_it_went_live(
+    session: Session, bucket: str, rows: _Rows
+) -> None:
+    practice_id = rows.practice()
+    first = _FrozenTime(datetime(2026, 9, 1, tzinfo=UTC))
+    service = PracticeSiteService(
+        PracticeSiteStore(session), LocalFileStorage(), bucket, clock=first
+    )
+    assert service.status(practice_id).live_published_at is None
+
+    service.publish_files(practice_id, SITE, PUBLISHER)
+    first.now = datetime(2026, 9, 2, tzinfo=UTC)
+    service.publish_files(practice_id, SITE, PUBLISHER)
+    session.commit()
+    assert service.status(practice_id).live_published_at == first.now
+
+    # A roll back is when the older version went live again, not when it was
+    # first published.
+    first.now = datetime(2026, 9, 3, tzinfo=UTC)
+    service.roll_back(practice_id, 1, PUBLISHER)
+    session.commit()
+    assert service.status(practice_id).live_published_at == first.now

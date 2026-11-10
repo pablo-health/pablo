@@ -76,8 +76,15 @@ export function useSetPracticeSiteHiddenFromSearch() {
   })
 }
 
+/**
+ * Minting a preview records `last_previewed_at` on the server, but answers
+ * with the preview link rather than the status. Refetch the status, or the
+ * page keeps showing the previous preview time (staleTime is 60s and window
+ * focus does not refetch).
+ */
 export function usePreviewPracticeSiteDraft() {
   return useAuthMutation<SitePreview, void>({
     mutationFn: () => previewPracticeSiteDraft(),
+    invalidateKeys: [practiceSiteKeys.all],
   })
 }

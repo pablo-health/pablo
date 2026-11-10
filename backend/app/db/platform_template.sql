@@ -583,7 +583,8 @@ CREATE TABLE platform.practice_sites (
     hide_from_search boolean DEFAULT false NOT NULL,
     served_version integer,
     served_hide_from_search boolean,
-    served_hosted_host character varying(253)
+    served_hosted_host character varying(253),
+    last_previewed_at timestamp with time zone
 );
 
 CREATE TABLE platform.practices (
