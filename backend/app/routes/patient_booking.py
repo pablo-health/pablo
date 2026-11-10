@@ -29,6 +29,13 @@ answer "is this time taken", and the answer that travels is a time, never the
 appointment that made it unavailable. :class:`PatientSlotResponse` carries
 three fields for that reason.
 
+**Every change reaches the clinician's calendar.** A booking the practice
+takes outright, a move and a cancellation each go to the clinician's connected
+Google Calendar the same way an in-app change does, over the owner-armed
+session, after the change has committed. A pending request is not pushed here:
+it goes when the clinician confirms it in-app. The push is best-effort, so a
+calendar that fails never fails the client's change (:func:`_push_to_calendar`).
+
 **Dark by default.** Every route here refuses unless the practice has turned
 self-booking on. A practice that has not thought about patient booking has not
 thereby agreed to it, so the default is off — and the refusal is a 403 rather
@@ -69,6 +76,7 @@ from ..repositories.postgres.external_calendar_event import (
     PostgresExternalCalendarEventRepository,
 )
 from ..repositories.postgres.google_calendar_token import PostgresGoogleCalendarTokenRepository
+from ..repositories.postgres.patient import PostgresPatientRepository
 from ..repositories.postgres.user import PostgresUserRepository
 from ..scheduling_engine.exceptions import (
     AppointmentConflictError,
@@ -93,6 +101,7 @@ from ..services.audit_service import AuditService, get_audit_service
 from ..services.busy_time import CalendarBusySource
 from ..services.google_calendar_service import GoogleCalendarService, google_consent_surface
 from ..settings import get_settings
+from .scheduling import _push_cancellation_to_google, _sync_appointment_to_google
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -714,6 +723,11 @@ def book_appointment(
 
         session.commit()
 
+        # Only a booking the practice has taken. A request is pushed when the
+        # clinician confirms it in-app, by that route's own push.
+        if created.status == AppointmentStatus.CONFIRMED:
+            created = _push_to_calendar(session, owner, created)
+
     audit.log_patient_principal_action(
         action=AuditAction.APPOINTMENT_CREATED,
         request=request,
@@ -832,6 +846,14 @@ def reschedule_appointment(
 
         session.commit()
 
+        # The move left two rows, so the calendar gets two changes: the old
+        # time's event comes off and the new time goes on. The replacement
+        # carries no event id of its own (the engine leaves the old one
+        # behind on purpose), so the push creates its event fresh.
+        _remove_from_calendar(session, owner, appointment)
+        if moved.status == AppointmentStatus.CONFIRMED:
+            moved = _push_to_calendar(session, owner, moved)
+
     audit.log_patient_principal_action(
         action=AuditAction.APPOINTMENT_UPDATED,
         request=request,
@@ -907,6 +929,8 @@ def cancel_appointment(
             _record_open_slot(session, opened)
         session.commit()
 
+        _remove_from_calendar(session, owner, cancelled)
+
     audit.log_patient_principal_action(
         action=AuditAction.APPOINTMENT_CANCELLED,
         request=request,
@@ -917,6 +941,69 @@ def cancel_appointment(
     if opened is not None:
         publish_open_slot(opened)
     return _to_patient_view(cancelled)
+
+
+def _owner_calendar(session: Session) -> tuple[SchedulingService, GoogleCalendarService]:
+    """The scheduling and calendar services the push needs, over the owner session.
+
+    Built the way the in-app routes build theirs (patients included, so the
+    event reads the way the clinician chose), but over the owner-armed session:
+    the request session is armed as the patient and cannot see the clinician's
+    calendar connection at all.
+    """
+    appointments = PostgresAppointmentRepository(session)
+    calendar = GoogleCalendarService.from_surface(
+        google_consent_surface(get_settings()),
+        token_repo=PostgresGoogleCalendarTokenRepository(session),
+        appointment_repo=appointments,
+        patient_repo=PostgresPatientRepository(session),
+    )
+    return SchedulingService(appointments), calendar
+
+
+def _push_to_calendar(session: Session, owner: str, appointment: Appointment) -> Appointment:
+    """Put a committed appointment on the clinician's calendar. Never raises.
+
+    The in-app push already swallows a Google failure and marks the row
+    ``google_sync_status='error'``. This also catches anything around it (the
+    owner lookup, the write of the event id) because the client's booking has
+    already committed by now, and a 5xx would tell them it had not. Returns
+    the row as the push left it, or as it was if the push never got that far.
+    """
+    try:
+        user = PostgresUserRepository(session).get(owner)
+        if user is None:
+            logger.warning("patient booking: no user row for owner %s, calendar not updated", owner)
+            return appointment
+        service, calendar = _owner_calendar(session)
+        synced = _sync_appointment_to_google(service, calendar, user, appointment)
+        session.commit()
+    except Exception:
+        session.rollback()
+        logger.exception("patient booking: calendar push failed for appointment %s", appointment.id)
+        return appointment
+    return synced
+
+
+def _remove_from_calendar(session: Session, owner: str, appointment: Appointment) -> None:
+    """Take a cancelled or moved appointment's event off the clinician's calendar.
+
+    Best-effort for the same reason as :func:`_push_to_calendar`. A row that
+    was never pushed has no event and costs nothing.
+    """
+    if not appointment.google_event_id:
+        return
+    try:
+        user = PostgresUserRepository(session).get(owner)
+        if user is None:
+            logger.warning("patient booking: no user row for owner %s, calendar not updated", owner)
+            return
+        _, calendar = _owner_calendar(session)
+        _push_cancellation_to_google(calendar, user, appointment)
+    except Exception:
+        logger.exception(
+            "patient booking: calendar removal failed for appointment %s", appointment.id
+        )
 
 
 def _record_open_slot(session: Session, slot: OpenSlot) -> None:
