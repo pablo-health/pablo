@@ -2691,6 +2691,9 @@ class AppointmentRow(Base):
     # Reminders
     reminder_24h_sent: Mapped[bool] = mapped_column(Boolean, default=False)
     reminder_1h_sent: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Which time and link the client was last sent; see
+    # app.services.client_video_link_notice.
+    client_link_notice: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

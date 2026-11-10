@@ -99,6 +99,11 @@ from ..scheduling_engine.services.scheduling_policy import (
 from ..scheduling_engine.services.scheduling_policy import load_policy, may_self_book
 from ..services.audit_service import AuditService, get_audit_service
 from ..services.busy_time import CalendarBusySource
+from ..services.client_video_link_notice import (
+    ClientVideoLinkNotifier,
+    get_client_video_link_notifier,
+    practice_id_for_schema,
+)
 from ..services.google_calendar_service import GoogleCalendarService, google_consent_surface
 from ..settings import get_settings
 from .scheduling import _push_cancellation_to_google, _sync_appointment_to_google
@@ -624,6 +629,7 @@ def book_appointment(
     patient: CurrentPatient,
     audit: AuditService = Depends(get_audit_service),
     _: None = Depends(subscription_exempt),
+    notifier: ClientVideoLinkNotifier = Depends(get_client_video_link_notifier),
 ) -> PatientAppointmentResponse:
     """Book one appointment for the calling patient.
 
@@ -727,6 +733,7 @@ def book_appointment(
         # clinician confirms it in-app, by that route's own push.
         if created.status == AppointmentStatus.CONFIRMED:
             created = _push_to_calendar(session, owner, created)
+            created = _send_video_link(session, owner, patient, created, notifier)
 
     audit.log_patient_principal_action(
         action=AuditAction.APPOINTMENT_CREATED,
@@ -746,6 +753,7 @@ def reschedule_appointment(
     patient: CurrentPatient,
     audit: AuditService = Depends(get_audit_service),
     _: None = Depends(subscription_exempt),
+    notifier: ClientVideoLinkNotifier = Depends(get_client_video_link_notifier),
 ) -> PatientAppointmentResponse:
     """Move one of the calling patient's own appointments to a different time.
 
@@ -853,6 +861,7 @@ def reschedule_appointment(
         _remove_from_calendar(session, owner, appointment)
         if moved.status == AppointmentStatus.CONFIRMED:
             moved = _push_to_calendar(session, owner, moved)
+            moved = _send_video_link(session, owner, patient, moved, notifier)
 
     audit.log_patient_principal_action(
         action=AuditAction.APPOINTMENT_UPDATED,
@@ -983,6 +992,40 @@ def _push_to_calendar(session: Session, owner: str, appointment: Appointment) ->
         logger.exception("patient booking: calendar push failed for appointment %s", appointment.id)
         return appointment
     return synced
+
+
+def _send_video_link(
+    session: Session,
+    owner: str,
+    patient: PatientContext,
+    appointment: Appointment,
+    notifier: ClientVideoLinkNotifier,
+) -> Appointment:
+    """Send the client the link to a committed video appointment. Never raises.
+
+    Over the owner-armed session, like the calendar push, and committed on its
+    own for the same reason: the booking has already committed, and a failed
+    send must not read to the client as a failed booking. Nothing goes out for
+    an appointment without a link (see :mod:`app.services.client_video_link_notice`).
+    """
+    if not appointment.video_link:
+        return appointment
+    try:
+        sent = notifier.notify(
+            SchedulingService(PostgresAppointmentRepository(session)),
+            appointment,
+            practice_id=practice_id_for_schema(patient.practice_schema),
+            patients=PostgresPatientRepository(session),
+            zone=lambda: _owner_timezone(session, owner),
+        )
+        session.commit()
+    except Exception:
+        session.rollback()
+        logger.exception(
+            "patient booking: video link notice failed for appointment %s", appointment.id
+        )
+        return appointment
+    return sent
 
 
 def _remove_from_calendar(session: Session, owner: str, appointment: Appointment) -> None:

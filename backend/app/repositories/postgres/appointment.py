@@ -607,6 +607,7 @@ def _row_to_appointment(row: AppointmentRow) -> Appointment:
         diagnosis_codes=row.diagnosis_codes,
         reminder_24h_sent=row.reminder_24h_sent,
         reminder_1h_sent=row.reminder_1h_sent,
+        client_link_notice=row.client_link_notice,
         pending_expires_at=row.pending_expires_at,
         confirmation_token_hash=row.confirmation_token_hash,
         cancelled_at=row.cancelled_at,
@@ -675,6 +676,7 @@ def _appointment_to_row(appt: Appointment, row: AppointmentRow) -> None:
     row.diagnosis_codes = appt.diagnosis_codes
     row.reminder_24h_sent = appt.reminder_24h_sent
     row.reminder_1h_sent = appt.reminder_1h_sent
+    row.client_link_notice = appt.client_link_notice
     row.pending_expires_at = appt.pending_expires_at
     row.confirmation_token_hash = appt.confirmation_token_hash
     # The cancellation record, together: set as one and cleared as one.

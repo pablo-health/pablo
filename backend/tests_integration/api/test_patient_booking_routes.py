@@ -2194,3 +2194,81 @@ def test_a_failure_around_the_push_never_fails_the_booking(
     assert response.status_code == 201, response.text
     assert _status_of(engine, response.json()["id"]) == "confirmed"
     assert google.pushed == []
+
+
+# --- the client's video link follows a move (PABLO-en9h.9) ---
+
+
+def test_a_move_sends_the_client_the_new_time_with_the_standing_room(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """A pasted room has no vendor handle, so it follows the move, and the client hears once.
+
+    The send runs over the owner-armed session after the move commits; the
+    practice is found from the patient's own schema.
+    """
+    from app.main import app  # noqa: PLC0415
+    from app.services.client_video_link_notice import (  # noqa: PLC0415
+        ClientVideoLinkNotifier,
+        PracticeFacts,
+        get_client_video_link_notifier,
+    )
+    from app.services.email_sender import InMemoryEmailSender  # noqa: PLC0415
+
+    _open_policy(engine)
+    _clear_appointments(engine)
+    original_id = _seed_appointment(engine, practice["a"], _at(10))
+    with engine.begin() as conn:
+        conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
+        conn.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _CLINICIAN})
+        conn.execute(
+            text(
+                "UPDATE appointments SET video_link = 'https://doxy.me/room', "
+                "place_of_service = '02' WHERE id = CAST(:i AS uuid)"
+            ),
+            {"i": original_id},
+        )
+        conn.execute(
+            text("UPDATE patients SET email = 'ada@example.test' WHERE id = CAST(:p AS uuid)"),
+            {"p": practice["a"]},
+        )
+    sent = InMemoryEmailSender()
+    asked: list[str | None] = []
+
+    def facts(practice_id: str | None) -> PracticeFacts:
+        asked.append(practice_id)
+        return PracticeFacts(sends_link=True, name="Booking Test Practice")
+
+    app.dependency_overrides[get_client_video_link_notifier] = lambda: ClientVideoLinkNotifier(
+        sender=sent, practice_facts=facts
+    )
+    try:
+        response = patient_a_client.post(
+            f"/api/patient/booking/{original_id}/reschedule",
+            json={"start_at": _at(14).isoformat()},
+        )
+    finally:
+        with engine.begin() as conn:
+            conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
+            conn.execute(
+                text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _CLINICIAN}
+            )
+            conn.execute(
+                text("UPDATE patients SET email = NULL WHERE id = CAST(:p AS uuid)"),
+                {"p": practice["a"]},
+            )
+
+    assert response.status_code == 200, response.text
+    [message] = sent.sent
+    assert message.to == "ada@example.test"
+    assert "Join here: https://doxy.me/room" in message.text
+    assert "Ada" not in message.text
+    assert asked == [_PRACTICE_ID]
+    with engine.begin() as conn:
+        conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
+        conn.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _CLINICIAN})
+        recorded = conn.execute(
+            text("SELECT client_link_notice FROM appointments WHERE id = CAST(:i AS uuid)"),
+            {"i": response.json()["id"]},
+        ).scalar_one()
+    assert recorded is not None, "the send was not recorded, so a re-save would send again"
