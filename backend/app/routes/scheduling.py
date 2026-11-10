@@ -153,6 +153,7 @@ from ..scheduling_engine.services import floating_block
 from ..scheduling_engine.services.availability import AvailabilityEngine
 from ..scheduling_engine.services.scheduling import SchedulingService
 from ..scheduling_engine.services.scheduling_policy import load_policy, update_policy
+from ..scheduling_engine.services.type_place import remember_place
 from ..services import (
     AuditService,
     NoteService,
@@ -261,13 +262,21 @@ def _apply_appointment_type(
     *,
     user_id: str,
     type_repo: AppointmentTypeRepository,
+    requested_provider: str | None = None,
 ) -> None:
     """Let a chosen appointment type speak for the appointment's label.
 
     When the caller names a type, that type is authoritative: ``session_type``
     is overwritten with its name so the id and the label cannot drift apart.
-    Nothing else is inferred — the caller still sends its own duration, because
-    a clinician may legitimately book a longer-than-usual session of a type.
+    The caller still sends its own duration, because a clinician may
+    legitimately book a longer-than-usual session of a type.
+
+    Where the visit happens is the one other thing a type supplies, and only
+    when the booking says nothing about it: no place of service, no video
+    service asked for, no link. Then the exact place of service the type was
+    last booked with is used (11, 02 or 10, the clinician's own code, never
+    translated), so a type last booked by video books by video again. A type
+    never booked with one leaves it unset.
 
     Mutates ``data`` in place. Raises ``NotFoundError`` for a type that is not
     this clinician's, which also stops one clinician booking against another's
@@ -280,6 +289,9 @@ def _apply_appointment_type(
     if appointment_type is None:
         raise NotFoundError(f"Appointment type not found: {appointment_type_id}")
     data["session_type"] = appointment_type.name
+    says_where = data.get("place_of_service") or data.get("video_link") or requested_provider
+    if not says_where and appointment_type.last_place_of_service is not None:
+        data["place_of_service"] = appointment_type.last_place_of_service
 
 
 def _owner_timezone(user_repo: UserRepository, user_id: str) -> tzinfo:
@@ -887,7 +899,9 @@ def create_appointment(
     # Which video service to ask is a request, not a column: the row records
     # who actually made the room, which is decided below.
     requested_provider = data.pop("provider", None)
-    _apply_appointment_type(data, user_id=user.id, type_repo=type_repo)
+    _apply_appointment_type(
+        data, user_id=user.id, type_repo=type_repo, requested_provider=requested_provider
+    )
     try:
         appt = service.create_appointment(
             user.id,
@@ -905,6 +919,7 @@ def create_appointment(
     # own update_appointment for linking, which resets rule_warnings).
     warnings = service.rule_warnings
     overridden = service.overridden_rules
+    remember_place(type_repo, user.id, appt)
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_CREATED,
         user,
@@ -1050,6 +1065,7 @@ def update_appointment(
     patient_repo: PatientRepository = Depends(get_patient_repository),
     registry: MeetingProviderRegistry = Depends(get_meeting_registry),
     user_repo: UserRepository = Depends(get_user_repository),
+    type_repo: AppointmentTypeRepository = Depends(get_appointment_type_repository),
     tz: tzinfo = Depends(get_owner_timezone),
     follow_up: MeetLinkFollowUp = Depends(get_meet_link_follow_up),
 ) -> AppointmentResponse:
@@ -1095,6 +1111,10 @@ def update_appointment(
     # Captured before any further service calls (Google sync below issues its
     # own update_appointment for linking, which resets rule_warnings).
     warnings = service.rule_warnings
+    # Only an edit that says where the visit happens teaches the type; an
+    # edit of something else is not a fresh choice of place.
+    if "place_of_service" in updates:
+        remember_place(type_repo, user.id, appt)
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_UPDATED,
         user,
@@ -2081,6 +2101,7 @@ def _appointment_type_to_response(appointment_type: AppointmentType) -> Appointm
         horizon_unit=appointment_type.horizon_unit,
         self_bookable=appointment_type.self_bookable,
         offerable=appointment_type.offerable,
+        modality=appointment_type.modality,
         created_at=appointment_type.created_at,
         updated_at=appointment_type.updated_at,
     )
