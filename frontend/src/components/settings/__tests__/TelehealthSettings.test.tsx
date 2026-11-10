@@ -18,6 +18,11 @@ import { TelehealthSettings } from "../TelehealthSettings"
 
 vi.mock("@/lib/api/telehealth")
 
+// The address rule is the real one: the card's refusal is only worth testing
+// against what the deployment would also refuse.
+const { isZoomRoomUrl: actualIsZoomRoomUrl } =
+  await vi.importActual<typeof import("@/lib/api/telehealth")>("@/lib/api/telehealth")
+
 // The card carries the return leg of the Zoom connect flow, which reads the
 // query string and clears it afterwards. None of the cases below arrive with
 // a code on the URL, so this is here to let the card mount rather than to be
@@ -50,10 +55,14 @@ beforeEach(() => {
     ],
     default_provider: null,
     room_url: null,
+    zoom_room_url: null,
+    zoom_app: true,
     join_window_before_minutes: 15,
   })
   vi.mocked(api.setTelehealthRoomUrl).mockResolvedValue({ room_url: null })
   vi.mocked(api.disconnectZoom).mockResolvedValue({ connected: false, account_handle: null })
+  vi.mocked(api.setZoomRoomUrl).mockResolvedValue({ zoom_room_url: null })
+  vi.mocked(api.isZoomRoomUrl).mockImplementation(actualIsZoomRoomUrl)
 })
 
 describe("what the card shows", () => {
@@ -86,6 +95,8 @@ describe("what the card shows", () => {
       providers: [{ id: "zoom", display_name: "Zoom", connected: true }],
       default_provider: "zoom",
       room_url: null,
+      zoom_room_url: null,
+      zoom_app: true,
       join_window_before_minutes: 15,
     })
     renderCard()
@@ -99,6 +110,8 @@ describe("what the card shows", () => {
       providers: [{ id: "manual", display_name: "A link I'll paste in", connected: true }],
       default_provider: null,
       room_url: null,
+      zoom_room_url: null,
+      zoom_app: true,
       join_window_before_minutes: 15,
     })
     renderCard()
@@ -115,6 +128,8 @@ describe("the clinician's own room", () => {
       providers: [{ id: "doxy_me", display_name: "Doxy.me", connected: true }],
       default_provider: "doxy_me",
       room_url: "https://clinic.example.test/me",
+      zoom_room_url: null,
+      zoom_app: true,
       join_window_before_minutes: 15,
     })
     renderCard()
@@ -157,6 +172,8 @@ describe("the clinician's own room", () => {
       providers: [{ id: "doxy_me", display_name: "Doxy.me", connected: true }],
       default_provider: "doxy_me",
       room_url: "https://clinic.example.test/me",
+      zoom_room_url: null,
+      zoom_app: true,
       join_window_before_minutes: 15,
     })
     renderCard()
@@ -182,6 +199,8 @@ describe("the default video service", () => {
       ],
       default_provider: defaultProvider,
       room_url: null,
+      zoom_room_url: null,
+      zoom_app: true,
       join_window_before_minutes: 15,
     })
   }
@@ -229,5 +248,83 @@ describe("the default video service", () => {
     expect(await screen.findByTestId("telehealth-settings-error")).toHaveTextContent(
       "That didn't save. Try again.",
     )
+  })
+})
+
+describe("Zoom with no Zoom app: the clinician's own room", () => {
+  const ROOM = "https://us02web.zoom.us/j/81234567890?pwd=abc"
+
+  function withoutAZoomApp(zoomRoomUrl: string | null) {
+    vi.mocked(api.listTelehealthProviders).mockResolvedValue({
+      providers: [
+        { id: "zoom", display_name: "Zoom", connected: zoomRoomUrl !== null },
+        { id: "manual", display_name: "A link I'll paste in", connected: true },
+      ],
+      default_provider: zoomRoomUrl !== null ? "zoom" : null,
+      room_url: null,
+      zoom_room_url: zoomRoomUrl,
+      zoom_app: false,
+      join_window_before_minutes: 15,
+    })
+  }
+
+  it("asks for the room rather than offering to connect Zoom", async () => {
+    withoutAZoomApp(null)
+    renderCard()
+
+    expect(await screen.findByLabelText("Your Zoom room")).toBeInTheDocument()
+    expect(screen.queryByTestId("telehealth-zoom-connect")).not.toBeInTheDocument()
+  })
+
+  it("does not ask when the deployment has a Zoom app", async () => {
+    renderCard()
+
+    await screen.findByTestId("telehealth-zoom-connect")
+    expect(screen.queryByTestId("telehealth-zoom-room-url")).not.toBeInTheDocument()
+  })
+
+  it("is seeded with the room already saved, and Zoom reads as ready", async () => {
+    withoutAZoomApp(ROOM)
+    renderCard()
+
+    await waitFor(() => expect(screen.getByTestId("telehealth-zoom-room-url")).toHaveValue(ROOM))
+    expect(screen.getByTestId("telehealth-provider-zoom-state")).toHaveTextContent("Ready")
+  })
+
+  it("saves a Zoom link", async () => {
+    withoutAZoomApp(null)
+    renderCard()
+
+    await userEvent.type(await screen.findByTestId("telehealth-zoom-room-url"), ROOM)
+    await userEvent.click(screen.getByTestId("telehealth-zoom-room-url-save"))
+
+    await waitFor(() => expect(api.setZoomRoomUrl).toHaveBeenCalledWith(ROOM))
+  })
+
+  it.each(["http://zoom.us/j/1", "https://zoom.us.example.com/j/1", "https://doxy.me/me"])(
+    "refuses %s, and says so",
+    async (url) => {
+      withoutAZoomApp(null)
+      renderCard()
+
+      await userEvent.type(await screen.findByTestId("telehealth-zoom-room-url"), url)
+      await userEvent.click(screen.getByTestId("telehealth-zoom-room-url-save"))
+
+      expect(await screen.findByTestId("telehealth-settings-error")).toHaveTextContent(
+        "That isn't a Zoom link.",
+      )
+      expect(api.setZoomRoomUrl).not.toHaveBeenCalled()
+    },
+  )
+
+  it("clearing it removes the room", async () => {
+    withoutAZoomApp(ROOM)
+    renderCard()
+    await waitFor(() => expect(screen.getByTestId("telehealth-zoom-room-url")).toHaveValue(ROOM))
+
+    await userEvent.clear(screen.getByTestId("telehealth-zoom-room-url"))
+    await userEvent.click(screen.getByTestId("telehealth-zoom-room-url-save"))
+
+    await waitFor(() => expect(api.setZoomRoomUrl).toHaveBeenCalledWith(null))
   })
 })

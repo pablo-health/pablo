@@ -339,6 +339,8 @@ export interface UserPreferences {
    * than a meeting per appointment. Null until you paste it in settings.
    */
   telehealth_room_url?: string | null
+  /** Your own Zoom room, pasted once in settings. Null until you do. */
+  zoom_room_url?: string | null
   default_session_type: string
   default_duration_minutes: number
   auto_transcribe: boolean

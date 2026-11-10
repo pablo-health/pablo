@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import pytest
 from app.meeting_providers.registry import build_registry
+from app.meeting_providers.zoom_room import ZoomRoomProvider
 from app.services.telehealth import (
     DOXY_ME,
     GOOGLE_MEET,
@@ -53,13 +54,13 @@ class TestWhatIsBuilt:
         )
         assert registry.ids() == (DOXY_ME,)
 
-    def test_zoom_needs_a_registered_app_as_well_as_the_list(self) -> None:
-        """No client id means the deployment has not registered a Zoom app."""
+    def test_zoom_with_no_registered_app_is_the_pasted_room(self) -> None:
+        """No client id means no Zoom app: Zoom is the clinician's own room."""
         without = build_registry(
             a_settings(telehealth_providers_enabled="zoom"),
             zoom_store=FakeZoomStore(),
         )
-        assert ZOOM not in without.ids()
+        assert isinstance(without.get(ZOOM), ZoomRoomProvider)
 
         with_app = build_registry(
             a_settings(telehealth_providers_enabled="zoom", zoom_client_id="abc"),

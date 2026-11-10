@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .telehealth import GOOGLE_MEET, ZOOM, Clinician
+from .telehealth import GOOGLE_MEET, ZOOM, clinician_from_preferences
 
 if TYPE_CHECKING:
     from ..repositories import UserRepository
@@ -44,9 +44,7 @@ def default_to_meet_on_calendar_connect(
     stored = preferences.default_video_platform
     if stored == ZOOM:
         return False
-    clinician = Clinician(
-        id=user_id, preferred_provider=stored, room_url=preferences.telehealth_room_url
-    )
+    clinician = clinician_from_preferences(user_id, preferences)
     for keep in (ZOOM, stored):
         provider = registry.get(keep)
         if provider is not None and provider.is_connected(clinician):

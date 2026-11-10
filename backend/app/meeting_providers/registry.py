@@ -35,6 +35,7 @@ from .doxy import DoxyMeProvider
 from .manual import ManualProvider
 from .meet import GoogleMeetProvider
 from .zoom import ZoomProvider
+from .zoom_room import ZoomAppOrRoom, ZoomRoomProvider
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -52,10 +53,11 @@ def build_registry(
     """The providers this process can talk to, in one registry.
 
     A provider whose dependency is missing is left out rather than built
-    broken: no calendar means no Meet, no connection store means no Zoom, and
-    Zoom with no OAuth client configured is a deployment that has not
-    registered a Zoom app. Each of those is a deployment that simply does not
-    offer that provider, which the surfaces above render correctly already.
+    broken: no calendar means no Meet. Zoom with no OAuth client configured
+    (or no connection store) is a deployment that has not registered a Zoom
+    app, so Zoom there is the clinician's own pasted room and nothing more;
+    with an app, a connected clinician gets a meeting per appointment and the
+    pasted room is the fallback for one who has not connected.
     """
     enabled = enabled_provider_ids(settings.telehealth_provider_names)
     providers: list[MeetingProvider] = []
@@ -66,12 +68,17 @@ def build_registry(
         providers.append(DoxyMeProvider())
     if GOOGLE_MEET in enabled and is_calendar_connected is not None:
         providers.append(GoogleMeetProvider(is_calendar_connected))
-    if ZOOM in enabled and zoom_store is not None and settings.zoom_client_id:
-        providers.append(
-            ZoomProvider(
-                store=zoom_store,
-                client_id=settings.zoom_client_id,
-                client_secret=settings.zoom_client_secret.get_secret_value(),
+    if ZOOM in enabled:
+        if zoom_store is not None and settings.zoom_client_id:
+            providers.append(
+                ZoomAppOrRoom(
+                    ZoomProvider(
+                        store=zoom_store,
+                        client_id=settings.zoom_client_id,
+                        client_secret=settings.zoom_client_secret.get_secret_value(),
+                    )
+                )
             )
-        )
+        else:
+            providers.append(ZoomRoomProvider())
     return MeetingProviderRegistry(providers)
