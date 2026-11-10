@@ -78,6 +78,14 @@ class PracticeRow(PlatformBase):
     ask_clients_about_ai_notes: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true"
     )
+    # Whether messages to the practice's clients carry the appointment's video
+    # link. On unless the practice turns it off; a deployment can still turn it
+    # off for everyone (TELEHEALTH_INCLUDE_JOIN_LINK_IN_REMINDERS). A column
+    # rather than a clinician preference because jobs read it, and so the
+    # default lives in one place. See app.services.telehealth.client_join_link.
+    send_clients_video_link: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
     # Tenant offboarding schedule. NULL = active; non-NULL = scheduled
     # offboard at this instant. Cleared by NULL to cancel.
     offboard_scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

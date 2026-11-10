@@ -122,6 +122,7 @@ from .routes import (
     practice_ai_notes_consent,
     practice_balances,
     practice_billing,
+    practice_client_video_link,
     practice_domains,
     public_booking,
     refill_requests,
@@ -328,6 +329,7 @@ app.include_router(admin_pentest.router)
 app.include_router(users.router)
 app.include_router(people_term.router)
 app.include_router(practice_ai_notes_consent.router)
+app.include_router(practice_client_video_link.router)
 app.include_router(patients.router)
 app.include_router(patient_activity.router)
 app.include_router(patient_allergies.router)

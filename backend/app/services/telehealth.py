@@ -34,12 +34,16 @@ from dataclasses import dataclass, replace
 from datetime import timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, ClassVar, Final, Protocol, runtime_checkable
+from urllib.parse import unquote_plus, urlsplit, urlunsplit
 
-from ..models.scheduling import is_telehealth
+from ..models.scheduling import TELEHEALTH_PLACES, is_telehealth
+from ..settings import get_settings
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
     from datetime import datetime
+
+    from sqlalchemy.orm import Session
 
     from ..models.user import UserPreferences
     from ..scheduling_engine.models.appointment import Appointment
@@ -480,15 +484,74 @@ def is_joinable(
     return join_opens_at(appointment, window_minutes=window_minutes) <= now <= appointment.end_at
 
 
-def reminder_join_link(appointment: Appointment, *, include_join_link: bool) -> str | None:
-    """The link a reminder may carry, or None.
+def client_join_link(appointment: Appointment, *, practice_sends_link: bool) -> str | None:
+    """The video link a message to the client may carry, or None.
 
-    A reminder carries the time and the practice's name and nothing else
-    unless a practice decides otherwise. The link is not neutral: it names the
-    video service and it says, to whoever reads the message, that this person
-    has an appointment. So the default is None and the setting is the whole
-    gate — there is no second condition for a caller to get wrong.
+    Every message to a client that could carry the link — a reminder, a
+    booking confirmation — asks here, so they cannot disagree about it.
+
+    Sent by default. Two switches stop it and either one is enough: the
+    practice's own (``platform.practices.send_clients_video_link``, read with
+    :func:`practice_sends_client_video_link`), and the deployment's
+    (``TELEHEALTH_INCLUDE_JOIN_LINK_IN_REMINDERS``), for a deployment that must
+    send no link to anybody. The deployment switch is read here rather than
+    passed in, so no caller can forget it.
+
+    An appointment recorded as in person carries no link, even one a clinician
+    pasted before the visit moved: the room stays on the appointment for the
+    clinician to take off (:func:`room_change`), but a client told to come to
+    the office should not also be sent somewhere to join. An appointment with
+    no place of service keeps its link, because that is how every appointment
+    booked before places were recorded looks.
+
+    The link goes out without the client's name. A Doxy room is stored with
+    ``username=<first name>`` so the clinician's waiting room checks the right
+    person in, but a message can be read on a lock screen, forwarded, or passed
+    through a mail vendor's link tracking: see :func:`_without_client_name`.
     """
-    if not include_join_link:
+    if not (practice_sends_link and get_settings().telehealth_include_join_link_in_reminders):
         return None
-    return appointment.video_link or None
+    place = appointment.place_of_service
+    if place and place not in TELEHEALTH_PLACES:
+        return None
+    if not appointment.video_link:
+        return None
+    return _without_client_name(appointment.video_link)
+
+
+#: Query keys that name the person joining. ``username`` is the one Doxy
+#: reads (``meeting_providers.doxy.compose_room_url``); it is stripped
+#: from any link, whatever service stored it, so a new provider that copies
+#: the convention cannot put a name in a client message by accident.
+_NAME_QUERY_KEYS: Final = frozenset({"username"})
+
+
+def _without_client_name(link: str) -> str:
+    """``link`` with every query parameter that names the client taken off.
+
+    Works on the raw ``&``-separated pairs rather than parsing and re-encoding,
+    so every other parameter (Doxy's ``pid`` and ``autocheckin``, a Zoom
+    password) goes out byte for byte as stored.
+    """
+    parts = urlsplit(link)
+    kept = [
+        pair
+        for pair in parts.query.split("&")
+        if unquote_plus(pair.partition("=")[0]).lower() not in _NAME_QUERY_KEYS
+    ]
+    return urlunsplit(parts._replace(query="&".join(kept)))
+
+
+def practice_sends_client_video_link(session: Session, practice_id: str | None) -> bool:
+    """Whether this practice sends its clients their video link.
+
+    The column says, and it is on unless the practice turned it off. A practice
+    that cannot be found sends nothing: the link goes out on a practice's
+    decision, and there is no practice here to have made one.
+    """
+    from ..db.platform_models import PracticeRow
+
+    if not practice_id:
+        return False
+    practice = session.get(PracticeRow, practice_id)
+    return bool(practice is not None and practice.send_clients_video_link)

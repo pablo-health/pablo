@@ -2292,11 +2292,13 @@ class Settings(BaseSettings):
         ),
     )
     telehealth_include_join_link_in_reminders: bool = Field(
-        default=False,
+        default=True,
         description=(
-            "Add the join link to appointment reminders. Off by default: a "
-            "reminder carries only the time and the practice name, and the "
-            "link names the video service and says an appointment exists."
+            "Let messages to clients carry a video appointment's join link. "
+            "On by default, and each practice can still turn it off for its "
+            "own clients. Off sends no link to anybody, whatever a practice "
+            "chose: the switch for a deployment that must never put one in a "
+            "message."
         ),
     )
     telehealth_doxy_clinic_features: bool = Field(

@@ -85,12 +85,14 @@ is how the room is ready when somebody arrives.
 
 ## Reminders
 
-A reminder carries the time and the practice's name. The join link is off by
-default and `TELEHEALTH_INCLUDE_JOIN_LINK_IN_REMINDERS` is the whole gate —
-`ReminderService.reminder_fields` applies it once, so two dispatchers cannot
-answer it differently. The link is not neutral: it names the video service,
-and it tells whoever is holding the phone that this person has an
-appointment.
+A reminder carries the time and the practice's name, and for a video
+appointment the link to join. The link goes out by default. A practice turns
+it off in Settings (`platform.practices.send_clients_video_link`), and
+`TELEHEALTH_INCLUDE_JOIN_LINK_IN_REMINDERS=false` turns it off for every
+practice on the deployment. `telehealth.client_join_link` applies both, and
+every message to a client asks it, so a reminder and a booking message cannot
+answer differently. An appointment recorded as in person never carries a
+link.
 
 ## The waiting-room webhook
 
@@ -112,7 +114,7 @@ Pablo appointments.
 |---|---|---|
 | `TELEHEALTH_PROVIDERS_ENABLED` | `manual` | Which providers this deployment offers. Comma-separated. |
 | `TELEHEALTH_JOIN_WINDOW_BEFORE_MINUTES` | `15` | How long before the start a link is offered. |
-| `TELEHEALTH_INCLUDE_JOIN_LINK_IN_REMINDERS` | `false` | Whether a reminder carries the link. |
+| `TELEHEALTH_INCLUDE_JOIN_LINK_IN_REMINDERS` | `true` | Whether messages to clients may carry the link. Off sends it to nobody, whatever a practice chose. |
 | `TELEHEALTH_DOXY_CLINIC_FEATURES` | `false` | Compose room URLs with the check-in parameters. |
 | `TELEHEALTH_DOXY_WEBHOOK_SECRET` | *(empty)* | Shared secret for the waiting-room webhook. Empty disables the route. |
 | `ZOOM_CLIENT_ID` / `ZOOM_CLIENT_SECRET` | *(empty)* | The deployment's own Zoom OAuth app. Without a client id, Zoom is not offered. |

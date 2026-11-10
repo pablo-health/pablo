@@ -28,7 +28,6 @@ from app.services.telehealth import (
     normalise_provider,
     provision_meeting,
     release_meeting,
-    reminder_join_link,
     resolve_provider_id,
     room_change,
     wants_a_room,
@@ -425,16 +424,3 @@ class TestTheJoinWindow:
         )
         assert appointment.video_link
         assert is_joinable(appointment, now=START, window_minutes=15) is False
-
-
-class TestWhatAReminderMaySay:
-    def test_off_by_default_means_no_link(self) -> None:
-        appointment = an_appointment(video_link="https://z.test/1")
-        assert reminder_join_link(appointment, include_join_link=False) is None
-
-    def test_on_means_the_link(self) -> None:
-        appointment = an_appointment(video_link="https://z.test/1")
-        assert reminder_join_link(appointment, include_join_link=True) == "https://z.test/1"
-
-    def test_on_with_nothing_to_say_says_nothing(self) -> None:
-        assert reminder_join_link(an_appointment(), include_join_link=True) is None
