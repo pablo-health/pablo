@@ -2,8 +2,8 @@
 
 """Common validation helpers for models."""
 
+import re
 from datetime import datetime
-from urllib.parse import urlsplit
 
 # Phone number validation constants
 MIN_PHONE_DIGITS = 10  # Standard US phone number length
@@ -195,7 +195,15 @@ def normalize_service_code(value: str | None) -> str | None:
     return normalized or None
 
 
-_ZOOM_DOMAIN = "zoom.us"
+# One anchored rule, kept character-for-character with ``isZoomRoomUrl`` in
+# frontend/src/lib/api/telehealth.ts and pinned by the shared case table in
+# backend/tests/fixtures/zoom_room_url_cases.json. The host must follow
+# ``https://`` directly, so userinfo and ports never match. A regex rather
+# than ``urlsplit``: Python's parser keeps ``\`` inside the host, while a
+# browser reads it as ``/``, so ``https://evil.example\.zoom.us`` ended in
+# ``.zoom.us`` here and opened evil.example in the patient's browser.
+# ``re.ASCII`` stops ``re.I`` matching the long s (U+017F) as ``s``.
+_ZOOM_ROOM = re.compile(r"https://([a-z0-9-]+\.)*zoom\.us\.?([/?#]|$)", re.IGNORECASE | re.ASCII)
 
 
 def is_zoom_room_url(value: str) -> bool:
@@ -203,18 +211,12 @@ def is_zoom_room_url(value: str) -> bool:
 
     ``zoom.us`` itself or any subdomain of it, which covers the vanity
     addresses an account can have (``yourpractice.zoom.us``). A look-alike
-    such as ``zoom.us.example.com`` or ``notzoom.us`` is refused: a Zoom room
-    is handed to patients to click.
+    such as ``zoom.us.example.com`` or ``notzoom.us`` is refused, and so is
+    any backslash, which a browser reads as a path separator: a Zoom room is
+    handed to patients to click.
     """
-    try:
-        parts = urlsplit(value.strip())
-        port = parts.port
-    except ValueError:
-        return False
-    if parts.scheme != "https" or parts.username or parts.password or port:
-        return False
-    host = (parts.hostname or "").rstrip(".")
-    return host == _ZOOM_DOMAIN or host.endswith(f".{_ZOOM_DOMAIN}")
+    cleaned = value.strip()
+    return bool(_ZOOM_ROOM.match(cleaned)) and "\\" not in cleaned
 
 
 def validate_zoom_room_url(value: str | None) -> str | None:

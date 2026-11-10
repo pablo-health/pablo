@@ -10,8 +10,10 @@ Zoom app and the clinician connected it, a meeting per appointment wins.
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -108,34 +110,20 @@ class FakeZoomApp:
         return True
 
 
+#: Shared with the card's check (frontend/src/lib/api/__tests__/zoomRoomUrl.test.ts),
+#: so the two can't drift apart: a card that accepts what the server refuses
+#: leaves the clinician on a "Try again" that never works.
+_CASES = json.loads(
+    (Path(__file__).parent / "fixtures" / "zoom_room_url_cases.json").read_text(encoding="utf-8")
+)
+
+
 class TestWhatCountsAsAZoomRoom:
-    @pytest.mark.parametrize(
-        "url",
-        [
-            ROOM,
-            "https://zoom.us/j/81234567890",
-            "https://yourpractice.zoom.us/my/drsmith",
-            "  https://zoom.us/my/drsmith  ",
-        ],
-    )
+    @pytest.mark.parametrize("url", _CASES["accept"])
     def test_an_https_address_on_zoom_is_accepted(self, url: str) -> None:
         assert is_zoom_room_url(url)
 
-    @pytest.mark.parametrize(
-        "url",
-        [
-            "http://zoom.us/j/81234567890",
-            "https://zoom.us.example.com/j/1",
-            "https://notzoom.us/j/1",
-            "https://example.com/zoom.us/j/1",
-            "https://someone@zoom.us/j/1",
-            "https://zoom.us:8443/j/1",
-            "javascript:alert(1)//zoom.us",
-            "zoom.us/j/1",
-            "https://doxy.me/drsmith",
-            "",
-        ],
-    )
+    @pytest.mark.parametrize("url", _CASES["refuse"])
     def test_anything_else_is_refused(self, url: str) -> None:
         assert not is_zoom_room_url(url)
 
@@ -287,7 +275,13 @@ class TestTheSettingsRoutes:
         assert providers["zoom_room_url"] is None
 
     @pytest.mark.parametrize(
-        "url", ["http://zoom.us/j/1", "https://zoom.us.example.com/j/1", "https://doxy.me/x"]
+        "url",
+        [
+            "http://zoom.us/j/1",
+            "https://zoom.us.example.com/j/1",
+            "https://doxy.me/x",
+            "https://evil.example\\.zoom.us/j/1",
+        ],
     )
     def test_an_address_that_is_not_zoom_is_a_field_error(
         self,
@@ -311,6 +305,19 @@ class TestTheSettingsRoutes:
         assert mock_user_repo.get_preferences(mock_user_id).zoom_room_url is None
 
 
+class TestTheProvidersRouteSaysWhetherThereIsAnApp:
+    def test_with_a_zoom_app_the_card_offers_connect(self, client: TestClient) -> None:
+        """With an app configured the card shows "Connect Zoom", not the room field."""
+        app.dependency_overrides[get_zoom_store] = FakeZoomStore
+        settings = a_settings(zoom_client_id="client-id")
+        try:
+            with patch("app.routes.telehealth.get_settings", return_value=settings):
+                providers = client.get("/api/telehealth/providers").json()
+        finally:
+            app.dependency_overrides.pop(get_zoom_store, None)
+        assert providers["zoom_app"] is True
+
+
 class TestEveryRouteThatSavesItChecksIt:
     """The general preferences PATCH must not be a way round the zoom.us check."""
 
@@ -322,6 +329,17 @@ class TestEveryRouteThatSavesItChecksIt:
         )
         assert response.status_code == 422
         assert "zoom_room_url" in response.text
+        assert mock_user_repo.get_preferences(mock_user_id).zoom_room_url is None
+
+    def test_patching_preferences_with_a_backslash_host_is_refused(
+        self, client: TestClient, mock_user_repo: InMemoryUserRepository, mock_user_id: str
+    ) -> None:
+        """A browser reads ``\\`` as ``/``, so this opens evil.example, not Zoom."""
+        response = client.patch(
+            "/api/users/me/preferences",
+            json={"zoom_room_url": "https://evil.example\\.zoom.us/j/1"},
+        )
+        assert response.status_code == 422
         assert mock_user_repo.get_preferences(mock_user_id).zoom_room_url is None
 
     def test_patching_preferences_with_a_zoom_room_saves_it(

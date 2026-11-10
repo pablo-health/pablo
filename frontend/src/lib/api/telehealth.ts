@@ -50,20 +50,22 @@ export async function setTelehealthRoomUrl(
   return put<{ room_url: string | null }>("/api/telehealth/room-url", { room_url: roomUrl })
 }
 
+// Kept character-for-character with the server's rule (is_zoom_room_url in
+// backend/app/models/validators.py) and pinned by the case table both run, so
+// the card never accepts what the server then refuses. A pattern rather than
+// new URL(): the server can't use a browser's parser, and two parsers is how
+// the two checks came to disagree. The host must follow https:// directly, so
+// userinfo and ports never match, and a backslash (read as / by a browser)
+// is refused anywhere.
+const ZOOM_ROOM = /^https:\/\/([a-z0-9-]+\.)*zoom\.us\.?([/?#]|$)/i
+
 /**
  * An https address on zoom.us or one of its subdomains, the same rule the
  * deployment applies. A look-alike host is refused: patients click this.
  */
 export function isZoomRoomUrl(value: string): boolean {
-  let url: URL
-  try {
-    url = new URL(value)
-  } catch {
-    return false
-  }
-  if (url.protocol !== "https:" || url.username || url.password || url.port) return false
-  const host = url.hostname.replace(/\.$/, "")
-  return host === "zoom.us" || host.endsWith(".zoom.us")
+  const trimmed = value.trim()
+  return ZOOM_ROOM.test(trimmed) && !trimmed.includes("\\")
 }
 
 /**
