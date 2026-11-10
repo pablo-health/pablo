@@ -22,6 +22,7 @@ import { CalendarHoursStep } from "./CalendarHoursStep"
 import { CalendarSessionsStep } from "./CalendarSessionsStep"
 import { CalendarClientsStep, alreadyComingIn } from "./CalendarClientsStep"
 import { CalendarReviewStep } from "./CalendarReviewStep"
+import { VideoDefaultLine, useMeetIsDefault } from "./VideoDefaultLine"
 import { newClientName, newClientNameFields, type NewClientName } from "./NewClientNameFields"
 import { seenElsewhere } from "./WhichClientsList"
 import {
@@ -633,6 +634,9 @@ export function CalendarSetupWizard({
   const onHoursStep = withHoursStep && activeIndex === 0
   const askingHours = onHoursStep && !hoursSaved
   const showConnected = justConnected && activeIndex === sessionsIndex
+  // The connect made Meet the default when there was none that works; this
+  // only reports it, and only when it is so.
+  const meetIsDefault = useMeetIsDefault(showConnected)
   const stepNumber = (index: number) => index + 1
 
   return (
@@ -690,6 +694,7 @@ export function CalendarSetupWizard({
           Google Calendar is connected.
         </p>
       ) : null}
+      {showConnected && meetIsDefault ? <VideoDefaultLine /> : null}
       {askingHours ? (
         <CalendarHoursStep
           step={stepNumber(0)}

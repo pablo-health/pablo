@@ -25,8 +25,10 @@ import {
   disconnectZoom,
   getZoomAuthUrl,
   listTelehealthProviders,
+  setDefaultVideoService,
   setTelehealthRoomUrl,
 } from "@/lib/api/telehealth"
+import { queryKeys } from "@/lib/api/queryKeys"
 import { ZoomConnectReturn } from "./ZoomConnectReturn"
 
 const PROVIDERS_QUERY_KEY = ["telehealth", "providers"]
@@ -45,6 +47,8 @@ const ZOOM_RETURN_PATH = "/dashboard/settings/sessions"
 
 const DOXY_ME = "doxy_me"
 const ZOOM = "zoom"
+// A link pasted onto one appointment is not a service sessions can default to.
+const MANUAL = "manual"
 
 const ROOM_URL_LABEL = "Your Doxy.me room"
 const ROOM_URL_HELP = "Paste the address of your waiting room."
@@ -52,6 +56,7 @@ const ROOM_URL_INVALID = "That doesn't look like a web address. It should start 
 const ROOM_URL_FAILED = "That didn't save. Try again."
 const ZOOM_CONNECT_FAILED = "Couldn't start the Zoom connection. Try again."
 const ZOOM_DISCONNECT_FAILED = "Couldn't disconnect. Try again."
+const DEFAULT_FAILED = "That didn't save. Try again."
 
 export function TelehealthSettings() {
   const queryClient = useQueryClient()
@@ -76,6 +81,16 @@ export function TelehealthSettings() {
       void queryClient.invalidateQueries({ queryKey: PROVIDERS_QUERY_KEY })
     },
     onError: () => setError(ROOM_URL_FAILED),
+  })
+
+  const makeDefault = useMutation({
+    mutationFn: (providerId: string) => setDefaultVideoService(providerId),
+    onMutate: () => setError(null),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: PROVIDERS_QUERY_KEY })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.user.preferences() })
+    },
+    onError: () => setError(DEFAULT_FAILED),
   })
 
   const disconnect = useMutation({
@@ -134,9 +149,35 @@ export function TelehealthSettings() {
                 <Check className="h-4 w-4 text-secondary-600" aria-hidden="true" />
               )}
               {provider.display_name}
+              {provider.id === data?.default_provider && (
+                <span
+                  data-testid={`telehealth-provider-${provider.id}-default`}
+                  className="text-xs font-medium text-secondary-700"
+                >
+                  Default
+                </span>
+              )}
             </span>
-            <span data-testid={`telehealth-provider-${provider.id}-state`} className="text-muted-foreground">
-              {provider.connected ? "Ready" : "Not set up"}
+            <span className="flex items-center gap-3">
+              {provider.connected &&
+                provider.id !== MANUAL &&
+                provider.id !== data?.default_provider && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    data-testid={`telehealth-provider-${provider.id}-make-default`}
+                    onClick={() => makeDefault.mutate(provider.id)}
+                    disabled={makeDefault.isPending}
+                  >
+                    Make default
+                  </Button>
+                )}
+              <span
+                data-testid={`telehealth-provider-${provider.id}-state`}
+                className="text-muted-foreground"
+              >
+                {provider.connected ? "Ready" : "Not set up"}
+              </span>
             </span>
           </li>
         ))}
