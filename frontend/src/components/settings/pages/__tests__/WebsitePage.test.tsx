@@ -459,6 +459,24 @@ describe("WebsitePage", () => {
       expect(screen.queryByTestId("website-live-since")).not.toBeInTheDocument()
     })
 
+    it("shows the new preview time right after Preview is clicked", async () => {
+      vi.spyOn(window, "open").mockReturnValue(null)
+      // The server is the record: the status reads whatever it last wrote.
+      let lastPreviewed: string | null = null
+      mockGet.mockImplementation(async () => ({ ...WITH_DRAFT, last_previewed_at: lastPreviewed }))
+      mockPreview.mockImplementation(async () => {
+        lastPreviewed = new Date().toISOString()
+        return { path: "/api/practice/website/preview/tok/", expires_at: WHEN }
+      })
+      renderWithProviders(<WebsitePage />)
+
+      await userEvent.click(await screen.findByRole("button", { name: "Preview" }))
+
+      expect(await screen.findByTestId("website-last-previewed")).toHaveTextContent(
+        "Draft last previewed just now.",
+      )
+    })
+
     it("shows neither line with nothing to date", async () => {
       mockGet.mockResolvedValue(site({ live_published_at: "2026-09-01T15:04:00Z" }))
       renderWithProviders(<WebsitePage />)
