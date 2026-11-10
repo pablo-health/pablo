@@ -85,6 +85,10 @@ if TYPE_CHECKING:
 RETAINED_VERSIONS = 10
 #: How long a draft's preview address works.
 PREVIEW_TTL = timedelta(hours=1)
+#: How often serving a draft's preview may record that it was previewed
+#: (``PracticeSiteRow.last_previewed_at``): its ``index.html`` only, so the
+#: page's own files never write.
+PREVIEW_MARK_EVERY = timedelta(minutes=1)
 _OCTET_STREAM = "application/octet-stream"
 _INDEX_FILE = "index.html"
 #: The hosts a suggested header leaves links to out: the portal's own.
@@ -158,6 +162,11 @@ class SiteStatus:
     versions: list[SiteVersion]
     #: The practice asks search engines not to list its website.
     hide_from_search: bool = False
+    #: When a draft was last previewed; kept across drafts and publishes.
+    last_previewed_at: datetime | None = None
+    #: When the live version was published or rolled back to; ``None`` while
+    #: nothing is published.
+    live_published_at: datetime | None = None
 
 
 def _version(row: PracticeSiteVersionRow) -> SiteVersion:
@@ -264,6 +273,8 @@ class PracticeSiteService:
             draft=_draft(row),
             versions=[_version(v) for v in self._store.versions(practice_id)] if row else [],
             hide_from_search=row.hide_from_search if row else False,
+            last_previewed_at=row.last_previewed_at if row else None,
+            live_published_at=row.published_at if row and live is not None else None,
         )
 
     def set_hide_from_search(
@@ -388,6 +399,7 @@ class PracticeSiteService:
         token = secrets.token_urlsafe(32)
         row.preview_token_hash = preview_token_hash(token)
         row.preview_expires_at = now + PREVIEW_TTL
+        row.last_previewed_at = now
         row.updated_at = now
         return token, row.preview_expires_at
 

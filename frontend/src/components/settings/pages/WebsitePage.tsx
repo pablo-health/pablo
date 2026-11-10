@@ -22,6 +22,7 @@ import { BookSessionCard } from "../website/BookSessionCard"
 import { DraftCard } from "../website/DraftCard"
 import { LiveStatus } from "../website/LiveStatus"
 import { SearchEnginesCard } from "../website/SearchEnginesCard"
+import { SiteTimes } from "../website/SiteTimes"
 import { VersionHistory } from "../website/VersionHistory"
 
 /**
@@ -96,6 +97,7 @@ export function WebsitePage() {
       )}
       <SettingsCard title="Your website">
         <LiveStatus site={site} />
+        <SiteTimes site={site} />
       </SettingsCard>
       <BookSessionCard canManage={canManage} showWebsite />
       <SearchEnginesCard

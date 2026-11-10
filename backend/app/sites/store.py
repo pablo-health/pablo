@@ -9,9 +9,9 @@ hosted address from its portal slug (:mod:`app.portal.hosted`).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from ..db.platform_models import PracticeDomainRow, PracticeSiteRow, PracticeSiteVersionRow
@@ -24,8 +24,9 @@ from ..portal.hosted import (
 
 if TYPE_CHECKING:
     from collections.abc import Collection
-    from datetime import datetime
+    from datetime import datetime, timedelta
 
+    from sqlalchemy.engine import CursorResult
     from sqlalchemy.orm import Session
 
     from ..portal.hosted import HostedPurpose
@@ -82,6 +83,30 @@ class PracticeSiteStore:
     def by_preview_token_hash(self, token_hash: str) -> PracticeSiteRow | None:
         stmt = select(PracticeSiteRow).where(PracticeSiteRow.preview_token_hash == token_hash)
         return self._session.execute(stmt).scalar_one_or_none()
+
+    def mark_previewed(self, practice_id: str, now: datetime, every: timedelta) -> bool:
+        """Record that the practice's draft was previewed at *now*, unless that
+        was already recorded less than *every* ago. Whether it wrote.
+
+        One conditional ``UPDATE``, so requests racing for the same row write
+        at most once between them.
+        """
+        stmt = (
+            update(PracticeSiteRow)
+            .where(
+                PracticeSiteRow.practice_id == practice_id,
+                or_(
+                    PracticeSiteRow.last_previewed_at.is_(None),
+                    PracticeSiteRow.last_previewed_at <= now - every,
+                ),
+            )
+            .values(last_previewed_at=now)
+            .execution_options(synchronize_session=False)
+        )
+        # cast: Session.execute is typed Result[Any]; an UPDATE returns a
+        # CursorResult, which is what carries rowcount.
+        result = cast("CursorResult[Any]", self._session.execute(stmt))
+        return bool(result.rowcount)
 
     def active_site_hosts(self, practice_id: str) -> list[PracticeDomainRow]:
         """The practice's working website hosts, the primary first, then oldest first."""

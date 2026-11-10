@@ -112,6 +112,11 @@ class PracticeSiteResponse(BaseModel):
     versions: list[SiteVersionResponse]
     #: The practice asks search engines not to list its website.
     hide_from_search: bool
+    #: When a draft was last previewed, whether or not one is there now.
+    last_previewed_at: datetime | None
+    #: When the live version was published or rolled back to; ``None`` while
+    #: nothing is published.
+    live_published_at: datetime | None
 
 
 class SiteSearchRequest(BaseModel):
@@ -169,6 +174,8 @@ def _response(service: PracticeSiteService, practice_id: str) -> PracticeSiteRes
             for v in status.versions
         ],
         hide_from_search=status.hide_from_search,
+        last_previewed_at=status.last_previewed_at,
+        live_published_at=status.live_published_at,
     )
 
 

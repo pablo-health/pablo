@@ -79,6 +79,10 @@ export interface PracticeSite {
   versions: SiteVersion[]
   /** The practice asks search engines not to list its website. */
   hide_from_search: boolean
+  /** When a draft was last previewed, whether or not one is there now. */
+  last_previewed_at: string | null
+  /** When the live version was published or rolled back to; `null` while nothing is published. */
+  live_published_at: string | null
 }
 
 export interface SitePreview {

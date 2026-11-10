@@ -61,6 +61,8 @@ function site(overrides: Partial<PracticeSite> = {}): PracticeSite {
     draft: null,
     versions: [],
     hide_from_search: false,
+    last_previewed_at: null,
+    live_published_at: null,
     ...overrides,
   }
 }
@@ -413,6 +415,57 @@ describe("WebsitePage", () => {
 
     expect(await screen.findByTestId("website-draft")).toBeVisible()
     expect(screen.queryByTestId("website-theme")).not.toBeInTheDocument()
+  })
+
+  describe("since when it is live, and when a draft was last previewed", () => {
+    beforeEach(() => {
+      // Only Date: the query client's own timers stay real.
+      vi.useFakeTimers({ toFake: ["Date"] })
+      vi.setSystemTime(new Date("2026-09-03T15:04:00Z"))
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it("says since when the live version is up and how long ago a draft was previewed", async () => {
+      mockGet.mockResolvedValue({
+        ...PUBLISHED,
+        live_published_at: "2026-09-01T15:04:00Z",
+        last_previewed_at: "2026-09-03T14:59:00Z",
+      })
+      renderWithProviders(<WebsitePage />)
+
+      expect(await screen.findByTestId("website-live-since")).toHaveTextContent("Live since Sep 1, 2026.")
+      expect(screen.getByTestId("website-last-previewed")).toHaveTextContent("Draft last previewed 5 minutes ago.")
+    })
+
+    it("dates a site published with no working domain as published, not live", async () => {
+      mockGet.mockResolvedValue(site({ live_version: 1, live_published_at: "2026-09-01T15:04:00Z" }))
+      renderWithProviders(<WebsitePage />)
+
+      const since = await screen.findByTestId("website-live-since")
+      expect(since).toHaveTextContent("Published Sep 1, 2026.")
+      expect(since).not.toHaveTextContent("Live")
+      expect(screen.queryByTestId("website-last-previewed")).not.toBeInTheDocument()
+    })
+
+    it("keeps the last preview once the draft is gone", async () => {
+      mockGet.mockResolvedValue(site({ last_previewed_at: "2026-09-01T15:04:00Z" }))
+      renderWithProviders(<WebsitePage />)
+
+      expect(await screen.findByTestId("website-last-previewed")).toHaveTextContent(
+        "Draft last previewed 2 days ago.",
+      )
+      expect(screen.queryByTestId("website-live-since")).not.toBeInTheDocument()
+    })
+
+    it("shows neither line with nothing to date", async () => {
+      mockGet.mockResolvedValue(site({ live_published_at: "2026-09-01T15:04:00Z" }))
+      renderWithProviders(<WebsitePage />)
+
+      expect(await screen.findByTestId("website-live")).toHaveTextContent("Not published yet.")
+      expect(screen.queryByTestId("website-times")).not.toBeInTheDocument()
+    })
   })
 
   it("marks the versions that give the portal a theme", async () => {

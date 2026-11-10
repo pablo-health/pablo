@@ -16,7 +16,8 @@
 * ``GET /api/practice/website/preview/{token}/{path}`` — the practice's draft,
   for the hour after an owner asked for its address. The token is the only
   thing that grants it; a new draft, a publish, or a newer preview address
-  ends it.
+  ends it. Serving the draft's ``index.html`` records when it was last
+  previewed, at most once a minute; a view is not audited.
 
 Website files are public by design and carry no PHI. These routes are
 reachable on the app's own origin, so every answer is inert there: a bare
@@ -29,11 +30,13 @@ host is the app's own host, so the Host cannot tell its fetch from a visitor's.
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Response, status
 from pydantic import BaseModel
+from sqlalchemy.exc import SQLAlchemyError
 
 from ..auth.route_security import truly_public
 from ..db import create_standalone_session
@@ -42,10 +45,12 @@ from ..settings import get_settings
 from ..utcnow import utc_now
 from .book_button import BookLink, book_link_tag
 from .hosts import SiteHost, SiteHostCache, get_site_host_cache, load_site_host
-from .service import draft_prefix, preview_token_hash, version_prefix
+from .service import PREVIEW_MARK_EVERY, draft_prefix, preview_token_hash, version_prefix
 from .serving import SiteFolder, plain_not_found, site_file_response
 from .storage import SiteFileCache, get_site_file_cache, site_storage
 from .store import PracticeSiteStore
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["practice-website"])
 
@@ -127,16 +132,35 @@ def site_file_route(
     )
 
 
-def _draft_for_token(token: str) -> str | None:
-    """The folder of the draft *token* previews, while the token works."""
+#: The paths of a draft's ``index.html``, as the preview route receives them.
+_INDEX_PATHS = frozenset({"", "index.html"})
+
+
+def _draft_for_token(token: str, *, index: bool) -> str | None:
+    """The folder of the draft *token* previews, while the token works.
+
+    With *index*, the request is for the draft's ``index.html``, which records
+    that the draft was previewed, at most once a minute. That record is best
+    effort: the preview is served whether or not it is written.
+    """
     session = create_standalone_session()
     try:
-        row = PracticeSiteStore(session).by_preview_token_hash(preview_token_hash(token))
+        store = PracticeSiteStore(session)
+        row = store.by_preview_token_hash(preview_token_hash(token))
         if row is None or row.draft_id is None or row.preview_expires_at is None:
             return None
-        if row.preview_expires_at <= utc_now():
+        now = utc_now()
+        if row.preview_expires_at <= now:
             return None
-        return draft_prefix(row.practice_id, row.draft_id)
+        prefix = draft_prefix(row.practice_id, row.draft_id)
+        if index:
+            try:
+                if store.mark_previewed(row.practice_id, now, PREVIEW_MARK_EVERY):
+                    session.commit()
+            except SQLAlchemyError:
+                session.rollback()
+                logger.warning("Could not record a website preview", exc_info=True)
+        return prefix
     finally:
         session.close()
 
@@ -150,7 +174,7 @@ def site_preview_route(
 ) -> Response:
     """The draft's file *path* names, for whoever holds a working preview token."""
     bucket = _bucket()
-    prefix = _draft_for_token(token) if bucket else None
+    prefix = _draft_for_token(token, index=path in _INDEX_PATHS) if bucket else None
     if bucket is None or prefix is None:
         return plain_not_found()
     # The path arrives decoded; the resolver reads a path as it was sent.
