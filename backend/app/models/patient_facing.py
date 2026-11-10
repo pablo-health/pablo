@@ -287,6 +287,7 @@ APPOINTMENT_COLUMN_DECISIONS: Final[Mapping[str, str | None]] = {
     "diagnosis_codes": "Billing and clinical coding, staff-authored.",
     "reminder_24h_sent": "Whether a reminder job has run — delivery bookkeeping.",
     "reminder_1h_sent": "Whether a reminder job has run — delivery bookkeeping.",
+    "client_link_notice": "A digest of what the client was last sent — delivery bookkeeping.",
     "created_at": "When the row was written, which is not when the appointment is.",
     "updated_at": "When the row was last edited, which is not when the appointment is.",
 }

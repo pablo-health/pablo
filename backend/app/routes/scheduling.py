@@ -164,6 +164,13 @@ from ..services import (
 )
 from ..services.availability_parse_service import AvailabilityRuleParseService, ProposedRule
 from ..services.busy_time import CalendarBusySource
+from ..services.client_video_link_notice import (
+    ClientVideoLinkNotifier,
+    get_client_video_link_notifier,
+    practice_id_for_schema,
+    read_practice_facts,
+)
+from ..services.email_sender import get_email_sender
 from ..services.google_calendar_follow import (
     GoogleChangeFollower,
     GoogleChangeUnavailableError,
@@ -383,9 +390,30 @@ class MeetLinkFollowUp:
     def _run(self, user_id: str, appointment_id: str, event_id: str) -> None:
         try:
             with self.services(user_id) as (service, gcal_service):
-                _fill_meet_link(service, gcal_service, user_id, appointment_id, event_id)
+                filled = _fill_meet_link(service, gcal_service, user_id, appointment_id, event_id)
+                if filled is not None:
+                    self.tell_client(service, filled)
         except Exception:
             logger.exception("The late read of a Google Meet link failed")
+
+    def tell_client(self, service: SchedulingService, appt: Appointment) -> None:
+        """Send the client the link the save could not wait for.
+
+        The practice is looked up only once a message is due, so a deployment
+        with no mail to send reads nothing here.
+        """
+        schema = self._schema
+        notifier = ClientVideoLinkNotifier(
+            sender=get_email_sender(),
+            practice_facts=lambda _id: read_practice_facts(practice_id_for_schema(schema)),
+        )
+        notifier.notify(
+            service,
+            appt,
+            practice_id=None,
+            patients=_patient_repo_factory(),
+            zone=lambda: _owner_timezone(get_user_repository(), appt.user_id),
+        )
 
     @contextlib.contextmanager
     def services(self, user_id: str) -> Iterator[tuple[SchedulingService, GoogleCalendarService]]:
@@ -668,6 +696,10 @@ class ClientBookingRoom:
     gcal_service: GoogleCalendarService
     background: BackgroundTasks
     follow_up: MeetLinkFollowUp
+    #: Sends the client their link once the room is made; None sends nothing.
+    notifier: ClientVideoLinkNotifier | None = None
+    #: The practice the booking was made in, for the notifier.
+    practice_id: str | None = None
 
     def settle(self, service: SchedulingService, owner: User, appt: Appointment) -> Appointment:
         # Asked first so an in-person booking reads no preferences and no
@@ -682,13 +714,22 @@ class ClientBookingRoom:
                 appt,
                 requested_provider=None,
             )
-        return _sync_appointment_to_google(
+        appt = _sync_appointment_to_google(
             service,
             self.gcal_service,
             owner,
             appt,
             background=self.background,
             follow_up=self.follow_up,
+        )
+        if self.notifier is None:
+            return appt
+        return self.notifier.notify(
+            service,
+            appt,
+            practice_id=self.practice_id,
+            patients=self.patient_repo,
+            zone=lambda: _owner_timezone(self.user_repo, owner.id),
         )
 
 
@@ -784,30 +825,31 @@ def _fill_meet_link(
     user_id: str,
     appointment_id: str,
     event_id: str,
-) -> None:
+) -> Appointment | None:
     """Read a Meet link that was still being made, and put it on the appointment.
 
     Only onto the appointment as it was left: still on Meet, still without a
     link, still on this event. An edit in the meantime (in person now, or a
     link pasted in) wins over a conference it no longer wants. A row that does
     not come back is not this clinician's to write, so nothing is written.
+    Returns the appointment with its link, or None when nothing was written.
     """
     pushed = gcal_service.read_appointment_event(user_id, event_id)
     link = pushed.conference_url if pushed else None
     if not link:
-        return
+        return None
     try:
         appt = service.get_appointment(appointment_id, user_id)
     except AppointmentNotFoundError:
-        return
+        return None
     if (
         appt.provider != GOOGLE_MEET
         or appt.video_link
         or appt.google_event_id != event_id
         or appt.status == AppointmentStatus.CANCELLED
     ):
-        return
-    service.update_appointment(appointment_id, user_id, video_link=link)
+        return None
+    return service.update_appointment(appointment_id, user_id, video_link=link)
 
 
 def _push_cancellation_to_google(
@@ -967,6 +1009,7 @@ def create_appointment(
     user_repo: UserRepository = Depends(get_user_repository),
     tz: tzinfo = Depends(get_owner_timezone),
     follow_up: MeetLinkFollowUp = Depends(get_meet_link_follow_up),
+    notifier: ClientVideoLinkNotifier = Depends(get_client_video_link_notifier),
 ) -> AppointmentResponse:
     """Create a new appointment."""
     data = request.model_dump()
@@ -1017,6 +1060,9 @@ def create_appointment(
     )
     appt = _sync_appointment_to_google(
         service, gcal_service, user, appt, background=background, follow_up=follow_up
+    )
+    appt = notifier.notify(
+        service, appt, practice_id=_ctx.practice_id, patients=patient_repo, zone=lambda: tz
     )
     return _to_response(
         appt,
@@ -1144,6 +1190,7 @@ def update_appointment(
     type_repo: AppointmentTypeRepository = Depends(get_appointment_type_repository),
     tz: tzinfo = Depends(get_owner_timezone),
     follow_up: MeetLinkFollowUp = Depends(get_meet_link_follow_up),
+    notifier: ClientVideoLinkNotifier = Depends(get_client_video_link_notifier),
 ) -> AppointmentResponse:
     """Update an appointment."""
     payload = request.model_dump()
@@ -1220,6 +1267,9 @@ def update_appointment(
         )
     appt = _sync_appointment_to_google(
         service, gcal_service, user, appt, background=background, follow_up=follow_up
+    )
+    appt = notifier.notify(
+        service, appt, practice_id=_ctx.practice_id, patients=patient_repo, zone=lambda: tz
     )
     return _to_response(
         appt,

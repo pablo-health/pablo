@@ -168,6 +168,10 @@ class Appointment:
     # Reminders
     reminder_24h_sent: bool = False
     reminder_1h_sent: bool = False
+    #: Which time and link the client was last sent the video link for, as a
+    #: digest; None when nothing has been sent. Lets a re-save send nothing.
+    #: See :mod:`app.services.client_video_link_notice`.
+    client_link_notice: str | None = None
 
     # When a PENDING request stops holding its slot. None for every other
     # status. Whoever creates the request decides the instant — the rules that
@@ -284,6 +288,7 @@ class Appointment:
             diagnosis_codes=data.get("diagnosis_codes"),
             reminder_24h_sent=data.get("reminder_24h_sent", False),
             reminder_1h_sent=data.get("reminder_1h_sent", False),
+            client_link_notice=data.get("client_link_notice"),
             pending_expires_at=data.get("pending_expires_at"),
             confirmation_token_hash=data.get("confirmation_token_hash"),
             cancelled_at=data.get("cancelled_at"),
@@ -346,6 +351,7 @@ class Appointment:
             "confirmation_token_hash": self.confirmation_token_hash,
             "reminder_24h_sent": self.reminder_24h_sent,
             "reminder_1h_sent": self.reminder_1h_sent,
+            "client_link_notice": self.client_link_notice,
             "cancelled_at": self.cancelled_at,
             "cancelled_by": self.cancelled_by,
             "cancelled_by_id": self.cancelled_by_id,

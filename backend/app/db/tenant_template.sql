@@ -208,7 +208,8 @@ CREATE TABLE __TENANT_SCHEMA__.appointments (
     outside_calendar_id text,
     auto_booked_at timestamp with time zone,
     auto_booked_acknowledged_at timestamp with time zone,
-    skipped boolean DEFAULT false NOT NULL
+    skipped boolean DEFAULT false NOT NULL,
+    client_link_notice character varying(64)
 );
 
 

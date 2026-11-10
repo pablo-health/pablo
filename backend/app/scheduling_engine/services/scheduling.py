@@ -351,6 +351,7 @@ class SchedulingService:
             "unit_count",
             "place_of_service",
             "diagnosis_codes",
+            "client_link_notice",
         }
         for field, value in updates.items():
             if field not in allowed_fields:
@@ -603,6 +604,8 @@ class SchedulingService:
         #   confirmation_token_hash — a credential minted for the old hold.
         #   reminder_24h_sent / reminder_1h_sent — reminders for the new time
         #     have not been sent, and resetting them is the point.
+        #   client_link_notice — the new time has not been sent to the client
+        #     either, so the move sends it.
         #   service_code / modifiers / unit_count / place_of_service /
         #     diagnosis_codes — entered against a visit that has not occurred.
         created = self._repo.create(replacement)

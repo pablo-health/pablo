@@ -89,6 +89,10 @@ from ..scheduling_engine.services.scheduling_policy import current_policy_or_def
 from ..services import AuditService, get_audit_service
 from ..services.busy_time import CalendarBusySource
 from ..services.captcha import CaptchaVerifier, get_captcha_verifier
+from ..services.client_video_link_notice import (
+    ClientVideoLinkNotifier,
+    get_client_video_link_notifier,
+)
 from ..services.coverage_intake import record_intake_coverage
 from ..services.email_sender import EmailSender, OutboundEmail, get_email_sender
 from ..services.google_calendar_service import (
@@ -303,6 +307,7 @@ def get_public_client_booking_room(
     gcal_service: GoogleCalendarService = Depends(get_public_gcal_service),
     user_repo: UserRepository = Depends(get_user_repository),
     patient_repo: PatientRepository = Depends(get_patient_repository),
+    notifier: ClientVideoLinkNotifier = Depends(get_client_video_link_notifier),
 ) -> ClientBookingRoom:
     """The video room and calendar push for a client's booking, in the link's practice.
 
@@ -310,7 +315,8 @@ def get_public_client_booking_room(
     owner's calendar and Zoom connections only when a room is being made,
     by which time the session is inside the link's practice. The late Meet
     read opens its own session on the link's practice, since a public request
-    has no tenant context to borrow one from.
+    has no tenant context to borrow one from. Once the room is made the
+    client is sent its link (see :mod:`app.services.client_video_link_notice`).
     """
     return ClientBookingRoom(
         registry=build_meeting_registry(),
@@ -319,6 +325,8 @@ def get_public_client_booking_room(
         gcal_service=gcal_service,
         background=background,
         follow_up=MeetLinkFollowUp(ctx.link.practice_schema),
+        notifier=notifier,
+        practice_id=ctx.link.practice_id,
     )
 
 
