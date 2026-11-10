@@ -1,0 +1,168 @@
+// Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+
+/**
+ * The appointment form says where a session happens and which link it gets.
+ *
+ * The form's unit tests mock the providers list and the save, so they prove
+ * the form sends what it means to. What only the stack can show: that the
+ * service the form names is the one the server uses, that the link is on the
+ * appointment when the save returns, that "in person" leaves the visit with
+ * no room, and that the clinician's last choice is kept on the server, where
+ * another device reads it.
+ *
+ * The stack offers doxy.me and pasted links, so doxy.me stands in for the
+ * default service here: a clinician's own room, addressed per appointment,
+ * with no vendor call to fake.
+ */
+
+import type { Page, Response } from "@playwright/test"
+import { test, expect } from "../fixtures/auth"
+import { givePatient, markCalendarSetupComplete, type Patient } from "../fixtures/scenarios"
+import type { ApiClient } from "../fixtures/api"
+
+const ROOM_URL = "https://doxy.me/e2e-video-place"
+const PASTED_LINK = "https://teams.example.test/l/meetup-join/e2e"
+
+/** Typed for the reason scheduling.spec.ts gives: the form sends browser time. */
+test.use({ timezoneId: "America/New_York" })
+
+interface SavedAppointment {
+  id: string
+  place_of_service: string | null
+  provider: string | null
+  video_link: string | null
+}
+
+interface Preferences {
+  default_video_platform: string | null
+  last_place_of_service?: string | null
+}
+
+interface Providers {
+  room_url: string | null
+}
+
+function tomorrow(): string {
+  const date = new Date()
+  date.setDate(date.getDate() + 1)
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate(),
+  ).padStart(2, "0")}`
+}
+
+/** Open a new appointment for this client, tomorrow at `time`, without saving. */
+async function openBooking(page: Page, patient: Patient, time: string): Promise<void> {
+  await page.goto("/dashboard/calendar")
+  await page.getByRole("button", { name: /new appointment/i }).click()
+  const picker = page.getByRole("combobox", { name: "Client" })
+  await picker.click()
+  await picker.fill(patient.first_name)
+  await page.getByRole("option", { name: `${patient.last_name}, ${patient.first_name}` }).click()
+  await page.getByLabel("Date", { exact: true }).fill(tomorrow())
+  await page.getByLabel("Time", { exact: true }).fill(time)
+}
+
+/** Press Schedule and return the appointment the POST created. */
+async function schedule(page: Page): Promise<SavedAppointment> {
+  const created = page.waitForResponse(
+    (response: Response) =>
+      new URL(response.url()).pathname === "/api/appointments" &&
+      response.request().method() === "POST",
+  )
+  await page.getByRole("button", { name: "Schedule", exact: true }).click()
+  const response = await created
+  expect(response.status(), `the booking was refused: ${await response.text()}`).toBe(201)
+  return (await response.json()) as SavedAppointment
+}
+
+test.describe("where the session happens, on the appointment form", () => {
+  let saved: { preferences: Preferences; roomUrl: string | null }
+  let patient: Patient
+  const booked: string[] = []
+
+  test.beforeEach(async ({ api }) => {
+    const preferences = await api.get<Preferences>("/api/users/me/preferences")
+    const providers = await api.get<Providers>("/api/telehealth/providers")
+    saved = { preferences, roomUrl: providers.room_url }
+    await markCalendarSetupComplete(api)
+    // A clinician whose default service is their doxy.me room, who has never
+    // said where a booking happens.
+    await api.put("/api/telehealth/room-url", { room_url: ROOM_URL })
+    await api.patch("/api/users/me/preferences", {
+      default_video_platform: "doxy_me",
+      last_place_of_service: null,
+    })
+    patient = await givePatient(api)
+  })
+
+  test.afterEach(async ({ api }) => {
+    for (const id of booked.splice(0)) await api.delete(`/api/appointments/${id}`)
+    // The worker's clinician is shared with the rest of the suite.
+    await api.put("/api/telehealth/room-url", { room_url: saved.roomUrl })
+    await api.patch("/api/users/me/preferences", {
+      default_video_platform: saved.preferences.default_video_platform,
+      last_place_of_service: saved.preferences.last_place_of_service ?? null,
+    })
+  })
+
+  test("video names the service before the save, and the link is there after it", async ({
+    signedInPage: page,
+    api,
+  }) => {
+    await openBooking(page, patient, "10:00")
+    const where = page.getByRole("radiogroup", { name: "Where" })
+    // Nobody has said yet, so the form does not guess.
+    await expect(where.getByRole("radio", { name: "Video" })).toHaveAttribute("aria-checked", "false")
+    await expect(where.getByRole("radio", { name: "In person" })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    )
+
+    await where.getByRole("radio", { name: "Video" }).click()
+    await expect(page.getByTestId("video-link-promise")).toHaveText(
+      /Doxy\.me link added when you save/,
+    )
+    const appointment = await schedule(page)
+    booked.push(appointment.id)
+
+    expect(appointment.place_of_service).toBe("02")
+    expect(appointment.provider).toBe("doxy_me")
+    expect(appointment.video_link).toMatch(/^https:\/\/doxy\.me\/e2e-video-place/)
+
+    // Kept on the server, so the next booking on any device starts at Video.
+    await expect
+      .poll(async () =>
+        (await api.get<Preferences>("/api/users/me/preferences")).last_place_of_service,
+      )
+      .toBe("02")
+    await openBooking(page, patient, "12:00")
+    await expect(
+      page.getByRole("radiogroup", { name: "Where" }).getByRole("radio", { name: "Video" }),
+    ).toHaveAttribute("aria-checked", "true")
+  })
+
+  test("in person saves no room", async ({ signedInPage: page }) => {
+    await openBooking(page, patient, "13:00")
+    await page.getByRole("radiogroup", { name: "Where" }).getByRole("radio", { name: "In person" }).click()
+    await expect(page.getByLabel("Video link")).toHaveCount(0)
+
+    const appointment = await schedule(page)
+    booked.push(appointment.id)
+    expect(appointment.place_of_service).toBe("11")
+    expect(appointment.video_link).toBeNull()
+    expect(appointment.provider).toBeNull()
+  })
+
+  test("a pasted link is that appointment's room", async ({ signedInPage: page }) => {
+    await openBooking(page, patient, "15:00")
+    await page.getByRole("radiogroup", { name: "Where" }).getByRole("radio", { name: "Video" }).click()
+    await page.getByRole("button", { name: "Change" }).click()
+    await page.getByRole("button", { name: "Paste a link" }).click()
+    await page.getByLabel("Video link").fill(PASTED_LINK)
+
+    const appointment = await schedule(page)
+    booked.push(appointment.id)
+    expect(appointment.place_of_service).toBe("02")
+    expect(appointment.video_link).toBe(PASTED_LINK)
+  })
+})

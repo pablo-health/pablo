@@ -298,3 +298,22 @@ class TestPatchPreferences:
 
         assert response.json()["theme"] == "dark"
         assert response.json()["timezone"] == "Asia/Tokyo"
+
+
+class TestLastPlaceOfService:
+    """Where the clinician last booked, kept on the server so every device agrees."""
+
+    def test_default_is_unset(self) -> None:
+        assert UserPreferences().last_place_of_service is None
+
+    def test_patch_round_trips_the_exact_code(self, client: Any) -> None:
+        response = client.patch("/api/users/me/preferences", json={"last_place_of_service": "10"})
+
+        assert response.status_code == 200
+        assert client.get("/api/users/me/preferences").json()["last_place_of_service"] == "10"
+
+    def test_a_code_the_form_never_sends_is_refused(self, client: Any) -> None:
+        response = client.patch("/api/users/me/preferences", json={"last_place_of_service": "99"})
+
+        assert response.status_code == 422
+        assert response.json()["detail"][0]["loc"] == ["body", "last_place_of_service"]

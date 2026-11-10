@@ -46,6 +46,7 @@ vi.mock("@/lib/api/telehealth", () => ({
   getZoomAuthUrl: (...args: unknown[]) => getAuthUrl(...args),
   disconnectZoom: vi.fn(),
   setTelehealthRoomUrl: vi.fn(),
+  ZOOM_RETURN_PATH: "/dashboard/settings/sessions",
 }))
 
 const RETURN_URL = "http://localhost:3000/dashboard/settings/sessions"

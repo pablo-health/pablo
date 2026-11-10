@@ -150,6 +150,12 @@ class UserPreferences(BaseModel):
         """Only an https address on zoom.us, whichever route saves it."""
         return validate_zoom_room_url(value)
 
+    #: Where the clinician's last booking from the appointment form happened,
+    #: as its exact place-of-service code (11 office, 02 or 10 telehealth).
+    #: The form starts a new appointment there when its type has nothing to
+    #: say. Kept here rather than in the browser so it follows the clinician
+    #: to another device. None until the first booking that says.
+    last_place_of_service: Literal["11", "02", "10"] | None = None
     default_session_type: str = "individual"
     default_duration_minutes: int = Field(default=50, ge=1, le=480)
     auto_transcribe: bool = True

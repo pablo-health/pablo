@@ -95,6 +95,21 @@ export async function getZoomStatus(): Promise<ZoomStatus> {
 }
 
 /**
+ * Where Zoom sends the clinician back to, as a path.
+ *
+ * This settings section rather than `/dashboard/settings`, which has no page
+ * of its own and server-redirects to the first item — dropping the query
+ * string, and with it the authorization code, before anything could read it.
+ *
+ * Sent to the deployment when the authorization URL is built and again when
+ * the code is spent, and the two have to be the same string.
+ *
+ * The appointment form's Connect Zoom uses it too, so the connection is
+ * completed in the one place that knows how.
+ */
+export const ZOOM_RETURN_PATH = "/dashboard/settings/sessions"
+
+/**
  * Where to send the clinician to approve a Zoom connection.
  *
  * The redirect URI is sent rather than assumed, because the deployment checks
