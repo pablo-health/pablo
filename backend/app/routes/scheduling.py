@@ -180,6 +180,7 @@ from ..services.google_calendar_service import (
     DEFAULT_EVENT_TITLING,
     DEFAULT_WRITE_TARGET,
     GoogleCalendarService,
+    PushedEvent,
     RetitleOutcome,
     google_consent_surface,
     wait_for_conference,
@@ -192,11 +193,14 @@ from ..services.telehealth import (
     MANUAL,
     Attendee,
     Clinician,
+    LinkTrail,
     MeetingProviderRegistry,
+    MissingLinkReason,
     Practice,
     RoomChange,
     TelehealthError,
     clinician_from_preferences,
+    log_missing_link,
     provision_meeting,
     release_meeting,
     room_change,
@@ -548,14 +552,17 @@ def _provision_meeting(
     appt: Appointment,
     *,
     requested_provider: str | None,
+    trail: LinkTrail | None = None,
 ) -> Appointment:
     """Best-effort: give the appointment a room and record it.
 
     A vendor that will not issue a meeting never fails the booking. The
     appointment is real — somebody is expected at a time — and the missing
     piece is a link, which the clinician can paste. Same judgement the
-    calendar push makes one function down, and for the same reason.
+    calendar push makes one function down, and for the same reason. What
+    went wrong is marked on ``trail`` for :func:`log_missing_link`.
     """
+    trail = trail if trail is not None else LinkTrail()
     try:
         provisioned = provision_meeting(
             appt,
@@ -567,7 +574,12 @@ def _provision_meeting(
         )
     except TelehealthError:
         logger.warning("telehealth_provision_failed provider=%s", requested_provider)
+        trail.reason = MissingLinkReason.PROVIDER_FAILED
         return appt
+    if provisioned.provider is None:
+        # Asked, and no service on offer answered: none was connected, or the
+        # one asked for and the one preferred are both not.
+        trail.reason = MissingLinkReason.NO_OFFERED_SERVICE
     if provisioned == appt:
         return appt
     return service.update_appointment(
@@ -605,6 +617,7 @@ def _reconcile_meeting(
     appt: Appointment,
     *,
     requested_provider: str | None,
+    trail: LinkTrail | None = None,
 ) -> Appointment:
     """Bring an edited appointment's room in line with the edit, and record it.
 
@@ -636,6 +649,7 @@ def _reconcile_meeting(
             user,
             appt,
             requested_provider=requested_provider,
+            trail=trail,
         )
     _release_meeting(registry, user, previous)
     if change is RoomChange.MANUAL:
@@ -655,6 +669,7 @@ def _reconcile_meeting(
         user,
         appt,
         requested_provider=requested_provider,
+        trail=trail,
     )
 
 
@@ -702,6 +717,7 @@ class ClientBookingRoom:
     practice_id: str | None = None
 
     def settle(self, service: SchedulingService, owner: User, appt: Appointment) -> Appointment:
+        trail = LinkTrail()
         # Asked first so an in-person booking reads no preferences and no
         # chart: it was never going to get a room.
         if wants_a_room(appt, requested_provider=None):
@@ -713,6 +729,7 @@ class ClientBookingRoom:
                 owner,
                 appt,
                 requested_provider=None,
+                trail=trail,
             )
         appt = _sync_appointment_to_google(
             service,
@@ -721,7 +738,9 @@ class ClientBookingRoom:
             appt,
             background=self.background,
             follow_up=self.follow_up,
+            trail=trail,
         )
+        log_missing_link(appt, trail=trail)
         if self.notifier is None:
             return appt
         return self.notifier.notify(
@@ -741,6 +760,7 @@ def _sync_appointment_to_google(
     *,
     background: BackgroundTasks | None = None,
     follow_up: MeetLinkFollowUp | None = None,
+    trail: LinkTrail | None = None,
 ) -> Appointment:
     """Best-effort push of an appointment create/update to Google Calendar.
 
@@ -760,7 +780,11 @@ def _sync_appointment_to_google(
     and ``follow_up`` reads it once more after the response. A caller that
     passes no ``follow_up`` neither waits nor reads again, and the next push
     picks the link up as before.
+
+    A Meet room that does not come back is marked on ``trail`` with why, for
+    :func:`log_missing_link`; a push that never asked for one marks nothing.
     """
+    trail = trail if trail is not None else LinkTrail()
     if appt.outside_event_id:
         # Already on a calendar another service keeps; a Pablo event would
         # put it there twice.
@@ -778,13 +802,24 @@ def _sync_appointment_to_google(
             conference = None
     except Exception:
         logger.exception("Failed to push appointment to Google Calendar")
+        if wants_conference:
+            trail.reason = MissingLinkReason.PUSH_FAILED
         return service.update_appointment(appt.id, user.id, google_sync_status="error")
     if event_id is None:
+        if wants_conference:
+            trail.reason = MissingLinkReason.CALENDAR_DISCONNECTED
         return appt
     if pending and background is not None and follow_up is not None:
-        conference, still_pending = _await_meet_link(gcal_service, user, event_id)
-        if still_pending and not conference:
+        conference, pending = _await_meet_link(gcal_service, user, event_id)
+        if pending and not conference:
             background.add_task(follow_up.run, user.id, appt.id, event_id)
+            trail.reading_back = True
+    if wants_conference and not conference:
+        trail.reason = (
+            MissingLinkReason.CONFERENCE_PENDING_TIMEOUT
+            if pending
+            else MissingLinkReason.PROVIDER_FAILED
+        )
     updates: dict[str, Any] = {
         "google_event_id": event_id,
         "google_sync_status": "synced",
@@ -834,10 +869,16 @@ def _fill_meet_link(
     not come back is not this clinician's to write, so nothing is written.
     Returns the appointment with its link, or None when nothing was written.
     """
-    pushed = gcal_service.read_appointment_event(user_id, event_id)
+    try:
+        pushed = gcal_service.read_appointment_event(user_id, event_id)
+    except Exception:
+        # One read and no retry, so a 429, a 5xx or a deleted event ends here.
+        # The appointment still has no link, and that still has to be said.
+        logger.exception("The late read of a Google Meet link failed")
+        pushed, read_failed = None, True
+    else:
+        read_failed = False
     link = pushed.conference_url if pushed else None
-    if not link:
-        return None
     try:
         appt = service.get_appointment(appointment_id, user_id)
     except AppointmentNotFoundError:
@@ -849,7 +890,28 @@ def _fill_meet_link(
         or appt.status == AppointmentStatus.CANCELLED
     ):
         return None
+    if not link:
+        # The last read there will be. The save logged nothing because this
+        # read was still to come, so this is where the missing link is said.
+        log_missing_link(appt, trail=LinkTrail(_late_read_reason(pushed, read_failed=read_failed)))
+        return None
     return service.update_appointment(appointment_id, user_id, video_link=link)
+
+
+def _late_read_reason(pushed: PushedEvent | None, *, read_failed: bool) -> MissingLinkReason:
+    """Why the late read of a Meet link came back without one.
+
+    A read that failed never learned what Google made, so the conference is
+    still the pending one the save left. A read that answered None found no
+    calendar connection, which the save calls a disconnect too.
+    """
+    if read_failed:
+        return MissingLinkReason.CONFERENCE_PENDING_TIMEOUT
+    if pushed is None:
+        return MissingLinkReason.CALENDAR_DISCONNECTED
+    if not pushed.conference_pending:
+        return MissingLinkReason.PROVIDER_FAILED
+    return MissingLinkReason.CONFERENCE_PENDING_TIMEOUT
 
 
 def _push_cancellation_to_google(
@@ -1049,6 +1111,7 @@ def create_appointment(
     )
     # Before the calendar push, because a Google Meet appointment is given its
     # provider here and the push is what turns that into a conference.
+    trail = LinkTrail()
     appt = _provision_meeting(
         service,
         registry,
@@ -1057,10 +1120,18 @@ def create_appointment(
         user,
         appt,
         requested_provider=requested_provider,
+        trail=trail,
     )
     appt = _sync_appointment_to_google(
-        service, gcal_service, user, appt, background=background, follow_up=follow_up
+        service,
+        gcal_service,
+        user,
+        appt,
+        background=background,
+        follow_up=follow_up,
+        trail=trail,
     )
+    log_missing_link(appt, trail=trail, requested_provider=requested_provider)
     appt = notifier.notify(
         service, appt, practice_id=_ctx.practice_id, patients=patient_repo, zone=lambda: tz
     )
@@ -1254,6 +1325,7 @@ def update_appointment(
     )
     # Before the calendar push, for the same reason as on create: the push is
     # what puts a Meet conference on the event, or takes one off.
+    trail = LinkTrail()
     if previous is not None:
         appt = _reconcile_meeting(
             service,
@@ -1264,10 +1336,18 @@ def update_appointment(
             previous,
             appt,
             requested_provider=requested_provider,
+            trail=trail,
         )
     appt = _sync_appointment_to_google(
-        service, gcal_service, user, appt, background=background, follow_up=follow_up
+        service,
+        gcal_service,
+        user,
+        appt,
+        background=background,
+        follow_up=follow_up,
+        trail=trail,
     )
+    log_missing_link(appt, trail=trail, requested_provider=requested_provider)
     appt = notifier.notify(
         service, appt, practice_id=_ctx.practice_id, patients=patient_repo, zone=lambda: tz
     )

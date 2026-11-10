@@ -105,6 +105,7 @@ from ..services.client_video_link_notice import (
     practice_id_for_schema,
 )
 from ..services.google_calendar_service import GoogleCalendarService, google_consent_surface
+from ..services.telehealth import LinkTrail, log_missing_link
 from ..settings import get_settings
 from .scheduling import _push_cancellation_to_google, _sync_appointment_to_google
 
@@ -978,19 +979,27 @@ def _push_to_calendar(session: Session, owner: str, appointment: Appointment) ->
     owner lookup, the write of the event id) because the client's booking has
     already committed by now, and a 5xx would tell them it had not. Returns
     the row as the push left it, or as it was if the push never got that far.
+
+    This is the last step that can settle a portal booking's link, so it is
+    where a video booking left without one is logged. A portal booking asks
+    no video service for a room, so unless the row already carried one, the
+    reason is ``never_provisioned``.
     """
+    trail = LinkTrail()
+    synced = appointment
     try:
         user = PostgresUserRepository(session).get(owner)
         if user is None:
             logger.warning("patient booking: no user row for owner %s, calendar not updated", owner)
-            return appointment
-        service, calendar = _owner_calendar(session)
-        synced = _sync_appointment_to_google(service, calendar, user, appointment)
-        session.commit()
+        else:
+            service, calendar = _owner_calendar(session)
+            synced = _sync_appointment_to_google(service, calendar, user, appointment, trail=trail)
+            session.commit()
     except Exception:
         session.rollback()
         logger.exception("patient booking: calendar push failed for appointment %s", appointment.id)
-        return appointment
+        synced = appointment
+    log_missing_link(synced, trail=trail)
     return synced
 
 

@@ -30,6 +30,7 @@ having a bad morning — so nothing here is allowed to overwrite it.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from enum import StrEnum
@@ -37,6 +38,7 @@ from typing import TYPE_CHECKING, ClassVar, Final, Protocol, runtime_checkable
 from urllib.parse import unquote_plus, urlsplit, urlunsplit
 
 from ..models.scheduling import TELEHEALTH_PLACES, is_telehealth
+from ..scheduling_engine.models.appointment import AppointmentStatus
 from ..settings import get_settings
 
 if TYPE_CHECKING:
@@ -47,6 +49,8 @@ if TYPE_CHECKING:
 
     from ..models.user import UserPreferences
     from ..scheduling_engine.models.appointment import Appointment
+
+logger = logging.getLogger(__name__)
 
 #: Provider ids, which are also the registry keys and the value stored in
 #: ``appointments.provider``. Short and stable: the column is VARCHAR(16) and
@@ -555,3 +559,92 @@ def practice_sends_client_video_link(session: Session, practice_id: str | None) 
         return False
     practice = session.get(PracticeRow, practice_id)
     return bool(practice is not None and practice.send_clients_video_link)
+
+
+#: The message of the one warning a video appointment saved without a link
+#: logs. Fixed, so a log-based alert can count it; why is in ``reason``.
+MISSING_LINK_MESSAGE: Final = "telehealth_link_missing"
+
+
+class MissingLinkReason(StrEnum):
+    """Why a video appointment was saved without a link."""
+
+    #: No video service the clinician has connected was asked for or preferred.
+    NO_OFFERED_SERVICE = "no_offered_service"
+    #: The service was asked and could not make a room, or Google answered
+    #: the conference request with none.
+    PROVIDER_FAILED = "provider_failed"
+    #: The calendar push that makes a Meet conference did not go through.
+    PUSH_FAILED = "push_failed"
+    #: A Meet room was wanted and there is no calendar connection to make it on.
+    CALENDAR_DISCONNECTED = "calendar_disconnected"
+    #: Google was still making the conference when the last read gave up.
+    CONFERENCE_PENDING_TIMEOUT = "conference_pending_timeout"
+    #: Nothing on the way asked for a room at all.
+    NEVER_PROVISIONED = "never_provisioned"
+
+
+@dataclass
+class LinkTrail:
+    """What a save learned about its video link, for :func:`log_missing_link`.
+
+    Starts at NEVER_PROVISIONED, because a save that asks nobody for a room
+    is exactly that. The steps a save takes (the room, the calendar push)
+    each mark what they found, and the last one to mark wins: it is the step
+    nearest to the missing link. ``reading_back`` is set when a late read of
+    a Meet link is still to come, which is not a missing link yet.
+    """
+
+    reason: MissingLinkReason = MissingLinkReason.NEVER_PROVISIONED
+    reading_back: bool = False
+
+
+#: Statuses where a missing link is expected. A request gets its room when it
+#: is agreed to, and nobody joins a cancelled, missed or finished session.
+_NO_LINK_EXPECTED: Final = frozenset(
+    {
+        AppointmentStatus.PENDING,
+        AppointmentStatus.CANCELLED,
+        AppointmentStatus.NO_SHOW,
+        AppointmentStatus.COMPLETED,
+    }
+)
+
+
+def log_missing_link(
+    appointment: Appointment,
+    *,
+    trail: LinkTrail,
+    requested_provider: str | None = None,
+) -> bool:
+    """Log one warning when a video appointment was saved without a link.
+
+    Called once at the end of every save that can give an appointment a room,
+    after the room and the calendar push have settled. Logs nothing for an
+    in-person appointment, one that has its link, one whose Meet link is
+    still being read back, or one that is not going ahead. Never changes the
+    appointment: this says why the link is missing and nothing more.
+
+    The record carries the reason, the service the save asked for and the
+    appointment id, and nothing about the client or the session.
+    """
+    if appointment.video_link or trail.reading_back:
+        return False
+    if appointment.status in _NO_LINK_EXPECTED:
+        return False
+    requested = normalise_provider(requested_provider)
+    if not is_telehealth(
+        provider=requested or appointment.provider,
+        video_link=None,
+        place_of_service=appointment.place_of_service,
+    ):
+        return False
+    logger.warning(
+        MISSING_LINK_MESSAGE,
+        extra={
+            "reason": trail.reason.value,
+            "requested_provider": requested,
+            "appointment_id": appointment.id,
+        },
+    )
+    return True
