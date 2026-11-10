@@ -116,9 +116,7 @@ def _client(
     client = _public_app(link_repo)
     if modality is not None:
         client.type_repo.record_modality(TYPE_ID, OWNER_ID, modality)
-    rooms = Rooms(
-        client, monkeypatch, provider=provider, calendar=calendar or RecordingCalendar()
-    )
+    rooms = Rooms(client, monkeypatch, provider=provider, calendar=calendar or RecordingCalendar())
     return client, rooms
 
 
@@ -246,7 +244,7 @@ class TestAVendorFailureKeepsTheBooking:
     def test_the_booking_stands_without_a_link(
         self, book: Any, link_repo: InMemoryBookingLinkRepository, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        client, rooms = _client(
+        client, _rooms = _client(
             link_repo, monkeypatch, modality="video", provider=_zoom(raises=True)
         )
 
