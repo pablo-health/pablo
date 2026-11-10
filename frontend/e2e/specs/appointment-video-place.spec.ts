@@ -17,14 +17,21 @@
 
 import type { Page, Response } from "@playwright/test"
 import { test, expect } from "../fixtures/auth"
-import { givePatient, markCalendarSetupComplete, type Patient } from "../fixtures/scenarios"
+import {
+  givePatient,
+  giveWorkingHours,
+  markCalendarSetupComplete,
+  type AvailabilityRule,
+  type Patient,
+} from "../fixtures/scenarios"
 import type { ApiClient } from "../fixtures/api"
 
 const ROOM_URL = "https://doxy.me/e2e-video-place"
 const PASTED_LINK = "https://teams.example.test/l/meetup-join/e2e"
 
 /** Typed for the reason scheduling.spec.ts gives: the form sends browser time. */
-test.use({ timezoneId: "America/New_York" })
+const PRACTICE_TIMEZONE = "America/New_York"
+test.use({ timezoneId: PRACTICE_TIMEZONE })
 
 interface SavedAppointment {
   id: string
@@ -42,12 +49,25 @@ interface Providers {
   room_url: string | null
 }
 
-function tomorrow(): string {
-  const date = new Date()
-  date.setDate(date.getDate() + 1)
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
-    date.getDate(),
-  ).padStart(2, "0")}`
+/**
+ * Tomorrow on the practice's wall clock, as the form's date field takes it,
+ * and its weekday in the engine's numbering (0 = Monday). Read through Intl
+ * because the runner's own zone is not the practice's.
+ */
+function practiceTomorrow(): { date: string; engineWeekday: number } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: PRACTICE_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date())
+  const part = (type: string) => Number(parts.find((p) => p.type === type)?.value)
+  // A UTC-midnight Date used only as a calendar, so DST cannot skip a day.
+  const day = new Date(Date.UTC(part("year"), part("month") - 1, part("day") + 1))
+  return {
+    date: day.toISOString().slice(0, 10),
+    engineWeekday: (day.getUTCDay() + 6) % 7,
+  }
 }
 
 /** Open a new appointment for this client, tomorrow at `time`, without saving. */
@@ -58,7 +78,7 @@ async function openBooking(page: Page, patient: Patient, time: string): Promise<
   await picker.click()
   await picker.fill(patient.first_name)
   await page.getByRole("option", { name: `${patient.last_name}, ${patient.first_name}` }).click()
-  await page.getByLabel("Date", { exact: true }).fill(tomorrow())
+  await page.getByLabel("Date", { exact: true }).fill(practiceTomorrow().date)
   await page.getByLabel("Time", { exact: true }).fill(time)
 }
 
@@ -70,6 +90,15 @@ async function schedule(page: Page): Promise<SavedAppointment> {
       response.request().method() === "POST",
   )
   await page.getByRole("button", { name: "Schedule", exact: true }).click()
+  // An override question would swallow the submit, and the wait above would
+  // then run to the test timeout. Say so at once instead.
+  const asked = page
+    .getByText("Book this event anyway?")
+    .waitFor({ timeout: 10_000 })
+    .then(() => "asked" as const)
+    .catch(() => "not asked" as const)
+  const first = await Promise.race([created.then(() => "posted" as const), asked])
+  expect(first, "the booking ran into an availability rule instead of saving").not.toBe("asked")
   const response = await created
   expect(response.status(), `the booking was refused: ${await response.text()}`).toBe(201)
   return (await response.json()) as SavedAppointment
@@ -78,6 +107,7 @@ async function schedule(page: Page): Promise<SavedAppointment> {
 test.describe("where the session happens, on the appointment form", () => {
   let saved: { preferences: Preferences; roomUrl: string | null }
   let patient: Patient
+  let hours: AvailabilityRule
   const booked: string[] = []
 
   test.beforeEach(async ({ api }) => {
@@ -85,6 +115,13 @@ test.describe("where the session happens, on the appointment form", () => {
     const providers = await api.get<Providers>("/api/telehealth/providers")
     saved = { preferences, roomUrl: providers.room_url }
     await markCalendarSetupComplete(api)
+    // Declared, not inherited: booking outside working hours asks the
+    // clinician first (see scheduling.spec.ts), and that question would
+    // stand between the form and the save this spec reads.
+    hours = await giveWorkingHours(api, practiceTomorrow().engineWeekday, {
+      start: "08:00",
+      end: "18:00",
+    })
     // A clinician whose default service is their doxy.me room, who has never
     // said where a booking happens.
     await api.put("/api/telehealth/room-url", { room_url: ROOM_URL })
@@ -97,6 +134,7 @@ test.describe("where the session happens, on the appointment form", () => {
 
   test.afterEach(async ({ api }) => {
     for (const id of booked.splice(0)) await api.delete(`/api/appointments/${id}`)
+    await api.delete(`/api/availability/rules/${hours.id}`)
     // The worker's clinician is shared with the rest of the suite.
     await api.put("/api/telehealth/room-url", { room_url: saved.roomUrl })
     await api.patch("/api/users/me/preferences", {
