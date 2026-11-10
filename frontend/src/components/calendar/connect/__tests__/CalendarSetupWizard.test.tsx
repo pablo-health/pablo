@@ -95,6 +95,8 @@ function providersWith(
     ],
     default_provider: null,
     room_url: null,
+    zoom_room_url: null,
+    zoom_app: true,
     join_window_before_minutes: 15,
     ...overrides,
   }
@@ -106,6 +108,8 @@ beforeEach(() => {
     providers: [],
     default_provider: null,
     room_url: null,
+    zoom_room_url: null,
+    zoom_app: true,
     join_window_before_minutes: 15,
   })
 })

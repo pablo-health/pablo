@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
     from datetime import datetime
 
+    from ..models.user import UserPreferences
     from ..scheduling_engine.models.appointment import Appointment
 
 #: Provider ids, which are also the registry keys and the value stored in
@@ -115,6 +116,23 @@ class Clinician:
     #: Their own permanent room, for a provider that has one (doxy.me). The
     #: clinician pastes it once in settings; nothing derives it.
     room_url: str | None = None
+    #: Their own Zoom meeting room, pasted once, for a deployment that cannot
+    #: make a Zoom meeting per appointment.
+    zoom_room_url: str | None = None
+
+
+def clinician_from_preferences(user_id: str, preferences: UserPreferences) -> Clinician:
+    """The clinician's telehealth preferences, as a provider sees them.
+
+    One place, so a new pasted room reaches every path that books a video
+    appointment rather than only the ones somebody remembered to update.
+    """
+    return Clinician(
+        id=user_id,
+        preferred_provider=preferences.default_video_platform,
+        room_url=preferences.telehealth_room_url,
+        zoom_room_url=preferences.zoom_room_url,
+    )
 
 
 @dataclass(frozen=True)

@@ -12,6 +12,7 @@ from app.main import app
 from app.meeting_providers.doxy import DoxyMeProvider
 from app.meeting_providers.manual import ManualProvider
 from app.meeting_providers.meet import GoogleMeetProvider
+from app.meeting_providers.zoom_room import ZoomRoomProvider
 from app.models import UserPreferences
 from app.repositories import InMemoryUserRepository
 from app.routes.scheduling import get_google_calendar_service, get_meeting_registry, get_savepoint
@@ -85,6 +86,18 @@ def test_nothing_changes_for_a_clinician_with_zoom_connected() -> None:
     repo = InMemoryUserRepository()
 
     assert _connect(repo, zoom=True) is False
+    assert _default(repo) is None
+
+
+def test_a_pasted_zoom_room_counts_as_zoom_connected() -> None:
+    """A clinician who pasted their own Zoom room keeps it: no Meet over the top."""
+    repo = InMemoryUserRepository()
+    repo.update_preferences(USER, {"zoom_room_url": "https://zoom.us/my/drsmith"})
+    registry = MeetingProviderRegistry(
+        [ManualProvider(), GoogleMeetProvider(lambda _user_id: True), ZoomRoomProvider()]  # type: ignore[list-item]
+    )
+
+    assert default_to_meet_on_calendar_connect(repo, USER, registry=registry) is False
     assert _default(repo) is None
 
 
