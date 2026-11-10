@@ -117,7 +117,7 @@ export interface VisitPlaceFieldProps {
   onChooseService: (providerId: string) => void
   onChoosePaste: () => void
   onConnectZoom: () => void
-  /** Only a pasted link can be written here (a series, say). */
+  /** Only a pasted link can be written here: a series, or a link already pasted. */
   pasteOnly: boolean
   /** An existing appointment with no place and no link: offer one tap. */
   onAddRoom?: () => void

@@ -883,6 +883,34 @@ describe("AppointmentModal", () => {
       expect(data).not.toHaveProperty("place_of_service")
     })
 
+    it("keeps a pasted link a pasted link, with no service to move it to", async () => {
+      // The server keeps a held paste whatever service is asked for, so the
+      // form offers none: picking one would promise a room that never comes.
+      const user = userEvent.setup()
+      mockListProviders.mockResolvedValue(MEET_DEFAULT)
+      const pasted = {
+        ...baseAppointment,
+        place_of_service: "02",
+        provider: "manual",
+        video_link: "https://teams.example.com/held",
+      }
+      render(<AppointmentModal open onClose={vi.fn()} appointment={pasted} />, {
+        wrapper: createWrapper(),
+      })
+      await waitFor(() => expect(mockListProviders).toHaveBeenCalled())
+      expect(await screen.findByLabelText("Video link")).toHaveValue(
+        "https://teams.example.com/held",
+      )
+      expect(screen.queryByRole("button", { name: "Change" })).not.toBeInTheDocument()
+      expect(screen.queryByRole("list", { name: "Video service" })).not.toBeInTheDocument()
+      expect(screen.queryByTestId("video-link-promise")).not.toBeInTheDocument()
+
+      await user.click(screen.getByRole("button", { name: "Save changes" }))
+      const data = mockUpdate.mock.calls[0][0].data
+      expect(data).toMatchObject({ video_link: "https://teams.example.com/held" })
+      expect(data).not.toHaveProperty("provider")
+    })
+
     it("pastes a link for one appointment", async () => {
       const user = userEvent.setup()
       mockListProviders.mockResolvedValue(MEET_DEFAULT)

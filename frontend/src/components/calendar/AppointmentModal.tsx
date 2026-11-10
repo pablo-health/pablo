@@ -457,7 +457,11 @@ function AppointmentForm({
   const collectedInputs = bookingSeries ? [] : declaredInputs
 
   // Neither series endpoint makes rooms, so a series only takes a pasted link.
-  const pasteOnly = bookingSeries || (isRecurring && scope === "series")
+  // Nor does an appointment that already holds a pasted link: the server keeps
+  // a held paste whatever service is asked for, so offering one would promise
+  // a room that never arrives.
+  const holdsPaste = !!appointment && holdsPastedLink(appointment)
+  const pasteOnly = bookingSeries || (isRecurring && scope === "series") || holdsPaste
   const services = linkServices(providers)
   const defaultService = services.find((p) => p.id === providers?.default_provider) ?? null
   const askedService = services.find((p) => p.id === chosenService) ?? null
