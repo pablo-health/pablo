@@ -518,3 +518,65 @@ class TestNoRoomWithoutAgreeing:
 
         assert body["video_link"] is None
         assert inbox.provider.attendees == []
+
+
+def _confirm_and_keep_the_token(
+    client: Any, link_repo: InMemoryBookingLinkRepository
+) -> tuple[Appointment, str]:
+    """Book by hold and confirm, keeping the token: it is also the manage link's."""
+    link = _link()
+    link.practice_schema = PRACTICE
+    link_repo.create(link)
+    date_str = _bookable_date()
+    client.rule_repo.create(_working_hours_rule(date_str))
+    _, token = _hold(client, "intro-call", f"{date_str}T09:00:00Z")
+    resp = client.post("/api/public/booking-links/intro-call/confirm", json={"token": token})
+    assert resp.status_code == 200, resp.text
+    return _only(client), token
+
+
+def _cancel_from_the_manage_link(client: Any, token: str) -> Appointment:
+    resp = client.post("/api/public/booking-links/intro-call/manage/cancel", json={"token": token})
+    assert resp.status_code == 200, resp.text
+    cancelled = _only(client)
+    assert cancelled.status == AppointmentStatus.CANCELLED
+    return cancelled
+
+
+class TestAClientCancellingReleasesTheRoom:
+    """The third way out of a booking: the client cancels from the manage link."""
+
+    def test_the_zoom_meeting_is_released_at_the_vendor(
+        self, link_repo: InMemoryBookingLinkRepository, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client, rooms = _client(link_repo, monkeypatch, place="02", provider=_zoom())
+        appt, token = _confirm_and_keep_the_token(client, link_repo)
+        assert appt.meeting_external_id == "81"
+
+        _cancel_from_the_manage_link(client, token)
+
+        assert rooms.provider.cancelled == ["81"]
+
+    def test_a_vendor_that_refuses_the_release_does_not_stop_the_cancel(
+        self, link_repo: InMemoryBookingLinkRepository, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        provider = _zoom()
+
+        def refuse(external_id: str, clinician: Clinician) -> bool:
+            raise RuntimeError("zoom is down")
+
+        monkeypatch.setattr(provider, "cancel", refuse)
+        client, _rooms = _client(link_repo, monkeypatch, place="02", provider=provider)
+        _appt, token = _confirm_and_keep_the_token(client, link_repo)
+
+        _cancel_from_the_manage_link(client, token)
+
+    def test_an_in_person_booking_has_nothing_to_release(
+        self, link_repo: InMemoryBookingLinkRepository, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client, rooms = _client(link_repo, monkeypatch, place="11", provider=_zoom())
+        _appt, token = _confirm_and_keep_the_token(client, link_repo)
+
+        _cancel_from_the_manage_link(client, token)
+
+        assert rooms.provider.cancelled == []

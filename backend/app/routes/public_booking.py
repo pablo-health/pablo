@@ -102,6 +102,7 @@ from .scheduling import (
     ClientBookingRoom,
     MeetLinkFollowUp,
     _push_cancellation_to_google,
+    _release_meeting,
     build_meeting_registry,
 )
 
@@ -1330,10 +1331,19 @@ def cancel_managed_booking(
     along with it, so the token that reached this endpoint stops working
     the moment this returns. The notice email is best-effort and never
     blocks or fails the cancellation itself.
+
+    A video booking's room is released at the vendor first, as the in-app
+    cancel does: a Zoom meeting outlives the calendar event, so without this
+    a room made for the client would stay open after they cancelled. Meet's
+    conference goes with the event. The registry reads nothing until a
+    provider is asked, by which time the session is in the link's practice
+    (see :func:`get_public_client_booking_room`), and the release never
+    fails the cancellation.
     """
     appt = _redeem_manage_token(request, ctx, appt_repo)
 
     appt = scheduling.cancel_appointment(appt.id, ctx.link.user_id)
+    _release_meeting(build_meeting_registry(), ctx.owner, appt)
     _push_cancellation_to_google(gcal_service, ctx.owner, appt)
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_CANCELLED,
