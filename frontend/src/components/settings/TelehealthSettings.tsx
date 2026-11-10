@@ -29,23 +29,12 @@ import {
   setDefaultVideoService,
   setTelehealthRoomUrl,
   setZoomRoomUrl,
+  ZOOM_RETURN_PATH,
 } from "@/lib/api/telehealth"
 import { queryKeys } from "@/lib/api/queryKeys"
 import { ZoomConnectReturn } from "./ZoomConnectReturn"
 
 const PROVIDERS_QUERY_KEY = ["telehealth", "providers"]
-
-/**
- * Where Zoom sends the clinician back to, as a path.
- *
- * This settings section rather than `/dashboard/settings`, which has no page
- * of its own and server-redirects to the first item — dropping the query
- * string, and with it the authorization code, before anything could read it.
- *
- * Sent to the deployment when the authorization URL is built and again when
- * the code is spent, and the two have to be the same string.
- */
-const ZOOM_RETURN_PATH = "/dashboard/settings/sessions"
 
 const DOXY_ME = "doxy_me"
 const ZOOM = "zoom"

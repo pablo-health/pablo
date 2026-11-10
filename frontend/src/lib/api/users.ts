@@ -341,6 +341,13 @@ export interface UserPreferences {
   telehealth_room_url?: string | null
   /** Your own Zoom room, pasted once in settings. Null until you do. */
   zoom_room_url?: string | null
+  /**
+   * Where your last booking from the appointment form happened, as its
+   * place-of-service code: "11" office, "02" or "10" telehealth. A new
+   * appointment starts there. Optional so an older server's answer still
+   * typechecks.
+   */
+  last_place_of_service?: "11" | "02" | "10" | null
   default_session_type: string
   default_duration_minutes: number
   auto_transcribe: boolean

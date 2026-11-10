@@ -117,6 +117,8 @@ export interface CreateAppointmentRequest {
    * Ignored when `video_link` is set: a link you typed is the room.
    */
   provider?: string | null
+  /** Where the visit happens: "11" office, "02" or "10" telehealth. */
+  place_of_service?: "11" | "02" | "10" | null
   notes?: string | null
   note_type?: string
   /** Values for the note type's declared inputs. */
@@ -161,6 +163,13 @@ export interface UpdateAppointmentRequest {
   session_type?: string
   video_link?: string | null
   video_platform?: string | null
+  /**
+   * Move the appointment to another video service; its old room is released.
+   * Ignored when the appointment holds a link you pasted.
+   */
+  provider?: string | null
+  /** Where the visit happens: "11" office, "02" or "10" telehealth. */
+  place_of_service?: "11" | "02" | "10" | null
   notes?: string | null
   note_type?: string
   /**
