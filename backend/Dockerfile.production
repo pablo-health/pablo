@@ -53,9 +53,14 @@ RUN poetry config virtualenvs.create false \
 # it has here, so the runtime stage copies it with one version-free COPY.
 # The site-packages path comes from the interpreter rather than being
 # written down, so a base on another CPython minor (python3.15, ...) needs
-# no edit here.
+# no edit here. The path list is assigned before the loop on purpose:
+# set -e cannot see a failing command substitution inside a for list, so
+# a missing interpreter there would run the loop zero times and ship a
+# runtime with no packages. As an assignment, the failure stops the build.
 RUN set -eu; \
-    for dir in $(python -c 'import sysconfig; print(" ".join(sorted({sysconfig.get_path("purelib"), sysconfig.get_path("platlib")})))'); do \
+    dirs=$(python -c 'import sysconfig; print(" ".join(sorted({sysconfig.get_path("purelib"), sysconfig.get_path("platlib")})))'); \
+    test -n "$dirs"; \
+    for dir in $dirs; do \
         mkdir -p "/staging${dir}"; \
         cp -a "${dir}/." "/staging${dir}/"; \
     done; \
@@ -72,6 +77,11 @@ WORKDIR /app
 # into the runtime's own site-packages (staged above). The runtime image
 # already ships a nonroot user (uid 65532), so no useradd is needed.
 COPY --from=builder /staging/ /
+
+# Fail the build, not the first start, if the copy is empty or landed in
+# another CPython minor's site-packages (the two base images disagree).
+# Exec form, because the runtime image has no shell.
+RUN ["python", "-c", "import fastapi, uvicorn"]
 
 # Application code
 COPY --chown=nonroot:nonroot backend/ ./backend/
