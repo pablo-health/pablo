@@ -1,0 +1,43 @@
+# Runtime base for backend/Dockerfile.production, built with apko from
+# public Wolfi packages.
+#
+# The interpreter is pinned to one CPython minor through the package
+# stream name (python-3.14). Everything else floats to the newest Wolfi
+# build each time the image is rebuilt, which is where the security fixes
+# come from. Moving to a new minor means changing the stream name here and
+# in builder.apko.yaml; both images must name the same stream, because the
+# builder's installed packages are copied into this image.
+#
+# No shell and no package manager: the image is the interpreter, its
+# shared libraries and CA certificates. It runs as nonroot (uid 65532).
+
+contents:
+  repositories:
+    - https://packages.wolfi.dev/os
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  packages:
+    - wolfi-baselayout
+    - ca-certificates-bundle
+    - python-3.14
+
+accounts:
+  groups:
+    - groupname: nonroot
+      gid: 65532
+  users:
+    - username: nonroot
+      uid: 65532
+      gid: 65532
+      homedir: /home/nonroot
+  run-as: "65532"
+
+entrypoint:
+  command: /usr/bin/python
+
+environment:
+  PATH: /usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/sbin:/bin
+  SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+
+archs:
+  - x86_64
