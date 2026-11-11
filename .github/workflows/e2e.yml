@@ -80,15 +80,19 @@ jobs:
           npm_config_fetch_retries: 5
           npm_config_fetch_retry_mintimeout: 20000
 
-      # The Azure-hosted Ubuntu mirror the runner image points apt at can stop
-      # resolving from the runners, which fails every browser install that
-      # needs system packages. The main archive serves the same packages.
-      - name: Point apt at the main Ubuntu archive
-        run: sudo sed -i 's|http://azure.archive.ubuntu.com|http://archive.ubuntu.com|g' /etc/apt/apt-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
-
+      # --with-deps installs system packages through apt, so it fails outright
+      # when the runner cannot resolve the Ubuntu archive. The runner image
+      # already carries Chrome's system libraries, and the browser itself comes
+      # from Playwright's own CDN, so skip apt when the archive is unreachable.
       - name: Install the Playwright browser
         working-directory: frontend
-        run: npx playwright install --with-deps chromium
+        run: |
+          if getent hosts archive.ubuntu.com >/dev/null; then
+            npx playwright install --with-deps chromium
+          else
+            echo "::warning::archive.ubuntu.com does not resolve; installing chromium without system packages"
+            npx playwright install chromium
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
@@ -152,15 +156,19 @@ jobs:
           npm_config_fetch_retries: 5
           npm_config_fetch_retry_mintimeout: 20000
 
-      # The Azure-hosted Ubuntu mirror the runner image points apt at can stop
-      # resolving from the runners, which fails every browser install that
-      # needs system packages. The main archive serves the same packages.
-      - name: Point apt at the main Ubuntu archive
-        run: sudo sed -i 's|http://azure.archive.ubuntu.com|http://archive.ubuntu.com|g' /etc/apt/apt-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
-
+      # --with-deps installs system packages through apt, so it fails outright
+      # when the runner cannot resolve the Ubuntu archive. The runner image
+      # already carries Chrome's system libraries, and the browser itself comes
+      # from Playwright's own CDN, so skip apt when the archive is unreachable.
       - name: Install the Playwright browser
         working-directory: frontend
-        run: npx playwright install --with-deps chromium
+        run: |
+          if getent hosts archive.ubuntu.com >/dev/null; then
+            npx playwright install --with-deps chromium
+          else
+            echo "::warning::archive.ubuntu.com does not resolve; installing chromium without system packages"
+            npx playwright install chromium
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
@@ -221,13 +229,16 @@ jobs:
         working-directory: frontend
         run: npm ci
 
-      # Same as above: apt on the main archive, not the Azure mirror.
-      - name: Point apt at the main Ubuntu archive
-        run: sudo sed -i 's|http://azure.archive.ubuntu.com|http://archive.ubuntu.com|g' /etc/apt/apt-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
-
+      # Same fallback as the chromium jobs above.
       - name: Install the Playwright browser
         working-directory: frontend
-        run: npx playwright install --with-deps webkit
+        run: |
+          if getent hosts archive.ubuntu.com >/dev/null; then
+            npx playwright install --with-deps webkit
+          else
+            echo "::warning::archive.ubuntu.com does not resolve; installing webkit without system packages"
+            npx playwright install webkit
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
