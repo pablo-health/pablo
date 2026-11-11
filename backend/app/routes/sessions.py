@@ -1857,6 +1857,10 @@ def init_audio_upload(
     Audit emission carries channel count and provider only — no
     filename, no caller-provided metadata to redact.
     """
+    # Same recording policy as the multipart ``upload_audio``: a refused
+    # caller gets no upload URLs.
+    _gate_recording(user.email)
+
     settings = get_settings()
     if not settings.transcription_enabled:
         raise HTTPException(
@@ -1942,6 +1946,10 @@ def finalize_audio_upload(
     Idempotent on retry: the size/exists check is read-only against storage,
     and both hand-offs dedupe by ``session_id``.
     """
+    # Checked again here, not only at init: URLs minted before the policy
+    # changed must not reach transcription.
+    _gate_recording(user.email)
+
     settings = get_settings()
 
     session = session_repo.get(session_id, user.id)
