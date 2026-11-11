@@ -80,6 +80,12 @@ jobs:
           npm_config_fetch_retries: 5
           npm_config_fetch_retry_mintimeout: 20000
 
+      # The Azure-hosted Ubuntu mirror the runner image points apt at can stop
+      # resolving from the runners, which fails every browser install that
+      # needs system packages. The main archive serves the same packages.
+      - name: Point apt at the main Ubuntu archive
+        run: sudo sed -i 's|http://azure.archive.ubuntu.com|http://archive.ubuntu.com|g' /etc/apt/apt-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
+
       - name: Install the Playwright browser
         working-directory: frontend
         run: npx playwright install --with-deps chromium
@@ -146,6 +152,12 @@ jobs:
           npm_config_fetch_retries: 5
           npm_config_fetch_retry_mintimeout: 20000
 
+      # The Azure-hosted Ubuntu mirror the runner image points apt at can stop
+      # resolving from the runners, which fails every browser install that
+      # needs system packages. The main archive serves the same packages.
+      - name: Point apt at the main Ubuntu archive
+        run: sudo sed -i 's|http://azure.archive.ubuntu.com|http://archive.ubuntu.com|g' /etc/apt/apt-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
+
       - name: Install the Playwright browser
         working-directory: frontend
         run: npx playwright install --with-deps chromium
@@ -208,6 +220,10 @@ jobs:
       - name: Install dependencies
         working-directory: frontend
         run: npm ci
+
+      # Same as above: apt on the main archive, not the Azure mirror.
+      - name: Point apt at the main Ubuntu archive
+        run: sudo sed -i 's|http://azure.archive.ubuntu.com|http://archive.ubuntu.com|g' /etc/apt/apt-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
 
       - name: Install the Playwright browser
         working-directory: frontend
