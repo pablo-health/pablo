@@ -236,18 +236,30 @@ class SessionResponse(BaseModel):
     source_document_id: str | None = None
     # Embedded note (None when this session has no generated note yet).
     note: NoteResponse | None = None
+    # Populated only on the recently-deleted listing
+    # (``GET /api/sessions?include_deleted=recent``, PABLO-ocvu); live reads
+    # leave both None. Mirrors ``PatientResponse``.
+    deleted_at: datetime | None = None
+    restore_deadline: datetime | None = None
 
     @staticmethod
     def from_session(
         session: TherapySession,
         patient_name: str,
         note: NoteResponse | None = None,
+        *,
+        deleted_at: datetime | None = None,
+        restore_deadline: datetime | None = None,
     ) -> SessionResponse:
         """Convert TherapySession dataclass to API response model.
 
         ``note`` is the embedded :class:`NoteResponse` for this session, if
         a note has been generated. Callers fetch the note via
         ``NotesRepository.get_by_session_id`` and pass it through.
+
+        Pass ``deleted_at`` and ``restore_deadline`` for a soft-deleted row
+        surfaced through ``include_deleted=recent``; the dataclass does not
+        carry the tombstone, so the listing hands it in out-of-band.
         """
         transcript_segments = None
         if note is not None and note.content is not None:
@@ -289,6 +301,8 @@ class SessionResponse(BaseModel):
             source_signer=session.source_signer,
             source_document_id=session.source_document_id,
             note=note,
+            deleted_at=deleted_at,
+            restore_deadline=restore_deadline,
         )
 
 

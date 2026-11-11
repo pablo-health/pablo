@@ -9,7 +9,6 @@ Implements CRUD operations for patient management with multi-tenant isolation.
 import logging
 import uuid
 from datetime import timedelta
-from enum import StrEnum
 from typing import Any, cast
 
 from fastapi import APIRouter, Depends, Query, Request, status
@@ -57,6 +56,7 @@ from ..services.export_billing import BillingRecordSource
 from ..services.export_clinical import ClinicalRecordSource
 from ..services.export_service import IntakeFormFiles
 from ..services.practice_billing_profile import load_billing_profile
+from ..undo_window import UNDO_WINDOW_DAYS, IncludeDeletedMode
 from ..utcnow import utc_now
 from .claims import _practice_timezone
 from .patient_documents import download_action_for, get_patient_documents_service
@@ -66,29 +66,6 @@ from .people_term import people_words_for
 from .superbills import get_billing_tax_id_loader
 
 logger = logging.getLogger(__name__)
-
-
-class IncludeDeletedMode(StrEnum):
-    """Soft-delete visibility for ``GET /api/patients`` (THERAPY-yg2).
-
-    Default behavior (``include_deleted`` omitted) lists only live
-    patients — soft-deleted rows are hidden by the repository's
-    ``deleted_at IS NULL`` filter (THERAPY-nyb).
-
-    ``recent`` switches the listing to the 30-day undo window: rows
-    with ``deleted_at IS NOT NULL AND deleted_at > NOW() - 30 days``.
-    The hard-purge cron (THERAPY-cgy) physically removes anything
-    older, so this mode never returns rows that are about to vanish.
-    """
-
-    RECENT = "recent"
-
-
-# THERAPY-yg2: 30-day undo window. Sized to match the soft-delete
-# retention before the day-30 hard-purge cron (THERAPY-cgy). Kept here
-# rather than in settings to make the contract obvious at the call site
-# and impossible to widen via env vars.
-_UNDO_WINDOW_DAYS = 30
 
 
 router = APIRouter(prefix="/api/patients", tags=["patients"])
@@ -387,12 +364,12 @@ def list_patients(
         # enough that returning the full list is simpler than
         # re-implementing the search path against tombstoned rows.
         # The hard-purge cron (THERAPY-cgy) caps the upper bound.
-        deleted_pairs = repo.list_recently_deleted(user.id, window_days=_UNDO_WINDOW_DAYS)
+        deleted_pairs = repo.list_recently_deleted(user.id, window_days=UNDO_WINDOW_DAYS)
         responses = [
             PatientResponse.from_patient(
                 p,
                 deleted_at=stamp,
-                restore_deadline=stamp + timedelta(days=_UNDO_WINDOW_DAYS),
+                restore_deadline=stamp + timedelta(days=UNDO_WINDOW_DAYS),
             )
             for p, stamp in deleted_pairs
         ]
@@ -609,7 +586,7 @@ def restore_patient(
     next-number generator ignores ``deleted_at`` so a restored
     session keeps its original number (THERAPY-nyb).
     """
-    restored = repo.restore(patient_id, user.id, window_days=_UNDO_WINDOW_DAYS)
+    restored = repo.restore(patient_id, user.id, window_days=UNDO_WINDOW_DAYS)
     if restored is None:
         raise NotFoundError("Patient not found", {"patient_id": patient_id})
 

@@ -14,11 +14,13 @@ hidden sessions recorded by anyone else.
 
 from __future__ import annotations
 
+import uuid
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String, Uuid, bindparam, func, select, text
+from sqlalchemy import String, Uuid, bindparam, func, select, text, update
 
-from ...db.models import PatientClinicianRow, TherapySessionRow
+from ...db.models import NoteRow, PatientClinicianRow, TherapySessionRow
 from ...models.session import TherapySession, Transcript
 from ...utcnow import utc_now
 from ..session import TherapySessionRepository, _compute_day_boundaries
@@ -29,6 +31,19 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from sqlalchemy.orm import Session
+
+
+def _is_uuid(value: str) -> bool:
+    """True iff ``value`` is a syntactically valid UUID string.
+
+    A path segment that is not one means "no such session"; without the
+    guard the uuid column comparison raises a DataError (a 500).
+    """
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
 
 
 _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindparams(
@@ -121,7 +136,12 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
         return list(rows)
 
     def list_by_user(
-        self, user_id: str, *, page: int = 1, page_size: int = 20
+        self,
+        user_id: str,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        patient_id: str | None = None,
     ) -> tuple[list[TherapySession], int]:
         """List sessions for any patient ``user_id`` has access to.
 
@@ -133,6 +153,8 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
         result is unchanged; for multi-clinician practices the caller
         now sees the full chart history they're authorized to see.
         """
+        if patient_id is not None and not _is_uuid(patient_id):
+            return [], 0
         base = (
             select(TherapySessionRow)
             .join(
@@ -144,6 +166,8 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
                 *live_grant(user_id),
             )
         )
+        if patient_id is not None:
+            base = base.where(TherapySessionRow.patient_id == patient_id)
         total = self._session.scalar(select(func.count()).select_from(base.subquery())) or 0
         offset = (page - 1) * page_size
         rows = (
@@ -280,20 +304,112 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
         return (result or 0) + 1
 
     def delete(self, session_id: str, user_id: str) -> bool:
-        """Soft-delete a single therapy session (THERAPY-nyb).
+        """Soft-delete a single therapy session and its note (THERAPY-nyb).
 
-        No HTTP route currently exposes this — it exists so the cascade
-        from ``PatientRepository.delete`` and the future per-session
-        delete UI (THERAPY-yg2) share one code path.
+        No HTTP route currently exposes this — it exists so the future
+        per-session delete UI (THERAPY-yg2) and :meth:`restore` share one
+        stamp: the note is tombstoned with the session's own ``deleted_at``,
+        which is how ``restore`` tells it apart from a note a later patient
+        delete cascaded onto.
         """
+        if not _is_uuid(session_id):
+            return False
         row = self._session.get(TherapySessionRow, session_id)
         if row is None or row.deleted_at is not None:
             return False
         if not self._has_patient_access(row.patient_id, user_id):
             return False
-        row.deleted_at = utc_now()
+        now = utc_now()
+        self._session.execute(
+            update(NoteRow)
+            .where(NoteRow.session_id == session_id, NoteRow.deleted_at.is_(None))
+            .values({NoteRow.deleted_at: now})
+            .execution_options(synchronize_session=False)
+        )
+        row.deleted_at = now
         self._session.flush()
         return True
+
+    def get_recently_deleted(
+        self, session_id: str, user_id: str, *, window_days: int = 30
+    ) -> tuple[TherapySession, datetime] | None:
+        """One soft-deleted session inside the undo window, or ``None``."""
+        row = self._recently_deleted_row(session_id, user_id, window_days=window_days)
+        if row is None or row.deleted_at is None:
+            return None
+        return _row_to_session(row), row.deleted_at
+
+    def list_recently_deleted(
+        self,
+        user_id: str,
+        *,
+        patient_id: str | None = None,
+        window_days: int = 30,
+    ) -> list[tuple[TherapySession, datetime]]:
+        """Soft-deleted sessions still inside the undo window, newest first."""
+        if patient_id is not None and not _is_uuid(patient_id):
+            return []
+        cutoff = utc_now() - timedelta(days=window_days)
+        query = (
+            select(TherapySessionRow)
+            .join(
+                PatientClinicianRow,
+                PatientClinicianRow.patient_id == TherapySessionRow.patient_id,
+            )
+            .where(
+                TherapySessionRow.deleted_at.isnot(None),
+                TherapySessionRow.deleted_at > cutoff,
+                *live_grant(user_id),
+            )
+        )
+        if patient_id is not None:
+            query = query.where(TherapySessionRow.patient_id == patient_id)
+        rows = (
+            self._session.execute(query.order_by(TherapySessionRow.session_date.desc()))
+            .scalars()
+            .all()
+        )
+        return [(_row_to_session(r), r.deleted_at) for r in rows if r.deleted_at is not None]
+
+    def restore(
+        self, session_id: str, user_id: str, *, window_days: int = 30
+    ) -> TherapySession | None:
+        """Reverse :meth:`delete` by clearing ``deleted_at`` (PABLO-ocvu)."""
+        row = self._recently_deleted_row(session_id, user_id, window_days=window_days)
+        if row is None:
+            return None
+        # Only the note stamped together with the session comes back. A note
+        # tombstoned on its own earlier, or by a patient delete after this
+        # session was already gone, carries a different stamp and stays put.
+        self._session.execute(
+            update(NoteRow)
+            .where(NoteRow.session_id == session_id, NoteRow.deleted_at == row.deleted_at)
+            .values({NoteRow.deleted_at: None})
+            .execution_options(synchronize_session=False)
+        )
+        row.deleted_at = None
+        self._session.flush()
+        return _row_to_session(row)
+
+    def _recently_deleted_row(
+        self, session_id: str, user_id: str, *, window_days: int
+    ) -> TherapySessionRow | None:
+        """The tombstoned row behind ``get_recently_deleted`` / ``restore``.
+
+        Absent, live, past-window and inaccessible all answer ``None`` so
+        the caller cannot tell the lifecycle state of a row it may not act
+        on — the same shape as :meth:`get`.
+        """
+        if not _is_uuid(session_id):
+            return None
+        row = self._session.get(TherapySessionRow, session_id)
+        if row is None or row.deleted_at is None:
+            return None
+        if not self._has_patient_access(row.patient_id, user_id):
+            return None
+        if row.deleted_at <= utc_now() - timedelta(days=window_days):
+            return None
+        return row
 
     def _physical_delete(self, session_id: str) -> bool:
         """Internal — purge cron only (THERAPY-cgy). Not HTTP-exposed.

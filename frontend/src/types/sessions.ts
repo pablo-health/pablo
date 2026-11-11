@@ -218,6 +218,12 @@ export interface SessionResponse {
   source_document_id?: string | null
   // Embedded note (None when this session has no generated note yet).
   note: Note | null
+  /**
+   * Set only on the recently-deleted listing (`include_deleted: "recent"`,
+   * PABLO-ocvu). Live reads leave both null. Mirrors `PatientResponse`.
+   */
+  deleted_at?: string | null
+  restore_deadline?: string | null
 }
 
 /**
@@ -228,6 +234,18 @@ export interface SessionListResponse {
   total: number
   page: number
   page_size: number
+}
+
+/**
+ * Query parameters for the session list.
+ *
+ * `include_deleted: "recent"` switches the listing to sessions soft-deleted
+ * on their own inside the 30-day undo window (PABLO-ocvu); `patient_id`
+ * narrows either listing to one chart.
+ */
+export interface SessionListParams {
+  patient_id?: string
+  include_deleted?: "recent"
 }
 
 export interface UploadSessionRequest {

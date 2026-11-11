@@ -13,12 +13,13 @@ access check on the session routes (GET / list / finalize), enforced by
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from app.auth.service import get_current_user_id, require_baa_acceptance
 from app.main import app
-from app.models import Patient, SessionSource, SessionStatus, TherapySession, Transcript
+from app.models import Patient, SessionSource, SessionStatus, TherapySession, Transcript, User
 from app.models.audit import AuditAction
 from app.notes import NoteTypeAuthorizer, get_note_type_authorizer
 from app.repositories import (  # noqa: TC002 — runtime fixture types
@@ -28,6 +29,7 @@ from app.repositories import (  # noqa: TC002 — runtime fixture types
 )
 from app.routes.sessions import _is_final_soap_attempt
 from app.services import AuditService  # noqa: TC002 — runtime fixture type
+from app.utcnow import utc_now
 from fastapi import HTTPException, status
 from fastapi.testclient import TestClient  # noqa: TC002 — runtime fixture type
 
@@ -434,3 +436,180 @@ class TestScheduleSession:
             app.dependency_overrides.pop(get_note_type_authorizer, None)
 
         assert resp.status_code == 201, resp.text
+
+
+# --- Restore a session soft-deleted on its own (PABLO-ocvu) ------------------
+
+
+def _seed_patient_session(
+    patient_repo: InMemoryPatientRepository,
+    session_repo: InMemoryTherapySessionRepository,
+    owner: str,
+) -> tuple[Patient, TherapySession]:
+    """A patient owned by ``owner`` with one finalized session on the chart."""
+    patient = seed_patient(patient_repo, owner)
+    session = TherapySession(
+        id=str(uuid.uuid4()),
+        user_id=owner,
+        patient_id=patient.id,
+        session_date=datetime(2026, 2, 4, tzinfo=UTC),
+        session_number=1,
+        status=SessionStatus.FINALIZED,
+        transcript=Transcript(format="txt", content="session text"),
+        created_at=datetime.now(UTC),
+    )
+    session_repo.create(session)
+    return patient, session
+
+
+class TestSessionRestore:
+    """``POST /api/sessions/{id}/restore`` mirrors ``restore_patient``: inside
+    the 30-day window the session comes back and an audit row is written;
+    outside it, for someone else's session, or for a live session the route
+    answers 404; and a session whose patient is still deleted is refused
+    with 409 ``PATIENT_DELETED`` so the clinician restores the patient first.
+    """
+
+    def test_restore_inside_window_brings_session_back_and_audits(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_session_repo: InMemoryTherapySessionRepository,
+        mock_audit_service: AuditService,
+        mock_user_id: str,
+    ) -> None:
+        patient, session = _seed_patient_session(mock_repo, mock_session_repo, mock_user_id)
+        assert mock_session_repo.delete(session.id, mock_user_id) is True
+        # Positive control: the tombstone hides the session from live reads.
+        assert client.get(f"/api/sessions/{session.id}").status_code == 404
+
+        resp = client.post(f"/api/sessions/{session.id}/restore")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["id"] == session.id
+        assert body["patient_id"] == patient.id
+        assert body["session_number"] == 1
+        # Live response: the tombstone fields are only on the deleted listing.
+        assert body["deleted_at"] is None
+        assert body["restore_deadline"] is None
+
+        assert client.get(f"/api/sessions/{session.id}").status_code == 200
+        listed = client.get("/api/sessions").json()["data"]
+        assert [s["id"] for s in listed] == [session.id]
+
+        restored_rows = [
+            entry
+            for entry in audited_entries(mock_audit_service)
+            if entry.action == AuditAction.SESSION_RESTORED.value
+        ]
+        assert [entry.resource_id for entry in restored_rows] == [session.id]
+
+    def test_recently_deleted_listing_shows_session_with_deadline(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_session_repo: InMemoryTherapySessionRepository,
+        mock_user_id: str,
+    ) -> None:
+        patient, session = _seed_patient_session(mock_repo, mock_session_repo, mock_user_id)
+        _other_patient, live = _seed_patient_session(mock_repo, mock_session_repo, mock_user_id)
+        mock_session_repo.delete(session.id, mock_user_id)
+
+        # Default listing hides the tombstone.
+        assert [s["id"] for s in client.get("/api/sessions").json()["data"]] == [live.id]
+
+        resp = client.get(f"/api/sessions?include_deleted=recent&patient_id={patient.id}")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total"] == 1
+        (row,) = body["data"]
+        assert row["id"] == session.id
+        assert row["patient_name"] == patient.display_name
+        assert row["deleted_at"] is not None
+        deadline = datetime.fromisoformat(row["restore_deadline"].replace("Z", "+00:00"))
+        stamp = datetime.fromisoformat(row["deleted_at"].replace("Z", "+00:00"))
+        assert deadline - stamp == timedelta(days=30)
+
+        # The other chart has nothing recently deleted.
+        other = client.get(f"/api/sessions?include_deleted=recent&patient_id={_other_patient.id}")
+        assert other.json()["data"] == []
+
+    def test_restore_past_window_returns_404_and_drops_off_listing(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_session_repo: InMemoryTherapySessionRepository,
+        mock_user_id: str,
+    ) -> None:
+        _patient, session = _seed_patient_session(mock_repo, mock_session_repo, mock_user_id)
+        mock_session_repo.delete(session.id, mock_user_id)
+        # Backdate the tombstone past the window, as the patient tests do.
+        tombstoned, _stamp = mock_session_repo._deleted[session.id]
+        mock_session_repo._deleted[session.id] = (tombstoned, utc_now() - timedelta(days=31))
+
+        resp = client.post(f"/api/sessions/{session.id}/restore")
+        assert resp.status_code == 404
+        assert client.get("/api/sessions?include_deleted=recent").json()["data"] == []
+        # Untouched: still awaiting the purge, not revived.
+        assert session.id in mock_session_repo._deleted
+
+    def test_restore_with_patient_still_deleted_returns_409(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_session_repo: InMemoryTherapySessionRepository,
+        mock_user_id: str,
+    ) -> None:
+        patient, session = _seed_patient_session(mock_repo, mock_session_repo, mock_user_id)
+        mock_session_repo.delete(session.id, mock_user_id)
+        # Tombstone the patient directly (the in-memory cascade would drop
+        # live sessions, and this one is already tombstoned on its own).
+        mock_repo._deleted_at[patient.id] = utc_now()
+
+        resp = client.post(f"/api/sessions/{session.id}/restore")
+        assert resp.status_code == 409
+        error = resp.json()["error"]
+        assert error["code"] == "PATIENT_DELETED"
+        assert error["details"]["patient_id"] == patient.id
+        # Refused, not restored.
+        assert session.id in mock_session_repo._deleted
+
+        # Once the patient is back, the session restores normally.
+        assert client.post(f"/api/patients/{patient.id}/restore").status_code == 200
+        assert client.post(f"/api/sessions/{session.id}/restore").status_code == 200
+
+    def test_restore_live_or_unknown_session_returns_404(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_session_repo: InMemoryTherapySessionRepository,
+        mock_user_id: str,
+    ) -> None:
+        _patient, session = _seed_patient_session(mock_repo, mock_session_repo, mock_user_id)
+        assert client.post(f"/api/sessions/{session.id}/restore").status_code == 404
+        assert client.post("/api/sessions/does-not-exist/restore").status_code == 404
+
+    def test_other_user_cannot_see_or_restore_the_session(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_session_repo: InMemoryTherapySessionRepository,
+        mock_user_id: str,
+    ) -> None:
+        _patient, session = _seed_patient_session(mock_repo, mock_session_repo, mock_user_id)
+        mock_session_repo.delete(session.id, mock_user_id)
+
+        user2 = User(
+            id=_OTHER_CLINICIAN,
+            email="other@example.com",
+            name="Other Clinician",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
+            baa_accepted_at=datetime(2024, 1, 1, tzinfo=UTC),
+            baa_version="2024-01-01",
+        )
+        app.dependency_overrides[get_current_user_id] = lambda: _OTHER_CLINICIAN
+        app.dependency_overrides[require_baa_acceptance] = lambda: user2
+
+        assert client.get("/api/sessions?include_deleted=recent").json()["data"] == []
+        assert client.post(f"/api/sessions/{session.id}/restore").status_code == 404
+        assert session.id in mock_session_repo._deleted
