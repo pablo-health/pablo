@@ -46,6 +46,7 @@ login gets to do.
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import TYPE_CHECKING
 
 from sqlalchemy import text
@@ -113,6 +114,17 @@ def record_owner_on_sign_in(practice_id: str, email: str, user_id: str) -> bool:
 
     normalized = email.strip().lower()
     if not normalized:
+        return False
+
+    # The auth resolve path hands back the provider's raw subject id for an
+    # account with no identity row yet, and ``owner_user_id`` is a uuid
+    # column: letting that reach the statement turns a first request into a
+    # 500. There is nothing to record until the account exists, and the next
+    # sign-in with the row in place records it.
+    try:
+        uuid.UUID(user_id)
+    except ValueError:
+        logger.debug("Practice '%s' has no account id to record as its owner yet", practice_id)
         return False
 
     with create_standalone_session() as db:

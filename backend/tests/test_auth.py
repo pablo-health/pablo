@@ -1187,6 +1187,52 @@ class TestGetTenantContext:
         # on, and the practice the account actually resolved to.
         record.assert_called_once_with("practice-abc", "dr@example.com", "user123")
 
+    def test_records_the_owner_once_the_identity_row_exists_and_not_before(self) -> None:
+        """A first authenticated request can get here before the account has an
+        identity row, and the resolve then falls back to the provider's subject
+        id. That is not an account id, and ``owner_user_id`` is a uuid column:
+        the request is served under the fallback and nothing is recorded, rather
+        than the cast failing the whole request. The next request, with the row
+        in place, records the owner.
+        """
+        decoded = {
+            "uid": "user123",
+            "email": "dr@example.com",
+            "email_verified": True,
+            "firebase": {},
+        }
+        account_id = "0b8f3c2e-5d6a-4c1b-9e7f-2a3b4c5d6e7f"
+        identity_repo = _identity_repo_for()
+
+        with (
+            patch("app.auth.service.get_settings"),
+            patch(
+                "app.auth.service._resolve_practice_from_email",
+                return_value=("practice-abc", "practice_abc"),
+            ),
+            patch("app.auth.service._await_provisioning_ready"),
+            patch("app.db.practice_owner.record_owner_on_sign_in") as record,
+        ):
+            token = _request_session.set(MagicMock())
+            user_id_token = _current_user_id.set(None)
+            try:
+                first = get_tenant_context(
+                    _mock_request(), decoded, InMemoryUserRepository(), identity_repo
+                )
+                record.assert_not_called()
+                assert first.user_id == "user123"
+
+                identity_repo.link("firebase", "user123", account_id)
+                second = get_tenant_context(
+                    _mock_request(), decoded, InMemoryUserRepository(), identity_repo
+                )
+            finally:
+                _request_session.reset(token)
+                _current_user_id.reset(user_id_token)
+
+        record.assert_called_once_with("practice-abc", "dr@example.com", account_id)
+        assert second.user_id == account_id
+
     def test_does_not_record_an_owner_without_a_practice(self) -> None:
         """No practice resolved, nothing to own."""
         decoded = {

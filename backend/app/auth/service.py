@@ -114,12 +114,37 @@ def _resolve_pablo_user_id(
     multiple dependencies in the same request. The cache key includes the
     provider so two issuers that happen to share a subject id can't
     cross-contaminate.
+
+    A caller that needs to know whether the mapping exists, rather than
+    have the subject id handed back in its place, uses
+    :func:`_lookup_pablo_user_id` directly.
     """
-    # Only the "real mapping found" path is cacheable. A fallback to
-    # the subject id (no mapping yet) must not poison the cache, or a
-    # later auto-provision call would short-circuit and skip the
-    # resolve_or_create.
-    if request is not None and not create_if_missing:
+    if not create_if_missing:
+        looked_up = _lookup_pablo_user_id(request, subject_id, identity_repo, provider=provider)
+        return looked_up or subject_id
+
+    pablo_id = identity_repo.resolve_or_create(provider, subject_id)
+    _remember_pablo_user_id(request, provider, subject_id, pablo_id)
+    return pablo_id
+
+
+def _lookup_pablo_user_id(
+    request: Request | None,
+    subject_id: str,
+    identity_repo: IdentityRepository,
+    *,
+    provider: str = "firebase",
+) -> str | None:
+    """The user_id an identity row maps *subject_id* to, or None without one.
+
+    The lookup-only half of :func:`_resolve_pablo_user_id`, with the
+    fallback left to the caller: None says the account has no identity row
+    yet, which a first authenticated request can reach before the
+    auto-provision path has written it. Only a found mapping is cached on
+    ``request.state``; caching the miss would let a later auto-provision
+    call short-circuit and skip the ``resolve_or_create``.
+    """
+    if request is not None:
         cached_key = getattr(request.state, "pablo_user_id_subject_key", None)
         cached_pid = getattr(request.state, "pablo_user_id", None)
         if (
@@ -129,18 +154,18 @@ def _resolve_pablo_user_id(
         ):
             return cached_pid
 
-    if create_if_missing:
-        pablo_id = identity_repo.resolve_or_create(provider, subject_id)
-        cacheable = True
-    else:
-        looked_up = identity_repo.get_user_id(provider, subject_id)
-        cacheable = looked_up is not None
-        pablo_id = looked_up or subject_id
+    looked_up = identity_repo.get_user_id(provider, subject_id)
+    if looked_up is not None:
+        _remember_pablo_user_id(request, provider, subject_id, looked_up)
+    return looked_up
 
-    if request is not None and cacheable:
+
+def _remember_pablo_user_id(
+    request: Request | None, provider: str, subject_id: str, pablo_id: str
+) -> None:
+    if request is not None:
         request.state.pablo_user_id = pablo_id
         request.state.pablo_user_id_subject_key = (provider, subject_id)
-    return pablo_id
 
 
 def _note_expired_token_subject(token: str) -> None:
@@ -544,13 +569,16 @@ def get_tenant_context(
     access.
     """
     identity = _identity_for_decoded(request, decoded_token)
-    pablo_user_id = _resolve_pablo_user_id(
-        request,
-        identity.subject_id,
-        identity_repo,
-        create_if_missing=False,
-        provider=identity.provider,
+    # An account with no identity row yet is known here only by the
+    # provider's subject id. That is the same fallback
+    # ``_resolve_pablo_user_id`` makes, and it is enough to serve the request
+    # under -- but not enough to record as a practice's owner, which is a
+    # uuid column that would refuse it. Kept apart so the owner write below
+    # can tell the two cases from each other.
+    resolved_user_id = _lookup_pablo_user_id(
+        request, identity.subject_id, identity_repo, provider=identity.provider
     )
+    pablo_user_id = resolved_user_id or identity.subject_id
     bind_log_user_id(str(pablo_user_id))
 
     # Resolve practice from user's email
@@ -575,10 +603,14 @@ def get_tenant_context(
             # Conditional on the practice having no owner yet, so it is a
             # one-time write that a re-login cannot disturb — see
             # ``app.db.practice_owner`` for the rule and what it refuses to
-            # infer.
-            from ..db.practice_owner import record_owner_on_sign_in
+            # infer. Only once the account is actually resolved: a first
+            # request that arrives before the identity row exists has no
+            # account id to record, and the next one with the row in place
+            # records it.
+            if resolved_user_id is not None:
+                from ..db.practice_owner import record_owner_on_sign_in
 
-            record_owner_on_sign_in(practice_id, email, str(pablo_user_id))
+                record_owner_on_sign_in(practice_id, email, resolved_user_id)
             # search_path is already set by DatabaseSessionMiddleware
             # before any dependency runs — see
             # `app.db.middleware.DatabaseSessionMiddleware._resolve_schema_from_request`.
