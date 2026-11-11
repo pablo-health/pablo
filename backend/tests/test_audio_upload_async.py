@@ -522,3 +522,85 @@ class TestSegmentedUpload:
             )
 
         assert resp.status_code == 422, resp.text  # type: ignore[attr-defined]
+
+
+class _RecordingRefusedError(Exception):
+    """Stand-in for the deployment's recording-policy refusal."""
+
+
+def _refuse_recording(_email: str, _settings: object) -> None:
+    raise _RecordingRefusedError
+
+
+class TestRecordingPolicyOnEveryAudioPath:
+    """The signed-URL pair applies the same recording check as multipart.
+
+    ``/upload-audio`` consulted the deployment's recording policy; ``init`` and
+    ``finalize`` did not, so a refused caller could still mint upload URLs and
+    get the audio queued for transcription by the other door.
+    """
+
+    def _post_refused(self, client: object, path: str) -> tuple[object, MagicMock, MagicMock]:
+        fake_storage = MagicMock()
+        fake_storage.make_upload_target.return_value = UploadTarget(
+            url="https://storage.example/put", method="PUT"
+        )
+        fake_storage.fetch_metadata.return_value = (1024, "application/octet-stream")
+        kwargs: dict[str, object] = {}
+        if path.endswith("/upload-audio"):
+            kwargs["files"] = {
+                "therapist_audio": ("t.pcm", b"therapist-audio", "application/octet-stream"),
+                "client_audio": ("c.pcm", b"client-audio", "application/octet-stream"),
+            }
+        with (
+            patch("app.routes.sessions.check_recording_allowed", _refuse_recording),
+            patch("app.routes.sessions.RecordingNotEnabledError", _RecordingRefusedError),
+            patch("app.routes.sessions.get_settings", return_value=_assemblyai_settings()),
+            patch(
+                "app.services.file_storage.file_storage_from_settings",
+                return_value=fake_storage,
+            ),
+            patch("app.routes.sessions.enqueue") as mock_enqueue,
+        ):
+            resp = client.post(path, **kwargs)  # type: ignore[attr-defined]
+        return resp, fake_storage, mock_enqueue
+
+    def test_init_and_finalize_refuse_with_the_multipart_error(
+        self, client: object, mock_session_repo: object, mock_user_id: str
+    ) -> None:
+        session = _seed_recording_complete(mock_session_repo, mock_user_id)
+        base = f"/api/sessions/{session.id}/upload-audio"
+
+        multipart, _, _ = self._post_refused(client, base)
+        assert multipart.status_code == 403, multipart.text  # type: ignore[attr-defined]
+        assert multipart.json()["detail"]["error"]["code"] == "RECORDING_NOT_ENABLED"  # type: ignore[attr-defined]
+
+        for suffix in ("/init", "/finalize"):
+            resp, _, _ = self._post_refused(client, base + suffix)
+            assert resp.status_code == multipart.status_code, resp.text  # type: ignore[attr-defined]
+            assert resp.json() == multipart.json()  # type: ignore[attr-defined]
+
+    def test_refused_init_mints_no_upload_urls(
+        self, client: object, mock_session_repo: object, mock_user_id: str
+    ) -> None:
+        session = _seed_recording_complete(mock_session_repo, mock_user_id)
+        resp, fake_storage, _ = self._post_refused(
+            client, f"/api/sessions/{session.id}/upload-audio/init"
+        )
+        assert resp.status_code == 403, resp.text  # type: ignore[attr-defined]
+        fake_storage.make_upload_target.assert_not_called()
+
+    def test_refused_finalize_queues_nothing_and_leaves_the_session(
+        self, client: object, mock_session_repo: object, mock_user_id: str
+    ) -> None:
+        session = _seed_recording_complete(mock_session_repo, mock_user_id)
+        resp, fake_storage, mock_enqueue = self._post_refused(
+            client, f"/api/sessions/{session.id}/upload-audio/finalize"
+        )
+        assert resp.status_code == 403, resp.text  # type: ignore[attr-defined]
+        mock_enqueue.assert_not_called()
+        fake_storage.fetch_metadata.assert_not_called()
+
+        unchanged = mock_session_repo.get(session.id, mock_user_id)  # type: ignore[attr-defined]
+        assert unchanged.status == SessionStatus.RECORDING_COMPLETE
+        assert not unchanged.audio_gcs_path
