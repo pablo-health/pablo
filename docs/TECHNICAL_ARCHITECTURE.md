@@ -25,9 +25,9 @@
 
 Pablo is a HIPAA-compliant web application that helps therapists produce
 clinical documentation from session transcripts. SOAP notes (Subjective,
-Objective, Assessment, Plan) are generated with an AI pipeline and verified
-with a dual-method approach (LLM plus classical NLP), then reviewed and
-finalized by the clinician.
+Objective, Assessment, Plan) are generated with an AI pipeline. A second
+attribution pass links each sentence to the transcript segments it came
+from, and the clinician reviews and signs the note.
 
 ### Core Functionality
 
