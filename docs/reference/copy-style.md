@@ -56,7 +56,6 @@ otherwise.
 
 ### Respect what the reader already has
 
-- Never push someone to leave a service they use.
 - Never imply Pablo holds, retrieved, or can separate data living in another
   system.
 - Recommend without requiring. An EIN and Type 2 NPI help some practices; a

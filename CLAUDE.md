@@ -62,14 +62,12 @@ carry that reasoning — long, defensive copy that exposes billing machinery
 early and starts contradicting itself. The reasoning goes in the code comment
 and the design doc. The screen gets the conclusion.
 
-Four that are easy to get wrong:
+Three that are easy to get wrong:
 
 - **Never claim readiness the system has not checked.** Reaching the end of a
   flow is not being finished — ask the data.
 - **Never recite what will not happen.** It introduces machinery the reader had
   not thought about and makes a safe default sound dangerous.
-- **Never imply someone should leave a service they use** (Headway, Alma, Rula
-  and the like). Staying is a good outcome.
 - **No gendered pronouns** for a clinician or client. Second person usually
   solves it; otherwise *they*.
 
