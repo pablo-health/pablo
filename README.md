@@ -1,14 +1,36 @@
 # Pablo
 
-**AI-powered therapy documentation that eliminates clinician paperwork.**
+**Open-source practice software for therapists, with notes drafted from the session.**
 
-Pablo generates SOAP notes from session transcripts with dual-method verification (LLM + classical NLP), ensuring zero hallucinations and full source attribution. Self-host on your own GCP account with one script.
+Pablo drafts your note from the session, in SOAP, DAP, BIRP, GIRP or a format you define, and links each sentence to the part of the session it came from so you can check it before you sign. Scheduling, intake, the client portal, insurance claims and payments are in the same app. Run it on your own Google Cloud account with one script.
 
 ## Features
 
-- **AI SOAP Note Generation** — Upload a session transcript, get a clinically accurate SOAP note
-- **Built-in Calendar** — Schedule and manage therapy sessions
-- **Patient Management** — Secure patient records with session history
+### Before a session
+
+- **Scheduling and online booking** — Set your hours and share a booking link. Google Calendar and iCal sync bring in appointments you keep elsewhere.
+- **Client portal** — Clients book, fill in intake forms, sign consents and message you.
+- **Intake forms you build** — Choose the documents and questions. Answers and signed consents land on the chart.
+- **Insurance on file** — Your payer list, each client's plan, and eligibility checks against the payer.
+
+### In the session
+
+- **Recording with Pablo Companion** — The [desktop app](https://github.com/pablo-health/pablo-companion) for Mac and Windows records the session, with your client's consent, and sends it to your Pablo for the note.
+- **Notes drafted for you** — SOAP, DAP, BIRP, GIRP, intake, safety plan, treatment plan, or note types your practice defines. Every sentence links back to the transcript. No recording? Upload or paste a transcript, or write the note yourself.
+
+### After the session
+
+- **The chart keeps up** — When the session changes something on the chart, such as a medication or an allergy, Pablo suggests the update and shows the lines that support it. You accept or skip each one.
+- **Ask about a client** — Pablo answers from the chart and shows the documents it used.
+- **Outcome measures** — PHQ-9, GAD-7 and others, trended on the chart.
+- **Insurance claims** — Build, check and submit claims through a clearinghouse, and track what the payer paid.
+- **Credentialing checklist** — Keep the details payers ask for in one place and track each application.
+- **Payments and superbills** — Charge a card on file with your own Stripe account, and download superbills and statements.
+- **One inbox** — Unsigned notes, portal messages, refill requests and intake submissions in one list.
+
+### Around the practice
+
+- **Moving in** — Import a SimplePractice export: client list, calendar and notes.
 - **Built for HIPAA** — HTTPS only, mandatory MFA, a 15-minute idle logoff, an append-only audit log of every record access, continuous backups with a monthly restore check. What the installer sets up and what stays yours: [Self-Hosting HIPAA Guide](docs/SELF_HOSTING_HIPAA_GUIDE.md)
 
 ## Quick Start
@@ -96,15 +118,28 @@ Two things worth flagging up front for self-hosters:
 
 ## Want Managed Hosting?
 
-**Pablo One** is the same engine, run for you: $59 per clinician a month at
-the founding rate ($79 list). On top of what you get by self-hosting:
+**Pablo One** is the same app, run for you: $59 per clinician a month at
+the founding rate ($79 list). It adds the parts that need us — our servers,
+our vendor contracts, our BAA, and a person:
 
-- We run it: updates, backups and monitoring, with the BAA signed at signup
-- Insurance credentialing done for you: two payers included for founding
-  practices, then at cost
-- Insurance claims at cost, and eligibility checks that run automatically
-- A practice website, built for you
-- A HIPAA-eligible mailbox
+- **An AI front office.** Pablo sorts your practice email, drafts the routine
+  replies from your fees, hours and insurance, and puts possible safety
+  messages at the top for you. You choose, topic by topic, whether Pablo files
+  it, drafts a reply for you to send, or sends it.
+- **Intake packets built with you.** Answer a few questions about your
+  practice; Pablo lists the documents your setup calls for and drafts the forms.
+- **A practice website, with SEO.** Written in your own words, published on
+  your domain, registered with Google and Bing, and kept current.
+- **Insurance, ready to bill.** Claims at the clearinghouse's cost, eligibility
+  checked automatically at intake, and help preparing and tracking your
+  credentialing applications under your own NPI.
+- **Appointment reminders**, sent for you.
+- **A HIPAA-eligible mailbox**, and the BAA signed at signup.
+- **We run it.** Updates, backups and monitoring.
+- **A person.** Kurt sets up each founding practice with you, including the
+  move from SimplePractice, and you talk to the developer directly.
+
+Try it for 30 days; if it is not a fit, you get a full refund.
 
 Self-hosting costs about $20 a month and keeps everything in your own Google
 Cloud account; Pablo One is for when you would rather not run a server.

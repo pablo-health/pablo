@@ -3,6 +3,7 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
+import { useQuery } from "@tanstack/react-query"
 import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { Check, ChevronRight, Plus, X } from "lucide-react"
 import {
@@ -26,6 +27,22 @@ import {
 } from "@/hooks/useAppointments"
 import { useNoteTypes } from "@/hooks/useNoteTypes"
 import { useCheckConflicts } from "@/hooks/useAvailability"
+import { useUpdatePreferences } from "@/hooks/usePreferences"
+import { getZoomAuthUrl, listTelehealthProviders, ZOOM_RETURN_PATH } from "@/lib/api/telehealth"
+import { TELEHEALTH_PROVIDERS_QUERY_KEY } from "./connect/VideoDefaultLine"
+import {
+  holdsPastedLink,
+  IN_PERSON_CODE,
+  linkServices,
+  MANUAL,
+  placeOfAppointment,
+  placeOfCode,
+  VIDEO_CODE,
+  VisitPlaceField,
+  type ExistingRoom,
+  type PlaceCode,
+  type VisitPlace,
+} from "./VisitPlaceField"
 import { AvailabilitySlotPicker } from "./AvailabilitySlotPicker"
 import { RuleOverrideDialog } from "./RuleOverrideDialog"
 import type { ConflictResponse } from "@/types/availability"
@@ -42,7 +59,6 @@ import { ApiError } from "@/lib/api/client"
 import { isReviewInput } from "@/lib/mdm"
 import { filledInputs } from "@/lib/noteInputs"
 import { browserTimeZone, formatTime } from "@/lib/dates"
-import { isTelehealth } from "@/lib/telehealth"
 import type { EditorialTheme } from "./editorial/EditorialSidebar"
 import "./editorial/editorial.css"
 
@@ -396,11 +412,36 @@ function AppointmentForm({
 
   const [moreOpen, setMoreOpen] = useState(
     isEditing &&
-      (!!appointment.video_link ||
-        !!appointment.notes ||
-        Object.keys(appointment.note_inputs ?? {}).length > 0),
+      (!!appointment.notes || Object.keys(appointment.note_inputs ?? {}).length > 0),
   )
   const [videoLink, setVideoLink] = useState(appointment?.video_link ?? "")
+
+  // Where the session happens. An appointment says so itself; a new one
+  // starts where the clinician last booked (kept on the server, so every
+  // device agrees), and otherwise says nothing until the clinician picks.
+  const initialPlace = appointment
+    ? placeOfAppointment(appointment)
+    : placeOfCode(preferences?.last_place_of_service)
+  const [place, setPlace] = useState<VisitPlace | null>(initialPlace)
+  // The exact telehealth code is kept: a clinician who codes 10 keeps 10.
+  const knownVideoCode = [appointment?.place_of_service, preferences?.last_place_of_service].find(
+    (code): code is PlaceCode => placeOfCode(code) === "video",
+  )
+  const videoCode = knownVideoCode ?? VIDEO_CODE
+  const [room, setRoom] = useState<ExistingRoom | null>(
+    appointment?.video_link && !holdsPastedLink(appointment)
+      ? { link: appointment.video_link, provider: appointment.provider ?? null }
+      : null,
+  )
+  // A video service picked for this appointment only; null keeps the default.
+  const [chosenService, setChosenService] = useState<string | null>(null)
+  const [pasting, setPasting] = useState(!!appointment && holdsPastedLink(appointment))
+  const [changeOpen, setChangeOpen] = useState(false)
+  const { data: providers } = useQuery({
+    queryKey: TELEHEALTH_PROVIDERS_QUERY_KEY,
+    queryFn: listTelehealthProviders,
+  })
+  const updatePreferences = useUpdatePreferences()
   const [noteType, setNoteType] = useState<string>(appointment?.note_type ?? DEFAULT_NOTE_TYPE)
   const [noteInputs, setNoteInputs] = useState<Record<string, string>>(
     appointment?.note_inputs ?? {},
@@ -414,6 +455,112 @@ function AppointmentForm({
   // required) there; each occurrence can take them once it's booked.
   const bookingSeries = !isEditing && repeat !== "none"
   const collectedInputs = bookingSeries ? [] : declaredInputs
+
+  // Neither series endpoint makes rooms, so a series only takes a pasted link.
+  // Nor does an appointment that already holds a pasted link: the server keeps
+  // a held paste whatever service is asked for, so offering one would promise
+  // a room that never arrives.
+  const holdsPaste = !!appointment && holdsPastedLink(appointment)
+  const pasteOnly = bookingSeries || (isRecurring && scope === "series") || holdsPaste
+  const services = linkServices(providers)
+  const defaultService = services.find((p) => p.id === providers?.default_provider) ?? null
+  const askedService = services.find((p) => p.id === chosenService) ?? null
+  // The service this save asks for a room. A room the appointment already
+  // has is kept unless another service was picked for it.
+  const linkService = pasteOnly || pasting ? null : (askedService ?? (room ? null : defaultService))
+  const shownRoom = pasteOnly || pasting || askedService ? null : room
+  const showPaste = pasteOnly || pasting || (!shownRoom && !linkService)
+  const [zoomError, setZoomError] = useState<string | null>(null)
+
+  const changePlace = (next: VisitPlace) => {
+    setPlace(next)
+    setChangeOpen(false)
+  }
+  const chooseService = (providerId: string) => {
+    setChosenService(providerId === room?.provider ? null : providerId)
+    setPasting(false)
+    setChangeOpen(false)
+  }
+  const choosePaste = () => {
+    // A link a service made is not one to edit by hand; start from empty.
+    if (room && videoLink === room.link) setVideoLink("")
+    setChosenService(null)
+    setPasting(true)
+    setChangeOpen(false)
+  }
+  const connectZoom = async () => {
+    setZoomError(null)
+    try {
+      const { auth_url } = await getZoomAuthUrl(`${window.location.origin}${ZOOM_RETURN_PATH}`)
+      window.location.assign(auth_url)
+    } catch {
+      setZoomError("Couldn't start the Zoom connection. Try again.")
+    }
+  }
+
+  // The next new appointment starts where this one was booked.
+  const rememberPlace = (code: PlaceCode | undefined) => {
+    if (code && code !== preferences?.last_place_of_service) {
+      updatePreferences.mutate({ last_place_of_service: code })
+    }
+  }
+
+  // What one appointment's save says about where it happens and its link.
+  // An edit sends the place only when it changed, so an unchanged visit is
+  // neither re-coded nor given a room it was not asked for.
+  const placeChanged = place !== initialPlace
+  const visitFields = (): {
+    place_of_service?: PlaceCode
+    video_link: string | null
+    provider?: string
+  } => {
+    if (place === "in_person") {
+      return {
+        video_link: null,
+        ...(isEditing && !placeChanged ? {} : { place_of_service: IN_PERSON_CODE }),
+      }
+    }
+    if (place === "video") {
+      const where = isEditing && !placeChanged ? {} : { place_of_service: videoCode }
+      if (showPaste) {
+        // An empty paste asks for no room rather than the default service's.
+        return { ...where, video_link: videoLink || null, ...(videoLink ? {} : { provider: MANUAL }) }
+      }
+      return {
+        ...where,
+        video_link: room?.link ?? null,
+        ...(linkService ? { provider: linkService.id } : {}),
+      }
+    }
+    return { video_link: videoLink || null }
+  }
+
+  // One tap on an appointment that says nothing about where: it becomes a
+  // video session and gets its room now, which also teaches its type.
+  const addRoom = () => {
+    if (!appointment) return
+    if (!defaultService) {
+      setPlace("video")
+      setPasting(true)
+      return
+    }
+    updateMutation.mutate(
+      {
+        appointmentId: appointment.id,
+        data: { place_of_service: videoCode, provider: defaultService.id },
+      },
+      {
+        onSuccess: (saved) => {
+          setPlace("video")
+          if (saved.video_link) {
+            setRoom({ link: saved.video_link, provider: saved.provider ?? defaultService.id })
+            setVideoLink(saved.video_link)
+          }
+          rememberPlace(videoCode)
+        },
+      },
+    )
+  }
   const [notes, setNotes] = useState(appointment?.notes ?? "")
 
   // Inputs belong to one note type; a different type starts with none.
@@ -472,14 +619,16 @@ function AppointmentForm({
   const save = (ruleOverride: boolean) => {
     // The default video platform belongs to telehealth visits only; an
     // in-person visit stamped with one would read as a video session.
-    const telehealth = isTelehealth({
-      provider: appointment?.provider ?? null,
-      video_link: videoLink || null,
-      place_of_service: appointment?.place_of_service ?? null,
-    })
+    const telehealth = place === "video" || (place === null && !!videoLink)
     const videoPlatform =
       appointment?.video_platform ??
       (telehealth ? (preferences?.default_video_platform ?? null) : null)
+    const seriesLink = place === "in_person" ? null : videoLink || null
+    const visit = visitFields()
+    const saved = () => {
+      rememberPlace(visit.place_of_service)
+      onClose()
+    }
     const payload = {
       patient_id: patientId,
       title,
@@ -487,7 +636,7 @@ function AppointmentForm({
       end_at: end.toISOString(),
       duration_minutes: duration,
       session_type: sessionType,
-      video_link: videoLink || null,
+      video_link: seriesLink,
       video_platform: videoPlatform,
       notes: notes || null,
       note_type: noteType,
@@ -511,7 +660,7 @@ function AppointmentForm({
             data: {
               title,
               session_type: sessionType,
-              video_link: videoLink || null,
+              video_link: seriesLink,
               notes: notes || null,
               note_type: noteType,
             },
@@ -532,13 +681,14 @@ function AppointmentForm({
           appointmentId: appointment.id,
           data: {
             ...untimed,
+            ...visit,
             ...timing,
             ...(declaredInputs.length > 0 || hadInputs
               ? { note_inputs: filledNoteInputs }
               : {}),
           },
         },
-        { onSuccess: onClose, onError },
+        { onSuccess: saved, onError },
       )
       return
     }
@@ -560,9 +710,10 @@ function AppointmentForm({
     createMutation.mutate(
       {
         ...payload,
+        ...visit,
         ...(declaredInputs.length > 0 ? { note_inputs: filledNoteInputs } : {}),
       },
-      { onSuccess: onClose, onError },
+      { onSuccess: saved, onError },
     )
   }
 
@@ -740,6 +891,36 @@ function AppointmentForm({
               selectedTime={timeStr}
               onSelect={setTimeStr}
             />
+          )}
+        </div>
+
+        {/* Where — in person or video, and which link */}
+        <div>
+          <FieldLabel>Where</FieldLabel>
+          <VisitPlaceField
+            place={place}
+            onPlaceChange={changePlace}
+            providers={providers}
+            service={linkService}
+            room={shownRoom}
+            pasting={showPaste}
+            videoLink={videoLink}
+            onVideoLinkChange={setVideoLink}
+            onChooseService={chooseService}
+            onChoosePaste={choosePaste}
+            onConnectZoom={connectZoom}
+            pasteOnly={pasteOnly}
+            onAddRoom={isEditing && !pasteOnly ? addRoom : undefined}
+            addingRoom={updateMutation.isPending}
+            changeOpen={changeOpen}
+            onToggleChange={() => setChangeOpen((v) => !v)}
+            fieldClass={FIELD_CLASS}
+            fieldStyle={fieldStyle()}
+          />
+          {zoomError && (
+            <p role="alert" className="mt-1.5 text-[12.5px]" style={{ color: "var(--ed-status-noshow-fg)" }}>
+              {zoomError}
+            </p>
           )}
         </div>
 
@@ -1002,23 +1183,12 @@ function AppointmentForm({
             />
             More options
             <span className="text-[12px] font-medium" style={{ color: "var(--ed-ink-soft)" }}>
-              · video link, note type, notes
+              · note type, notes
             </span>
           </button>
 
           {moreOpen && (
             <div className="ed-fade-in mt-4 flex flex-col gap-[18px]">
-              <div>
-                <FieldLabel>Video link</FieldLabel>
-                <input
-                  value={videoLink}
-                  aria-label="Video link"
-                  onChange={(e) => setVideoLink(e.target.value)}
-                  placeholder="https://zoom.us/j/…"
-                  className={FIELD_CLASS}
-                  style={fieldStyle()}
-                />
-              </div>
               <div>
                 <FieldLabel hint="Used when you start the session">Note type</FieldLabel>
                 <Select value={noteType} onValueChange={changeNoteType}>

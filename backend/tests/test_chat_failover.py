@@ -20,6 +20,7 @@ import pytest
 from app.reliability import RetryExhaustedError
 from app.repositories import InMemoryChatRepository, InMemoryNotesRepository
 from app.services.ai_features import AIFeature
+from app.services.anthropic_vertex_chat_llm_gateway import AnthropicVertexChatLLMGateway
 from app.services.bedrock_chat_llm_gateway import BedrockChatLLMGateway, to_converse_messages
 from app.services.bedrock_structured_llm_gateway import BedrockStructuredLLMGateway
 from app.services.chat_failover import FailoverChatLLMGateway, failover_chat_gateway
@@ -35,6 +36,7 @@ from app.services.chat_turn_service import ChatTurnService
 from app.settings import get_settings
 from botocore.exceptions import ClientError, ReadTimeoutError
 
+from .test_anthropic_vertex_chat_llm_gateway import gateway_replaying
 from .test_chat_turn_service import _drain, _make_context, _make_conversation, _no_sleep
 
 if TYPE_CHECKING:
@@ -107,6 +109,34 @@ class TestFailover:
         assert [c["model"] for c in fake.calls] == ["primary", FALLBACK]
         assert "model=test:fallback failures=primary:service_unavailable" in caplog.text
         assert "lighthouse" not in caplog.text
+
+    def test_claude_overloaded_inside_its_stream_moves_to_the_fallback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The real SDK raises ``event: error`` with the stream's 200; it still hands over."""
+        _no_db_guard(monkeypatch)
+        fallback = FakeChatLLMGateway(scripts=[list(_ANSWER)])
+
+        async def run() -> list[StreamEvent]:
+            claude = gateway_replaying("authored_overloaded_mid_stream")
+            gateway = FailoverChatLLMGateway(
+                claude,
+                [FALLBACK],
+                resolve=lambda m: claude if m.startswith("anthropic:") else fallback,
+            )
+            return [
+                e
+                async for e in gateway.stream_completion(
+                    model="anthropic:claude-sonnet-5-5",
+                    system_prompt="You help.",
+                    prior_turns=[],
+                    new_user_text=SAID,
+                    max_output_tokens=64,
+                )
+            ]
+
+        assert asyncio.run(run()) == _ANSWER
+        assert [c["model"] for c in fallback.calls] == [FALLBACK]
 
     def test_a_failure_after_the_first_word_is_never_stitched_to_another_model(self) -> None:
         cut = [StreamEvent(delta="Half an "), _DOWN]
@@ -198,6 +228,32 @@ class TestFailover:
         )
         assert _stream(gateway) == _ANSWER
         assert [c["model"] for c in bedrock.calls] == ["bedrock:some-model"]
+
+    def test_each_provider_prefix_streams_through_its_own_gateway(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``bedrock:`` to Bedrock, ``anthropic:`` to Claude on Vertex, the rest to its own."""
+        own = FakeChatLLMGateway(scripts=[])
+        bedrock = FakeChatLLMGateway(scripts=[])
+        vertex_claude = FakeChatLLMGateway(scripts=[])
+        monkeypatch.setattr("app.services.chat_failover._bedrock_gateway", lambda: bedrock)
+        monkeypatch.setattr(
+            "app.services.chat_failover._anthropic_vertex_gateway",
+            lambda _effort=None: vertex_claude,
+        )
+        failover = FailoverChatLLMGateway(own, [])
+
+        assert failover._default_resolve("bedrock:us.anthropic.claude-haiku-4-5") is bedrock
+        assert failover._default_resolve("anthropic:claude-sonnet-5-5") is vertex_claude
+        assert failover._default_resolve("google:gemini-3.5-flash") is own
+        assert failover._default_resolve("gemini-3.5-flash") is own
+
+    def test_the_real_anthropic_route_is_the_claude_on_vertex_gateway(self) -> None:
+        failover = FailoverChatLLMGateway(FakeChatLLMGateway(scripts=[]), [])
+
+        assert isinstance(
+            failover._default_resolve("anthropic:claude-sonnet-5-5"), AnthropicVertexChatLLMGateway
+        )
 
 
 class TestTurnService:
@@ -306,6 +362,28 @@ class TestBedrockChat:
         assert events[-1] == StreamEvent(finish_reason="length", output_tokens=7)
         assert client.requests[0]["modelId"] == "us.some-model"
         assert client.requests[0]["system"] == [{"text": "You help."}]
+
+    @pytest.mark.parametrize(
+        ("model", "sends_temperature"),
+        [
+            ("bedrock:us.anthropic.claude-sonnet-4-6", True),
+            ("bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0", True),
+            ("bedrock:us.anthropic.claude-sonnet-5-5-v1:0", False),
+            ("bedrock:us.anthropic.claude-opus-5-5-v1:0", False),
+        ],
+    )
+    def test_temperature_is_left_out_for_a_model_that_rejects_it(
+        self, monkeypatch: pytest.MonkeyPatch, model: str, sends_temperature: bool
+    ) -> None:
+        """Measured on Vertex for the 5.5 models; assumed to carry over to Bedrock (untested)."""
+        _no_db_guard(monkeypatch)
+        gateway, client = _bedrock([{"messageStop": {"stopReason": "end_turn"}}])
+
+        _stream(gateway, model)
+
+        config = client.requests[0]["inferenceConfig"]
+        assert ("temperature" in config) is sends_temperature
+        assert config["maxTokens"] == 64
 
     def test_claude_system_prompt_ends_with_a_cache_point(
         self, monkeypatch: pytest.MonkeyPatch

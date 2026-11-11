@@ -22,7 +22,7 @@ import pytest
 from app.reliability import SINGLE_ATTEMPT, RetryExhaustedError
 from app.reliability.classify import is_pre_dispatch, is_transient
 from app.reliability.hedge import INTERACTIVE_STALL_AFTER, FailureKind
-from app.reliability.retry import LLM_REQUEST
+from app.reliability.retry import LLM_LONG_REQUEST, LLM_REQUEST
 from app.services.availability_parse_service import AvailabilityRuleParseService
 from app.services.bedrock_structured_llm_gateway import (
     BedrockCallError,
@@ -30,6 +30,7 @@ from app.services.bedrock_structured_llm_gateway import (
     build_botocore_session,
     to_json_schema,
 )
+from app.services.claude_models import REQUESTED_TOOL_DESCRIPTION
 from app.services.hedged_structured_llm_gateway import (
     HedgedStructuredLLMGateway,
     classify_structured_failure,
@@ -189,6 +190,36 @@ class TestSuccess:
         spec = sent["toolConfig"]["tools"][0]["toolSpec"]
         assert spec["inputSchema"] == {"json": to_json_schema(_SCHEMA)}
         assert sent["toolConfig"]["toolChoice"] == {"tool": {"name": spec["name"]}}
+
+    @pytest.mark.parametrize(
+        "model",
+        [
+            "bedrock:us.anthropic.claude-sonnet-5-5-v1:0",
+            "bedrock:us.anthropic.claude-opus-5-5-v1:0",
+        ],
+    )
+    def test_a_model_that_rejects_a_forced_tool_is_asked_for_it_without_temperature(
+        self, model: str
+    ) -> None:
+        """Measured on Vertex; applied to Bedrock on its strength (untested there)."""
+        gw, client = _gateway(_response({"proposals": []}))
+        _call(gw, model=model)
+        sent = client.requests[0]
+        assert sent["inferenceConfig"] == {"maxTokens": 256}
+        assert sent["toolConfig"]["toolChoice"] == {"auto": {}}
+        spec = sent["toolConfig"]["tools"][0]["toolSpec"]
+        asked = f"9 to 5\n\nCall {spec['name']} with the result."
+        assert sent["messages"] == [{"role": "user", "content": [{"text": asked}]}]
+        assert spec["description"] == REQUESTED_TOOL_DESCRIPTION
+
+    def test_haiku_5_5_keeps_the_forced_tool_but_is_sent_no_temperature(self) -> None:
+        gw, client = _gateway(_response({"proposals": []}))
+        _call(gw, model="bedrock:us.anthropic.claude-haiku-5-5-v1:0")
+        sent = client.requests[0]
+        assert sent["inferenceConfig"] == {"maxTokens": 256}
+        spec = sent["toolConfig"]["tools"][0]["toolSpec"]
+        assert sent["toolConfig"]["toolChoice"] == {"tool": {"name": spec["name"]}}
+        assert sent["messages"] == [{"role": "user", "content": [{"text": "9 to 5"}]}]
 
     def test_non_claude_model_does_not_receive_a_cache_point(self) -> None:
         gw, client = _gateway(_response({"proposals": []}))
@@ -368,8 +399,9 @@ class TestTimeouts:
             clock[0] += module._MAX_CLIENT_IDLE_SECONDS / 2
         assert built == [15.0]
 
-    def test_with_no_bound_given_the_retry_deadline_does_not_cut_the_attempt(self) -> None:
-        """A long draft on Bedrock as the only model keeps the full default bound."""
+    def test_with_no_bound_given_the_attempt_takes_the_policys_bound(self) -> None:
+        """The request preset's own bound; a long draft on Bedrock as the only
+        model passes the long preset and keeps the full default bound."""
         built: list[float] = []
         client = _StubClient(_response({"proposals": []}))
 
@@ -379,8 +411,9 @@ class TestTimeouts:
 
         gw = BedrockStructuredLLMGateway(client_factory=factory)
         _call(gw, retry_policy=None)
+        _call(gw, retry_policy=LLM_LONG_REQUEST)
         _call(gw, retry_policy=None, timeout_seconds=40.0)
-        assert built == [180.0, 25.0]
+        assert built == [LLM_REQUEST.attempt_timeout, 180.0, 40.0]
 
     def test_a_real_client_carries_the_bound_and_no_retries_of_its_own(
         self, monkeypatch: pytest.MonkeyPatch

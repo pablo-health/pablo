@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -20,7 +21,13 @@ from unittest.mock import MagicMock, patch
 
 from app.meeting_providers.meet import CONFERENCE_SOLUTION_TYPE, GoogleMeetProvider
 from app.scheduling_engine.models.appointment import Appointment, AppointmentStatus
-from app.services.google_calendar_service import GoogleCalendarService, conference_url
+from app.services.google_calendar_service import (
+    GoogleCalendarService,
+    PushedEvent,
+    conference_pending,
+    conference_url,
+    wait_for_conference,
+)
 from app.services.telehealth import GOOGLE_MEET, Attendee, Clinician, Practice
 
 FIXTURES = Path(__file__).parent / "fixtures" / "telehealth"
@@ -30,6 +37,16 @@ START = datetime(2026, 10, 1, 15, 0, tzinfo=UTC)
 def google_event() -> dict[str, Any]:
     """An event with a conference, in the shape Google documents."""
     return json.loads((FIXTURES / "google_calendar_event_with_conference.json").read_text())
+
+
+def google_event_still_making(status: str = "pending") -> dict[str, Any]:
+    """The same event before Google has made its conference: a request, no link."""
+    event = google_event()
+    event.pop("hangoutLink")
+    request = event["conferenceData"]["createRequest"]
+    request["status"] = {"statusCode": status}
+    event["conferenceData"] = {"createRequest": request}
+    return event
 
 
 def an_appointment(**overrides: object) -> Appointment:
@@ -65,6 +82,28 @@ class TestWhatWeAskGoogleFor:
             first["conferenceData"]["createRequest"]["requestId"]
             == second["conferenceData"]["createRequest"]["requestId"]
         )
+
+    def test_asking_again_after_a_later_write_is_a_new_request(self) -> None:
+        # Google ignores a requestId it has already answered and returns no
+        # conference, so an appointment that gives its room up and asks again
+        # (video, in person, video) must not send the first key twice.
+        first_ask = an_appointment(provider=GOOGLE_MEET, updated_at=START)
+        asked_again = replace(first_ask, updated_at=START + timedelta(minutes=5))
+
+        first = GoogleCalendarService._appointment_to_event(first_ask)
+        second = GoogleCalendarService._appointment_to_event(asked_again)
+
+        assert (
+            first["conferenceData"]["createRequest"]["requestId"]
+            != second["conferenceData"]["createRequest"]["requestId"]
+        )
+
+    def test_a_row_with_no_updated_at_still_asks(self) -> None:
+        event = GoogleCalendarService._appointment_to_event(
+            an_appointment(id="a-1", provider=GOOGLE_MEET, updated_at=None)
+        )
+
+        assert event["conferenceData"]["createRequest"]["requestId"] == "pablo-a-1"
 
     def test_two_appointments_ask_for_two_conferences(self) -> None:
         first = GoogleCalendarService._appointment_to_event(an_appointment(provider=GOOGLE_MEET))
@@ -197,3 +236,187 @@ def _service_with_calendar() -> tuple[GoogleCalendarService, MagicMock]:
     service._get_credentials = MagicMock(return_value=MagicMock())  # type: ignore[method-assign]
     service._summary_for = MagicMock(return_value="Therapy Session")  # type: ignore[method-assign]
     return service, calendar
+
+
+class TestTellingAPendingConferenceApart:
+    def test_a_request_google_is_still_working_on_is_pending(self) -> None:
+        assert conference_pending(google_event_still_making()) is True
+
+    def test_a_finished_conference_is_not(self) -> None:
+        assert conference_pending(google_event()) is False
+
+    def test_one_google_gave_up_on_is_not_worth_waiting_for(self) -> None:
+        assert conference_pending(google_event_still_making("failure")) is False
+
+    def test_a_link_settles_it_whatever_the_status_says(self) -> None:
+        event = google_event()
+        event["conferenceData"]["createRequest"]["status"] = {"statusCode": "pending"}
+        assert conference_pending(event) is False
+
+    def test_an_event_with_no_conference_is_not(self) -> None:
+        assert conference_pending({"id": "e1"}) is False
+
+    def test_the_push_says_so(self) -> None:
+        service, calendar = _service_with_calendar()
+        calendar.events.return_value.insert.return_value.execute.return_value = (
+            google_event_still_making()
+        )
+
+        with patch(
+            "app.services.google_calendar_service._build_calendar_service",
+            return_value=calendar,
+        ):
+            pushed = service.push_appointment_event(
+                "clinician-1", an_appointment(provider=GOOGLE_MEET)
+            )
+
+        assert pushed == PushedEvent(
+            event_id="ssssssssssssssssssssssssss", conference_url=None, conference_pending=True
+        )
+
+
+class TestReadingTheEventBack:
+    def test_it_reads_the_event_and_what_its_conference_says(self) -> None:
+        service, calendar = _service_with_calendar()
+        calendar.events.return_value.get.return_value.execute.return_value = google_event()
+
+        with patch(
+            "app.services.google_calendar_service._build_calendar_service",
+            return_value=calendar,
+        ):
+            read = service.read_appointment_event("clinician-1", "evt-1")
+
+        assert read == PushedEvent(
+            event_id="ssssssssssssssssssssssssss",
+            conference_url="https://meet.example.test/abc-defg-hij",
+            conference_pending=False,
+        )
+
+    def test_it_asks_for_the_event_with_only_what_a_get_takes(self) -> None:
+        """``conferenceDataVersion`` is a write parameter; the client refuses it on a get."""
+        service, calendar = _service_with_calendar()
+        calendar.events.return_value.get.return_value.execute.return_value = (
+            google_event_still_making()
+        )
+
+        with patch(
+            "app.services.google_calendar_service._build_calendar_service",
+            return_value=calendar,
+        ):
+            read = service.read_appointment_event("clinician-1", "evt-1")
+
+        assert calendar.events.return_value.get.call_args.kwargs == {
+            "calendarId": "cal-1",
+            "eventId": "evt-1",
+        }
+        assert read is not None
+        assert read.conference_pending is True
+
+    def test_a_clinician_no_longer_connected_reads_nothing(self) -> None:
+        service, calendar = _service_with_calendar()
+        service._get_credentials = MagicMock(return_value=None)  # type: ignore[method-assign]
+
+        assert service.read_appointment_event("clinician-1", "evt-1") is None
+        calendar.events.assert_not_called()
+
+
+class FakeClock:
+    """Time that moves only when the code under test sleeps, or a read takes some."""
+
+    def __init__(self, read_takes: float = 0.0) -> None:
+        self.now = 100.0
+        self.read_takes = read_takes
+        self.sleeps: list[float] = []
+
+    def clock(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+def _reader(clock: FakeClock, *answers: PushedEvent | None) -> tuple[list[float], Any]:
+    """Answers in turn, repeating the last; records when each read started."""
+    started: list[float] = []
+
+    def read() -> PushedEvent | None:
+        started.append(clock.now)
+        clock.now += clock.read_takes
+        return answers[min(len(started), len(answers)) - 1]
+
+    return started, read
+
+
+PENDING = PushedEvent(event_id="evt-1", conference_url=None, conference_pending=True)
+READY = PushedEvent(
+    event_id="evt-1", conference_url="https://meet.test/x", conference_pending=False
+)
+GAVE_UP = PushedEvent(event_id="evt-1", conference_url=None, conference_pending=False)
+
+
+class TestWaitingForTheLink:
+    def test_it_stops_at_the_first_read_with_a_link(self) -> None:
+        clock = FakeClock()
+        started, read = _reader(clock, PENDING, READY, PENDING)
+
+        settled = wait_for_conference(read, budget_seconds=2, sleep=clock.sleep, clock=clock.clock)
+
+        assert settled == READY
+        assert len(started) == 2
+
+    def test_it_waits_before_each_read_and_backs_off(self) -> None:
+        clock = FakeClock()
+        _started, read = _reader(clock, PENDING)
+
+        wait_for_conference(read, budget_seconds=10, sleep=clock.sleep, clock=clock.clock)
+
+        assert clock.sleeps[:4] == [0.25, 0.5, 1.0, 1.0]
+
+    def test_it_never_waits_past_the_budget(self) -> None:
+        clock = FakeClock(read_takes=0.1)
+        started, read = _reader(clock, PENDING)
+
+        settled = wait_for_conference(read, budget_seconds=2, sleep=clock.sleep, clock=clock.clock)
+
+        assert settled == PENDING
+        assert started[-1] <= 100.0 + 2
+        # The budget plus the one read already under way when it ran out.
+        assert clock.now <= 100.0 + 2 + clock.read_takes
+        # Reads start at 0.25, 0.85 and 1.95 s; a fourth would start past 2 s.
+        assert len(started) == 3
+
+    def test_a_budget_of_zero_reads_nothing(self) -> None:
+        clock = FakeClock()
+        started, read = _reader(clock, READY)
+
+        assert (
+            wait_for_conference(read, budget_seconds=0, sleep=clock.sleep, clock=clock.clock)
+            is None
+        )
+        assert started == []
+        assert clock.sleeps == []
+
+    def test_a_conference_google_gave_up_on_ends_the_wait(self) -> None:
+        clock = FakeClock()
+        started, read = _reader(clock, GAVE_UP, READY)
+
+        settled = wait_for_conference(read, budget_seconds=2, sleep=clock.sleep, clock=clock.clock)
+
+        assert settled == GAVE_UP
+        assert len(started) == 1
+
+    def test_a_read_that_fails_ends_the_wait_with_what_was_known(self) -> None:
+        clock = FakeClock()
+        calls: list[int] = []
+
+        def read() -> PushedEvent:
+            calls.append(1)
+            if len(calls) == 2:
+                raise RuntimeError("Google said no")
+            return PENDING
+
+        settled = wait_for_conference(read, budget_seconds=5, sleep=clock.sleep, clock=clock.clock)
+
+        assert settled == PENDING
+        assert len(calls) == 2

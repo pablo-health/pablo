@@ -9,7 +9,7 @@
  * room that never arrives.
  */
 
-import { del, get, put } from "@/lib/api/client"
+import { del, get, patch, put } from "@/lib/api/client"
 
 /** One video service, as settings and the appointment form show it. */
 export interface TelehealthProvider {
@@ -21,8 +21,16 @@ export interface TelehealthProvider {
 
 export interface TelehealthProviders {
   providers: TelehealthProvider[]
+  /** The default in use: null when none is saved or the saved one is not connected. */
   default_provider: string | null
   room_url: string | null
+  /** Your own Zoom room, pasted once. */
+  zoom_room_url: string | null
+  /**
+   * Whether this deployment has a Zoom app, so connecting Zoom makes a meeting
+   * per appointment. Without one, Zoom means the room you paste.
+   */
+  zoom_app: boolean
   join_window_before_minutes: number
 }
 
@@ -42,9 +50,64 @@ export async function setTelehealthRoomUrl(
   return put<{ room_url: string | null }>("/api/telehealth/room-url", { room_url: roomUrl })
 }
 
+// Kept character-for-character with the server's rule (is_zoom_room_url in
+// backend/app/models/validators.py) and pinned by the case table both run, so
+// the card never accepts what the server then refuses. A pattern rather than
+// new URL(): the server can't use a browser's parser, and two parsers is how
+// the two checks came to disagree. The host must follow https:// directly, so
+// userinfo and ports never match, and a backslash (read as / by a browser)
+// is refused anywhere.
+const ZOOM_ROOM = /^https:\/\/([a-z0-9-]+\.)*zoom\.us\.?([/?#]|$)/i
+
+/**
+ * An https address on zoom.us or one of its subdomains, the same rule the
+ * deployment applies. A look-alike host is refused: patients click this.
+ */
+export function isZoomRoomUrl(value: string): boolean {
+  const trimmed = value.trim()
+  return ZOOM_ROOM.test(trimmed) && !trimmed.includes("\\")
+}
+
+/**
+ * Save your own Zoom room. Pass null to remove it.
+ *
+ * The deployment accepts only an https address on zoom.us and refuses
+ * anything else as a field error.
+ */
+export async function setZoomRoomUrl(
+  zoomRoomUrl: string | null,
+): Promise<{ zoom_room_url: string | null }> {
+  return put<{ zoom_room_url: string | null }>("/api/telehealth/zoom-room-url", {
+    zoom_room_url: zoomRoomUrl,
+  })
+}
+
+/**
+ * Make one of your connected services the one sessions use when the
+ * appointment does not say. Changes that preference and nothing else.
+ */
+export async function setDefaultVideoService(providerId: string): Promise<void> {
+  await patch("/api/users/me/preferences", { default_video_platform: providerId })
+}
+
 export async function getZoomStatus(): Promise<ZoomStatus> {
   return get<ZoomStatus>("/api/telehealth/zoom/status")
 }
+
+/**
+ * Where Zoom sends the clinician back to, as a path.
+ *
+ * This settings section rather than `/dashboard/settings`, which has no page
+ * of its own and server-redirects to the first item — dropping the query
+ * string, and with it the authorization code, before anything could read it.
+ *
+ * Sent to the deployment when the authorization URL is built and again when
+ * the code is spent, and the two have to be the same string.
+ *
+ * The appointment form's Connect Zoom uses it too, so the connection is
+ * completed in the one place that knows how.
+ */
+export const ZOOM_RETURN_PATH = "/dashboard/settings/sessions"
 
 /**
  * Where to send the clinician to approve a Zoom connection.

@@ -5,16 +5,18 @@
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import dataclasses
 import logging
+import time
 import uuid
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection, Iterator, Sequence
 from datetime import UTC, datetime, tzinfo
 from datetime import date as date_cls
 from typing import TYPE_CHECKING, Any, TypedDict
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request, status
 
 from ..api_errors import (
     BadRequestError,
@@ -41,6 +43,7 @@ from ..calendar_providers.event_titles import (
 from ..calendar_providers.oauth_state import OAuthStateError
 from ..calendar_providers.pkce_store import PkceStoreDownError, PkceStoreUnavailableError
 from ..db import get_db_session, release_db_connection
+from ..db.tenant_session import tenant_db_session
 from ..models import (
     AuditAction,
     ScheduleSessionRequest,
@@ -143,12 +146,14 @@ from ..scheduling_engine.exceptions import (
     InvalidRecurrenceError,
     RuleViolationError,
 )
+from ..scheduling_engine.models.appointment import AppointmentStatus
 from ..scheduling_engine.models.appointment_type import AppointmentType, Audience, HorizonUnit
 from ..scheduling_engine.models.availability import AvailabilityRule, EnforcementLevel, RuleType
 from ..scheduling_engine.services import floating_block
 from ..scheduling_engine.services.availability import AvailabilityEngine
 from ..scheduling_engine.services.scheduling import SchedulingService
 from ..scheduling_engine.services.scheduling_policy import load_policy, update_policy
+from ..scheduling_engine.services.type_place import remember_place
 from ..services import (
     AuditService,
     NoteService,
@@ -159,6 +164,13 @@ from ..services import (
 )
 from ..services.availability_parse_service import AvailabilityRuleParseService, ProposedRule
 from ..services.busy_time import CalendarBusySource
+from ..services.client_video_link_notice import (
+    ClientVideoLinkNotifier,
+    get_client_video_link_notifier,
+    practice_id_for_schema,
+    read_practice_facts,
+)
+from ..services.email_sender import get_email_sender
 from ..services.google_calendar_follow import (
     GoogleChangeFollower,
     GoogleChangeUnavailableError,
@@ -168,22 +180,33 @@ from ..services.google_calendar_service import (
     DEFAULT_EVENT_TITLING,
     DEFAULT_WRITE_TARGET,
     GoogleCalendarService,
+    PushedEvent,
     RetitleOutcome,
     google_consent_surface,
+    wait_for_conference,
 )
 from ..services.hedged_structured_llm_gateway import HedgedStructuredLLMGateway
 from ..services.http_structured_llm_gateway import HttpStructuredLLMGateway
 from ..services.recording_consent import RecordingConsentGate, get_recording_consent_gate
 from ..services.telehealth import (
     GOOGLE_MEET,
+    MANUAL,
     Attendee,
     Clinician,
+    LinkTrail,
     MeetingProviderRegistry,
+    MissingLinkReason,
     Practice,
+    RoomChange,
     TelehealthError,
+    clinician_from_preferences,
+    log_missing_link,
     provision_meeting,
     release_meeting,
+    room_change,
+    wants_a_room,
 )
+from ..services.video_default import default_to_meet_on_calendar_connect
 from ..settings import get_settings
 from ..utcnow import utc_now
 
@@ -252,13 +275,21 @@ def _apply_appointment_type(
     *,
     user_id: str,
     type_repo: AppointmentTypeRepository,
+    requested_provider: str | None = None,
 ) -> None:
     """Let a chosen appointment type speak for the appointment's label.
 
     When the caller names a type, that type is authoritative: ``session_type``
     is overwritten with its name so the id and the label cannot drift apart.
-    Nothing else is inferred — the caller still sends its own duration, because
-    a clinician may legitimately book a longer-than-usual session of a type.
+    The caller still sends its own duration, because a clinician may
+    legitimately book a longer-than-usual session of a type.
+
+    Where the visit happens is the one other thing a type supplies, and only
+    when the booking says nothing about it: no place of service, no video
+    service asked for, no link. Then the exact place of service the type was
+    last booked with is used (11, 02 or 10, the clinician's own code, never
+    translated), so a type last booked by video books by video again. A type
+    never booked with one leaves it unset.
 
     Mutates ``data`` in place. Raises ``NotFoundError`` for a type that is not
     this clinician's, which also stops one clinician booking against another's
@@ -271,6 +302,9 @@ def _apply_appointment_type(
     if appointment_type is None:
         raise NotFoundError(f"Appointment type not found: {appointment_type_id}")
     data["session_type"] = appointment_type.name
+    says_where = data.get("place_of_service") or data.get("video_link") or requested_provider
+    if not says_where and appointment_type.last_place_of_service is not None:
+        data["place_of_service"] = appointment_type.last_place_of_service
 
 
 def _owner_timezone(user_repo: UserRepository, user_id: str) -> tzinfo:
@@ -325,12 +359,80 @@ def get_google_calendar_service(
     _ctx: TenantContext = Depends(get_tenant_context),
 ) -> GoogleCalendarService:
     """Get Google Calendar service with injected dependencies."""
+    return _build_google_calendar_service()
+
+
+def _build_google_calendar_service() -> GoogleCalendarService:
+    """The calendar service over whatever tenant session is current."""
     return GoogleCalendarService.from_surface(
         google_consent_surface(get_settings()),
         token_repo=_gcal_token_repo_factory(),
         appointment_repo=_appt_repo_factory(),
         patient_repo=_patient_repo_factory(),
     )
+
+
+class MeetLinkFollowUp:
+    """The one late read of a Meet link that a save could not wait for.
+
+    Runs after the response, so it cannot use anything the request built: the
+    request's database session is being torn down on another thread by then.
+    It opens a session of its own on the practice the save was made in.
+    """
+
+    #: How long after the save the link is read. Google usually finishes a
+    #: conference within seconds, and the save has already waited its budget.
+    delay_seconds: float = 10.0
+
+    def __init__(self, practice_schema: str | None) -> None:
+        self._schema = practice_schema
+
+    def run(self, user_id: str, appointment_id: str, event_id: str) -> None:
+        time.sleep(self.delay_seconds)
+        contextvars.Context().run(self._run, user_id, appointment_id, event_id)
+
+    def _run(self, user_id: str, appointment_id: str, event_id: str) -> None:
+        try:
+            with self.services(user_id) as (service, gcal_service):
+                filled = _fill_meet_link(service, gcal_service, user_id, appointment_id, event_id)
+                if filled is not None:
+                    self.tell_client(service, filled)
+        except Exception:
+            logger.exception("The late read of a Google Meet link failed")
+
+    def tell_client(self, service: SchedulingService, appt: Appointment) -> None:
+        """Send the client the link the save could not wait for.
+
+        The practice is looked up only once a message is due, so a deployment
+        with no mail to send reads nothing here.
+        """
+        schema = self._schema
+        notifier = ClientVideoLinkNotifier(
+            sender=get_email_sender(),
+            practice_facts=lambda _id: read_practice_facts(practice_id_for_schema(schema)),
+        )
+        notifier.notify(
+            service,
+            appt,
+            practice_id=None,
+            patients=_patient_repo_factory(),
+            zone=lambda: _owner_timezone(get_user_repository(), appt.user_id),
+        )
+
+    @contextlib.contextmanager
+    def services(self, user_id: str) -> Iterator[tuple[SchedulingService, GoogleCalendarService]]:
+        """The scheduling and calendar services, on a session of the follow-up's own."""
+        if self._schema is None:
+            raise RuntimeError("no practice schema to read the appointment from")
+        with tenant_db_session(self._schema, user_id):
+            yield SchedulingService(_appt_repo_factory()), _build_google_calendar_service()
+
+
+def get_meet_link_follow_up(
+    ctx: TenantContext = Depends(get_tenant_context),
+) -> MeetLinkFollowUp:
+    """The late Meet-link read, bound to the practice this request is for."""
+    return MeetLinkFollowUp(ctx.practice_schema)
 
 
 def get_outside_session_repository(
@@ -398,13 +500,19 @@ class _LazyZoomStore:
 def get_meeting_registry(
     _ctx: TenantContext = Depends(get_tenant_context),
 ) -> MeetingProviderRegistry:
-    """The video services this deployment can offer, for this request.
+    """The video services this deployment can offer, for this request."""
+    return build_meeting_registry()
+
+
+def build_meeting_registry() -> MeetingProviderRegistry:
+    """The video services this deployment can offer, over the current session.
 
     Google Meet is offered only to a clinician whose calendar is connected,
     because the conference lives on the calendar event. The check is passed in
     as a callable so the Meet adapter never holds a calendar service — and so
     that nothing here reads the database until a provider that needs it is
-    both configured and asked.
+    both configured and asked. That is also what lets a public booking build
+    it before its session has entered the link's practice.
     """
     from ..meeting_providers.registry import build_registry
 
@@ -417,12 +525,7 @@ def get_meeting_registry(
 
 def _clinician_view(user_repo: UserRepository, user_id: str) -> Clinician:
     """The clinician's telehealth preferences, as a provider sees them."""
-    preferences = user_repo.get_preferences(user_id)
-    return Clinician(
-        id=user_id,
-        preferred_provider=preferences.default_video_platform,
-        room_url=preferences.telehealth_room_url,
-    )
+    return clinician_from_preferences(user_id, user_repo.get_preferences(user_id))
 
 
 def _practice_view() -> Practice:
@@ -449,14 +552,17 @@ def _provision_meeting(
     appt: Appointment,
     *,
     requested_provider: str | None,
+    trail: LinkTrail | None = None,
 ) -> Appointment:
     """Best-effort: give the appointment a room and record it.
 
     A vendor that will not issue a meeting never fails the booking. The
     appointment is real — somebody is expected at a time — and the missing
     piece is a link, which the clinician can paste. Same judgement the
-    calendar push makes one function down, and for the same reason.
+    calendar push makes one function down, and for the same reason. What
+    went wrong is marked on ``trail`` for :func:`log_missing_link`.
     """
+    trail = trail if trail is not None else LinkTrail()
     try:
         provisioned = provision_meeting(
             appt,
@@ -468,7 +574,12 @@ def _provision_meeting(
         )
     except TelehealthError:
         logger.warning("telehealth_provision_failed provider=%s", requested_provider)
+        trail.reason = MissingLinkReason.PROVIDER_FAILED
         return appt
+    if provisioned.provider is None:
+        # Asked, and no service on offer answered: none was connected, or the
+        # one asked for and the one preferred are both not.
+        trail.reason = MissingLinkReason.NO_OFFERED_SERVICE
     if provisioned == appt:
         return appt
     return service.update_appointment(
@@ -492,11 +603,164 @@ def _release_meeting(
         logger.exception("Failed to release the telehealth meeting")
 
 
+#: The fields an edit can carry that bear on the video room.
+_ROOM_FIELDS = frozenset({"place_of_service", "video_link"})
+
+
+def _reconcile_meeting(
+    service: SchedulingService,
+    registry: MeetingProviderRegistry,
+    user_repo: UserRepository,
+    patient_repo: PatientRepository,
+    user: User,
+    previous: Appointment,
+    appt: Appointment,
+    *,
+    requested_provider: str | None,
+    trail: LinkTrail | None = None,
+) -> Appointment:
+    """Bring an edited appointment's room in line with the edit, and record it.
+
+    :func:`room_change` decides; this carries it out. Giving up a room is
+    best-effort on the vendor's side, as cancelling is, and always clears the
+    row: a link to a meeting being released must not stay where a client can
+    find it. For Google Meet, clearing is the whole release — the calendar
+    push that follows writes the event without a conference, which takes the
+    conference off. A new room is made the way a booking makes one, so a
+    vendor that refuses leaves the appointment without a room rather than
+    failing the edit. Agreeing to a client's request is also an edit that can
+    owe a room (see :func:`_confirms_a_request_without_a_room`).
+    """
+    change = room_change(
+        previous,
+        appt,
+        requested_provider=requested_provider,
+        clinician=_clinician_view(user_repo, user.id),
+        registry=registry,
+    )
+    if change is RoomChange.KEEP:
+        if not _confirms_a_request_without_a_room(previous, appt, requested_provider):
+            return appt
+        return _provision_meeting(
+            service,
+            registry,
+            user_repo,
+            patient_repo,
+            user,
+            appt,
+            requested_provider=requested_provider,
+            trail=trail,
+        )
+    _release_meeting(registry, user, previous)
+    if change is RoomChange.MANUAL:
+        return service.update_appointment(
+            appt.id, user.id, provider=MANUAL, meeting_external_id=None
+        )
+    appt = service.update_appointment(
+        appt.id, user.id, provider=None, video_link=None, meeting_external_id=None
+    )
+    if change is RoomChange.RELEASE:
+        return appt
+    return _provision_meeting(
+        service,
+        registry,
+        user_repo,
+        patient_repo,
+        user,
+        appt,
+        requested_provider=requested_provider,
+        trail=trail,
+    )
+
+
+def _confirms_a_request_without_a_room(
+    previous: Appointment, appt: Appointment, requested_provider: str | None
+) -> bool:
+    """Whether this edit agreed to a client's request that is owed a room.
+
+    A request a client made through a booking link waits pending, and its room
+    is made when it is agreed to, never before: a request turned down must not
+    leave a meeting behind at the vendor. Agreeing in the app is that moment,
+    the same as the client confirming a hold. An appointment that already has
+    a room (a pending Meet, a pasted link) is
+    left as it is.
+    """
+    return (
+        previous.status == AppointmentStatus.PENDING
+        and appt.status == AppointmentStatus.CONFIRMED
+        and appt.provider is None
+        and not appt.video_link
+        and wants_a_room(appt, requested_provider=requested_provider)
+    )
+
+
+@dataclasses.dataclass
+class ClientBookingRoom:
+    """Gives a booking a client made its video room, then puts it on the calendar.
+
+    The clinician create path does the same two steps in the same order; a
+    client booking never names a video service, so the clinician's default
+    one is used, and only when the booking is a video visit (its place of
+    service, which came from its type). Best-effort like that path: a vendor
+    that will not make a room leaves the booking in place without a link.
+    """
+
+    registry: MeetingProviderRegistry
+    user_repo: UserRepository
+    patient_repo: PatientRepository
+    gcal_service: GoogleCalendarService
+    background: BackgroundTasks
+    follow_up: MeetLinkFollowUp
+    #: Sends the client their link once the room is made; None sends nothing.
+    notifier: ClientVideoLinkNotifier | None = None
+    #: The practice the booking was made in, for the notifier.
+    practice_id: str | None = None
+
+    def settle(self, service: SchedulingService, owner: User, appt: Appointment) -> Appointment:
+        trail = LinkTrail()
+        # Asked first so an in-person booking reads no preferences and no
+        # chart: it was never going to get a room.
+        if wants_a_room(appt, requested_provider=None):
+            appt = _provision_meeting(
+                service,
+                self.registry,
+                self.user_repo,
+                self.patient_repo,
+                owner,
+                appt,
+                requested_provider=None,
+                trail=trail,
+            )
+        appt = _sync_appointment_to_google(
+            service,
+            self.gcal_service,
+            owner,
+            appt,
+            background=self.background,
+            follow_up=self.follow_up,
+            trail=trail,
+        )
+        log_missing_link(appt, trail=trail)
+        if self.notifier is None:
+            return appt
+        return self.notifier.notify(
+            service,
+            appt,
+            practice_id=self.practice_id,
+            patients=self.patient_repo,
+            zone=lambda: _owner_timezone(self.user_repo, owner.id),
+        )
+
+
 def _sync_appointment_to_google(
     service: SchedulingService,
     gcal_service: GoogleCalendarService,
     user: User,
     appt: Appointment,
+    *,
+    background: BackgroundTasks | None = None,
+    follow_up: MeetLinkFollowUp | None = None,
+    trail: LinkTrail | None = None,
 ) -> Appointment:
     """Best-effort push of an appointment create/update to Google Calendar.
 
@@ -509,25 +773,53 @@ def _sync_appointment_to_google(
     URL only exists on the way back from this call — and it is asked for only
     on an appointment whose provider is Meet, so every other appointment's
     push is exactly the call it has always been.
+
+    Google sometimes answers that it is still making the conference. Then the
+    event is read back for up to ``google_meet_link_wait_seconds``, so the
+    save still returns with the link; past that, the save returns without it
+    and ``follow_up`` reads it once more after the response. A caller that
+    passes no ``follow_up`` neither waits nor reads again, and the next push
+    picks the link up as before.
+
+    A Meet room that does not come back is marked on ``trail`` with why, for
+    :func:`log_missing_link`; a push that never asked for one marks nothing.
     """
+    trail = trail if trail is not None else LinkTrail()
     if appt.outside_event_id:
         # Already on a calendar another service keeps; a Pablo event would
         # put it there twice.
         return appt
     wants_conference = appt.provider == GOOGLE_MEET and not appt.video_link
+    pending = False
     try:
         if wants_conference:
             pushed = gcal_service.push_appointment_event(user.id, appt)
             event_id = pushed.event_id if pushed else None
             conference = pushed.conference_url if pushed else None
+            pending = pushed.conference_pending if pushed else False
         else:
             event_id = gcal_service.push_appointment(user.id, appt)
             conference = None
     except Exception:
         logger.exception("Failed to push appointment to Google Calendar")
+        if wants_conference:
+            trail.reason = MissingLinkReason.PUSH_FAILED
         return service.update_appointment(appt.id, user.id, google_sync_status="error")
     if event_id is None:
+        if wants_conference:
+            trail.reason = MissingLinkReason.CALENDAR_DISCONNECTED
         return appt
+    if pending and background is not None and follow_up is not None:
+        conference, pending = _await_meet_link(gcal_service, user, event_id)
+        if pending and not conference:
+            background.add_task(follow_up.run, user.id, appt.id, event_id)
+            trail.reading_back = True
+    if wants_conference and not conference:
+        trail.reason = (
+            MissingLinkReason.CONFERENCE_PENDING_TIMEOUT
+            if pending
+            else MissingLinkReason.PROVIDER_FAILED
+        )
     updates: dict[str, Any] = {
         "google_event_id": event_id,
         "google_sync_status": "synced",
@@ -535,6 +827,91 @@ def _sync_appointment_to_google(
     if conference:
         updates["video_link"] = conference
     return service.update_appointment(appt.id, user.id, **updates)
+
+
+def _await_meet_link(
+    gcal_service: GoogleCalendarService,
+    user: User,
+    event_id: str,
+) -> tuple[str | None, bool]:
+    """Wait, within the budget, for a pending conference's link.
+
+    Returns the link if it came, and whether it is still worth reading for
+    later: yes while Google says pending, or when no read got an answer at
+    all; no once Google has given up on the conference.
+
+    The request's connection is released first, as before any slow outside
+    call, so the wait never holds a pooled connection idle.
+    """
+    budget = get_settings().google_meet_link_wait_seconds
+    release_db_connection()
+    settled = wait_for_conference(
+        lambda: gcal_service.read_appointment_event(user.id, event_id),
+        budget_seconds=budget,
+    )
+    if settled is None:
+        return None, True
+    return settled.conference_url, settled.conference_pending
+
+
+def _fill_meet_link(
+    service: SchedulingService,
+    gcal_service: GoogleCalendarService,
+    user_id: str,
+    appointment_id: str,
+    event_id: str,
+) -> Appointment | None:
+    """Read a Meet link that was still being made, and put it on the appointment.
+
+    Only onto the appointment as it was left: still on Meet, still without a
+    link, still on this event. An edit in the meantime (in person now, or a
+    link pasted in) wins over a conference it no longer wants. A row that does
+    not come back is not this clinician's to write, so nothing is written.
+    Returns the appointment with its link, or None when nothing was written.
+    """
+    try:
+        pushed = gcal_service.read_appointment_event(user_id, event_id)
+    except Exception:
+        # One read and no retry, so a 429, a 5xx or a deleted event ends here.
+        # The appointment still has no link, and that still has to be said.
+        logger.exception("The late read of a Google Meet link failed")
+        pushed, read_failed = None, True
+    else:
+        read_failed = False
+    link = pushed.conference_url if pushed else None
+    try:
+        appt = service.get_appointment(appointment_id, user_id)
+    except AppointmentNotFoundError:
+        return None
+    if (
+        appt.provider != GOOGLE_MEET
+        or appt.video_link
+        or appt.google_event_id != event_id
+        or appt.status == AppointmentStatus.CANCELLED
+    ):
+        return None
+    if not link:
+        # The last read there will be. The save logged nothing because this
+        # read was still to come, so this is where the missing link is said.
+        log_missing_link(appt, trail=LinkTrail(_late_read_reason(pushed, read_failed=read_failed)))
+        return None
+    return service.update_appointment(appointment_id, user_id, video_link=link)
+
+
+def _late_read_reason(pushed: PushedEvent | None, *, read_failed: bool) -> MissingLinkReason:
+    """Why the late read of a Meet link came back without one.
+
+    A read that failed never learned what Google made, so the conference is
+    still the pending one the save left. A read that answered None found no
+    calendar connection, which the save calls a disconnect too.
+    """
+    if read_failed:
+        return MissingLinkReason.CONFERENCE_PENDING_TIMEOUT
+    if pushed is None:
+        return MissingLinkReason.CALENDAR_DISCONNECTED
+    if not pushed.conference_pending:
+        return MissingLinkReason.PROVIDER_FAILED
+    return MissingLinkReason.CONFERENCE_PENDING_TIMEOUT
 
 
 def _push_cancellation_to_google(
@@ -682,6 +1059,7 @@ def _to_response(
 def create_appointment(
     request: CreateAppointmentRequest,
     http_request: Request,
+    background: BackgroundTasks,
     _ctx: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
@@ -692,6 +1070,8 @@ def create_appointment(
     registry: MeetingProviderRegistry = Depends(get_meeting_registry),
     user_repo: UserRepository = Depends(get_user_repository),
     tz: tzinfo = Depends(get_owner_timezone),
+    follow_up: MeetLinkFollowUp = Depends(get_meet_link_follow_up),
+    notifier: ClientVideoLinkNotifier = Depends(get_client_video_link_notifier),
 ) -> AppointmentResponse:
     """Create a new appointment."""
     data = request.model_dump()
@@ -700,7 +1080,9 @@ def create_appointment(
     # Which video service to ask is a request, not a column: the row records
     # who actually made the room, which is decided below.
     requested_provider = data.pop("provider", None)
-    _apply_appointment_type(data, user_id=user.id, type_repo=type_repo)
+    _apply_appointment_type(
+        data, user_id=user.id, type_repo=type_repo, requested_provider=requested_provider
+    )
     try:
         appt = service.create_appointment(
             user.id,
@@ -718,6 +1100,7 @@ def create_appointment(
     # own update_appointment for linking, which resets rule_warnings).
     warnings = service.rule_warnings
     overridden = service.overridden_rules
+    remember_place(type_repo, user.id, appt)
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_CREATED,
         user,
@@ -728,6 +1111,7 @@ def create_appointment(
     )
     # Before the calendar push, because a Google Meet appointment is given its
     # provider here and the push is what turns that into a conference.
+    trail = LinkTrail()
     appt = _provision_meeting(
         service,
         registry,
@@ -736,8 +1120,21 @@ def create_appointment(
         user,
         appt,
         requested_provider=requested_provider,
+        trail=trail,
     )
-    appt = _sync_appointment_to_google(service, gcal_service, user, appt)
+    appt = _sync_appointment_to_google(
+        service,
+        gcal_service,
+        user,
+        appt,
+        background=background,
+        follow_up=follow_up,
+        trail=trail,
+    )
+    log_missing_link(appt, trail=trail, requested_provider=requested_provider)
+    appt = notifier.notify(
+        service, appt, practice_id=_ctx.practice_id, patients=patient_repo, zone=lambda: tz
+    )
     return _to_response(
         appt,
         patient_name=_patient_name_map(patient_repo, user.id, [appt]).get(appt.patient_id),
@@ -852,17 +1249,26 @@ def update_appointment(
     appointment_id: str,
     request: UpdateAppointmentRequest,
     http_request: Request,
+    background: BackgroundTasks,
     _ctx: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
     audit: AuditService = Depends(get_audit_service),
     gcal_service: GoogleCalendarService = Depends(get_google_calendar_service),
     patient_repo: PatientRepository = Depends(get_patient_repository),
+    registry: MeetingProviderRegistry = Depends(get_meeting_registry),
+    user_repo: UserRepository = Depends(get_user_repository),
+    type_repo: AppointmentTypeRepository = Depends(get_appointment_type_repository),
     tz: tzinfo = Depends(get_owner_timezone),
+    follow_up: MeetLinkFollowUp = Depends(get_meet_link_follow_up),
+    notifier: ClientVideoLinkNotifier = Depends(get_client_video_link_notifier),
 ) -> AppointmentResponse:
     """Update an appointment."""
     payload = request.model_dump()
     rule_override = bool(payload.pop("rule_override", False))
+    # As on create, a service asked for is a request, not a column: the row
+    # records who actually made the room, which is decided after the write.
+    requested_provider = payload.pop("provider", None)
     updates = {k: v for k, v in payload.items() if v is not None}
     if request.note_inputs is not None:
         # Checked against the note type the appointment will have after this
@@ -876,6 +1282,15 @@ def update_appointment(
         updates["note_inputs"] = _checked_note_inputs(note_type, request.note_inputs)
     if _FOLLOWED_TIME_FIELDS & updates.keys():
         _refuse_moving_a_followed_session(service, appointment_id, user.id)
+    # The room is decided from the appointment before and after the write, so
+    # read the before — only when the edit could bear on the room at all.
+    previous: Appointment | None = None
+    confirming = updates.get("status") == AppointmentStatus.CONFIRMED
+    if requested_provider is not None or _ROOM_FIELDS & updates.keys() or confirming:
+        try:
+            previous = service.get_appointment(appointment_id, user.id)
+        except AppointmentNotFoundError as e:
+            raise NotFoundError(str(e)) from e
     try:
         appt = service.update_appointment(
             appointment_id, user.id, tz=tz, rule_override=rule_override, **updates
@@ -891,6 +1306,10 @@ def update_appointment(
     # Captured before any further service calls (Google sync below issues its
     # own update_appointment for linking, which resets rule_warnings).
     warnings = service.rule_warnings
+    # Only an edit that says where the visit happens teaches the type; an
+    # edit of something else is not a fresh choice of place.
+    if "place_of_service" in updates:
+        remember_place(type_repo, user.id, appt)
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_UPDATED,
         user,
@@ -898,11 +1317,40 @@ def update_appointment(
         appt.id,
         patient_id=appt.patient_id,
         changes={
-            "changed_fields": sorted(updates.keys()),
+            "changed_fields": sorted(
+                {*updates.keys(), *(["provider"] if requested_provider else [])}
+            ),
             **(_override_record(service.overridden_rules) or {}),
         },
     )
-    appt = _sync_appointment_to_google(service, gcal_service, user, appt)
+    # Before the calendar push, for the same reason as on create: the push is
+    # what puts a Meet conference on the event, or takes one off.
+    trail = LinkTrail()
+    if previous is not None:
+        appt = _reconcile_meeting(
+            service,
+            registry,
+            user_repo,
+            patient_repo,
+            user,
+            previous,
+            appt,
+            requested_provider=requested_provider,
+            trail=trail,
+        )
+    appt = _sync_appointment_to_google(
+        service,
+        gcal_service,
+        user,
+        appt,
+        background=background,
+        follow_up=follow_up,
+        trail=trail,
+    )
+    log_missing_link(appt, trail=trail, requested_provider=requested_provider)
+    appt = notifier.notify(
+        service, appt, practice_id=_ctx.practice_id, patients=patient_repo, zone=lambda: tz
+    )
     return _to_response(
         appt,
         patient_name=_patient_name_map(patient_repo, user.id, [appt]).get(appt.patient_id),
@@ -1860,6 +2308,7 @@ def _appointment_type_to_response(appointment_type: AppointmentType) -> Appointm
         horizon_unit=appointment_type.horizon_unit,
         self_bookable=appointment_type.self_bookable,
         offerable=appointment_type.offerable,
+        modality=appointment_type.modality,
         created_at=appointment_type.created_at,
         updated_at=appointment_type.updated_at,
     )
@@ -2204,6 +2653,16 @@ def _parse_incremental_capability(value: str) -> CalendarCapability:
         raise BadRequestError("Unsupported capability") from exc
 
 
+def get_savepoint() -> Callable[[], contextlib.AbstractContextManager[object]]:
+    """Opens a savepoint on the request session, for a write allowed to fail alone.
+
+    A database error aborts the whole Postgres transaction, and the commit at
+    the end of the request then quietly rolls back everything before it too.
+    Inside a savepoint only the savepoint's own work is lost.
+    """
+    return lambda: get_db_session().begin_nested()
+
+
 @router.get("/api/google-calendar/callback")
 def google_calendar_callback(
     code: str = Query(..., description="OAuth authorization code"),
@@ -2229,6 +2688,9 @@ def google_calendar_callback(
     ),
     ctx: TenantContext = Depends(get_tenant_context),
     service: GoogleCalendarService = Depends(get_google_calendar_service),
+    user_repo: UserRepository = Depends(get_user_repository),
+    meeting_registry: MeetingProviderRegistry = Depends(get_meeting_registry),
+    savepoint: Callable[[], contextlib.AbstractContextManager[object]] = Depends(get_savepoint),
 ) -> dict[str, str]:
     """Handle Google OAuth callback — exchange code for tokens.
 
@@ -2292,7 +2754,32 @@ def google_calendar_callback(
     except Exception as e:
         logger.exception("Google Calendar OAuth callback failed")
         raise BadRequestError("OAuth callback failed") from e
+    if capability is None:
+        _default_to_meet(user_repo, ctx.user_id, registry=meeting_registry, savepoint=savepoint)
     return {"status": "connected"}
+
+
+def _default_to_meet(
+    user_repo: UserRepository,
+    user_id: str,
+    *,
+    registry: MeetingProviderRegistry,
+    savepoint: Callable[[], contextlib.AbstractContextManager[object]],
+) -> None:
+    """Give a clinician with no working video default Google Meet, now that Meet works.
+
+    Never fails the connect: the calendar is connected either way, and a
+    default left as it was is what every clinician had before this existed.
+    The savepoint is what makes that true. The token row this request has
+    just written is in the same transaction, and without it a lock or
+    statement timeout here would take the connection down with the default
+    while the route still answered "connected".
+    """
+    try:
+        with savepoint():
+            default_to_meet_on_calendar_connect(user_repo, user_id, registry=registry)
+    except Exception:
+        logger.warning("Could not set the video default after a calendar connect", exc_info=True)
 
 
 @router.delete("/api/google-calendar/disconnect")

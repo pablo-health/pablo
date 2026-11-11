@@ -13,6 +13,13 @@ from ...money import DollarAmount, cents_to_dollars, dollars_to_cents, format_mo
 
 Audience = Literal["new", "existing", "both"]
 HorizonUnit = Literal["business", "days"]
+Modality = Literal["in_person", "video"]
+#: The place-of-service codes a type remembers from its last booking: office
+#: (11), telehealth other than home (02), and telehealth in the client's home
+#: (10). Any other code says something more specific than where the session
+#: happens, and a type does not learn it.
+RememberedPlace = Literal["11", "02", "10"]
+REMEMBERED_PLACES: frozenset[str] = frozenset({"11", "02", "10"})
 
 
 @dataclass
@@ -52,6 +59,10 @@ class AppointmentType:
     horizon_unit: HorizonUnit = "business"
     self_bookable: bool = False
     offerable: bool = True
+    #: The place of service this type was last booked with, the clinician's
+    #: own code, learned from bookings rather than set by anyone. ``None``
+    #: means never booked with one. See :attr:`modality`.
+    last_place_of_service: RememberedPlace | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -69,6 +80,7 @@ class AppointmentType:
         "horizon_unit",
         "self_bookable",
         "offerable",
+        "last_place_of_service",
         "created_at",
         "updated_at",
     )
@@ -93,6 +105,17 @@ class AppointmentType:
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for storage."""
         return {name: getattr(self, name) for name in self._FIELDS}
+
+    @property
+    def modality(self) -> Modality | None:
+        """Where this type was last booked, read from its remembered place.
+
+        ``in_person`` for 11, ``video`` for 02 or 10, ``None`` if never booked
+        with one. Derived, so it cannot disagree with the code it stands for.
+        """
+        if self.last_place_of_service is None:
+            return None
+        return "in_person" if self.last_place_of_service == "11" else "video"
 
     # --- Money, at the human boundary -------------------------------------
     #

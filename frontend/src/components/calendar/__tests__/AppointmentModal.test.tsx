@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest"
-import { render, screen, waitFor, within } from "@testing-library/react"
+import { act, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { AppointmentModal } from "../AppointmentModal"
@@ -21,7 +21,13 @@ const {
   mockCheckConflicts,
   mockDeleteRule,
   mockUpdateRule,
+  mockListProviders,
+  mockUpdatePreferences,
+  mockGetZoomAuthUrl,
 } = vi.hoisted(() => ({
+  mockListProviders: vi.fn(),
+  mockUpdatePreferences: vi.fn(),
+  mockGetZoomAuthUrl: vi.fn(),
   mockCreate: vi.fn(),
   mockCreateRecurring: vi.fn(),
   mockUpdate: vi.fn(),
@@ -117,6 +123,45 @@ vi.mock("@/hooks/useNoteTypes", () => ({
     },
   }),
 }))
+
+vi.mock("@/lib/api/telehealth", () => ({
+  // A test that never set an answer gets the deployment with nothing connected.
+  listTelehealthProviders: () => mockListProviders() ?? Promise.resolve(NOTHING_CONNECTED),
+  getZoomAuthUrl: (uri: string) => mockGetZoomAuthUrl(uri),
+  ZOOM_RETURN_PATH: "/dashboard/settings/sessions",
+}))
+
+vi.mock("@/hooks/usePreferences", () => ({
+  useUpdatePreferences: () => ({ mutate: mockUpdatePreferences, isPending: false }),
+}))
+
+/** What GET /telehealth/providers answers; `connected` per service id. */
+function providersAnswer(
+  connected: Record<string, boolean>,
+  defaultProvider: string | null,
+  zoomApp = false,
+) {
+  const names: Record<string, string> = {
+    google_meet: "Google Meet",
+    zoom: "Zoom",
+    manual: "A link I'll paste in",
+  }
+  return {
+    providers: Object.entries(connected).map(([id, isConnected]) => ({
+      id,
+      display_name: names[id] ?? id,
+      connected: isConnected,
+    })),
+    default_provider: defaultProvider,
+    room_url: null,
+    zoom_room_url: null,
+    zoom_app: zoomApp,
+    join_window_before_minutes: 10,
+  }
+}
+
+const MEET_DEFAULT = providersAnswer({ google_meet: true, zoom: true, manual: true }, "google_meet")
+const NOTHING_CONNECTED = providersAnswer({ google_meet: false, manual: true }, null)
 
 vi.mock("@/lib/config", () => ({
   useConfig: () => ({ dataMode: "api" }),
@@ -294,12 +339,11 @@ describe("AppointmentModal", () => {
     )
   })
 
-  it("tucks video link, note type, and notes behind More options", async () => {
+  it("tucks note type and notes behind More options", async () => {
     const user = userEvent.setup()
     render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
-    expect(screen.queryByLabelText("Video link")).not.toBeInTheDocument()
+    expect(screen.queryByLabelText("Notes")).not.toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: /more options/i }))
-    expect(screen.getByLabelText("Video link")).toBeInTheDocument()
     expect(screen.getByRole("combobox", { name: /note type/i })).toBeInTheDocument()
     expect(screen.getByLabelText("Notes")).toBeInTheDocument()
   })
@@ -677,7 +721,7 @@ describe("AppointmentModal", () => {
       const patientTrigger = screen.getByRole("combobox", { name: /client/i })
       await user.click(patientTrigger)
       await user.click(screen.getByRole("option", { name: /Doe, Jane/i }))
-      await user.click(screen.getByRole("button", { name: /more options/i }))
+      await user.click(screen.getByRole("radio", { name: "Video" }))
       await user.type(screen.getByLabelText("Video link"), "https://meet.example.com/abc")
       await user.click(screen.getByRole("button", { name: "Schedule" }))
 
@@ -758,6 +802,284 @@ describe("AppointmentModal", () => {
       await user.click(screen.getByRole("button", { name: "Save changes" }))
 
       expect(mockUpdate.mock.calls[0][0].data).toMatchObject({ video_platform: "zoom" })
+    })
+  })
+
+  describe("Where the session happens", () => {
+    beforeEach(() => {
+      mockListProviders.mockResolvedValue(NOTHING_CONNECTED)
+    })
+    afterEach(() => {
+      mockListProviders.mockReset()
+    })
+
+    async function pickPatient(user: ReturnType<typeof userEvent.setup>) {
+      await user.click(screen.getByRole("combobox", { name: /client/i }))
+      await user.click(screen.getByRole("option", { name: /Doe, Jane/i }))
+    }
+    const where = () => screen.getByRole("radiogroup", { name: "Where" })
+    const meetRoom = {
+      ...baseAppointment,
+      place_of_service: "02",
+      provider: "google_meet",
+      video_link: "https://meet.google.com/abc-defg-hij",
+    }
+
+    it("says the default service adds the link when you save", async () => {
+      const user = userEvent.setup()
+      mockListProviders.mockResolvedValue(MEET_DEFAULT)
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+      await pickPatient(user)
+      await user.click(within(where()).getByRole("radio", { name: "Video" }))
+
+      expect(await screen.findByTestId("video-link-promise")).toHaveTextContent(
+        "Google Meet link added when you save",
+      )
+      await user.click(screen.getByRole("button", { name: "Schedule" }))
+      expect(mockCreate.mock.calls[0][0]).toMatchObject({
+        place_of_service: "02",
+        provider: "google_meet",
+        video_link: null,
+      })
+    })
+
+    it("shows the link and the service that made it on a booked appointment", async () => {
+      mockListProviders.mockResolvedValue(MEET_DEFAULT)
+      render(<AppointmentModal open onClose={vi.fn()} appointment={meetRoom} />, {
+        wrapper: createWrapper(),
+      })
+      const room = await screen.findByTestId("video-room")
+      await waitFor(() => expect(room).toHaveTextContent("Google Meet"))
+      expect(room).toHaveTextContent("https://meet.google.com/abc-defg-hij")
+    })
+
+    it("moves one appointment to another connected service", async () => {
+      const user = userEvent.setup()
+      mockListProviders.mockResolvedValue(MEET_DEFAULT)
+      render(<AppointmentModal open onClose={vi.fn()} appointment={meetRoom} />, {
+        wrapper: createWrapper(),
+      })
+      await user.click(await screen.findByRole("button", { name: "Change" }))
+      const list = screen.getByRole("list", { name: "Video service" })
+      // Only what this clinician can use, plus pasting. No Connect Zoom:
+      // this deployment has no Zoom app.
+      expect(within(list).getAllByRole("button").map((b) => b.textContent)).toEqual([
+        "Google Meet",
+        "Zoom",
+        "Paste a link",
+      ])
+      await user.click(within(list).getByRole("button", { name: "Zoom" }))
+      expect(screen.getByTestId("video-link-promise")).toHaveTextContent(
+        "Zoom link added when you save",
+      )
+      await user.click(screen.getByRole("button", { name: "Save changes" }))
+
+      const data = mockUpdate.mock.calls[0][0].data
+      expect(data).toMatchObject({
+        provider: "zoom",
+        video_link: "https://meet.google.com/abc-defg-hij",
+      })
+      // The place did not change, so the visit is not re-coded.
+      expect(data).not.toHaveProperty("place_of_service")
+    })
+
+    it("keeps a pasted link a pasted link, with no service to move it to", async () => {
+      // The server keeps a held paste whatever service is asked for, so the
+      // form offers none: picking one would promise a room that never comes.
+      const user = userEvent.setup()
+      mockListProviders.mockResolvedValue(MEET_DEFAULT)
+      const pasted = {
+        ...baseAppointment,
+        place_of_service: "02",
+        provider: "manual",
+        video_link: "https://teams.example.com/held",
+      }
+      render(<AppointmentModal open onClose={vi.fn()} appointment={pasted} />, {
+        wrapper: createWrapper(),
+      })
+      await waitFor(() => expect(mockListProviders).toHaveBeenCalled())
+      expect(await screen.findByLabelText("Video link")).toHaveValue(
+        "https://teams.example.com/held",
+      )
+      expect(screen.queryByRole("button", { name: "Change" })).not.toBeInTheDocument()
+      expect(screen.queryByRole("list", { name: "Video service" })).not.toBeInTheDocument()
+      expect(screen.queryByTestId("video-link-promise")).not.toBeInTheDocument()
+
+      await user.click(screen.getByRole("button", { name: "Save changes" }))
+      const data = mockUpdate.mock.calls[0][0].data
+      expect(data).toMatchObject({ video_link: "https://teams.example.com/held" })
+      expect(data).not.toHaveProperty("provider")
+    })
+
+    it("pastes a link for one appointment", async () => {
+      const user = userEvent.setup()
+      mockListProviders.mockResolvedValue(MEET_DEFAULT)
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+      await pickPatient(user)
+      await user.click(within(where()).getByRole("radio", { name: "Video" }))
+      await user.click(await screen.findByRole("button", { name: "Change" }))
+      await user.click(screen.getByRole("button", { name: "Paste a link" }))
+      await user.type(screen.getByLabelText("Video link"), "https://teams.example.com/x")
+      await user.click(screen.getByRole("button", { name: "Schedule" }))
+
+      const payload = mockCreate.mock.calls[0][0]
+      expect(payload).toMatchObject({
+        place_of_service: "02",
+        video_link: "https://teams.example.com/x",
+      })
+      expect(payload).not.toHaveProperty("provider")
+    })
+
+    it("offers Connect Zoom only where the deployment has a Zoom app and Zoom is not connected", async () => {
+      const user = userEvent.setup()
+      mockListProviders.mockResolvedValue(
+        providersAnswer({ google_meet: true, zoom: false, manual: true }, "google_meet", true),
+      )
+      mockGetZoomAuthUrl.mockRejectedValue(new Error("down"))
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+      await user.click(within(where()).getByRole("radio", { name: "Video" }))
+      await user.click(await screen.findByRole("button", { name: "Change" }))
+      const list = screen.getByRole("list", { name: "Video service" })
+      expect(within(list).getAllByRole("button").map((b) => b.textContent)).toEqual([
+        "Google Meet",
+        "Paste a link",
+        "Connect Zoom",
+      ])
+      await user.click(within(list).getByRole("button", { name: "Connect Zoom" }))
+      expect(mockGetZoomAuthUrl).toHaveBeenCalledWith(
+        `${window.location.origin}/dashboard/settings/sessions`,
+      )
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Couldn't start the Zoom connection. Try again.",
+      )
+    })
+
+    it("in person shows no video row and saves no room", async () => {
+      const user = userEvent.setup()
+      mockListProviders.mockResolvedValue(MEET_DEFAULT)
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+      await pickPatient(user)
+      await user.click(within(where()).getByRole("radio", { name: "In person" }))
+
+      expect(screen.queryByTestId("video-link-promise")).not.toBeInTheDocument()
+      expect(screen.queryByLabelText("Video link")).not.toBeInTheDocument()
+      await user.click(screen.getByRole("button", { name: "Schedule" }))
+      const payload = mockCreate.mock.calls[0][0]
+      expect(payload).toMatchObject({ place_of_service: "11", video_link: null })
+      expect(payload).not.toHaveProperty("provider")
+    })
+
+    it("moving a video appointment to in person sends the office code and no link", async () => {
+      const user = userEvent.setup()
+      mockListProviders.mockResolvedValue(MEET_DEFAULT)
+      render(<AppointmentModal open onClose={vi.fn()} appointment={meetRoom} />, {
+        wrapper: createWrapper(),
+      })
+      await user.click(within(where()).getByRole("radio", { name: "In person" }))
+      await user.click(screen.getByRole("button", { name: "Save changes" }))
+      expect(mockUpdate.mock.calls[0][0].data).toMatchObject({
+        place_of_service: "11",
+        video_link: null,
+      })
+    })
+
+    it("starts a new appointment where the clinician last booked, and keeps the exact code", async () => {
+      const user = userEvent.setup()
+      mockListProviders.mockResolvedValue(MEET_DEFAULT)
+      const prefs = { last_place_of_service: "10" } as UserPreferences
+      render(<AppointmentModal open onClose={vi.fn()} preferences={prefs} />, {
+        wrapper: createWrapper(),
+      })
+      expect(within(where()).getByRole("radio", { name: "Video" })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      )
+      await pickPatient(user)
+      await user.click(screen.getByRole("button", { name: "Schedule" }))
+      expect(mockCreate.mock.calls[0][0]).toMatchObject({ place_of_service: "10" })
+      // Already the last choice, so there is nothing new to remember.
+      act(() => mockCreate.mock.calls[0][1].onSuccess())
+      expect(mockUpdatePreferences).not.toHaveBeenCalled()
+    })
+
+    it("remembers a new choice on the clinician's preferences once the save succeeds", async () => {
+      const user = userEvent.setup()
+      const prefs = { last_place_of_service: "02" } as UserPreferences
+      render(<AppointmentModal open onClose={vi.fn()} preferences={prefs} />, {
+        wrapper: createWrapper(),
+      })
+      await pickPatient(user)
+      await user.click(within(where()).getByRole("radio", { name: "In person" }))
+      await user.click(screen.getByRole("button", { name: "Schedule" }))
+
+      expect(mockUpdatePreferences).not.toHaveBeenCalled()
+      act(() => mockCreate.mock.calls[0][1].onSuccess())
+      expect(mockUpdatePreferences).toHaveBeenCalledWith({ last_place_of_service: "11" })
+    })
+
+    it("picks nothing for a clinician who has never booked, and sends nothing", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+      for (const radio of within(where()).getAllByRole("radio")) {
+        expect(radio).toHaveAttribute("aria-checked", "false")
+      }
+      await pickPatient(user)
+      await user.click(screen.getByRole("button", { name: "Schedule" }))
+      expect(mockCreate.mock.calls[0][0]).not.toHaveProperty("place_of_service")
+      act(() => mockCreate.mock.calls[0][1].onSuccess())
+      expect(mockUpdatePreferences).not.toHaveBeenCalled()
+    })
+
+    it("with no service connected, offers pasting and the Google Calendar connection", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+      await user.click(within(where()).getByRole("radio", { name: "Video" }))
+
+      expect(screen.getByLabelText("Video link")).toBeInTheDocument()
+      const connect = await screen.findByRole("link", { name: "Connect Google Calendar" })
+      expect(connect).toHaveAttribute("href", "/dashboard/settings/calendar")
+      expect(connect.parentElement).toHaveTextContent(
+        "Connect Google Calendar to get Meet links automatically.",
+      )
+      expect(screen.queryByRole("button", { name: "Change" })).not.toBeInTheDocument()
+    })
+
+    it("adds a Meet room to an appointment that says nothing, in one tap", async () => {
+      const user = userEvent.setup()
+      mockListProviders.mockResolvedValue(MEET_DEFAULT)
+      const onClose = vi.fn()
+      render(<AppointmentModal open onClose={onClose} appointment={baseAppointment} />, {
+        wrapper: createWrapper(),
+      })
+      await user.click(await screen.findByRole("button", { name: "Add Google Meet" }))
+
+      expect(mockUpdate).toHaveBeenCalledTimes(1)
+      const [{ appointmentId, data }, { onSuccess }] = mockUpdate.mock.calls[0]
+      expect(appointmentId).toBe("a1")
+      expect(data).toEqual({ place_of_service: "02", provider: "google_meet" })
+
+      act(() => onSuccess({ ...meetRoom, video_link: "https://meet.google.com/new-room" }))
+      expect(screen.getByTestId("video-room")).toHaveTextContent(
+        "https://meet.google.com/new-room",
+      )
+      expect(mockUpdatePreferences).toHaveBeenCalledWith({ last_place_of_service: "02" })
+      expect(onClose).not.toHaveBeenCalled()
+    })
+
+    it("a new series takes only a pasted link", async () => {
+      const user = userEvent.setup()
+      mockListProviders.mockResolvedValue(MEET_DEFAULT)
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+      await pickPatient(user)
+      await user.click(screen.getByRole("radio", { name: "Weekly" }))
+      await user.click(within(where()).getByRole("radio", { name: "Video" }))
+
+      expect(screen.queryByTestId("video-link-promise")).not.toBeInTheDocument()
+      await user.type(screen.getByLabelText("Video link"), "https://teams.example.com/s")
+      await user.click(screen.getByRole("button", { name: "Schedule" }))
+      expect(mockCreateRecurring.mock.calls[0][0]).toMatchObject({
+        video_link: "https://teams.example.com/s",
+      })
     })
   })
 

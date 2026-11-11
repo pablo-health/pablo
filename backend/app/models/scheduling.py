@@ -48,8 +48,14 @@ class VisitCodingFields(BaseModel):
     Shared between the two surfaces that write them — a standalone edit on
     the appointment (:class:`UpdateAppointmentRequest`) and note creation
     (``CreateStandaloneNoteRequest``) — so both validate identically and
-    converge on the same stored fields. Every field is optional: nothing
-    infers or defaults a code, so an unset visit stays unset.
+    converge on the same stored fields. Every field is optional, and an unset
+    field leaves the visit's code as it was.
+
+    One code is ever filled in for the clinician: a booking that names an
+    appointment type and says nothing about where the session happens takes
+    the place of service that type was last booked with, the exact code
+    (``app.scheduling_engine.services.type_place``). Nothing else infers or
+    defaults a code, so an unset visit otherwise stays unset.
     """
 
     service_code: str | None = Field(default=None, max_length=10)
@@ -107,6 +113,10 @@ class CreateAppointmentRequest(BaseModel):
     #: Ignored when ``video_link`` is set: a link the clinician typed is the
     #: room, whatever any preference says.
     provider: str | None = None
+    #: Where the visit happens. 02 or 10 is a video visit and gets a room from
+    #: the clinician's default service; anything else gets none unless a
+    #: ``provider`` or ``video_link`` says otherwise.
+    place_of_service: PlaceOfServiceCode | None = None
     notes: str | None = None
     note_type: str | None = None
     #: Values for the note type's declared inputs.
@@ -172,6 +182,10 @@ class UpdateAppointmentRequest(VisitCodingFields):
     session_type: str | None = None
     video_link: str | None = None
     video_platform: str | None = None
+    #: Move the appointment to a different video service. Its old room is
+    #: released and the new service makes one. Ignored when the appointment
+    #: has a link the clinician pasted.
+    provider: str | None = None
     notes: str | None = None
     note_type: str | None = None
     #: Values for the note type's declared inputs.
@@ -555,6 +569,10 @@ class AppointmentTypeResponse(BaseModel):
     horizon_unit: str = "business"
     self_bookable: bool = False
     offerable: bool = True
+    #: Where this type was last booked, ``in_person`` or ``video``, read from
+    #: the place of service it remembers; ``None`` if never. Read-only: it is
+    #: learned from bookings, not set here.
+    modality: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

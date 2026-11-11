@@ -25,11 +25,13 @@ from typing import Any
 _ANTHROPIC_VERTEX_REGION = os.environ.get("ANTHROPIC_VERTEX_REGION", "global")
 
 # Per-call deadline for a single Vertex request, both request-path and
-# job/cron callers. Generous relative to the request-path retry presets
-# (``reliability.LLM_REQUEST`` budgets 25s across all attempts) because a
-# streaming chat completion or a large structured extraction can
-# legitimately run long; this exists to fail a truly hung connection, not
-# to shape p99 latency.
+# job/cron callers. The same 60 s the request-path preset names as its own
+# per-attempt bound (``reliability.LLM_REQUEST.attempt_timeout``), of which
+# two fit inside that preset's deadline with the backoff between them, so a
+# request-path caller on this default can retry a call that failed at its
+# bound. Generous for an ordinary answer because a streaming chat completion
+# or a large structured extraction can legitimately run long; this exists to
+# fail a truly hung connection, not to shape p99 latency.
 DEFAULT_VERTEX_TIMEOUT_SECONDS = 60.0
 
 
@@ -66,10 +68,13 @@ def anthropic_vertex_client(
 ) -> Any:
     """Return a new anthropic client bound to Claude on Vertex AI.
 
-    Project comes from ``GOOGLE_CLOUD_PROJECT``; the region defaults to
-    ``ANTHROPIC_VERTEX_REGION`` (``global``) rather than the Gemini location, since
-    the Anthropic publisher models are served from a different endpoint. Imported
-    lazily so units that never touch Claude don't pay the import cost.
+    Project comes from ``ANTHROPIC_VERTEX_PROJECT_ID`` when set, else
+    ``GOOGLE_CLOUD_PROJECT``. The separate variable lets a deployment serve Claude
+    from a different project than the one Gemini, Document AI and logging use,
+    without redirecting those. The region defaults to ``ANTHROPIC_VERTEX_REGION``
+    (``global``) rather than the Gemini location, since the Anthropic publisher
+    models are served from a different endpoint. Imported lazily so units that
+    never touch Claude don't pay the import cost.
 
     Raises:
         RuntimeError: the anthropic package is not installed.
@@ -80,15 +85,47 @@ def anthropic_vertex_client(
         raise RuntimeError("anthropic package is required for Claude on Vertex AI access") from exc
     # project_id/region take a NotGiven sentinel (not None) when unset; with no
     # project the client falls back to the ambient GOOGLE_CLOUD_PROJECT itself.
-    project = os.environ.get("GOOGLE_CLOUD_PROJECT")
     return AnthropicVertex(
-        project_id=project or NOT_GIVEN,
+        project_id=_claude_project() or NOT_GIVEN,
         region=region or _ANTHROPIC_VERTEX_REGION,
         timeout=timeout_seconds,
-        # The SDK's own retry loop (default 2) would otherwise stack with
-        # the reliability engine's attempts — up to 3x SDK tries per engine
-        # attempt, with the SDK's internal backoff able to blow LLM_REQUEST's
-        # 25s deadline from inside a single attempt. Mirrors `retry=None` on
-        # the Document AI gax client: this module owns the retry policy.
-        max_retries=0,
+        max_retries=_SDK_MAX_RETRIES,
     )
+
+
+def async_anthropic_vertex_client(
+    *, region: str | None = None, timeout_seconds: float = DEFAULT_VERTEX_TIMEOUT_SECONDS
+) -> Any:
+    """Return a new async anthropic client bound to Claude on Vertex AI.
+
+    The streaming sibling of :func:`anthropic_vertex_client`: the same project,
+    region and retry policy, for callers that stream an answer on the event
+    loop. ``timeout_seconds`` bounds each wait on the connection, not the
+    whole answer.
+
+    Raises:
+        RuntimeError: the anthropic package is not installed.
+    """
+    try:
+        from anthropic import NOT_GIVEN, AsyncAnthropicVertex
+    except ImportError as exc:
+        raise RuntimeError("anthropic package is required for Claude on Vertex AI access") from exc
+    return AsyncAnthropicVertex(
+        project_id=_claude_project() or NOT_GIVEN,
+        region=region or _ANTHROPIC_VERTEX_REGION,
+        timeout=timeout_seconds,
+        max_retries=_SDK_MAX_RETRIES,
+    )
+
+
+def _claude_project() -> str | None:
+    """The project Claude is called against: its own variable, else the ambient one."""
+    return os.environ.get("ANTHROPIC_VERTEX_PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT")
+
+
+# The SDK's own retry loop (default 2) would otherwise stack with the
+# reliability engine's attempts — up to 3x SDK tries per engine attempt, with
+# the SDK's internal backoff and retried reads able to run one engine attempt
+# past LLM_REQUEST's attempt bound and eat the deadline from inside it. Mirrors
+# `retry=None` on the Document AI gax client: this module owns the retry policy.
+_SDK_MAX_RETRIES = 0

@@ -36,6 +36,7 @@ from pydantic import ValidationError
 
 from ..notes.practice_types import PracticeNoteTypeSpec, to_definition
 from ..notes.references import missing_elements
+from ..reliability import LLM_LONG_REQUEST
 from ..settings import get_settings
 from .ai_features import AIFeature
 from .hedged_structured_llm_gateway import generation_gateway
@@ -455,6 +456,9 @@ class NoteTypeDeriveService:
                     max_output_tokens=budget,
                     temperature=0.2,
                     thinking_budget=settings.note_thinking_budget,
+                    # Reasoning at the note budget over several whole notes,
+                    # behind a request: the client's long bound, two attempts.
+                    retry_policy=LLM_LONG_REQUEST,
                 ).data
             except StructuredOutputTruncatedError:
                 logger.warning("Note type derive truncated at max_output_tokens=%d", budget)

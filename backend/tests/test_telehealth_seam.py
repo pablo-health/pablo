@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -19,6 +20,7 @@ from app.services.telehealth import (
     MeetingLink,
     MeetingProviderRegistry,
     Practice,
+    RoomChange,
     TelehealthError,
     enabled_provider_ids,
     is_joinable,
@@ -26,8 +28,9 @@ from app.services.telehealth import (
     normalise_provider,
     provision_meeting,
     release_meeting,
-    reminder_join_link,
     resolve_provider_id,
+    room_change,
+    wants_a_room,
 )
 
 START = datetime(2026, 10, 1, 15, 0, tzinfo=UTC)
@@ -173,7 +176,7 @@ class TestProvisioning:
         )
 
         result = provision_meeting(
-            an_appointment(),
+            an_appointment(place_of_service="10"),
             clinician=Clinician(id="c", preferred_provider=ZOOM),
             practice=Practice(),
             registry=MeetingProviderRegistry([zoom]),
@@ -188,7 +191,7 @@ class TestProvisioning:
         meet = FakeProvider(GOOGLE_MEET, link=None)
 
         result = provision_meeting(
-            an_appointment(),
+            an_appointment(place_of_service="10"),
             clinician=Clinician(id="c", preferred_provider=GOOGLE_MEET),
             practice=Practice(),
             registry=MeetingProviderRegistry([meet]),
@@ -211,11 +214,167 @@ class TestProvisioning:
         registry = MeetingProviderRegistry([FakeProvider(ZOOM, raises=True)])
         with pytest.raises(TelehealthError):
             provision_meeting(
-                an_appointment(),
+                an_appointment(place_of_service="10"),
                 clinician=Clinician(id="c", preferred_provider=ZOOM),
                 practice=Practice(),
                 registry=registry,
             )
+
+
+class TestOnlyAVideoVisitGetsARoom:
+    """A default service says which room to make, not that every visit is video."""
+
+    @pytest.mark.parametrize("place", [None, "11"])
+    def test_an_in_person_visit_gets_no_room_from_the_default(self, place: str | None) -> None:
+        meet = FakeProvider(GOOGLE_MEET, link=None)
+        appointment = an_appointment(place_of_service=place)
+
+        result = provision_meeting(
+            appointment,
+            clinician=Clinician(id="c", preferred_provider=GOOGLE_MEET),
+            practice=Practice(),
+            registry=MeetingProviderRegistry([meet]),
+        )
+
+        assert result is appointment
+        assert result.provider is None
+        assert result.video_link is None
+
+    @pytest.mark.parametrize("place", ["02", "10"])
+    def test_a_telehealth_place_gets_the_default_service(self, place: str) -> None:
+        meet = FakeProvider(GOOGLE_MEET, link=None)
+
+        result = provision_meeting(
+            an_appointment(place_of_service=place),
+            clinician=Clinician(id="c", preferred_provider=GOOGLE_MEET),
+            practice=Practice(),
+            registry=MeetingProviderRegistry([meet]),
+        )
+
+        assert result.provider == GOOGLE_MEET
+
+    def test_a_service_asked_for_by_name_is_a_video_visit(self) -> None:
+        zoom = FakeProvider(
+            ZOOM, link=MeetingLink(url="https://z.test/81", provider=ZOOM, external_id="81")
+        )
+
+        result = provision_meeting(
+            an_appointment(),
+            clinician=Clinician(id="c"),
+            practice=Practice(),
+            registry=MeetingProviderRegistry([zoom]),
+            requested_provider=ZOOM,
+        )
+
+        assert result.provider == ZOOM
+
+    @pytest.mark.parametrize("place", [None, "11", "10"])
+    def test_a_pasted_link_is_kept_whatever_the_place(self, place: str | None) -> None:
+        result = provision_meeting(
+            an_appointment(place_of_service=place, video_link="https://practice.test/room"),
+            clinician=Clinician(id="c", preferred_provider=GOOGLE_MEET),
+            practice=Practice(),
+            registry=MeetingProviderRegistry([FakeProvider(GOOGLE_MEET)]),
+        )
+
+        assert result.video_link == "https://practice.test/room"
+        assert result.provider == MANUAL
+
+    @pytest.mark.parametrize(
+        ("place", "requested", "link", "expected"),
+        [
+            (None, None, None, False),
+            ("11", None, None, False),
+            ("02", None, None, True),
+            ("10", None, None, True),
+            ("11", "zoom", None, True),
+            (None, None, "https://practice.test/room", True),
+        ],
+    )
+    def test_the_rule_matches_the_one_the_client_shows(
+        self, place: str | None, requested: str | None, link: str | None, expected: bool
+    ) -> None:
+        appointment = an_appointment(place_of_service=place, video_link=link)
+        assert wants_a_room(appointment, requested_provider=requested) is expected
+
+
+def _both_connected() -> MeetingProviderRegistry:
+    return MeetingProviderRegistry([FakeProvider(GOOGLE_MEET), FakeProvider(ZOOM)])
+
+
+def _decide(
+    previous: Appointment, edited: Appointment, *, requested: str | None = None
+) -> RoomChange:
+    return room_change(
+        previous,
+        edited,
+        requested_provider=requested,
+        clinician=Clinician(id="c", preferred_provider=GOOGLE_MEET),
+        registry=_both_connected(),
+    )
+
+
+class TestAnEditAndItsRoom:
+    def test_in_person_to_video_makes_a_room(self) -> None:
+        before = an_appointment(place_of_service="11")
+        assert _decide(before, replace(before, place_of_service="10")) is RoomChange.PROVISION
+
+    @pytest.mark.parametrize(
+        ("provider", "link", "handle"),
+        [(ZOOM, "https://z.test/81", "81"), (GOOGLE_MEET, "https://meet.test/abc", None)],
+    )
+    def test_video_to_in_person_gives_the_room_up(
+        self, provider: str, link: str, handle: str | None
+    ) -> None:
+        before = an_appointment(
+            place_of_service="10", provider=provider, video_link=link, meeting_external_id=handle
+        )
+        assert _decide(before, replace(before, place_of_service="11")) is RoomChange.RELEASE
+
+    def test_asking_for_another_service_replaces_the_room(self) -> None:
+        before = an_appointment(
+            place_of_service="10", provider=GOOGLE_MEET, video_link="https://meet.test/abc"
+        )
+        assert _decide(before, before, requested=ZOOM) is RoomChange.REPLACE
+
+    def test_asking_for_the_service_it_already_has_keeps_the_room(self) -> None:
+        before = an_appointment(
+            place_of_service="10", provider=ZOOM, video_link="https://z.test/81"
+        )
+        assert _decide(before, before, requested="Zoom") is RoomChange.KEEP
+
+    def test_moving_between_the_two_telehealth_places_keeps_the_room(self) -> None:
+        """The client has the link already; a billing correction must not change it."""
+        before = an_appointment(
+            place_of_service="10", provider=ZOOM, video_link="https://z.test/81"
+        )
+        assert _decide(before, replace(before, place_of_service="02")) is RoomChange.KEEP
+
+    def test_an_edit_that_does_not_touch_the_room_keeps_it(self) -> None:
+        """A room booked with no place on record stays put when the time moves."""
+        before = an_appointment(provider=ZOOM, video_link="https://z.test/81")
+        moved = replace(before, start_at=START + timedelta(hours=1))
+        assert _decide(before, moved) is RoomChange.KEEP
+
+    def test_a_newly_pasted_link_becomes_the_room(self) -> None:
+        before = an_appointment(
+            place_of_service="10", provider=ZOOM, video_link="https://z.test/81"
+        )
+        edited = replace(before, video_link="https://practice.test/room")
+        assert _decide(before, edited) is RoomChange.MANUAL
+
+    def test_a_pasted_link_survives_a_move_to_in_person(self) -> None:
+        """Only the clinician takes off a link the clinician typed."""
+        before = an_appointment(
+            place_of_service="10", provider=MANUAL, video_link="https://practice.test/room"
+        )
+        edited = replace(before, place_of_service="11")
+        assert _decide(before, edited) is RoomChange.KEEP
+        assert _decide(before, before, requested=ZOOM) is RoomChange.KEEP
+
+    def test_in_person_staying_in_person_has_nothing_to_give_up(self) -> None:
+        before = an_appointment(place_of_service=None)
+        assert _decide(before, replace(before, place_of_service="11")) is RoomChange.KEEP
 
 
 class TestReleasing:
@@ -265,16 +424,3 @@ class TestTheJoinWindow:
         )
         assert appointment.video_link
         assert is_joinable(appointment, now=START, window_minutes=15) is False
-
-
-class TestWhatAReminderMaySay:
-    def test_off_by_default_means_no_link(self) -> None:
-        appointment = an_appointment(video_link="https://z.test/1")
-        assert reminder_join_link(appointment, include_join_link=False) is None
-
-    def test_on_means_the_link(self) -> None:
-        appointment = an_appointment(video_link="https://z.test/1")
-        assert reminder_join_link(appointment, include_join_link=True) == "https://z.test/1"
-
-    def test_on_with_nothing_to_say_says_nothing(self) -> None:
-        assert reminder_join_link(an_appointment(), include_join_link=True) is None

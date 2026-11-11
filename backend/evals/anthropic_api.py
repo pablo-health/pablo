@@ -16,6 +16,12 @@ from typing import TYPE_CHECKING, Any
 
 from anthropic import Anthropic
 from app.reliability import LLM_REQUEST, Idempotency, call_with_retry
+from app.services.claude_models import (
+    REQUESTED_TOOL_DESCRIPTION,
+    effort_config,
+    effort_kwargs,
+    tool_instruction,
+)
 from app.services.structured_llm_gateway import (
     AnthropicStructuredLLMGateway,
     StructuredCompletion,
@@ -47,6 +53,11 @@ class DirectAnthropicGateway(AnthropicStructuredLLMGateway):
         model = model.removeprefix("strict:")
         auto_tool = model.startswith("auto:")
         model = model.removeprefix("auto:")
+        policy = retry_policy or LLM_REQUEST
+        # The caller's bound, else the policy's own; the client's 180 s
+        # default would outlast the request preset's deadline.
+        bound = timeout_seconds if timeout_seconds is not None else policy.attempt_timeout
+        timeout = {"timeout": bound} if bound is not None else {}
         if strict_output:
             del temperature, thinking_budget
             wire_schema = _strict_output_schema(response_schema)
@@ -63,14 +74,15 @@ class DirectAnthropicGateway(AnthropicStructuredLLMGateway):
                     ],
                     messages=[{"role": "user", "content": user_prompt}],
                     output_config={
+                        **effort_config(model, self._effort),
                         "format": {
                             "type": "json_schema",
                             "schema": wire_schema,
-                        }
+                        },
                     },
-                    **({"timeout": timeout_seconds} if timeout_seconds is not None else {}),
+                    **timeout,
                 ),
-                policy=retry_policy or LLM_REQUEST,
+                policy=policy,
                 idempotency=Idempotency.SAFE,
             )
             if response.stop_reason == "max_tokens":
@@ -95,7 +107,9 @@ class DirectAnthropicGateway(AnthropicStructuredLLMGateway):
                 output_tokens=getattr(response.usage, "output_tokens", None),
                 finish_reason="safety" if response.stop_reason == "refusal" else "stop",
             )
-        if not auto_tool and not model.startswith("claude-sonnet-5-5"):
+        if not auto_tool:
+            # The app's gateway asks ``claude_models`` what the model accepts,
+            # so every 5.5 model is handled there, not by name here.
             return super().complete_structured(
                 model=model,
                 system_prompt=system_prompt,
@@ -108,11 +122,13 @@ class DirectAnthropicGateway(AnthropicStructuredLLMGateway):
                 retry_policy=retry_policy,
             )
 
-        # Sonnet 5.5 rejects forced tool choice and sampling controls.
+        # The ``auto:`` form asks for the tool and never forces it or sets
+        # sampling, on any model: the way results were first recorded for the
+        # models that reject both. Its wording is the app's own.
         del temperature, thinking_budget
         tool = {
             "name": self._TOOL_NAME,
-            "description": "Always call this tool to return the requested structured result.",
+            "description": REQUESTED_TOOL_DESCRIPTION,
             "input_schema": response_schema,
         }
         response = call_with_retry(
@@ -131,12 +147,13 @@ class DirectAnthropicGateway(AnthropicStructuredLLMGateway):
                 messages=[
                     {
                         "role": "user",
-                        "content": f"{user_prompt}\n\nCall {self._TOOL_NAME} with the result.",
+                        "content": tool_instruction(user_prompt, self._TOOL_NAME),
                     }
                 ],
-                **({"timeout": timeout_seconds} if timeout_seconds is not None else {}),
+                **effort_kwargs(model, self._effort),
+                **timeout,
             ),
-            policy=retry_policy or LLM_REQUEST,
+            policy=policy,
             idempotency=Idempotency.SAFE,
         )
         if response.stop_reason == "max_tokens":
@@ -163,13 +180,17 @@ class DirectAnthropicGateway(AnthropicStructuredLLMGateway):
         )
 
 
-def direct_anthropic_gateway() -> StructuredLLMGateway:
-    """Build the eval-only direct gateway from ``ANTHROPIC_API_KEY``."""
+def direct_anthropic_gateway(effort: str | None = None) -> StructuredLLMGateway:
+    """Build the eval-only direct gateway from ``ANTHROPIC_API_KEY``.
+
+    ``effort`` is the reasoning effort every call asks for, where the model
+    takes one, so a run can measure a setting before it is configured.
+    """
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
         raise RuntimeError("anthropic-api: evals need ANTHROPIC_API_KEY set")
 
-    return DirectAnthropicGateway(client=Anthropic(api_key=api_key, timeout=180.0))
+    return DirectAnthropicGateway(client=Anthropic(api_key=api_key, timeout=180.0), effort=effort)
 
 
 def direct_anthropic_model(model: str) -> str:

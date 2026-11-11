@@ -95,6 +95,9 @@ def book_slot_link(
         "duration_minutes": int((end - start).total_seconds() // 60),
         "session_type": appointment_type.name,
         "appointment_type_id": appointment_type.id,
+        # Where the visit happens is the type's, as for any booking that says
+        # nothing about it: the exact code it was last booked with.
+        "place_of_service": appointment_type.last_place_of_service,
         "notes": notes,
     }
     if policy.get("self_book_mode") != "auto":

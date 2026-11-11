@@ -39,8 +39,10 @@ from .chat_llm_gateway import (
     FinishReason,
     StreamEvent,
     UserAssistantTurn,
+    alternating_turns,
     is_transient_failure,
 )
+from .claude_models import sampling_kwargs
 from .llm_provider import LLMProvider, strip_provider_prefix
 from .llm_telemetry import LLMSpanRecorder, LLMSpanRequest, llm_span
 
@@ -51,10 +53,6 @@ logger = logging.getLogger(__name__)
 
 #: How long to wait for the stream to open, and then for each event on it.
 _READ_TIMEOUT_SECONDS = 60.0
-
-#: Bedrock requires a conversation to open with a user turn. A windowed
-#: history can open with the assistant; this stands in for what came before.
-_OPENING_USER_TURN = "(Earlier in this conversation.)"
 
 #: Errors Bedrock reports inside the stream rather than as a failed request.
 _STREAM_ERROR_STATUS = {
@@ -101,18 +99,10 @@ def to_converse_messages(
     Empty turns are skipped, as the Gemini gateway skips them, and turns in
     a row from the same side are joined, since Converse rejects two in a row.
     """
-    messages: list[dict[str, Any]] = []
-    turns = [(t.role, (t.content or "").strip()) for t in prior_turns]
-    for role, text in [*turns, ("user", new_user_text)]:
-        if not text:
-            continue
-        if not messages and role != "user":
-            messages.append({"role": "user", "content": [{"text": _OPENING_USER_TURN}]})
-        if messages and messages[-1]["role"] == role:
-            messages[-1]["content"][0]["text"] += f"\n\n{text}"
-        else:
-            messages.append({"role": role, "content": [{"text": text}]})
-    return messages
+    return [
+        {"role": role, "content": [{"text": text}]}
+        for role, text in alternating_turns(prior_turns, new_user_text)
+    ]
 
 
 def _error_code(exc: BaseException) -> str:
@@ -165,7 +155,10 @@ class BedrockChatLLMGateway(ChatLLMGateway):
                 stable, normalized_model, uncached_suffix=delimiter + patient_context
             ),
             "messages": to_converse_messages(prior_turns, new_user_text),
-            "inferenceConfig": {"maxTokens": max_output_tokens, "temperature": temperature},
+            "inferenceConfig": {
+                "maxTokens": max_output_tokens,
+                **sampling_kwargs(normalized_model, temperature),
+            },
         }
         with llm_span(
             LLMSpanRequest(operation="chat", model=normalized_model, provider=LLMProvider.BEDROCK)

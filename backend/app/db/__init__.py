@@ -567,6 +567,44 @@ def _validate_schema_name(name: str) -> None:
         raise ValueError(f"Invalid schema name: {name!r}")
 
 
+def _refuse_inside_savepoint(session: Session, what: str) -> None:
+    """Refuse to arm a principal or switch a schema inside a ``begin_nested`` savepoint.
+
+    These functions write two kinds of state: the database side (a
+    transaction-local ``set_config`` or a ``SET search_path``) and the
+    in-process carriers (``session.info`` and the ContextVars). Rolling back
+    a savepoint reverts the database side to its value at savepoint start,
+    and leaves the carriers alone. After that the two disagree. Because the
+    ``after_begin`` listeners skip savepoints (:func:`_is_savepoint`),
+    nothing puts them back in step before the next new transaction.
+
+    Disagreement does not fail closed here. If the root transaction already
+    holds clinician A and a savepoint arms patient P and is rolled back,
+    Postgres restores A, while the carriers still say P. Every later
+    statement in that transaction then runs with A's grants on a request
+    that believes it is P. So the precondition the listeners rely on, that
+    arming happens only on a root transaction, is enforced here rather than
+    left to convention.
+
+    :func:`read_once_as` is unaffected. It arms inside a savepoint on
+    purpose, with a raw ``set_config`` and no carriers, so its rollback
+    leaves nothing out of step.
+
+    ``is True`` rather than truthiness: a real ``Session`` returns a ``bool``,
+    and a unit test's ``MagicMock`` session returns a truthy mock that is not
+    a savepoint.
+    """
+    if session.in_nested_transaction() is True:
+        msg = (
+            f"{what} was called inside a savepoint (begin_nested). Rolling the "
+            "savepoint back would revert the database setting and keep the "
+            "session's record of it, so later statements would run under a "
+            "principal or schema the session does not believe it has. Call it "
+            "on the root transaction, before begin_nested."
+        )
+        raise RuntimeError(msg)
+
+
 def set_tenant_schema(session: Session, practice_schema: str = DEFAULT_PRACTICE_SCHEMA) -> None:
     """Set the search_path for a session to include the practice schema.
 
@@ -583,6 +621,7 @@ def set_tenant_schema(session: Session, practice_schema: str = DEFAULT_PRACTICE_
     practice: a raw ``SET search_path`` would be undone after the next commit
     (``tests/test_search_path_switch_guardrail.py``).
     """
+    _refuse_inside_savepoint(session, "set_tenant_schema")
     _validate_schema_name(practice_schema)
     session.execute(text(f"SET search_path = {practice_schema}, {PLATFORM_SCHEMA}, public"))
     session.info[_TENANT_SCHEMA_KEY] = practice_schema
@@ -598,6 +637,7 @@ def clear_tenant_schema(session: Session) -> None:
     ContextVar too, so a later pool checkout keeps the neutral path the checkin
     listener left on the connection.
     """
+    _refuse_inside_savepoint(session, "clear_tenant_schema")
     session.execute(text(f"SET search_path = {PLATFORM_SCHEMA}, public"))
     session.info[_TENANT_SCHEMA_KEY] = _NO_PRACTICE_SCHEMA
     _current_tenant_schema.set(None)
@@ -656,6 +696,7 @@ def arm_current_user_id(session: Session, user_id: str) -> None:
     ``session`` must be the request-scoped session the subsequent write
     runs through, so the GUC lands on the same transaction.
     """
+    _refuse_inside_savepoint(session, "arm_current_user_id")
     session.info[_RLS_USER_ID_KEY] = user_id
     set_current_user_id(user_id)
     session.execute(
@@ -764,6 +805,7 @@ def arm_current_patient_id(session: Session, patient_id: str) -> None:
         msg = "patient_id must be a non-empty identifier"
         raise ValueError(msg)
 
+    _refuse_inside_savepoint(session, "arm_current_patient_id")
     session.info[_RLS_PATIENT_ID_KEY] = patient_id
     set_current_patient_id(patient_id)
     session.execute(
@@ -818,9 +860,23 @@ def read_once_as(
         savepoint.rollback()
 
 
+def _is_savepoint(transaction: Any) -> bool:
+    """Whether an ``after_begin`` is for a ``begin_nested`` savepoint, not a new transaction.
+
+    The two ``after_begin`` listeners below restore what a *new* transaction
+    lacks: transaction-local settings a commit cleared, and a search path a
+    pool round trip reset. A savepoint lacks neither. It runs on the root
+    transaction's connection, sees the root's ``set_config(..., true)``
+    values and search path, and on rollback reverts only what was changed
+    inside it. So they skip it rather than re-issue the same settings once
+    per savepoint.
+    """
+    return bool(getattr(transaction, "nested", False))
+
+
 @event.listens_for(Session, "after_begin")
 def _reapply_tenant_schema_on_txn_begin(
-    session: Session, _transaction: Any, connection: Any
+    session: Session, transaction: Any, connection: Any
 ) -> None:
     """Keep a session on the practice schema it was set to, across commits.
 
@@ -832,21 +888,31 @@ def _reapply_tenant_schema_on_txn_begin(
     without the practice schema. The schema recorded on ``session.info``
     rides the Session itself, so it is put back here.
 
-    Only when the two disagree: when they match, the checkout listener has
-    already applied it and this costs nothing. A session cleared with
-    ``clear_tenant_schema`` is put back on no practice, not on whatever the
-    ContextVar still names.
+    Only when the two disagree: when they match on a practice, the checkout
+    listener has already applied it and this costs nothing. A session cleared
+    with ``clear_tenant_schema`` is put back on no practice, not on whatever
+    the ContextVar still names, and is always set here: the checkout listener
+    applies nothing for an empty ContextVar, and a connection the pool has
+    just created has never been through the checkin reset, so it carries the
+    server's default path rather than the platform schema and ``public``.
 
     Because this restores the recorded schema, a raw ``SET search_path`` on a
     Session would be undone after the next commit. Switch with
     ``set_tenant_schema``; ``tests/test_search_path_switch_guardrail.py``
     holds the line.
+
+    Not on a savepoint: ``after_begin`` also fires for ``begin_nested``, but a
+    savepoint runs on the connection and inside the transaction its root
+    began, so the path is already whatever the root was given (see
+    :func:`_is_savepoint`).
     """
+    if _is_savepoint(transaction):
+        return
     recorded = session.info.get(_TENANT_SCHEMA_KEY)
     if recorded is None:
         return
     wanted = recorded or None
-    if wanted == _current_tenant_schema.get():
+    if wanted is not None and wanted == _current_tenant_schema.get():
         return
     path = f"{wanted}, {PLATFORM_SCHEMA}, public" if wanted else f"{PLATFORM_SCHEMA}, public"
     connection.exec_driver_sql(f"SET search_path = {path}")
@@ -854,7 +920,7 @@ def _reapply_tenant_schema_on_txn_begin(
 
 @event.listens_for(Session, "after_begin")
 def _rearm_rls_principal_gucs_on_txn_begin(
-    session: Session, _transaction: Any, connection: Any
+    session: Session, transaction: Any, connection: Any
 ) -> None:
     """Re-apply the RLS ``app.current_user_id`` GUC on every txn begin.
 
@@ -907,6 +973,20 @@ def _rearm_rls_principal_gucs_on_txn_begin(
     has one, it does not impose a principal on a transaction that has
     none.
 
+    **Not on a savepoint.** ``after_begin`` fires for ``begin_nested`` too,
+    and re-arming there would cost a ``set_config`` round trip per savepoint
+    to put back values the savepoint already has: a transaction-local
+    setting made in the root transaction is visible inside every savepoint
+    under it, and a savepoint's rollback only reverts what was set inside
+    that savepoint. Every arming path (:func:`arm_current_user_id`,
+    :func:`arm_current_patient_id`, ``tenant_db_session``) issues its own
+    ``set_config`` on the open transaction, so nothing depends on a later
+    savepoint to arm it. The arming functions refuse to run inside a
+    savepoint (:func:`_refuse_inside_savepoint`), so a savepoint rollback can
+    never leave the GUCs and the carriers this listener reads out of step.
+    The refusal below is therefore checked once per transaction, as each
+    arming path already checks its own. See :func:`_is_savepoint`.
+
     **Both principals visible at once is refused, loudly.** The arming
     functions make it unreachable — each clears the other's carriers — but
     they clear them on the ``Session`` they are handed, and this listener
@@ -922,6 +1002,8 @@ def _rearm_rls_principal_gucs_on_txn_begin(
     legitimate producer, so a 500 naming it is strictly better than either
     guess.
     """
+    if _is_savepoint(transaction):
+        return
     user_id = session.info.get(_RLS_USER_ID_KEY) or _current_user_id.get()
     patient_id = session.info.get(_RLS_PATIENT_ID_KEY) or _current_patient_id.get()
     if user_id is None and patient_id is None:
@@ -1777,7 +1859,14 @@ PATIENT_PURGE_TABLES: dict[str, frozenset[str]] = {
     "session_dictations": frozenset({"read"}),
 }
 
-_PATIENT_PURGE_ARMED = "current_setting('app.allow_patient_purge', true) = 'on'"
+#: ``coalesce`` because a connection that never set the setting reads it as
+#: NULL, not ``''``, and ``NULL = 'on'`` is NULL. ``NULL AND EXISTS (...)``
+#: cannot short-circuit (it is false if the EXISTS is false), so the purge
+#: arm ran its ``patients`` subquery, row security and all, for every row of
+#: every ordinary read of these tables: about half the cost of counting a
+#: clinician's open notes. A NULL policy result already grants nothing, so
+#: who can read what is unchanged; the subquery just stops running.
+_PATIENT_PURGE_ARMED = "coalesce(current_setting('app.allow_patient_purge', true), '') = 'on'"
 
 
 def _patient_purge_policy_statements(schema_name: str, table_name: str) -> list[str]:

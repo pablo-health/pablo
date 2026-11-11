@@ -55,6 +55,12 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from ..reliability import LLM_REQUEST, Idempotency, RetryExhaustedError, call_with_retry
+from .claude_models import (
+    capabilities_for,
+    sampling_kwargs,
+    tool_description,
+    with_tool_instruction,
+)
 from .llm_provider import LLMProvider, strip_provider_prefix
 from .llm_telemetry import LLMSpanRequest, llm_span
 from .structured_llm_gateway import (
@@ -62,6 +68,7 @@ from .structured_llm_gateway import (
     StructuredCompletion,
     StructuredLLMGateway,
     StructuredOutputTruncatedError,
+    _attempt_bound,
     _attempt_timeout,
     tool_input_completion,
 )
@@ -331,37 +338,56 @@ class BedrockStructuredLLMGateway(StructuredLLMGateway):
         # the forced tool call is a single non-thinking completion.
         del thinking_budget
 
-        bound = timeout_seconds if timeout_seconds is not None else _STRUCTURED_LLM_TIMEOUT_SECONDS
         policy = retry_policy or LLM_REQUEST
+        # As on the Gemini path: the caller's bound, else the policy's own,
+        # else the long default a draft on this model as the only model needs.
+        bound = _attempt_bound(timeout_seconds, policy)
+        if bound is None:
+            bound = _STRUCTURED_LLM_TIMEOUT_SECONDS
         normalized_model = strip_provider_prefix(model)
+        # A model that rejects a forced tool call is asked for the tool with
+        # ``auto`` and told to call it; one that rejects ``temperature`` is sent
+        # none (see ``claude_models``). Measured on Vertex; applied here on its
+        # strength, since the 5.5 models could not be called on Bedrock.
+        tool_choice: dict[str, Any] = (
+            {"tool": {"name": _TOOL_NAME}}
+            if capabilities_for(normalized_model).forces_tool_choice
+            else {"auto": {}}
+        )
         request: dict[str, Any] = {
             "modelId": normalized_model,
             "system": system_content(system_prompt, normalized_model),
-            "messages": [{"role": "user", "content": [{"text": user_prompt}]}],
-            "inferenceConfig": {"maxTokens": max_output_tokens, "temperature": temperature},
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"text": with_tool_instruction(normalized_model, user_prompt, _TOOL_NAME)}
+                    ],
+                }
+            ],
+            "inferenceConfig": {
+                "maxTokens": max_output_tokens,
+                **sampling_kwargs(normalized_model, temperature),
+            },
             "toolConfig": {
                 "tools": [
                     {
                         "toolSpec": {
                             "name": _TOOL_NAME,
-                            "description": "Return the result as structured output.",
+                            "description": tool_description(normalized_model),
                             "inputSchema": {"json": to_json_schema(response_schema)},
                         }
                     }
                 ],
-                "toolChoice": {"tool": {"name": _TOOL_NAME}},
+                "toolChoice": tool_choice,
             },
         }
         started = time.monotonic()
 
         def attempt() -> dict[str, Any]:
-            # As on the Gemini path, only a caller's own bound is cut to the
-            # policy's deadline. With none given, each attempt keeps the full
-            # default: a note drafted on this model as the primary takes far
-            # longer than the request preset's 25 s.
-            attempt_bound = (
-                bound if timeout_seconds is None else _attempt_timeout(bound, started, policy)
-            )
+            # The second attempt is cut to what the policy's deadline has left;
+            # a deadline-free policy leaves every attempt its full bound.
+            attempt_bound = _attempt_timeout(bound, started, policy)
             try:
                 response: dict[str, Any] = self._client(attempt_bound).converse(**request)
             except Exception as exc:

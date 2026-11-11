@@ -18,11 +18,33 @@ vi.mock("@/lib/auth/public-paths", () => ({
   extraPublicPaths: () => [],
 }))
 
+// The library's answer to the logout path: a JSON 200 carrying the expiry
+// of every session cookie, sent before any token is looked at. Shape as
+// `removeAuthCookies` in next-firebase-auth-edge produces it with
+// `enableMultipleCookies` on.
+const EXPIRED_COOKIES = ["id", "refresh", "custom", "metadata", "sig"].map(
+  (part) =>
+    `AuthToken.${part}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax`
+)
+
 vi.mock("next-firebase-auth-edge", () => ({
   authMiddleware: async (
-    _request: NextRequest,
-    options: { handleInvalidToken: (reason: unknown) => Promise<NextResponse> }
-  ) => options.handleInvalidToken("no-token"),
+    request: NextRequest,
+    options: {
+      logoutPath: string
+      handleInvalidToken: (reason: unknown) => Promise<NextResponse>
+    }
+  ) => {
+    if (request.nextUrl.pathname === options.logoutPath) {
+      const response = new NextResponse(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+      for (const cookie of EXPIRED_COOKIES) response.headers.append("set-cookie", cookie)
+      return response
+    }
+    return options.handleInvalidToken("no-token")
+  },
   redirectToLogin: (_request: NextRequest, { path }: { path: string }) =>
     NextResponse.redirect(new URL(path, "https://example.test")),
   redirectToHome: (_request: NextRequest, { path }: { path: string }) =>
@@ -61,6 +83,66 @@ describe("firebaseAuthMiddleware", () => {
 
     expect(response.status).toBe(200)
     expect(response.headers.get("location")).toBeNull()  })
+})
+
+/**
+ * The account menu signs out by navigating to the logout path. The library
+ * answers that path with cookie expiry on a JSON body; a navigation must
+ * land on /login carrying that same expiry, while a fetch() keeps the JSON.
+ *
+ * The requests say what they are through `Accept`: happy-dom's Request
+ * drops `Sec-Fetch-Mode` as a forbidden header, so that branch is pinned in
+ * logout-navigation.test.ts on a plain Headers instead.
+ */
+describe("firebaseAuthMiddleware logout path", () => {
+  beforeEach(() => {
+    vi.stubEnv("NODE_ENV", "production")
+    vi.stubEnv("DEV_MODE", "")
+    vi.resetModules()
+  })
+
+  it("answers a navigation with a redirect to /login carrying the cookie expiry unchanged", async () => {
+    const { default: firebaseAuthMiddleware } = await import("../middleware")
+    const request = new NextRequest("https://example.test/api/logout", {
+      headers: { accept: "text/html,application/xhtml+xml" },
+    })
+
+    const response = await firebaseAuthMiddleware(request)
+
+    expect(response.status).toBe(307)
+    expect(response.headers.get("location")).toBe("https://example.test/login")
+    expect(response.headers.getSetCookie()).toEqual(EXPIRED_COOKIES)
+  })
+
+  it("keeps the library's JSON answer for a fetch()", async () => {
+    const { default: firebaseAuthMiddleware } = await import("../middleware")
+    const request = new NextRequest("https://example.test/api/logout", {
+      headers: { accept: "application/json" },
+    })
+
+    const response = await firebaseAuthMiddleware(request)
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get("location")).toBeNull()
+    expect(await response.json()).toEqual({ success: true })
+    expect(response.headers.getSetCookie()).toEqual(EXPIRED_COOKIES)
+  })
+
+  it("lands a navigation on /login in dev mode too, where nothing serves the logout path", async () => {
+    vi.stubEnv("NODE_ENV", "development")
+    vi.stubEnv("DEV_MODE", "true")
+    vi.resetModules()
+
+    const { default: firebaseAuthMiddleware } = await import("../middleware")
+    const request = new NextRequest("https://example.test/api/logout", {
+      headers: { accept: "text/html,application/xhtml+xml" },
+    })
+
+    const response = await firebaseAuthMiddleware(request)
+
+    expect(response.status).toBe(307)
+    expect(response.headers.get("location")).toBe("https://example.test/login")
+  })
 })
 
 function scriptSrcDirective(csp: string): string {

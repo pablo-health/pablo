@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from ..people_term import PeopleTerm  # noqa: TC001 — Pydantic needs this at runtime
 from .inbox import EarlierMessagesOnReply  # noqa: TC001 — Pydantic needs this at runtime
-from .validators import validate_phone
+from .validators import validate_phone, validate_zoom_room_url
 
 ProviderType = Literal["therapist", "prescriber", "both"]
 OnboardingState = Literal["in_progress", "later", "completed"]
@@ -128,12 +128,34 @@ BOOK_SESSIONS_NAMED_IN_TITLE_BY_DEFAULT = True
 class UserPreferences(BaseModel):
     """User preferences for the companion app."""
 
-    default_video_platform: str = "zoom"
+    #: The video service a session uses when the appointment does not say.
+    #: None until the clinician has one: connecting Google Calendar makes it
+    #: Google Meet (app.services.video_default). A stored "zoom" is never
+    #: changed for them.
+    default_video_platform: str | None = None
     #: The clinician's own permanent video room, for a service that gives them
     #: one rather than a meeting per appointment (doxy.me). Pasted once, in
     #: settings. None until they do, which is why doxy.me is not offered to a
     #: clinician who has not: a room nobody named is not a room.
     telehealth_room_url: str | None = None
+    #: The clinician's own Zoom meeting room, pasted once, for a deployment
+    #: with no Zoom app to make a meeting per appointment. Used for every
+    #: video appointment on Zoom; None until they paste one, which is why Zoom
+    #: is not offered to them until then.
+    zoom_room_url: str | None = None
+
+    @field_validator("zoom_room_url")
+    @classmethod
+    def _zoom_room_on_zoom(cls, value: str | None) -> str | None:
+        """Only an https address on zoom.us, whichever route saves it."""
+        return validate_zoom_room_url(value)
+
+    #: Where the clinician's last booking from the appointment form happened,
+    #: as its exact place-of-service code (11 office, 02 or 10 telehealth).
+    #: The form starts a new appointment there when its type has nothing to
+    #: say. Kept here rather than in the browser so it follows the clinician
+    #: to another device. None until the first booking that says.
+    last_place_of_service: Literal["11", "02", "10"] | None = None
     default_session_type: str = "individual"
     default_duration_minutes: int = Field(default=50, ge=1, le=480)
     auto_transcribe: bool = True

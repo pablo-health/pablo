@@ -522,6 +522,7 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # own connection to one. No patient appears in any of them.
         ("get", "/api/telehealth/providers"),  # deployment config + own connections
         ("put", "/api/telehealth/room-url"),  # the clinician's own room address
+        ("put", "/api/telehealth/zoom-room-url"),  # the clinician's own Zoom room address
         ("get", "/api/telehealth/zoom/authorize"),  # OAuth start, returns auth URL
         ("get", "/api/telehealth/zoom/callback"),  # OAuth token exchange, no meetings
         ("get", "/api/telehealth/zoom/status"),  # own connection status
@@ -561,6 +562,9 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # practice_ai_notes_consent.py — one practice preference + retention days, no PHI
         ("get", "/api/users/me/practice/ai-notes-consent"),  # reads the practice preference
         ("put", "/api/users/me/practice/ai-notes-consent"),  # owner turns it on or off
+        # practice_client_video_link.py — one practice preference, no PHI
+        ("get", "/api/users/me/practice/client-video-link"),  # reads the practice preference
+        ("put", "/api/users/me/practice/client-video-link"),  # owner turns it on or off
         # supervision.py — clinician's own oversight relationships + accrued hours (no patient PHI)
         ("get", "/api/supervision"),  # lists clinician's own supervision relationships
         ("post", "/api/supervision"),  # creates a clinician supervision relationship

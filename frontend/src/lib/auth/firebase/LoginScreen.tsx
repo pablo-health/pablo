@@ -192,7 +192,7 @@ export function FirebaseLoginScreen() {
               <Image src="/pablo-login.webp" alt="" width={44} height={44} className="object-contain" />
               <span className="font-display text-2xl font-bold text-primary-600">Pablo</span>
             </div>
-            <span className="text-xs text-neutral-500">The AI-native front office for mental health clinicians</span>
+            <span className="font-display text-sm italic text-neutral-500">Pablo&apos;s got it.</span>
           </div>
 
           <AuthHeader
@@ -220,28 +220,22 @@ export function FirebaseLoginScreen() {
   )
 }
 
+/**
+ * Brand, not pitch: everyone who reaches this screen already uses Pablo or has
+ * just signed up from pablo.health, and self-hosted installs show it too, so
+ * the selling lives on the marketing site. The panel keeps the name, the bear,
+ * the tagline and the theme picker.
+ */
 function LoginBrandPanel() {
-  const points = [
-    "Your practice inbox, sorted — with routine replies drafted and safety messages held for you",
-    "Session notes drafted for you to review, edit, and finalize",
-    "Your schedule, charts, payments, and compliance work together in one place",
-    "HIPAA-compliant by design",
-  ]
   return (
     <>
       <div>
-        <span
-          className="mb-2.5 block text-xs font-semibold uppercase tracking-[0.12em]"
-          style={{ color: "var(--brand-panel-accent)" }}
-        >
-          For mental health clinicians
-        </span>
         <span className="font-display text-3xl font-bold">Pablo</span>
         <p
-          className="mt-6 max-w-xs font-display text-2xl leading-snug"
-          style={{ color: "var(--brand-panel-fg)" }}
+          className="mt-3 font-display text-2xl italic"
+          style={{ color: "var(--brand-panel-accent)" }}
         >
-          Let AI carry the work of running your practice, so your evenings and weekends are yours again.
+          Pablo&apos;s got it.
         </p>
         <div className="mt-8 flex flex-col gap-2">
           <span className="text-[0.6875rem] font-semibold uppercase tracking-[0.09em] text-brand-panel-muted">
@@ -260,14 +254,6 @@ function LoginBrandPanel() {
           className="drop-shadow-2xl"
         />
       </div>
-      <ul className="space-y-3 text-sm">
-        {points.map((point) => (
-          <li key={point} className="flex items-start gap-3">
-            <span style={{ color: "var(--brand-panel-accent)" }}>✦</span>
-            <span style={{ color: "var(--brand-panel-muted)" }}>{point}</span>
-          </li>
-        ))}
-      </ul>
     </>
   )
 }

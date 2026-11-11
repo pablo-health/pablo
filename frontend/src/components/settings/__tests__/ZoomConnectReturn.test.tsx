@@ -46,6 +46,7 @@ vi.mock("@/lib/api/telehealth", () => ({
   getZoomAuthUrl: (...args: unknown[]) => getAuthUrl(...args),
   disconnectZoom: vi.fn(),
   setTelehealthRoomUrl: vi.fn(),
+  ZOOM_RETURN_PATH: "/dashboard/settings/sessions",
 }))
 
 const RETURN_URL = "http://localhost:3000/dashboard/settings/sessions"
@@ -55,6 +56,8 @@ function providers(zoomConnected: boolean): TelehealthProviders {
     providers: [{ id: "zoom", display_name: "Zoom", connected: zoomConnected }],
     default_provider: zoomConnected ? "zoom" : null,
     room_url: null,
+    zoom_room_url: null,
+    zoom_app: true,
     join_window_before_minutes: 15,
   }
 }

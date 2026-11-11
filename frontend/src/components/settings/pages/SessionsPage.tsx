@@ -4,6 +4,7 @@
 
 import { AiNotesConsentCard } from "../AiNotesConsentCard"
 import { AudioRetentionSettings } from "../AudioRetentionSettings"
+import { ClientVideoLinkSetting } from "../ClientVideoLinkSetting"
 import { SessionDefaults } from "../SessionDefaults"
 import { TelehealthSettings } from "../TelehealthSettings"
 import { TranscriptionSettings } from "../TranscriptionSettings"
@@ -35,6 +36,7 @@ export function SessionsPage() {
         description="Where a session happens when you meet online. Pablo uses the service you already have."
       >
         <TelehealthSettings />
+        <ClientVideoLinkSetting />
       </SettingsCard>
 
       <SessionsRecordingCard

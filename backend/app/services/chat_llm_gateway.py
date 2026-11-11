@@ -74,6 +74,35 @@ class UserAssistantTurn:
     content: str
 
 
+#: Claude's APIs require a conversation to open with a user turn. A windowed
+#: history can open with the assistant; this stands in for what came before.
+OPENING_USER_TURN = "(Earlier in this conversation.)"
+
+
+def alternating_turns(
+    prior_turns: list[UserAssistantTurn], new_user_text: str
+) -> list[tuple[Literal["user", "assistant"], str]]:
+    """The turns as ``(role, text)`` pairs: user first, roles alternating.
+
+    Empty turns are skipped, as the Gemini gateway skips them, and turns in
+    a row from the same side are joined, since Claude's APIs reject two in a
+    row. The Bedrock and Vertex gateways each put these pairs in their own
+    message shape.
+    """
+    turns: list[tuple[Literal["user", "assistant"], str]] = []
+    pairs = [(t.role, (t.content or "").strip()) for t in prior_turns]
+    for role, text in [*pairs, ("user", new_user_text)]:
+        if not text:
+            continue
+        if not turns and role != "user":
+            turns.append(("user", OPENING_USER_TURN))
+        if turns and turns[-1][0] == role:
+            turns[-1] = (role, f"{turns[-1][1]}\n\n{text}")
+        else:
+            turns.append((role, text))
+    return turns
+
+
 FinishReason = Literal["stop", "length", "safety", "error"]
 
 
@@ -449,11 +478,13 @@ class FakeChatLLMGateway(ChatLLMGateway):
 
 
 __all__ = [
+    "OPENING_USER_TURN",
     "ChatLLMGateway",
     "FakeChatLLMGateway",
     "FinishReason",
     "GeminiChatLLMGateway",
     "StreamEvent",
     "UserAssistantTurn",
+    "alternating_turns",
     "is_transient_failure",
 ]

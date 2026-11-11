@@ -19,6 +19,7 @@ HIPAA Compliance:
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
@@ -85,11 +86,13 @@ class PushedEvent(NamedTuple):
     ``conference_url`` is None on every ordinary appointment and on one whose
     conference Google is still making — ``createRequest.status`` comes back
     ``pending`` sometimes, and a link that is not there yet is not a failure.
-    The next push reads it.
+    ``conference_pending`` says which of the two it is: only a pending
+    conference is worth reading the event back for.
     """
 
     event_id: str
     conference_url: str | None
+    conference_pending: bool = False
 
 
 class BusyCalendars(NamedTuple):
@@ -106,14 +109,31 @@ class BusyCalendars(NamedTuple):
 
 
 def _conference_request_id(appointment: Appointment) -> str:
-    """A stable idempotency key for the conference this appointment asks for.
+    """The idempotency key for the conference this write of the appointment asks for.
 
-    Derived from the appointment id so re-writing the same event re-uses the
-    conference instead of making a second one. It goes to Google and nowhere
-    near a patient, so the appointment id itself is the right value — unlike
-    the handle in a room URL, which a patient is sent.
+    Google ignores a ``createRequest`` whose id it has already answered, and
+    hands back no conference for it: "Clients should regenerate this ID for
+    every new request. If an ID provided is the same as for the previous
+    request, the request is ignored." So the key has to change each time the
+    appointment asks for a NEW conference — booked by video, then in person,
+    then by video again; or Meet, then Zoom, then Meet — and stay the same for
+    retries of one push, so a retried write re-uses the conference instead of
+    making a second one.
+
+    The row's ``updated_at`` does both. Every write to the appointment moves
+    it, and asking for a room again is always a write (the provider and link
+    are recorded before the push); a retry of one push carries the same row.
+    A row from before ``updated_at`` was kept falls back to the appointment id
+    alone, which is what every key was before.
+
+    It goes to Google and nowhere near a patient, so the appointment id itself
+    is the right value, unlike the handle in a room URL, which a patient is
+    sent.
+    https://developers.google.com/workspace/calendar/api/v3/reference/events
     """
-    return f"pablo-{appointment.id}"
+    if appointment.updated_at is None:
+        return f"pablo-{appointment.id}"
+    return f"pablo-{appointment.id}-{appointment.updated_at:%Y%m%dT%H%M%S%f}"
 
 
 def conference_url(event: Mapping[str, Any]) -> str | None:
@@ -138,6 +158,82 @@ def conference_url(event: Mapping[str, Any]) -> str | None:
                         return str(uri)
     hangout = event.get("hangoutLink")
     return str(hangout) if hangout else None
+
+
+def conference_pending(event: Mapping[str, Any]) -> bool:
+    """Whether Google is still making the conference this event asked for.
+
+    ``createRequest.status.statusCode`` is ``pending`` until the conference
+    exists, then ``success`` (or ``failure``, which no amount of waiting
+    changes). A link already on the event settles it whatever the status says.
+    https://developers.google.com/workspace/calendar/api/v3/reference/events
+    """
+    if conference_url(event):
+        return False
+    data = event.get("conferenceData")
+    if not isinstance(data, Mapping):
+        return False
+    request = data.get("createRequest")
+    if not isinstance(request, Mapping):
+        return False
+    status = request.get("status")
+    return isinstance(status, Mapping) and status.get("statusCode") == "pending"
+
+
+def _pushed(event: Mapping[str, Any]) -> PushedEvent | None:
+    """What an event Google handed back says about itself and its conference."""
+    event_id = event.get("id")
+    if not event_id:
+        return None
+    return PushedEvent(
+        event_id=str(event_id),
+        conference_url=conference_url(event),
+        conference_pending=conference_pending(event),
+    )
+
+
+#: The first read-back of a pending conference waits this long; each later one
+#: waits twice as long as the last, up to :data:`_CONFERENCE_READ_MAX_GAP`.
+#: Google usually finishes a Meet conference within a second.
+_CONFERENCE_READ_FIRST_GAP = 0.25
+_CONFERENCE_READ_MAX_GAP = 1.0
+
+
+def wait_for_conference(
+    read: Callable[[], PushedEvent | None],
+    *,
+    budget_seconds: float,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> PushedEvent | None:
+    """Read an event back until its pending conference has a link, or time runs out.
+
+    Waits before every read, never past ``budget_seconds`` from the start, and
+    stops as soon as the conference is no longer pending: a link has arrived,
+    or Google has given up, which waiting cannot change. A read that fails
+    ends the wait the same way a budget does. One read already under way when
+    the budget runs out is allowed to finish, so the time this adds is the
+    budget plus at most one read.
+
+    Returns the last read, or None when nothing was read: a budget of zero
+    reads nothing, and a pending conference is left for later.
+    """
+    deadline = clock() + budget_seconds
+    gap = _CONFERENCE_READ_FIRST_GAP
+    last: PushedEvent | None = None
+    while True:
+        remaining = deadline - clock()
+        if remaining <= 0:
+            return last
+        sleep(min(gap, remaining))
+        try:
+            last = read()
+        except Exception:
+            logger.warning("Reading back a pending Google Meet conference failed", exc_info=True)
+            return last
+        if last is None or not last.conference_pending:
+            return last
+        gap = min(gap * 2, _CONFERENCE_READ_MAX_GAP)
 
 
 # Writing to a calendar Google let Pablo create is reachable with a grant
@@ -1011,10 +1107,26 @@ class GoogleCalendarService:
             )
             logger.info("Created Google Calendar event")
 
-        event_id = event.get("id")
-        if not event_id:
+        return _pushed(event)
+
+    def read_appointment_event(self, user_id: str, event_id: str) -> PushedEvent | None:
+        """Read an appointment's event back, for a conference that was still pending.
+
+        One read and no retry: the caller is either holding a save open for a
+        bounded time or making its one late attempt, and a rate-limit backoff
+        would spend more than either has. The conference rides along on every
+        ``events.get`` — ``conferenceDataVersion`` is a write parameter only.
+        None when the clinician is no longer connected.
+        """
+        credentials = self._get_credentials(user_id)
+        if not credentials:
             return None
-        return PushedEvent(event_id=str(event_id), conference_url=conference_url(event))
+        token_doc = self._token_repo.get(user_id)
+        if not token_doc or not token_doc.calendar_id:
+            return None
+        service = self._calendar(credentials)
+        event = service.events().get(calendarId=token_doc.calendar_id, eventId=event_id).execute()
+        return _pushed(event)
 
     def delete_event(self, user_id: str, event_id: str) -> bool:
         """Delete a Google Calendar event."""
@@ -2137,9 +2249,10 @@ class GoogleCalendarService:
           ``conferenceDataVersion=1``, and whose link is read back onto the
           appointment afterwards.
 
-        The request id is derived from the appointment so a retry of the same
-        write re-uses the same conference instead of making a second one.
-        Google documents it as the caller's idempotency key for exactly this.
+        The request id is derived from the appointment and the version of it
+        being written (see :func:`_conference_request_id`), so a retry of the
+        same write re-uses the same conference, and asking again after the room
+        was given up makes a new one rather than being ignored.
         https://developers.google.com/workspace/calendar/api/v3/reference/events
         """
         event: dict[str, Any] = {

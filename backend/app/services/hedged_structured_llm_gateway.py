@@ -18,8 +18,8 @@ A fallback is named by model string alone. ``resolve`` (by default
 so a new provider joins by registering a gateway for its prefix, with no
 change to the policy.
 
-Every call ends within 25 s, the deadline of the ``LLM_REQUEST`` retry
-this replaces: a leg that starts late is given what is left of it.
+Every call ends within 25 s, the interactive budget: a leg that starts late
+is given what is left of it.
 
 A long call (drafting, importing or deriving a note) uses the same legs,
 built by :func:`generation_gateway` from the feature's entry in
@@ -53,6 +53,7 @@ Model names and error classes only, never prompt or answer text.
 
 from __future__ import annotations
 
+import functools
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -92,8 +93,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: Every call, retries included, ends within this long: the deadline of the
-#: one-retry ``LLM_REQUEST`` preset these legs replace.
+#: Every call, retries included, ends within this long. An interactive call
+#: answers in seconds and is given fallbacks beside a stalled leg, so it keeps
+#: a tighter budget than the one-retry ``LLM_REQUEST`` preset these legs
+#: replace, whose deadline holds two full attempts of a single model.
 _BUDGET_SECONDS = 25.0
 
 #: A long call's whole sequence of attempts ends within this long. Each
@@ -162,14 +165,18 @@ class HedgedStructuredLLMGateway(StructuredLLMGateway):
         *,
         fallbacks: Sequence[str] = (),
         stall_after: float | None = INTERACTIVE_STALL_AFTER,
-        resolve: Callable[[str], StructuredLLMGateway] = resolve_structured_llm_gateway,
+        resolve: Callable[[str], StructuredLLMGateway] | None = None,
         executor: Executor | None = None,
         budget: float = _BUDGET_SECONDS,
         feature: str | None = None,
     ) -> None:
         self._fallbacks = tuple(fallbacks)
         self._stall_after = stall_after
-        self._resolve = resolve
+        # With no resolver of its own, each leg goes to its model's provider,
+        # which reads this feature's settings (its reasoning effort).
+        self._resolve = resolve or functools.partial(
+            resolve_structured_llm_gateway, feature=feature
+        )
         self._executor = executor
         self._budget = budget
         # Labels every leg's span and usage record; the legs run in the
@@ -179,7 +186,7 @@ class HedgedStructuredLLMGateway(StructuredLLMGateway):
     @classmethod
     def from_settings(
         cls,
-        resolve: Callable[[str], StructuredLLMGateway] = resolve_structured_llm_gateway,
+        resolve: Callable[[str], StructuredLLMGateway] | None = None,
         feature: str = AIFeature.AVAILABILITY_PARSE,
     ) -> HedgedStructuredLLMGateway:
         """An interactive gateway with ``feature``'s fallbacks, if it has any,
@@ -290,7 +297,7 @@ class ProviderStructuredLLMGateway(StructuredLLMGateway):
         retry_policy: RetryPolicy | None = None,
     ) -> StructuredCompletion:
         with llm_feature(self._feature):
-            return resolve_structured_llm_gateway(model).complete_structured(
+            return resolve_structured_llm_gateway(model, feature=self._feature).complete_structured(
                 model=model,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
@@ -323,7 +330,7 @@ def generation_gateway(
     return HedgedStructuredLLMGateway(
         fallbacks=fallbacks,
         stall_after=settings.long_call_hedge_after_for(feature),
-        resolve=resolve_structured_llm_gateway if single is None else (lambda _model: single),
+        resolve=None if single is None else (lambda _model: single),
         budget=GENERATION_BUDGET_SECONDS,
         feature=feature,
     )

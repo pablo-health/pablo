@@ -38,6 +38,14 @@ if TYPE_CHECKING:
     from ..reliability import RetryPolicy
 
 from ..reliability import LLM_JOB, LLM_REQUEST, Idempotency, call_with_retry
+from ..settings import get_settings
+from .claude_models import (
+    capabilities_for,
+    effort_kwargs,
+    sampling_kwargs,
+    tool_description,
+    with_tool_instruction,
+)
 from .llm_provider import LLMProvider, strip_provider_prefix
 from .llm_telemetry import LLMSpanRequest, llm_span, usage_detail_tokens, usage_tokens
 from .vertex_client import (
@@ -48,12 +56,15 @@ from .vertex_client import (
 
 logger = logging.getLogger(__name__)
 
-# Structured generation runs off the request thread (a Cloud Tasks worker, well
-# inside the 300s request budget), and a reasoning model working a real
-# multi-turn transcript into a full SOAP note routinely spends more than the
-# 60s default client read timeout — long enough to trip an httpcore.ReadTimeout
-# and fail the note. Give these one-shot structured calls a generous read
-# timeout so genuine generation completes instead of timing out.
+# The long bound: what an attempt gets under a policy that names no bound of
+# its own (``LLM_JOB``, a hedged leg's ``SINGLE_ATTEMPT``). A reasoning model
+# working a real multi-turn transcript into a full note routinely spends more
+# than the 60 s default client read timeout, long enough to trip an
+# httpcore.ReadTimeout and fail the draft, so a long call keeps this generous
+# bound. A request-path call takes its shorter bound from its policy instead
+# (``LLM_REQUEST.attempt_timeout``, sized so two attempts fit the deadline):
+# under this bound a slow failure could never be retried, because the first
+# attempt alone outlasted the deadline.
 _STRUCTURED_LLM_TIMEOUT_SECONDS = 180.0
 
 # Mistral publisher models on Vertex are reached via the regional rawPredict
@@ -68,14 +79,24 @@ _GEMINI_THINKING_LOW_MAX_BUDGET = 2_048
 _GEMINI_THINKING_MEDIUM_MAX_BUDGET = 8_192
 
 
+def _attempt_bound(timeout_seconds: float | None, policy: RetryPolicy) -> float | None:
+    """The bound each attempt starts from: the caller's, else the policy's own.
+
+    ``None`` when neither names one: the attempt then runs under the client's
+    long default, as a long generation under ``LLM_JOB`` should.
+    """
+    return timeout_seconds if timeout_seconds is not None else policy.attempt_timeout
+
+
 def _attempt_timeout(timeout_seconds: float, started: float, policy: RetryPolicy) -> float:
-    """This attempt's bound: the caller's, cut to what the policy has left.
+    """This attempt's bound, cut to what the policy has left.
 
     ``call_with_retry`` checks the policy's deadline only before it backs
     off, never against the attempt it is about to start, so a stalled first
     attempt followed by a full-length second one would run past it. Shrinking
     the second attempt to the time remaining keeps the whole call, retry
-    included, inside the deadline.
+    included, inside the deadline. A policy's own bound already fits twice
+    (see ``RetryPolicy.attempt_timeout``); this matters for a caller's.
     """
     deadline = policy.deadline
     if deadline is None:
@@ -251,15 +272,20 @@ class StructuredLLMGateway(ABC):
         reasoning is doing the work.
 
         ``timeout_seconds`` bounds each attempt when set, in place of the
-        client's generous default. An interactive caller that would rather
-        retry a stalled call than wait out the default passes a short one;
-        a timed-out attempt is retried like any other transient failure, and
+        retry policy's own bound (``LLM_REQUEST`` names one that fits its
+        deadline twice) or, under a policy that names none, the client's
+        generous default. An interactive caller that would rather retry a
+        stalled call than wait out the default passes a short one; a
+        timed-out attempt is retried like any other transient failure, and
         the retry is cut to whatever is left of the retry policy's deadline,
         so the call as a whole never outlasts it.
 
-        ``retry_policy`` replaces the implementation's own retry preset.
-        A caller that runs its own attempts (a hedged run, where a retry
-        is another leg) passes ``SINGLE_ATTEMPT``.
+        ``retry_policy`` replaces the implementation's own retry preset,
+        ``LLM_REQUEST``. A long generation behind a request passes
+        ``LLM_LONG_REQUEST`` (the client's long bound, twice, inside a
+        deadline); background work passes ``LLM_JOB``; a caller that runs
+        its own attempts (a hedged run, where a retry is another leg)
+        passes ``SINGLE_ATTEMPT``.
 
         Raises:
             ValueError: model returned invalid JSON or violated the schema.
@@ -329,10 +355,11 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
             thinking_config=thinking_config,
         )
         policy = retry_policy or LLM_REQUEST
+        bound = _attempt_bound(timeout_seconds, policy)
         started = time.monotonic()
 
         def attempt() -> Any:
-            if timeout_seconds is None:
+            if bound is None:
                 return client.models.generate_content(
                     model=normalized_model, contents=user_prompt, config=config
                 )
@@ -346,7 +373,7 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
                 update={
                     "http_options": types.HttpOptions(
                         timeout=seconds_to_genai_timeout_ms(
-                            _attempt_timeout(timeout_seconds, started, policy)
+                            _attempt_timeout(bound, started, policy)
                         ),
                         headers={"X-Server-Timeout": str(int(_STRUCTURED_LLM_TIMEOUT_SECONDS))},
                     )
@@ -429,9 +456,12 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
 
     _TOOL_NAME = "emit_structured_output"
 
-    def __init__(self, client: Any = None) -> None:
+    def __init__(self, client: Any = None, *, effort: str | None = None) -> None:
         # Injectable for tests; lazily built from the shared factory otherwise.
         self._client = client
+        # The reasoning effort every call from this gateway asks for, when the
+        # model takes one (see ``claude_models.effort_kwargs``).
+        self._effort = effort
 
     def _get_client(self) -> Any:
         if self._client is None:
@@ -463,11 +493,28 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
 
         client = self._get_client()
         normalized_model = strip_provider_prefix(model)
+        # A model that rejects a forced tool call is asked for the tool with
+        # ``auto`` and told to call it; one that rejects ``temperature`` is sent
+        # none (see ``claude_models``).
+        tool_choice: dict[str, str] = (
+            {"type": "tool", "name": self._TOOL_NAME}
+            if capabilities_for(normalized_model).forces_tool_choice
+            else {"type": "auto"}
+        )
         tool = {
             "name": self._TOOL_NAME,
-            "description": "Return the result as structured output.",
+            "description": tool_description(normalized_model),
             "input_schema": response_schema,
         }
+        policy = retry_policy or LLM_REQUEST
+        bound = _attempt_bound(timeout_seconds, policy)
+        started = time.monotonic()
+
+        def timeout() -> dict[str, float]:
+            # Per attempt: the second is cut to what the deadline has left.
+            if bound is None:
+                return {}
+            return {"timeout": _attempt_timeout(bound, started, policy)}
 
         with llm_span(LLMSpanRequest(operation="structured", model=normalized_model)) as span:
             try:
@@ -475,7 +522,6 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
                     lambda: client.messages.create(
                         model=normalized_model,
                         max_tokens=max_output_tokens,
-                        temperature=temperature,
                         system=[
                             {
                                 "type": "text",
@@ -484,11 +530,20 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
                             }
                         ],
                         tools=[tool],
-                        tool_choice={"type": "tool", "name": self._TOOL_NAME},
-                        messages=[{"role": "user", "content": user_prompt}],
-                        **({"timeout": timeout_seconds} if timeout_seconds is not None else {}),
+                        tool_choice=tool_choice,
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": with_tool_instruction(
+                                    normalized_model, user_prompt, self._TOOL_NAME
+                                ),
+                            }
+                        ],
+                        **sampling_kwargs(normalized_model, temperature),
+                        **effort_kwargs(normalized_model, self._effort),
+                        **timeout(),
                     ),
-                    policy=retry_policy or LLM_REQUEST,
+                    policy=policy,
                     idempotency=Idempotency.SAFE,
                 )
             except Exception as exc:
@@ -503,12 +558,15 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
                 if prompt_tokens is not None or output_tokens is not None
                 else None
             )
-            # Anthropic reports cache reads apart from input_tokens; fold them
-            # into the prompt so it means the whole prompt on every provider.
+            # Anthropic reports cache reads and cache writes apart from
+            # input_tokens; fold both into the prompt so it means the whole
+            # prompt on every provider. Only the reads were served from cache.
             cached_tokens = getattr(usage, "cache_read_input_tokens", None)
-            if prompt_tokens is not None and cached_tokens:
-                prompt_tokens += cached_tokens
-                total = (total or 0) + cached_tokens
+            written_tokens = getattr(usage, "cache_creation_input_tokens", None)
+            if prompt_tokens is not None and (cached_tokens or written_tokens):
+                folded = (cached_tokens or 0) + (written_tokens or 0)
+                prompt_tokens += folded
+                total = (total or 0) + folded
             span.set_token_usage(
                 prompt_tokens=prompt_tokens,
                 completion_tokens=output_tokens,
@@ -824,16 +882,18 @@ def get_default_structured_llm_gateway() -> StructuredLLMGateway:
     return _default_gateway_holder[0]
 
 
-_anthropic_gateway_holder: list[StructuredLLMGateway] = []
+#: One Claude-on-Vertex gateway per effort, so a feature asking for ``low`` and
+#: one asking for nothing do not share a client's settings.
+_anthropic_gateways: dict[str | None, StructuredLLMGateway] = {}
 _mistral_gateway_holder: list[StructuredLLMGateway] = []
 _bedrock_gateway_holder: list[StructuredLLMGateway] = []
 
 
-def _get_anthropic_structured_llm_gateway() -> StructuredLLMGateway:
-    """Return the process-wide :class:`AnthropicStructuredLLMGateway`."""
-    if not _anthropic_gateway_holder:
-        _anthropic_gateway_holder.append(AnthropicStructuredLLMGateway())
-    return _anthropic_gateway_holder[0]
+def _get_anthropic_structured_llm_gateway(effort: str | None = None) -> StructuredLLMGateway:
+    """Return the process-wide :class:`AnthropicStructuredLLMGateway` for ``effort``."""
+    if effort not in _anthropic_gateways:
+        _anthropic_gateways[effort] = AnthropicStructuredLLMGateway(effort=effort)
+    return _anthropic_gateways[effort]
 
 
 def _get_mistral_structured_llm_gateway() -> StructuredLLMGateway:
@@ -872,7 +932,9 @@ def register_structured_llm_provider(
     _registered_providers[prefix] = gateway
 
 
-def resolve_structured_llm_gateway(model: str) -> StructuredLLMGateway:
+def resolve_structured_llm_gateway(
+    model: str, *, feature: str | None = None
+) -> StructuredLLMGateway:
     """Pick the structured gateway for a (possibly provider-prefixed) model id.
 
     A prefix registered with :func:`register_structured_llm_provider` →
@@ -882,12 +944,15 @@ def resolve_structured_llm_gateway(model: str) -> StructuredLLMGateway:
     caller target any provider by model string alone, the same way
     :func:`strip_provider_prefix` already lets the prefix ride through
     config.
+
+    ``feature`` is the AI feature the call serves, when the caller knows it:
+    Claude on Vertex asks for that feature's ``ai_efforts`` entry.
     """
     provider, sep, _rest = model.partition(":")
     if sep and provider in _registered_providers:
         return _registered_providers[provider]()
     if sep and provider == LLMProvider.ANTHROPIC:
-        return _get_anthropic_structured_llm_gateway()
+        return _get_anthropic_structured_llm_gateway(get_settings().effort_for(feature))
     if sep and provider == LLMProvider.MISTRALAI:
         return _get_mistral_structured_llm_gateway()
     return get_default_structured_llm_gateway()

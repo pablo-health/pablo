@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from ..exceptions import AppointmentTypeNameTakenError
 
 if TYPE_CHECKING:
-    from ..models.appointment_type import AppointmentType
+    from ..models.appointment_type import AppointmentType, RememberedPlace
 
 
 class AppointmentTypeRepository(ABC):
@@ -45,6 +45,18 @@ class AppointmentTypeRepository(ABC):
     @abstractmethod
     def delete(self, appointment_type_id: str, user_id: str) -> bool:
         """Delete an appointment type. Returns True if deleted."""
+
+    @abstractmethod
+    def record_place(
+        self, appointment_type_id: str, user_id: str, place_of_service: RememberedPlace
+    ) -> None:
+        """Remember the place of service this type was last booked with.
+
+        Learned from a booking, not an edit, so ``updated_at`` is left alone.
+        A type that is not this clinician's, or no longer exists, is left
+        untouched rather than raising: the booking that taught it has already
+        been made and must not fail over it.
+        """
 
 
 class InMemoryAppointmentTypeRepository(AppointmentTypeRepository):
@@ -88,3 +100,10 @@ class InMemoryAppointmentTypeRepository(AppointmentTypeRepository):
             return False
         del self._types[appointment_type_id]
         return True
+
+    def record_place(
+        self, appointment_type_id: str, user_id: str, place_of_service: RememberedPlace
+    ) -> None:
+        appointment_type = self.get(appointment_type_id, user_id)
+        if appointment_type is not None:
+            appointment_type.last_place_of_service = place_of_service

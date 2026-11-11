@@ -25,7 +25,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from ..api_errors import BadRequestError, NotFoundError
 from ..auth.oauth_redirect import is_allowed_oauth_redirect_uri
@@ -43,10 +43,11 @@ from ..meeting_providers.zoom_client import (
     exchange_code,
     revoke,
 )
+from ..models.validators import validate_zoom_room_url
 from ..repositories import UserRepository, get_user_repository
 from ..repositories import get_google_calendar_token_repository as _gcal_token_repo_factory
 from ..repositories import get_zoom_connection_store as _zoom_store_factory
-from ..services.telehealth import Clinician, MeetingProviderRegistry
+from ..services.telehealth import ZOOM, MeetingProviderRegistry, clinician_from_preferences
 from ..services.token_encryption import derive_subkey
 from ..settings import get_settings
 
@@ -95,6 +96,12 @@ class TelehealthProvidersResponse(BaseModel):
     default_provider: str | None = None
     #: Their own permanent room, for a service that works that way.
     room_url: str | None = None
+    #: Their own Zoom room, pasted once.
+    zoom_room_url: str | None = None
+    #: Whether this deployment has a Zoom app, so Zoom can make a meeting per
+    #: appointment once connected. Without one, Zoom means the clinician's
+    #: own pasted room, and that is the field settings shows.
+    zoom_app: bool = False
     join_window_before_minutes: int
 
 
@@ -119,6 +126,22 @@ class SetRoomUrlRequest(BaseModel):
     )
 
 
+class SetZoomRoomUrlRequest(BaseModel):
+    """The clinician's own Zoom meeting room."""
+
+    zoom_room_url: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Paste your Zoom room's web address, or leave empty to remove it.",
+    )
+
+    @field_validator("zoom_room_url")
+    @classmethod
+    def _a_zoom_address(cls, value: str | None) -> str | None:
+        """Only an ``https`` address on zoom.us, because patients are given it to click."""
+        return validate_zoom_room_url(value)
+
+
 @router.get("/providers", response_model=TelehealthProvidersResponse)
 def list_providers(
     ctx: TenantContext = Depends(get_tenant_context),
@@ -133,11 +156,7 @@ def list_providers(
     """
     settings = get_settings()
     preferences = user_repo.get_preferences(ctx.user_id)
-    clinician = Clinician(
-        id=ctx.user_id,
-        preferred_provider=preferences.default_video_platform,
-        room_url=preferences.telehealth_room_url,
-    )
+    clinician = clinician_from_preferences(ctx.user_id, preferences)
     registry = build_registry(
         settings,
         zoom_store=zoom_store,
@@ -158,6 +177,8 @@ def list_providers(
         if preferences.default_video_platform in offered
         else None,
         room_url=preferences.telehealth_room_url,
+        zoom_room_url=preferences.zoom_room_url,
+        zoom_app=registry.get(ZOOM) is not None and bool(settings.zoom_client_id),
         join_window_before_minutes=settings.telehealth_join_window_before_minutes,
     )
 
@@ -187,6 +208,25 @@ def set_room_url(
         raise BadRequestError("A room address must start with https://")
     user_repo.update_preferences(ctx.user_id, {"telehealth_room_url": room_url})
     return SetRoomUrlRequest(room_url=room_url)
+
+
+@router.put("/zoom-room-url", response_model=SetZoomRoomUrlRequest)
+def set_zoom_room_url(
+    request: SetZoomRoomUrlRequest,
+    ctx: TenantContext = Depends(get_tenant_context),
+    user_repo: UserRepository = Depends(get_user_repository),
+) -> SetZoomRoomUrlRequest:
+    """Record the clinician's own Zoom room, used for every video appointment on Zoom.
+
+    The address was checked on the way in (:class:`SetZoomRoomUrlRequest`);
+    anything that is not ``https`` on zoom.us is refused as a field error
+    before it reaches here.
+
+    Not audited: it is the clinician's own setting, and no patient appears in
+    it.
+    """
+    user_repo.update_preferences(ctx.user_id, {"zoom_room_url": request.zoom_room_url})
+    return SetZoomRoomUrlRequest(zoom_room_url=request.zoom_room_url)
 
 
 @router.get("/zoom/authorize", response_model=ZoomAuthResponse)

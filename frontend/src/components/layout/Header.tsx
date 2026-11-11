@@ -4,9 +4,8 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
 import { useQueryClient } from "@tanstack/react-query"
-import { signOutAndClear } from "@/lib/auth/signOutAndClear"
+import { hardSignOut } from "@/lib/auth/hardSignOut"
 import Image from "next/image"
 import { UserCircle, LogOut } from "lucide-react"
 import { ThemeMenu } from "@/components/theme/ThemeMenu"
@@ -21,12 +20,14 @@ interface HeaderProps {
 }
 
 export function Header({ user }: HeaderProps) {
-  const router = useRouter()
   const queryClient = useQueryClient()
   const [isMenuOpen, setIsMenuOpen] = useState(false)
 
+  // The navigation reloads the page, but the cache is cleared first anyway:
+  // Back can restore this page from the browser's cache with its heap intact.
   const handleSignOut = async () => {
-    await signOutAndClear(queryClient, router, "/login")
+    queryClient.clear()
+    await hardSignOut()
   }
 
   return (

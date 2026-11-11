@@ -296,13 +296,11 @@ export const TOKEN_REFRESH_RETRY_CODES = new Set(["TOKEN_EXPIRED", "INVALID_TOKE
 export const FORBIDDEN_REFRESH_RETRY_CODES = new Set(["EMAIL_NOT_VERIFIED"])
 
 /**
- * Backend auth 401 codes that mean the session is unrecoverable — the token is
- * expired (and a refresh didn't help), malformed/invalid, revoked, or the
- * account is disabled. These boot the user to /login rather than letting the
- * request throw and strand them. Deliberately EXCLUDES ``MFA_REQUIRED`` (a
- * step-up flow handled inline) and ``IDLE_TIMEOUT`` (handled separately, with
- * its own reason). ``TOKEN_REVOKED`` / ``USER_DISABLED`` are terminal on
- * arrival — no refresh is attempted for them.
+ * Backend auth 401 codes that name a dead session — the token is expired (and
+ * a refresh didn't help), malformed/invalid, revoked, or the account is
+ * disabled. ``TOKEN_REVOKED`` / ``USER_DISABLED`` are terminal on arrival — no
+ * refresh is attempted for them. The chat stream classifies its 401s against
+ * this set; ``apiClient`` goes further, see ``isTerminalAuth401``.
  */
 export const TERMINAL_AUTH_CODES = new Set([
   "TOKEN_EXPIRED",
@@ -310,6 +308,23 @@ export const TERMINAL_AUTH_CODES = new Set([
   "TOKEN_REVOKED",
   "USER_DISABLED",
 ])
+
+/**
+ * Whether a 401 on a client-managed request means the session is over.
+ *
+ * Every 401 does, except the two that carry their own flow: ``MFA_REQUIRED``
+ * drives the passkey step-up inline, and ``IDLE_TIMEOUT`` boots with its own
+ * reason. A 401 is the backend refusing the bearer token this client minted,
+ * and no body makes that recoverable — so a 401 with no envelope at all
+ * (FastAPI's plain ``{"detail": ...}``, which resolves to ``UNKNOWN_ERROR``
+ * here, or an edge layer answering before the backend) counts too. That one
+ * used to boot nothing: a session that had gone stale overnight kept
+ * rendering the signed-in shell while every call failed with exactly that
+ * shape, and nothing on the page could get the user out.
+ */
+function isTerminalAuth401(errorCode: string): boolean {
+  return errorCode !== "MFA_REQUIRED" && errorCode !== "IDLE_TIMEOUT"
+}
 
 /**
  * Resolve the bearer token for an authenticated request.
@@ -494,17 +509,18 @@ export async function apiClient<T>(
 
     // An unrecoverable 401 boots the user to /login instead of stranding them
     // on a logged-in-looking page that throws on every action. IDLE_TIMEOUT
-    // mirrors the client-side IdleTimeout component. A token-level failure that
-    // survived the force-refresh retry above (expired/invalid) or is terminal
-    // on arrival (revoked/disabled) sends the user to a fresh sign-in — scoped
-    // to client-managed tokens (no caller-supplied `token`), since a caller
-    // that owns its token owns its own auth handling. Both paths are re-entry
-    // guarded so a parallel burst of 401s fires one redirect. MFA_REQUIRED is
-    // never a logout: a refused dashboard read goes to passkey step-up instead.
+    // mirrors the client-side IdleTimeout component. Any other 401 — a
+    // token-level failure that survived the force-refresh retry above, one
+    // terminal on arrival (revoked/disabled), or one with no code at all —
+    // sends the user to a fresh sign-in; scoped to client-managed tokens (no
+    // caller-supplied `token`), since a caller that owns its token owns its
+    // own auth handling. Both paths are re-entry guarded so a parallel burst
+    // of 401s fires one redirect. MFA_REQUIRED is never a logout: a refused
+    // dashboard read goes to passkey step-up instead.
     if (response.status === 401 && typeof window !== "undefined") {
       if (errorCode === "IDLE_TIMEOUT") {
         handleTerminalAuthLogout("idle_timeout")
-      } else if (!token && TERMINAL_AUTH_CODES.has(errorCode)) {
+      } else if (!token && isTerminalAuth401(errorCode)) {
         handleTerminalAuthLogout("session_expired")
       }
     }
@@ -628,7 +644,7 @@ async function fetchDownload(
     if (response.status === 401 && typeof window !== "undefined") {
       if (errorCode === "IDLE_TIMEOUT") {
         handleTerminalAuthLogout("idle_timeout")
-      } else if (!token && TERMINAL_AUTH_CODES.has(errorCode)) {
+      } else if (!token && isTerminalAuth401(errorCode)) {
         handleTerminalAuthLogout("session_expired")
       }
     }
