@@ -27,6 +27,7 @@ import {
   buildApiUrl,
   getAuthHeader,
   handleTerminalAuthLogout,
+  runApiErrorInterceptors,
 } from "@/lib/api/client"
 
 import type {
@@ -109,9 +110,23 @@ export async function streamChatMessages(
     // onError call so the panel renders the same error notice machinery
     // regardless of whether the failure happened before or during the
     // stream.
+    //
+    // Registered API error interceptors see this failure first, as they do
+    // for every apiClient request. One that marks it `handledExternally` has
+    // already explained it to the user elsewhere, so the panel must not add
+    // its own reading of the status (a 403 would otherwise say "not signed
+    // in"). It runs before the body is read so the interceptor's clone works.
+    const intercepted = await interceptFailure(response)
     const message = await safeReadText(response)
     if (response.status === 401) {
       bootIfTerminalAuth(message)
+    }
+    if (intercepted?.handledExternally === true) {
+      callbacks.onError({
+        error: "handled_externally",
+        message: typeof intercepted.message === "string" ? intercepted.message : "",
+      })
+      return
     }
     callbacks.onError({
       error: mapHttpStatusToErrorCode(response.status),
@@ -239,6 +254,21 @@ function bootIfTerminalAuth(body: string): void {
     }
   } catch {
     // Unparseable body — not a recognizable terminal auth error.
+  }
+}
+
+/**
+ * Run the registered API error interceptors over a failed stream response.
+ * An interceptor that throws is treated as one that did not answer: the
+ * stream still reports its own error rather than failing silently.
+ */
+async function interceptFailure(
+  response: Response,
+): Promise<Record<string, unknown> | null> {
+  try {
+    return await runApiErrorInterceptors(response)
+  } catch {
+    return null
   }
 }
 

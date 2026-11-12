@@ -76,6 +76,9 @@ export function createAppQueryClient(showToast: (message: string) => void): Quer
   return new QueryClient({
     mutationCache: new MutationCache({
       onError: (error) => {
+        // A registered API error interceptor has already explained this
+        // failure to the user; a second, generic message would contradict it.
+        if (error instanceof ApiError && error.handledExternally) return
         showToast(error.message || "Something went wrong. Please try again.")
       },
     }),

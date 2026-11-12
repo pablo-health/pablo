@@ -217,6 +217,12 @@ export type ChatErrorCode =
   | "auth_denied"
   | "llm_error"
   | "concurrent_turn"
+  /**
+   * A registered API error interceptor claimed the failure and has already
+   * explained it to the user elsewhere. The message is whatever short line
+   * the interceptor supplied, or empty.
+   */
+  | "handled_externally"
 
 export interface ChatStreamErrorEvent {
   error: ChatErrorCode | string

@@ -120,4 +120,43 @@ describe("createAppQueryClient", () => {
     await waitFor(() => expect(showToast).toHaveBeenCalledTimes(1))
     expect(localOnError).toHaveBeenCalledTimes(1)
   })
+
+  it("raises no toast for a failure an interceptor already explained", async () => {
+    const showToast = vi.fn()
+    const localOnError = vi.fn()
+    const queryClient = createAppQueryClient(showToast)
+    const explained = Object.assign(apiError(403), { handledExternally: true })
+
+    const { result } = renderHook(
+      () =>
+        useMutation({
+          mutationFn: () => Promise.reject(explained),
+          onError: localOnError,
+        }),
+      { wrapper: wrapperFor(queryClient) }
+    )
+
+    result.current.mutate(undefined)
+
+    // The mutation's own handler still runs; only the global toast is skipped.
+    await waitFor(() => expect(localOnError).toHaveBeenCalledTimes(1))
+    expect(showToast).not.toHaveBeenCalled()
+  })
+
+  it("still toasts a 403 that no interceptor claimed", async () => {
+    const showToast = vi.fn()
+    const queryClient = createAppQueryClient(showToast)
+
+    const { result } = renderHook(
+      () =>
+        useMutation({
+          mutationFn: () => Promise.reject(apiError(403)),
+        }),
+      { wrapper: wrapperFor(queryClient) }
+    )
+
+    result.current.mutate()
+
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith("message"))
+  })
 })
