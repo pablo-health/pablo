@@ -1,6 +1,14 @@
 # Portal sign-in without a text at every visit: the link plus a password
 
-Status: proposed. Modules touched: `backend/app/portal/` (new `passwords.py`,
+Status: **not chosen** (2026-11-13). The passkey design,
+[`portal-client-passkeys.md`](portal-client-passkeys.md), is being built
+instead because it is the more secure path: phishing-resistant, with nothing
+to reuse. This document is kept as the alternative that was weighed, and
+because *The problem* and the shared pieces (the SMS policy ledger, the
+in-session code, the country allow-list) are specified here and the passkey
+design builds on them.
+
+Modules touched: `backend/app/portal/` (new `passwords.py`,
 `password_blocklist.py`, `sms_policy.py`, `in_session_code.py`; changes to
 `routes.py`, `recovery.py`, `service.py`, `store.py`, `db_store.py`), the
 portal frontend, and the clinician's portal-access card on the chart. New
@@ -386,7 +394,6 @@ The passkey alternative is designed in full in
 | Older phones and shared computers | Work everywhere | Need recent OS versions; otherwise link plus text |
 | Forgotten or lost | Clinician reset, every time | Synced passkeys usually return on a new phone; otherwise link plus text |
 | Texts after enrollment | None | Occasional, for a new browser no known one approves, and for devices without passkey support |
-| Build size | About 3 weeks (13–15 developer-days, six slices) | About 5 weeks (23–25 developer-days, eight slices) |
 
 Passwords are the smaller build and work on every device. Passkeys are the
 stronger factor and spare clinicians the resets, but cost more to build and
@@ -402,12 +409,12 @@ tables and the SMS ledger are compatible.
 
 | Slice | Contents | Size |
 |---|---|---|
-| 1. Tables and stores | Tenant migration, template, ORM rows, stores, RLS registration, `code_source` column | S (1–2 days) |
-| 2. Hashing and rules | `argon2-cffi` dependency, hasher with parameters, semaphore, dummy hash, rehash, optional pepper, blocklist, the build-time timing check | S (2 days) |
-| 3. Password sign-in | `new_password` on redeem, `redeem-password`, `set-password` with the `must_change` gate, throttling, audit, kill switch | M (3 days) |
-| 4. SMS policy and ledger | `PORTAL_SMS_POLICY`, resolver, ledger, cap, country allow-list, 409 | S (2 days) |
-| 5. Clinician card | *Give a sign-in code* and *Reset sign-in*, both shown once, audited | S (2 days) |
-| 6. Portal screens and e2e | Password fields, show/hide, messages from the copy table; local-stack e2e covering the first sign-in, a later sign-in with no text, the cap, a reset and the kill switch | M (3–4 days) |
+| 1. Tables and stores | Tenant migration, template, ORM rows, stores, RLS registration, `code_source` column | S |
+| 2. Hashing and rules | `argon2-cffi` dependency, hasher with parameters, semaphore, dummy hash, rehash, optional pepper, blocklist, the build-time timing check | S |
+| 3. Password sign-in | `new_password` on redeem, `redeem-password`, `set-password` with the `must_change` gate, throttling, audit, kill switch | M |
+| 4. SMS policy and ledger | `PORTAL_SMS_POLICY`, resolver, ledger, cap, country allow-list, 409 | S |
+| 5. Clinician card | *Give a sign-in code* and *Reset sign-in*, both shown once, audited | S |
+| 6. Portal screens and e2e | Password fields, show/hide, messages from the copy table; local-stack e2e covering the first sign-in, a later sign-in with no text, the cap, a reset and the kill switch | M |
 
 `enrollment_only` shouldn't be offered until slices 1–5 have landed.
 

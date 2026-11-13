@@ -1,8 +1,19 @@
 # Portal sign-in without a text at every visit: client passkeys
 
-Status: proposed, as an alternative to
-[`portal-client-sign-in.md`](portal-client-sign-in.md) (the link plus a
-password). Both documents solve the same problem. Read that one's *The problem*
+Status: **chosen** (2026-11-13). This is the design being built. The
+alternative, [`portal-client-sign-in.md`](portal-client-sign-in.md) (the link
+plus a password), stays in the repo as the path not taken.
+
+**Why this one: it is the more secure path.** A passkey is phishing-resistant
+and there is nothing for a client to reuse from another site; a password is
+weaker on both counts. It also keeps a forgotten credential from becoming
+work for the clinician, because a passkey usually follows the client to a new
+phone. The cost is a few more things for a client to understand, and the
+synced-account exposure described under *Decision
+summary*, which the known-browser check, the new-device notice and protected
+mode are there to answer. That trade was accepted.
+
+Both documents solve the same problem. Read that one's *The problem*
 first; this one doesn't repeat it. Shared pieces (the SMS policy ledger, the
 in-session code, the country allow-list) are specified once there and only
 summarized here.
@@ -310,17 +321,14 @@ sets of known browsers. Nothing joins them.
 
 | Slice | Contents | Size |
 |---|---|---|
-| 1. Tables and stores | Five tables, the shared ledger and column, stores, RLS | S (2 days) |
-| 2. Passkey ceremonies | Register and usernameless sign-in, UV, clone check, kill switch revokes, audit | M (4 days) |
-| 3. Known browsers and the second step | Cookie, approvals, new-browser text and email paths, notices, *This wasn't me*, devices list | M (4–5 days) |
-| 4. Protected mode | Setting, in-session-only registration and browsers, optional device-bound check | S (2 days) |
-| 5. SMS policy and ledger | Shared with the password design (`limited` adds two purposes) | S (2 days) |
-| 6. Clinician card | In-session code (shared), protected mode, devices, reports | S (2–3 days) |
-| 7. Portal screens | Offer, shared-device question, sign-in, waiting and approval, devices, copy | M (4–5 days) |
-| 8. Local-stack e2e | Virtual authenticator: enroll, known-browser sign-in with no text, new browser approved from a known one, *This wasn't me*, protected-mode refusal, fallback floor | M (3 days) |
-
-About 23–25 developer-days, roughly five weeks, against about three weeks for
-the password design.
+| 1. Tables and stores | Five tables, the shared ledger and column, stores, RLS | S |
+| 2. Passkey ceremonies | Register and usernameless sign-in, UV, clone check, kill switch revokes, audit | M |
+| 3. Known browsers and the second step | Cookie, approvals, new-browser text and email paths, notices, *This wasn't me*, devices list | M |
+| 4. Protected mode | Setting, in-session-only registration and browsers, optional device-bound check | S |
+| 5. SMS policy and ledger | Shared with the password design (`limited` adds two purposes) | S |
+| 6. Clinician card | In-session code (shared), protected mode, devices, reports | S |
+| 7. Portal screens | Offer, shared-device question, sign-in, waiting and approval, devices, copy | M |
+| 8. Local-stack e2e | Virtual authenticator: enroll, known-browser sign-in with no text, new browser approved from a known one, *This wasn't me*, protected-mode refusal, fallback floor | M |
 
 ## Texts saved
 
