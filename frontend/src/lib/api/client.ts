@@ -363,6 +363,27 @@ export async function getAuthHeader(
   return auth
 }
 
+/**
+ * Run every registered error interceptor over `response` and merge what they
+ * return, later interceptors winning on a clash. Null when none answered.
+ *
+ * `apiClient` calls this on every response. A reader that bypasses
+ * `apiClient` because it needs the raw body (the chat SSE stream) calls it on
+ * a failed response before mapping the status, so an interceptor sees that
+ * failure too, and can mark it `handledExternally`. Interceptors must clone
+ * the response before reading its body; see `client.extensions.ts`.
+ */
+export async function runApiErrorInterceptors(
+  response: Response,
+): Promise<Record<string, unknown> | null> {
+  let merged: Record<string, unknown> | null = null
+  for (const interceptor of apiErrorInterceptors) {
+    const data = await interceptor(response)
+    if (data) merged = { ...(merged ?? {}), ...data }
+  }
+  return merged
+}
+
 export function buildApiUrl(endpoint: string): string {
   return `${getApiUrl()}${endpoint}`
 }
@@ -468,11 +489,7 @@ export async function apiClient<T>(
     // downstream build uses these to detect a condition (e.g. a maintenance
     // 503) and ride extra fields onto the thrown ApiError, so a server-side
     // caller can react without the client-only stores. Empty by default.
-    let interceptorData: Record<string, unknown> | null = null
-    for (const interceptor of apiErrorInterceptors) {
-      const data = await interceptor(response)
-      if (data) interceptorData = { ...(interceptorData ?? {}), ...data }
-    }
+    const interceptorData = await runApiErrorInterceptors(response)
 
     if (response.ok) {
       const contentType = response.headers.get("content-type")

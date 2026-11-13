@@ -68,6 +68,23 @@ export function ChatErrorNotice({
   onResetToDefaults,
   onRetry,
 }: ChatErrorNoticeProps) {
+  // Something outside the panel has already explained this failure. Saying
+  // more here would contradict it, so show only the short line it supplied,
+  // as a plain note rather than an alert, or nothing at all.
+  if (code === "handled_externally") {
+    if (!serverMessage) return null
+    return (
+      <div
+        data-slot="chat-error-notice"
+        data-error-code={code}
+        role="status"
+        className="rounded-xl border border-neutral-200 px-3 py-2 text-sm text-neutral-600"
+      >
+        <p>{serverMessage}</p>
+      </div>
+    )
+  }
+
   const copy = COPY[code]
   const body = copy?.body ?? serverMessage ?? "Something went wrong."
   const remedy = copy?.remedy

@@ -22,6 +22,7 @@ vi.mock("@/lib/api/client", () => ({
   buildApiUrl: (endpoint: string) => `http://test${endpoint}`,
   getAuthHeader: vi.fn().mockResolvedValue({ Authorization: "Bearer tok" }),
   handleTerminalAuthLogout,
+  runApiErrorInterceptors: vi.fn().mockResolvedValue(null),
 }))
 
 import { streamChatMessages } from "../sse"
