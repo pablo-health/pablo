@@ -32,10 +32,27 @@ jobs:
   e2e:
     uses: ./.github/workflows/e2e.yml
 
-  backend:
+  # The backend and frontend images are published for linux/amd64 and
+  # linux/arm64 under one tag (a manifest list), so arm64 hosts such as Apple
+  # silicon and Graviton pull a native image instead of emulating amd64. Each
+  # architecture builds on its own native runner and pushes by digest; the
+  # publish job then points the tags at both digests. Emulating arm64 on an
+  # amd64 runner would build the same image several times slower.
+  build:
     needs: [e2e]
-    name: Build & Push Backend
-    runs-on: ubuntu-latest
+    name: Build ${{ matrix.image.name }} (${{ matrix.arch }})
+    strategy:
+      fail-fast: true
+      matrix:
+        arch: [amd64, arm64]
+        image:
+          - name: backend
+            context: .
+            file: backend/Dockerfile.production
+          - name: frontend
+            context: frontend
+            file: frontend/Dockerfile.production
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -48,35 +65,51 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Compute image tags
-        id: tags
-        run: |
-          BASE="${{ env.REGISTRY }}/${{ env.OWNER }}/backend"
-          TAGS="${BASE}:${{ github.sha }}"
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/}"
-            TAGS="${TAGS},${BASE}:${VERSION},${BASE}:latest"
-          elif [[ "${{ github.ref }}" == refs/heads/main ]]; then
-            TAGS="${TAGS},${BASE}:main"
-          fi
-          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+      - name: Short commit SHA
+        id: sha
+        run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push
+      - name: Build and push by digest
+        id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
-          context: .
-          file: backend/Dockerfile.production
-          push: true
-          tags: ${{ steps.tags.outputs.tags }}
-          cache-from: type=gha,scope=backend
-          cache-to: type=gha,mode=max,scope=backend
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.file }}
+          platforms: linux/${{ matrix.arch }}
+          build-args: ${{ matrix.image.name == 'frontend' && format('NEXT_PUBLIC_CLIENT_BUILD={0}', steps.sha.outputs.short) || '' }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image.name }},push-by-digest=true,name-canonical=true,push=true
+          # amd64 keeps the scope it has always used, so its cache survives.
+          cache-from: type=gha,scope=${{ matrix.image.name }}${{ matrix.arch == 'arm64' && '-arm64' || '' }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}${{ matrix.arch == 'arm64' && '-arm64' || '' }}
 
-  frontend:
-    needs: [e2e]
-    name: Build & Push Frontend
+      - name: Record the digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          [[ "$DIGEST" == sha256:* ]] || { echo "::error::no digest from the build"; exit 1; }
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: digests-${{ matrix.image.name }}-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: [build]
+    name: Publish ${{ matrix.image }}
+    strategy:
+      matrix:
+        image: [backend, frontend]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: digests-${{ matrix.image }}-*
+          merge-multiple: true
+          path: /tmp/digests
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
@@ -87,31 +120,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Compute image tags
-        id: tags
+      - name: Tag both architectures
+        working-directory: /tmp/digests
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}
         run: |
-          BASE="${{ env.REGISTRY }}/${{ env.OWNER }}/frontend"
-          TAGS="${BASE}:${{ github.sha }}"
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/}"
-            TAGS="${TAGS},${BASE}:${VERSION},${BASE}:latest"
-          elif [[ "${{ github.ref }}" == refs/heads/main ]]; then
-            TAGS="${TAGS},${BASE}:main"
+          set -euo pipefail
+          digests=(*)
+          [[ ${#digests[@]} -eq 2 ]] || { echo "::error::expected 2 digests, found ${#digests[@]}"; exit 1; }
+          tags=(-t "${IMAGE}:${GITHUB_SHA}")
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tags+=(-t "${IMAGE}:${GITHUB_REF#refs/tags/}" -t "${IMAGE}:latest")
+          elif [[ "$GITHUB_REF" == refs/heads/main ]]; then
+            tags+=(-t "${IMAGE}:main")
           fi
-          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
-          echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-
-      - name: Build and push
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
-        with:
-          context: frontend
-          file: frontend/Dockerfile.production
-          build-args: |
-            NEXT_PUBLIC_CLIENT_BUILD=${{ steps.tags.outputs.short_sha }}
-          push: true
-          tags: ${{ steps.tags.outputs.tags }}
-          cache-from: type=gha,scope=frontend
-          cache-to: type=gha,mode=max,scope=frontend
+          sources=()
+          for d in "${digests[@]}"; do sources+=("${IMAGE}@sha256:${d}"); done
+          docker buildx imagetools create "${tags[@]}" "${sources[@]}"
+          docker buildx imagetools inspect "${IMAGE}:${GITHUB_SHA}"
 
   pentest:
     needs: [e2e]
