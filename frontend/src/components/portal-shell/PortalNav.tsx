@@ -24,7 +24,8 @@ import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { portalSectionHref } from "@/lib/portal-shell/paths"
 import { usePortalHost } from "./portal-host-context"
-import type { PortalSlot } from "./slots"
+import type { PortalSlot, PortalSlotProps } from "./slots"
+import { SlotGate } from "./SlotGate"
 import { BookSessionLink } from "./BookSessionLink"
 import { PracticeBrand, WebsiteCta, WebsiteLinks } from "./WebsiteHeader"
 
@@ -39,6 +40,7 @@ export function ShellHeader({
   onSignOut,
   signingOut,
   bookingUrl = null,
+  session = null,
 }: {
   displayName: string | null
   slots: PortalSlot[]
@@ -49,6 +51,8 @@ export function ShellHeader({
   signingOut: boolean
   /** The practice's "Book a session" address, when it shows one here. */
   bookingUrl?: string | null
+  /** The signed-in patient's session, handed to a slot's `Gate`. */
+  session?: PortalSlotProps | null
 }) {
   // Only slots that asked for a label appear in the navigation; a slot
   // without one still has a tile and a page of its own.
@@ -116,16 +120,18 @@ export function ShellHeader({
                 </Link>
               </li>
               {navSlots.map((slot) => (
-                <li key={slot.id}>
-                  <Link
-                    href={portalSectionHref(base, slot.id)}
-                    data-testid={`portal-shell-nav-${slot.id}`}
-                    aria-current={section === slot.id ? "page" : undefined}
-                    className={LINK_CLASS}
-                  >
-                    {slot.label}
-                  </Link>
-                </li>
+                <SlotGate key={slot.id} slot={slot} session={session}>
+                  <li>
+                    <Link
+                      href={portalSectionHref(base, slot.id)}
+                      data-testid={`portal-shell-nav-${slot.id}`}
+                      aria-current={section === slot.id ? "page" : undefined}
+                      className={LINK_CLASS}
+                    >
+                      {slot.label}
+                    </Link>
+                  </li>
+                </SlotGate>
               ))}
             </ul>
           </nav>

@@ -249,6 +249,7 @@ export function PortalShell({ slug, children }: { slug: string; children?: React
         onSignOut={signedIn ? handleSignOut : undefined}
         signingOut={signingOut}
         bookingUrl={signedOut || signedIn ? bookingUrl : null}
+        session={view}
       />
       <main
         className={`flex flex-1 items-start justify-center px-4 ${signedOut ? "py-10 sm:py-16" : "py-8 sm:py-12"}`}

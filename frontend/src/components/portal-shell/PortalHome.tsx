@@ -24,6 +24,7 @@ import { portalSectionHref } from "@/lib/portal-shell/paths"
 import { CardShell } from "./PortalAuthCards"
 import { type PortalView, usePortalView } from "./context"
 import type { PortalSlot } from "./slots"
+import { SlotGate } from "./SlotGate"
 
 export function PortalHome() {
   const view = usePortalView()
@@ -46,9 +47,11 @@ export function PortalHome() {
       ) : (
         <ul className="flex flex-col gap-3" aria-label="Sections">
           {view.slots.map((slot) => (
-            <li key={slot.id}>
-              <SectionTile slot={slot} view={view} />
-            </li>
+            <SlotGate key={slot.id} slot={slot} session={view}>
+              <li>
+                <SectionTile slot={slot} view={view} />
+              </li>
+            </SlotGate>
           ))}
         </ul>
       )}

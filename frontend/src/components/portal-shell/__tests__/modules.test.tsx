@@ -56,6 +56,38 @@ describe("portal modules", () => {
     ])
   })
 
+  it("adds nothing of its own when the deployment lists no extensions", async () => {
+    const { extensionPortalSlots } = await import("../modules.extensions")
+
+    expect(extensionPortalSlots).toEqual([])
+  })
+
+  it("registers what the deployment lists after the engine's, and cannot be overridden by it", async () => {
+    vi.doMock("../modules.extensions", () => ({
+      extensionPortalSlots: [
+        { id: "forms", label: "Not the engine's forms", Component: () => null },
+        { id: "extra", label: "Extra", Component: () => null },
+      ],
+    }))
+    try {
+      await import("../modules")
+      const { getPortalSlots } = await import("../slots")
+
+      const slots = getPortalSlots()
+      expect(slots.map((slot) => slot.id)).toEqual([
+        "forms",
+        "messaging",
+        "appointments",
+        "homework",
+        "refills",
+        "extra",
+      ])
+      expect(slots[0].label).toBe("Forms")
+    } finally {
+      vi.doUnmock("../modules.extensions")
+    }
+  })
+
   it("is imported by the shell's client component", () => {
     const shell = readFileSync(join(__dirname, "..", "PortalShell.tsx"), "utf8")
 

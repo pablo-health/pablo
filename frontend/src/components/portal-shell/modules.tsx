@@ -12,6 +12,9 @@
  * graph and leave the browser's empty — the slots would simply never
  * render.
  *
+ * A deployment adds sections of its own through `modules.extensions.tsx`,
+ * which ships empty; see that file.
+ *
  * Registration is not a gate. A slot is only ever rendered in the shell's
  * active phase, which needs a live patient session, which needs the portal
  * routes to be mounted — so a deployment that serves no portal renders
@@ -28,6 +31,7 @@ import { HomeworkSummary } from "@/components/portal/homework/HomeworkSummary"
 import { PortalHomework } from "@/components/portal/homework/PortalHomework"
 import { PortalRefills } from "@/components/portal/refills/PortalRefills"
 import { RefillsSummary } from "@/components/portal/refills/RefillsSummary"
+import { extensionPortalSlots } from "./modules.extensions"
 import { registerPortalSlot, type PortalSlotProps } from "./slots"
 
 function FormsSlot({ slug, sessionToken }: PortalSlotProps) {
@@ -109,3 +113,6 @@ registerPortalSlot({
   module: "refills",
   label: "Refills",
 })
+// Whatever the deployment adds comes after everything the engine mounts, in
+// the order the deployment lists it. The base build lists nothing.
+for (const slot of extensionPortalSlots) registerPortalSlot(slot)
