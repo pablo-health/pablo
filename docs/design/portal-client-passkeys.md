@@ -87,9 +87,10 @@ before misses:
    offers a passkey after asking whether the device is used only by the
    client. On a shared device it doesn't create one.
 4. Registration (`POST /api/patient/auth/passkeys/register/begin|finish`)
-   requires a session minted by a two-factor redemption less than 15 minutes
-   ago, or by a passkey sign-in from a known browser (to add another device).
-   UV is required, attestation is `none`, and the user handle is 32 random
+   requires a session whose `minted_via` is `sms`, `in_session` or
+   `passkey_known` (adding another device from a known browser) and whose
+   `chain_started_at` is less than 15 minutes ago. Both are defined under
+   *How a session was minted* below. UV is required, attestation is `none`, and the user handle is 32 random
    bytes per client (never the patient id).
 5. The browser that enrolled becomes the first **known browser**.
 
@@ -97,6 +98,28 @@ Before the passkey is saved, the client sees what their device will keep: an
 entry for the practice's portal address under their email. The RP ID is the
 portal host, and the account name is the email. Neither is hidden, and the
 copy says so plainly.
+
+### How a session was minted
+
+Two rules (registration above, and protected mode below) depend on how a
+session began, so the session records it. `companion_sessions` gains one
+column, `minted_via`, set when a sign-in mints a new chain:
+
+| `minted_via` | Minted by |
+|---|---|
+| `sms` | Link plus text code (first sign-in, or the fallback floor) |
+| `in_session` | Link plus the clinician's in-session code |
+| `passkey_known` | Passkey sign-in from a known browser |
+| `passkey_approval` | Passkey from a new browser, approved from a known one |
+| `passkey_text` | Passkey from a new browser, plus a text code |
+| `passkey_email` | Passkey from a new browser, plus the emailed link |
+
+Mint time is the existing `chain_started_at`: it is set when the chain is
+redeemed and never moves, so no second column is needed. A refresh rotates
+`jti` and `issued_at` and copies `minted_via` and `chain_started_at` forward
+unchanged, so a refreshed session qualifies for exactly what the original
+did. Every sign-in starts a new chain. Sessions minted before the column
+exists have `minted_via` null, and null qualifies for neither rule.
 
 ## Sign-in
 
@@ -187,11 +210,17 @@ client who has said someone else may have access to their devices or accounts.
 While it's on:
 
 - **Passkeys are added only in session.** Registration requires a session
-  minted by an in-session code within the last 10 minutes. A text-based
-  enrollment can't add one.
-- **New browsers are refused.** No approval, no text, no email link. The
-  pending sign-in fails with *Ask {practice name} to add this device*. Adding
-  a browser means signing in on it with an in-session code.
+  with `minted_via = in_session` and `chain_started_at` less than 10 minutes
+  ago. A session minted any other way can't add one, however recent.
+- **New browsers are refused, on every path.** A browser with no known-browser
+  token for this client can't sign in except with an in-session code. A
+  passkey assertion from it creates no pending sign-in: no approval, no text,
+  no email link. A link-plus-text redemption from it (the fallback floor) is
+  refused the same way, after the invite signature verifies and before any
+  text is sent or counted. Both answer *Ask {practice name} to add this
+  device* and write `PATIENT_PORTAL_NEW_BROWSER_REFUSED`. Adding a browser
+  means redeeming the link on it with an in-session code. A known browser
+  keeps the fallback floor: link plus text from it still works.
 - **Device-bound credentials, if the deployment requires them**
   (`PORTAL_PROTECTED_REQUIRE_DEVICE_BOUND`, default off). Registration refuses
   a credential whose backup-eligible flag is set, so the passkey can't sync.
@@ -199,9 +228,9 @@ While it's on:
   sync (Windows Hello). iPhone and Android passkeys always sync, so the default
   is off, and the new-browser block already stops a synced copy from being used
   anywhere the client hasn't signed in.
-- Turning protected mode on revokes every known browser except those signed in
-  with the clinician present. The clinician chooses which to keep, from the
-  devices list.
+- Turning protected mode on asks the clinician which known browsers to keep,
+  from the devices list, ideally with the client in session. Every browser not
+  kept is revoked with its sessions, and pending sign-ins are cancelled.
 
 ## The fallback floor
 
@@ -213,19 +242,40 @@ While it's on:
 | Cap reached | In-session code (409 `PORTAL_TEXT_LIMIT` first, never a silent skip) |
 
 There is no path weaker than link plus text. The emailed link only ever counts
-as a factor alongside a passkey.
+as a factor alongside a passkey. Under protected mode the floor holds only on a
+known browser (see *Protected mode*).
+
+## Turning portal access off
+
+The existing kill switch revokes every passkey, every known browser and every
+session for the client, and cancels pending sign-ins. If access is turned back
+on, the client starts again at *Enrollment*.
 
 ## The SMS policy
 
-The same setting as the password design, with one more value:
+What slice 5 builds, and only this. `PORTAL_SMS_POLICY` takes two values:
 
-- `every_sign_in` (default): today's flow, passkeys not offered.
-- `limited`: passkeys offered; texts only for enrollment, new-browser steps and
-  the fallback floor, each written to `portal_step_up_texts` (purpose
-  `enrollment`, `new_browser`, `fallback`) and checked against the practice
-  cap and the country allow-list.
+- `every_sign_in` (default): today's flow. A text at every link redemption,
+  passkeys not offered, nothing counted.
+- `limited`: passkeys offered. A text is sent only for one of three purposes,
+  and each is written to `portal_step_up_texts` before sending:
+  - `enrollment`: the first sign-in's link plus text.
+  - `new_browser`: the second step for a passkey from a new browser.
+  - `fallback`: link plus text from a client with no usable passkey (no
+    platform authenticator, or *I don't have my device*).
 
-The per-practice resolver (`register_portal_sms_policy`) is the same.
+  Every text under `limited` is checked first against the practice cap (50
+  per rolling 30 days, all purposes together) and the country allow-list
+  (`PORTAL_SMS_ALLOWED_COUNTRY_CODES`, default `1`). `new_browser` texts also
+  have the per-client limit under *Rate limits*. A refusal is 409
+  `PORTAL_TEXT_LIMIT`, never a silent skip, and sends the client to the
+  practice for an in-session code.
+
+The per-practice resolver (`register_portal_sms_policy(resolver)`) returns the
+policy and its caps for one practice; with none registered, the settings apply
+to every practice. The password design has the same resolver, ledger table,
+cap, allow-list and 409, and specifies their mechanics in more detail. Its
+policy values and ledger purposes belong to that design and aren't built.
 
 ## Shared devices and older ones
 
@@ -275,9 +325,14 @@ matches `companion_sessions` and is proven by a provisioning test.
 | `portal_known_browsers` | `browser_key` uuid PK, `patient_id`, `token_hash` (SHA-256), `browser_family`, `added_via` (`enrollment`, `approval`, `text`, `email`, `in_session`), `created_at`, `last_seen_at`, `revoked_at`, `revoked_by` |
 | `portal_sign_in_approvals` | `approval_id` uuid PK, `patient_id`, `credential_id`, `browser_family`, `status` (`pending`, `approved`, `denied`, `expired`, `completed`), `completed_via`, `created_at`, `expires_at` (10 min) |
 | `portal_client_protection` | `patient_id` PK, `protected` boolean, `set_by`, `set_at` |
-| `portal_step_up_texts` | shared with the password design |
+| `portal_step_up_texts` | `text_id` uuid PK, `patient_id`, `purpose` (`enrollment`, `new_browser`, `fallback`), `sent_at`. No number, no code, no message |
 
-Plus `code_source` on `companion_auth_challenges`, shared.
+Two new columns on existing tables:
+
+- `companion_sessions.minted_via`, nullable text, values as in *How a session
+  was minted*.
+- `companion_auth_challenges.code_source` (`sms`, `in_session`), as in the
+  password design.
 
 ### Audit events
 
@@ -321,14 +376,35 @@ sets of known browsers. Nothing joins them.
 
 | Slice | Contents | Size |
 |---|---|---|
-| 1. Tables and stores | Five tables, the shared ledger and column, stores, RLS | S |
-| 2. Passkey ceremonies | Register and usernameless sign-in, UV, clone check, kill switch revokes, audit | M |
+| 1. Tables and stores | Five tables, the ledger, `minted_via` and `code_source`, stores, RLS; refresh carries `minted_via` forward | S |
+| 2. Passkey ceremonies | Register (gated on `minted_via` and `chain_started_at`) and usernameless sign-in, UV, clone check, kill switch revokes, audit | M |
 | 3. Known browsers and the second step | Cookie, approvals, new-browser text and email paths, notices, *This wasn't me*, devices list | M |
-| 4. Protected mode | Setting, in-session-only registration and browsers, optional device-bound check | S |
-| 5. SMS policy and ledger | Shared with the password design (`limited` adds two purposes) | S |
+| 4. Protected mode | Setting, in-session-only registration, new browsers refused on the passkey path and on link plus text, keep-or-revoke on turning it on, optional device-bound check | S |
+| 5. SMS policy and ledger | `every_sign_in` and `limited`, the three purposes, cap, country allow-list, 409, resolver (see *The SMS policy*) | S |
 | 6. Clinician card | In-session code (shared), protected mode, devices, reports | S |
 | 7. Portal screens | Offer, shared-device question, sign-in, waiting and approval, devices, copy | M |
-| 8. Local-stack e2e | Virtual authenticator: enroll, known-browser sign-in with no text, new browser approved from a known one, *This wasn't me*, protected-mode refusal, fallback floor | M |
+| 8. Local-stack e2e | See *Slice 8 cases* | M |
+
+### Slice 8 cases
+
+The local stack runs with `PORTAL_SMS_POLICY=limited` and a virtual
+authenticator. "No text" means the SMS fake recorded zero sends and
+`portal_step_up_texts` gained zero rows, not that a field is missing.
+
+1. Enroll: link plus text (one `enrollment` row), add a passkey.
+2. Known-browser sign-in with the passkey: no text.
+3. New browser approved from a known one: no text, the new browser becomes
+   known, `new_device_signed_in` is sent.
+4. New browser, text step: one `new_browser` row.
+5. New browser, emailed-link step: no text, the sign-in completes in the
+   pending browser.
+6. *This wasn't me*: the browser's token and sessions are revoked.
+7. Protected mode, passkey from a new browser: refused, no pending sign-in.
+8. Protected mode, link plus text from a new browser: refused, no text sent.
+9. Fallback floor, no platform authenticator: link plus text, one `fallback`
+   row, no passkey offered.
+10. Fallback floor, cap reached: 409 `PORTAL_TEXT_LIMIT`, then sign-in with
+    an in-session code.
 
 ## Texts saved
 

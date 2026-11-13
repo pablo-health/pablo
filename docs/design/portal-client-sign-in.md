@@ -359,7 +359,8 @@ migration lands.
 
 **`portal_step_up_texts`**: the ledger the caps read. `text_id` uuid PK,
 `patient_id`, `purpose` (`enrollment`, `sign_in`), `sent_at`. No number, no
-code, no message.
+code, no message. The passkey design uses the same table with its own purposes
+(`enrollment`, `new_browser`, `fallback`).
 
 **`companion_auth_challenges`**: one new nullable column, `code_source`
 (`sms` / `in_session`).
@@ -398,12 +399,6 @@ The passkey alternative is designed in full in
 Passwords are the smaller build and work on every device. Passkeys are the
 stronger factor and spare clinicians the resets, but cost more to build and
 more states to explain.
-
-## Later: passkeys
-
-If passwords ship first, passkeys can be added later as an option, accepted in
-place of the password, along the lines of `portal-client-passkeys.md`. The
-tables and the SMS ledger are compatible.
 
 ## Build slices
 
