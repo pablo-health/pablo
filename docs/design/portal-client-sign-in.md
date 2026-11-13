@@ -75,7 +75,7 @@ factor is opt-in, per deployment or per practice.
 | The client's inbox, long-term (e.g. a family member) | Can request links, can't get codes | Can request links. Needs the password too, and the throttle bounds guessing |
 | The client's number via SIM swap | Needs the inbox too | Not used after enrollment |
 | A password the client reused elsewhere and leaked | n/a | Needs the inbox too. This is the main weakness against a phone, and the blocklist only catches known leaks |
-| A phishing page imitating the portal | Can relay link and code in real time | Can relay link and password. Neither flow is phishing-resistant; passkeys would be (see *Later: passkeys*) |
+| A phishing page imitating the portal | Can relay link and code in real time | Can relay link and password. Neither flow is phishing-resistant; passkeys are (see `portal-client-passkeys.md`) |
 | The database, or a backup of it | Code hashes for codes already spent | Argon2id hashes, uncrackable at scale for strong passwords, and useless without the pepper when one is set |
 | A stranger trying to lock a client out | n/a | Can't: a password attempt needs a valid link first |
 
