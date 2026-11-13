@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { IDBFactory } from "fake-indexeddb"
 
-import { clearFirebaseAuthStorage } from "../firebaseAuthRecovery"
+import { CLEAR_AUTH_STORAGE_LIMIT_MS, clearFirebaseAuthStorage } from "../firebaseAuthRecovery"
 
 // A real IndexedDB implementation, not a mock: what matters here is how the
 // database behaves while another connection holds it open, which is exactly
@@ -86,5 +86,88 @@ describe("clearFirebaseAuthStorage", () => {
     await clearFirebaseAuthStorage()
     const names = (await indexedDB.databases()).map((db) => db.name)
     expect(names).not.toContain(DB)
+  })
+
+  // Another tab of the app holds a transaction on the database and never
+  // finishes it (a browser can suspend a tab mid-transaction). The clear
+  // queues behind it for as long as it is held, so the reset's reload never
+  // came. Held here the way such a tab holds it: one request after another
+  // on the store, so the transaction never runs out of work.
+  it("resolves within its limit while another tab holds the database", async () => {
+    const otherTab = await open()
+    await put(otherTab, "stale-session")
+    let holding = true
+    const hold = otherTab.transaction([STORE], "readwrite")
+    const store = hold.objectStore(STORE)
+    const again = () => {
+      if (holding) store.get(USER_KEY).onsuccess = again
+    }
+    again()
+
+    const started = Date.now()
+    await clearFirebaseAuthStorage()
+    const elapsed = Date.now() - started
+
+    expect(elapsed).toBeGreaterThanOrEqual(CLEAR_AUTH_STORAGE_LIMIT_MS - 50)
+    expect(elapsed).toBeLessThan(CLEAR_AUTH_STORAGE_LIMIT_MS + 1_000)
+    holding = false
+    otherTab.close()
+  }, 10_000)
+})
+
+/**
+ * An open that never fires success or error, as one queued behind another
+ * tab's pending delete does. Hand-built: the point is a request that never
+ * answers, or answers only when the test says so.
+ */
+function stalledOpen() {
+  const request: Partial<IDBOpenDBRequest> & { result?: IDBDatabase } = {}
+  const db = {
+    objectStoreNames: [] as unknown as DOMStringList,
+    close: vi.fn(),
+  }
+  const factory = { open: vi.fn(() => request as IDBOpenDBRequest) }
+  /** Let the open succeed now. */
+  const succeed = () => {
+    request.result = db as unknown as IDBDatabase
+    request.onsuccess?.call(request as IDBOpenDBRequest, new Event("success"))
+  }
+  return { factory, db, succeed }
+}
+
+describe("clearFirebaseAuthStorage with an open that never answers", () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    // @ts-expect-error -- happy-dom provides none; restore that.
+    delete globalThis.indexedDB
+  })
+
+  it("resolves at its limit", async () => {
+    const { factory } = stalledOpen()
+    globalThis.indexedDB = factory as unknown as IDBFactory
+    let done = false
+    void clearFirebaseAuthStorage().then(() => {
+      done = true
+    })
+
+    await vi.advanceTimersByTimeAsync(CLEAR_AUTH_STORAGE_LIMIT_MS - 1)
+    expect(done).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(done).toBe(true)
+  })
+
+  it("closes a connection that opens after the limit", async () => {
+    const { factory, db, succeed } = stalledOpen()
+    globalThis.indexedDB = factory as unknown as IDBFactory
+    const cleared = clearFirebaseAuthStorage()
+    await vi.advanceTimersByTimeAsync(CLEAR_AUTH_STORAGE_LIMIT_MS)
+    await cleared
+
+    succeed()
+    expect(db.close).toHaveBeenCalledTimes(1)
   })
 })

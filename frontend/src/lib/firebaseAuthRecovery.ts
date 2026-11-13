@@ -35,6 +35,9 @@ export function isFirebaseStuckStateError(err: unknown): boolean {
   return /INTERNAL ASSERTION FAILED.*Pending promise was never set/i.test(msg)
 }
 
+/** How long the reset waits on the auth database before giving up on it. */
+export const CLEAR_AUTH_STORAGE_LIMIT_MS = 3_000
+
 /**
  * Empty `firebaseLocalStorageDb` in place: every record the SDK restores from
  * on the next load — the signed-in user, any unfinished redirect event — is
@@ -49,16 +52,31 @@ export function isFirebaseStuckStateError(err: unknown): boolean {
  * again — wiping the session just stored — so the next full page load came
  * up signed out. A clear runs inside an ordinary transaction, needs no
  * exclusive access, and leaves nothing behind to fire later.
+ *
+ * Both the open and the clear can wait on another tab of the app
+ * indefinitely: a tab holding a transaction on the database (a browser can
+ * suspend a background tab mid-transaction), or a delete queued behind other
+ * tabs' connections. So the whole of it has one time limit, and on expiry
+ * this resolves anyway, so every caller's reload still happens. An open that
+ * succeeds after the limit closes its connection at once.
  */
 export async function clearFirebaseAuthStorage(): Promise<void> {
   if (typeof indexedDB === "undefined") return
   await new Promise<void>((resolve) => {
     let settled = false
+    let db: IDBDatabase | undefined
     const finish = () => {
       if (settled) return
       settled = true
+      clearTimeout(timer)
       resolve()
     }
+    const timer = setTimeout(() => {
+      // Closing waits for a pending clear rather than cancelling it; what
+      // matters is that this page stops waiting.
+      db?.close()
+      finish()
+    }, CLEAR_AUTH_STORAGE_LIMIT_MS)
     try {
       const open = indexedDB.open(FIREBASE_AUTH_DB)
       // No database yet means nothing to clear. Abort the upgrade so opening
@@ -67,7 +85,11 @@ export async function clearFirebaseAuthStorage(): Promise<void> {
       open.onerror = finish
       open.onblocked = finish
       open.onsuccess = () => {
-        const db = open.result
+        db = open.result
+        if (settled) {
+          db.close()
+          return
+        }
         const stores = Array.from(db.objectStoreNames)
         if (stores.length === 0) {
           db.close()
@@ -78,7 +100,7 @@ export async function clearFirebaseAuthStorage(): Promise<void> {
           const tx = db.transaction(stores, "readwrite")
           for (const name of stores) tx.objectStore(name).clear()
           tx.oncomplete = tx.onerror = tx.onabort = () => {
-            db.close()
+            db?.close()
             finish()
           }
         } catch {
