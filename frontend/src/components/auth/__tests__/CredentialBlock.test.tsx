@@ -62,6 +62,7 @@ vi.mock("@/lib/feErrorReporter", () => ({ reportFrontendError }))
 
 import { WebAuthnError } from "@simplewebauthn/browser"
 import { CredentialBlock, type CredentialBlockProps } from "../CredentialBlock"
+import { PENDING_PASSKEY_STALL_KEY } from "../passkeyCeremony"
 
 const PASSKEY_BUTTON = "Sign in with a passkey"
 const RECOVERY_LINK = "Lost your passkey? Use a recovery code"
@@ -88,6 +89,7 @@ function renderBlock(props: Partial<CredentialBlockProps> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  window.localStorage.clear()
   useConfig.mockReturnValue({ passkeysEnabled: true, googleSignInEnabled: true })
   browserSupportsWebAuthn.mockReturnValue(true)
   // Keep step-up inactive unless a test opts into it.
@@ -406,12 +408,52 @@ describe("CredentialBlock passkey step time limits", () => {
     vi.useRealTimers()
   }
 
-  function expectReported(step: string) {
+  function expectReported(flow: string, step: string, extra = "") {
     expect(reportFrontendError).toHaveBeenCalledTimes(1)
     const report = reportFrontendError.mock.calls[0][0] as Error
     expect(report.name).toBe(`PasskeyStepTimeout:${step}`)
-    expect(report.stack).toContain(`step=${step}`)
+    expect(report.stack).toContain(`passkey ${flow} step=${step} elapsed_ms=`)
+    if (extra) expect(report.stack).toContain(extra)
     expect(report.stack).not.toMatch(/clinician|@/)
+  }
+
+  // A sign-in stall happens while the browser is signed out, where the
+  // reporter's endpoint may refuse it, so it is held for the next sign-in.
+  function expectHeld(step: string) {
+    expect(reportFrontendError).not.toHaveBeenCalled()
+    const held = JSON.parse(window.localStorage.getItem(PENDING_PASSKEY_STALL_KEY) ?? "null")
+    expect(held).toMatchObject({ flow: "sign-in", step, reset: false })
+    expect(typeof held.elapsed_ms).toBe("number")
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(`passkey sign-in step=${step}`))
+  }
+
+  // Swap window.location for one whose reload is a spy, for the reset.
+  function stubReload(): { reload: ReturnType<typeof vi.fn>; restore: () => void } {
+    const realLocation = window.location
+    const reload = vi.fn()
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      writable: true,
+      value: { ...realLocation, reload },
+    })
+    return {
+      reload,
+      restore: () =>
+        Object.defineProperty(window, "location", {
+          configurable: true,
+          writable: true,
+          value: realLocation,
+        }),
+    }
+  }
+
+  // A promise the test settles by hand: a step that answers late.
+  function deferred<T>() {
+    let resolve!: (value: T) => void
+    const promise = new Promise<T>((r) => {
+      resolve = r
+    })
+    return { promise, resolve }
   }
 
   const cases: { step: string; limitMs: number; stall: () => void }[] = [
@@ -433,7 +475,7 @@ describe("CredentialBlock passkey step time limits", () => {
       expect(screen.getByRole("button", { name: RESET })).toBeInTheDocument()
       expect(screen.getByRole("button", { name: PASSKEY_BUTTON })).not.toBeDisabled()
       expect(onCredential).not.toHaveBeenCalled()
-      expectReported(step)
+      expectHeld(step)
     })
   }
 
@@ -445,7 +487,7 @@ describe("CredentialBlock passkey step time limits", () => {
 
     expect(await screen.findByText(STUCK)).toBeInTheDocument()
     expect(onCredential).toHaveBeenCalledTimes(1)
-    expectReported("sign-in")
+    expectHeld("sign-in")
   })
 
   it("gives the passkey prompt the default ceremony time when the options carry none", async () => {
@@ -481,13 +523,7 @@ describe("CredentialBlock passkey step time limits", () => {
   it("the reset clears the stored sign-in state and reloads", async () => {
     signInWithCustomToken.mockImplementation(hang)
     clearFirebaseAuthStorage.mockResolvedValue(undefined)
-    const realLocation = window.location
-    const reload = vi.fn()
-    Object.defineProperty(window, "location", {
-      configurable: true,
-      writable: true,
-      value: { ...realLocation, reload },
-    })
+    const { reload, restore } = stubReload()
     try {
       renderBlock()
       await clickAndWait(PASSKEY_BUTTON, 20_000 - 1)
@@ -497,11 +533,7 @@ describe("CredentialBlock passkey step time limits", () => {
       await waitFor(() => expect(reload).toHaveBeenCalledTimes(1))
       expect(clearFirebaseAuthStorage).toHaveBeenCalledTimes(1)
     } finally {
-      Object.defineProperty(window, "location", {
-        configurable: true,
-        writable: true,
-        value: realLocation,
-      })
+      restore()
     }
   })
 
@@ -563,7 +595,141 @@ describe("CredentialBlock passkey step time limits", () => {
       expect(screen.getByRole("button", { name: RESET })).toBeInTheDocument()
       expect(screen.getByRole("button", { name: "Use passkey" })).not.toBeDisabled()
       expect(onCredential).not.toHaveBeenCalled()
-      expectReported(step)
+      // The first factor is signed in, so the report goes out at once.
+      expectReported("step-up", step)
+      expect(window.localStorage.getItem(PENDING_PASSKEY_STALL_KEY)).toBeNull()
     })
   }
+
+  it("sends a held stall after the next passkey sign-in, and only once", async () => {
+    signInWithCustomToken.mockImplementationOnce(hang)
+    const { onCredential } = renderBlock()
+    await clickAndWait(PASSKEY_BUTTON, 20_000 - 1)
+    await screen.findByText(STUCK)
+    expect(reportFrontendError).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole("button", { name: PASSKEY_BUTTON }))
+
+    await waitFor(() => expect(onCredential).toHaveBeenCalledTimes(1))
+    expectReported("sign-in", "sign-in", "reset=no then_signed_in_with=passkey")
+    expect(window.localStorage.getItem(PENDING_PASSKEY_STALL_KEY)).toBeNull()
+
+    fireEvent.click(screen.getByRole("button", { name: PASSKEY_BUTTON }))
+    await waitFor(() => expect(onCredential).toHaveBeenCalledTimes(2))
+    expect(reportFrontendError).toHaveBeenCalledTimes(1)
+  })
+
+  it("a held stall says the reset was used and what signed the person in", async () => {
+    signInWithCustomToken.mockImplementation(hang)
+    clearFirebaseAuthStorage.mockResolvedValue(undefined)
+    signInWithEmailAndPassword.mockResolvedValue(firstFactorCredential())
+    const { reload, restore } = stubReload()
+    try {
+      const { onCredential, container } = renderBlock()
+      await clickAndWait(PASSKEY_BUTTON, 20_000 - 1)
+      fireEvent.click(await screen.findByRole("button", { name: RESET }))
+      await waitFor(() => expect(reload).toHaveBeenCalledTimes(1))
+      expect(reportFrontendError).not.toHaveBeenCalled()
+
+      await signInWithPassword(container)
+
+      await waitFor(() => expect(onCredential).toHaveBeenCalledTimes(1))
+      expectReported("sign-in", "sign-in", "reset=yes then_signed_in_with=email")
+    } finally {
+      restore()
+    }
+  })
+
+  it("drops a held record it cannot read, and sends nothing", async () => {
+    // Everything else is well formed: only the step is not one of ours, and
+    // the step becomes the report's error class.
+    window.localStorage.setItem(
+      PENDING_PASSKEY_STALL_KEY,
+      JSON.stringify({ flow: "sign-in", step: "someone@example.com", elapsed_ms: 20_000 }),
+    )
+    const { onCredential } = renderBlock()
+
+    fireEvent.click(await screen.findByRole("button", { name: PASSKEY_BUTTON }))
+
+    await waitFor(() => expect(onCredential).toHaveBeenCalledTimes(1))
+    expect(reportFrontendError).not.toHaveBeenCalled()
+    expect(window.localStorage.getItem(PENDING_PASSKEY_STALL_KEY)).toBeNull()
+  })
+
+  it("a retry after a stall hands the host one credential when the first answers late", async () => {
+    const late = deferred<UserCredential>()
+    const retried = { user: { uid: "u1", tag: "retry" } } as unknown as UserCredential
+    signInWithCustomToken.mockReturnValueOnce(late.promise).mockResolvedValueOnce(retried)
+    const { onCredential } = renderBlock()
+    await clickAndWait(PASSKEY_BUTTON, 20_000 - 1)
+    await screen.findByText(STUCK)
+
+    fireEvent.click(screen.getByRole("button", { name: PASSKEY_BUTTON }))
+    await waitFor(() => expect(onCredential).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      late.resolve(credential)
+      await late.promise
+    })
+
+    expect(onCredential).toHaveBeenCalledTimes(1)
+    expect(onCredential).toHaveBeenCalledWith(retried, "passkey")
+  })
+
+  it("a password sign-in after a stall is the only one the host sees", async () => {
+    const late = deferred<UserCredential>()
+    const password = firstFactorCredential("u2")
+    signInWithCustomToken.mockReturnValueOnce(late.promise)
+    signInWithEmailAndPassword.mockResolvedValue(password)
+    const { onCredential, container } = renderBlock()
+    await clickAndWait(PASSKEY_BUTTON, 20_000 - 1)
+    await screen.findByText(STUCK)
+
+    await signInWithPassword(container)
+    await waitFor(() => expect(onCredential).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      late.resolve(credential)
+      await late.promise
+    })
+
+    expect(onCredential).toHaveBeenCalledTimes(1)
+    expect(onCredential).toHaveBeenCalledWith(password, "email")
+  })
+
+  it("a step-up retry after a stall hands the host one credential", async () => {
+    const late = deferred<UserCredential>()
+    const upgraded = { user: { uid: "u1", getIdToken: vi.fn() } } as unknown as UserCredential
+    signInWithEmailAndPassword.mockResolvedValue(firstFactorCredential())
+    getUserStatus.mockResolvedValue({ session_mfa_satisfied: false, has_passkey: true })
+    signInWithCustomToken.mockReturnValueOnce(late.promise).mockResolvedValueOnce(upgraded)
+    const { onCredential, container } = renderBlock()
+    await signInWithPassword(container)
+    await clickAndWait("Use passkey", 20_000 - 1)
+    await screen.findByText(STUCK)
+
+    fireEvent.click(screen.getByRole("button", { name: "Use passkey" }))
+    await waitFor(() => expect(onCredential).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      late.resolve({ user: { uid: "u1", getIdToken: vi.fn() } } as unknown as UserCredential)
+      await late.promise
+    })
+
+    expect(onCredential).toHaveBeenCalledTimes(1)
+    expect(onCredential).toHaveBeenCalledWith(upgraded, "email")
+  })
+
+  it("a sign-in that answers late with no retry still finishes, once", async () => {
+    const late = deferred<UserCredential>()
+    signInWithCustomToken.mockReturnValueOnce(late.promise)
+    const { onCredential } = renderBlock()
+    await clickAndWait(PASSKEY_BUTTON, 20_000 - 1)
+    await screen.findByText(STUCK)
+
+    await act(async () => {
+      late.resolve(credential)
+      await late.promise
+    })
+
+    await waitFor(() => expect(onCredential).toHaveBeenCalledTimes(1))
+    expect(onCredential).toHaveBeenCalledWith(credential, "passkey")
+  })
 })

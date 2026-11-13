@@ -117,22 +117,110 @@ export async function runPasskeyCeremony(
   await withStepTimeout("sign-in", PASSKEY_SIGN_IN_STEP_LIMIT_MS, () => signIn(custom_token))
 }
 
+export type PasskeyFlow = "sign-in" | "step-up"
+
 /**
- * Record which step stalled, through the frontend error reporter. Carries the
- * flow, the step and the elapsed time — nothing about the person signing in.
- * Also written to the console, which is where it is visible when the
- * reporter's endpoint refuses a browser that is not signed in yet.
+ * Where a stall on the signed-out sign-in path waits to be reported. The
+ * reporter's endpoint can refuse a browser that is not signed in, so the
+ * report goes out after the next successful sign-in instead. localStorage, not
+ * the auth database: the reset clears that one, and this record has to
+ * survive the reset to say whether the reset helped.
  */
-export function reportPasskeyStall(
-  flow: "sign-in" | "step-up",
-  err: PasskeyStepTimeoutError,
-): void {
-  const detail = `passkey ${flow} step=${err.step} elapsed_ms=${err.elapsedMs}`
-  console.warn(`Passkey sign-in stalled: ${detail}`)
+export const PENDING_PASSKEY_STALL_KEY = "pablo:passkey-stall"
+
+interface PendingPasskeyStall {
+  flow: PasskeyFlow
+  step: PasskeyStep
+  elapsed_ms: number
+  reset: boolean
+}
+
+const PASSKEY_STEPS: readonly string[] = ["challenge", "webauthn", "verify", "sign-in"]
+
+function readPendingStall(): PendingPasskeyStall | null {
+  try {
+    const raw = window.localStorage.getItem(PENDING_PASSKEY_STALL_KEY)
+    if (!raw) return null
+    const value = JSON.parse(raw) as Partial<PendingPasskeyStall>
+    if (
+      (value.flow !== "sign-in" && value.flow !== "step-up") ||
+      typeof value.step !== "string" ||
+      !PASSKEY_STEPS.includes(value.step) ||
+      typeof value.elapsed_ms !== "number"
+    ) {
+      return null
+    }
+    return {
+      flow: value.flow,
+      step: value.step as PasskeyStep,
+      elapsed_ms: value.elapsed_ms,
+      reset: value.reset === true,
+    }
+  } catch {
+    return null
+  }
+}
+
+function writePendingStall(stall: PendingPasskeyStall): void {
+  try {
+    window.localStorage.setItem(PENDING_PASSKEY_STALL_KEY, JSON.stringify(stall))
+  } catch {
+    // Storage blocked: the console line is all there is.
+  }
+}
+
+function clearPendingStall(): void {
+  try {
+    window.localStorage.removeItem(PENDING_PASSKEY_STALL_KEY)
+  } catch {
+    // Nothing to clear.
+  }
+}
+
+/**
+ * Ship one stall through the frontend error reporter. The reporter sends the
+ * error's name and the top stack frame, never the message, so both carry the
+ * step. Nothing in it identifies the person.
+ */
+function sendStall(step: PasskeyStep, detail: string): void {
   const report = new Error(detail)
-  // The reporter ships the error's name and the top stack frame, never the
-  // message, so both carry the step.
-  report.name = `PasskeyStepTimeout:${err.step}`
+  report.name = `PasskeyStepTimeout:${step}`
   report.stack = `${report.name}\n    at ${detail}`
   void reportFrontendError(report)
+}
+
+/**
+ * Record which step stalled. Always written to the console. A step-up runs on
+ * a signed-in first factor, so its report goes out now; a sign-in stall is
+ * held until the next successful sign-in (see `sendPendingPasskeyStall`).
+ */
+export function reportPasskeyStall(flow: PasskeyFlow, err: PasskeyStepTimeoutError): void {
+  const detail = `passkey ${flow} step=${err.step} elapsed_ms=${err.elapsedMs}`
+  console.warn(`Passkey sign-in stalled: ${detail}`)
+  if (flow === "step-up") {
+    sendStall(err.step, detail)
+    return
+  }
+  writePendingStall({ flow, step: err.step, elapsed_ms: err.elapsedMs, reset: false })
+}
+
+/** Note on a held stall that the reset was used after it. */
+export function markPendingPasskeyStallReset(): void {
+  const pending = readPendingStall()
+  if (pending) writePendingStall({ ...pending, reset: true })
+}
+
+/**
+ * Send a held stall, now that the browser is signed in, and forget it. Says
+ * whether the reset was used and which method got the person in.
+ */
+export function sendPendingPasskeyStall(signedInWith: string): void {
+  const pending = readPendingStall()
+  clearPendingStall()
+  if (!pending) return
+  sendStall(
+    pending.step,
+    `passkey ${pending.flow} step=${pending.step} elapsed_ms=${pending.elapsed_ms} ` +
+      `reset=${pending.reset ? "yes" : "no"} then_signed_in_with=${signedInWith}`,
+  )
 }

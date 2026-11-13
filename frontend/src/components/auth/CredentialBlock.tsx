@@ -10,7 +10,7 @@
  * AFTER a credential resolves is the host's job, via `onCredential`.
  */
 
-import { useState, useSyncExternalStore, type ReactNode } from "react"
+import { useRef, useState, useSyncExternalStore, type ReactNode } from "react"
 import {
   signInWithPopup,
   signInWithRedirect,
@@ -41,7 +41,13 @@ import { AuthLinkButton } from "./AuthLinkButton"
 import { AuthOutlineButton } from "./AuthOutlineButton"
 import { AuthPrimaryButton } from "./AuthPrimaryButton"
 import { MfaChallengeScreen } from "./MfaChallengeScreen"
-import { PasskeyStepTimeoutError, reportPasskeyStall, runPasskeyCeremony } from "./passkeyCeremony"
+import {
+  markPendingPasskeyStallReset,
+  PasskeyStepTimeoutError,
+  reportPasskeyStall,
+  runPasskeyCeremony,
+  sendPendingPasskeyStall,
+} from "./passkeyCeremony"
 import { RecoveryCodeScreen } from "./RecoveryCodeScreen"
 import { VerifyEmailScreen } from "./VerifyEmailScreen"
 
@@ -172,6 +178,12 @@ export function CredentialBlock({
   // Retain the first-factor credential while its passkey is asserted.
   const [pendingCredential, setPendingCredential] = useState<UserCredential | null>(null)
 
+  // Every sign-in attempt takes the next number. A passkey step that ran out
+  // of time is abandoned, not cancelled, so its sign-in can still finish
+  // later; by then the person may have started another attempt, and only the
+  // newest attempt may hand a credential to the host.
+  const attemptRef = useRef(0)
+
   // Only offer passkey sign-in where the browser can actually run the
   // ceremony. The server renders `false` and the client corrects it after
   // hydration, without a mismatch.
@@ -207,6 +219,9 @@ export function CredentialBlock({
       setError("")
       return
     }
+    // The browser is signed in now, so a stall held from an earlier passkey
+    // attempt can be reported.
+    sendPendingPasskeyStall(method)
     // Prompt inline when a Firebase sign-in still needs Pablo's passkey.
     // Status failures fall through because the server-side dashboard gate is
     // authoritative and will route an unsatisfied session to step-up.
@@ -238,12 +253,14 @@ export function CredentialBlock({
    */
   const handlePasskeyStepUp = async () => {
     if (!pendingCredential) return
+    const attempt = ++attemptRef.current
     setError("")
     setLoading(true)
     try {
       await runPasskeyCeremony(async (customToken) => {
         const upgraded = await signInWithCustomToken(getFirebaseAuth(), customToken)
         await upgraded.user.getIdToken(true)
+        if (attempt !== attemptRef.current) return
         await onCredential(upgraded, pendingMethod)
         if (showLastUsed) rememberAuthMethod(pendingMethod)
       })
@@ -270,6 +287,7 @@ export function CredentialBlock({
 
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault()
+    attemptRef.current++
     setError("")
     setLoading(true)
 
@@ -318,6 +336,7 @@ export function CredentialBlock({
   }
 
   const handleGoogleLogin = async () => {
+    attemptRef.current++
     setError("")
     const auth = getFirebaseAuth()
     const provider = new GoogleAuthProvider()
@@ -339,6 +358,7 @@ export function CredentialBlock({
   }
 
   const handlePasskeyLogin = async () => {
+    const attempt = ++attemptRef.current
     setError("")
     setLoading(true)
     try {
@@ -346,6 +366,7 @@ export function CredentialBlock({
         // The custom token carries the verified passkey factor (pablo_amr);
         // signing in with it yields an MFA-satisfied session in one step.
         const credential = await signInWithCustomToken(getFirebaseAuth(), customToken)
+        if (attempt !== attemptRef.current) return
         await resolveCredential(credential, "passkey")
       })
     } catch (err) {
@@ -363,6 +384,7 @@ export function CredentialBlock({
   }
 
   const handleAuthReset = async () => {
+    markPendingPasskeyStallReset()
     await clearFirebaseAuthStorage()
     window.location.reload()
   }

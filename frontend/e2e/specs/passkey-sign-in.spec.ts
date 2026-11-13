@@ -137,7 +137,9 @@ async function browserWithPasskey(
   await createEmulatorUser(email, password)
   const api = new ApiClient(await signInWithPassword(email, password))
 
-  const context = await browser.newContext()
+  // Signed out: a new context otherwise inherits the worker's stored sign-in,
+  // and /login would send it straight on to the dashboard.
+  const context = await browser.newContext({ storageState: { cookies: [], origins: [] } })
   const page = await context.newPage()
   // Passkey sign-in is a per-deployment switch, off on this stack because it
   // would also send every new account through passkey enrollment. Only this
@@ -221,7 +223,8 @@ test("a passkey sign-in lands on the dashboard and stays signed in", async ({
  * while a private window signed in fine. Here the last step, Firebase's
  * exchange of the API's custom token for a session, is held so it never
  * answers. The screen has to stop waiting, say sign-in got stuck, and offer
- * the reset, and the reset has to lead to a working sign-in.
+ * the reset, and the reset has to lead to a working sign-in, which then
+ * reports the stall it held.
  */
 test("a stuck passkey sign-in offers the reset, and the reset leads to a sign-in", async ({
   browser,
@@ -254,8 +257,19 @@ test("a stuck passkey sign-in offers the reset, and the reset leads to a sign-in
   await reloaded
   await expect(page.getByText("Sign-in got stuck.")).toHaveCount(0)
 
+  // The stall was held while the browser was signed out; the sign-in after
+  // the reset sends it, saying the reset was used and what got the person in.
+  const stallReport = page.waitForRequest(
+    (request) =>
+      request.method() === "POST" &&
+      new URL(request.url()).pathname === "/api/internal/fe-error" &&
+      (request.postData() ?? "").includes("PasskeyStepTimeout:sign-in"),
+  )
   await passkeyButton.click()
   await page.waitForURL(/\/dashboard/)
+  const report = (await stallReport).postDataJSON() as { stack_top_frame: string }
+  expect(report.stack_top_frame).toContain("passkey sign-in step=sign-in")
+  expect(report.stack_top_frame).toContain("reset=yes then_signed_in_with=passkey")
 
   await context.close()
 })
