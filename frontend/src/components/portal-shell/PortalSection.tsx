@@ -12,6 +12,10 @@
  * draws, so a practice that has the module off never flashes it. A document
  * that never arrives draws it anyway — the same direction
  * `visiblePortalSlots` fails in, and for the same reason.
+ *
+ * A section with a `Gate` is drawn inside it, so a gate that renders
+ * nothing leaves the page empty under the header rather than sending the
+ * patient Home: the gate may still be fetching its answer.
  */
 
 "use client"
@@ -21,6 +25,7 @@ import { useRouter } from "next/navigation"
 import { ResolvingCard } from "./PortalAuthCards"
 import { usePortalView } from "./context"
 import { getPortalSlots } from "./slots"
+import { SlotGate } from "./SlotGate"
 
 export function PortalSection({ id }: { id: string }) {
   const view = usePortalView()
@@ -39,8 +44,10 @@ export function PortalSection({ id }: { id: string }) {
 
   const { Component } = served
   return (
-    <section data-testid={`portal-section-${id}`} aria-label={served.label}>
-      <Component slug={view.slug} sessionToken={view.sessionToken} />
-    </section>
+    <SlotGate slot={served} session={view}>
+      <section data-testid={`portal-section-${id}`} aria-label={served.label}>
+        <Component slug={view.slug} sessionToken={view.sessionToken} />
+      </section>
+    </SlotGate>
   )
 }

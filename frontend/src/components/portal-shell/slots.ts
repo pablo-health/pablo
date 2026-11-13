@@ -14,7 +14,7 @@
  * the session would be re-deriving state the shell just proved.
  */
 
-import type { ComponentType } from "react"
+import type { ComponentType, ReactNode } from "react"
 
 /** What the shell hands every mounted slot. */
 export interface PortalSlotProps {
@@ -51,6 +51,24 @@ export interface PortalSlot {
    * alone, and Home never carries a section's error.
    */
   Summary?: ComponentType<PortalSlotProps>
+  /**
+   * Decides, once a patient is signed in, whether this slot shows at all.
+   *
+   * It wraps the slot's tile on Home, its link in the navigation and its
+   * section page, each separately, so one answer covers all three: render
+   * `children` to show the slot, render nothing to hide it. A gate may
+   * fetch, and may render nothing while it does, so a section that turns
+   * out to be off never flashes.
+   *
+   * `module` answers from the capability document, which the engine fills
+   * in. A gate is for a slot whose answer lives somewhere else, such as a
+   * per-practice setting the slot reads through its own API. Omitted means
+   * no gate: the slot shows wherever its module allows.
+   *
+   * Like `module`, this is presentation, not authorization. The routes
+   * behind a section are what refuse a patient who should not reach it.
+   */
+  Gate?: ComponentType<PortalSlotProps & { children: ReactNode }>
 }
 
 const slots: PortalSlot[] = []
