@@ -353,10 +353,32 @@ class SchedulingService:
             "diagnosis_codes",
             "client_link_notice",
         }
-        for field, value in updates.items():
+        for field in updates:
             if field not in allowed_fields:
                 raise InvalidAppointmentError(f"Cannot update field: {field}")
+
+        # The calendar accepts or declines a request by setting its status, so
+        # leaving PENDING here has to mean what confirm_appointment means. An
+        # accept that also moves the time gets the stricter overlap check below
+        # instead.
+        leaves_pending = (
+            appointment.status == AppointmentStatus.PENDING
+            and "status" in updates
+            and updates["status"] != AppointmentStatus.PENDING
+        )
+        moves_time = bool({"start_at", "end_at", "duration_minutes"} & updates.keys())
+        if leaves_pending and updates["status"] == AppointmentStatus.CONFIRMED and not moves_time:
+            self._reject_if_really_booked(
+                user_id,
+                _as_datetime(appointment.start_at),
+                _as_datetime(appointment.end_at),
+                exclude_appointment_id=appointment_id,
+            )
+
+        for field, value in updates.items():
             setattr(appointment, field, value)
+        if leaves_pending:
+            appointment.pending_expires_at = None
 
         # Only re-check collision and availability rules when a time field
         # actually moved — the internal start-session call attaches
@@ -364,7 +386,7 @@ class SchedulingService:
         # 422 here.
         self.rule_warnings = []
         self.overridden_rules = []
-        if {"start_at", "end_at", "duration_minutes"} & updates.keys():
+        if moves_time:
             appointment.start_at = _as_datetime(appointment.start_at, tz)
             appointment.end_at = _as_datetime(appointment.end_at, tz)
             self._reject_if_overlapping(
