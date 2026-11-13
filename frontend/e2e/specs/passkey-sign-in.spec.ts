@@ -217,21 +217,23 @@ test("a passkey sign-in lands on the dashboard and stays signed in", async ({
 })
 
 /**
- * A passkey sign-in that gets stuck says so and offers the reset.
+ * A passkey sign-in that gets stuck says so and offers a retry.
  *
  * Seen in a browser with many tabs of the app open: the button spun forever,
- * while a private window signed in fine. Here the last step, Firebase's
- * exchange of the API's custom token for a session, is held so it never
- * answers. The screen has to stop waiting, say sign-in got stuck, and offer
- * the reset, and the reset has to lead to a working sign-in, which then
- * reports the stall it held.
+ * while a private window signed in fine, and closing the other tabs is what
+ * got the person in. Here the last step, Firebase's exchange of the API's
+ * custom token for a session, is held so it never answers. The screen has to
+ * stop waiting, say sign-in got stuck and what to do, and offer Try again,
+ * and Try again has to lead to a working sign-in, which then reports the
+ * stall it held.
  */
-test("a stuck passkey sign-in offers the reset, and the reset leads to a sign-in", async ({
+test("a stuck passkey sign-in offers a retry, and the retry leads to a sign-in", async ({
   browser,
   onboardedUser: _owner,
 }) => {
   test.setTimeout(3 * 60 * 1000)
   const { context, page } = await browserWithPasskey(browser)
+  const stuck = page.getByText("Sign-in got stuck. Close your other Pablo tabs, then try again.")
 
   const held: Route[] = []
   const exchange = /\/accounts:signInWithCustomToken\b/
@@ -244,7 +246,7 @@ test("a stuck passkey sign-in offers the reset, and the reset leads to a sign-in
   await expect.poll(() => held.length, { message: "the token exchange was reached" }).toBe(1)
 
   // The step's limit is 20 s; allow some slack past it.
-  await expect(page.getByText("Sign-in got stuck.")).toBeVisible({ timeout: 40_000 })
+  await expect(stuck).toBeVisible({ timeout: 40_000 })
   await expect(passkeyButton).toBeEnabled()
   await expect(page).toHaveURL(/\/login/)
 
@@ -252,24 +254,20 @@ test("a stuck passkey sign-in offers the reset, and the reset leads to a sign-in
   await page.unroute(exchange)
   await Promise.all(held.map((route) => route.abort().catch(() => {})))
 
-  const reloaded = page.waitForEvent("load")
-  await page.getByRole("button", { name: "Reset and try again" }).click()
-  await reloaded
-  await expect(page.getByText("Sign-in got stuck.")).toHaveCount(0)
-
-  // The stall was held while the browser was signed out; the sign-in after
-  // the reset sends it, saying the reset was used and what got the person in.
+  // The stall was held while the browser was signed out; the sign-in that
+  // Try again starts sends it, saying no reset was used and what got the
+  // person in.
   const stallReport = page.waitForRequest(
     (request) =>
       request.method() === "POST" &&
       new URL(request.url()).pathname === "/api/internal/fe-error" &&
       (request.postData() ?? "").includes("PasskeyStepTimeout:sign-in"),
   )
-  await passkeyButton.click()
+  await page.getByRole("button", { name: "Try again" }).click()
   await page.waitForURL(/\/dashboard/)
   const report = (await stallReport).postDataJSON() as { stack_top_frame: string }
   expect(report.stack_top_frame).toContain("passkey sign-in step=sign-in")
-  expect(report.stack_top_frame).toContain("reset=yes then_signed_in_with=passkey")
+  expect(report.stack_top_frame).toContain("reset=no then_signed_in_with=passkey")
 
   await context.close()
 })

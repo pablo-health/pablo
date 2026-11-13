@@ -33,6 +33,7 @@ import { getUserStatus } from "@/lib/api/users"
 import { firebaseAuthErrorOutcome } from "@/lib/auth-errors"
 import { clearFirebaseAuthStorage } from "@/lib/firebaseAuthRecovery"
 import { errorCode } from "@/lib/errors/errorCode"
+import { SupportContactLine } from "@/components/support/SupportContactLine"
 import { AuthDivider } from "./AuthDivider"
 import { AuthFeedback } from "./AuthFeedback"
 import { AuthGoogleButton } from "./AuthGoogleButton"
@@ -85,9 +86,11 @@ function rememberAuthMethod(method: AuthMethod): void {
   }
 }
 
-// Shown when a passkey step ran out of time. The reset beside it clears the
-// browser's stored sign-in state, which is what a stuck step has needed so far.
-const PASSKEY_STUCK_MESSAGE = "Sign-in got stuck."
+// Shown when a passkey step ran out of time. What has got people in so far is
+// closing the app's other open tabs and starting again, so the message names
+// that step. "Try again" only restarts the passkey sign-in; the storage reset
+// stays behind "Having trouble signing in?", where it already was.
+const PASSKEY_STUCK_MESSAGE = "Sign-in got stuck. Close your other Pablo tabs, then try again."
 
 function noSubscription(): () => void {
   return () => {}
@@ -101,10 +104,11 @@ function LastUsedPill() {
   )
 }
 
-function PasskeyResetButton({ onClick }: { onClick: () => void }) {
+function PasskeyStuckActions({ onRetry }: { onRetry: () => void }) {
   return (
-    <div className="text-center">
-      <AuthLinkButton onClick={onClick}>Reset and try again</AuthLinkButton>
+    <div className="space-y-2 text-center">
+      <AuthLinkButton onClick={onRetry}>Try again</AuthLinkButton>
+      <SupportContactLine lead="Still stuck?" />
     </div>
   )
 }
@@ -436,7 +440,7 @@ export function CredentialBlock({
         </AuthPrimaryButton>
 
         {error && <AuthFeedback variant="error">{error}</AuthFeedback>}
-        {error === PASSKEY_STUCK_MESSAGE && <PasskeyResetButton onClick={handleAuthReset} />}
+        {error === PASSKEY_STUCK_MESSAGE && <PasskeyStuckActions onRetry={handlePasskeyStepUp} />}
 
         <AuthLinkButton
           onClick={() => {
@@ -581,7 +585,7 @@ export function CredentialBlock({
         )}
 
         {error && <AuthFeedback variant="error">{error}</AuthFeedback>}
-        {error === PASSKEY_STUCK_MESSAGE && <PasskeyResetButton onClick={handleAuthReset} />}
+        {error === PASSKEY_STUCK_MESSAGE && <PasskeyStuckActions onRetry={handlePasskeyLogin} />}
 
         {resetSent && (
           <AuthFeedback variant="success">
