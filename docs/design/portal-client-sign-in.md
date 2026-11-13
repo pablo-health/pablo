@@ -374,41 +374,29 @@ the resource. None of them ever carries the password, the hash or a code:
 
 ## Passwords against passkeys
 
-| | Link plus password | Passkey (later) |
+The passkey alternative is designed in full in
+[`portal-client-passkeys.md`](portal-client-passkeys.md).
+
+| | Link plus password | Passkeys |
 |---|---|---|
 | Phishing | Relayable in real time, like link plus text | Resistant: bound to the portal's origin |
-| A partner on the same Apple or Google account | Doesn't see the password unless it's saved to that shared manager | A synced passkey appears on every device signed into the account, which is a real risk where the partner is the person the client is protecting themselves from |
+| Password reuse | The main weakness; the blocklist catches only known leaks | Nothing to reuse |
+| A partner on the same Apple or Google account | Doesn't see the password unless it's saved to that shared manager | A synced passkey reaches the partner's devices; the known-browser check, new-device email and protected mode answer it, at the cost of more machinery |
 | Client familiarity | Everyone knows passwords | Many clients haven't used a passkey; prompts differ by device |
-| Older phones and shared computers | Work everywhere | Need recent OS versions; shared devices are unsafe |
-| Forgotten or lost | Clinician reset | Synced passkeys usually return on a new phone, otherwise clinician |
-| Build size | About 2 weeks across six slices | About 3 weeks, plus per-host RP IDs |
+| Older phones and shared computers | Work everywhere | Need recent OS versions; otherwise link plus text |
+| Forgotten or lost | Clinician reset, every time | Synced passkeys usually return on a new phone; otherwise link plus text |
+| Texts after enrollment | None | Occasional, for a new browser no known one approves, and for devices without passkey support |
+| Build size | About 3 weeks (13–15 developer-days, six slices) | About 5 weeks (23–25 developer-days, eight slices) |
 
-Passwords lead because every client can use one on any device today, they
-don't follow the client onto a shared cloud account, and they cost the least to
-build. Passkeys are the stronger factor, and they come later as an option for
-the clients who want one.
+Passwords are the smaller build and work on every device. Passkeys are the
+stronger factor and spare clinicians the resets, but cost more to build and
+more states to explain.
 
 ## Later: passkeys
 
-A client who has signed in with the link plus a password may add a passkey,
-created with user verification required, which is then accepted in place of
-the password. A passkey with user verification is a multi-factor cryptographic
-authenticator (WebAuthn L2 §6.2.3; NIST SP 800-63B §5.1.9), so it may also
-sign in without the link.
-
-The shape, drafted earlier and kept for when this is picked up:
-
-- Credentials are per practice and per client, in the practice schema, with a
-  random user handle (never the patient id).
-- The RP ID is the portal host the passkey was created on, so moving a practice
-  to a new host needs related origins (`/.well-known/webauthn`) or
-  re-enrollment.
-- Reuse `py_webauthn`, `passkey_ceremony.py` helpers and the frontend
-  `passkeyCeremony.ts` step timeouts from the clinician passkeys. The Firebase
-  token, backup codes and platform tables are not reused, because clients
-  aren't Firebase users.
-- The kill switch revokes passkeys, and enrollment asks whether the device is
-  shared before creating one.
+If passwords ship first, passkeys can be added later as an option, accepted in
+place of the password, along the lines of `portal-client-passkeys.md`. The
+tables and the SMS ledger are compatible.
 
 ## Build slices
 
