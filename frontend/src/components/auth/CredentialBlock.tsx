@@ -25,15 +25,10 @@ import {
   type MultiFactorResolver,
   type UserCredential,
 } from "firebase/auth"
-import {
-  startAuthentication,
-  browserSupportsWebAuthn,
-  WebAuthnError,
-} from "@simplewebauthn/browser"
+import { browserSupportsWebAuthn, WebAuthnError } from "@simplewebauthn/browser"
 import { Fingerprint } from "lucide-react"
 import { getFirebaseAuth } from "@/lib/firebase"
 import { useConfig } from "@/lib/config"
-import { beginAuthentication, finishAuthentication } from "@/lib/api/passkey"
 import { getUserStatus } from "@/lib/api/users"
 import { firebaseAuthErrorOutcome } from "@/lib/auth-errors"
 import { clearFirebaseAuthStorage } from "@/lib/firebaseAuthRecovery"
@@ -46,6 +41,7 @@ import { AuthLinkButton } from "./AuthLinkButton"
 import { AuthOutlineButton } from "./AuthOutlineButton"
 import { AuthPrimaryButton } from "./AuthPrimaryButton"
 import { MfaChallengeScreen } from "./MfaChallengeScreen"
+import { PasskeyStepTimeoutError, reportPasskeyStall, runPasskeyCeremony } from "./passkeyCeremony"
 import { RecoveryCodeScreen } from "./RecoveryCodeScreen"
 import { VerifyEmailScreen } from "./VerifyEmailScreen"
 
@@ -83,6 +79,10 @@ function rememberAuthMethod(method: AuthMethod): void {
   }
 }
 
+// Shown when a passkey step ran out of time. The reset beside it clears the
+// browser's stored sign-in state, which is what a stuck step has needed so far.
+const PASSKEY_STUCK_MESSAGE = "Sign-in got stuck."
+
 function noSubscription(): () => void {
   return () => {}
 }
@@ -92,6 +92,14 @@ function LastUsedPill() {
     <span className="pointer-events-none absolute -top-2 right-3 rounded-full bg-primary-600 px-2 py-0.5 text-[11px] font-semibold text-on-honey shadow-sm ring-2 ring-card">
       Last used
     </span>
+  )
+}
+
+function PasskeyResetButton({ onClick }: { onClick: () => void }) {
+  return (
+    <div className="text-center">
+      <AuthLinkButton onClick={onClick}>Reset and try again</AuthLinkButton>
+    </div>
   )
 }
 
@@ -233,14 +241,18 @@ export function CredentialBlock({
     setError("")
     setLoading(true)
     try {
-      const options = await beginAuthentication()
-      const assertion = await startAuthentication({ optionsJSON: options })
-      const { custom_token } = await finishAuthentication(assertion)
-      const upgraded = await signInWithCustomToken(getFirebaseAuth(), custom_token)
-      await upgraded.user.getIdToken(true)
-      await onCredential(upgraded, pendingMethod)
-      if (showLastUsed) rememberAuthMethod(pendingMethod)
+      await runPasskeyCeremony(async (customToken) => {
+        const upgraded = await signInWithCustomToken(getFirebaseAuth(), customToken)
+        await upgraded.user.getIdToken(true)
+        await onCredential(upgraded, pendingMethod)
+        if (showLastUsed) rememberAuthMethod(pendingMethod)
+      })
     } catch (err) {
+      if (err instanceof PasskeyStepTimeoutError) {
+        reportPasskeyStall("step-up", err)
+        setError(PASSKEY_STUCK_MESSAGE)
+        return
+      }
       if (err instanceof WebAuthnError && err.name === "NotAllowedError") return
       setError("That didn't work. Try again, or start over and sign in with your passkey.")
     } finally {
@@ -330,14 +342,18 @@ export function CredentialBlock({
     setError("")
     setLoading(true)
     try {
-      const options = await beginAuthentication()
-      const assertion = await startAuthentication({ optionsJSON: options })
-      const { custom_token } = await finishAuthentication(assertion)
-      // The custom token carries the verified passkey factor (pablo_amr);
-      // signing in with it yields an MFA-satisfied session in one step.
-      const credential = await signInWithCustomToken(getFirebaseAuth(), custom_token)
-      await resolveCredential(credential, "passkey")
+      await runPasskeyCeremony(async (customToken) => {
+        // The custom token carries the verified passkey factor (pablo_amr);
+        // signing in with it yields an MFA-satisfied session in one step.
+        const credential = await signInWithCustomToken(getFirebaseAuth(), customToken)
+        await resolveCredential(credential, "passkey")
+      })
     } catch (err) {
+      if (err instanceof PasskeyStepTimeoutError) {
+        reportPasskeyStall("sign-in", err)
+        setError(PASSKEY_STUCK_MESSAGE)
+        return
+      }
       // User dismissed the platform prompt — leave the form untouched.
       if (err instanceof WebAuthnError && err.name === "NotAllowedError") return
       setError("Passkey sign-in failed. Try again, or use your email and password.")
@@ -398,6 +414,7 @@ export function CredentialBlock({
         </AuthPrimaryButton>
 
         {error && <AuthFeedback variant="error">{error}</AuthFeedback>}
+        {error === PASSKEY_STUCK_MESSAGE && <PasskeyResetButton onClick={handleAuthReset} />}
 
         <AuthLinkButton
           onClick={() => {
@@ -542,6 +559,7 @@ export function CredentialBlock({
         )}
 
         {error && <AuthFeedback variant="error">{error}</AuthFeedback>}
+        {error === PASSKEY_STUCK_MESSAGE && <PasskeyResetButton onClick={handleAuthReset} />}
 
         {resetSent && (
           <AuthFeedback variant="success">
