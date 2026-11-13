@@ -28,7 +28,7 @@
  */
 
 import { randomBytes } from "node:crypto"
-import type { CDPSession, Page } from "@playwright/test"
+import type { Browser, BrowserContext, CDPSession, Page, Route } from "@playwright/test"
 import { ApiClient, createEmulatorUser, signInWithPassword } from "../fixtures/api"
 import { expect, test } from "../fixtures/auth"
 
@@ -126,18 +126,20 @@ async function settleForcedLogoutArrival(page: Page): Promise<void> {
   await page.waitForLoadState("networkidle")
 }
 
-test("a passkey sign-in lands on the dashboard and stays signed in", async ({
-  browser,
-  // Requested for its side effect: the practice's owner is whoever signs in
-  // first, and that must be the worker's clinician, not this account.
-  onboardedUser: _owner,
-}) => {
-  test.setTimeout(10 * 60 * 1000)
+/**
+ * A browser with a passkey registered for a fresh account, on /login with the
+ * passkey button offered.
+ */
+async function browserWithPasskey(
+  browser: Browser,
+): Promise<{ context: BrowserContext; page: Page }> {
   const { email, password } = freshAccount()
   await createEmulatorUser(email, password)
   const api = new ApiClient(await signInWithPassword(email, password))
 
-  const context = await browser.newContext()
+  // Signed out: a new context otherwise inherits the worker's stored sign-in,
+  // and /login would send it straight on to the dashboard.
+  const context = await browser.newContext({ storageState: { cookies: [], origins: [] } })
   const page = await context.newPage()
   // Passkey sign-in is a per-deployment switch, off on this stack because it
   // would also send every new account through passkey enrollment. Only this
@@ -152,6 +154,17 @@ test("a passkey sign-in lands on the dashboard and stays signed in", async ({
   const options = await api.post<RegistrationOptions>("/api/auth/passkey/register/begin", {})
   const credential = await createCredential(page, options)
   await api.post("/api/auth/passkey/register/finish", { credential, device_label: "e2e" })
+  return { context, page }
+}
+
+test("a passkey sign-in lands on the dashboard and stays signed in", async ({
+  browser,
+  // Requested for its side effect: the practice's owner is whoever signs in
+  // first, and that must be the worker's clinician, not this account.
+  onboardedUser: _owner,
+}) => {
+  test.setTimeout(10 * 60 * 1000)
+  const { context, page } = await browserWithPasskey(browser)
 
   const passkeyButton = page.getByRole("button", { name: "Sign in with a passkey" })
 
@@ -199,6 +212,64 @@ test("a passkey sign-in lands on the dashboard and stays signed in", async ({
       await expect(page).toHaveURL(/\/login$/)
     })
   }
+
+  await context.close()
+})
+
+/**
+ * A passkey sign-in that gets stuck says so and offers the reset.
+ *
+ * Seen in a browser with many tabs of the app open: the button spun forever,
+ * while a private window signed in fine. Here the last step, Firebase's
+ * exchange of the API's custom token for a session, is held so it never
+ * answers. The screen has to stop waiting, say sign-in got stuck, and offer
+ * the reset, and the reset has to lead to a working sign-in, which then
+ * reports the stall it held.
+ */
+test("a stuck passkey sign-in offers the reset, and the reset leads to a sign-in", async ({
+  browser,
+  onboardedUser: _owner,
+}) => {
+  test.setTimeout(3 * 60 * 1000)
+  const { context, page } = await browserWithPasskey(browser)
+
+  const held: Route[] = []
+  const exchange = /\/accounts:signInWithCustomToken\b/
+  await page.route(exchange, (route) => {
+    held.push(route)
+  })
+
+  const passkeyButton = page.getByRole("button", { name: "Sign in with a passkey" })
+  await passkeyButton.click()
+  await expect.poll(() => held.length, { message: "the token exchange was reached" }).toBe(1)
+
+  // The step's limit is 20 s; allow some slack past it.
+  await expect(page.getByText("Sign-in got stuck.")).toBeVisible({ timeout: 40_000 })
+  await expect(passkeyButton).toBeEnabled()
+  await expect(page).toHaveURL(/\/login/)
+
+  // Let the exchange through again, and drop the request that was held.
+  await page.unroute(exchange)
+  await Promise.all(held.map((route) => route.abort().catch(() => {})))
+
+  const reloaded = page.waitForEvent("load")
+  await page.getByRole("button", { name: "Reset and try again" }).click()
+  await reloaded
+  await expect(page.getByText("Sign-in got stuck.")).toHaveCount(0)
+
+  // The stall was held while the browser was signed out; the sign-in after
+  // the reset sends it, saying the reset was used and what got the person in.
+  const stallReport = page.waitForRequest(
+    (request) =>
+      request.method() === "POST" &&
+      new URL(request.url()).pathname === "/api/internal/fe-error" &&
+      (request.postData() ?? "").includes("PasskeyStepTimeout:sign-in"),
+  )
+  await passkeyButton.click()
+  await page.waitForURL(/\/dashboard/)
+  const report = (await stallReport).postDataJSON() as { stack_top_frame: string }
+  expect(report.stack_top_frame).toContain("passkey sign-in step=sign-in")
+  expect(report.stack_top_frame).toContain("reset=yes then_signed_in_with=passkey")
 
   await context.close()
 })
