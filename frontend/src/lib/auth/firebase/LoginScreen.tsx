@@ -30,6 +30,7 @@ import {
   AuthHeader,
   CredentialBlock,
 } from "@/components/auth"
+import { LoginBrandPanelExtension } from "@/components/auth/loginBrandPanel.extensions"
 import { ThemeSwitcher } from "@/components/theme/ThemeSwitcher"
 import { errorCode } from "@/lib/errors/errorCode"
 
@@ -47,6 +48,9 @@ function getUrlParam(name: string): string {
 function postLoginDestination(): string {
   return safeReturnTo(getUrlParam("returnTo"))
 }
+
+// A deployment can lay out the wide-screen panel its own way; see the slot.
+const BrandPanel = LoginBrandPanelExtension ?? LoginBrandPanel
 
 export function FirebaseLoginScreen() {
   const router = useRouter()
@@ -186,7 +190,7 @@ export function FirebaseLoginScreen() {
       signUp={isSignUp}
       onSignUpChange={setIsSignUp}
       renderShell={(form) => (
-        <AuthCard brandPanel={<LoginBrandPanel />}>
+        <AuthCard brandPanel={<BrandPanel />}>
           <div className="mb-6 flex flex-col items-center gap-2 lg:hidden">
             <div className="flex items-center gap-2.5">
               <Image src="/pablo-login.webp" alt="" width={44} height={44} className="object-contain" />
