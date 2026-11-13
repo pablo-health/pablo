@@ -22,6 +22,7 @@ const {
   cancelCeremony,
   reportFrontendError,
   clearFirebaseAuthStorage,
+  useOptionalConfig,
 } = vi.hoisted(() => ({
   signInWithEmailAndPassword: vi.fn(),
   signInWithCustomToken: vi.fn(),
@@ -34,6 +35,7 @@ const {
   cancelCeremony: vi.fn(),
   reportFrontendError: vi.fn(),
   clearFirebaseAuthStorage: vi.fn(),
+  useOptionalConfig: vi.fn(),
 }))
 
 vi.mock("firebase/auth", () => ({
@@ -49,6 +51,8 @@ vi.mock("firebase/auth", () => ({
 }))
 vi.mock("@/lib/firebase", () => ({ getFirebaseAuth: vi.fn() }))
 vi.mock("@/lib/config", () => ({ useConfig }))
+// The support line reads the deployment's address from here.
+vi.mock("@/lib/config-provider", () => ({ useOptionalConfig }))
 vi.mock("@/lib/api/passkey", () => ({ beginAuthentication, finishAuthentication }))
 vi.mock("@/lib/api/users", () => ({ getUserStatus }))
 vi.mock("@simplewebauthn/browser", () => ({
@@ -91,6 +95,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   window.localStorage.clear()
   useConfig.mockReturnValue({ passkeysEnabled: true, googleSignInEnabled: true })
+  useOptionalConfig.mockReturnValue({ supportEmail: "" })
   browserSupportsWebAuthn.mockReturnValue(true)
   // Keep step-up inactive unless a test opts into it.
   getUserStatus.mockResolvedValue({ session_mfa_satisfied: true, has_passkey: false })
@@ -372,8 +377,10 @@ describe("CredentialBlock last-used hint", () => {
 describe("CredentialBlock passkey step time limits", () => {
   // A promise that never settles: the step the browser got stuck on.
   const hang = () => new Promise<never>(() => {})
-  const STUCK = "Sign-in got stuck."
-  const RESET = "Reset and try again"
+  const STUCK = "Sign-in got stuck. Close your other Pablo tabs, then try again."
+  const TRY_AGAIN = "Try again"
+  const TROUBLE = "Having trouble signing in?"
+  const SUPPORT = "help@example.com"
   const credential = { user: { uid: "u1" } } as unknown as UserCredential
 
   let warn: ReturnType<typeof vi.spyOn>
@@ -406,6 +413,11 @@ describe("CredentialBlock passkey step time limits", () => {
       await vi.advanceTimersByTimeAsync(1)
     })
     vi.useRealTimers()
+  }
+
+  function expectSupportLine() {
+    const line = screen.getByTestId("support-contact-line")
+    expect(line).toHaveTextContent(`Still stuck? Email ${SUPPORT}.`)
   }
 
   function expectReported(flow: string, step: string, extra = "") {
@@ -465,14 +477,16 @@ describe("CredentialBlock passkey step time limits", () => {
   ]
 
   for (const { step, limitMs, stall } of cases) {
-    it(`stops the spinner and offers the reset when the ${step} step never finishes`, async () => {
+    it(`stops the spinner and offers a retry when the ${step} step never finishes`, async () => {
       stall()
+      useOptionalConfig.mockReturnValue({ supportEmail: SUPPORT })
       const { onCredential } = renderBlock()
 
       await clickAndWait(PASSKEY_BUTTON, limitMs - 1)
 
       expect(await screen.findByText(STUCK)).toBeInTheDocument()
-      expect(screen.getByRole("button", { name: RESET })).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: TRY_AGAIN })).toBeInTheDocument()
+      expectSupportLine()
       expect(screen.getByRole("button", { name: PASSKEY_BUTTON })).not.toBeDisabled()
       expect(onCredential).not.toHaveBeenCalled()
       expectHeld(step)
@@ -520,15 +534,61 @@ describe("CredentialBlock passkey step time limits", () => {
     expect(cancelCeremony).not.toHaveBeenCalled()
   })
 
-  it("the reset clears the stored sign-in state and reloads", async () => {
+  it("shows no support line when the deployment has no support address", async () => {
     signInWithCustomToken.mockImplementation(hang)
+    renderBlock()
+
+    await clickAndWait(PASSKEY_BUTTON, 20_000 - 1)
+
+    expect(await screen.findByText(STUCK)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: TRY_AGAIN })).toBeInTheDocument()
+    expect(screen.queryByTestId("support-contact-line")).toBeNull()
+  })
+
+  it("Try again starts a new passkey sign-in and keeps the stored sign-in state", async () => {
+    signInWithCustomToken.mockImplementationOnce(hang)
+    const { reload, restore } = stubReload()
+    try {
+      const { onCredential } = renderBlock()
+      await clickAndWait(PASSKEY_BUTTON, 20_000 - 1)
+      await screen.findByText(STUCK)
+
+      fireEvent.click(screen.getByRole("button", { name: TRY_AGAIN }))
+
+      await waitFor(() => expect(onCredential).toHaveBeenCalledWith(credential, "passkey"))
+      expect(beginAuthentication).toHaveBeenCalledTimes(2)
+      expect(clearFirebaseAuthStorage).not.toHaveBeenCalled()
+      expect(reload).not.toHaveBeenCalled()
+      expect(screen.queryByText(STUCK)).toBeNull()
+    } finally {
+      restore()
+    }
+  })
+
+  it("step-up: Try again asks for the passkey again", async () => {
+    const upgraded = { user: { uid: "u1", getIdToken: vi.fn() } } as unknown as UserCredential
+    signInWithEmailAndPassword.mockResolvedValue(firstFactorCredential())
+    getUserStatus.mockResolvedValue({ session_mfa_satisfied: false, has_passkey: true })
+    signInWithCustomToken.mockImplementationOnce(hang).mockResolvedValueOnce(upgraded)
+    const { onCredential, container } = renderBlock()
+    await signInWithPassword(container)
+    await clickAndWait("Use passkey", 20_000 - 1)
+    await screen.findByText(STUCK)
+
+    fireEvent.click(screen.getByRole("button", { name: TRY_AGAIN }))
+
+    await waitFor(() => expect(onCredential).toHaveBeenCalledWith(upgraded, "email"))
+    expect(beginAuthentication).toHaveBeenCalledTimes(2)
+    expect(clearFirebaseAuthStorage).not.toHaveBeenCalled()
+  })
+
+  it("the Having trouble reset still clears the stored sign-in state and reloads", async () => {
     clearFirebaseAuthStorage.mockResolvedValue(undefined)
     const { reload, restore } = stubReload()
     try {
-      renderBlock()
-      await clickAndWait(PASSKEY_BUTTON, 20_000 - 1)
+      renderBlock({ showAuthReset: true })
 
-      fireEvent.click(await screen.findByRole("button", { name: RESET }))
+      fireEvent.click(await screen.findByRole("button", { name: TROUBLE }))
 
       await waitFor(() => expect(reload).toHaveBeenCalledTimes(1))
       expect(clearFirebaseAuthStorage).toHaveBeenCalledTimes(1)
@@ -568,7 +628,7 @@ describe("CredentialBlock passkey step time limits", () => {
     expect(screen.queryByText(STUCK)).toBeNull()
   })
 
-  it("an ordinary failure keeps its own message and offers no reset", async () => {
+  it("an ordinary failure keeps its own message and offers no stuck actions", async () => {
     finishAuthentication.mockRejectedValue(new Error("400"))
     renderBlock()
 
@@ -577,14 +637,15 @@ describe("CredentialBlock passkey step time limits", () => {
     expect(
       await screen.findByText("Passkey sign-in failed. Try again, or use your email and password."),
     ).toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: RESET })).toBeNull()
+    expect(screen.queryByRole("button", { name: TRY_AGAIN })).toBeNull()
     expect(reportFrontendError).not.toHaveBeenCalled()
   })
 
   for (const { step, limitMs, stall } of cases) {
-    it(`step-up: offers the reset when the ${step} step never finishes`, async () => {
+    it(`step-up: offers a retry when the ${step} step never finishes`, async () => {
       signInWithEmailAndPassword.mockResolvedValue(firstFactorCredential())
       getUserStatus.mockResolvedValue({ session_mfa_satisfied: false, has_passkey: true })
+      useOptionalConfig.mockReturnValue({ supportEmail: SUPPORT })
       stall()
       const { onCredential, container } = renderBlock()
       await signInWithPassword(container)
@@ -592,7 +653,8 @@ describe("CredentialBlock passkey step time limits", () => {
       await clickAndWait("Use passkey", limitMs - 1)
 
       expect(await screen.findByText(STUCK)).toBeInTheDocument()
-      expect(screen.getByRole("button", { name: RESET })).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: TRY_AGAIN })).toBeInTheDocument()
+      expectSupportLine()
       expect(screen.getByRole("button", { name: "Use passkey" })).not.toBeDisabled()
       expect(onCredential).not.toHaveBeenCalled()
       // The first factor is signed in, so the report goes out at once.
@@ -625,9 +687,9 @@ describe("CredentialBlock passkey step time limits", () => {
     signInWithEmailAndPassword.mockResolvedValue(firstFactorCredential())
     const { reload, restore } = stubReload()
     try {
-      const { onCredential, container } = renderBlock()
+      const { onCredential, container } = renderBlock({ showAuthReset: true })
       await clickAndWait(PASSKEY_BUTTON, 20_000 - 1)
-      fireEvent.click(await screen.findByRole("button", { name: RESET }))
+      fireEvent.click(await screen.findByRole("button", { name: TROUBLE }))
       await waitFor(() => expect(reload).toHaveBeenCalledTimes(1))
       expect(reportFrontendError).not.toHaveBeenCalled()
 
