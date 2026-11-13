@@ -272,6 +272,16 @@ export class ApiError extends Error {
 
 interface FetchOptions extends RequestInit {
   token?: string
+  /**
+   * `"none"`: send no Authorization header and don't ask the auth provider
+   * for a token. For calls that run before any session exists, such as the
+   * passkey sign-in ceremony. Asking for a token waits for the provider to
+   * restore the stored session, and that restore can wait on another tab of
+   * the app that holds the browser's auth storage, so a call that needs no
+   * session should not ask. Omitted: today's behaviour, a token when there
+   * is one.
+   */
+  auth?: "none"
 }
 
 /**
@@ -430,7 +440,7 @@ export async function apiClient<T>(
   endpoint: string,
   options: FetchOptions = {}
 ): Promise<T> {
-  const { token, ...fetchOptions } = options
+  const { token, auth, ...fetchOptions } = options
   // Read before the first await: the background mark only lasts for the
   // synchronous part of the call that started this request.
   const background = isBackgroundRequest()
@@ -446,7 +456,7 @@ export async function apiClient<T>(
       ...clientBuildHeader(),
       ...(background ? { [BACKGROUND_REQUEST_HEADER]: "1" } : {}),
       ...(fetchOptions.headers as Record<string, string>),
-      ...(await getAuthHeader(token, forceRefresh)),
+      ...(auth === "none" ? {} : await getAuthHeader(token, forceRefresh)),
     }
     return fetch(url, { ...fetchOptions, headers })
   }
@@ -463,6 +473,7 @@ export async function apiClient<T>(
     if (
       (response.status === 401 || response.status === 403) &&
       !token &&
+      auth !== "none" &&
       typeof window !== "undefined"
     ) {
       const retryCode = (await peekErrorCode(response)) ?? ""

@@ -261,7 +261,7 @@ export function CredentialBlock({
     setError("")
     setLoading(true)
     try {
-      await runPasskeyCeremony(async (customToken) => {
+      await runPasskeyCeremony("step-up", async (customToken) => {
         const upgraded = await signInWithCustomToken(getFirebaseAuth(), customToken)
         await upgraded.user.getIdToken(true)
         if (attempt !== attemptRef.current) return
@@ -366,7 +366,7 @@ export function CredentialBlock({
     setError("")
     setLoading(true)
     try {
-      await runPasskeyCeremony(async (customToken) => {
+      await runPasskeyCeremony("sign-in", async (customToken) => {
         // The custom token carries the verified passkey factor (pablo_amr);
         // signing in with it yields an MFA-satisfied session in one step.
         const credential = await signInWithCustomToken(getFirebaseAuth(), customToken)

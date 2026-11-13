@@ -145,6 +145,9 @@ describe("CredentialBlock passkey step-up", () => {
 
     await waitFor(() => expect(onCredential).toHaveBeenCalledTimes(1))
     expect(onCredential).toHaveBeenCalledWith(upgraded, "email")
+    // A step-up's verify sends the session's token, so the API can refuse a
+    // passkey that belongs to another account.
+    expect(finishAuthentication).toHaveBeenCalledWith({ id: "assertion" }, "step-up")
   })
 
   it("does not interrupt a session that already cleared a factor", async () => {
@@ -255,6 +258,8 @@ describe("CredentialBlock credential resolution", () => {
       optionsJSON: { challenge: "c" },
     })
     expect(signInWithCustomToken).toHaveBeenCalledWith(undefined, "custom-token")
+    // A sign-in's verify needs no session, so it doesn't wait for one.
+    expect(finishAuthentication).toHaveBeenCalledWith({ id: "assertion" }, "sign-in")
   })
 })
 

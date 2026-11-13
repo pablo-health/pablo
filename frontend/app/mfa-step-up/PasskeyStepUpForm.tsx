@@ -34,7 +34,7 @@ export function PasskeyStepUpForm() {
     try {
       const options = await beginAuthentication()
       const assertion = await startAuthentication({ optionsJSON: options })
-      const { custom_token } = await finishAuthentication(assertion)
+      const { custom_token } = await finishAuthentication(assertion, "step-up")
 
       const credential = await signInWithCustomToken(getFirebaseAuth(), custom_token)
       const idToken = await credential.user.getIdToken(true)
