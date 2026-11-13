@@ -1119,18 +1119,19 @@ test = ["pytest (>=6)"]
 
 [[package]]
 name = "fastapi"
-version = "0.162.0"
+version = "0.162.5"
 description = "FastAPI framework, high performance, easy to learn, fast to code, ready for production"
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "fastapi-0.162.0-py3-none-any.whl", hash = "sha256:3785963de305dd09912426cb81f2d230fce98ab3521cdfe97265c8d14983128c"},
-    {file = "fastapi-0.162.0.tar.gz", hash = "sha256:6a22c1e2e6e32e0633ee7e170f00009a29b8228b16feb219ee42f32fd8d88a8f"},
+    {file = "fastapi-0.162.5-py3-none-any.whl", hash = "sha256:5303c67415fde762889ca337db79d27b755b8bd09cef314fa7a4340bb30bfd2b"},
+    {file = "fastapi-0.162.5.tar.gz", hash = "sha256:1ca37f64f61c99cebd38636e67525fb721c5e8c1169f07f2a35d73b0a63265d4"},
 ]
 
 [package.dependencies]
 annotated-doc = ">=0.0.2"
+anyio = ">=4.1.0"
 opentelemetry-api = ">=1.44.0"
 pydantic = ">=2.9.0"
 starlette = ">=0.46.0"
@@ -1475,14 +1476,14 @@ protobuf = ">=4.25.8,<8.0.0"
 
 [[package]]
 name = "google-cloud-batch"
-version = "0.22.4"
+version = "0.22.5"
 description = "Google Cloud Batch API client library"
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "google_cloud_batch-0.22.4-py3-none-any.whl", hash = "sha256:394631302bfceb04dadfe83246eae17e1f1aa1ff7122e0f8c8764b23f5dc3359"},
-    {file = "google_cloud_batch-0.22.4.tar.gz", hash = "sha256:64b1c3b3e0dd14f1ff2ca973b1c916549f2617425cfc9a22e22533243a5ecc6b"},
+    {file = "google_cloud_batch-0.22.5-py3-none-any.whl", hash = "sha256:db6e2021687d6b31cef67b9262898d2561b7a0b52c29c9be3ef01add9ac29c49"},
+    {file = "google_cloud_batch-0.22.5.tar.gz", hash = "sha256:eada4e5847d94b11df94f8bff59ce81ba2c9df2b7a69e5f58530ab173358f157"},
 ]
 
 [package.dependencies]
@@ -1519,21 +1520,21 @@ protobuf = ">=6.33.5,<8.0.0"
 
 [[package]]
 name = "google-cloud-compute"
-version = "1.56.0"
+version = "1.57.0"
 description = "Google Cloud Compute API client library"
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "google_cloud_compute-1.56.0-py3-none-any.whl", hash = "sha256:c5ec7aa46533b34d0731f52dcba98660d0c294267a7230edb0d8a9ed4f4b072b"},
-    {file = "google_cloud_compute-1.56.0.tar.gz", hash = "sha256:ad6339cbae67979d6c9131fd795cbfacdeb9ec24c78c9c0072ca37cc385fae30"},
+    {file = "google_cloud_compute-1.57.0-py3-none-any.whl", hash = "sha256:c96be18eebc6e0cd633cd27767b1eb7d5fa3e63f9264adf5565ddc001c1bc607"},
+    {file = "google_cloud_compute-1.57.0.tar.gz", hash = "sha256:772d1457652cf5824583d7996a9b885fd5f5726394c55490ca99c2eb78a0e09c"},
 ]
 
 [package.dependencies]
 google-api-core = {version = ">=2.28.0,<3.0.0", extras = ["grpc"]}
 google-auth = ">=2.14.1,!=2.24.0,!=2.25.0,<3.0.0"
 grpcio = [
-    {version = ">=1.59.0,<2.0.0"},
+    {version = ">=1.59.0,<2.0.0", markers = "python_version < \"3.14\""},
     {version = ">=1.75.1,<2.0.0", markers = "python_version >= \"3.14\""},
 ]
 proto-plus = ">=1.26.1,<2.0.0"
@@ -1647,7 +1648,7 @@ google-cloud-audit-log = ">=0.3.2,<1.0.0"
 google-cloud-core = ">=2.0.0,<3.0.0"
 grpc-google-iam-v1 = ">=0.14.2,<1.0.0"
 grpcio = [
-    {version = ">=1.59.0,<2.0.0", markers = "python_version < \"3.14\""},
+    {version = ">=1.59.0,<2.0.0"},
     {version = ">=1.75.1,<2.0.0", markers = "python_version >= \"3.14\""},
 ]
 opentelemetry-api = ">=1.16.0"
@@ -1656,14 +1657,14 @@ protobuf = ">=6.33.5,<8.0.0"
 
 [[package]]
 name = "google-cloud-secret-manager"
-version = "2.31.0"
+version = "2.32.0"
 description = "Google Cloud Secret Manager API client library"
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "google_cloud_secret_manager-2.31.0-py3-none-any.whl", hash = "sha256:945ef53be34b09f94b86eeabca910e19460fb54680cf5e0a792a77d62355e88e"},
-    {file = "google_cloud_secret_manager-2.31.0.tar.gz", hash = "sha256:29bb33b48c3b974495a4d015e06b06b126e23232bccd223d678da1e1a861b6e6"},
+    {file = "google_cloud_secret_manager-2.32.0-py3-none-any.whl", hash = "sha256:74eb64fb0bcdd7369ba95b17685860900cfbd2c07a2a8c043680cb25a1197860"},
+    {file = "google_cloud_secret_manager-2.32.0.tar.gz", hash = "sha256:104635f69f094f717caf0b68adf623f0f0cf7b3236dcba12d3a503e8637017e8"},
 ]
 
 [package.dependencies]
