@@ -9,7 +9,12 @@
  * finish endpoints take the authenticator's response back.
  *
  * Authenticate begin/finish are deliberately unauthenticated — they ARE
- * the factor being asserted, so they run before any session exists.
+ * the factor being asserted, so they run before any session exists. On the
+ * sign-in path they send no token and don't wait for one (see `auth` on
+ * `apiClient`): waiting for a token waits for the stored session to be
+ * restored, which another tab of the app can hold up indefinitely. A step-up
+ * still sends its token on finish, because the API uses it to bind the
+ * assertion to the account already signed in.
  */
 
 import type {
@@ -19,7 +24,7 @@ import type {
   RegistrationResponseJSON,
 } from "@simplewebauthn/browser"
 
-import { del, get, post } from "./client"
+import { apiClient, del, get, post } from "./client"
 
 export interface PasskeyCredentialSummary {
   credential_id: string
@@ -61,15 +66,41 @@ export function finishRegistration(
   })
 }
 
+/**
+ * Which ceremony an assertion belongs to. A "sign-in" has no session to
+ * speak of; a "step-up" runs on the first-factor session it upgrades.
+ */
+export type PasskeyAssertionFlow = "sign-in" | "step-up"
+
+/**
+ * Fetch the options for an assertion. The API reads no session here in
+ * either flow, so no token is sent.
+ */
 export function beginAuthentication(): Promise<PublicKeyCredentialRequestOptionsJSON> {
-  return post<PublicKeyCredentialRequestOptionsJSON>("/api/auth/passkey/authenticate/begin", {})
+  return apiClient<PublicKeyCredentialRequestOptionsJSON>("/api/auth/passkey/authenticate/begin", {
+    method: "POST",
+    body: JSON.stringify({}),
+    auth: "none",
+  })
 }
 
+/**
+ * Verify the assertion. A step-up sends the session's token, which the API
+ * uses to refuse a passkey that belongs to a different account; a sign-in
+ * sends none.
+ */
 export function finishAuthentication(
   credential: AuthenticationResponseJSON,
+  flow: PasskeyAssertionFlow,
 ): Promise<PasskeyAuthenticationResult> {
-  return post<PasskeyAuthenticationResult>("/api/auth/passkey/authenticate/finish", {
-    credential,
+  const body = { credential }
+  if (flow === "step-up") {
+    return post<PasskeyAuthenticationResult>("/api/auth/passkey/authenticate/finish", body)
+  }
+  return apiClient<PasskeyAuthenticationResult>("/api/auth/passkey/authenticate/finish", {
+    method: "POST",
+    body: JSON.stringify(body),
+    auth: "none",
   })
 }
 

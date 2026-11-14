@@ -92,9 +92,11 @@ export function webauthnStepLimitMs(options: PublicKeyCredentialRequestOptionsJS
 
 /**
  * Run the four steps. `signIn` is step 4: given the custom token, it signs in
- * and hands the credential on, and the whole of it shares one limit.
+ * and hands the credential on, and the whole of it shares one limit. `flow`
+ * says whether a session is being upgraded (see `finishAuthentication`).
  */
 export async function runPasskeyCeremony(
+  flow: PasskeyFlow,
   signIn: (customToken: string) => Promise<void>,
 ): Promise<void> {
   const options = await withStepTimeout("challenge", PASSKEY_API_STEP_LIMIT_MS, () =>
@@ -112,7 +114,7 @@ export async function runPasskeyCeremony(
     throw err
   }
   const { custom_token } = await withStepTimeout("verify", PASSKEY_API_STEP_LIMIT_MS, () =>
-    finishAuthentication(assertion),
+    finishAuthentication(assertion, flow),
   )
   await withStepTimeout("sign-in", PASSKEY_SIGN_IN_STEP_LIMIT_MS, () => signIn(custom_token))
 }

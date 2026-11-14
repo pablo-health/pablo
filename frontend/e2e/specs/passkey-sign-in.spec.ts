@@ -271,3 +271,73 @@ test("a stuck passkey sign-in offers a retry, and the retry leads to a sign-in",
 
   await context.close()
 })
+
+/**
+ * Hold the browser's auth storage from another page of the app, as a tab the
+ * browser suspended in the middle of a transaction does: a readonly
+ * transaction on Firebase's store, kept alive by one request after another.
+ * Opened with the SDK's own schema, so the hold doesn't depend on whether
+ * this page's SDK got round to creating the database.
+ */
+async function holdAuthStorage(page: Page): Promise<void> {
+  const held = await page.evaluate(
+    () =>
+      new Promise<string>((resolve) => {
+        const request = indexedDB.open("firebaseLocalStorageDb", 1)
+        request.onupgradeneeded = () => {
+          request.result.createObjectStore("firebaseLocalStorage", { keyPath: "fbase_key" })
+        }
+        request.onerror = () => resolve(`open failed: ${String(request.error)}`)
+        request.onsuccess = () => {
+          const store = request.result
+            .transaction(["firebaseLocalStorage"], "readonly")
+            .objectStore("firebaseLocalStorage")
+          const again = () => {
+            store.get("e2e-hold").onsuccess = again
+          }
+          again()
+          resolve("held")
+        }
+      }),
+  )
+  expect(held, "the other page holds the auth storage").toBe("held")
+}
+
+/**
+ * A passkey sign-in doesn't depend on what another tab of the app holds.
+ *
+ * Seen in a browser with other tabs of the app open: the sign-in got stuck at
+ * its first step, the request for the challenge never left the browser, and
+ * the reset didn't help; closing the other tabs did. A tab holding the auth
+ * storage left this one's wait for the stored session, and so every request
+ * that asks for a token, waiting for good. Here a second page holds it, and a
+ * fresh load of the login page has to sign in with a passkey and reach the
+ * dashboard without the reset.
+ */
+test("a passkey sign-in works while another tab of the app holds the auth storage", async ({
+  browser,
+  onboardedUser: _owner,
+}) => {
+  test.setTimeout(3 * 60 * 1000)
+  const { context, page } = await browserWithPasskey(browser)
+
+  const otherTab = await context.newPage()
+  await otherTab.goto("/login")
+  await holdAuthStorage(otherTab)
+
+  // A fresh load, so this page's auth starts up while the storage is held.
+  // Same page, because the passkey lives on its virtual authenticator.
+  await page.goto("/login")
+  const stalls: string[] = []
+  page.on("console", (message) => {
+    if (message.text().includes("Passkey sign-in stalled")) stalls.push(message.text())
+  })
+
+  await page.getByRole("button", { name: "Sign in with a passkey" }).click()
+  // The challenge step's limit is 15 s and the token exchange's 20 s; a
+  // sign-in that waits on the other tab runs into one of them first.
+  await page.waitForURL(/\/dashboard/, { timeout: 45_000 })
+  expect(stalls, "no step ran out of time").toEqual([])
+
+  await context.close()
+})
