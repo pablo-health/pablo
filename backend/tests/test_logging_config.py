@@ -226,6 +226,56 @@ class TestEndToEnd:
         assert "123-45-6789" not in payload["message"]
         assert "[REDACTED-SSN]" in payload["message"]
 
+    @staticmethod
+    def _emit(name: str, msg: str, *args: object, **kwargs: Any) -> dict[str, Any]:
+        buf = io.StringIO()
+        handler = logging.StreamHandler(buf)
+        handler.setFormatter(JSONFormatter())
+        handler.addFilter(RedactPHIFilter())
+        lg = logging.getLogger(name)
+        lg.handlers = [handler]
+        lg.setLevel(logging.INFO)
+        lg.propagate = False
+        lg.error(msg, *args, **kwargs)
+        payload: dict[str, Any] = json.loads(buf.getvalue().strip())
+        return payload
+
+    def test_format_string_emitted_as_message_template(self) -> None:
+        payload = self._emit("e2e_test_template", "lookup failed for %s", "x")
+        assert payload["message"] == "lookup failed for x"
+        assert payload["message_template"] == "lookup failed for %s"
+
+    def test_mapping_args_emit_message_template(self) -> None:
+        payload = self._emit("e2e_test_template_map", "lookup failed for %(key)s", {"key": "x"})
+        assert payload["message"] == "lookup failed for x"
+        assert payload["message_template"] == "lookup failed for %(key)s"
+
+    def test_no_message_template_without_args(self) -> None:
+        value = "x"
+        formatted = self._emit("e2e_test_template_fstr", f"lookup failed for {value}")
+        assert formatted["message"] == "lookup failed for x"
+        assert "message_template" not in formatted
+        plain = self._emit("e2e_test_template_plain", "no args")
+        assert plain["message"] == "no args"
+        assert "message_template" not in plain
+
+    def test_extra_cannot_replace_message_template(self) -> None:
+        payload = self._emit(
+            "e2e_test_template_extra",
+            "lookup failed for %s",
+            "x",
+            extra={"message_template": "other"},
+        )
+        assert payload["message_template"] == "lookup failed for %s"
+
+    def test_scrubbed_message_carries_no_template(self) -> None:
+        # The scrub replaces the message and drops the arguments; the line
+        # then has no format string to report.
+        payload = self._emit("e2e_test_template_ssn", "got ssn %s", "123-45-6789")
+        assert "[REDACTED-SSN]" in payload["message"]
+        assert "message_template" not in payload
+        assert "123-45-6789" not in json.dumps(payload)
+
     def test_configure_logging_is_idempotent(self) -> None:
         configure_logging(level="DEBUG")
         configure_logging(level="DEBUG")

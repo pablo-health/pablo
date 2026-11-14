@@ -346,8 +346,9 @@ _STANDARD_LOGRECORD_ATTRS: Final[frozenset[str]] = frozenset(
 class JSONFormatter(logging.Formatter):
     """Emit one JSON object per record.
 
-    Standard fields: timestamp, severity, level, logger, message. Optional
-    fields populated from contextvars: request_id, user_id, tenant_id,
+    Standard fields: timestamp, severity, level, logger, message. A call
+    that passed arguments also gets message_template, its unformatted
+    format string. Optional fields populated from contextvars: request_id, user_id, tenant_id,
     route_template, and the Cloud Logging trace / spanId of the request.
     Any extra kwargs passed via `logger.info(..., extra={...})` are merged
     at the top level (after PHI scrubbing).
@@ -378,6 +379,13 @@ class JSONFormatter(logging.Formatter):
             "logger": record.name,
             "message": record.getMessage(),
         }
+        # The call's format string, before the arguments were filled in, so
+        # lines from one call site group together whatever the values were.
+        # An f-string or argument-free call has no separate format string, so
+        # nothing is added. When RedactPHIFilter rewrote the message it also
+        # cleared the arguments, so a scrubbed line carries no template.
+        if isinstance(record.msg, str) and record.args:
+            payload["message_template"] = record.msg
 
         http_request = getattr(record, LOG_HTTP_REQUEST_EXTRA, None)
         if not isinstance(http_request, LogHttpRequest):
