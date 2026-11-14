@@ -19,6 +19,10 @@
  * `WorkingHoursGrid` stays one click away and takes over automatically
  * when the parser is unavailable or twice unsure, so a model being down
  * can never block a practice.
+ *
+ * A deployment that cannot read hours from text for this account says so
+ * through `useHoursFromTextAvailable` (calendarHours.extensions.ts), and
+ * the step then opens on the grid with nothing to describe.
  */
 
 import { useCallback, useRef, useState } from "react"
@@ -42,6 +46,7 @@ import {
   type WorkingHoursSelection,
 } from "@/components/availability/WorkingHoursGrid"
 import { echoLines, timezoneOptions, type EchoLine } from "./hoursCapture"
+import { useHoursFromTextAvailable } from "./calendarHours.extensions"
 import { useCreateAvailabilityRule, useParseAvailabilityRules } from "@/hooks/useAvailability"
 import { detectBrowserTimezone, usePreferences, useUpdatePreferences } from "@/hooks/usePreferences"
 import {
@@ -98,6 +103,7 @@ export function CalendarHoursStep({ step, onSaved, onSkip }: CalendarHoursStepPr
   const updatePreferences = useUpdatePreferences()
   const createRule = useCreateAvailabilityRule()
   const parseRules = useParseAvailabilityRules()
+  const hoursFromText = useHoursFromTextAvailable()
   const boxRef = useRef<HTMLTextAreaElement>(null)
 
   const [text, setText] = useState("")
@@ -135,6 +141,10 @@ export function CalendarHoursStep({ step, onSaved, onSkip }: CalendarHoursStepPr
   const detected = fromSettings ? savedTimezone : detectBrowserTimezone()
   const chosenTimezone = timezone ?? detected
   const locked = saving || unsaved !== null
+  // Without the sentence box there is nothing to go back to, so the grid is
+  // not a fallback here: it is the step, and it says nothing about why.
+  const textOff = hoursFromText === false
+  const showGrid = onGrid || textOff
 
   // Typing and clicking a chip are the same path: the chip only fills the
   // box, and this is what reads it.
@@ -290,7 +300,7 @@ export function CalendarHoursStep({ step, onSaved, onSkip }: CalendarHoursStepPr
         lede="Your general working hours. You can change them later in Settings."
       />
 
-      {onGrid ? (
+      {hoursFromText === null ? null : showGrid ? (
         <div className="space-y-6">
           {fallbackReason ? (
             <p className="text-sm text-neutral-600" role="status">
@@ -315,7 +325,7 @@ export function CalendarHoursStep({ step, onSaved, onSkip }: CalendarHoursStepPr
             >
               Save hours
             </Button>
-            {fallbackReason ? null : (
+            {fallbackReason || textOff ? null : (
               <button
                 type="button"
                 onClick={() => setOnGrid(false)}
