@@ -92,6 +92,15 @@
     "seroval": "^1.6.8",
     "seroval-plugins": "^1.6.8",
     "source-map-js": "^1.2.2",
-    "brace-expansion@1": "^1.1.21"
+    "brace-expansion@1": "^1.1.21",
+    "typed-rest-client": {
+      "qs": "^6.16.1"
+    },
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "^11.0.1"
+    },
+    "@stryker-mutator/core": {
+      "minimatch": "^11.0.1"
+    }
   }
 }
