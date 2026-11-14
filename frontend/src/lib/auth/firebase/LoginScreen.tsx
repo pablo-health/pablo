@@ -31,6 +31,7 @@ import {
   CredentialBlock,
 } from "@/components/auth"
 import { LoginBrandPanelExtension } from "@/components/auth/loginBrandPanel.extensions"
+import { LoginTopMessageExtension } from "@/components/auth/loginTopMessage.extensions"
 import { ThemeSwitcher } from "@/components/theme/ThemeSwitcher"
 import { errorCode } from "@/lib/errors/errorCode"
 
@@ -51,6 +52,8 @@ function postLoginDestination(): string {
 
 // A deployment can lay out the wide-screen panel its own way; see the slot.
 const BrandPanel = LoginBrandPanelExtension ?? LoginBrandPanel
+// And may put a message at the top of the form, at every width; see the slot.
+const TopMessage = LoginTopMessageExtension
 
 export function FirebaseLoginScreen() {
   const router = useRouter()
@@ -191,6 +194,8 @@ export function FirebaseLoginScreen() {
       onSignUpChange={setIsSignUp}
       renderShell={(form) => (
         <AuthCard brandPanel={<BrandPanel />}>
+          {TopMessage && <TopMessage />}
+
           <div className="mb-6 flex flex-col items-center gap-2 lg:hidden">
             <div className="flex items-center gap-2.5">
               <Image src="/pablo-login.webp" alt="" width={44} height={44} className="object-contain" />
