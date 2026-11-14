@@ -34,6 +34,13 @@ vi.mock("@/hooks/usePreferences", () => ({
   detectBrowserTimezone: () => preferencesState.browserTimezone,
 }))
 
+// The slot is mocked so each test can answer it; its default build's answer
+// is pinned in calendarHours.extensions.test.ts.
+const hoursFromText = vi.hoisted(() => ({ answer: true as boolean | null }))
+vi.mock("../calendarHours.extensions", () => ({
+  useHoursFromTextAvailable: () => hoursFromText.answer,
+}))
+
 function workingHours(day: number): ProposedAvailabilityRule {
   return {
     rule_type: "working_hours",
@@ -61,6 +68,7 @@ describe("CalendarHoursStep", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     parseState.pending = false
+    hoursFromText.answer = true
     preferencesState.data = { timezone: "America/New_York" }
     preferencesState.browserTimezone = "America/New_York"
     createRule.mockResolvedValue({})
@@ -322,6 +330,53 @@ describe("CalendarHoursStep", () => {
     expect(parseRules).not.toHaveBeenCalled()
   })
 
+  it("opens on the grid, with nothing to describe, where hours cannot be read from text", async () => {
+    const user = userEvent.setup()
+    hoursFromText.answer = false
+    renderStep()
+
+    expect(screen.getByLabelText("Monday")).toBeInTheDocument()
+    expect(screen.queryByLabelText("Describe your usual hours")).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "No appointments before 10am" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Describe my hours" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Use the hours grid" })).not.toBeInTheDocument()
+    // Not a fallback, so no reason is given: nothing was tried.
+    expect(screen.queryByRole("status")).toBeNull()
+
+    await user.click(screen.getByLabelText("Tuesday"))
+    await user.click(screen.getByRole("button", { name: "Save hours" }))
+
+    await waitFor(() => expect(createRule).toHaveBeenCalledTimes(4))
+    expect(createRule.mock.calls.map((call) => call[0].params.day_of_week)).toEqual([0, 2, 3, 4])
+    expect(parseRules).not.toHaveBeenCalled()
+    expect(onSaved).toHaveBeenCalledTimes(1)
+  })
+
+  it("shows neither the box nor the grid until it knows which one to offer", () => {
+    hoursFromText.answer = null
+    const { rerender } = renderStep()
+
+    expect(screen.getByText("What are your usual hours?")).toBeInTheDocument()
+    expect(screen.queryByLabelText("Describe your usual hours")).not.toBeInTheDocument()
+    expect(screen.queryByLabelText("Monday")).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Save hours" })).not.toBeInTheDocument()
+
+    hoursFromText.answer = false
+    rerender(<CalendarHoursStep onSaved={onSaved} onSkip={onSkip} />)
+    expect(screen.getByLabelText("Monday")).toBeInTheDocument()
+    expect(screen.queryByLabelText("Describe your usual hours")).not.toBeInTheDocument()
+  })
+
+  it("leads with the box once the answer arrives as yes", () => {
+    hoursFromText.answer = null
+    const { rerender } = renderStep()
+
+    hoursFromText.answer = true
+    rerender(<CalendarHoursStep onSaved={onSaved} onSkip={onSkip} />)
+    expect(screen.getByLabelText("Describe your usual hours")).toBeInTheDocument()
+    expect(screen.queryByLabelText("Monday")).not.toBeInTheDocument()
+  })
+
   it("pre-fills the detected timezone and saves a correction with the hours", async () => {
     const user = userEvent.setup()
     renderStep()
@@ -406,6 +461,7 @@ describe("CalendarHoursStep while Pablo reads", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     parseState.pending = false
+    hoursFromText.answer = true
     preferencesState.data = { timezone: "America/New_York" }
   })
 
@@ -465,6 +521,7 @@ describe("CalendarHoursStep saving", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     parseState.pending = false
+    hoursFromText.answer = true
     preferencesState.data = { timezone: "America/New_York" }
     updatePreferences.mockResolvedValue({})
     parseRules.mockResolvedValue({ proposals: MON_TO_THU, could_not_parse: null })
