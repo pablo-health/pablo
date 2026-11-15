@@ -21,8 +21,13 @@ import { unwatchDraft, useWatchedDrafts, watchDraft } from "@/lib/draftWatch"
 import { refreshDashboard } from "./dashboardFreshness"
 import { useSessionList } from "./useSessions"
 
-/** How often the session list is re-read for drafts started elsewhere (a recording). */
-const LIST_POLL_MS = 60_000
+/**
+ * How often the session list is re-read for drafts started elsewhere (a
+ * recording on another device). The list is also re-read whenever the tab
+ * regains focus, whatever its age, and not polled at all while the tab is
+ * hidden. A draft that starts and lands between two reads is not announced.
+ */
+const LIST_POLL_MS = 180_000
 /** How often a session being drafted is re-read, as the session page does. */
 const DRAFT_POLL_MS = 3_000
 /** Notices beyond this many are dropped, oldest first. */
@@ -48,7 +53,11 @@ export function useDraftNotices(): {
   const announced = useRef(new Set<string>())
   const [notices, setNotices] = useState<DraftNotice[]>([])
 
-  const { data: list } = useSessionList(undefined, undefined, LIST_POLL_MS)
+  const { data: list } = useSessionList(
+    undefined,
+    { refetchOnWindowFocus: "always", refetchIntervalInBackground: false },
+    LIST_POLL_MS,
+  )
 
   useEffect(() => {
     if (!live || !list) return
