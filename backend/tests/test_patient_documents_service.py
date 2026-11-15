@@ -1041,3 +1041,136 @@ class TestOcrFallback:
         document = _finalize_and_extract(service, document_id=init.document.id, user_id="user-1")
         assert document.extracted_via is None
         assert ocr.calls == []
+
+
+# ---- per-practice OCR policy -------------------------------------------
+
+
+from app.services.document_ocr_policy import register_document_ocr_policy  # noqa: E402
+
+
+@dataclass
+class _RecordingOcrPolicy:
+    """Answers ``offers`` for every practice and records who was asked about."""
+
+    offers: bool
+    asked: list[str | None] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.asked is None:
+            self.asked = []
+
+    def offers_ocr(self, tenant_schema: str | None) -> bool:
+        self.asked.append(tenant_schema)
+        return self.offers
+
+
+@pytest.fixture
+def ocr_policy_registry() -> Any:
+    yield register_document_ocr_policy
+    register_document_ocr_policy(None)
+
+
+def _upload_pdf(service: PatientDocumentsService, fake_gcs: _FakeStorageClient, pdf: bytes) -> str:
+    init = service.init_upload(
+        patient_id="patient-1",
+        user_id="user-1",
+        filename="upload.pdf",
+        mime_type="application/pdf",
+        size_bytes=len(pdf),
+    )
+    _put_blob(fake_gcs, "pablo-docs-test", init.document.gcs_path, pdf, "application/pdf")
+    service.finalize_upload(document_id=init.document.id, user_id="user-1")
+    return init.document.id
+
+
+class TestOcrPolicy:
+    def test_declined_practice_scan_is_stored_without_ocr(
+        self,
+        repo: InMemoryPatientDocumentRepository,
+        settings: Settings,
+        fake_gcs: _FakeStorageClient,
+        ocr_policy_registry: Any,
+    ) -> None:
+        policy = _RecordingOcrPolicy(offers=False)
+        ocr_policy_registry(policy)
+        ocr = _FakeOcrClient(raise_on_call=True)
+        service = _service_with_ocr(repo, settings, fake_gcs, ocr)
+        document_id = _upload_pdf(service, fake_gcs, _empty_pdf())
+
+        document = service.run_finalize_extraction(
+            document_id=document_id, user_id="user-1", tenant_schema="practice_a"
+        )
+
+        assert ocr.calls == []
+        assert policy.asked == ["practice_a"]
+        # Lands like a scan on a deployment with no OCR: complete, no text.
+        assert document.extraction_status == ExtractionStatus.COMPLETE
+        assert document.extracted_via is None
+        assert document.extracted_text is None
+        assert document.finalized_at is not None
+
+    def test_declined_practice_text_pdf_still_gets_its_text(
+        self,
+        repo: InMemoryPatientDocumentRepository,
+        settings: Settings,
+        fake_gcs: _FakeStorageClient,
+        ocr_policy_registry: Any,
+    ) -> None:
+        policy = _RecordingOcrPolicy(offers=False)
+        ocr_policy_registry(policy)
+        ocr = _FakeOcrClient(raise_on_call=True)
+        service = _service_with_ocr(repo, settings, fake_gcs, ocr)
+        document_id = _upload_pdf(service, fake_gcs, _native_text_pdf())
+
+        document = service.run_finalize_extraction(
+            document_id=document_id, user_id="user-1", tenant_schema="practice_a"
+        )
+
+        assert document.extracted_via == "pymupdf"
+        assert document.extracted_text
+        assert ocr.calls == []
+        # Only a scan that needs the fallback asks the policy.
+        assert policy.asked == []
+
+    def test_offered_practice_scan_is_ocrd(
+        self,
+        repo: InMemoryPatientDocumentRepository,
+        settings: Settings,
+        fake_gcs: _FakeStorageClient,
+        ocr_policy_registry: Any,
+    ) -> None:
+        policy = _RecordingOcrPolicy(offers=True)
+        ocr_policy_registry(policy)
+        ocr = _FakeOcrClient(
+            result=OcrResult(text="Scanned intake form.", page_count=1, avg_confidence=0.9)
+        )
+        service = _service_with_ocr(repo, settings, fake_gcs, ocr)
+        document_id = _upload_pdf(service, fake_gcs, _empty_pdf())
+
+        document = service.run_finalize_extraction(
+            document_id=document_id, user_id="user-1", tenant_schema="practice_b"
+        )
+
+        assert document.extracted_via == "document_ai"
+        assert len(ocr.calls) == 1
+        assert policy.asked == ["practice_b"]
+
+    def test_default_policy_offers_ocr(
+        self,
+        repo: InMemoryPatientDocumentRepository,
+        settings: Settings,
+        fake_gcs: _FakeStorageClient,
+        ocr_policy_registry: Any,
+    ) -> None:
+        ocr_policy_registry(None)
+        ocr = _FakeOcrClient(
+            result=OcrResult(text="Scanned intake form.", page_count=1, avg_confidence=0.9)
+        )
+        service = _service_with_ocr(repo, settings, fake_gcs, ocr)
+        document_id = _upload_pdf(service, fake_gcs, _empty_pdf())
+
+        document = service.run_finalize_extraction(document_id=document_id, user_id="user-1")
+
+        assert document.extracted_via == "document_ai"
+        assert len(ocr.calls) == 1
