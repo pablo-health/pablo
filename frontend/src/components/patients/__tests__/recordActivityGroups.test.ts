@@ -95,9 +95,10 @@ describe("groupRecordActivity", () => {
   })
 
   it.each([
-    ["someone else", { is_you: false, actor_name: "Riley Colleague" }],
+    // One field apart each, so every part of "the same person" is pinned.
+    ["a colleague with the reader's name", { is_you: false }],
     ["another person of the same kind", { actor_name: "Riley Colleague" }],
-    ["another kind of actor", { actor_type: "patient", actor_name: null }],
+    ["another kind of actor with the same name", { actor_type: "staff" }],
     ["another action", { action: "patient_updated" }],
     ["another kind of record", { resource_type: "session" }],
   ] as const)("never folds in a row by %s", (_label, overrides) => {
