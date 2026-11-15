@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING
 
 from ..settings import get_settings
 from .chat_llm_gateway import ChatLLMGateway, StreamEvent, UserAssistantTurn
+from .http_chat_llm_gateway import HttpChatLLMGateway
 from .llm_provider import LLMProvider
 
 if TYPE_CHECKING:
@@ -179,7 +180,11 @@ class FailoverChatLLMGateway(ChatLLMGateway):
 
 
 def failover_chat_gateway(
-    feature: str, gateway: ChatLLMGateway, *, retry_refusals: bool = False
+    feature: str,
+    gateway: ChatLLMGateway,
+    *,
+    retry_refusals: bool = False,
+    standin_base_url: str | None = None,
 ) -> ChatLLMGateway:
     """``gateway`` with ``feature``'s fallbacks behind it, or unchanged with none.
 
@@ -187,7 +192,17 @@ def failover_chat_gateway(
     so a ``bedrock:`` primary streams through Bedrock with ``gateway``'s
     models as its fallbacks. ``retry_refusals`` lets a refused turn move to
     the next model too (see the module docstring).
+
+    ``standin_base_url`` is the caller's answer from
+    :func:`.model_standin.amodel_standin_base_url`: when set, the practice is
+    listed in ``MODEL_STANDIN_PRACTICES`` and gets the stand-in instead, for
+    every model. The caller asks, rather than this function, because a chat
+    turn runs on the event loop and the first answer for a practice is a
+    database lookup that must not block it. The turn service asks for each
+    answer.
     """
+    if standin_base_url:
+        return HttpChatLLMGateway(standin_base_url)
     settings = get_settings()
     fallbacks = settings.fallbacks_for(feature)
     if not fallbacks and feature not in settings.ai_models:

@@ -18,6 +18,10 @@ answered the way a model answers one it cannot pin down — no proposals and a
 question back — rather than with an error, so a spec that strays sees the
 product's own refusal instead of a server error.
 
+The same app also serves the stand-in a deployment names in
+``MODEL_STANDIN_BASE_URL``, under ``/standin``: structured calls, chat answers
+and dictated clips for the practices in ``MODEL_STANDIN_PRACTICES``.
+
 Run locally with ``uvicorn scripts.fake_llm:app --port 8083``; the compose
 stack builds it from ``scripts/e2e/fake-llm.Dockerfile``.
 """
@@ -821,6 +825,36 @@ def _turn_labels(user_prompt: str) -> dict[str, Any]:
             label = "therapy" if cue >= 0 else "admin"
         runs.append({"first_segment": index, "last_segment": index, "label": label})
     return {"runs": runs, "cue_segment": cue}
+
+
+#: Every chat answer under ``/standin``: plainly not a model's words.
+CHAT_TEXT = "Stand-in answer. No model wrote this reply."
+
+
+@app.post("/standin/v1/structured")
+async def standin_structured(call: NoteCall) -> dict[str, Any]:
+    """Any structured call from a practice routed here by MODEL_STANDIN_PRACTICES.
+
+    MODEL_STANDIN_BASE_URL points at ``/standin``, one address for every
+    feature, so the call is told apart by its schema: an availability parse
+    is answered as ``/v1/structured`` answers it, anything else as a note
+    draft is, from the schema it asks for.
+    """
+    if "could_not_parse" in call.response_schema.get("properties", {}):
+        return await structured(StructuredCall(model=call.model, user_prompt=call.user_prompt))
+    return await draft_note(call)
+
+
+@app.post("/standin/v1/chat")
+async def standin_chat() -> dict[str, str]:
+    """Chat answers for a routed practice: the same words every time."""
+    return {"text": CHAT_TEXT}
+
+
+@app.post("/standin/v1/transcribe")
+async def standin_transcribe() -> dict[str, str]:
+    """Dictated clips for a routed practice, transcribed as ``/transcription`` does."""
+    return {"text": DICTATION_TEXT}
 
 
 @app.get("/_fake/health")

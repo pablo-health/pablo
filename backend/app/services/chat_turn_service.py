@@ -46,6 +46,7 @@ from .chat_context_bundler import (
 from .chat_failover import failover_chat_gateway
 from .chat_llm_gateway import PATIENT_CONTEXT_DELIMITER, StreamEvent, UserAssistantTurn
 from .llm_telemetry import RetrievedDocumentRef, llm_feature, retrieval_span
+from .model_standin import amodel_standin_base_url
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -612,7 +613,14 @@ class ChatTurnService:
             # each gets only the fallbacks configured for it (see
             # ``chat_failover``): a client-facing answer never inherits the
             # clinician chat's fallback.
-            gateway = failover_chat_gateway(_chat_feature(context), self._gateway)
+            #
+            # Whether this practice's calls go to a stand-in is asked off the
+            # loop: the first answer for a practice is a database lookup.
+            gateway = failover_chat_gateway(
+                _chat_feature(context),
+                self._gateway,
+                standin_base_url=await amodel_standin_base_url(),
+            )
             stream = gateway.stream_completion(
                 model=context.model,
                 system_prompt=system_prompt,

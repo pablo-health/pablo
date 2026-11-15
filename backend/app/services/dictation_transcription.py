@@ -10,7 +10,9 @@ submits the clip and waits for the words.
 The provider is the deployment's transcription provider (AssemblyAI, under the
 same agreement as session audio). The end-to-end stack has no provider; its
 stand-in answers instead (``dictation_transcription_base_url``, refused
-outside development). A deployment with neither offers no dictation.
+outside development). A deployment with neither offers no dictation. A
+practice listed in ``MODEL_STANDIN_PRACTICES`` has its clips answered by the
+model stand-in (:mod:`.model_standin`).
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from typing import TYPE_CHECKING, Protocol
 import httpx
 
 from .assemblyai_transcription_service import ASSEMBLYAI_API_BASE, AssemblyAiTranscriptionService
+from .model_standin import model_standin_base_url
 
 if TYPE_CHECKING:
     from ..settings import Settings
@@ -131,8 +134,30 @@ class HttpDictationTranscriber:
         return str(response.json().get("text") or "").strip()
 
 
+class StandinRoutedTranscriber:
+    """The provider, or the model stand-in for a practice routed to it.
+
+    Asked at each clip rather than when the transcriber is built: the queue's
+    worker builds its service before it scopes itself to the job's practice.
+    """
+
+    def __init__(self, provider: DictationTranscriber) -> None:
+        self._provider = provider
+
+    def transcribe(self, audio: bytes, content_type: str) -> str:
+        standin = model_standin_base_url()
+        if standin:
+            return HttpDictationTranscriber(standin).transcribe(audio, content_type)
+        return self._provider.transcribe(audio, content_type)
+
+
 def get_dictation_transcriber(settings: Settings) -> DictationTranscriber | None:
-    """The deployment's transcriber for dictation, or ``None`` when it has none."""
+    """The deployment's transcriber for dictation, or ``None`` when it has none.
+
+    With practices listed in ``MODEL_STANDIN_PRACTICES``, their clips go to the
+    stand-in and everyone else's to the provider. A deployment with no provider
+    still offers no dictation, to listed practices included.
+    """
     if settings.dictation_transcription_base_url:
         return HttpDictationTranscriber(settings.dictation_transcription_base_url)
     api_key = settings.assemblyai_api_key.get_secret_value()
@@ -141,5 +166,8 @@ def get_dictation_transcriber(settings: Settings) -> DictationTranscriber | None
         and settings.transcription_provider == "assemblyai"
         and api_key
     ):
-        return AssemblyAiDictationTranscriber(api_key, settings.assemblyai_speech_model)
+        provider = AssemblyAiDictationTranscriber(api_key, settings.assemblyai_speech_model)
+        if settings.model_standin_practices:
+            return StandinRoutedTranscriber(provider)
+        return provider
     return None

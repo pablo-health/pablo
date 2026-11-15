@@ -196,6 +196,27 @@ def test_log_startup_posture_emits_summary_line(caplog: pytest.LogCaptureFixture
     assert "clearinghouse_origin_override=False" in message
     assert "ical_feed_origin_override=False" in message
     assert "google_calendar_origin_override=False" in message
+    assert "model_standin_practices=0" in message
+    assert "model_standin_origin=False" in message
+
+
+def test_startup_posture_counts_model_standin_practices_without_naming_them(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings = _make(
+        environment="production",
+        MODEL_STANDIN_PRACTICES="practice-one, practice-two",
+        model_standin_base_url="http://stand-in.internal/standin",
+    )
+    logger = logging.getLogger("app.settings.test_model_standin_posture")
+    with caplog.at_level(logging.INFO, logger=logger.name):
+        log_startup_posture(settings, logger)
+    [record] = [r for r in caplog.records if r.name == logger.name and r.levelno == logging.INFO]
+    message = record.getMessage()
+    assert "model_standin_practices=2" in message
+    assert "model_standin_origin=True" in message
+    assert "practice-one" not in message
+    assert "stand-in.internal" not in message
 
 
 @pytest.mark.parametrize("environment", ["staging", "production"])
