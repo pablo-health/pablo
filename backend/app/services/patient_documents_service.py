@@ -43,6 +43,7 @@ from ..jobs.task_queue import enqueue
 from ..models import DocumentCategory, ExtractionStatus, PatientDocument
 from ..repositories.patient_document import FinalizedExtraction
 from ..utcnow import utc_now
+from .document_ocr_policy import get_document_ocr_policy
 
 if TYPE_CHECKING:
     from ..repositories import PatientDocumentRepository
@@ -566,6 +567,7 @@ class PatientDocumentsService:
         document_id: str,
         user_id: str,
         transient_is_terminal: bool = False,
+        tenant_schema: str | None = None,
     ) -> PatientDocument:
         """Worker body: download the blob and run PyMuPDF / Document AI.
 
@@ -585,6 +587,12 @@ class PatientDocumentsService:
         :meth:`DocumentAiOcrClient.extract` already maps every failure
         mode to ``None`` (extracted_via='unavailable'), which is a
         successful completion with no text, not an extraction failure.
+
+        ``tenant_schema`` is the practice the job runs for. The registered
+        :class:`~.document_ocr_policy.DocumentOcrPolicy` is asked about it
+        only when a scanned PDF needs the OCR fallback; a declined practice's
+        scan lands as if OCR were not configured (no text, ``extracted_via``
+        unset).
         """
         document = self._repo.get(document_id, user_id)
         if document is None:
@@ -620,7 +628,11 @@ class PatientDocumentsService:
 
             if extracted_text is not None:
                 extracted_via = "pymupdf"
-            elif self._ocr is not None and self._ocr.is_configured:
+            elif (
+                self._ocr is not None
+                and self._ocr.is_configured
+                and get_document_ocr_policy().offers_ocr(tenant_schema)
+            ):
                 # PyMuPDF saw fewer than the scanned-doc threshold —
                 # fall back to Document AI. Any failure is soft.
                 ocr_result = self._ocr.extract(

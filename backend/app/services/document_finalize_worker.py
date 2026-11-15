@@ -59,4 +59,5 @@ def run_document_finalize_job(
         document_id=document_id,
         user_id=user_id,
         transient_is_terminal=transient_is_terminal,
+        tenant_schema=schema,
     )
