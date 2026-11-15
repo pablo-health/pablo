@@ -206,6 +206,45 @@ class TestWhatLeavesTheRoute:
         ]
 
 
+class TestEveryRowIsSentAsStored:
+    def test_identical_rows_in_the_same_second_each_come_back(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_user_id: str,
+        patient: Patient,
+        audit_repo: InMemoryAuditRepository,
+    ) -> None:
+        """The panel folds repeats into one line on screen; the server never does.
+
+        A page load writes one row per request, so five identical views in one
+        second are ordinary. Each is its own access, and the trail keeps and
+        returns all five.
+        """
+        _owned_by(monkeypatch, mock_user_id)
+        when = _iso(datetime.now(UTC) - timedelta(minutes=1))
+        stored = [
+            AuditLogEntry(
+                patient_id=patient.id,
+                resource_type="patient",
+                resource_id=patient.id,
+                timestamp=when,
+                user_id=mock_user_id,
+                action="patient_viewed",
+            )
+            for _ in range(5)
+        ]
+        for entry in stored:
+            audit_repo.append(entry)
+
+        body = client.get(f"/api/patients/{patient.id}/activity").json()
+
+        assert sorted(d["id"] for d in body["data"]) == sorted(e.id for e in stored)
+        assert {(d["action"], d["timestamp"]) for d in body["data"]} == {("patient_viewed", when)}
+        views = [r for r in audit_repo.all() if r.action == "patient_viewed"]
+        assert views == stored
+
+
 class TestReadingIsRecorded:
     def test_viewing_writes_patient_activity_viewed_after_the_read(
         self,

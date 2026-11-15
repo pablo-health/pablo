@@ -12,6 +12,7 @@ import userEvent from "@testing-library/user-event"
 import { RecordActivity } from "../RecordActivity"
 import { renderWithProviders } from "@/test/renderWithProviders"
 import type { RecordActivityItem, RecordActivityPage } from "@/lib/api/patientActivity"
+import { NEW_CLIENT_FIRST_VISIT } from "./recordActivityFixture"
 
 const mockStatus = vi.fn()
 const mockActivity = vi.fn()
@@ -107,5 +108,48 @@ describe("RecordActivity", () => {
     expect(await screen.findByText("A clinician edited the chart")).toBeTruthy()
     expect(mockActivity).toHaveBeenLastCalledWith("p-1", { cursor: "older", limit: 50 })
     expect(screen.queryByRole("button", { name: "Load older" })).toBeNull()
+  })
+
+  it("reads identical rows a few seconds apart as one line, and opens each time", async () => {
+    mockStatus.mockResolvedValue({ can_view_record_activity: true })
+    mockActivity.mockResolvedValue(page(NEW_CLIENT_FIRST_VISIT))
+
+    renderWithProviders(<RecordActivity patientId="p-1" />)
+    await userEvent.click(await screen.findByRole("button", { name: /record activity/i }))
+
+    const list = await screen.findByRole("list", { name: "Record activity" })
+    const lines = () => within(list).getAllByRole("listitem")
+    expect(lines()).toHaveLength(14)
+    expect(lines()[1].querySelector("p")?.textContent).toBe("You viewed the chart")
+    expect(within(lines()[0]).queryByRole("button")).toBeNull()
+
+    const counts = within(list).getAllByRole("button", { name: /times$/ })
+    expect(counts.map((b) => b.textContent)).toEqual([
+      "4 times",
+      "5 times",
+      "2 times",
+      "2 times",
+      "2 times",
+      "2 times",
+      "5 times",
+      "2 times",
+      "2 times",
+    ])
+
+    const fiveViews = counts[6]
+    expect(fiveViews.getAttribute("aria-expanded")).toBe("false")
+    expect(within(list).queryByRole("list", { name: "Each time" })).toBeNull()
+    await userEvent.click(fiveViews)
+
+    expect(fiveViews.getAttribute("aria-expanded")).toBe("true")
+    const each = within(list).getByRole("list", { name: "Each time" })
+    expect(within(each).getAllByRole("listitem")).toHaveLength(5)
+    expect(lines()[10].contains(each)).toBe(true)
+
+    await userEvent.click(fiveViews)
+    expect(within(list).queryByRole("list", { name: "Each time" })).toBeNull()
+    // Folding is on screen only: the server was asked for its rows as before.
+    expect(mockActivity).toHaveBeenCalledTimes(1)
+    expect(mockActivity).toHaveBeenCalledWith("p-1", { cursor: null, limit: 50 })
   })
 })

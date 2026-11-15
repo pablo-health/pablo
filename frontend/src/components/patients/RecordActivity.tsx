@@ -2,6 +2,7 @@
 
 "use client"
 
+import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { History } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -17,6 +18,8 @@ import { describeActivity, formatAuditTimestamp } from "@/components/settings/au
 import { useRecordActivity } from "@/hooks/useRecordActivity"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { getUserStatus } from "@/lib/api/users"
+import type { PeopleWords } from "@/lib/peopleTerm"
+import { groupRecordActivity, type ActivityGroup } from "./recordActivityGroups"
 
 /**
  * "Record activity" in the chart header: who acted on this record, and when.
@@ -79,11 +82,8 @@ function ActivityList({ patientId }: { patientId: string }) {
   return (
     <div>
       <ol className="divide-y divide-neutral-200" aria-label="Record activity">
-        {entries.map((item) => (
-          <li key={item.id} className="py-3">
-            <p className="text-sm font-medium text-neutral-900">{describeActivity(item, people)}</p>
-            <p className="text-xs text-neutral-500">{formatAuditTimestamp(item.timestamp)}</p>
-          </li>
+        {groupRecordActivity(entries).map((group) => (
+          <ActivityLine key={group.id} group={group} people={people} />
         ))}
       </ol>
       {hasMore && (
@@ -98,5 +98,44 @@ function ActivityList({ patientId }: { patientId: string }) {
         </Button>
       )}
     </div>
+  )
+}
+
+/**
+ * One line of the trail. Identical rows a few seconds apart read as one line
+ * with a count; the count opens the individual times.
+ */
+function ActivityLine({ group, people }: { group: ActivityGroup; people: PeopleWords }) {
+  const [open, setOpen] = useState(false)
+  const newest = group.rows[0]
+  const count = group.rows.length
+
+  return (
+    <li className="py-3">
+      <p className="text-sm font-medium text-neutral-900">{describeActivity(newest, people)}</p>
+      <p className="text-xs text-neutral-500">
+        {formatAuditTimestamp(newest.timestamp)}
+        {count > 1 && (
+          <>
+            {" · "}
+            <button
+              type="button"
+              className="underline underline-offset-2 hover:text-neutral-700"
+              aria-expanded={open}
+              onClick={() => setOpen((was) => !was)}
+            >
+              {count} times
+            </button>
+          </>
+        )}
+      </p>
+      {open && (
+        <ol className="mt-1 space-y-0.5 pl-3 text-xs text-neutral-500" aria-label="Each time">
+          {group.rows.map((row) => (
+            <li key={row.id}>{formatAuditTimestamp(row.timestamp)}</li>
+          ))}
+        </ol>
+      )}
+    </li>
   )
 }
