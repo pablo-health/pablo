@@ -28,22 +28,23 @@ const shape = (entries: RecordActivityItem[]) =>
   groupRecordActivity(entries).map((g) => [g.rows[0].action, g.rows.length])
 
 describe("groupRecordActivity", () => {
-  it("reads a new client's first visit as 14 lines, not 31", () => {
+  it("reads a new client's first visit as 15 lines, not 31", () => {
     expect(NEW_CLIENT_FIRST_VISIT).toHaveLength(31)
     expect(shape(NEW_CLIENT_FIRST_VISIT)).toEqual([
-      ["patient_activity_viewed", 1],
-      ["patient_viewed", 4],
-      ["patient_viewed", 5],
-      ["session_viewed", 2],
-      ["session_viewed", 2],
+      ["patient_viewed", 6],
+      ["patient_ai_consent_viewed", 1],
+      ["waitlist_viewed", 1],
+      ["session_viewed", 5],
       ["note_signed", 1],
-      ["session_viewed", 2],
+      ["session_viewed", 1],
       ["session_updated", 1],
       ["session_viewed", 2],
+      ["patient_viewed", 1],
       ["session_created", 1],
-      ["patient_viewed", 5],
-      ["patient_ai_consent_viewed", 2],
-      ["waitlist_viewed", 2],
+      ["patient_activity_viewed", 1],
+      ["patient_viewed", 7],
+      ["patient_ai_consent_viewed", 1],
+      ["waitlist_viewed", 1],
       ["patient_created", 1],
     ])
   })

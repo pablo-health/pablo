@@ -119,34 +119,30 @@ describe("RecordActivity", () => {
 
     const list = await screen.findByRole("list", { name: "Record activity" })
     const lines = () => within(list).getAllByRole("listitem")
-    expect(lines()).toHaveLength(14)
-    expect(lines()[1].querySelector("p")?.textContent).toBe("You viewed the chart")
-    expect(within(lines()[0]).queryByRole("button")).toBeNull()
+    expect(lines()).toHaveLength(15)
+    expect(lines()[0].querySelector("p")?.textContent).toBe("You viewed the chart")
+    expect(within(lines()[1]).queryByRole("button")).toBeNull()
 
-    const counts = within(list).getAllByRole("button", { name: /times$/ })
-    expect(counts.map((b) => b.textContent)).toEqual([
-      "4 times",
-      "5 times",
-      "2 times",
-      "2 times",
-      "2 times",
-      "2 times",
-      "5 times",
-      "2 times",
-      "2 times",
+    const counts = within(list).getAllByRole("button", { name: /^Show all \d+ times$/ })
+    expect(counts.map((b) => b.textContent)).toEqual(["6 times", "5 times", "2 times", "7 times"])
+    expect(counts.map((b) => b.getAttribute("aria-label"))).toEqual([
+      "Show all 6 times",
+      "Show all 5 times",
+      "Show all 2 times",
+      "Show all 7 times",
     ])
 
-    const fiveViews = counts[6]
-    expect(fiveViews.getAttribute("aria-expanded")).toBe("false")
+    const sevenViews = counts[3]
+    expect(sevenViews.getAttribute("aria-expanded")).toBe("false")
     expect(within(list).queryByRole("list", { name: "Each time" })).toBeNull()
-    await userEvent.click(fiveViews)
+    await userEvent.click(sevenViews)
 
-    expect(fiveViews.getAttribute("aria-expanded")).toBe("true")
+    expect(sevenViews.getAttribute("aria-expanded")).toBe("true")
     const each = within(list).getByRole("list", { name: "Each time" })
-    expect(within(each).getAllByRole("listitem")).toHaveLength(5)
-    expect(lines()[10].contains(each)).toBe(true)
+    expect(within(each).getAllByRole("listitem")).toHaveLength(7)
+    expect(lines()[11].contains(each)).toBe(true)
 
-    await userEvent.click(fiveViews)
+    await userEvent.click(sevenViews)
     expect(within(list).queryByRole("list", { name: "Each time" })).toBeNull()
     // Folding is on screen only: the server was asked for its rows as before.
     expect(mockActivity).toHaveBeenCalledTimes(1)

@@ -122,6 +122,7 @@ function ActivityLine({ group, people }: { group: ActivityGroup; people: PeopleW
               type="button"
               className="underline underline-offset-2 hover:text-neutral-700"
               aria-expanded={open}
+              aria-label={`Show all ${count} times`}
               onClick={() => setOpen((was) => !was)}
             >
               {count} times
