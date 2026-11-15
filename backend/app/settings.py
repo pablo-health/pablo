@@ -669,7 +669,8 @@ class Settings(BaseSettings):
         default=30,
         description=(
             "SQLAlchemy QueuePool ``pool_timeout`` -- seconds a checkout waits for a free "
-            "connection before raising. Applies to the request pool and the standalone pool."
+            "connection before raising. Applies to the main pool; the nested pool has its "
+            "own, shorter ``database_nested_pool_timeout_seconds``."
         ),
     )
     database_nested_pool_size: int = Field(
@@ -685,6 +686,28 @@ class Settings(BaseSettings):
             "pool. Counts against "
             "``max_connections`` on top of ``pool_size + max_overflow``. ``0`` shares the "
             "main pool."
+        ),
+    )
+    database_nested_pool_timeout_seconds: float = Field(
+        default=5.0,
+        gt=0,
+        description=(
+            "Seconds a checkout from the nested pool (``database_nested_pool_size``) waits "
+            "for a free connection before raising. Short on purpose: a session from that "
+            "pool is a few reads and then closed, so a wait this long means a caller is "
+            "holding one too long, and failing fast says so instead of holding the "
+            "request's own connection for ``database_pool_timeout_seconds``. Each "
+            "timeout is counted on the ``db_pool_stats`` line."
+        ),
+    )
+    database_pool_stats_interval_seconds: int = Field(
+        default=60,
+        ge=0,
+        description=(
+            "How often each connection pool (``main`` and ``nested``) logs one "
+            "``db_pool_stats`` line: checkouts, checkout timeouts, connections in use and "
+            "the longest checkout wait since the previous line. Counts only; an idle pool "
+            "writes nothing. ``0`` turns the line off."
         ),
     )
     worker_thread_limit: int = Field(

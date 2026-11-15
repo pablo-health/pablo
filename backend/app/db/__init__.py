@@ -23,7 +23,9 @@ Off-request tenant context (background tasks, workers):
         ...
 """
 
+import logging
 import re
+import sys
 import urllib.parse
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
@@ -36,6 +38,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..settings import Settings, get_settings
+from .pool_stats import timed_queue_pool
 from .rls_state import (
     TablePlan,
     read_live_rls,
@@ -178,8 +181,10 @@ def get_engine() -> Engine:
     settings = get_settings()
     return _build_engine(
         settings,
+        pool_name=MAIN_POOL,
         pool_size=settings.database_pool_size,
         max_overflow=settings.database_max_overflow,
+        pool_timeout=settings.database_pool_timeout_seconds,
     )
 
 
@@ -212,6 +217,14 @@ def get_nested_engine() -> Engine:
     (``release_db_connection``), as ``tenant_db_session`` does, so its session
     comes from the main pool.
 
+    Two things hold callers to that. ``create_standalone_session`` refuses
+    (tests) or logs once per call site (servers) an open made while a
+    nested-pool session in the same context still holds a connection. And a
+    checkout here gives up after ``database_nested_pool_timeout_seconds``
+    (default 5), so a caller that keeps one open too long shows up as a timeout
+    counted on the ``db_pool_stats`` line, not as requests stalled for the main
+    pool's timeout.
+
     With ``db_use_cloud_sql_connector`` this engine builds its own
     ``Connector``: one more background refresh thread and certificate fetch
     per process, otherwise harmless.
@@ -221,13 +234,32 @@ def get_nested_engine() -> Engine:
         return get_engine()
     return _build_engine(
         settings,
+        pool_name=NESTED_POOL,
         pool_size=settings.database_nested_pool_size,
         max_overflow=0,
+        pool_timeout=settings.database_nested_pool_timeout_seconds,
     )
 
 
-def _build_engine(settings: Settings, *, pool_size: int, max_overflow: int) -> Engine:
-    """Build an engine with the configured timeouts and the given pool size."""
+#: Pool names on the ``db_pool_stats`` line (``app.db.pool_stats``).
+MAIN_POOL = "main"
+NESTED_POOL = "nested"
+
+
+class _PoolOptions(NamedTuple):
+    """The pool half of an engine: all that differs between the main and nested engines."""
+
+    name: str
+    size: int
+    max_overflow: int
+    timeout: float
+
+
+def _build_engine(
+    settings: Settings, *, pool_name: str, pool_size: int, max_overflow: int, pool_timeout: float
+) -> Engine:
+    """Build an engine with the configured timeouts and the given pool."""
+    pool = _PoolOptions(pool_name, pool_size, max_overflow, pool_timeout)
     option_parts: list[str] = []
     if settings.database_lock_timeout_ms > 0:
         option_parts.append(f"-c lock_timeout={settings.database_lock_timeout_ms}")
@@ -240,15 +272,31 @@ def _build_engine(settings: Settings, *, pool_size: int, max_overflow: int) -> E
         option_parts.append(f"-c statement_timeout={settings.database_statement_timeout_ms}")
 
     if settings.db_use_cloud_sql_connector:
-        return _build_cloud_sql_engine(settings, option_parts, pool_size, max_overflow)
-    return _build_direct_engine(settings, option_parts, pool_size, max_overflow)
+        return _build_cloud_sql_engine(settings, option_parts, pool)
+    return _build_direct_engine(settings, option_parts, pool)
+
+
+def _pool_kwargs(settings: Settings, pool: _PoolOptions | None) -> dict[str, Any]:
+    """``create_engine`` pool arguments; the main pool's when *pool* is None (unit tests)."""
+    if pool is None:
+        pool = _PoolOptions(
+            MAIN_POOL,
+            settings.database_pool_size,
+            settings.database_max_overflow,
+            settings.database_pool_timeout_seconds,
+        )
+    return {
+        "poolclass": timed_queue_pool(pool.name),
+        "pool_size": pool.size,
+        "max_overflow": pool.max_overflow,
+        "pool_timeout": pool.timeout,
+    }
 
 
 def _build_direct_engine(
     settings: Settings,
     option_parts: list[str],
-    pool_size: int | None = None,
-    max_overflow: int | None = None,
+    pool: _PoolOptions | None = None,
 ) -> Engine:
     """Build the default engine: a plain DSN via ``DATABASE_URL``."""
     if not settings.database_url:
@@ -272,9 +320,7 @@ def _build_direct_engine(
         connect_args["options"] = " ".join(option_parts)
     return create_engine(
         settings.database_url,
-        pool_size=settings.database_pool_size if pool_size is None else pool_size,
-        max_overflow=settings.database_max_overflow if max_overflow is None else max_overflow,
-        pool_timeout=settings.database_pool_timeout_seconds,
+        **_pool_kwargs(settings, pool),
         pool_pre_ping=True,
         pool_recycle=settings.database_pool_recycle_seconds,
         echo=settings.debug,
@@ -290,8 +336,7 @@ def _build_direct_engine(
 def _build_cloud_sql_engine(
     settings: Settings,
     option_parts: list[str],
-    pool_size: int | None = None,
-    max_overflow: int | None = None,
+    pool: _PoolOptions | None = None,
 ) -> Engine:
     """Build a SQLAlchemy engine that connects via the Cloud SQL Python connector.
 
@@ -374,9 +419,7 @@ def _build_cloud_sql_engine(
     return create_engine(
         "postgresql+psycopg2://",
         creator=_creator,
-        pool_size=settings.database_pool_size if pool_size is None else pool_size,
-        max_overflow=settings.database_max_overflow if max_overflow is None else max_overflow,
-        pool_timeout=settings.database_pool_timeout_seconds,
+        **_pool_kwargs(settings, pool),
         pool_pre_ping=True,
         pool_recycle=settings.database_pool_recycle_seconds,
         echo=settings.debug,
@@ -1288,6 +1331,108 @@ def _reset_search_path_on_checkin(dbapi_conn: Any, _conn_record: Any) -> None:
         dbapi_conn.autocommit = prior_autocommit
 
 
+# Sessions ``create_standalone_session`` handed out from the nested pool in this
+# context. STRONG references, on purpose: the guard below must not forget a
+# session because nothing else happened to point at it (a weak reference to an
+# otherwise unreferenced session is gone at the next cyclic collection, and the
+# guard with it). The tuple lives in this context only, so a request's entries
+# go with the request; and every open drops the ones that no longer hold a
+# connection, so a long-lived context (a job loop) keeps only open sessions.
+_nested_pool_sessions: ContextVar[tuple[Session, ...]] = ContextVar(
+    "_nested_pool_sessions", default=()
+)
+
+# Call sites (``module:function``) allowed to open a standalone session while a
+# nested-pool session in their context still holds a connection, each with the
+# reason it is safe. Keep this short: the usual fix is to close the nested
+# session first, or to ``release_db_connection()`` before opening it so it
+# comes from the main pool (as ``app.db.practice_owner.owner_session`` does).
+NESTED_OPEN_ALLOWED: dict[str, str] = {}
+
+# Tests raise on a guard hit (``raise_on_nested_open``); a server logs each call
+# site once.
+_raise_on_nested_open = False
+_nested_opens_logged: set[str] = set()
+
+
+class NestedPoolContractError(RuntimeError):
+    """A standalone session was opened while a nested-pool session here held a connection."""
+
+
+def raise_on_nested_open(enabled: bool = True) -> None:
+    """Make a guard hit in ``create_standalone_session`` raise instead of logging.
+
+    A process-wide switch rather than a ``Settings`` field so a test that swaps
+    or re-reads settings cannot turn it off by accident. The integration suite
+    turns it on for every test.
+    """
+    global _raise_on_nested_open  # noqa: PLW0603 -- process-wide test switch
+    _raise_on_nested_open = enabled
+
+
+def _holds_connection(session: Session) -> bool:
+    # ``is True``: unit tests hand out MagicMock sessions, whose in_transaction()
+    # is a truthy mock rather than a bool, and those hold nothing.
+    return session.in_transaction() is True
+
+
+def _opening_site() -> tuple[str, int]:
+    """``module:function`` and line of the first caller outside ``app.db``. Code location only.
+
+    ``contextlib`` frames are skipped too. A ``@contextmanager`` in ``app.db``
+    (``tenant_db_session``) runs as a generator, and a running generator's
+    ``f_back`` is whoever resumed it: contextlib's ``__enter__``. Stopping
+    there would name every caller of every such helper ``contextlib:__enter__``,
+    one log line and one ``NESTED_OPEN_ALLOWED`` key for all of them.
+    """
+    frame = sys._getframe(1)  # cheaper than inspect.stack()
+    package = __name__
+    while frame.f_back is not None:
+        module = str(frame.f_globals.get("__name__", ""))
+        in_package = module == package or module.startswith(package + ".")
+        if not in_package and module != "contextlib":
+            break
+        frame = frame.f_back
+    return f"{frame.f_globals.get('__name__')}:{frame.f_code.co_name}", frame.f_lineno
+
+
+def _check_nested_pool_contract(held: tuple[Session, ...]) -> None:
+    """Refuse (tests) or log once (server) a standalone open beside a held nested session.
+
+    A nested-pool session is a leaf: a few reads, then close
+    (``get_nested_engine``). Opening another standalone session while one
+    holds a connection breaks that. The new one comes from the nested pool too
+    while the request still holds its own connection, so two such callers can
+    each hold one of its connections and wait for the other; or from the main
+    pool, which requests waiting on the nested pool may have filled. Either
+    way the caller waits on a pool it is helping to exhaust.
+    """
+    if not held:
+        return
+    site, line = _opening_site()
+    if site in NESTED_OPEN_ALLOWED:
+        return
+    if _raise_on_nested_open:
+        msg = (
+            f"{site} (line {line}) opened a standalone session while a nested-pool "
+            f"session in this context holds a connection ({len(held)} held). Close the "
+            "nested session first, call release_db_connection() before opening it so "
+            "it comes from the main pool, or add the call site to NESTED_OPEN_ALLOWED "
+            "with the reason it is safe."
+        )
+        raise NestedPoolContractError(msg)
+    if site in _nested_opens_logged:
+        return
+    _nested_opens_logged.add(site)
+    logging.getLogger(__name__).warning(
+        "nested_pool_contract opened standalone session beside a held nested-pool "
+        "session at=%s line=%d",
+        site,
+        line,
+        extra={"event": "nested_pool_contract", "at": site, "line": line},
+    )
+
+
 def create_standalone_session(practice_schema: str | None = None) -> Session:
     """Create a standalone session outside of request context.
 
@@ -1299,10 +1444,23 @@ def create_standalone_session(practice_schema: str | None = None) -> Session:
     connection while holding one from the same pool. Otherwise it uses the
     main pool, as jobs, scripts and worker threads always have.
     Caller is responsible for commit/rollback/close.
+
+    A session from the nested pool is a leaf. Opening another standalone
+    session while one still holds a connection is a guard hit
+    (``_check_nested_pool_contract``): it raises under the integration suite
+    and logs once per call site in a server. The guard sees sessions opened in
+    the same context, which covers a nested open in the same call stack; it
+    does not see across a sync route's separate threadpool hops. It also asks
+    whether a session holds a connection *now*: a session opened without
+    ``practice_schema`` holds nothing until its first statement, so two such
+    opens made back to back, then both used, get past it.
     """
+    held = tuple(s for s in _nested_pool_sessions.get() if _holds_connection(s))
+    _check_nested_pool_contract(held)
     holding = any(bound.in_transaction() for bound in bound_db_sessions())
     factory = get_nested_session_factory() if holding else get_session_factory()
     session = factory()
+    _nested_pool_sessions.set((*held, session) if holding else held)
     if practice_schema:
         set_tenant_schema(session, practice_schema)
     return session
