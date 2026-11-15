@@ -45,7 +45,9 @@ from typing import TYPE_CHECKING
 
 from ..settings import get_settings
 from .chat_llm_gateway import ChatLLMGateway, StreamEvent, UserAssistantTurn
+from .http_chat_llm_gateway import HttpChatLLMGateway
 from .llm_provider import LLMProvider
+from .model_standin import model_standin_base_url
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Sequence
@@ -187,7 +189,14 @@ def failover_chat_gateway(
     so a ``bedrock:`` primary streams through Bedrock with ``gateway``'s
     models as its fallbacks. ``retry_refusals`` lets a refused turn move to
     the next model too (see the module docstring).
+
+    A practice listed in ``MODEL_STANDIN_PRACTICES`` gets the stand-in
+    instead, for every model (:mod:`.model_standin`). The turn service builds
+    this gateway for each answer, so the rule is asked per answer.
     """
+    standin = model_standin_base_url()
+    if standin:
+        return HttpChatLLMGateway(standin)
     settings = get_settings()
     fallbacks = settings.fallbacks_for(feature)
     if not fallbacks and feature not in settings.ai_models:

@@ -48,6 +48,7 @@ from .claude_models import (
 )
 from .llm_provider import LLMProvider, strip_provider_prefix
 from .llm_telemetry import LLMSpanRequest, llm_span, usage_detail_tokens, usage_tokens
+from .model_standin import model_standin_base_url
 from .vertex_client import (
     anthropic_vertex_client,
     seconds_to_genai_timeout_ms,
@@ -947,7 +948,17 @@ def resolve_structured_llm_gateway(
 
     ``feature`` is the AI feature the call serves, when the caller knows it:
     Claude on Vertex asks for that feature's ``ai_efforts`` entry.
+
+    Before any of that, a practice listed in ``MODEL_STANDIN_PRACTICES`` gets
+    the stand-in, whatever the model (:mod:`.model_standin`). Asked here
+    rather than where a gateway is built because every structured call
+    resolves its gateway at call time, with the caller's practice in scope.
     """
+    standin = model_standin_base_url()
+    if standin:
+        from .http_structured_llm_gateway import HttpStructuredLLMGateway
+
+        return HttpStructuredLLMGateway(standin)
     provider, sep, _rest = model.partition(":")
     if sep and provider in _registered_providers:
         return _registered_providers[provider]()

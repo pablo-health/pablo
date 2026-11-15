@@ -2112,6 +2112,53 @@ class Settings(BaseSettings):
         ),
     )
 
+    model_standin_practices_raw: str = Field(
+        default="",
+        alias="MODEL_STANDIN_PRACTICES",
+        description=(
+            "Comma-separated practice ids whose model calls go to "
+            "MODEL_STANDIN_BASE_URL instead of a model: structured calls, "
+            "chat answers and dictation transcription. For a deployment that "
+            "runs automated suites under practices of its own and wants their "
+            "calls deterministic and free, while every other practice keeps "
+            "its real models. Empty (default): no practice is routed. "
+            "Configure per-deployment; requires MODEL_STANDIN_BASE_URL."
+        ),
+    )
+
+    model_standin_base_url: str = Field(
+        default="",
+        description=(
+            "Base URL of the stand-in that answers the model calls of the "
+            "practices in MODEL_STANDIN_PRACTICES (scripts/fake_llm.py serves "
+            "it under /standin): POST {base}/v1/structured, {base}/v1/chat and "
+            "{base}/v1/transcribe. Refused without a practice list, since it "
+            "would route no one."
+        ),
+    )
+
+    @property
+    def model_standin_practices(self) -> frozenset[str]:
+        """Parse comma-separated MODEL_STANDIN_PRACTICES into a set."""
+        raw = self.model_standin_practices_raw
+        return frozenset(p.strip() for p in raw.split(",") if p.strip())
+
+    @model_validator(mode="after")
+    def _validate_model_standin(self) -> "Settings":
+        """Both halves of the model stand-in, or neither.
+
+        Not tied to ENVIRONMENT, unlike the per-feature stand-in origins: this
+        one reaches only the practices it names, so a deployment run in
+        production mode can route its own test practices and no one else's.
+        """
+        if self.model_standin_practices and not self.model_standin_base_url:
+            raise ValueError("MODEL_STANDIN_PRACTICES requires MODEL_STANDIN_BASE_URL")
+        if self.model_standin_base_url and not self.model_standin_practices:
+            raise ValueError(
+                "MODEL_STANDIN_BASE_URL is set but MODEL_STANDIN_PRACTICES names no practice"
+            )
+        return self
+
     clearinghouse_webhook_secret: SecretStr = Field(
         default=SecretStr(""),
         description=(
@@ -2437,7 +2484,7 @@ def log_startup_posture(settings: Settings, logger: logging.Logger) -> None:
     An operator scanning boot logs should be able to see at a glance
     whether MFA, the signup allowlist, Redis-backed shared state, DPoP
     proof enforcement, and the test-identity bypass are on, without
-    grepping for each setting individually. Booleans and a count only —
+    grepping for each setting individually. Booleans and counts only —
     no PHI, no secrets.
     """
     cors_origin_count = len([o for o in settings.cors_origins.split(",") if o.strip()])
@@ -2445,11 +2492,14 @@ def log_startup_posture(settings: Settings, logger: logging.Logger) -> None:
     # itself. Each is a legitimate proxy on some deployments and a stand-in
     # on the end-to-end stack; the feed origin is refused outside development
     # (see _validate_deployment_posture) and is here so a boot log says so.
+    # The model stand-in is reported as how many practices it routes, never
+    # which ones.
     logger.info(
         "startup posture: mfa=%s restrict_signups=%s use_redis=%s "
         "dpop=%s cors_origins=%d "
         "nppes_origin_override=%s clearinghouse_origin_override=%s "
-        "ical_feed_origin_override=%s google_calendar_origin_override=%s",
+        "ical_feed_origin_override=%s google_calendar_origin_override=%s "
+        "model_standin_practices=%d model_standin_origin=%s",
         settings.require_mfa,
         settings.restrict_signups,
         settings.use_redis,
@@ -2459,6 +2509,8 @@ def log_startup_posture(settings: Settings, logger: logging.Logger) -> None:
         bool(settings.clearinghouse_base_url),
         bool(settings.ical_feed_base_url),
         bool(settings.google_calendar_base_url),
+        len(settings.model_standin_practices),
+        bool(settings.model_standin_base_url),
     )
     if not settings.use_redis and not settings.is_development:
         # Every rate-limit window lives in one process, so each replica

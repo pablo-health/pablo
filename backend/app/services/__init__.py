@@ -34,6 +34,7 @@ from .ehr_navigation_service import (
 )
 from .export_service import ExportService
 from .llm_usage_meter import LlmUsageMeter, period_yyyymm
+from .model_standin import model_standin_base_url
 from .note_generation_service import (
     GeneratedNote,
     MockNoteGenerationService,
@@ -153,6 +154,7 @@ __all__ = [
     "get_chat_model_resolver",
     "get_default_structured_llm_gateway",
     "merge_attribution_into_soap",
+    "model_standin_base_url",
     "parse_attribution_response",
     "period_yyyymm",
 ]
