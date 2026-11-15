@@ -290,35 +290,43 @@ class TestClaimedUserOnExpiredToken:
 
 
 class TestSessionPeekIsAttributed:
-    def test_session_peek_binds_the_mapped_user(self) -> None:
-        verified = MagicMock(provider="firebase", subject_id="firebase-uid-1", claims={"a": 1})
+    """Every open tab polls the peek, so it attributes its line without a lookup.
+
+    It binds the sign-in's opaque id (the one the sign-in's audit row records)
+    and never asks the identity repository who the caller is: the request
+    middleware opens no database session for the liveness paths, so a lookup
+    there could only fail.
+    """
+
+    def test_session_peek_binds_the_sign_in_without_a_lookup(self) -> None:
+        from app.auth import idle_session  # noqa: PLC0415
+        from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
+
+        verified = VerifiedIdentity(
+            provider="firebase",
+            subject_id="firebase-uid-1",
+            email="c@example.invalid",
+            email_verified=True,
+            mfa_satisfied=True,
+            claims={"uid": "firebase-uid-1", "auth_time": 1_700_000_000},
+        )
+        request = MagicMock()
+        request.state.verified_identity = None
         repo = MagicMock()
-        repo.get_user_id.return_value = "user-42"
         identity, token = begin_request_log_identity()
         try:
             with (
-                patch.object(auth_service, "_verify_request_identity", return_value=verified),
+                patch.object(auth_service, "verify_token", return_value=verified),
+                patch.object(auth_service, "_get_cached_token", return_value=None),
                 patch.object(auth_service, "get_identity_repository", return_value=repo),
             ):
                 claims = auth_service.get_session_peek_claims(
-                    MagicMock(), HTTPAuthorizationCredentials(scheme="Bearer", credentials="t")
+                    request, HTTPAuthorizationCredentials(scheme="Bearer", credentials="t")
                 )
         finally:
             end_request_log_identity(token)
 
-        assert claims == {"a": 1}
-        assert identity.user_id == "user-42"
-
-    def test_session_peek_still_answers_when_the_lookup_fails(self) -> None:
-        verified = MagicMock(provider="firebase", subject_id="s", claims={"a": 1})
-        repo = MagicMock()
-        repo.get_user_id.side_effect = RuntimeError("db down")
-        with (
-            patch.object(auth_service, "_verify_request_identity", return_value=verified),
-            patch.object(auth_service, "get_identity_repository", return_value=repo),
-        ):
-            claims = auth_service.get_session_peek_claims(
-                MagicMock(), HTTPAuthorizationCredentials(scheme="Bearer", credentials="t")
-            )
-
-        assert claims == {"a": 1}
+        assert claims == verified.claims
+        assert identity.auth_session == idle_session.session_log_key(verified.claims)
+        assert identity.user_id is None
+        repo.get_user_id.assert_not_called()

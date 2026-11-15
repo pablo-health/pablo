@@ -697,10 +697,18 @@ def _resolve_practice_from_email(email: str) -> tuple[str, str] | None:
     """Look up practice_id and schema_name from the platform schema.
 
     Returns (practice_id, schema_name) or None if not found.
+
+    Runs on every signed-in request, so a resolution the database gave is
+    repeated from Redis for a short time (``app.db.practice_resolution_cache``:
+    positive answers only, dropped when a mapping or practice row commits a
+    change). Without Redis this reads the database every time.
     """
-    from ..db import create_standalone_session
+    from ..db import create_standalone_session, practice_resolution_cache
     from ..db.platform_models import EmailTenantMappingRow, PracticeRow
 
+    cached = practice_resolution_cache.get(email)
+    if cached is not None:
+        return cached
     with create_standalone_session() as db:
         mapping = db.get(EmailTenantMappingRow, email)
         if not mapping:
@@ -708,7 +716,9 @@ def _resolve_practice_from_email(email: str) -> tuple[str, str] | None:
         practice = db.get(PracticeRow, mapping.practice_id)
         if not practice or not practice.is_active:
             return None
-        return (practice.id, practice.schema_name)
+        resolved = (practice.id, practice.schema_name)
+    practice_resolution_cache.fill(email, *resolved)
+    return resolved
 
 
 # Brief poll window before 503-ing on an in-flight provisioning. Five
@@ -944,14 +954,13 @@ def get_session_peek_claims(
     ``tests/test_route_mfa_guardrails.py``.
     """
     token = auth_credentials.credentials
-    identity = _verify_request_identity(request, token)
-    # Log attribution only. The idle controller polls this from every open
-    # tab, so a person's session shows up as theirs rather than anonymous.
-    with contextlib.suppress(Exception):
-        user_id = get_identity_repository().get_user_id(identity.provider, identity.subject_id)
-        if user_id is not None:
-            bind_log_user_id(str(user_id))
-    return identity.claims
+    # Touches no database: every open tab polls the endpoints behind this, so
+    # the request middleware opens no session for them either
+    # (``SESSION_LIVENESS_PATHS``). The access line is still attributed: it
+    # carries the sign-in's opaque id (``_bind_auth_session``), the same id the
+    # sign-in's own audit row records, so a poll groups with the person's
+    # session without looking up who they are on every call.
+    return _verify_request_identity(request, token).claims
 
 
 def _resolve_user(
