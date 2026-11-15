@@ -2,7 +2,7 @@
 
 These exercise the per-table policy decision without a real Postgres by
 driving the function with a fake session that records the DDL it would
-run and serves a canned ``information_schema.columns`` result. The
+run and serves a canned answer to the schema's column read. The
 invariant under test: a table is never left force-RLS'd with no policy
 (a silent deny-all), which is the trap that hid behind the historical
 BYPASSRLS-on-role posture.
@@ -40,6 +40,7 @@ from app.db import (
     rls_forced_tenant_tables,
 )
 from app.db.models import Base
+from app.db.rls_state import SCHEMA_COLUMNS_SQL
 
 
 class _FakeResult:
@@ -78,7 +79,7 @@ class _FakeSession:
     def execute(self, statement, params=None):
         sql = str(statement)
         self.executed.append(sql)
-        if sql.strip().upper().startswith("SELECT TABLE_NAME"):
+        if sql == SCHEMA_COLUMNS_SQL:
             rows = [
                 (table, col, self._types_by_table.get(table, {}).get(col, _sql_type(col)))
                 for table, cols in self._columns_by_table.items()
