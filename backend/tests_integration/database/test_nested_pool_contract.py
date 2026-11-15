@@ -163,6 +163,52 @@ def test_a_standalone_open_beside_a_held_nested_session_raises(default_engines: 
         assert _nested_checked_out() == 1, "the refused open took a connection"
 
 
+def test_a_hit_through_tenant_db_session_names_the_caller_once_per_site(
+    default_engines: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    """``tenant_db_session`` beside a held lookup names whoever entered it, not contextlib.
+
+    Raising, the message names this test. In a server, two different callers
+    each get their own ``nested_pool_contract`` line.
+    """
+    from unittest.mock import patch  # noqa: PLC0415
+
+    from app import db  # noqa: PLC0415
+    from app.db import NestedPoolContractError, create_standalone_session  # noqa: PLC0415
+    from app.db.tenant_session import tenant_db_session  # noqa: PLC0415
+
+    def first_caller() -> None:
+        with tenant_db_session("public", "user-1"):
+            pass
+
+    def second_caller() -> None:
+        with tenant_db_session("public", "user-1"):
+            pass
+
+    with _request_holding_a_connection(), create_standalone_session() as lookup:
+        lookup.execute(text("SELECT 1"))
+        with pytest.raises(NestedPoolContractError) as raised:
+            first_caller()
+        assert str(raised.value).startswith(f"{__name__}:first_caller "), str(raised.value)
+
+        db.raise_on_nested_open(False)
+        try:
+            with (
+                patch.object(db, "_nested_opens_logged", set()),
+                caplog.at_level(logging.WARNING, logger="app.db"),
+            ):
+                first_caller()
+                second_caller()
+        finally:
+            db.raise_on_nested_open()
+    sites = [
+        r.at  # type: ignore[attr-defined]
+        for r in caplog.records
+        if r.name == "app.db" and getattr(r, "event", None) == "nested_pool_contract"
+    ]
+    assert sites == [f"{__name__}:first_caller", f"{__name__}:second_caller"]
+
+
 def test_a_closed_nested_session_frees_the_next_open(default_engines: None) -> None:
     """Close the leaf and the next lookup is fine: the guard tracks holding, not history."""
     from app.db import create_standalone_session  # noqa: PLC0415

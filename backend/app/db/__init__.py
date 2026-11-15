@@ -1377,12 +1377,20 @@ def _holds_connection(session: Session) -> bool:
 
 
 def _opening_site() -> tuple[str, int]:
-    """``module:function`` and line of the first caller outside ``app.db``. Code location only."""
+    """``module:function`` and line of the first caller outside ``app.db``. Code location only.
+
+    ``contextlib`` frames are skipped too. A ``@contextmanager`` in ``app.db``
+    (``tenant_db_session``) runs as a generator, and a running generator's
+    ``f_back`` is whoever resumed it: contextlib's ``__enter__``. Stopping
+    there would name every caller of every such helper ``contextlib:__enter__``,
+    one log line and one ``NESTED_OPEN_ALLOWED`` key for all of them.
+    """
     frame = sys._getframe(1)  # cheaper than inspect.stack()
     package = __name__
     while frame.f_back is not None:
         module = str(frame.f_globals.get("__name__", ""))
-        if module != package and not module.startswith(package + "."):
+        in_package = module == package or module.startswith(package + ".")
+        if not in_package and module != "contextlib":
             break
         frame = frame.f_back
     return f"{frame.f_globals.get('__name__')}:{frame.f_code.co_name}", frame.f_lineno
@@ -1442,7 +1450,10 @@ def create_standalone_session(practice_schema: str | None = None) -> Session:
     (``_check_nested_pool_contract``): it raises under the integration suite
     and logs once per call site in a server. The guard sees sessions opened in
     the same context, which covers a nested open in the same call stack; it
-    does not see across a sync route's separate threadpool hops.
+    does not see across a sync route's separate threadpool hops. It also asks
+    whether a session holds a connection *now*: a session opened without
+    ``practice_schema`` holds nothing until its first statement, so two such
+    opens made back to back, then both used, get past it.
     """
     held = tuple(s for s in _nested_pool_sessions.get() if _holds_connection(s))
     _check_nested_pool_contract(held)

@@ -9,6 +9,11 @@ at the pool timeout. :func:`log_pool_stats` writes one line per pool with the
 counts since the previous line and the connections in use right now, so pool
 sizes can be chosen from what a deployment actually does.
 
+The timed checkout also includes the ``pool_pre_ping`` round trip, which every
+engine here makes on every checkout. So ``wait_total_ms`` on a pool with many
+checkouts is mostly ping time, not queueing. Read queueing from ``timeouts``
+and from a ``wait_max_ms`` well above one round trip.
+
 The ``timeouts`` count is the one to watch on the ``nested`` pool: it is small
 and its checkout gives up after ``database_nested_pool_timeout_seconds``, so a
 caller that breaks its leaf-only contract (see ``app.db.get_nested_engine``)

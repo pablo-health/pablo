@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import gc
 import logging
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -182,6 +183,32 @@ def test_a_hit_inside_an_app_db_submodule_names_that_helper_s_caller(
         helper()  # type: ignore[operator]
     assert str(raised.value).startswith(
         f"{__name__}:test_a_hit_inside_an_app_db_submodule_names_that_helper_s_caller "
+    )
+
+
+def test_a_hit_inside_an_app_db_context_manager_names_its_caller(
+    request_holding: _Session,
+) -> None:
+    """A ``@contextmanager`` in ``app.db.*`` is skipped too, not named ``contextlib:__enter__``.
+
+    The generator's frame is resumed by contextlib's ``__enter__``, so a walk
+    that stops at the first frame outside ``app.db`` stops in contextlib.
+    """
+    helper_globals = {
+        "__name__": "app.db.tenant_session",
+        "contextmanager": contextmanager,
+        "create_standalone_session": create_standalone_session,
+    }
+    exec(  # noqa: S102
+        "@contextmanager\ndef unit_of_work():\n    yield create_standalone_session()\n",
+        helper_globals,
+    )
+    unit_of_work = helper_globals["unit_of_work"]
+    create_standalone_session()
+    with pytest.raises(NestedPoolContractError) as raised, unit_of_work():  # type: ignore[operator]
+        pass
+    assert str(raised.value).startswith(
+        f"{__name__}:test_a_hit_inside_an_app_db_context_manager_names_its_caller "
     )
 
 
