@@ -13,6 +13,7 @@ main-pool connection, which is what the lookup pool is for, does not.
 from __future__ import annotations
 
 import asyncio
+import gc
 import logging
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
@@ -45,6 +46,20 @@ def _query(session: MagicMock) -> MagicMock:
     return session
 
 
+def _assert_still_held(held: MagicMock, pool: str) -> None:
+    """The guard tracks opened sessions by weakref, so a test must keep its own.
+
+    A MagicMock and its child mocks form a cycle; left unreferenced, the
+    stand-in lives only until the next cyclic GC, and a case built on it then
+    fails at random or passes without the guard ever seeing a holder. Forcing
+    the GC here makes that deterministic: the caller's reference is all that
+    keeps *held* counted.
+    """
+    gc.collect()
+    assert db._held_pools() == [pool]
+    assert held.in_transaction()
+
+
 @pytest.fixture(autouse=True)
 def _factories() -> Iterator[None]:
     """Each factory call hands out a fresh stand-in; the ContextVars start empty."""
@@ -68,7 +83,8 @@ def test_guard_is_on_for_the_unit_suite() -> None:
 
 
 def test_standalone_inside_a_holding_standalone_raises() -> None:
-    _query(create_standalone_session())
+    held = _query(create_standalone_session())
+    _assert_still_held(held, db._POOL_MAIN)
     with pytest.raises(NestedSessionError, match="main-pool"):
         create_standalone_session()
 
@@ -91,18 +107,21 @@ def test_lookup_while_the_request_session_holds_is_what_the_lookup_pool_is_for()
 
 
 def test_lookup_inside_a_holding_standalone_is_allowed() -> None:
-    _query(create_standalone_session())
+    held = _query(create_standalone_session())
+    _assert_still_held(held, db._POOL_MAIN)
     create_lookup_session()
 
 
 def test_lookup_inside_a_holding_lookup_raises() -> None:
-    _query(create_lookup_session())
+    held = _query(create_lookup_session())
+    _assert_still_held(held, db._POOL_LOOKUP)
     with pytest.raises(NestedSessionError, match="lookup-pool session while this context holds"):
         create_lookup_session()
 
 
 def test_standalone_inside_a_holding_lookup_raises() -> None:
-    _query(create_lookup_session())
+    held = _query(create_lookup_session())
+    _assert_still_held(held, db._POOL_LOOKUP)
     with pytest.raises(NestedSessionError):
         create_standalone_session()
 
@@ -123,7 +142,8 @@ def test_a_released_session_stops_counting() -> None:
 
 
 def test_allow_nested_session_permits_a_reviewed_path_and_only_inside_it() -> None:
-    _query(create_standalone_session())
+    held = _query(create_standalone_session())
+    _assert_still_held(held, db._POOL_MAIN)
     with allow_nested_session("provisioning step"):
         create_standalone_session()
     with pytest.raises(NestedSessionError):

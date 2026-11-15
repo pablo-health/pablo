@@ -253,8 +253,12 @@ def resolve_client_sender(practice_id: str) -> ClientSender:
     Opens and closes its own session, and is asked once per send, so a domain
     that verifies takes effect on the next email. Raises ``LookupError`` for a
     practice that does not exist.
+
+    A lookup session: every caller asks this while its request (or the
+    booking's owner session) holds a main-pool connection, and it makes a few
+    reads and no network call. Don't call it with a lookup session open.
     """
-    session = create_standalone_session()
+    session = create_lookup_session()
     try:
         practice, chosen = _load(session, practice_id)
         return _resolve(session, practice, chosen)

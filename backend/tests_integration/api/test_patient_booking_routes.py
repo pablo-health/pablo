@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from contextlib import contextmanager
 from datetime import UTC, date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
@@ -2199,6 +2200,39 @@ def test_a_failure_around_the_push_never_fails_the_booking(
 # --- the client's video link follows a move (PABLO-en9h.9) ---
 
 
+@contextmanager
+def _video_room_and_client_email(
+    engine: Engine, practice: dict[str, Any], appointment_id: str
+) -> Iterator[None]:
+    """A pasted room on *appointment_id* and an address on the client, for the block."""
+    with engine.begin() as conn:
+        conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
+        conn.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _CLINICIAN})
+        conn.execute(
+            text(
+                "UPDATE appointments SET video_link = 'https://doxy.me/room', "
+                "place_of_service = '02' WHERE id = CAST(:i AS uuid)"
+            ),
+            {"i": appointment_id},
+        )
+        conn.execute(
+            text("UPDATE patients SET email = 'ada@example.test' WHERE id = CAST(:p AS uuid)"),
+            {"p": practice["a"]},
+        )
+    try:
+        yield
+    finally:
+        with engine.begin() as conn:
+            conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
+            conn.execute(
+                text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _CLINICIAN}
+            )
+            conn.execute(
+                text("UPDATE patients SET email = NULL WHERE id = CAST(:p AS uuid)"),
+                {"p": practice["a"]},
+            )
+
+
 def test_a_move_sends_the_client_the_new_time_with_the_standing_room(
     engine: Engine, practice: dict[str, Any], patient_a_client: Any
 ) -> None:
@@ -2218,20 +2252,6 @@ def test_a_move_sends_the_client_the_new_time_with_the_standing_room(
     _open_policy(engine)
     _clear_appointments(engine)
     original_id = _seed_appointment(engine, practice["a"], _at(10))
-    with engine.begin() as conn:
-        conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
-        conn.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _CLINICIAN})
-        conn.execute(
-            text(
-                "UPDATE appointments SET video_link = 'https://doxy.me/room', "
-                "place_of_service = '02' WHERE id = CAST(:i AS uuid)"
-            ),
-            {"i": original_id},
-        )
-        conn.execute(
-            text("UPDATE patients SET email = 'ada@example.test' WHERE id = CAST(:p AS uuid)"),
-            {"p": practice["a"]},
-        )
     sent = InMemoryEmailSender()
     asked: list[str | None] = []
 
@@ -2242,21 +2262,11 @@ def test_a_move_sends_the_client_the_new_time_with_the_standing_room(
     app.dependency_overrides[get_client_video_link_notifier] = lambda: ClientVideoLinkNotifier(
         sender=sent, practice_facts=facts
     )
-    try:
+    with _video_room_and_client_email(engine, practice, original_id):
         response = patient_a_client.post(
             f"/api/patient/booking/{original_id}/reschedule",
             json={"start_at": _at(14).isoformat()},
         )
-    finally:
-        with engine.begin() as conn:
-            conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
-            conn.execute(
-                text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _CLINICIAN}
-            )
-            conn.execute(
-                text("UPDATE patients SET email = NULL WHERE id = CAST(:p AS uuid)"),
-                {"p": practice["a"]},
-            )
 
     assert response.status_code == 200, response.text
     [message] = sent.sent
@@ -2272,3 +2282,54 @@ def test_a_move_sends_the_client_the_new_time_with_the_standing_room(
             {"i": response.json()["id"]},
         ).scalar_one()
     assert recorded is not None, "the send was not recorded, so a re-save would send again"
+
+
+def test_the_real_practice_facts_read_opens_no_main_pool_session_inside_the_route(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """The notifier's own ``read_practice_facts``, not a stand-in, under the nested-session guard.
+
+    ``_send_video_link`` runs inside ``owner_session``, so the route already
+    holds two main-pool connections when it asks for the practice's facts.
+    The facts and the sender come from lookup sessions; a main-pool open there
+    raises ``NestedSessionError`` under test, which the notifier's
+    best-effort ``except`` would swallow into a client who gets no link.
+    Every other test of this path stubs ``practice_facts``, which is how the
+    old open went unseen.
+    """
+    from app.main import app  # noqa: PLC0415
+    from app.services.client_video_link_notice import (  # noqa: PLC0415
+        ClientVideoLinkNotifier,
+        PracticeFacts,
+        get_client_video_link_notifier,
+        read_practice_facts,
+    )
+    from app.services.email_sender import InMemoryEmailSender  # noqa: PLC0415
+
+    _open_policy(engine)
+    _clear_appointments(engine)
+    original_id = _seed_appointment(engine, practice["a"], _at(10))
+    sent = InMemoryEmailSender()
+    raised: list[str] = []
+
+    def facts(practice_id: str | None) -> PracticeFacts | None:
+        try:
+            return read_practice_facts(practice_id)
+        except Exception as exc:
+            raised.append(f"{type(exc).__name__}: {exc}")
+            raise
+
+    app.dependency_overrides[get_client_video_link_notifier] = lambda: ClientVideoLinkNotifier(
+        sender=sent, practice_facts=facts
+    )
+    with _video_room_and_client_email(engine, practice, original_id):
+        response = patient_a_client.post(
+            f"/api/patient/booking/{original_id}/reschedule",
+            json={"start_at": _at(14).isoformat()},
+        )
+
+    assert response.status_code == 200, response.text
+    assert raised == []
+    [message] = sent.sent
+    assert message.to == "ada@example.test"
+    assert "Join here: https://doxy.me/room" in message.text

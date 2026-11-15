@@ -152,7 +152,13 @@ def tenant_db_session(
     # one. publish_request_session below commits the displaced session anyway;
     # doing it first means this unit of work never waits on the main pool while
     # holding a connection from it, which is how a burst deadlocks the pool
-    # (see app.db._check_nested_open).
+    # (see app.db._check_nested_open). The cost: the caller's pending writes
+    # are committed here, before the open below, so an open that then fails
+    # (the main pool's timeout, say) leaves them committed while the route
+    # still errors. Before this release a failed open left them uncommitted.
+    # publish_request_session already commits on a later raise, so a caller
+    # had no stronger promise than this; a caller that needs its writes and
+    # this unit of work to stand or fall together must not straddle the two.
     release_db_connection()
     session = create_standalone_session(schema)
     # Publishing (rather than a bare ContextVar set) is what releases the

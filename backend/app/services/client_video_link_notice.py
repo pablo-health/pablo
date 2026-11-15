@@ -86,11 +86,16 @@ def read_practice_facts(practice_id: str | None) -> PracticeFacts | None:
     """The practice's facts, on a session of their own. None for no practice.
 
     Its own session because the caller's may be a patient's or a public one,
-    and these are platform rows no tenant context is needed for.
+    and these are platform rows no tenant context is needed for. A lookup
+    session, closed before the portal link is built, because every caller
+    already holds a main-pool connection: the booking routes ask this inside
+    ``owner_session``, and the Meet follow-up inside its own ``services()``
+    session. ``resolve_client_sender`` then takes a lookup session of its own,
+    after this one is closed.
     """
     if not practice_id:
         return None
-    from ..db import create_standalone_session
+    from ..db import create_lookup_session
     from ..portal.client_sender import resolve_client_sender
     from ..portal.delivery import DeliveryNotConfiguredError
     from ..portal.factory import build_portal_link
@@ -98,7 +103,7 @@ def read_practice_facts(practice_id: str | None) -> PracticeFacts | None:
     from ..portal.portal_settings import portal_enabled_in
     from .telehealth import practice_sends_client_video_link
 
-    session = create_standalone_session()
+    session = create_lookup_session()
     try:
         sends_link = practice_sends_client_video_link(session, practice_id)
         if not sends_link:
