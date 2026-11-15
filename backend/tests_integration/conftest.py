@@ -308,6 +308,21 @@ def clear_fastapi_dependency_caches() -> None:
             candidate.cache_clear()
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _raise_on_nested_pool_contract() -> None:
+    """Fail a test whose code opens a standalone session beside a held nested-pool one.
+
+    A server logs that once per call site (``app.db._check_nested_pool_contract``);
+    here it raises, so a new break of the nested pool's leaf-only contract is
+    found by the test that introduces it. Imported inside the fixture:
+    ``pytest_configure`` must set ``DATABASE_URL`` before anything imports
+    ``app.db``.
+    """
+    from app.db import raise_on_nested_open  # noqa: PLC0415
+
+    raise_on_nested_open()
+
+
 @pytest.fixture(autouse=True)
 def _release_fastapi_dependency_caches() -> Iterator[None]:
     """Release engines pinned by fastapi's dependency-classification caches.

@@ -234,6 +234,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     raise_worker_thread_limit(settings.worker_thread_limit)
 
     tasks: list[asyncio.Task[None]] = []
+    if settings.database_pool_stats_interval_seconds > 0:
+        from .db.pool_stats import pool_stats_loop
+
+        tasks.append(
+            asyncio.create_task(pool_stats_loop(settings.database_pool_stats_interval_seconds))
+        )
     if settings.calendar_auto_sync_enabled and not settings.is_saas:
         from .background_sync import calendar_sync_loop
 
