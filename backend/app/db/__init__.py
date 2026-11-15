@@ -25,7 +25,8 @@ Off-request tenant context (background tasks, workers):
 
 import re
 import urllib.parse
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from functools import lru_cache
 from typing import Any, Literal, NamedTuple
@@ -175,7 +176,58 @@ def get_engine() -> Engine:
     completely unaffected — the package need not be installed.
     """
     settings = get_settings()
+    return _build_engine(
+        settings,
+        pool_size=settings.database_pool_size,
+        max_overflow=settings.database_max_overflow,
+    )
 
+
+@lru_cache(maxsize=1)
+def get_nested_engine() -> Engine:
+    """The engine for standalone sessions opened while holding a connection.
+
+    A request takes a pooled connection at its first query and keeps it until
+    its commit. Several request paths open a standalone session while they
+    hold that connection: resolving the caller's practice, recording
+    presence, sign-in bookkeeping. When both came from one pool, a burst of
+    requests could each hold one connection and wait for a second until every
+    connection was taken: nothing could move until the pool timeout, and under
+    continued load the same wait re-formed at once (seen in a load run at a
+    few dozen active users, pool 15 + 5).
+
+    A separate pool means such a lookup never waits on a request's
+    connection. Same database, same listeners (they are registered on the
+    ``Engine`` and ``Session`` classes), fixed size, no overflow. Only a
+    caller that already holds a connection uses it (see
+    ``create_standalone_session``); jobs, scripts and worker threads keep the
+    main pool, so their concurrency is unchanged. With
+    ``database_nested_pool_size=0`` this is the main engine.
+
+    The pool is small, so it is only safe for what it was made for: a few
+    reads, then close. A session from it must not open another standalone
+    session (that one also comes from here, and two such requests can wait on
+    each other) and must not stay open across a network call. Work that needs
+    either should release the request's connection first
+    (``release_db_connection``), as ``tenant_db_session`` does, so its session
+    comes from the main pool.
+
+    With ``db_use_cloud_sql_connector`` this engine builds its own
+    ``Connector``: one more background refresh thread and certificate fetch
+    per process, otherwise harmless.
+    """
+    settings = get_settings()
+    if settings.database_nested_pool_size <= 0:
+        return get_engine()
+    return _build_engine(
+        settings,
+        pool_size=settings.database_nested_pool_size,
+        max_overflow=0,
+    )
+
+
+def _build_engine(settings: Settings, *, pool_size: int, max_overflow: int) -> Engine:
+    """Build an engine with the configured timeouts and the given pool size."""
     option_parts: list[str] = []
     if settings.database_lock_timeout_ms > 0:
         option_parts.append(f"-c lock_timeout={settings.database_lock_timeout_ms}")
@@ -188,11 +240,16 @@ def get_engine() -> Engine:
         option_parts.append(f"-c statement_timeout={settings.database_statement_timeout_ms}")
 
     if settings.db_use_cloud_sql_connector:
-        return _build_cloud_sql_engine(settings, option_parts)
-    return _build_direct_engine(settings, option_parts)
+        return _build_cloud_sql_engine(settings, option_parts, pool_size, max_overflow)
+    return _build_direct_engine(settings, option_parts, pool_size, max_overflow)
 
 
-def _build_direct_engine(settings: Settings, option_parts: list[str]) -> Engine:
+def _build_direct_engine(
+    settings: Settings,
+    option_parts: list[str],
+    pool_size: int | None = None,
+    max_overflow: int | None = None,
+) -> Engine:
     """Build the default engine: a plain DSN via ``DATABASE_URL``."""
     if not settings.database_url:
         msg = "DATABASE_URL is required when database_backend=postgres"
@@ -215,8 +272,9 @@ def _build_direct_engine(settings: Settings, option_parts: list[str]) -> Engine:
         connect_args["options"] = " ".join(option_parts)
     return create_engine(
         settings.database_url,
-        pool_size=settings.database_pool_size,
-        max_overflow=settings.database_max_overflow,
+        pool_size=settings.database_pool_size if pool_size is None else pool_size,
+        max_overflow=settings.database_max_overflow if max_overflow is None else max_overflow,
+        pool_timeout=settings.database_pool_timeout_seconds,
         pool_pre_ping=True,
         pool_recycle=settings.database_pool_recycle_seconds,
         echo=settings.debug,
@@ -229,7 +287,12 @@ def _build_direct_engine(settings: Settings, option_parts: list[str]) -> Engine:
     )
 
 
-def _build_cloud_sql_engine(settings: Settings, option_parts: list[str]) -> Engine:
+def _build_cloud_sql_engine(
+    settings: Settings,
+    option_parts: list[str],
+    pool_size: int | None = None,
+    max_overflow: int | None = None,
+) -> Engine:
     """Build a SQLAlchemy engine that connects via the Cloud SQL Python connector.
 
     Imported lazily (called only when ``db_use_cloud_sql_connector=true``) so
@@ -311,8 +374,9 @@ def _build_cloud_sql_engine(settings: Settings, option_parts: list[str]) -> Engi
     return create_engine(
         "postgresql+psycopg2://",
         creator=_creator,
-        pool_size=settings.database_pool_size,
-        max_overflow=settings.database_max_overflow,
+        pool_size=settings.database_pool_size if pool_size is None else pool_size,
+        max_overflow=settings.database_max_overflow if max_overflow is None else max_overflow,
+        pool_timeout=settings.database_pool_timeout_seconds,
         pool_pre_ping=True,
         pool_recycle=settings.database_pool_recycle_seconds,
         echo=settings.debug,
@@ -326,6 +390,15 @@ def _build_cloud_sql_engine(settings: Settings, option_parts: list[str]) -> Engi
 def get_session_factory() -> sessionmaker[Session]:
     """Create and cache the session factory."""
     return sessionmaker(bind=get_engine(), expire_on_commit=False)
+
+
+@lru_cache(maxsize=1)
+def get_nested_session_factory() -> sessionmaker[Session]:
+    """Session factory for standalone sessions opened while holding a connection.
+
+    See ``get_nested_engine`` for why it is not the main pool.
+    """
+    return sessionmaker(bind=get_nested_engine(), expire_on_commit=False)
 
 
 def get_db_session() -> Session:
@@ -722,6 +795,29 @@ def set_current_patient_id(patient_id: str) -> None:
     ``DatabaseSessionMiddleware`` clears it at request end.
     """
     _current_patient_id.set(patient_id)
+
+
+@contextmanager
+def request_principal_restored() -> Iterator[None]:
+    """Hand back this context's principal and practice ContextVars as found.
+
+    For a block that arms a second session as someone else (``arm_current_user_id``
+    and ``set_tenant_schema`` also set the request ContextVars) beside a request
+    session it will use again afterwards. Without this, the request session's
+    next transaction reads the block's principal from the ContextVar next to
+    its own from ``session.info``, and the ``after_begin`` listener refuses to
+    open it. That only shows once the request session has committed in
+    between, as it has after ``release_db_connection``.
+    """
+    user_token = _current_user_id.set(_current_user_id.get())
+    patient_token = _current_patient_id.set(_current_patient_id.get())
+    schema_token = _current_tenant_schema.set(_current_tenant_schema.get())
+    try:
+        yield
+    finally:
+        _current_tenant_schema.reset(schema_token)
+        _current_patient_id.reset(patient_token)
+        _current_user_id.reset(user_token)
 
 
 def _disarm_other_principal(
@@ -1195,10 +1291,18 @@ def _reset_search_path_on_checkin(dbapi_conn: Any, _conn_record: Any) -> None:
 def create_standalone_session(practice_schema: str | None = None) -> Session:
     """Create a standalone session outside of request context.
 
-    Useful for CLI scripts, migrations, and provisioning.
+    Useful for CLI scripts, migrations, and provisioning, and for the
+    platform lookups a request makes beside its own session. While a session
+    bound to this context holds a connection (a request past its first query,
+    a unit of work in ``tenant_db_session``), it draws from the nested pool
+    (``get_nested_engine``), so the caller cannot end up waiting on a
+    connection while holding one from the same pool. Otherwise it uses the
+    main pool, as jobs, scripts and worker threads always have.
     Caller is responsible for commit/rollback/close.
     """
-    session = get_session_factory()()
+    holding = any(bound.in_transaction() for bound in bound_db_sessions())
+    factory = get_nested_session_factory() if holding else get_session_factory()
+    session = factory()
     if practice_schema:
         set_tenant_schema(session, practice_schema)
     return session

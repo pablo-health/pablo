@@ -56,7 +56,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from ..auth.patient_context import AuthStrength, PatientContext, get_patient_context
 from ..auth.route_access import subscription_exempt
-from ..db import arm_current_user_id, create_standalone_session, set_tenant_schema
+from ..db import (
+    arm_current_user_id,
+    create_standalone_session,
+    release_db_connection,
+    request_principal_restored,
+    set_tenant_schema,
+)
 from ..models.audit import AuditAction, ResourceType
 from ..models.patient_facing import PatientAppointmentResponse
 from ..models.scheduling import (
@@ -102,7 +108,6 @@ from ..services.busy_time import CalendarBusySource
 from ..services.client_video_link_notice import (
     ClientVideoLinkNotifier,
     get_client_video_link_notifier,
-    practice_id_for_schema,
 )
 from ..services.google_calendar_service import GoogleCalendarService, google_consent_surface
 from ..services.telehealth import LinkTrail, log_missing_link
@@ -181,11 +186,20 @@ def _slot_instant(iso: str) -> datetime:
 
 
 @contextlib.contextmanager
-def owner_session(patient: PatientContext) -> Iterator[tuple[Session, str]]:
+def owner_session(patient: PatientContext) -> Iterator[tuple[Session, str, str]]:
     """A second session, armed as the clinician whose diary is in question.
 
     Separate from the request's patient-armed session on purpose — see the
-    module docstring. Yields ``(session, clinician_user_id)``.
+    module docstring. Yields ``(session, clinician_user_id, practice_id)``.
+
+    The request's own connection is released first. These routes do all their
+    work on this session, and it stays open across the calendar push and the
+    client's video-link send, which are both network calls. Opened while the
+    request still held a connection, it would come from the small pool kept
+    for short lookups (``app.db.get_nested_engine``), and two bookings at once
+    could each hold one of those connections while waiting for another.
+    Released first, it comes from the main pool, like any unit of work. The
+    practice id is yielded so nothing inside has to look it up again.
 
     The clinician is the practice's owner. For the single-clinician practice
     this serves, that is exactly right, and it is the only answer available
@@ -199,22 +213,27 @@ def owner_session(patient: PatientContext) -> Iterator[tuple[Session, str]]:
     """
     from ..db.platform_models import PracticeRow
 
-    session = create_standalone_session()
-    try:
-        practice = (
-            session.query(PracticeRow)
-            .filter(PracticeRow.schema_name == patient.practice_schema)
-            .one_or_none()
-        )
-        owner = practice.owner_user_id if practice is not None else None
-        if not owner:
-            raise _refuse(_NO_CLINICIAN, "NO_CLINICIAN", status.HTTP_409_CONFLICT)
+    release_db_connection()
+    # Arming this session also sets the request's ContextVars. Put them back
+    # on the way out, so the request session (released above, so its next
+    # transaction re-arms) comes back as the patient only.
+    with request_principal_restored():
+        session = create_standalone_session()
+        try:
+            practice = (
+                session.query(PracticeRow)
+                .filter(PracticeRow.schema_name == patient.practice_schema)
+                .one_or_none()
+            )
+            owner = practice.owner_user_id if practice is not None else None
+            if practice is None or not owner:
+                raise _refuse(_NO_CLINICIAN, "NO_CLINICIAN", status.HTTP_409_CONFLICT)
 
-        set_tenant_schema(session, patient.practice_schema)
-        arm_current_user_id(session, owner)
-        yield session, owner
-    finally:
-        session.close()
+            set_tenant_schema(session, patient.practice_schema)
+            arm_current_user_id(session, owner)
+            yield session, owner, practice.id
+        finally:
+            session.close()
 
 
 def _owner_engine(session: Session) -> AvailabilityEngine:
@@ -477,6 +496,7 @@ def _practice_directory(schema: str) -> tuple[str | None, str | None]:
     """
     from ..db.platform_models import PracticeRow
 
+    release_db_connection()
     session = create_standalone_session()
     try:
         practice = (
@@ -525,7 +545,7 @@ def get_booking_options(
     owner, phone = _practice_directory(patient.practice_schema)
 
     if owner:
-        with owner_session(patient) as (session, clinician):
+        with owner_session(patient) as (session, clinician, _practice_id):
             policy = load_policy(session)
             self_booking = may_self_book(policy, is_new_patient=False)
             # The same frame ``list_bookable_slots`` computes openings in, so a
@@ -586,7 +606,7 @@ def list_bookable_slots(
     nothing to book, and saying which would leak whether the practice has
     finished setting itself up.
     """
-    with owner_session(patient) as (session, owner):
+    with owner_session(patient) as (session, owner, _practice_id):
         policy = load_policy(session)
         _require_self_booking(policy)
 
@@ -648,7 +668,7 @@ def book_appointment(
     a request rather than a commitment; ``auto`` books it outright.
     """
     _require_stepped_up(patient)
-    with owner_session(patient) as (session, owner):
+    with owner_session(patient) as (session, owner, practice_id):
         policy = load_policy(session)
         _require_self_booking(policy)
         appointment_type = _bookable_type(session, owner, payload.session_type)
@@ -734,7 +754,7 @@ def book_appointment(
         # clinician confirms it in-app, by that route's own push.
         if created.status == AppointmentStatus.CONFIRMED:
             created = _push_to_calendar(session, owner, created)
-            created = _send_video_link(session, owner, patient, created, notifier)
+            created = _send_video_link(session, owner, practice_id, created, notifier)
 
     audit.log_patient_principal_action(
         action=AuditAction.APPOINTMENT_CREATED,
@@ -787,7 +807,7 @@ def reschedule_appointment(
     """
     _require_stepped_up(patient)
     now = datetime.now(UTC)
-    with owner_session(patient) as (session, owner):
+    with owner_session(patient) as (session, owner, practice_id):
         policy = load_policy(session)
         _require_self_booking(policy)
 
@@ -862,7 +882,7 @@ def reschedule_appointment(
         _remove_from_calendar(session, owner, appointment)
         if moved.status == AppointmentStatus.CONFIRMED:
             moved = _push_to_calendar(session, owner, moved)
-            moved = _send_video_link(session, owner, patient, moved, notifier)
+            moved = _send_video_link(session, owner, practice_id, moved, notifier)
 
     audit.log_patient_principal_action(
         action=AuditAction.APPOINTMENT_UPDATED,
@@ -911,7 +931,7 @@ def cancel_appointment(
     """
     _require_stepped_up(patient)
     now = datetime.now(UTC)
-    with owner_session(patient) as (session, owner):
+    with owner_session(patient) as (session, owner, _practice_id):
         policy = load_policy(session)
 
         service = SchedulingService(PostgresAppointmentRepository(session))
@@ -1006,7 +1026,7 @@ def _push_to_calendar(session: Session, owner: str, appointment: Appointment) ->
 def _send_video_link(
     session: Session,
     owner: str,
-    patient: PatientContext,
+    practice_id: str,
     appointment: Appointment,
     notifier: ClientVideoLinkNotifier,
 ) -> Appointment:
@@ -1016,14 +1036,19 @@ def _send_video_link(
     own for the same reason: the booking has already committed, and a failed
     send must not read to the client as a failed booking. Nothing goes out for
     an appointment without a link (see :mod:`app.services.client_video_link_notice`).
+
+    The owner session's connection is released before the send. The notifier
+    reads the practice's facts on a session of its own, and that lookup should
+    not run while this one holds a connection.
     """
     if not appointment.video_link:
         return appointment
     try:
+        session.commit()
         sent = notifier.notify(
             SchedulingService(PostgresAppointmentRepository(session)),
             appointment,
-            practice_id=practice_id_for_schema(patient.practice_schema),
+            practice_id=practice_id,
             patients=PostgresPatientRepository(session),
             zone=lambda: _owner_timezone(session, owner),
         )

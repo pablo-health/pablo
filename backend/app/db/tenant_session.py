@@ -69,6 +69,7 @@ from . import (
     assert_tenant_schema_set,
     create_standalone_session,
     publish_request_session,
+    release_db_connection,
     restore_request_session,
     set_current_user_id,
 )
@@ -147,6 +148,13 @@ def tenant_db_session(
     # later because the explicit ``set_config`` in the try block corrects it;
     # there is no such corrective call for the patient GUC, by design.
     patient_id_token = _current_patient_id.set(None)
+    # Release whatever connection the sessions bound here hold BEFORE opening
+    # this one. publish_request_session below commits the displaced session
+    # anyway; doing it first means this unit of work is opened by a caller
+    # holding nothing, so create_standalone_session gives it the main pool
+    # rather than the small nested one reserved for lookups made while
+    # holding a connection.
+    release_db_connection()
     session = create_standalone_session(schema)
     # Publishing (rather than a bare ContextVar set) is what releases the
     # session this one displaces. Whatever opened that session -- most often

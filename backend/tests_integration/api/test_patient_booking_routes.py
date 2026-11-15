@@ -28,6 +28,7 @@ issuance is a separate bead, and the resolver is not what is under test here.
 
 from __future__ import annotations
 
+import contextvars
 import os
 import uuid
 from datetime import UTC, date, datetime, time, timedelta
@@ -375,11 +376,26 @@ def _client(  # type: ignore[no-untyped-def]
 
     app.dependency_overrides[get_patient_context] = _context
     app.dependency_overrides[subscription_exempt] = lambda: None
+
     # https, because SecurityHeadersMiddleware refuses plain HTTP outright —
     # these routes carry appointment times, which is PHI. Not overridden away:
     # a test client that quietly bypassed the transport rule would be testing a
     # deployment shape that does not exist.
-    client = TestClient(app, base_url="https://testserver", raise_server_exceptions=False)
+    class _FreshContextClient(TestClient):
+        """Each request starts from an empty context, as it does under a server.
+
+        The seeding helpers here arm the clinician in the pytest thread, which
+        sets the request ContextVars there, and TestClient hands the calling
+        thread's context to the app. A patient request would then carry a
+        clinician id no production request can, and the first time its session
+        re-begins (after ``release_db_connection``) the RLS listener sees both
+        principals and refuses.
+        """
+
+        def request(self, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+            return contextvars.Context().run(super().request, *args, **kwargs)
+
+    client = _FreshContextClient(app, base_url="https://testserver", raise_server_exceptions=False)
     try:
         yield client
     finally:
@@ -2272,3 +2288,139 @@ def test_a_move_sends_the_client_the_new_time_with_the_standing_room(
             {"i": response.json()["id"]},
         ).scalar_one()
     assert recorded is not None, "the send was not recorded, so a re-save would send again"
+
+
+# --- two video bookings at once leave the lookup pool alone (PABLO-nubg) ---
+
+
+def _clear_engine_caches() -> None:
+    """Drop the cached engines so the next use builds them from current settings."""
+    from app import db  # noqa: PLC0415
+    from app.settings import get_settings  # noqa: PLC0415
+
+    for cached in (db.get_nested_session_factory, db.get_session_factory):
+        cached.cache_clear()
+    for engine_fn in (db.get_nested_engine, db.get_engine):
+        if engine_fn.cache_info().currsize:
+            engine_fn().dispose()
+        engine_fn.cache_clear()
+    get_settings.cache_clear()
+
+
+@pytest.fixture
+def short_pool_timeout(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """The app's real engines at default sizes, with a checkout that gives up in 3 s."""
+    monkeypatch.delenv("DATABASE_NESTED_POOL_SIZE", raising=False)
+    monkeypatch.setenv("DATABASE_POOL_TIMEOUT_SECONDS", "3")
+    _clear_engine_caches()
+    yield
+    monkeypatch.undo()
+    _clear_engine_caches()
+
+
+@pytest.mark.timeout(120)
+def test_two_video_moves_at_once_both_send_the_link(
+    engine: Engine,
+    practice: dict[str, Any],
+    patient_a_client: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    short_pool_timeout: None,
+) -> None:
+    """Two moves in their calendar push at once hold no lookup-pool connection.
+
+    The owner session stays open across the calendar calls and the send. When
+    it came from the small pool kept for lookups made while holding a
+    connection, two moves at once held both of that pool's connections across
+    the calendar call, so every other request's practice lookup in the process
+    waited on Google. Where nothing committed in between (no clinician user
+    row), the move's own practice lookup waited too, until the checkout timed
+    out and the client lost the link.
+
+    The barrier holds both moves inside their push at once, and the facts
+    lookup opens its own session as ``read_practice_facts`` does.
+    """
+    import threading  # noqa: PLC0415
+
+    from app.db import create_standalone_session, get_nested_engine  # noqa: PLC0415
+    from app.main import app  # noqa: PLC0415
+    from app.services.client_video_link_notice import (  # noqa: PLC0415
+        ClientVideoLinkNotifier,
+        PracticeFacts,
+        get_client_video_link_notifier,
+    )
+    from app.services.email_sender import InMemoryEmailSender  # noqa: PLC0415
+    from app.services.google_calendar_service import (  # noqa: PLC0415
+        GoogleCalendarService,
+    )
+
+    _open_policy(engine)
+    _clear_appointments(engine)
+    originals = [_seed_appointment(engine, practice["a"], _at(hour)) for hour in (10, 11)]
+    with engine.begin() as conn:
+        conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
+        conn.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _CLINICIAN})
+        for original_id in originals:
+            conn.execute(
+                text(
+                    "UPDATE appointments SET video_link = 'https://doxy.me/room', "
+                    "place_of_service = '02' WHERE id = CAST(:i AS uuid)"
+                ),
+                {"i": original_id},
+            )
+        conn.execute(
+            text("UPDATE patients SET email = 'ada@example.test' WHERE id = CAST(:p AS uuid)"),
+            {"p": practice["a"]},
+        )
+
+    both_pushing = threading.Barrier(2, timeout=10)
+    nested_held: list[int] = []
+
+    def _push(_self: GoogleCalendarService, _user_id: str, appt: Any) -> str:
+        both_pushing.wait()
+        # Both moves are inside their owner session now, across a network call.
+        nested_held.append(get_nested_engine().pool.checkedout())  # type: ignore[attr-defined]
+        return f"evt-{appt.id}"
+
+    monkeypatch.setattr(GoogleCalendarService, "push_appointment", _push)
+
+    def facts(practice_id: str | None) -> PracticeFacts:
+        with create_standalone_session() as lookup:
+            lookup.execute(text("SELECT 1"))
+        return PracticeFacts(sends_link=True, name="Booking Test Practice")
+
+    sent = InMemoryEmailSender()
+    app.dependency_overrides[get_client_video_link_notifier] = lambda: ClientVideoLinkNotifier(
+        sender=sent, practice_facts=facts
+    )
+    statuses: list[int] = []
+
+    def move(original_id: str, hour: int) -> None:
+        response = patient_a_client.post(
+            f"/api/patient/booking/{original_id}/reschedule",
+            json={"start_at": _at(hour).isoformat()},
+        )
+        statuses.append(response.status_code)
+
+    try:
+        threads = [
+            threading.Thread(target=move, args=(original_id, hour))
+            for original_id, hour in zip(originals, (14, 15), strict=True)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=60)
+    finally:
+        with engine.begin() as conn:
+            conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
+            conn.execute(
+                text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _CLINICIAN}
+            )
+            conn.execute(
+                text("UPDATE patients SET email = NULL WHERE id = CAST(:p AS uuid)"),
+                {"p": practice["a"]},
+            )
+
+    assert statuses == [200, 200]
+    assert len(sent.sent) == 2, "a move succeeded but its client never got the link"
+    assert nested_held == [0, 0], "an owner session held a lookup-pool connection"
