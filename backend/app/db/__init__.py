@@ -25,7 +25,8 @@ Off-request tenant context (background tasks, workers):
 
 import re
 import urllib.parse
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from functools import lru_cache
 from typing import Any, Literal, NamedTuple
@@ -202,6 +203,18 @@ def get_nested_engine() -> Engine:
     ``create_standalone_session``); jobs, scripts and worker threads keep the
     main pool, so their concurrency is unchanged. With
     ``database_nested_pool_size=0`` this is the main engine.
+
+    The pool is small, so it is only safe for what it was made for: a few
+    reads, then close. A session from it must not open another standalone
+    session (that one also comes from here, and two such requests can wait on
+    each other) and must not stay open across a network call. Work that needs
+    either should release the request's connection first
+    (``release_db_connection``), as ``tenant_db_session`` does, so its session
+    comes from the main pool.
+
+    With ``db_use_cloud_sql_connector`` this engine builds its own
+    ``Connector``: one more background refresh thread and certificate fetch
+    per process, otherwise harmless.
     """
     settings = get_settings()
     if settings.database_nested_pool_size <= 0:
@@ -782,6 +795,29 @@ def set_current_patient_id(patient_id: str) -> None:
     ``DatabaseSessionMiddleware`` clears it at request end.
     """
     _current_patient_id.set(patient_id)
+
+
+@contextmanager
+def request_principal_restored() -> Iterator[None]:
+    """Hand back this context's principal and practice ContextVars as found.
+
+    For a block that arms a second session as someone else (``arm_current_user_id``
+    and ``set_tenant_schema`` also set the request ContextVars) beside a request
+    session it will use again afterwards. Without this, the request session's
+    next transaction reads the block's principal from the ContextVar next to
+    its own from ``session.info``, and the ``after_begin`` listener refuses to
+    open it. That only shows once the request session has committed in
+    between, as it has after ``release_db_connection``.
+    """
+    user_token = _current_user_id.set(_current_user_id.get())
+    patient_token = _current_patient_id.set(_current_patient_id.get())
+    schema_token = _current_tenant_schema.set(_current_tenant_schema.get())
+    try:
+        yield
+    finally:
+        _current_tenant_schema.reset(schema_token)
+        _current_patient_id.reset(patient_token)
+        _current_user_id.reset(user_token)
 
 
 def _disarm_other_principal(

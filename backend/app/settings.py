@@ -695,7 +695,8 @@ class Settings(BaseSettings):
             "connection between those hops, so if new requests can take every thread "
             "while they wait for a connection, the requests holding the connections never "
             "get a thread back to finish. Keep it above the most requests one process "
-            "serves at once (the server's or platform's concurrency limit)."
+            "serves at once (the server's or platform's concurrency limit). Does not "
+            "cover ``asyncio.to_thread``, which uses the event loop's default executor."
         ),
     )
     database_connect_timeout_seconds: int = Field(
