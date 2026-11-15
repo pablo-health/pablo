@@ -34,6 +34,9 @@ import { expect, test } from "../fixtures/auth"
 
 const ROUNDS = 20
 
+/** The API's passkey sign-in rate window (rate_limit.py), plus a margin. */
+const PASSKEY_WINDOW_MS = 61 * 1000
+
 /**
  * Its own account, not the worker's clinician: a passkey on that account
  * would put every password sign-in in the suite through passkey step-up. New
@@ -144,10 +147,16 @@ async function browserWithPasskey(
   // Passkey sign-in is a per-deployment switch, off on this stack because it
   // would also send every new account through passkey enrollment. Only this
   // browser's copy of the config needs it, to offer the button.
-  await page.route("**/api/config", async (route) => {
-    const response = await route.fetch()
-    await route.fulfill({ response, json: { ...(await response.json()), passkeysEnabled: true } })
-  })
+  //
+  // Read once and answered from memory, not fetched per page load with
+  // route.fetch(): a handler still awaiting that fetch when the context closes
+  // reads a disposed response and fails a test whose every round passed. The
+  // last round's /dashboard/settings load is still fetching its config when the
+  // test closes the context, so that is how this spec failed on main.
+  const configResponse = await context.request.get("/api/config")
+  expect(configResponse.ok(), "deployment config").toBe(true)
+  const config = { ...(await configResponse.json()), passkeysEnabled: true }
+  await page.route("**/api/config", (route) => route.fulfill({ json: config }))
   await addVirtualAuthenticator(await context.newCDPSession(page))
 
   await page.goto("/login")
@@ -162,8 +171,13 @@ test("a passkey sign-in lands on the dashboard and stays signed in", async ({
   // Requested for its side effect: the practice's owner is whoever signs in
   // first, and that must be the worker's clinician, not this account.
   onboardedUser: _owner,
-}) => {
+}, testInfo) => {
   test.setTimeout(10 * 60 * 1000)
+  // The API allows 60 passkey sign-in requests a minute from one address, and
+  // every round spends two (begin and finish), so twenty rounds use forty. A
+  // retry starts seconds after the attempt it replaces and would share that
+  // minute: its eleventh sign-in is refused. Let the window pass first.
+  if (testInfo.retry > 0) await new Promise((resolve) => setTimeout(resolve, PASSKEY_WINDOW_MS))
   const { context, page } = await browserWithPasskey(browser)
 
   const passkeyButton = page.getByRole("button", { name: "Sign in with a passkey" })
@@ -181,7 +195,9 @@ test("a passkey sign-in lands on the dashboard and stays signed in", async ({
       }
 
       await passkeyButton.click()
-      await page.waitForURL(/\/dashboard/)
+      // Bounded by the expect timeout. page.waitForURL has no limit of its own,
+      // so a sign-in that fails and stays on /login waited out the whole test.
+      await expect(page).toHaveURL(/\/dashboard/)
 
       // A full page load, as a reload, a link opened in place or the next
       // visit arrives. The sign-in the browser stored has to be there for it,
