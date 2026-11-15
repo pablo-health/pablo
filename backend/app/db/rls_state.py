@@ -64,6 +64,102 @@ SCHEMA_PLACEHOLDER = "__TENANT_SCHEMA__"
 _POLICY_STATEMENT = re.compile(r"^(CREATE|DROP) POLICY (?:IF EXISTS )?(\w+) ON ")
 
 
+_SCHEMA_OID = "(SELECT n.oid FROM pg_catalog.pg_namespace n WHERE n.nspname = :schema)"
+_PG_CATALOG = "'pg_catalog'::pg_catalog.regnamespace"
+
+#: The OID of every relation in the schema bound to ``:schema``.
+#:
+#: Each of the reconcile's catalog reads starts from this rather than from
+#: ``pg_class.relnamespace``, because Postgres indexes ``pg_class`` by OID and
+#: by name-within-schema but not by schema alone: "the tables in schema X" read
+#: that way is a pass over every relation in the database. The migrate fan-out
+#: makes those reads once per schema, so the pass as a whole grew with the
+#: square of the schema count. ``pg_depend`` records each relation's dependency
+#: on the schema that holds it (the edge ``DROP SCHEMA ... CASCADE`` walks), and
+#: is indexed on the referenced object, so this costs what the one schema holds,
+#: however many others share the database.
+#:
+#: Callers still require ``relnamespace`` to be the schema's, so a
+#: relation outside the schema can never be returned whatever ``pg_depend``
+#: holds; the integration suite checks the result set against the plain reads.
+SCHEMA_RELATIONS_SQL = (
+    "SELECT d.objid FROM pg_catalog.pg_depend d "  # noqa: S608 — module constants
+    "WHERE d.refclassid = 'pg_catalog.pg_namespace'::pg_catalog.regclass "
+    f"AND d.refobjid = {_SCHEMA_OID} "
+    "AND d.refobjsubid = 0 "
+    "AND d.classid = 'pg_catalog.pg_class'::pg_catalog.regclass"
+)
+
+#: ``(table_name, column_name, data_type)`` for every column the schema's
+#: tables and views expose, as ``information_schema.columns`` would list them
+#: for ``table_schema = :schema``, ``alembic_version`` excluded.
+#:
+#: That view applies its filters only after joining the whole catalog, so it
+#: is spelled out here over the rows ``SCHEMA_RELATIONS_SQL`` finds. It keeps
+#: the view's row filter (relation kinds, dropped columns, the privilege
+#: check) and its ``data_type`` expression, domains resolved to their base
+#: type, because the reconcile compares a ``patient_id`` type against
+#: ``'uuid'``. Two spellings differ from the view's and mean the same: a
+#: type's schema is compared by OID rather than joined for its name, and a
+#: domain's base type is looked up only for a domain. With the relations
+#: picked first (``OFFSET 0`` keeps the planner from probing ``pg_class``
+#: once per column instead), the work per column is the one ``pg_type``
+#: probe it needs.
+SCHEMA_COLUMNS_SQL = (
+    "SELECT c.relname, a.attname, "  # noqa: S608 — module constants
+    "CASE WHEN t.typtype = 'd' THEN ("
+    "  SELECT CASE WHEN bt.typelem <> 0 AND bt.typlen = -1 THEN 'ARRAY' "
+    f"   WHEN bt.typnamespace = {_PG_CATALOG} "
+    "    THEN pg_catalog.format_type(t.typbasetype, NULL) "
+    "   ELSE 'USER-DEFINED' END "
+    "  FROM pg_catalog.pg_type bt WHERE bt.oid = t.typbasetype) "
+    "WHEN t.typelem <> 0 AND t.typlen = -1 THEN 'ARRAY' "
+    f"WHEN t.typnamespace = {_PG_CATALOG} THEN pg_catalog.format_type(a.atttypid, NULL) "
+    "ELSE 'USER-DEFINED' END "
+    "FROM ("
+    "  SELECT c.oid, c.relname, c.relowner FROM pg_catalog.pg_class c "
+    f"  WHERE c.oid IN ({SCHEMA_RELATIONS_SQL}) "
+    f"  AND c.relnamespace = {_SCHEMA_OID} "
+    "  AND NOT pg_catalog.pg_is_other_temp_schema(c.relnamespace) "
+    "  AND c.relkind IN ('r', 'v', 'f', 'p') "
+    "  AND c.relname <> 'alembic_version' "
+    "  OFFSET 0"
+    ") c "
+    "JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid "
+    "JOIN pg_catalog.pg_type t ON t.oid = a.atttypid "
+    "WHERE a.attnum > 0 AND NOT a.attisdropped "
+    "AND (pg_catalog.pg_has_role(c.relowner, 'USAGE') "
+    "  OR pg_catalog.has_column_privilege(c.oid, a.attnum, "
+    "'SELECT, INSERT, UPDATE, REFERENCES'))"
+)
+
+#: ``(table, relrowsecurity, relforcerowsecurity)`` for each of the schema's tables.
+SCHEMA_RLS_FLAGS_SQL = (
+    "SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity "  # noqa: S608 — module constants
+    "FROM pg_catalog.pg_class c "
+    f"WHERE c.oid IN ({SCHEMA_RELATIONS_SQL}) "
+    f"AND c.relnamespace = {_SCHEMA_OID} AND c.relkind IN ('r', 'p')"
+)
+
+#: Every policy on the schema's tables, deparsed: table, name, command,
+#: permissive, roles, USING, WITH CHECK, comment. ``pg_policy`` is indexed on
+#: its table's OID, so this too reads only the schema's own rows.
+SCHEMA_POLICIES_SQL = (
+    "SELECT c.relname, p.polname, p.polcmd::text, p.polpermissive, "  # noqa: S608 — module constants
+    "pg_catalog.array_to_string(ARRAY("
+    "  SELECT CASE WHEN r = 0 THEN 'public' ELSE pg_catalog.pg_get_userbyid(r) END "
+    "  FROM pg_catalog.unnest(p.polroles) AS r ORDER BY 1"
+    "), ','), "
+    "pg_catalog.pg_get_expr(p.polqual, p.polrelid), "
+    "pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid), "
+    "pg_catalog.obj_description(p.oid, 'pg_policy') "
+    "FROM pg_catalog.pg_policy p "
+    "JOIN pg_catalog.pg_class c ON c.oid = p.polrelid "
+    f"WHERE c.oid IN ({SCHEMA_RELATIONS_SQL}) "
+    f"AND c.relnamespace = {_SCHEMA_OID}"
+)
+
+
 class TablePlan(NamedTuple):
     """What the reconcile would run on one table, and what that leaves behind."""
 
@@ -123,6 +219,12 @@ def schema_neutral(sql: str, schema_name: str) -> str:
     return re.sub(rf"(?<![A-Za-z0-9_]){re.escape(schema_name)}\.", f"{SCHEMA_PLACEHOLDER}.", sql)
 
 
+def read_schema_columns(session: Session, schema_name: str) -> list[tuple[str, str, str]]:
+    """``(table, column, data_type)`` for the schema's columns; see ``SCHEMA_COLUMNS_SQL``."""
+    rows = session.execute(text(SCHEMA_COLUMNS_SQL), {"schema": schema_name}).fetchall()
+    return [(row[0], row[1], row[2]) for row in rows]
+
+
 def read_live_rls(session: Session, schema_name: str) -> LiveRls:
     """Every table's RLS flags and every policy in the schema, deparsed.
 
@@ -133,32 +235,8 @@ def read_live_rls(session: Session, schema_name: str) -> LiveRls:
     previous = session.execute(text("SELECT pg_catalog.current_setting('search_path')")).scalar()
     session.execute(text("SELECT pg_catalog.set_config('search_path', 'pg_catalog', true)"))
     try:
-        flag_rows = session.execute(
-            text(
-                "SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity "
-                "FROM pg_catalog.pg_class c "
-                "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
-                "WHERE n.nspname = :schema AND c.relkind IN ('r', 'p')"
-            ),
-            {"schema": schema_name},
-        ).fetchall()
-        policy_rows = session.execute(
-            text(
-                "SELECT c.relname, p.polname, p.polcmd::text, p.polpermissive, "
-                "pg_catalog.array_to_string(ARRAY("
-                "  SELECT CASE WHEN r = 0 THEN 'public' ELSE pg_catalog.pg_get_userbyid(r) END "
-                "  FROM pg_catalog.unnest(p.polroles) AS r ORDER BY 1"
-                "), ','), "
-                "pg_catalog.pg_get_expr(p.polqual, p.polrelid), "
-                "pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid), "
-                "pg_catalog.obj_description(p.oid, 'pg_policy') "
-                "FROM pg_catalog.pg_policy p "
-                "JOIN pg_catalog.pg_class c ON c.oid = p.polrelid "
-                "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
-                "WHERE n.nspname = :schema"
-            ),
-            {"schema": schema_name},
-        ).fetchall()
+        flag_rows = session.execute(text(SCHEMA_RLS_FLAGS_SQL), {"schema": schema_name}).fetchall()
+        policy_rows = session.execute(text(SCHEMA_POLICIES_SQL), {"schema": schema_name}).fetchall()
     finally:
         if previous is not None:
             session.execute(

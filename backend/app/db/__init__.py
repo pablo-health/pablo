@@ -35,7 +35,13 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..settings import Settings, get_settings
-from .rls_state import TablePlan, read_live_rls, record_fingerprints, table_matches
+from .rls_state import (
+    TablePlan,
+    read_live_rls,
+    read_schema_columns,
+    record_fingerprints,
+    table_matches,
+)
 
 _VALID_SCHEMA_RE = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 
@@ -2532,13 +2538,11 @@ def enable_rls_on_schema(  # noqa: PLR0915 — planning, verify and the registra
     # failed tenant provisioning over a column that is right there in the
     # table. It also makes the deny-all guard's "columns present" message
     # say what the table actually has.
-    column_rows = session.execute(
-        text(
-            "SELECT table_name, column_name, data_type FROM information_schema.columns "
-            "WHERE table_schema = :schema AND table_name != 'alembic_version'"
-        ),
-        {"schema": schema_name},
-    ).fetchall()
+    #
+    # Read from the catalog by the schema's own rows, not through
+    # ``information_schema.columns`` — see ``SCHEMA_COLUMNS_SQL`` for why that
+    # view made the migrate fan-out grow with the square of the schema count.
+    column_rows = read_schema_columns(session, schema_name)
 
     scoping_columns = {"user_id", "patient_id", "id"}
     all_columns: dict[str, set[str]] = {}
