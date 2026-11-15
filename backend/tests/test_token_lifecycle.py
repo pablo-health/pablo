@@ -45,6 +45,7 @@ from unittest.mock import patch
 import pytest
 from app.auth.route_security import truly_public
 from app.auth.service import get_current_user_no_mfa, get_session_peek_claims, require_mfa
+from app.db.middleware import SESSION_LIVENESS_PATHS
 from app.main import app
 from app.route_introspection import iter_api_routes
 from fastapi.testclient import TestClient
@@ -277,12 +278,14 @@ def test_bad_token_state_rejected_before_handler(
     assert detail.get("error", {}).get("code") == state.expected_code
 
     # The handler never ran: the only SQL the mocked session saw is the
-    # middleware's own unconditional "SET search_path" (issued for every
-    # request, success or failure, before any dependency runs — see
+    # middleware's own "SET search_path" (issued for every request, success or
+    # failure, before any dependency runs — see
     # ``DatabaseSessionMiddleware._prepare``). A repository query beyond
     # that one statement would mean a handler (or a dependency downstream
-    # of the auth check) got far enough to touch the database.
-    assert _mock_session_instance.execute.call_count == 1
+    # of the auth check) got far enough to touch the database. The
+    # session-liveness paths open no session at all, so they see none.
+    expected_statements = 0 if concrete_path in SESSION_LIVENESS_PATHS else 1
+    assert _mock_session_instance.execute.call_count == expected_statements
 
 
 def test_finds_at_least_25_authenticated_routes() -> None:

@@ -18,6 +18,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from ..logging_config import bind_log_tenant_id
+from ..middleware.dpop import INSTALL_ID_HEADER
 from . import (
     DEFAULT_PRACTICE_SCHEMA,
     _current_patient_id,
@@ -47,6 +48,28 @@ _SCOPE_SESSION_KEY = "pablo.db_session"
 #: the same body the health handler uses, so a probe reads the same thing
 #: whichever layer said "not yet".
 HEALTH_PATH = "/api/health"
+
+#: The session-liveness endpoints (``app.routes.auth``). Every open tab polls
+#: them, and they answer from the idle-session store and the verified token
+#: alone: no route behind them reads the database. So no session is opened
+#: and no practice is resolved for them, which keeps a tab left open all day
+#: from costing a pooled connection and the practice lookup on every poll.
+#: Exact paths: a route added under them later is not skipped by accident.
+SESSION_LIVENESS_PATHS: frozenset[str] = frozenset({"/api/auth/session", "/api/auth/session/touch"})
+
+
+def _needs_no_database(request: Request) -> bool:
+    """True for a session-liveness poll that nothing in the stack reads the database for.
+
+    A request carrying a device install id is the exception. The proof-of-
+    possession middleware runs inside this one and looks that device up in the
+    request's session, so such a request keeps the session it always had.
+    """
+    return (
+        request.url.path in SESSION_LIVENESS_PATHS
+        and request.headers.get(INSTALL_ID_HEADER) is None
+    )
+
 
 #: Seconds a client should wait before retrying a request turned away because
 #: the database could not be reached.
@@ -287,6 +310,12 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
+        if _needs_no_database(request):
+            # No session, no schema, no prelude: the route verifies the token
+            # itself (``get_session_peek_claims``) and reads only Redis. With no
+            # request session, anything that did try the database there would
+            # fail loudly rather than run against the template.
+            return await call_next(request)
         session = get_session_factory()()
         guard_template_writes(session)
         _request_session.set(session)

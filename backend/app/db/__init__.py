@@ -2732,8 +2732,12 @@ def rls_forced_tenant_tables() -> set[str]:
     return result
 
 
-# Re-export the off-request tenant-session primitives so callers can
-# import them from the package root without knowing the sub-module.
+# ``practice_resolution_cache`` is imported for its side effect too: it
+# registers the Session listener that drops cached practice resolutions when a
+# mapping or practice row commits a change, and every writer of those rows
+# imports this package first. The tenant-session primitives are re-exported so
+# callers can import them from the package root without knowing the sub-module.
+from . import practice_resolution_cache  # noqa: E402
 from .tenant_session import run_in_tenant, tenant_db_session  # noqa: E402
 
 __all__ = [
@@ -2743,6 +2747,7 @@ __all__ = [
     "DEFAULT_PRACTICE_OWN_SCHEMA",
     "DEFAULT_PRACTICE_SCHEMA",
     "PLATFORM_SCHEMA",
+    "practice_resolution_cache",
     "register_overlay_not_row_scoped",
     "rls_forced_tenant_tables",
     "run_in_tenant",
