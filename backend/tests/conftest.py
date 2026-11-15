@@ -59,6 +59,7 @@ _mock_engine = MagicMock()
 
 patch("app.db.get_engine", return_value=_mock_engine).start()
 patch("app.db.get_session_factory", return_value=_mock_session_factory).start()
+patch("app.db.get_nested_session_factory", return_value=_mock_session_factory).start()
 
 import pytest  # noqa: E402
 from app import repositories as app_repositories  # noqa: E402

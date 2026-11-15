@@ -665,6 +665,39 @@ class Settings(BaseSettings):
             "set to ``-1`` to disable recycling."
         ),
     )
+    database_pool_timeout_seconds: int = Field(
+        default=30,
+        description=(
+            "SQLAlchemy QueuePool ``pool_timeout`` -- seconds a checkout waits for a free "
+            "connection before raising. Applies to the request pool and the standalone pool."
+        ),
+    )
+    database_nested_pool_size: int = Field(
+        default=2,
+        description=(
+            "Connections in the separate pool for standalone sessions opened while a "
+            "session in the same context holds a connection (no overflow). A request "
+            "holds its own pooled connection from its first query to its commit, and "
+            "several request paths open a standalone session while they hold it (the "
+            "practice lookup, presence, sign-in bookkeeping). On one shared pool, once "
+            "every connection belongs to a request waiting for a second one, nothing "
+            "moves until the pool timeout. Every other standalone session keeps the main "
+            "pool. Counts against "
+            "``max_connections`` on top of ``pool_size + max_overflow``. ``0`` shares the "
+            "main pool."
+        ),
+    )
+    worker_thread_limit: int = Field(
+        default=200,
+        description=(
+            "Worker threads available to sync routes, sync dependencies and "
+            "``run_in_threadpool`` (the anyio default is 40). A request keeps its pooled "
+            "connection between those hops, so if new requests can take every thread "
+            "while they wait for a connection, the requests holding the connections never "
+            "get a thread back to finish. Keep it above the most requests one process "
+            "serves at once (the server's or platform's concurrency limit)."
+        ),
+    )
     database_connect_timeout_seconds: int = Field(
         default=5,
         description=(

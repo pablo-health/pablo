@@ -11,6 +11,7 @@ import os
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 
+import anyio.to_thread
 from fastapi import APIRouter, Depends, FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
@@ -187,6 +188,24 @@ def _refuse_loops_in_multiple_workers(settings: Settings) -> None:
         )
 
 
+def raise_worker_thread_limit(limit: int) -> None:
+    """Give sync routes, sync dependencies and ``run_in_threadpool`` ``limit`` threads.
+
+    anyio's default is 40 per event loop. A request keeps its pooled database
+    connection from its first query to its commit, across several of those
+    thread hops. With fewer threads than requests in flight, newly arrived
+    requests could take every thread while they waited for a connection, and
+    the requests holding the connections then never got a thread to finish
+    on: the process stood still until the pool timeout, and the same wait
+    re-formed under continued load. Threads are started on demand, so a high
+    limit costs nothing while idle. Never lowers the limit.
+
+    Must run on the serving event loop (the limiter is per loop).
+    """
+    limiter = anyio.to_thread.current_default_thread_limiter()
+    limiter.total_tokens = max(limiter.total_tokens, limit)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Manage background tasks across the application lifecycle."""
@@ -212,6 +231,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         )
 
     _refuse_loops_in_multiple_workers(settings)
+    raise_worker_thread_limit(settings.worker_thread_limit)
 
     tasks: list[asyncio.Task[None]] = []
     if settings.calendar_auto_sync_enabled and not settings.is_saas:
