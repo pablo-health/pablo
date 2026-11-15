@@ -52,7 +52,7 @@ from typing import TYPE_CHECKING, Protocol
 from email_validator import EmailNotValidError, validate_email
 from sqlalchemy import func, select
 
-from ..db import create_standalone_session
+from ..db import create_lookup_session, create_standalone_session
 from ..db.platform_models import (
     EmailTenantMappingRow,
     PracticeDomainApexRow,
@@ -266,9 +266,10 @@ def resolve_client_sender_for_schema(schema: str) -> ClientSender | None:
     """:func:`resolve_client_sender` for the practice living in *schema*.
 
     For callers that know a tenant schema rather than a practice id. ``None``
-    when no practice lives there.
+    when no practice lives there. A lookup session: portal routes ask this
+    while their request holds a main-pool connection; a few reads, no network.
     """
-    session = create_standalone_session()
+    session = create_lookup_session()
     try:
         practice_id = session.execute(
             select(PracticeRow.id).where(PracticeRow.schema_name == schema)

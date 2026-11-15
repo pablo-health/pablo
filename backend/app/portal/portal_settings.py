@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Protocol
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 
-from ..db import create_standalone_session
+from ..db import create_lookup_session, create_standalone_session
 from ..db.platform_models import PracticePortalSettingsRow, PracticeRow
 from ..utcnow import utc_now
 
@@ -100,7 +100,8 @@ class PortalSettingsStore(Protocol):
 
 class PlatformPortalSettingsStore:
     def get(self, practice_id: str) -> PortalSettings:
-        session = create_standalone_session()
+        # A lookup session: read inside requests that hold a main-pool connection.
+        session = create_lookup_session()
         try:
             return _from_row(session.get(PracticePortalSettingsRow, practice_id))
         finally:
@@ -271,8 +272,10 @@ def portal_settings_for_schema(schema: str) -> PortalSettings:
     """The settings of the practice whose clients live in *schema*.
 
     :data:`NOT_OFFERED` for an unknown schema or a practice with no row.
+    A lookup session: the portal module gate asks this inside requests that
+    hold a main-pool connection.
     """
-    session = create_standalone_session()
+    session = create_lookup_session()
     try:
         row = session.execute(
             select(PracticePortalSettingsRow)

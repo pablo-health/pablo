@@ -703,13 +703,15 @@ def _resolve_practice_from_email(email: str) -> tuple[str, str] | None:
     positive answers only, dropped when a mapping or practice row commits a
     change). Without Redis this reads the database every time.
     """
-    from ..db import create_standalone_session, practice_resolution_cache
+    from ..db import create_lookup_session, practice_resolution_cache
     from ..db.platform_models import EmailTenantMappingRow, PracticeRow
 
     cached = practice_resolution_cache.get(email)
     if cached is not None:
         return cached
-    with create_standalone_session() as db:
+    # The lookup pool: the request calling this usually holds a main-pool
+    # connection already (``get_lookup_engine``). Two reads, then close.
+    with create_lookup_session() as db:
         mapping = db.get(EmailTenantMappingRow, email)
         if not mapping:
             return None
@@ -751,11 +753,12 @@ def _await_provisioning_ready(practice_id: str) -> None:
     """
     import time
 
-    from ..db import create_standalone_session
+    from ..db import create_lookup_session
     from ..db.platform_models import PracticeRow
 
     for _attempt in range(_PROVISIONING_POLL_ROUNDS):
-        with create_standalone_session() as db:
+        # Closed before the sleep below, so no lookup connection waits with it.
+        with create_lookup_session() as db:
             row = db.get(PracticeRow, practice_id)
         if row is None or row.provisioning_status == "ready":
             return
@@ -837,11 +840,11 @@ def _ensure_tenant_mapping(email: str) -> None:
     whatever practice it resolves to, so this cannot move a user between
     practices on a re-login.
     """
-    from ..db import DEFAULT_PRACTICE_ID, create_standalone_session
+    from ..db import DEFAULT_PRACTICE_ID, create_lookup_session
     from ..db.platform_models import EmailTenantMappingRow
 
     normalized = email.lower()
-    with create_standalone_session() as db:
+    with create_lookup_session() as db:
         if db.get(EmailTenantMappingRow, normalized) is not None:
             return
         db.add(
@@ -898,10 +901,10 @@ def _email_has_tenant_mapping(email: str) -> bool:
     A provisioned tenant grants its primary email access even without an
     explicit `platform.allowed_emails` row.
     """
-    from ..db import create_standalone_session
+    from ..db import create_lookup_session
     from ..db.platform_models import EmailTenantMappingRow
 
-    with create_standalone_session() as db:
+    with create_lookup_session() as db:
         return db.get(EmailTenantMappingRow, email.lower()) is not None
 
 

@@ -69,6 +69,7 @@ from . import (
     assert_tenant_schema_set,
     create_standalone_session,
     publish_request_session,
+    release_db_connection,
     restore_request_session,
     set_current_user_id,
 )
@@ -147,6 +148,12 @@ def tenant_db_session(
     # later because the explicit ``set_config`` in the try block corrects it;
     # there is no such corrective call for the patient GUC, by design.
     patient_id_token = _current_patient_id.set(None)
+    # Release the connections the sessions bound here hold BEFORE opening this
+    # one. publish_request_session below commits the displaced session anyway;
+    # doing it first means this unit of work never waits on the main pool while
+    # holding a connection from it, which is how a burst deadlocks the pool
+    # (see app.db._check_nested_open).
+    release_db_connection()
     session = create_standalone_session(schema)
     # Publishing (rather than a bare ContextVar set) is what releases the
     # session this one displaces. Whatever opened that session -- most often

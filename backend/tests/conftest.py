@@ -59,8 +59,17 @@ _mock_engine = MagicMock()
 
 patch("app.db.get_engine", return_value=_mock_engine).start()
 patch("app.db.get_session_factory", return_value=_mock_session_factory).start()
+# Lookups (``create_lookup_session``) use a second engine; it follows the same
+# stand-in, or they would try to reach the placeholder database.
+patch("app.db.get_lookup_engine", return_value=_mock_engine).start()
+patch("app.db.get_lookup_session_factory", return_value=_mock_session_factory).start()
 
 import pytest  # noqa: E402
+from app.db import raise_on_nested_sessions  # noqa: E402
+
+# A session opened while this context already holds a pooled connection fails
+# the test that does it, instead of logging once as a server would.
+raise_on_nested_sessions()
 from app import repositories as app_repositories  # noqa: E402
 from app.auth.firebase_init import initialize_firebase_app  # noqa: E402
 from app.auth.service import (  # noqa: E402

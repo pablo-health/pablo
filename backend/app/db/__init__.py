@@ -25,16 +25,21 @@ Off-request tenant context (background tasks, workers):
 
 import re
 import urllib.parse
-from collections.abc import Sequence
+import weakref
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from contextvars import ContextVar, Token
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Literal, NamedTuple
 
 from sqlalchemy import Executable, Row, create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import QueuePool
 
 from ..settings import Settings, get_settings
+from .pool_stats import timed_queue_pool
 from .rls_state import (
     TablePlan,
     read_live_rls,
@@ -162,9 +167,11 @@ def get_engine() -> Engine:
     any of the three timeout settings drops that GUC from the options
     string so the server default applies.
 
-    Pool budget rule of thumb: ``(pool_size + max_overflow) * max
-    instance count`` must stay under the database's ``max_connections``
-    minus ~10 reserved for migrations / admin / monitoring.
+    Pool budget rule of thumb: ``(pool_size + max_overflow +
+    lookup_pool_size + lookup_max_overflow) * max instance count`` must stay
+    under the database's ``max_connections`` minus ~10 reserved for
+    migrations / admin / monitoring. The lookup pool (``get_lookup_engine``)
+    is a second pool per instance and counts in full.
 
     When ``db_use_cloud_sql_connector=true`` the engine is built with a
     ``creator`` callable that opens connections via the Cloud SQL Python
@@ -173,9 +180,68 @@ def get_engine() -> Engine:
     auth, certificate rotation, and private-IP routing transparently. The
     library is imported lazily so deployments that don't set the flag are
     completely unaffected — the package need not be installed.
+
+    Every engine/session event listener in this package is registered on the
+    ``Engine`` and ``Session`` classes, so ``get_lookup_engine`` inherits them
+    all. A listener ever attached to this engine INSTANCE must be attached to
+    the lookup engine too, or lookups lose it.
     """
     settings = get_settings()
+    return _build_engine(
+        settings,
+        pool_name="main",
+        pool_size=settings.database_pool_size,
+        max_overflow=settings.database_max_overflow,
+        pool_timeout=None,
+    )
 
+
+@lru_cache(maxsize=1)
+def get_lookup_engine() -> Engine:
+    """The engine for short lookups made while a request holds a connection.
+
+    A request takes a pooled connection at its first query and keeps it until
+    it commits. Resolving the caller's practice and account opens a second
+    session while the request holds that connection. When both came from one
+    pool, a burst of requests could each hold one connection and wait for a
+    second until every connection was taken; nothing moved until the pool
+    timeout, and under continued load the same wait formed again at once.
+
+    A separate pool means such a lookup never waits on a request's connection.
+    Same builder as ``get_engine`` (URL, connect options, pre-ping, recycle,
+    Cloud SQL connector) with only the pool size and timeout swapped, and the
+    same class-level listeners. The timeout is short so an undersized pool
+    fails fast and shows up in the ``db_pool_stats`` line.
+
+    Only ``create_lookup_session`` uses it. Anything that holds its session
+    across a network call, or for longer than a few queries, belongs on the
+    main pool (``create_standalone_session``).
+    """
+    settings = get_settings()
+    return _build_engine(
+        settings,
+        pool_name="lookup",
+        pool_size=settings.database_lookup_pool_size,
+        max_overflow=settings.database_lookup_max_overflow,
+        pool_timeout=settings.database_lookup_pool_timeout_seconds,
+    )
+
+
+def _build_engine(
+    settings: Settings,
+    *,
+    pool_name: str,
+    pool_size: int,
+    max_overflow: int,
+    pool_timeout: float | None,
+) -> Engine:
+    """Build an engine with the configured connection options and the given pool."""
+    pool = _PoolOptions(
+        poolclass=timed_queue_pool(pool_name),
+        pool_size=pool_size,
+        max_overflow=max_overflow,
+        pool_timeout=pool_timeout,
+    )
     option_parts: list[str] = []
     if settings.database_lock_timeout_ms > 0:
         option_parts.append(f"-c lock_timeout={settings.database_lock_timeout_ms}")
@@ -188,11 +254,44 @@ def get_engine() -> Engine:
         option_parts.append(f"-c statement_timeout={settings.database_statement_timeout_ms}")
 
     if settings.db_use_cloud_sql_connector:
-        return _build_cloud_sql_engine(settings, option_parts)
-    return _build_direct_engine(settings, option_parts)
+        return _build_cloud_sql_engine(settings, option_parts, pool)
+    return _build_direct_engine(settings, option_parts, pool)
 
 
-def _build_direct_engine(settings: Settings, option_parts: list[str]) -> Engine:
+@dataclass(frozen=True)
+class _PoolOptions:
+    """The pool half of an engine: what differs between the main and lookup engines."""
+
+    poolclass: type[QueuePool]
+    pool_size: int
+    max_overflow: int
+    #: ``None`` keeps SQLAlchemy's default (30 s).
+    pool_timeout: float | None
+
+    def as_kwargs(self) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {
+            "poolclass": self.poolclass,
+            "pool_size": self.pool_size,
+            "max_overflow": self.max_overflow,
+        }
+        if self.pool_timeout is not None:
+            kwargs["pool_timeout"] = self.pool_timeout
+        return kwargs
+
+
+def _main_pool_options(settings: Settings) -> _PoolOptions:
+    """The request pool, for a builder called without one (as unit tests do)."""
+    return _PoolOptions(
+        poolclass=timed_queue_pool("main"),
+        pool_size=settings.database_pool_size,
+        max_overflow=settings.database_max_overflow,
+        pool_timeout=None,
+    )
+
+
+def _build_direct_engine(
+    settings: Settings, option_parts: list[str], pool: _PoolOptions | None = None
+) -> Engine:
     """Build the default engine: a plain DSN via ``DATABASE_URL``."""
     if not settings.database_url:
         msg = "DATABASE_URL is required when database_backend=postgres"
@@ -213,10 +312,10 @@ def _build_direct_engine(settings: Settings, option_parts: list[str]) -> Engine:
         connect_args["keepalives_count"] = 5
     if option_parts:
         connect_args["options"] = " ".join(option_parts)
+    pool = pool or _main_pool_options(settings)
     return create_engine(
         settings.database_url,
-        pool_size=settings.database_pool_size,
-        max_overflow=settings.database_max_overflow,
+        **pool.as_kwargs(),
         pool_pre_ping=True,
         pool_recycle=settings.database_pool_recycle_seconds,
         echo=settings.debug,
@@ -229,7 +328,9 @@ def _build_direct_engine(settings: Settings, option_parts: list[str]) -> Engine:
     )
 
 
-def _build_cloud_sql_engine(settings: Settings, option_parts: list[str]) -> Engine:
+def _build_cloud_sql_engine(
+    settings: Settings, option_parts: list[str], pool: _PoolOptions | None = None
+) -> Engine:
     """Build a SQLAlchemy engine that connects via the Cloud SQL Python connector.
 
     Imported lazily (called only when ``db_use_cloud_sql_connector=true``) so
@@ -308,11 +409,11 @@ def _build_cloud_sql_engine(settings: Settings, option_parts: list[str]) -> Engi
             kwargs["options"] = connect_options
         return connector.connect(instance_name, "psycopg2", **kwargs)
 
+    pool = pool or _main_pool_options(settings)
     return create_engine(
         "postgresql+psycopg2://",
         creator=_creator,
-        pool_size=settings.database_pool_size,
-        max_overflow=settings.database_max_overflow,
+        **pool.as_kwargs(),
         pool_pre_ping=True,
         pool_recycle=settings.database_pool_recycle_seconds,
         echo=settings.debug,
@@ -326,6 +427,12 @@ def _build_cloud_sql_engine(settings: Settings, option_parts: list[str]) -> Engi
 def get_session_factory() -> sessionmaker[Session]:
     """Create and cache the session factory."""
     return sessionmaker(bind=get_engine(), expire_on_commit=False)
+
+
+@lru_cache(maxsize=1)
+def get_lookup_session_factory() -> sessionmaker[Session]:
+    """Session factory on the lookup pool. See ``get_lookup_engine``."""
+    return sessionmaker(bind=get_lookup_engine(), expire_on_commit=False)
 
 
 def get_db_session() -> Session:
@@ -1192,16 +1299,156 @@ def _reset_search_path_on_checkin(dbapi_conn: Any, _conn_record: Any) -> None:
         dbapi_conn.autocommit = prior_autocommit
 
 
-def create_standalone_session(practice_schema: str | None = None) -> Session:
-    """Create a standalone session outside of request context.
+# Sessions opened by ``create_standalone_session`` / ``create_lookup_session``
+# in this context, with which pool each came from. Weak references: dropping a
+# session must not be kept from collection by this bookkeeping. Pruned on every
+# open to the ones still holding a connection.
+_opened_sessions: ContextVar[tuple[tuple[weakref.ref[Session], str], ...]] = ContextVar(
+    "_opened_sessions", default=()
+)
+# Set by ``allow_nested_session``: a reviewed call path that opens a session
+# while holding one, outside any request.
+_nested_session_allowed: ContextVar[str | None] = ContextVar(
+    "_nested_session_allowed", default=None
+)
+# Tests raise on a nested open; a running server logs it once per call path.
+_raise_on_nested_session = False
+_nested_sessions_logged: set[str] = set()
 
-    Useful for CLI scripts, migrations, and provisioning.
-    Caller is responsible for commit/rollback/close.
+_POOL_MAIN = "main"
+_POOL_LOOKUP = "lookup"
+
+
+class NestedSessionError(RuntimeError):
+    """A session was opened while this context already held a pooled connection."""
+
+
+def raise_on_nested_sessions(enabled: bool = True) -> None:
+    """Make a nested session open raise instead of logging. Test suites turn this on."""
+    global _raise_on_nested_session  # noqa: PLW0603 — process-wide test switch
+    _raise_on_nested_session = enabled
+
+
+@contextmanager
+def allow_nested_session(reason: str) -> Iterator[None]:
+    """Allow sessions opened inside this block to nest, for a reviewed call path.
+
+    For code that runs outside any request (a CLI step, provisioning, a job
+    that knows its own concurrency) and legitimately opens one session while
+    another holds a connection. *reason* names the call path; it goes in the
+    error a test raises if the allow is missing elsewhere, never in a log line
+    with user data.
     """
-    session = get_session_factory()()
+    token = _nested_session_allowed.set(reason)
+    try:
+        yield
+    finally:
+        _nested_session_allowed.reset(token)
+
+
+def _holding(session: Session) -> bool:
+    # ``is True``: unit tests bind MagicMock sessions, whose in_transaction()
+    # is a truthy mock rather than a bool.
+    return session.in_transaction() is True
+
+
+def _held_pools() -> list[str]:
+    """Pools this context holds a connection from, newest last."""
+    held: list[str] = [_POOL_MAIN for s in bound_db_sessions() if _holding(s)]
+    for ref, pool in _opened_sessions.get():
+        opened = ref()
+        if opened is not None and _holding(opened):
+            held.append(pool)
+    return held
+
+
+def _check_nested_open(opening: str) -> None:
+    """Refuse (tests) or log once (server) an open that could wait on itself.
+
+    Waiting for a connection while holding one from the SAME pool is how the
+    pool deadlocks: once every connection belongs to a caller waiting for a
+    second, nothing frees until the pool timeout. So:
+
+    - ``create_standalone_session`` (main pool) while this context holds any
+      connection: a request session past its first query, or another session
+      opened here. (A held lookup connection counts too: its holder is itself
+      nested in something on the main pool.)
+    - ``create_lookup_session`` while this context holds a lookup connection.
+      Holding a main-pool connection is exactly what the lookup pool is for.
+    """
+    held = _held_pools()
+    nested = bool(held) if opening == _POOL_MAIN else _POOL_LOOKUP in held
+    if not nested or _nested_session_allowed.get() is not None:
+        return
+    where = _caller_site()
+    if _raise_on_nested_session:
+        msg = (
+            f"{where} opened a {opening}-pool session while this context holds "
+            f"{', '.join(held)}-pool connection(s). Release the held connection first, "
+            "use create_lookup_session for a short lookup, or wrap a reviewed "
+            "out-of-request path in allow_nested_session()."
+        )
+        raise NestedSessionError(msg)
+    if where in _nested_sessions_logged:
+        return
+    _nested_sessions_logged.add(where)
+    import logging
+
+    logging.getLogger(__name__).warning(
+        "nested_db_session opening=%s held=%s at=%s",
+        opening,
+        ",".join(held),
+        where,
+        extra={"event": "nested_db_session", "opening": opening, "held": held, "at": where},
+    )
+
+
+def _caller_site() -> str:
+    """``module:function:line`` of the first frame outside this module. Code location only."""
+    import sys
+
+    frame = sys._getframe(1)  # cheaper than inspect.stack()
+    while frame.f_globals.get("__name__") == __name__ and frame.f_back is not None:
+        frame = frame.f_back
+    return f"{frame.f_globals.get('__name__')}:{frame.f_code.co_name}:{frame.f_lineno}"
+
+
+def _open_session(
+    factory: sessionmaker[Session], pool: str, practice_schema: str | None
+) -> Session:
+    _check_nested_open(pool)
+    session = factory()
+    live = tuple((ref, p) for ref, p in _opened_sessions.get() if (o := ref()) and _holding(o))
+    _opened_sessions.set((*live, (weakref.ref(session), pool)))
     if practice_schema:
         set_tenant_schema(session, practice_schema)
     return session
+
+
+def create_standalone_session(practice_schema: str | None = None) -> Session:
+    """Create a standalone session on the main pool, outside of request context.
+
+    Useful for CLI scripts, migrations, provisioning, jobs, and units of work
+    (``tenant_db_session``). Caller is responsible for commit/rollback/close.
+
+    Must not be opened while this context already holds a connection: on the
+    same pool that can wait forever on itself (see ``_check_nested_open``).
+    A short lookup made from inside a request uses ``create_lookup_session``.
+    """
+    return _open_session(get_session_factory(), _POOL_MAIN, practice_schema)
+
+
+def create_lookup_session(practice_schema: str | None = None) -> Session:
+    """Create a session on the small lookup pool for a few quick queries.
+
+    For the lookups a request makes beside its own session: resolving the
+    caller's practice or account. Run a few queries and close it. Never hold
+    it across a network call or a sleep, and never open another session while
+    it is open: the pool is small and its timeout short
+    (``database_lookup_pool_timeout_seconds``) on purpose. Caller is
+    responsible for commit/rollback/close.
+    """
+    return _open_session(get_lookup_session_factory(), _POOL_LOOKUP, practice_schema)
 
 
 # Tenant tables that a deployment knows are NOT row-scoped — their

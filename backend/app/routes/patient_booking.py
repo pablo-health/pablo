@@ -56,7 +56,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from ..auth.patient_context import AuthStrength, PatientContext, get_patient_context
 from ..auth.route_access import subscription_exempt
-from ..db import arm_current_user_id, create_standalone_session, set_tenant_schema
+from ..db import (
+    allow_nested_session,
+    arm_current_user_id,
+    create_lookup_session,
+    create_standalone_session,
+    set_tenant_schema,
+)
 from ..models.audit import AuditAction, ResourceType
 from ..models.patient_facing import PatientAppointmentResponse
 from ..models.scheduling import (
@@ -196,10 +202,18 @@ def owner_session(patient: PatientContext) -> Iterator[tuple[Session, str]]:
 
     ``platform.practices`` carries no row policies, which is what makes it a
     non-circular place to find a principal.
+
+    Held beside the request's own session for the whole route, so the route
+    holds two main-pool connections at once: the nesting that can deadlock the
+    pool under a burst (``app.db._check_nested_open``). It is allowed here by
+    name, not fixed: the clinician-armed unit of work cannot move to the lookup
+    pool (it lives as long as the route) and cannot share the request's session
+    (that one is armed as the patient).
     """
     from ..db.platform_models import PracticeRow
 
-    session = create_standalone_session()
+    with allow_nested_session("patient booking: clinician session beside the patient's"):
+        session = create_standalone_session()
     try:
         practice = (
             session.query(PracticeRow)
@@ -473,11 +487,12 @@ def _practice_directory(schema: str) -> tuple[str | None, str | None]:
 
     ``platform.practices`` carries no row policies, so this is reachable
     without arming anything — the same property that makes it a non-circular
-    place to find a principal.
+    place to find a principal. One read on a lookup session: the route holds
+    a main-pool connection when it asks.
     """
     from ..db.platform_models import PracticeRow
 
-    session = create_standalone_session()
+    session = create_lookup_session()
     try:
         practice = (
             session.query(PracticeRow).filter(PracticeRow.schema_name == schema).one_or_none()

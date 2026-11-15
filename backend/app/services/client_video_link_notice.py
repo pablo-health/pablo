@@ -127,15 +127,19 @@ def read_practice_facts(practice_id: str | None) -> PracticeFacts | None:
 
 
 def practice_id_for_schema(schema: str | None) -> str | None:
-    """The id of the practice living in *schema*, or None."""
+    """The id of the practice living in *schema*, or None.
+
+    One read on a lookup session: the booking routes ask this while holding a
+    main-pool connection.
+    """
     if not schema:
         return None
     from sqlalchemy import select
 
-    from ..db import create_standalone_session
+    from ..db import create_lookup_session
     from ..db.platform_models import PracticeRow
 
-    session = create_standalone_session()
+    session = create_lookup_session()
     try:
         return session.execute(
             select(PracticeRow.id).where(PracticeRow.schema_name == schema)

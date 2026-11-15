@@ -308,6 +308,20 @@ def clear_fastapi_dependency_caches() -> None:
             candidate.cache_clear()
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _raise_on_nested_sessions() -> None:
+    """Fail a test that opens a session while its context holds a pooled connection.
+
+    A running server logs that once per call path (``app.db._check_nested_open``);
+    here it raises, so a new nesting is found by the test that introduces it.
+    Imported inside the fixture: ``pytest_configure`` must set ``DATABASE_URL``
+    before anything imports ``app.db``.
+    """
+    from app.db import raise_on_nested_sessions  # noqa: PLC0415
+
+    raise_on_nested_sessions()
+
+
 @pytest.fixture(autouse=True)
 def _release_fastapi_dependency_caches() -> Iterator[None]:
     """Release engines pinned by fastapi's dependency-classification caches.

@@ -26,7 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from ..db import create_standalone_session
+from ..db import create_lookup_session
 from ..db.platform_models import PracticeDomainRow
 from ..portal.booking_button import booking_button_url
 from ..portal.hosted import hosted_portal_host, hosted_practice_id, practice_slug
@@ -91,8 +91,13 @@ def resolve_site_host(session: Session, host: str) -> SiteHost | None:
 
 
 def load_site_host(host: str) -> SiteHost | None:
-    """:func:`resolve_site_host` on a session of its own."""
-    session = create_standalone_session()
+    """:func:`resolve_site_host` on a lookup session of its own.
+
+    A request already holding a main-pool connection asks this, so it takes the
+    lookup pool (``app.db.create_lookup_session``): a handful of reads, no
+    network call while open.
+    """
+    session = create_lookup_session()
     try:
         return resolve_site_host(session, host)
     finally:

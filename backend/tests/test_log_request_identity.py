@@ -223,7 +223,7 @@ def _practice_row(status: str) -> Iterator[None]:
     session = MagicMock()
     session.__enter__.return_value = db
     with (
-        patch("app.db.create_standalone_session", return_value=session),
+        patch("app.db.create_lookup_session", return_value=session),
         patch("time.sleep"),
     ):
         yield

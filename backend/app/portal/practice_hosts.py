@@ -43,7 +43,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
-from ..db import create_standalone_session
+from ..db import create_lookup_session, create_standalone_session
 from ..db.platform_models import PortalPracticeSlugRow, PracticeDomainRow
 from ..settings import get_settings
 from .hosted import (
@@ -183,9 +183,10 @@ def primary_portal_host_for_slug(slug: str) -> str | None:
     first and fall back to its own address when it answers ``None``, so its
     links follow the same rule. Opens and closes its own session; asked once
     per link, never cached, so a link is never minted on a host that has just
-    stopped working.
+    stopped working. A lookup session: link minting runs inside requests that
+    hold a main-pool connection.
     """
-    session = create_standalone_session()
+    session = create_lookup_session()
     try:
         practice_id = session.execute(
             select(PortalPracticeSlugRow.practice_id).where(PortalPracticeSlugRow.slug == slug)

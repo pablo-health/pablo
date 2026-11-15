@@ -34,7 +34,7 @@ from sqlalchemy.exc import IntegrityError
 
 from ..auth.route_security import truly_public
 from ..auth.service import _resolve_practice_from_email, require_active_subscription
-from ..db import create_standalone_session
+from ..db import create_lookup_session, create_standalone_session
 from ..db.platform_models import PortalPracticeSlugRow, PracticePortalSettingsRow, PracticeRow
 from ..models import User
 from ..rate_limit import require_portal_practice_resolve_rate_limit
@@ -185,9 +185,10 @@ def practice_address_for_schema(schema: str) -> PracticeAddress | None:
     For the patient-facing routes, which know a schema (from a
     signature-verified token) and not a practice id. Returns ``None`` when
     the practice has no address yet — a caller on this path is mid-sign-in
-    and must not be failed over a display name.
+    and must not be failed over a display name. A lookup session: those
+    routes hold a main-pool connection when they ask.
     """
-    session = create_standalone_session()
+    session = create_lookup_session()
     try:
         practice = session.execute(
             select(PracticeRow.id).where(PracticeRow.schema_name == schema)

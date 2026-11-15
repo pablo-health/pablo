@@ -40,15 +40,17 @@ def resolve_tenant_for_user(user_id: str) -> tuple[str, str] | None:
     """Resolve a Pablo ``user_id`` to its active ``(practice_id, schema_name)``, off-request.
 
     ``user_id`` → email (platform ``users``) → practice (``email_tenant_mappings``
-    → ``practices``), all in the shared platform schema via a standalone
+    → ``practices``), all in the shared platform schema via a lookup
     session. Returns ``None`` if the user, mapping, or practice is missing or
     inactive; the caller treats that as non-retryable (no schema to safely
     write into).
     """
-    from ..db import create_standalone_session
+    from ..db import create_lookup_session
     from ..db.platform_models import EmailTenantMappingRow, PlatformUserRow, PracticeRow
 
-    with create_standalone_session() as db:
+    # The lookup pool: sign-in and task handlers call this while their own
+    # session holds a main-pool connection. Three reads, then close.
+    with create_lookup_session() as db:
         user = db.get(PlatformUserRow, user_id)
         if user is None:
             return None

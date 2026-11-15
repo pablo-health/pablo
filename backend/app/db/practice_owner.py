@@ -108,9 +108,10 @@ def record_owner_on_sign_in(practice_id: str, email: str, user_id: str) -> bool:
     Opens its own session rather than using the request's. The request session
     is inside the practice's schema with the caller's identity armed on it; the
     registry is neither, and this write has to land whether or not the
-    surrounding request goes on to succeed.
+    surrounding request goes on to succeed. A lookup session: the request
+    usually holds a main-pool connection already, and this is one statement.
     """
-    from . import create_standalone_session
+    from . import create_lookup_session
 
     normalized = email.strip().lower()
     if not normalized:
@@ -127,7 +128,7 @@ def record_owner_on_sign_in(practice_id: str, email: str, user_id: str) -> bool:
         logger.debug("Practice '%s' has no account id to record as its owner yet", practice_id)
         return False
 
-    with create_standalone_session() as db:
+    with create_lookup_session() as db:
         # Through the session's connection rather than ``db.execute``, because
         # what this needs back is how many rows the statement matched, and only
         # the cursor-level result carries that.

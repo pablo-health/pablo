@@ -665,6 +665,53 @@ class Settings(BaseSettings):
             "set to ``-1`` to disable recycling."
         ),
     )
+    database_lookup_pool_size: int = Field(
+        default=2,
+        description=(
+            "Warm connections in the separate lookup pool (``create_lookup_session``): "
+            "the short practice and account lookups a request makes while its own "
+            "session holds a connection from the main pool. Kept apart so such a "
+            "lookup never waits on a connection that another request, itself waiting "
+            "on a lookup, is holding. Counts against ``max_connections`` on top of "
+            "``database_pool_size + database_max_overflow``."
+        ),
+    )
+    database_lookup_max_overflow: int = Field(
+        default=2,
+        description=(
+            "Extra connections the lookup pool may open above "
+            "``database_lookup_pool_size`` under burst. Same ``max_connections`` budget."
+        ),
+    )
+    database_lookup_pool_timeout_seconds: float = Field(
+        default=5.0,
+        description=(
+            "Seconds a lookup waits for a free lookup-pool connection before raising. "
+            "Short on purpose: a lookup takes milliseconds, so a wait this long means "
+            "the pool is undersized, and failing fast says so instead of holding the "
+            "request's own connection for the main pool's 30 seconds."
+        ),
+    )
+    database_pool_stats_interval_seconds: int = Field(
+        default=60,
+        description=(
+            "How often each connection pool logs one ``db_pool_stats`` line: checkouts, "
+            "connections in use, the longest checkout wait and any checkout timeouts "
+            "since the last line. Counts only. ``0`` turns the line off."
+        ),
+    )
+    server_thread_limit: int = Field(
+        default=40,
+        ge=1,
+        description=(
+            "Worker threads available to sync routes, sync dependencies and "
+            "``run_in_threadpool`` (AnyIO's default is 40), applied at startup. Set it at "
+            "or above the most requests one instance serves at once. A request keeps its "
+            "pooled connection between thread hops, so when new arrivals can take every "
+            "thread while they wait for a connection, the requests holding connections "
+            "never get a thread back to finish on."
+        ),
+    )
     database_connect_timeout_seconds: int = Field(
         default=5,
         description=(
