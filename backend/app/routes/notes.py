@@ -606,10 +606,14 @@ def list_patient_notes(
                 changes=_restricted_change(n) or None,
             )
     imported = imported_note_ids(notes, sessions, user.id)
-    return PatientNotesListResponse(
+    response = PatientNotesListResponse(
         data=[NoteResponse.from_note(n, imported=n.id in imported) for n in notes],
         total=len(notes),
     )
+    # Last query done and the response built: give the connection back
+    # before serialization rather than holding it idle until teardown.
+    release_db_connection()
+    return response
 
 
 @patient_notes_router.post(

@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse, Response
 from .. import repositories
 from ..api_errors import BadRequestError, NotFoundError, ServerError
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
-from ..db import get_db_session
+from ..db import get_db_session, release_db_connection
 from ..models import (
     AuditAction,
     CloseChartRequest,
@@ -376,6 +376,9 @@ def list_patients(
         with audit.batched():
             for p, _stamp in deleted_pairs:
                 audit.log_patient_action(AuditAction.PATIENT_VIEWED, user, request, p)
+        # Last query done and the response built: give the connection back
+        # before serialization rather than holding it idle until teardown.
+        release_db_connection()
         total = len(responses)
         return PatientListResponse(
             data=responses,
@@ -397,6 +400,9 @@ def list_patients(
         for p in patients:
             audit.log_patient_action(AuditAction.PATIENT_VIEWED, user, request, p)
 
+    # Last query done and the response built: give the connection back
+    # before serialization rather than holding it idle until teardown.
+    release_db_connection()
     return PatientListResponse(
         data=responses,
         total=total,

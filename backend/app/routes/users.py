@@ -278,6 +278,11 @@ def get_user_status(
         if sub_info:
             result["subscription"] = sub_info
 
+    # Every read above is done and the answer is plain values: give the
+    # connection back before serialization rather than holding it until teardown.
+    from ..db import release_db_connection
+
+    release_db_connection()
     return result
 
 
