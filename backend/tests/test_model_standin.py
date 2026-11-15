@@ -11,16 +11,21 @@ Practice A is listed and practice B is not. The stand-in is the real
 from __future__ import annotations
 
 import asyncio
+import time
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
 from app.db import _current_tenant_schema
+from app.models import ChatConversation
+from app.repositories import InMemoryChatRepository, InMemoryNotesRepository
 from app.services import http_chat_llm_gateway, model_standin, structured_llm_gateway
 from app.services.ai_features import AIFeature
 from app.services.chat_failover import FailoverChatLLMGateway, failover_chat_gateway
 from app.services.chat_llm_gateway import FakeChatLLMGateway, StreamEvent
+from app.services.chat_turn_service import ChatTurnService, TurnContext
 from app.services.dictation_transcription import (
     AssemblyAiDictationTranscriber,
     StandinRoutedTranscriber,
@@ -223,19 +228,65 @@ class TestHelper:
         with practice(SCHEMA_A):
             assert model_standin_base_url() == BASE_URL
 
-    def test_a_failed_lookup_means_the_real_model_and_is_asked_again(
+    def test_a_failed_lookup_means_the_real_model_and_is_asked_again_later(
+        self, listed: list[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        now = [1000.0]
+        monkeypatch.setattr(model_standin, "_monotonic", lambda: now[0])
+        failures: list[str] = []
+
+        def down() -> Any:
+            failures.append("asked")
+            raise ConnectionError("database unavailable")
+
+        monkeypatch.setattr("app.db.create_standalone_session", down)
+        with practice(SCHEMA_A):
+            assert model_standin_base_url() is None
+            now[0] += model_standin._LOOKUP_RETRY_SECONDS - 1
+            assert model_standin_base_url() is None
+        # Inside the window the database is not asked again.
+        assert failures == ["asked"]
+
+        monkeypatch.setattr("app.db.create_standalone_session", lambda: _PracticesSession(listed))
+        now[0] += 1
+        with practice(SCHEMA_A):
+            assert model_standin_base_url() == BASE_URL
+        assert listed == [SCHEMA_A]
+
+    def test_a_failed_lookup_holds_back_only_its_own_schema(
         self, listed: list[str], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         def down() -> Any:
             raise ConnectionError("database unavailable")
 
         monkeypatch.setattr("app.db.create_standalone_session", down)
-        with practice(SCHEMA_A):
+        with practice(SCHEMA_B):
             assert model_standin_base_url() is None
 
         monkeypatch.setattr("app.db.create_standalone_session", lambda: _PracticesSession(listed))
         with practice(SCHEMA_A):
             assert model_standin_base_url() == BASE_URL
+
+    def test_the_async_form_gives_the_same_answers(self, listed: list[str]) -> None:
+        async def ask(schema: str) -> str | None:
+            with practice(schema):
+                return await model_standin.amodel_standin_base_url()
+
+        assert asyncio.run(ask(SCHEMA_A)) == BASE_URL
+        assert asyncio.run(ask(SCHEMA_B)) is None
+
+    def test_the_async_form_with_no_list_uses_no_thread(
+        self, lookups: list[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        get_settings.cache_clear()
+
+        async def no_thread(*_args: object) -> object:
+            raise AssertionError("no thread wanted with no practice listed")
+
+        monkeypatch.setattr(model_standin.asyncio, "to_thread", no_thread)
+        with practice(SCHEMA_A):
+            assert asyncio.run(model_standin.amodel_standin_base_url()) is None
+        assert lookups == []
 
 
 class TestStructured:
@@ -363,38 +414,29 @@ def chat_stand_in(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 
 class TestChat:
-    def test_a_listed_practice_answers_from_the_stand_in(
-        self, listed: list[str], chat_stand_in: list[str]
-    ) -> None:
+    def test_a_stand_in_url_answers_from_the_stand_in(self, chat_stand_in: list[str]) -> None:
         provider = FakeChatLLMGateway(script=[StreamEvent(delta="From the model.")])
-        with practice(SCHEMA_A):
-            gateway = failover_chat_gateway("briefing_chat", provider)
-            events = _drain(gateway)
+        gateway = failover_chat_gateway("briefing_chat", provider, standin_base_url=BASE_URL)
+        events = _drain(gateway)
 
         assert isinstance(gateway, HttpChatLLMGateway)
         assert chat_stand_in == [f"{BASE_URL}/v1/chat"]
         assert events == [StreamEvent(delta=CHAT_TEXT), StreamEvent(finish_reason="stop")]
         assert provider.calls == []
 
-    def test_an_unlisted_practice_answers_from_the_provider(
-        self, listed: list[str], chat_stand_in: list[str]
-    ) -> None:
+    def test_no_stand_in_url_answers_from_the_provider(self, chat_stand_in: list[str]) -> None:
         provider = FakeChatLLMGateway(script=[StreamEvent(delta="From the model.")])
-        with practice(SCHEMA_B):
-            gateway = failover_chat_gateway("briefing_chat", provider)
-            events = _drain(gateway)
+        gateway = failover_chat_gateway("briefing_chat", provider, standin_base_url=None)
+        events = _drain(gateway)
 
         assert gateway is provider
         assert events == [StreamEvent(delta="From the model.")]
         assert chat_stand_in == []
 
-    def test_an_unlisted_practice_keeps_its_fallbacks(
-        self, listed: list[str], monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_no_stand_in_url_keeps_the_fallbacks(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("AI_FALLBACKS", '{"briefing_chat": "anthropic:claude-sonnet-4-5"}')
         get_settings.cache_clear()
-        with practice(SCHEMA_B):
-            gateway = failover_chat_gateway("briefing_chat", FakeChatLLMGateway())
+        gateway = failover_chat_gateway("briefing_chat", FakeChatLLMGateway())
 
         assert isinstance(gateway, FailoverChatLLMGateway)
 
@@ -441,6 +483,121 @@ class TestChat:
 
         assert event.finish_reason == "error"
         assert event.transient is True
+
+
+def _turn_service(gateway: FakeChatLLMGateway) -> ChatTurnService:
+    """The real turn service, with in-memory repositories and one conversation."""
+    chat_repo = InMemoryChatRepository()
+    chat_repo.grant_all_access()
+    chat_repo.add_conversation(
+        ChatConversation(
+            id="conv-standin",
+            patient_id="patient-standin",
+            owner_user_id="user-standin",
+            title="Stand-in",
+            caller_system_prompt="You are a clinical assistant.",
+            caller_feature_key="chart_qa",
+            created_at=datetime.now(UTC),
+        ),
+        "user-standin",
+    )
+    notes_repo = InMemoryNotesRepository()
+    notes_repo.grant_all_access()
+    ChatTurnService._conversation_locks.clear()
+    return ChatTurnService(chat_repo=chat_repo, notes_repo=notes_repo, gateway=gateway)
+
+
+_TURN = TurnContext(
+    conversation_id="conv-standin",
+    patient_id="patient-standin",
+    requesting_user_id="user-standin",
+    caller_system_prompt="You are a clinical assistant.",
+    caller_feature_key="chart_qa",
+    user_message="What have we tried?",
+    source_selection=None,
+    model="gemini-test-flash",
+)
+
+
+async def _turn_text(service: ChatTurnService) -> str:
+    events = [e async for e in service.run_turn(_TURN)]
+    return "".join(str(e.data["text"]) for e in events if e.kind == "delta")
+
+
+class TestChatTurn:
+    """The turn service asks the rule for each answer, off the event loop."""
+
+    def test_a_listed_practice_answers_from_the_stand_in(
+        self, listed: list[str], chat_stand_in: list[str]
+    ) -> None:
+        provider = FakeChatLLMGateway(
+            script=[StreamEvent(delta="From the model."), StreamEvent(finish_reason="stop")]
+        )
+        with practice(SCHEMA_A):
+            text = asyncio.run(_turn_text(_turn_service(provider)))
+
+        assert text == CHAT_TEXT
+        assert chat_stand_in == [f"{BASE_URL}/v1/chat"]
+        assert provider.calls == []
+
+    def test_an_unlisted_practice_answers_from_the_provider(
+        self, listed: list[str], chat_stand_in: list[str]
+    ) -> None:
+        provider = FakeChatLLMGateway(
+            script=[StreamEvent(delta="From the model."), StreamEvent(finish_reason="stop")]
+        )
+        with practice(SCHEMA_B):
+            text = asyncio.run(_turn_text(_turn_service(provider)))
+
+        assert text == "From the model."
+        assert chat_stand_in == []
+        assert len(provider.calls) == 1
+
+    def test_a_slow_lookup_does_not_stall_the_event_loop(
+        self, listed: list[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An exhausted pool: each lookup waits, then fails. Other work keeps running."""
+        stall = 0.6
+        lookups_made: list[str] = []
+
+        def exhausted() -> Any:
+            lookups_made.append("asked")
+            time.sleep(stall)
+            raise TimeoutError("pool exhausted")
+
+        monkeypatch.setattr("app.db.create_standalone_session", exhausted)
+
+        async def turns_beside_a_ticker() -> tuple[float, list[str]]:
+            gaps: list[float] = []
+            done = asyncio.Event()
+
+            async def ticker() -> None:
+                last = time.monotonic()
+                while not done.is_set():
+                    await asyncio.sleep(0.02)
+                    now = time.monotonic()
+                    gaps.append(now - last)
+                    last = now
+
+            tick = asyncio.create_task(ticker())
+            texts = []
+            for _ in range(3):
+                provider = FakeChatLLMGateway(
+                    script=[StreamEvent(delta="From the model."), StreamEvent(finish_reason="stop")]
+                )
+                texts.append(await _turn_text(_turn_service(provider)))
+            done.set()
+            await tick
+            return max(gaps), texts
+
+        with practice(SCHEMA_B):
+            worst_gap, texts = asyncio.run(turns_beside_a_ticker())
+
+        # The lookup did wait (one stall), the turns fell back to the real
+        # model, and the loop kept ticking throughout.
+        assert lookups_made == ["asked"]
+        assert texts == ["From the model."] * 3
+        assert worst_gap < stall / 2
 
 
 @pytest.fixture

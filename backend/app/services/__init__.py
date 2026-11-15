@@ -34,7 +34,7 @@ from .ehr_navigation_service import (
 )
 from .export_service import ExportService
 from .llm_usage_meter import LlmUsageMeter, period_yyyymm
-from .model_standin import model_standin_base_url
+from .model_standin import amodel_standin_base_url, model_standin_base_url
 from .note_generation_service import (
     GeneratedNote,
     MockNoteGenerationService,
@@ -144,6 +144,7 @@ __all__ = [
     "UnsupportedMimeTypeError",
     "UploadNotCompleteError",
     "UserAssistantTurn",
+    "amodel_standin_base_url",
     "assemble_context_bundle",
     "build_attribution_prompt",
     "build_claims_from_soap",
