@@ -11,10 +11,10 @@ Sub-modules:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from ..notes.client_present import recording_end, segments_from_transcript
 from .enums import (
@@ -48,7 +48,27 @@ from .transcript import (
     TranscriptSegmentModel,
     parse_transcript_segments,
 )
-from .validators import validate_iso_date
+
+
+def session_date_as_aware(value: datetime) -> datetime:
+    """A session date with a timezone: a naive value is read as UTC.
+
+    The upload dialog's ``datetime-local`` field and a date read from an
+    imported document both arrive with no offset, while
+    ``patients.last_session_date`` is ``timestamptz`` and reads back aware.
+    Python refuses to order the two, so every upload after a client's first
+    failed with a 500 (PABLO-8vsn). An aware value keeps its own offset.
+
+    UTC rather than the practice's timezone, because that timezone lives in
+    the clinician's preferences and is not reachable from a request model or
+    from ``import_session``. UTC is also what a naive value already meant: the
+    database stored it as ``timestamptz`` read in the connection's UTC
+    timezone, so sessions saved before and after this agree.
+    """
+    if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+        return value.replace(tzinfo=UTC)
+    return value
+
 
 # --- API request/response models ---
 
@@ -68,10 +88,10 @@ class UploadSessionRequest(BaseModel):
         description="Values for the note type's declared inputs.",
     )
 
+    @field_validator("session_date")
     @classmethod
-    def validate_session_date(cls, v: str) -> str:
-        """Validate session_date is ISO format."""
-        return validate_iso_date(v, "session_date")  # type: ignore  # validate_iso_date returns None only for a None input, which the str annotation rules out
+    def _session_date_is_aware(cls, value: datetime) -> datetime:
+        return session_date_as_aware(value)
 
 
 class FinalizeSessionRequest(BaseModel):
