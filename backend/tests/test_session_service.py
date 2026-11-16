@@ -492,7 +492,8 @@ class TestImportSession:
         # A reference copy of a note signed elsewhere, never one to sign; no
         # LLM generation involved.
         assert session.status == SessionStatus.IMPORTED
-        assert session.session_date == session_date
+        # The naive document date is read as UTC (PABLO-8vsn).
+        assert session.session_date == session_date.replace(tzinfo=UTC)
         # Original text is preserved as the transcript for side-by-side review.
         assert session.transcript is not None
         assert session.transcript.content == "S/O/A/P original document text"
@@ -505,7 +506,7 @@ class TestImportSession:
         assert note.session_id == session.id
         # Patient metadata advances like any other session.
         assert returned_patient.session_count == 1
-        assert returned_patient.last_session_date == session_date
+        assert returned_patient.last_session_date == session_date.replace(tzinfo=UTC)
 
     def test_unknown_patient_raises(
         self,

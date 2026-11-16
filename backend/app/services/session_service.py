@@ -32,6 +32,7 @@ from ..models import (
     UploadSessionRequest,
     UploadTranscriptToSessionRequest,
 )
+from ..models.session import session_date_as_aware
 from ..notes import NoteTypeDefinition, get_default_registry
 from ..notes.chart_context import ChartContext, chart_context_for
 from ..notes.client_present import client_present_end, is_call, segments_from_transcript
@@ -620,6 +621,9 @@ class SessionService:
         if not patient:
             raise PatientNotFoundError(f"Patient {patient_id} not found")
 
+        # The route hands over a naive date (from the form or the document);
+        # the comparison with last_session_date below needs it aware.
+        session_date = session_date_as_aware(session_date)
         now = _now()
         session_number = self.session_repo.get_session_number_for_patient(patient_id)
         session = TherapySession(
