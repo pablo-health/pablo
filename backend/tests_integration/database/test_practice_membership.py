@@ -598,6 +598,31 @@ def test_revoking_a_grant_leaves_a_membership_in_another_practice(
     assert _resolve(account.id, account.email) == (joined.id, joined.schema)
 
 
+def test_revoking_after_a_regrant_elsewhere_removes_the_claimed_membership(
+    world: _World, engine: Engine, no_redis: None
+) -> None:
+    """An invite from another practice moves the grant, not the membership.
+
+    The revoke that follows must still cut the account off, as it did when
+    the mapping was the only source.
+    """
+    first = world.practice("first")
+    second = world.practice("second")
+    account = world.account("regranted")
+    _grant(engine, account.email, first.id)
+    assert _resolve(account.id, account.email) == (first.id, first.schema)
+    _grant(engine, account.email, second.id)
+    assert _resolve(account.id, account.email) == (first.id, first.schema)
+
+    assert _revoke(engine, account.email) is True
+
+    assert world.membership(account.id) is None
+    assert _resolve(account.id, account.email) is None
+
+    _grant(engine, account.email, second.id)
+    assert _resolve(account.id, account.email) == (second.id, second.schema)
+
+
 def test_revoking_one_address_leaves_another_member_of_the_practice(
     world: _World, engine: Engine, no_redis: None
 ) -> None:

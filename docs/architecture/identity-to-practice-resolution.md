@@ -99,10 +99,12 @@ still one lookup and no counting: membership, then mapping, then nothing.
 
 Two things follow for the allowlist. Revoking a grant
 (`AllowlistRepository.remove`) also deletes the membership of the account
-with that address, if the membership is in the practice the grant named.
-Without that, the account's membership would keep resolving it to the
-practice after its grant and mapping were gone. A membership in a
-different practice, for example one reached by invitation, is left alone.
+with that address when the membership is in the practice the grant or
+mapping named, or when the allowlist produced it (`email_claim` or
+`backfill`) in any practice. Without that, the account's membership would
+keep resolving it to the practice after its grant and mapping were gone,
+including after a re-grant had moved the grant elsewhere. A membership
+reached by invitation in a practice the grant never named is left alone.
 
 Re-granting an address to another practice (`add` with a new
 `practice_id`) moves the mapping, but it no longer moves an account that

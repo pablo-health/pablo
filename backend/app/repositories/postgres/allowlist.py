@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from ...db.platform_models import (
     EmailTenantMappingRow,
@@ -19,6 +19,10 @@ from ..allowlist import AllowlistRepository
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+# The membership kinds a grant produces: the first sign-in's claim, and the
+# upgrade's backfill of every account mapped before memberships existed.
+_ALLOWLIST_JOINED_VIA = ("email_claim", "backfill")
 
 
 class PostgresAllowlistRepository(AllowlistRepository):
@@ -84,8 +88,13 @@ class PostgresAllowlistRepository(AllowlistRepository):
         # from ``practice_members`` before the mapping is read
         # (``app.auth.service._resolve_practice``), so with the mapping gone
         # and the membership kept, a revoked account would still enter.
-        # Only a membership in the practice this grant named: an account that
-        # has since joined another practice keeps that one. In this session,
+        # Which memberships: one in a practice this grant or mapping named, or
+        # one the allowlist itself produced (``email_claim``, ``backfill``)
+        # wherever it is. The second matters after a re-grant: ``add`` moves
+        # the grant and mapping to the new practice but leaves a claimed
+        # membership where it was, so matching on practice alone would revoke
+        # nothing. A membership reached by invitation (``invite``) in a
+        # practice the grant never named is kept. In this session,
         # so the resolution cache listener drops the account's cached answer
         # when the revocation commits.
         if granted_practices:
@@ -100,7 +109,10 @@ class PostgresAllowlistRepository(AllowlistRepository):
                 .join(PlatformUserRow, PlatformUserRow.id == PracticeMemberRow.user_id)
                 .where(
                     func.lower(PlatformUserRow.email) == email,
-                    PracticeMemberRow.practice_id.in_(practice_ids),
+                    or_(
+                        PracticeMemberRow.practice_id.in_(practice_ids),
+                        PracticeMemberRow.joined_via.in_(_ALLOWLIST_JOINED_VIA),
+                    ),
                 )
             )
             .scalars()
