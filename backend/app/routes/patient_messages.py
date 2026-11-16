@@ -1004,7 +1004,7 @@ def reply_to_thread(
         repo,
         patient_id=thread.patient_id,
         to_email=patient.email if patient is not None else None,
-        from_clinician_email=user.email,
+        from_clinician=user,
     )
     return ClinicianReplyResponse(
         **PatientMessageResponse.from_message(message).model_dump(), inbox=outcome

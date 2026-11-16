@@ -119,7 +119,7 @@ def client(
     session.get.return_value = SimpleNamespace(id=PRACTICE_ID, owner_email=owner_email)
     with (
         patch(
-            "app.auth.service._resolve_practice_from_email",
+            "app.auth.service._resolve_practice",
             return_value=(PRACTICE_ID, "practice_1"),
         ),
         patch("app.db.get_db_session", return_value=session),

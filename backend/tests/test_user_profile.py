@@ -119,7 +119,7 @@ class TestUpdateProfile:
         with (
             patch("app.settings.get_settings") as mock_settings,
             patch(
-                "app.auth.service._resolve_practice_from_email",
+                "app.auth.service._resolve_practice",
                 return_value=("practice-1", "practice_1"),
             ),
             patch("app.db.get_db_session", return_value=fake_session),
@@ -154,7 +154,7 @@ class TestUpdateProfile:
         with (
             patch("app.settings.get_settings") as mock_settings,
             patch(
-                "app.auth.service._resolve_practice_from_email",
+                "app.auth.service._resolve_practice",
                 return_value=("practice-1", "practice_1"),
             ),
             patch("app.db.get_db_session", return_value=fake_session),
@@ -245,7 +245,7 @@ class TestTitleAndCredentials:
         assert mock_clinician_profile_repo.get(mock_user.id) is None
 
         with patch(
-            "app.auth.service._resolve_practice_from_email",
+            "app.auth.service._resolve_practice",
             return_value=("practice-fresh", "practice_fresh"),
         ):
             response = client.patch(
@@ -277,7 +277,7 @@ class TestTitleAndCredentials:
         mock_user_repo.update(mock_user)
 
         with patch(
-            "app.auth.service._resolve_practice_from_email",
+            "app.auth.service._resolve_practice",
             return_value=None,
         ):
             response = client.patch(
@@ -686,7 +686,7 @@ class TestProfessionalInfo:
         self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
     ) -> None:
         mock_user_repo.update(mock_user)
-        with patch("app.auth.service._resolve_practice_from_email", return_value=None):
+        with patch("app.auth.service._resolve_practice", return_value=None):
             response = client.patch(
                 "/api/users/me/professional-info",
                 json={"legal_name": "Jane Q. Therapist"},
@@ -800,7 +800,7 @@ class TestProfessionalInfo:
         fake_session.get.return_value = practice
         with (
             patch(
-                "app.auth.service._resolve_practice_from_email",
+                "app.auth.service._resolve_practice",
                 return_value=("practice-1", "practice_1"),
             ),
             patch("app.db.get_db_session", return_value=fake_session),
@@ -823,7 +823,7 @@ class TestProfessionalInfo:
         fake_session.get.return_value = practice
         with (
             patch(
-                "app.auth.service._resolve_practice_from_email",
+                "app.auth.service._resolve_practice",
                 return_value=("practice-1", "practice_1"),
             ),
             patch("app.db.get_db_session", return_value=fake_session),
@@ -864,7 +864,7 @@ class TestPracticeRename:
         fake_session.get.return_value = practice
         with (
             patch(
-                "app.auth.service._resolve_practice_from_email",
+                "app.auth.service._resolve_practice",
                 return_value=("practice-1", "practice_1"),
             ),
             patch("app.db.get_db_session", return_value=fake_session),
@@ -900,7 +900,7 @@ class TestPracticeRename:
         fake_session.get.return_value = self._practice()
         with (
             patch(
-                "app.auth.service._resolve_practice_from_email",
+                "app.auth.service._resolve_practice",
                 return_value=("practice-1", "practice_1"),
             ),
             patch("app.db.get_db_session", return_value=fake_session),
@@ -989,7 +989,7 @@ class TestPracticeRename:
             with (
                 patch("app.settings.get_settings") as mock_settings,
                 patch(
-                    "app.auth.service._resolve_practice_from_email",
+                    "app.auth.service._resolve_practice",
                     return_value=("practice-1", "practice_1"),
                 ),
                 patch("app.db.get_db_session", return_value=fake_session),
@@ -1015,7 +1015,7 @@ class TestPracticeRename:
         with (
             patch("app.settings.get_settings") as mock_settings,
             patch(
-                "app.auth.service._resolve_practice_from_email",
+                "app.auth.service._resolve_practice",
                 return_value=("practice-1", "practice_1"),
             ),
             patch("app.db.get_db_session", return_value=fake_session),
@@ -1062,7 +1062,7 @@ class TestPracticeRename:
             with (
                 patch("app.settings.get_settings") as mock_settings,
                 patch(
-                    "app.auth.service._resolve_practice_from_email",
+                    "app.auth.service._resolve_practice",
                     return_value=("practice-1", "practice_1"),
                 ),
                 patch("app.db.get_db_session", return_value=fake_session),
@@ -1096,7 +1096,7 @@ class TestAudioRetentionSelfService:
         fake_session.get.return_value = self._practice()
         with (
             patch(
-                "app.auth.service._resolve_practice_from_email",
+                "app.auth.service._resolve_practice",
                 return_value=("practice-1", "practice_1"),
             ),
             patch("app.db.get_db_session", return_value=fake_session),
@@ -1116,7 +1116,7 @@ class TestAudioRetentionSelfService:
         fake_session.get.return_value = practice
         with (
             patch(
-                "app.auth.service._resolve_practice_from_email",
+                "app.auth.service._resolve_practice",
                 return_value=("practice-1", "practice_1"),
             ),
             patch("app.db.get_db_session", return_value=fake_session),
@@ -1138,7 +1138,7 @@ class TestAudioRetentionSelfService:
         fake_session.get.return_value = practice
         with (
             patch(
-                "app.auth.service._resolve_practice_from_email",
+                "app.auth.service._resolve_practice",
                 return_value=("practice-1", "practice_1"),
             ),
             patch("app.db.get_db_session", return_value=fake_session),
@@ -1165,7 +1165,7 @@ class TestAudioRetentionSelfService:
         fake_session.get.return_value = practice
         with (
             patch(
-                "app.auth.service._resolve_practice_from_email",
+                "app.auth.service._resolve_practice",
                 return_value=("practice-1", "practice_1"),
             ),
             patch("app.db.get_db_session", return_value=fake_session),
@@ -1181,7 +1181,7 @@ class TestAudioRetentionSelfService:
         fake_session.get.return_value = self._practice()
         with (
             patch(
-                "app.auth.service._resolve_practice_from_email",
+                "app.auth.service._resolve_practice",
                 return_value=("practice-1", "practice_1"),
             ),
             patch("app.db.get_db_session", return_value=fake_session),
@@ -1210,7 +1210,7 @@ class TestAudioRetentionSelfService:
         fake_session.get.return_value = practice
         with (
             patch(
-                "app.auth.service._resolve_practice_from_email",
+                "app.auth.service._resolve_practice",
                 return_value=("practice-1", "practice_1"),
             ),
             patch("app.db.get_db_session", return_value=fake_session),
@@ -1226,7 +1226,7 @@ class TestAudioRetentionSelfService:
         self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
     ) -> None:
         mock_user_repo.update(mock_user)
-        with patch("app.auth.service._resolve_practice_from_email", return_value=None):
+        with patch("app.auth.service._resolve_practice", return_value=None):
             response = client.get("/api/users/me/practice/audio-retention")
         assert response.status_code == 404
 
@@ -1272,7 +1272,7 @@ class TestAcceptBaaSnapshot:
         fake_session.get.return_value = practice
         with (
             patch(
-                "app.auth.service._resolve_practice_from_email",
+                "app.auth.service._resolve_practice",
                 return_value=("practice-1", "practice_1"),
             ),
             patch("app.db.get_db_session", return_value=fake_session),
@@ -1327,7 +1327,7 @@ class TestAcceptBaaByNonOwner:
         fake_session.get.return_value = practice
         with (
             patch(
-                "app.auth.service._resolve_practice_from_email",
+                "app.auth.service._resolve_practice",
                 return_value=("practice-1", "practice_1"),
             ),
             patch("app.db.get_db_session", return_value=fake_session),
@@ -1374,7 +1374,7 @@ class TestBaaResign:
         fake_session.get.return_value = practice
         with (
             patch(
-                "app.auth.service._resolve_practice_from_email",
+                "app.auth.service._resolve_practice",
                 return_value=("practice-1", "practice_1"),
             ),
             patch("app.db.get_db_session", return_value=fake_session),
@@ -1462,7 +1462,7 @@ class TestBaaResign:
         fake_session.get.return_value = self._practice()
         with (
             patch(
-                "app.auth.service._resolve_practice_from_email",
+                "app.auth.service._resolve_practice",
                 return_value=("practice-1", "practice_1"),
             ),
             patch("app.db.get_db_session", return_value=fake_session),
@@ -1494,7 +1494,7 @@ class TestBaaEndpointsNoMfaPosture:
         self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
     ) -> None:
         mock_user_repo.update(mock_user)
-        with patch("app.auth.service._resolve_practice_from_email", return_value=None):
+        with patch("app.auth.service._resolve_practice", return_value=None):
             response = client.get("/api/users/me/baa-status")
         assert response.status_code == 200, (
             f"expected 200 (no-MFA posture); got {response.status_code}: {response.text}"
@@ -1513,7 +1513,7 @@ class TestBaaEndpointsNoMfaPosture:
         # the practice resolver to None so the practice-snapshot branch is
         # skipped (OSS single-tenant has no practice row); the user-row
         # gate stamp still runs.
-        with patch("app.auth.service._resolve_practice_from_email", return_value=None):
+        with patch("app.auth.service._resolve_practice", return_value=None):
             response = client.post(
                 "/api/users/me/accept-baa",
                 json={"accepted": True, "version": "2024-01-01"},

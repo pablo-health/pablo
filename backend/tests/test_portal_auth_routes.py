@@ -187,8 +187,8 @@ def _practice_address(monkeypatch: pytest.MonkeyPatch) -> None:
     ``test_portal_practice_routes.py``.
     """
     monkeypatch.setattr(
-        "app.portal.routes._resolve_practice_from_email",
-        lambda _email: (PRACTICE_ID, TENANT),
+        "app.portal.routes._resolve_practice",
+        lambda _user_id, _email: (PRACTICE_ID, TENANT),
     )
     monkeypatch.setattr(
         "app.portal.routes.ensure_practice_slug",

@@ -12,6 +12,7 @@ practice row patched in, as ``test_practice_domains_routes.py`` does.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from email import message_from_bytes, policy
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -20,6 +21,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from app.api_errors import register_exception_handlers
 from app.auth.service import require_active_subscription
+from app.models import User
 from app.models.audit import AuditAction, ResourceType
 from app.portal import client_sender, notices, sender_routes
 from app.portal.adapters import SmtpInviteDelivery
@@ -51,11 +53,15 @@ from tests.client_sender_doubles import EXAMPLE_SENDER, SenderAwareNoticeDeliver
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from app.models import User
-
     from tests.audit_fakes import RecordingAudit
 
 PRACTICE_ID = "practice-1"
+CLINICIAN = User(
+    id="00000000-0000-4000-8000-000000000001",
+    email="clinician@example.com",
+    name="Clinician",
+    created_at=datetime(2026, 1, 1, tzinfo=UTC),
+)
 URL = "/api/practice/email-sender"
 SENDER = EXAMPLE_SENDER
 
@@ -227,7 +233,7 @@ def test_a_portal_notice_goes_out_as_the_clinicians_practice(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        notices, "_resolve_practice_from_email", lambda _email: (PRACTICE_ID, "schema")
+        notices, "_resolve_practice", lambda _user_id, _email: (PRACTICE_ID, "schema")
     )
     monkeypatch.setattr(
         notices,
@@ -250,7 +256,7 @@ def test_a_portal_notice_goes_out_as_the_clinicians_practice(
         delivery,
         notice="refill_request_decided",
         to_email="client@example.com",
-        from_clinician_email="clinician@example.com",
+        from_clinician=CLINICIAN,
     )
 
     assert sent is True
@@ -263,7 +269,7 @@ def test_a_notice_whose_sender_cannot_be_found_is_not_sent_and_not_raised(
 ) -> None:
     """Best-effort, like any other notice failure: the practice's act stands."""
     monkeypatch.setattr(
-        notices, "_resolve_practice_from_email", lambda _email: (PRACTICE_ID, "schema")
+        notices, "_resolve_practice", lambda _user_id, _email: (PRACTICE_ID, "schema")
     )
     monkeypatch.setattr(
         notices,
@@ -285,7 +291,7 @@ def test_a_notice_whose_sender_cannot_be_found_is_not_sent_and_not_raised(
             delivery,
             notice="refill_request_decided",
             to_email="client@example.com",
-            from_clinician_email="clinician@example.com",
+            from_clinician=CLINICIAN,
         )
         is False
     )
@@ -360,7 +366,7 @@ def client(
     session.get.return_value = SimpleNamespace(id=PRACTICE_ID, owner_email=owner_email)
     with (
         patch(
-            "app.auth.service._resolve_practice_from_email",
+            "app.auth.service._resolve_practice",
             return_value=(PRACTICE_ID, "practice_1"),
         ),
         patch("app.db.get_db_session", return_value=session),

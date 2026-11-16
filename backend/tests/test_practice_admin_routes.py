@@ -102,7 +102,7 @@ def app(
     )
     with (
         patch(
-            "app.auth.service._resolve_practice_from_email",
+            "app.auth.service._resolve_practice",
             return_value=("practice-1", "practice_1"),
         ),
         patch("app.db.get_db_session", return_value=session),
