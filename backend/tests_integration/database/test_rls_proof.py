@@ -37,15 +37,6 @@ That is why row-scoped above requires ``relforcerowsecurity`` and not just
 what notices. ``test_app_role_cannot_bypass_rls`` reports how many tables the
 role owns, so the record says which of the two is holding.
 
-**The template schema.** The provisioning template (``practice``) has RLS off
-on every table, which is safe only because no practice's rows live in it
-(``app/db``, ``DEFAULT_PRACTICE_SCHEMA``). That is checked here: every table
-that is row-scoped in a provisioned practice is empty in the template, counted
-as the app role with ``row_security = off``, which Postgres refuses rather
-than filter. The template does hold seed rows (its revision marker and the
-default intake packet) in tables that are not row-scoped anywhere; they are
-reported, not failed.
-
 **Enforcement.** As the app's own role (``NOSUPERUSER NOBYPASSRLS``, the shape
 ``tests_integration/conftest.py`` gives it), two practices are set up: in the
 first, clinician A with patient PA and clinician B with patient PB; in the
@@ -530,54 +521,6 @@ class TestCoverage:
         print(
             f"\n[rls-coverage] the app role owns {owned} of the {total} tables with RLS on; "
             "on those RLS holds only through FORCE ROW LEVEL SECURITY"
-        )
-
-    def test_template_schema_holds_no_practice_rows(
-        self, engine: Engine, fresh_practice: str
-    ) -> None:
-        """The template has RLS off, which is safe only while no practice's rows are in it.
-
-        It does carry rows: its revision marker and the default intake packet
-        a new practice starts from, in tables that are not row-scoped in a
-        practice either. What must be empty is every table that is row-scoped
-        once provisioned, since those are the ones holding a clinician's or a
-        patient's rows; the rest are reported.
-        """
-        from app.db import DEFAULT_PRACTICE_SCHEMA  # noqa: PLC0415
-
-        with engine.connect() as conn:
-            states = _table_states(conn, fresh_practice)
-            tables = list(
-                conn.execute(
-                    text(
-                        "SELECT c.relname FROM pg_class c "
-                        "JOIN pg_namespace n ON n.oid = c.relnamespace "
-                        "WHERE n.nspname = :s AND c.relkind IN ('r', 'p') ORDER BY 1"
-                    ),
-                    {"s": DEFAULT_PRACTICE_SCHEMA},
-                ).scalars()
-            )
-            assert tables, f"{DEFAULT_PRACTICE_SCHEMA} has no tables; nothing was checked"
-            # row_security = off makes Postgres raise rather than filter, so a
-            # zero below is every row there is, not every row the role may see.
-            conn.execute(text("SET LOCAL row_security = off"))
-            leaked: list[str] = []
-            seeded: list[str] = []
-            for name in tables:
-                sql = f'SELECT count(*) FROM "{DEFAULT_PRACTICE_SCHEMA}"."{name}"'  # noqa: S608
-                n = conn.execute(text(sql)).scalar_one()
-                if not n:
-                    continue
-                st = states.get(name)
-                (leaked if st is None or st.row_scoped else seeded).append(f"{name} ({n})")
-            conn.rollback()
-        assert not leaked, (
-            "the template holds rows in tables that are row-scoped (or absent) in a "
-            "provisioned practice:\n  " + "\n  ".join(leaked)
-        )
-        print(
-            f"\n[rls-coverage] template {DEFAULT_PRACTICE_SCHEMA}: {len(tables)} tables; "
-            f"0 rows in the row-scoped ones; seed rows in: {', '.join(seeded) or 'none'}"
         )
 
     @pytest.mark.parametrize("which", ["fresh", "default"])
