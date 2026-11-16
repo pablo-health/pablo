@@ -38,6 +38,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from ..models.enums import PracticeEdition
 from . import PLATFORM_SCHEMA
+from .schema_modules import MODULES as SCHEMA_MODULES
 
 
 class PlatformBase(DeclarativeBase):
@@ -114,6 +115,18 @@ class PracticeRow(PlatformBase):
     # NULL = not chosen. A clinician's own choice, then what their details
     # suggest, come first; this is the fallback when neither settles it.
     people_term: Mapped[str | None] = mapped_column(String(10))
+    # Which schema modules this practice's schema holds (``app.db.schema_modules``).
+    # Every module by default, existing practices included, so a deployment that
+    # never narrows it provisions and migrates exactly as before modules existed.
+    # Only ever grows: removing a module would not drop its tables, and the
+    # practice keeps migrating every module it has held. ``clinical`` is always
+    # present (CHECK below). Added by ``c4e8a2f6d1b9``.
+    schema_modules: Mapped[list[str]] = mapped_column(
+        ARRAY(Text),
+        nullable=False,
+        default=lambda: list(SCHEMA_MODULES),
+        server_default=text("ARRAY['clinical', 'ai', 'portal']"),
+    )
     # BAA snapshot — written once at acceptance time and immutable thereafter.
     # These are the legal record: who signed, under what credentials, on what text.
     baa_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -160,6 +173,11 @@ class PracticeRow(PlatformBase):
         CheckConstraint(
             "people_term IN ('clients', 'patients')",
             name="ck_practices_people_term",
+        ),
+        # Added by ``c4e8a2f6d1b9``. Every practice holds the core module.
+        CheckConstraint(
+            "'clinical' = ANY (schema_modules)",
+            name="ck_practices_schema_modules_clinical",
         ),
         # Added by ``a4f7e2c81b9d``.
         CheckConstraint(

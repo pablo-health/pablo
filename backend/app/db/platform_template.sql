@@ -617,9 +617,11 @@ CREATE TABLE platform.practices (
     people_term character varying(10),
     ask_clients_about_ai_notes boolean DEFAULT true NOT NULL,
     send_clients_video_link boolean DEFAULT true NOT NULL,
+    schema_modules text[] DEFAULT ARRAY['clinical'::text, 'ai'::text, 'portal'::text] NOT NULL,
     CONSTRAINT ck_practices_audio_retention_days_range CHECK (((audio_retention_days >= 0) AND (audio_retention_days <= 2555))),
     CONSTRAINT ck_practices_edition CHECK (((edition)::text = ANY (ARRAY[('therapist'::character varying)::text, ('personal'::character varying)::text]))),
     CONSTRAINT ck_practices_people_term CHECK (((people_term)::text = ANY (ARRAY[('clients'::character varying)::text, ('patients'::character varying)::text]))),
+    CONSTRAINT ck_practices_schema_modules_clinical CHECK (('clinical'::text = ANY (schema_modules))),
     CONSTRAINT practices_pentest_schema_name CHECK ((is_pentest = ((schema_name)::text ~~ like_escape('practice\_pentest\_%'::text, '\'::text)))),
     CONSTRAINT practices_provisioning_status_chk CHECK (((provisioning_status)::text = ANY (ARRAY[('in_progress'::character varying)::text, ('ready'::character varying)::text, ('failed'::character varying)::text])))
 );
