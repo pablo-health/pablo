@@ -411,11 +411,25 @@ describe("frontend/proxy.ts website host", () => {
         method: "GET",
         ifNoneMatch: '"v2"',
         hideFromSearch: false,
+        forwardHeaders: {},
       })
       expect(response.headers.get("location")).toBeNull()
       expect(authProviderMiddleware).not.toHaveBeenCalled()
     },
   )
+
+  it("tells the backend which visitor each website file is for, so visitors do not share one budget", async () => {
+    vi.stubEnv("FRONTEND_FORWARD_SECRET", "s3cret")
+    const visitor = { "x-forwarded-for": "6.6.6.6, 198.51.100.7", "user-agent": "Browser/1" }
+
+    await proxy(at(`https://${SITE}/css/site.css`, SITE, { headers: visitor }))
+
+    expect(vi.mocked(fetchSiteFile).mock.calls[0][0].forwardHeaders).toEqual({
+      "X-Pablo-Frontend-Auth": "s3cret",
+      "X-Pablo-Client-IP": "198.51.100.7",
+      "X-Pablo-Client-UA": "Browser/1",
+    })
+  })
 
   it("asks for the website only once the host is known to be no practice's portal", async () => {
     await proxy(at(`https://${SITE}/`, SITE))

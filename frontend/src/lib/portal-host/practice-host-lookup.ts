@@ -19,6 +19,7 @@
  * route (`./practice-site-lookup`), through {@link createHostLookup}.
  */
 
+import { serverForwardHeaders } from "./backend-forwarding"
 import { type PracticeHost, type PracticeHostAnswer, practiceHostname } from "./practice-host"
 import { parsePracticeHeader } from "./practice-header"
 import { parsePracticeTheme } from "./practice-theme"
@@ -34,6 +35,12 @@ export interface PracticeHostLookupOptions {
   foundTtlMs?: number
   maxEntries?: number
   timeoutMs?: number
+  /**
+   * Extra headers on every call, read per call. Defaults to marking the call
+   * as this server's own (`./backend-forwarding`): an answer is kept and
+   * shared by every visitor, so it is asked for no one in particular.
+   */
+  headers?: () => Record<string, string>
 }
 
 export interface HostLookupRoute<T> {
@@ -89,6 +96,7 @@ export function createHostLookup<T>(options: PracticeHostLookupOptions, route: H
   const foundTtlMs = options.foundTtlMs ?? ttlMs
   const maxEntries = options.maxEntries ?? MAX_ENTRIES
   const timeoutMs = options.timeoutMs ?? TIMEOUT_MS
+  const extraHeaders = options.headers ?? (() => serverForwardHeaders())
   const kept = new Map<string, { until: number; answer: T | null }>()
   const inFlight = new Map<string, Promise<T | null | "unavailable">>()
 
@@ -97,7 +105,7 @@ export function createHostLookup<T>(options: PracticeHostLookupOptions, route: H
     let response: Response
     try {
       response = await fetchFn(`${base}${route.path(hostname)}`, {
-        headers: { Accept: "application/json" },
+        headers: { ...extraHeaders(), Accept: "application/json" },
         cache: "no-store",
         signal: AbortSignal.timeout(timeoutMs),
       })

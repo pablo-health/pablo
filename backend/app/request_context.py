@@ -27,11 +27,15 @@ FORWARD_AUTH_HEADER = "X-Pablo-Frontend-Auth"
 MAX_USER_AGENT_LENGTH = 512
 
 
+def parse_forward_secrets(raw: str) -> list[bytes]:
+    """The accepted forward secrets from ``Settings.frontend_forward_secret``."""
+    return [s.strip().encode() for s in raw.split(",") if s.strip()]
+
+
 def _accepted_forward_secrets() -> list[bytes]:
     from .settings import get_settings  # noqa: PLC0415
 
-    raw = get_settings().frontend_forward_secret.get_secret_value()
-    return [s.strip().encode() for s in raw.split(",") if s.strip()]
+    return parse_forward_secrets(get_settings().frontend_forward_secret.get_secret_value())
 
 
 def _forward_secret_matches(presented: str, secrets: list[bytes]) -> bool:
@@ -41,6 +45,30 @@ def _forward_secret_matches(presented: str, secrets: list[bytes]) -> bool:
     for secret in secrets:
         matched |= hmac.compare_digest(candidate, secret)
     return matched
+
+
+def is_from_web_app_server(request: Request, secrets: list[bytes]) -> bool:
+    """True when the request carries one of ``secrets`` in FORWARD_AUTH_HEADER.
+
+    That proves the web app's own server made it. Logs nothing, so a caller
+    sending a wrong secret on every request costs no log line per request.
+    """
+    presented = request.headers.get(FORWARD_AUTH_HEADER)
+    if presented is None or not secrets:
+        return False
+    return _forward_secret_matches(presented, secrets)
+
+
+def forwarded_client_ip(request: Request) -> str | None:
+    """The end user's address in FORWARDED_CLIENT_IP_HEADER, if it is a valid one.
+
+    Trust it only after ``is_from_web_app_server``: anyone can send the header.
+    """
+    raw_ip = (request.headers.get(FORWARDED_CLIENT_IP_HEADER) or "").strip()
+    try:
+        return str(ipaddress.ip_address(raw_ip))
+    except ValueError:
+        return None
 
 
 def _forwarded_client(request: Request) -> tuple[str, str | None] | None:
@@ -59,10 +87,8 @@ def _forwarded_client(request: Request) -> tuple[str, str | None] | None:
         logger.warning("forwarded_client_rejected reason=bad_secret")
         return None
 
-    raw_ip = (request.headers.get(FORWARDED_CLIENT_IP_HEADER) or "").strip()
-    try:
-        ip = str(ipaddress.ip_address(raw_ip))
-    except ValueError:
+    ip = forwarded_client_ip(request)
+    if ip is None:
         logger.warning("forwarded_client_rejected reason=invalid_ip")
         return None
 

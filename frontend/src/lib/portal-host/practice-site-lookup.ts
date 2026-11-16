@@ -49,6 +49,8 @@ export interface SiteFileRequest {
   ifNoneMatch: string | null
   /** The practice asks search engines not to list its website. */
   hideFromSearch?: boolean
+  /** Who the fetch is for, as the backend counts it (`./backend-forwarding`). */
+  forwardHeaders?: Record<string, string>
 }
 
 export interface SiteFileOptions {
@@ -74,7 +76,10 @@ export async function fetchSiteFile(request: SiteFileRequest, options: SiteFileO
   let upstream: Response
   try {
     upstream = await fetchFn(url, {
-      headers: request.ifNoneMatch ? { "If-None-Match": request.ifNoneMatch } : {},
+      headers: {
+        ...request.forwardHeaders,
+        ...(request.ifNoneMatch ? { "If-None-Match": request.ifNoneMatch } : {}),
+      },
       cache: "no-store",
       redirect: "manual",
       signal: AbortSignal.timeout(FILE_TIMEOUT_MS),
