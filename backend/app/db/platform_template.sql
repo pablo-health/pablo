@@ -549,7 +549,7 @@ CREATE TABLE platform.practice_members (
     joined_at timestamp with time zone NOT NULL,
     joined_via character varying(16) NOT NULL,
     invited_by uuid,
-    CONSTRAINT practice_members_joined_via_check CHECK (((joined_via)::text = ANY ((ARRAY['email_claim'::character varying, 'invite'::character varying, 'backfill'::character varying])::text[])))
+    CONSTRAINT practice_members_joined_via_check CHECK (((joined_via)::text = ANY (ARRAY[('email_claim'::character varying)::text, ('invite'::character varying)::text, ('backfill'::character varying)::text])))
 );
 
 CREATE TABLE platform.practice_portal_settings (
