@@ -292,7 +292,7 @@ def _practice(monkeypatch: pytest.MonkeyPatch) -> None:
     address = PracticeAddress(slug="example-therapy", display_name=PRACTICE_NAME, enabled=True)
     for module in (routes, _deps):
         monkeypatch.setattr(
-            module, "_resolve_practice_from_email", lambda _email: (PRACTICE_ID, TENANT)
+            module, "_resolve_practice", lambda _user_id, _email: (PRACTICE_ID, TENANT)
         )
     for module in (routes, invite_template_routes):
         monkeypatch.setattr(module, "ensure_practice_slug", lambda _practice_id: address)

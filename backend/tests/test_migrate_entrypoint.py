@@ -24,7 +24,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -120,6 +120,15 @@ def _install(
 
     provisioning = ModuleType("app.db.provisioning")
     provisioning.ensure_schemas = lambda _engine: (calls or []).append("provision")  # type: ignore[attr-defined]
+
+    members = ModuleType("app.db.practice_members")
+
+    def _backfill(_engine: Any) -> SimpleNamespace:
+        (calls or []).append("backfill")
+        return SimpleNamespace(inserted=0, unmembered=0)
+
+    members.backfill = _backfill  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "app.db.practice_members", members)
     if calls is not None:
         original_is_migrated = recorder.is_migrated
 
@@ -153,7 +162,7 @@ def test_an_upgrade_provisions_after_the_practice_migration(
     _install(monkeypatch, _Recorder(migrated=True), calls)
 
     assert migrate_entrypoint._after_upgrade() == 0
-    assert calls == ["practice-migration", "provision"]
+    assert calls == ["practice-migration", "provision", "backfill"]
 
 
 def test_a_refusing_preflight_stops_before_provisioning(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -163,6 +172,36 @@ def test_a_refusing_preflight_stops_before_provisioning(monkeypatch: pytest.Monk
 
     assert migrate_entrypoint._after_upgrade() == 1
     assert calls == ["practice-migration"]
+
+
+def test_the_membership_backfill_prints_its_count(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Printed, because alembic leaves the root logger at WARNING; zero is the
+    ordinary answer and says nothing at ERROR."""
+    _install(monkeypatch, _Recorder(migrated=True), [])
+
+    assert migrate_entrypoint._after_upgrade() == 0
+
+    assert "practice_members backfill: 0 inserted; 0 mapped accounts" in capsys.readouterr().out
+    assert not [r for r in caplog.records if r.levelname == "ERROR"]
+
+
+def test_accounts_left_without_a_membership_are_an_error_not_a_stop(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """They keep resolving through their mapping, so the deploy goes on."""
+    _install(monkeypatch, _Recorder(migrated=True), [])
+    members = sys.modules["app.db.practice_members"]
+    members.backfill = lambda _engine: SimpleNamespace(inserted=3, unmembered=2)  # type: ignore[attr-defined]
+
+    assert migrate_entrypoint._after_upgrade() == 0
+
+    [line] = [r for r in caplog.records if "practice_members backfill" in r.getMessage()]
+    assert line.levelname == "ERROR"
+    assert "3 inserted; 2 mapped accounts" in line.getMessage()
 
 
 def test_an_already_migrated_deployment_does_nothing(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -37,13 +37,14 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from ..auth.service import _resolve_practice_from_email
+from ..auth.service import _resolve_practice
 from .client_sender import resolve_client_sender
 from .delivery import PORTAL_NOTICES, DeliveryNotConfiguredError, sending_as_practice
 from .factory import build_portal_link
 from .practice_routes import ensure_practice_slug
 
 if TYPE_CHECKING:
+    from ..models import User
     from .delivery import PortalNoticeDelivery
 
 logger = logging.getLogger(__name__)
@@ -54,24 +55,25 @@ def send_portal_notice(
     *,
     notice: str,
     to_email: str | None,
-    from_clinician_email: str | None,
+    from_clinician: User,
 ) -> bool:
     """Best-effort: tell *to_email* something is waiting. Returns whether it went.
 
-    ``from_clinician_email`` is whose practice the link should point at. It
-    is the acting clinician's own address rather than a practice id taken
-    from a request, for the same reason the invitation route resolves it
-    that way: there is then no field a caller could put another practice in.
+    ``from_clinician`` says whose practice the link should point at. It is
+    the acting clinician's own account rather than a practice id taken from
+    a request, for the same reason
+    the invitation route resolves it that way: there is then no field a caller
+    could put another practice in.
 
     A ``False`` is the ordinary answer on a deployment that has wired no
     channel, and never a reason for the caller to fail.
     """
     if notice not in PORTAL_NOTICES:  # pragma: no cover — callers pass a constant
         raise ValueError(f"unknown portal notice: {notice}")
-    if not to_email or not from_clinician_email or not delivery.can_deliver():
+    if not to_email or not from_clinician.email or not delivery.can_deliver():
         return False
 
-    practice = _resolve_practice_from_email(from_clinician_email)
+    practice = _resolve_practice(from_clinician.id, from_clinician.email)
     if practice is None:
         return False
     practice_id = practice[0]

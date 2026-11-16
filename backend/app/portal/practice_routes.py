@@ -33,7 +33,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from ..auth.route_security import truly_public
-from ..auth.service import _resolve_practice_from_email, require_active_subscription
+from ..auth.service import _resolve_practice, require_active_subscription
 from ..db import create_standalone_session
 from ..db.platform_models import PortalPracticeSlugRow, PracticePortalSettingsRow, PracticeRow
 from ..models import User
@@ -155,9 +155,9 @@ def get_or_create_portal_practice_slug(
     A practice has at most one address (``practice_id`` is UNIQUE), so a second
     call from the same practice returns the first one unchanged rather than
     minting another. ``User`` carries no practice of its own, so it is resolved
-    from the caller's address through the platform email mapping.
+    from the caller's membership (``app.auth.service._resolve_practice``).
     """
-    practice = _resolve_practice_from_email(user.email)
+    practice = _resolve_practice(user.id, user.email)
     if practice is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

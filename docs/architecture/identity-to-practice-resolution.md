@@ -72,3 +72,27 @@ route refuses rather than writing a grant that would resolve to nothing.
 That is a real behaviour change and it is deliberate: an invitation is
 into somebody's practice, and an invitation into no practice is an
 account that signs in successfully and lands nowhere.
+
+## Amended 2026-11-16: the mapping decides once, then the account does
+
+The mapping above is keyed by address, while the identity it resolves is
+keyed by the provider's subject id. Two keys deciding one thing can
+disagree. An account whose address changed after its first sign-in was
+routed by the old address, and a clinician who joined a practice under a
+different address from the one they were mapped at had no way in.
+
+So a signed-in request now resolves the **account** first:
+`platform.practice_members` holds one row per account (`user_id` is the
+primary key) naming its practice. The email mapping is the first claim:
+an account with no membership resolves through its address's mapping, and
+that request writes the membership (`joined_via = 'email_claim'`). It
+writes it only when the account id is actually known, never under the
+provider's subject id. From then on the membership decides. When the
+address maps to a different practice, the membership wins and the
+disagreement is logged with ids only. The migrate step backfills a
+membership for every account that was already mapped.
+
+Nothing above changes. `allowed_emails` and `email_tenant_mappings` stay,
+`AllowlistRepository.add` still writes both, and it is still how an
+address is admitted and how its first sign-in finds a practice. There is
+still one lookup and no counting: membership, then mapping, then nothing.

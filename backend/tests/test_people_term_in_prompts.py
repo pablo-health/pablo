@@ -49,7 +49,7 @@ def _lookup(term: str | None) -> PeopleTermLookup:
 
 @pytest.fixture(autouse=True)
 def _no_practice() -> object:
-    with patch("app.auth.service._resolve_practice_from_email", return_value=None):
+    with patch("app.auth.service._resolve_practice", return_value=None):
         yield
 
 

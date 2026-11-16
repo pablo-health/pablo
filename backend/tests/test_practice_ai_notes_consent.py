@@ -38,7 +38,7 @@ def _call(client: Any, method: str, practice: Any, **kwargs: Any) -> Any:
     session.get.return_value = practice
     with (
         patch(
-            "app.auth.service._resolve_practice_from_email",
+            "app.auth.service._resolve_practice",
             return_value=("practice-1", "practice_1"),
         ),
         patch("app.db.get_db_session", return_value=session),
@@ -91,7 +91,7 @@ class TestRoutes:
         assert practice.ask_clients_about_ai_notes is True
 
     def test_no_practice_is_404(self, client: Any) -> None:
-        with patch("app.auth.service._resolve_practice_from_email", return_value=None):
+        with patch("app.auth.service._resolve_practice", return_value=None):
             response = client.get(_PATH)
         assert response.status_code == 404
 

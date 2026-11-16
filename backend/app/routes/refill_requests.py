@@ -390,6 +390,6 @@ def decide_refill_request(
         notices,
         notice=DECIDED_NOTICE,
         to_email=patient.email if patient is not None else None,
-        from_clinician_email=user.email,
+        from_clinician=user,
     )
     return RefillRequestResponse.from_request(decided)

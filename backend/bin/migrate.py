@@ -17,9 +17,10 @@ regen, the tests), not only for this entrypoint.
 After a successful upgrade this also moves a pre-provisioning deployment onto
 its own practice schema, if it is still on the template (see
 ``_run_single_practice_migration`` for why that belongs here rather than in the
-boot path or in an operator's hands), and then provisions: the template, and on
+boot path or in an operator's hands), then provisions: the template, and on
 an empty database the deployment's own practice (``app.db.provisioning.
-ensure_schemas``). The app itself touches no database when it starts, so this
+ensure_schemas``), and then gives each mapped account its practice membership
+(``_backfill_practice_members``). The app itself touches no database when it starts, so this
 step has to run before it does — on a fresh install as on every upgrade.
 """
 
@@ -149,12 +150,45 @@ def _provision_schemas() -> None:
     ensure_schemas(get_engine())
 
 
+def _backfill_practice_members() -> None:
+    """Give every account its email mapping resolves to a practice a membership.
+
+    Sign-in resolves an account's practice from ``platform.practice_members``
+    first, and writes the row on an account's first sign-in through its email
+    mapping. Accounts that were mapped before that table existed get their row
+    here, so none of them depends on its address still matching. Idempotent:
+    an account with a membership is left alone, so every later run inserts
+    nothing. A fresh install has no accounts yet, and does nothing.
+
+    Prints how many accounts still have a mapping and no membership afterwards,
+    which must be zero. Printed rather than logged at INFO, because alembic's
+    logging config raises the root logger to WARNING for the rest of the job.
+    Anything other than zero is also an ERROR to read, not a reason to stop the
+    deploy: those accounts still resolve through their mapping.
+    """
+    from app.db import get_engine  # noqa: PLC0415
+    from app.db.practice_members import backfill  # noqa: PLC0415
+
+    report = backfill(get_engine())
+    line = (
+        f"practice_members backfill: {report.inserted} inserted; "
+        f"{report.unmembered} mapped accounts without a membership"
+    )
+    print(line, flush=True)
+    if report.unmembered:
+        logger.error("%s", line)
+
+
 def _after_upgrade() -> int:
-    """The practice migration, then provisioning. A process exit code."""
+    """The practice migration, provisioning, then the membership backfill.
+
+    A process exit code.
+    """
     rc = _run_single_practice_migration()
     if rc != 0:
         return rc
     _provision_schemas()
+    _backfill_practice_members()
     return 0
 
 

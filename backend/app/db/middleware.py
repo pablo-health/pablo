@@ -217,8 +217,9 @@ def _resolve_schema_from_request(request: Request) -> tuple[str | None, str]:
     """Extract tenant schema from the Authorization header.
 
     Reuses the identity ``_verify_and_stash_clinician_identity`` already
-    verified for this request, then resolves the practice schema from its
-    email. Tenant resolution is email-based, so it is provider-agnostic.
+    verified for this request, then resolves the practice schema from the
+    account it belongs to, or for an account with no membership yet from its
+    email (``app.auth.service._resolve_practice``).
 
     Only an email the issuer has verified is looked up. An invite writes the
     email-to-practice mapping before the invitee has an account, and a
@@ -246,9 +247,11 @@ def _resolve_schema_from_request(request: Request) -> tuple[str | None, str]:
         return None, UNRESOLVED_EMAIL_UNVERIFIED
 
     try:
-        from ..auth.service import _resolve_practice_from_email
+        from ..auth.service import _resolve_practice_for_identity
 
-        practice = _resolve_practice_from_email(identity.email)
+        practice = _resolve_practice_for_identity(
+            request, identity.provider, identity.subject_id, identity.email
+        )
         if practice:
             # The earliest point the practice is known, and before any route
             # or dependency logs: every line for the request carries it.

@@ -216,6 +216,53 @@ class EmailTenantMappingRow(PlatformBase):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+#: How a membership came to exist. ``email_claim``: the first sign-in through the
+#: email mapping. ``invite``: an invitation redeemed. ``backfill``: written by the
+#: migrate step for an account that was already mapped.
+PRACTICE_MEMBER_JOINED_VIA = ("email_claim", "invite", "backfill")
+
+
+class PracticeMemberRow(PlatformBase):
+    """The practice an account belongs to, keyed by the account, not its address.
+
+    A signed-in request resolves its practice from this row first. The email
+    mapping is only how an account claims a practice the first time: once the
+    account has a row here, a change of address does not move it, and a
+    different address cannot sign it into another practice.
+
+    ``user_id`` is the primary key, so an account belongs to one practice.
+
+    No PHI: account and practice ids, a time, and how the row was written.
+    """
+
+    __tablename__ = "practice_members"
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
+        CheckConstraint(
+            "joined_via IN ('email_claim', 'invite', 'backfill')",
+            name="practice_members_joined_via_check",
+        ),
+        Index("ix_practice_members_practice_id", "practice_id"),
+        {"schema": PLATFORM_SCHEMA},
+    )
+
+    user_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey(f"{PLATFORM_SCHEMA}.users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    practice_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey(f"{PLATFORM_SCHEMA}.practices.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    joined_via: Mapped[str] = mapped_column(String(16), nullable=False)
+    invited_by: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey(f"{PLATFORM_SCHEMA}.users.id", ondelete="SET NULL"),
+    )
+
+
 class ClaimRouteRow(PlatformBase):
     """Which practice filed the claim carrying this control number.
 

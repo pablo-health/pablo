@@ -213,10 +213,10 @@ def get_user_status(
         "import_prompted_at": user.import_prompted_at,
     }
 
-    from ..auth.service import _resolve_practice_from_email
+    from ..auth.service import _resolve_practice
     from ..payments.provider import get_payment_credential_provider
 
-    practice = _resolve_practice_from_email(user.email)
+    practice = _resolve_practice(user.id, user.email)
     # Whether this practice takes cards, so the chart never asks for a card
     # or a charge amount in a practice that cannot take one. Resolved for the
     # same practice the payment routes resolve, through the same provider;
@@ -605,10 +605,10 @@ def _upsert_clinician_profile(
 
 
 def _resolve_practice_id_for(user: User) -> str | None:
-    """Resolve the practice_id for ``user`` from the platform email mapping."""
-    from ..auth.service import _resolve_practice_from_email
+    """The practice_id ``user`` resolves to (``app.auth.service._resolve_practice``)."""
+    from ..auth.service import _resolve_practice
 
-    practice = _resolve_practice_from_email(user.email)
+    practice = _resolve_practice(user.id, user.email)
     return practice[0] if practice else None
 
 

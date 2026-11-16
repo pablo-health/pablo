@@ -326,7 +326,7 @@ def request_intake_correction(
         notices,
         notice=CORRECTION_NOTICE,
         to_email=patient.email,
-        from_clinician_email=user.email,
+        from_clinician=user,
     )
     return assignment_response(assignments, moved, patient_id)
 

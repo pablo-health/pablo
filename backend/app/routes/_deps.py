@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from fastapi import HTTPException, status
 
 from ..api_errors import ConflictError, NotFoundError
-from ..auth.service import _resolve_practice_from_email
+from ..auth.service import _resolve_practice
 from .users import _resolve_practice_id_for
 
 if TYPE_CHECKING:
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 def practice_id_or_409(user: User) -> str:
     """The caller's practice, or 409 when no practice is associated with them yet."""
-    practice = _resolve_practice_from_email(user.email)
+    practice = _resolve_practice(user.id, user.email)
     if practice is None:
         raise ConflictError("No practice is associated with this account yet.")
     return practice[0]

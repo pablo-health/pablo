@@ -39,26 +39,22 @@ class UnknownTenantError(Exception):
 def resolve_tenant_for_user(user_id: str) -> tuple[str, str] | None:
     """Resolve a Pablo ``user_id`` to its active ``(practice_id, schema_name)``, off-request.
 
-    ``user_id`` → email (platform ``users``) → practice (``email_tenant_mappings``
-    → ``practices``), all in the shared platform schema via a standalone
-    session. Returns ``None`` if the user, mapping, or practice is missing or
-    inactive; the caller treats that as non-retryable (no schema to safely
-    write into).
+    The same resolution a signed-in request makes
+    (``app.auth.service._resolve_practice``): the account's membership, or for
+    an account without one, its address's mapping. Returns ``None`` if the
+    user is missing or resolves to no active practice; the caller treats that
+    as non-retryable (no schema to safely write into).
     """
+    from ..auth.service import _resolve_practice
     from ..db import create_standalone_session
-    from ..db.platform_models import EmailTenantMappingRow, PlatformUserRow, PracticeRow
+    from ..db.platform_models import PlatformUserRow
 
     with create_standalone_session() as db:
-        user = db.get(PlatformUserRow, user_id)
-        if user is None:
-            return None
-        mapping = db.get(EmailTenantMappingRow, user.email)
-        if mapping is None:
-            return None
-        practice = db.get(PracticeRow, mapping.practice_id)
-        if practice is None or not practice.is_active:
-            return None
-        return practice.id, practice.schema_name
+        user: PlatformUserRow | None = db.get(PlatformUserRow, user_id)
+        email = user.email if user is not None else None
+    if user is None:
+        return None
+    return _resolve_practice(user_id, email)
 
 
 def resolve_tenant_schema_for_user(user_id: str) -> str | None:

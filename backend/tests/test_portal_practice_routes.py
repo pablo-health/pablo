@@ -205,8 +205,8 @@ def client(app: FastAPI, fake_db: _FakeSession) -> Iterator[TestClient]:
     with (
         patch("app.portal.practice_routes.create_standalone_session", lambda: fake_db),
         patch(
-            "app.portal.practice_routes._resolve_practice_from_email",
-            lambda _email: (PRACTICE_ID, f"practice_{PRACTICE_ID}"),
+            "app.portal.practice_routes._resolve_practice",
+            lambda _user_id, _email: (PRACTICE_ID, f"practice_{PRACTICE_ID}"),
         ),
     ):
         yield TestClient(app)
@@ -346,8 +346,8 @@ def test_mint_never_hands_out_a_reserved_word_bare(fake_db: _FakeSession, mock_u
     with (
         patch("app.portal.practice_routes.create_standalone_session", lambda: fake_db),
         patch(
-            "app.portal.practice_routes._resolve_practice_from_email",
-            lambda _email: (PRACTICE_ID, f"practice_{PRACTICE_ID}"),
+            "app.portal.practice_routes._resolve_practice",
+            lambda _user_id, _email: (PRACTICE_ID, f"practice_{PRACTICE_ID}"),
         ),
     ):
         response = TestClient(application).post(MINT_URL)
@@ -370,8 +370,8 @@ def test_a_practice_named_like_a_web_app_route_gets_a_suffixed_address(
     with (
         patch("app.portal.practice_routes.create_standalone_session", lambda: fake_db),
         patch(
-            "app.portal.practice_routes._resolve_practice_from_email",
-            lambda _email: (PRACTICE_ID, f"practice_{PRACTICE_ID}"),
+            "app.portal.practice_routes._resolve_practice",
+            lambda _user_id, _email: (PRACTICE_ID, f"practice_{PRACTICE_ID}"),
         ),
     ):
         response = TestClient(application).post(MINT_URL)
