@@ -35,7 +35,7 @@ from google.api_core.exceptions import AlreadyExists
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from ..auth.service import _resolve_practice_from_email, require_cloud_tasks_invoker
+from ..auth.service import _resolve_practice, require_cloud_tasks_invoker
 from ..db import (
     arm_current_user_id,
     create_standalone_session,
@@ -151,7 +151,7 @@ def _resolve_schema_for_user(user_id: str) -> str | None:
     with create_standalone_session() as tmp:
         user_row = tmp.get(PlatformUserRow, user_id)
         if user_row:
-            practice = _resolve_practice_from_email(user_row.email)
+            practice = _resolve_practice(user_id, user_row.email)
             if practice:
                 return practice[1]
     return None

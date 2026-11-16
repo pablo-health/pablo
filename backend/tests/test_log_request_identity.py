@@ -197,12 +197,17 @@ class TestTenantBoundWhereTheSchemaResolves:
         """The database middleware resolves the practice inside run_in_threadpool."""
         request = MagicMock()
         request.state = SimpleNamespace(
-            verified_identity=SimpleNamespace(email="clinician@example.com", email_verified=True)
+            verified_identity=SimpleNamespace(
+                provider="firebase",
+                subject_id="uid-1",
+                email="clinician@example.com",
+                email_verified=True,
+            )
         )
         _identity, token = begin_request_log_identity()
         try:
             with patch(
-                "app.auth.service._resolve_practice_from_email",
+                "app.auth.service._resolve_practice_for_identity",
                 return_value=("practice-9", "practice_9"),
             ):
                 ctx = contextvars.copy_context()

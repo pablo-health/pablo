@@ -883,7 +883,7 @@ def _wire_portal_address(monkeypatch: pytest.MonkeyPatch) -> None:
     from app.portal.practice_routes import PracticeAddress  # noqa: PLC0415
 
     monkeypatch.setattr(
-        notices_module, "_resolve_practice_from_email", lambda _email: ("practice-1", "schema")
+        notices_module, "_resolve_practice", lambda _user_id, _email: ("practice-1", "schema")
     )
     monkeypatch.setattr(
         notices_module,

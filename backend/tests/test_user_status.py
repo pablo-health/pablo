@@ -23,7 +23,7 @@ class TestUserStatusPracticeId:
         with (
             patch("app.settings.get_settings") as mock_settings,
             patch(
-                "app.auth.service._resolve_practice_from_email",
+                "app.auth.service._resolve_practice",
                 return_value=("practice-abc", "practice_abc"),
             ),
         ):
@@ -37,7 +37,7 @@ class TestUserStatusPracticeId:
     def test_omits_practice_id_when_email_has_no_mapping(self, client: Any) -> None:
         with (
             patch("app.settings.get_settings") as mock_settings,
-            patch("app.auth.service._resolve_practice_from_email", return_value=None),
+            patch("app.auth.service._resolve_practice", return_value=None),
         ):
             mock_settings.return_value.is_saas = False
 
@@ -74,7 +74,7 @@ class TestUserStatusCardPayments:
         with (
             patch("app.settings.get_settings") as mock_settings,
             patch(
-                "app.auth.service._resolve_practice_from_email",
+                "app.auth.service._resolve_practice",
                 return_value=("practice-abc", "practice_abc"),
             ),
         ):

@@ -98,7 +98,7 @@ def test_the_limits_are_inclusive() -> None:
 @pytest.fixture(autouse=True)
 def _practice(monkeypatch: pytest.MonkeyPatch) -> None:
     address = PracticeAddress(slug="example-therapy", display_name=PRACTICE_NAME, enabled=True)
-    monkeypatch.setattr(_deps, "_resolve_practice_from_email", lambda _email: (PRACTICE_ID, TENANT))
+    monkeypatch.setattr(_deps, "_resolve_practice", lambda _user_id, _email: (PRACTICE_ID, TENANT))
     monkeypatch.setattr(welcome_routes, "ensure_practice_slug", lambda _practice_id: address)
 
 

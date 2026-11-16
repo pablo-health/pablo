@@ -590,7 +590,7 @@ def get_tenant_context(
         # schema-resolving middleware and ``_resolve_user`` apply the same rule.
         raise _email_not_verified_error()
     if email:
-        practice = _resolve_practice_from_email(email)
+        practice = _resolve_practice(resolved_user_id, email)
         if practice:
             practice_id, schema_name = practice
             # Bound before the provisioning wait so a 503 from it is
@@ -691,6 +691,44 @@ def _extract_email(decoded_token: dict[str, Any]) -> str:
         if email_list:
             email = email_list[0]
     return email.lower() if email else ""
+
+
+def _resolve_practice(user_id: str | None, email: str | None) -> tuple[str, str] | None:
+    """The ``(practice_id, schema_name)`` a signed-in account resolves to, or None.
+
+    Every caller that needs an account's practice asks here, with the account's
+    own id where it has one and its address. Today the practice is decided by
+    the address alone, through the platform email mapping
+    (``email_tenant_mappings``); ``user_id`` is accepted so the
+    account can take part in that decision without touching the callers again.
+    A caller that holds only the provider's subject id, before the identity row
+    exists, passes None.
+    """
+    del user_id  # Not consulted yet: the address decides.
+    if not email:
+        return None
+    return _resolve_practice_from_email(email)
+
+
+def _resolve_practice_for_identity(
+    request: Request | None, provider: str, subject_id: str, email: str | None
+) -> tuple[str, str] | None:
+    """:func:`_resolve_practice` for a verified identity, before any dependency runs.
+
+    The request middleware holds only the identity, so it looks the account up
+    from the identity row first. The account id it finds is remembered on the
+    request, where the auth dependencies' own lookup finds it.
+    """
+    from ..db import create_standalone_session
+    from ..repositories.postgres.identity import PostgresIdentityRepository
+
+    user_id: str | None = None
+    if subject_id:
+        with create_standalone_session() as db:
+            user_id = _lookup_pablo_user_id(
+                request, subject_id, PostgresIdentityRepository(db), provider=provider
+            )
+    return _resolve_practice(user_id, email)
 
 
 def _resolve_practice_from_email(email: str) -> tuple[str, str] | None:
@@ -856,7 +894,7 @@ def _ensure_tenant_mapping(email: str) -> None:
     logger.info("Mapped auto-provisioned identity onto practice '%s'", DEFAULT_PRACTICE_ID)
 
 
-def _keep_request_off_the_template(email: str) -> None:
+def _keep_request_off_the_template(user_id: str, email: str) -> None:
     """Make sure an authenticated request runs on its practice's schema or on none.
 
     The schema middleware resolves the practice before any dependency runs. Two
@@ -885,7 +923,7 @@ def _keep_request_off_the_template(email: str) -> None:
     current = _current_tenant_schema.get()
     if session is None or current not in (None, DEFAULT_PRACTICE_SCHEMA):
         return
-    practice = _resolve_practice_from_email(email) if email else None
+    practice = _resolve_practice(user_id, email) if email else None
     if practice:
         set_tenant_schema(session, practice[1])
     elif current == DEFAULT_PRACTICE_SCHEMA:
@@ -1150,7 +1188,7 @@ def _resolve_user(
     from ..db import _request_session, arm_current_user_id
 
     if request is not None:
-        _keep_request_off_the_template(email if email_verified else "")
+        _keep_request_off_the_template(user.id, email if email_verified else "")
 
     db_session = _request_session.get()
     if db_session is not None:

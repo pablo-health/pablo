@@ -1074,7 +1074,7 @@ class TestTokenVerificationWithTenantClaims:
 class TestGetTenantContext:
     """Test the get_tenant_context FastAPI dependency.
 
-    The context resolves via _resolve_practice_from_email (Postgres lookup).
+    The context resolves via _resolve_practice (Postgres lookup).
     """
 
     def test_resolves_practice_from_email(self) -> None:
@@ -1089,7 +1089,7 @@ class TestGetTenantContext:
         with (
             patch("app.auth.service.get_settings"),
             patch(
-                "app.auth.service._resolve_practice_from_email",
+                "app.auth.service._resolve_practice",
                 return_value=("practice-abc", "practice_abc"),
             ),
             # The post-resolve provisioning_status gate (THERAPY-da7t)
@@ -1164,7 +1164,7 @@ class TestGetTenantContext:
         with (
             patch("app.auth.service.get_settings"),
             patch(
-                "app.auth.service._resolve_practice_from_email",
+                "app.auth.service._resolve_practice",
                 return_value=("practice-abc", "practice_abc"),
             ),
             patch("app.auth.service._await_provisioning_ready"),
@@ -1207,7 +1207,7 @@ class TestGetTenantContext:
         with (
             patch("app.auth.service.get_settings"),
             patch(
-                "app.auth.service._resolve_practice_from_email",
+                "app.auth.service._resolve_practice",
                 return_value=("practice-abc", "practice_abc"),
             ),
             patch("app.auth.service._await_provisioning_ready"),
@@ -1254,7 +1254,7 @@ class TestGetTenantContext:
 
         with (
             patch("app.auth.service.get_settings"),
-            patch("app.auth.service._resolve_practice_from_email", return_value=None),
+            patch("app.auth.service._resolve_practice", return_value=None),
             patch("app.db.practice_owner.record_owner_on_sign_in") as record,
         ):
             get_tenant_context(_mock_request(), decoded, user_repo, _identity_repo_for("admin-uid"))
@@ -1281,7 +1281,7 @@ class TestGetTenantContext:
 
         with (
             patch("app.auth.service.get_settings"),
-            patch("app.auth.service._resolve_practice_from_email", return_value=None),
+            patch("app.auth.service._resolve_practice", return_value=None),
         ):
             pass
 
@@ -1310,7 +1310,7 @@ class TestGetTenantContext:
 
         with (
             patch("app.auth.service.get_settings"),
-            patch("app.auth.service._resolve_practice_from_email", return_value=None),
+            patch("app.auth.service._resolve_practice", return_value=None),
         ):
             pass
 
@@ -1333,7 +1333,7 @@ class TestGetTenantContext:
 
         with (
             patch("app.auth.service.get_settings"),
-            patch("app.auth.service._resolve_practice_from_email", return_value=None),
+            patch("app.auth.service._resolve_practice", return_value=None),
         ):
             pass
 
@@ -1362,7 +1362,7 @@ class TestGetTenantContext:
 
         with (
             patch("app.auth.service.get_settings"),
-            patch("app.auth.service._resolve_practice_from_email") as resolve,
+            patch("app.auth.service._resolve_practice") as resolve,
             patch("app.db.practice_owner.record_owner_on_sign_in") as record,
             pytest.raises(HTTPException) as exc_info,
         ):
@@ -1382,7 +1382,7 @@ class TestGetTenantContext:
 
         with (
             patch("app.auth.service.get_settings"),
-            patch("app.auth.service._resolve_practice_from_email") as resolve,
+            patch("app.auth.service._resolve_practice") as resolve,
             pytest.raises(HTTPException) as exc_info,
         ):
             get_tenant_context(

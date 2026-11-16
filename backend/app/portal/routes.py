@@ -56,7 +56,7 @@ from ..api_errors import (
 from ..auth.patient_context import patient_not_authenticated_detail
 from ..auth.route_access import subscription_exempt
 from ..auth.route_security import truly_public
-from ..auth.service import _resolve_practice_from_email, require_active_subscription
+from ..auth.service import _resolve_practice, require_active_subscription
 from ..db import DEFAULT_PRACTICE_SCHEMA
 from ..models import User
 from ..models.audit import AuditAction, ResourceType
@@ -181,7 +181,7 @@ def _practice_address_for(user: User) -> tuple[str, PracticeAddress]:
     page that answers 404 is worse than no invitation — the patient is the one
     who finds out, and the clinician believes it was sent.
     """
-    practice = _resolve_practice_from_email(user.email)
+    practice = _resolve_practice(user.id, user.email)
     if practice is None:
         raise ConflictError("No practice is associated with this account yet.")
     practice_id, _schema_name = practice
@@ -368,7 +368,7 @@ def get_portal_access(
     """
     visible_patient(patients, patient_id, user.id, _patient_not_found)
     now = int(utc_now().timestamp())
-    practice = _resolve_practice_from_email(user.email)
+    practice = _resolve_practice(user.id, user.email)
     return PortalAccessState(
         patient_id=patient_id,
         invite_outstanding=stores.challenges.has_outstanding(patient_id),

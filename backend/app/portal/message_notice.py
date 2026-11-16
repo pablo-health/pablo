@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 from .notices import send_portal_notice
 
 if TYPE_CHECKING:
+    from ..models import User
     from ..repositories.patient_message import PatientMessageRepository
     from .delivery import PortalNoticeDelivery
 
@@ -40,7 +41,7 @@ def notify_patient_of_reply(
     *,
     patient_id: str,
     to_email: str | None,
-    from_clinician_email: str | None,
+    from_clinician: User,
 ) -> bool:
     """Best-effort: email the patient if this reply is all that's waiting.
 
@@ -57,7 +58,7 @@ def notify_patient_of_reply(
         delivery,
         notice=MESSAGE_NOTICE,
         to_email=to_email,
-        from_clinician_email=from_clinician_email,
+        from_clinician=from_clinician,
     )
 
 

@@ -33,9 +33,9 @@ if TYPE_CHECKING:
 
 
 def practice_row_for(user: User) -> PracticeRow | None:
-    """The practice ``user`` belongs to, by their email's mapping."""
+    """The practice ``user`` belongs to (``app.auth.service._resolve_practice``)."""
     # Looked up through the modules, so a test can stand either in.
-    practice = auth_service._resolve_practice_from_email(user.email)
+    practice = auth_service._resolve_practice(user.id, user.email)
     if practice is None:
         return None
     return db.get_db_session().get(PracticeRow, practice[0])
