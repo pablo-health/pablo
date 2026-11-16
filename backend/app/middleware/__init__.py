@@ -3,6 +3,7 @@
 """FastAPI middleware components (security + request context)."""
 
 from .dpop import DPoPMiddleware
+from .ip_rate_limit import GeneralIPRateLimitMiddleware
 from .outbound import (
     build_traceparent,
     inject_trace_headers,
@@ -24,6 +25,7 @@ __all__ = [
     "REQUEST_ID_HEADER",
     "W3C_TRACEPARENT_HEADER",
     "DPoPMiddleware",
+    "GeneralIPRateLimitMiddleware",
     "HTTPSEnforcementMiddleware",
     "RequestContextMiddleware",
     "SecurityHeadersMiddleware",

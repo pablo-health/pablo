@@ -218,6 +218,29 @@ class Settings(BaseSettings):
             "extra trusted proxy (e.g. an external HTTP(S) load balancer)."
         ),
     )
+    # General per-address request ceiling (app.middleware.ip_rate_limit).
+    # The per-endpoint limiters in app.rate_limit guard the sensitive routes;
+    # this one bounds how many requests a single address can make across the
+    # whole API, whatever route it calls. Off by default.
+    general_ip_rate_limit_per_min: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Max requests per source address per minute across every API "
+            "route. 0 (default) turns the limit off. The health check is "
+            "never limited. Uses Redis when USE_REDIS is on, so the budget is "
+            "shared across instances; otherwise each instance counts alone."
+        ),
+    )
+    general_ip_rate_limit_exempt_ips: str = Field(
+        default="",
+        description=(
+            "Comma-separated source addresses the general request ceiling "
+            "never applies to, e.g. an internal service that calls the API "
+            "at volume. Matched against the same client address the limit "
+            "keys on (see TRUSTED_PROXY_IPS)."
+        ),
+    )
     frontend_forward_secret: SecretStr = Field(
         default=SecretStr(""),
         description=(

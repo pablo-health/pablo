@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { authProviderMiddleware } from "@/lib/auth/middleware"
 import { appHostsFromEnv, classifyHost, routePracticeHost } from "@/lib/portal-host/practice-host"
 import { browserScheme } from "@/lib/portal-host/practice-host-api"
+import { visitorForwardHeaders } from "@/lib/portal-host/backend-forwarding"
 import { lookupBookingLink, lookupPracticeHost } from "@/lib/portal-host/practice-host-lookup"
 import {
   HIDDEN_FROM_SEARCH_HEADERS,
@@ -175,6 +176,7 @@ async function serveSiteHost(request: NextRequest, host: string, hostname: strin
         method: request.method,
         ifNoneMatch: request.headers.get("if-none-match"),
         hideFromSearch,
+        forwardHeaders: visitorForwardHeaders(request.headers),
       })
     case "disallow-robots":
       return disallowRobotsResponse(request.method)

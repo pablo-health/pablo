@@ -287,3 +287,30 @@ describe("how long an answer is kept", () => {
     expect(await askTwiceAfter(59_000)).toBe(1)
   })
 })
+
+describe("what a lookup tells the backend about whose call it is", () => {
+  afterEach(() => vi.unstubAllEnvs())
+
+  function sentHeaders(fetch: ReturnType<typeof setup>["fetch"]): Record<string, string> {
+    const init = (fetch.mock.calls[0] as unknown as [string, RequestInit])[1]
+    return init.headers as Record<string, string>
+  }
+
+  it("says the call is this server's own, naming no visitor: the answer is shared by all of them", async () => {
+    vi.stubEnv("FRONTEND_FORWARD_SECRET", "s3cret")
+    const { lookup, fetch } = setup(() => json(200, { slug: "acme", primary_host: null }))
+
+    await lookup("portal.example.com")
+
+    expect(sentHeaders(fetch)).toEqual({ "X-Pablo-Frontend-Auth": "s3cret", Accept: "application/json" })
+  })
+
+  it("says nothing without a forward secret", async () => {
+    vi.stubEnv("FRONTEND_FORWARD_SECRET", "")
+    const { lookup, fetch } = setup(() => json(200, { slug: "acme", primary_host: null }))
+
+    await lookup("portal.example.com")
+
+    expect(sentHeaders(fetch)).toEqual({ Accept: "application/json" })
+  })
+})

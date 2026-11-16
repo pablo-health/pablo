@@ -20,7 +20,12 @@ function setup(answer: Response | Error) {
   })
   const ask = (
     pathname: string,
-    extra: { method?: string; ifNoneMatch?: string | null; hideFromSearch?: boolean } = {},
+    extra: {
+      method?: string
+      ifNoneMatch?: string | null
+      hideFromSearch?: boolean
+      forwardHeaders?: Record<string, string>
+    } = {},
   ) =>
     fetchSiteFile(
       {
@@ -30,6 +35,7 @@ function setup(answer: Response | Error) {
         method: extra.method ?? "GET",
         ifNoneMatch: extra.ifNoneMatch ?? null,
         hideFromSearch: extra.hideFromSearch,
+        forwardHeaders: extra.forwardHeaders,
       },
       { apiUrl: () => `${API}/`, fetch: fetch as unknown as typeof globalThis.fetch },
     )
@@ -37,6 +43,18 @@ function setup(answer: Response | Error) {
 }
 
 describe("fetchSiteFile", () => {
+  it("tells the backend which visitor the file is for, alongside the visitor's own validator", async () => {
+    const { fetch, ask } = setup(upstream(304, null))
+    const forwardHeaders = { "X-Pablo-Frontend-Auth": "s3cret", "X-Pablo-Client-IP": "198.51.100.7" }
+
+    await ask("/index.html", { ifNoneMatch: '"v3"', forwardHeaders })
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ headers: { ...forwardHeaders, "If-None-Match": '"v3"' } }),
+    )
+  })
+
   it("asks the backend for the path as sent, encoded whole, so nothing resolves it on the way", async () => {
     const { fetch, ask } = setup(upstream(404, "Not Found"))
 

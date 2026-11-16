@@ -32,6 +32,7 @@ from .logging_config import configure_logging
 from .medications.router import medications_router
 from .middleware import (
     DPoPMiddleware,
+    GeneralIPRateLimitMiddleware,
     HTTPSEnforcementMiddleware,
     RequestContextMiddleware,
     SecurityHeadersMiddleware,
@@ -304,6 +305,12 @@ app.add_middleware(DPoPMiddleware, settings=settings)
 # provisioning here ran on every container start, under an advisory lock, and
 # a slow first database connection on a new instance crashed the import.
 app.add_middleware(DatabaseSessionMiddleware)
+
+# General per-address request ceiling. Added AFTER DatabaseSessionMiddleware
+# so it sits OUTSIDE it at request time: a refused request is answered before
+# a session is opened or a pooled connection drawn. Off unless
+# GENERAL_IP_RATE_LIMIT_PER_MIN is above 0.
+app.add_middleware(GeneralIPRateLimitMiddleware, settings=settings)
 
 # Security middleware - HIPAA TLS enforcement (order matters: security first)
 app.add_middleware(SecurityHeadersMiddleware, settings=settings)
