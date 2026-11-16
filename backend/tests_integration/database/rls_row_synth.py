@@ -2,11 +2,11 @@
 
 """Synthesize one owned row per row-scoped table, through RLS, as the app role.
 
-``test_rls_proof.py`` needs a row in every row-scoped tenant table that
-belongs to one principal, so it can then try to reach that row as every
-other principal. Writing a fixture per table would go stale the day a table
-is added, which is the drift the proof exists to catch. So the rows are made
-from the catalog instead:
+``test_rls_proof.py`` needs a row in every row-scoped table, of a practice
+schema and of ``platform``, that belongs to one principal, so it can then
+try to reach that row as every other principal. Writing a fixture per
+table would go stale the day a table is added, which is the drift the proof
+exists to catch. So the rows are made from the catalog instead:
 
 * each column is filled from its type, its CHECK constraint (the first value
   an ``IN (...)`` / ``= ANY (ARRAY[...])`` list allows) or its enum;
@@ -73,6 +73,10 @@ OWNER_USER = object()
 CHECK_OVERRIDES: dict[str, dict[str, object]] = {
     # ck_client_ai_consent_events_recorded_by: a clinician-sourced event names who recorded it
     "client_ai_consent_events": {"recorded_by": OWNER_USER},
+    # ck_contracted_rates_basis_fields (platform): a fixed rate carries an amount
+    "contracted_rates": {"basis": "fixed", "amount_cents": 100},
+    # ck_credential_confirmations_corrected (platform): a correction or a confirmation
+    "credential_confirmations": {"confirmed": True},
     # ck_llm_usage_period_yyyymm_shape
     "llm_usage": {"period_yyyymm": "202611"},
     # ck_patient_charges_method_kind: a session charge carries a method

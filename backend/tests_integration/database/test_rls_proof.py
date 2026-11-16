@@ -8,28 +8,57 @@ Two layers, both read from the database rather than from a list someone keeps:
 **Coverage.** Every base table in a practice schema and in ``platform`` is
 listed from ``pg_class`` and must be exactly one of:
 
-* row-scoped: ``relrowsecurity`` and ``relforcerowsecurity`` on, and at least
-  one policy that applies to the app's role;
+* row-scoped: ``relrowsecurity`` and ``relforcerowsecurity`` on, at least one
+  policy that applies to the app's role, and no permissive policy that applies
+  to it admitting every row (a ``USING`` of ``true`` or none, or a
+  ``WITH CHECK`` of ``true``). A policy applies to the app's role when it names
+  ``PUBLIC`` or a role whose privileges the app's role has, either inherited
+  (``pg_has_role(..., 'USAGE')``) or one ``SET ROLE`` away (``'SET'``): a
+  membership granted for some other purpose must not quietly open a table;
 * registered not-row-scoped (``not_row_scoped_tenant_tables()``), whose reason
   is written where it is registered;
 * named in this file's exemptions, with its reason beside it.
 
-A table in none of the three fails by name, and so does an exemption naming a
-table that no longer exists. The practice check runs against a schema
-provisioned now and against the default practice as the migrate step built it,
-since the two are made by different paths (template and chain).
+A table in none of the three fails by name. So does an exemption naming a
+table that no longer exists, and an exemption or registration whose table has
+since become row-scoped: a recorded reason must not outlive the state it
+describes. The practice check runs against a schema provisioned now and
+against the default practice as the migrate step built it, since the two are
+made by different paths (template and chain).
+
+The "admits every row" rule reads the policy text, so it catches ``true`` and
+an absent clause but not an always-true expression in other words; the
+enforcement layer below is what catches those.
+
+**Ownership.** The app's role owns the tables it reads, and Postgres does not
+apply RLS to a table's owner unless the table is ``FORCE ROW LEVEL SECURITY``.
+That is why row-scoped above requires ``relforcerowsecurity`` and not just
+``relrowsecurity``: the owner can turn FORCE off, and the coverage check is
+what notices. ``test_app_role_cannot_bypass_rls`` reports how many tables the
+role owns, so the record says which of the two is holding.
+
+**The template schema.** The provisioning template (``practice``) has RLS off
+on every table, which is safe only because no practice's rows live in it
+(``app/db``, ``DEFAULT_PRACTICE_SCHEMA``). That is checked here: every table
+that is row-scoped in a provisioned practice is empty in the template, counted
+as the app role with ``row_security = off``, which Postgres refuses rather
+than filter. The template does hold seed rows (its revision marker and the
+default intake packet) in tables that are not row-scoped anywhere; they are
+reported, not failed.
 
 **Enforcement.** As the app's own role (``NOSUPERUSER NOBYPASSRLS``, the shape
 ``tests_integration/conftest.py`` gives it), two practices are set up: in the
 first, clinician A with patient PA and clinician B with patient PB; in the
 second, clinician C with patient PC. One row owned by A / PA is synthesized in
-every row-scoped table, through RLS (``rls_row_synth``), so each one passed its
-table's ``WITH CHECK`` as an app write would. Then, for every one of those rows:
+every row-scoped table of the first practice and of ``platform``, through RLS
+(``rls_row_synth``), so each one passed its table's ``WITH CHECK`` as an app
+write would. Then, for every one of those rows:
 
 * A sees it (the control: without it every "nothing visible" below is vacuous);
 * clinician B, an unarmed session, patient PB, and clinician C reaching into
   the first practice with schema-qualified SQL, each SELECT nothing and
-  UPDATE and DELETE zero rows.
+  UPDATE and DELETE zero rows. ``platform`` is shared by every practice, so
+  there clinician C is simply a clinician of another practice.
 
 Two request shapes from the 2026-11-15 changes get their own cases:
 
@@ -146,37 +175,75 @@ class TableState:
     rls: bool
     forced: bool
     app_policies: int
+    # permissive policies that apply to the app role and admit every row
+    open_policies: tuple[str, ...] = ()
+
+    @property
+    def row_scoped(self) -> bool:
+        return self.rls and self.forced and self.app_policies > 0 and not self.open_policies
+
+
+#: A policy applies to the app role: it names PUBLIC, or a role the app role
+#: inherits (USAGE) or can SET ROLE to (SET).
+_APPLIES_TO_APP = (
+    "(p.polroles = '{0}' OR EXISTS ("
+    "   SELECT 1 FROM pg_roles r WHERE r.oid = ANY (p.polroles) "
+    "   AND (pg_has_role(:role, r.oid, 'USAGE') OR pg_has_role(:role, r.oid, 'SET'))))"
+)
+
+#: A permissive policy that admits every row for the commands it covers. An
+#: INSERT policy has no USING; any other has its USING checked, and its WITH
+#: CHECK falls back to the USING when absent.
+_ADMITS_EVERY_ROW = (
+    "p.polpermissive AND ("
+    " (p.polcmd <> 'a' AND (p.polqual IS NULL"
+    "   OR pg_get_expr(p.polqual, p.polrelid) = 'true'))"
+    " OR (p.polcmd = 'a' AND p.polwithcheck IS NULL)"
+    " OR (p.polcmd IN ('a', 'w', '*')"
+    "   AND pg_get_expr(p.polwithcheck, p.polrelid) = 'true'))"
+)
 
 
 def _table_states(conn: Any, schema: str) -> dict[str, TableState]:
     """Every base table of ``schema`` with its RLS flags and policies the app role gets."""
     rows = conn.execute(
+        # the interpolated parts are this module's constants
         text(
-            "SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity, "
-            "  (SELECT count(*) FROM pg_policy p WHERE p.polrelid = c.oid "
-            "     AND (p.polroles = '{0}' OR EXISTS ("
-            "          SELECT 1 FROM pg_roles r WHERE r.oid = ANY (p.polroles) "
-            "          AND pg_has_role(:role, r.oid, 'USAGE')))) "
+            "SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity, "  # noqa: S608
+            f"  (SELECT count(*) FROM pg_policy p WHERE p.polrelid = c.oid AND {_APPLIES_TO_APP}), "
+            "  array(SELECT p.polname || ' (' || p.polroles::regrole[]::text || ')' "
+            "        FROM pg_policy p WHERE p.polrelid = c.oid "
+            f"       AND {_APPLIES_TO_APP} AND {_ADMITS_EVERY_ROW} ORDER BY 1) "
             "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
             "WHERE n.nspname = :s AND c.relkind IN ('r', 'p') ORDER BY 1"
         ),
         {"s": schema, "role": APP_ROLE},
     ).all()
-    return {r[0]: TableState(r[0], r[1], r[2], r[3]) for r in rows}
+    return {r[0]: TableState(r[0], r[1], r[2], r[3], tuple(r[4])) for r in rows}
 
 
 def _classify(
     states: dict[str, TableState], registered: set[str], exempt: dict[str, str]
 ) -> tuple[list[str], list[str], list[str], list[str]]:
-    """Split tables into (row-scoped, registered, exempt, unaccounted)."""
+    """Split tables into (row-scoped, registered, exempt, unaccounted).
+
+    Unaccounted includes a registered or exempt table that has become
+    row-scoped: its recorded reason no longer describes it, so it is stale,
+    and a stale reason is how the next change to that table goes unread.
+    """
     scoped, reg, ex, bad = [], [], [], []
     for name, st in sorted(states.items()):
-        if st.rls and st.forced and st.app_policies > 0:
+        listed = "registered" if name in registered else "exempt" if name in exempt else None
+        if st.row_scoped and listed:
+            bad.append(f"{name} is row-scoped now; its {listed} entry is stale, remove it")
+        elif st.row_scoped:
             scoped.append(name)
-        elif name in registered and not st.rls:
+        elif listed == "registered" and not st.rls:
             reg.append(name)
-        elif name in exempt and not st.rls:
+        elif listed == "exempt" and not st.rls:
             ex.append(name)
+        elif st.open_policies:
+            bad.append(f"{name}: policies admit every row: {', '.join(st.open_policies)}")
         else:
             bad.append(f"{name} (rls={st.rls} forced={st.forced} app_policies={st.app_policies})")
     return scoped, reg, ex, bad
@@ -199,6 +266,21 @@ def fresh_practice(engine: Engine) -> Iterator[str]:
         conn.commit()
 
 
+@dataclass(frozen=True)
+class Target:
+    """One row A owns, and how to reach it."""
+
+    schema: str
+    table: str
+    pk: dict[str, Any]
+    # a SET clause that reads no column, for the blind-write probe
+    blind_assign: str
+
+    @property
+    def qualified(self) -> str:
+        return f'"{self.schema}"."{self.table}"'
+
+
 @dataclass
 class World:
     p1: str
@@ -209,10 +291,8 @@ class World:
     pa: str
     pb: str
     pc: str
-    # table -> primary key of the row A owns in p1
-    owned: dict[str, dict[str, Any]]
-    # table -> a SET clause that reads no column, for the blind-write probe
-    blind_assign: dict[str, str]
+    # one row A owns in every row-scoped table of p1 and of platform
+    targets: list[Target]
 
 
 def _in_fresh_context[T](fn: Callable[[], T]) -> T:
@@ -242,8 +322,50 @@ def _session_as(
     return session
 
 
+def _seed_owned(
+    session: Session, schema: str, owner: Owner, preseeded: dict[str, dict[str, Any]]
+) -> tuple[list[Target], list[tuple[str, dict[str, Any]]]]:
+    """Synthesize A's row in every row-scoped table of ``schema``.
+
+    Returns the targets and every row written, in insertion order (parents
+    first), so a caller can remove what it wrote.
+    """
+    catalog = load_catalog(session, schema)
+    synth = Synthesizer(session, schema, owner, catalog)
+    synth.rows.update(preseeded)
+    forced = _row_scoped(session, schema)
+    failed: list[str] = []
+    for table in forced:
+        before = dict(synth.rows)
+        savepoint = session.begin_nested()
+        try:
+            synth.row_for(table)
+            savepoint.commit()
+        except Exception as exc:
+            savepoint.rollback()
+            synth.rows = before
+            failed.append(f"{schema}.{table}: {str(exc).splitlines()[0]}")
+    assert not failed, "could not synthesize an owned row in:\n  " + "\n  ".join(failed)
+    targets = [
+        Target(
+            schema,
+            t,
+            {k: synth.rows[t][k] for k in catalog[t].pk},
+            _blind_assignment(catalog[t]),
+        )
+        for t in forced
+    ]
+    written = [
+        (t, {k: row[k] for k in catalog[t].pk})
+        for t, row in synth.rows.items()
+        if t not in preseeded
+    ]
+    return targets, written
+
+
 @pytest.fixture(scope="module")
 def world(engine: Engine) -> Iterator[World]:
+    from app.db import PLATFORM_SCHEMA  # noqa: PLC0415
     from app.db.provisioning import create_practice_schema  # noqa: PLC0415
 
     p1 = f"practice_rls_one_{uuid.uuid4().hex[:8]}"
@@ -252,45 +374,48 @@ def world(engine: Engine) -> Iterator[World]:
     create_practice_schema(engine, p2)
     a, b, c = (str(uuid.uuid4()) for _ in range(3))
 
-    def seed() -> tuple[str, str, str, dict[str, dict[str, Any]], dict[str, str]]:
+    def seed() -> tuple[str, str, str, list[Target], list[tuple[str, dict[str, Any]]]]:
         with _session_as(engine, p1, user=a) as s:
             pa = seed_patient_row(s, a)
-            catalog = load_catalog(s, p1)
-            synth = Synthesizer(s, p1, Owner(user_id=a, patient_id=pa), catalog)
+            owner = Owner(user_id=a, patient_id=pa)
             # seed_patient_row made the patient and A's grant on it already.
+            preseeded: dict[str, dict[str, Any]] = {}
             for parent, key in (("patients", "id"), ("patient_clinicians", "patient_id")):
                 existing = f'SELECT * FROM "{p1}"."{parent}" WHERE "{key}" = :p'  # noqa: S608
-                synth.rows[parent] = dict(s.execute(text(existing), {"p": pa}).mappings().one())
-            forced = _row_scoped(s, p1)
-            failed: list[str] = []
-            for table in forced:
-                before = dict(synth.rows)
-                savepoint = s.begin_nested()
-                try:
-                    synth.row_for(table)
-                    savepoint.commit()
-                except Exception as exc:
-                    savepoint.rollback()
-                    synth.rows = before
-                    failed.append(f"{table}: {str(exc).splitlines()[0]}")
-            assert not failed, "could not synthesize an owned row in:\n  " + "\n  ".join(failed)
+                preseeded[parent] = dict(s.execute(text(existing), {"p": pa}).mappings().one())
+            targets, _ = _seed_owned(s, p1, owner, preseeded)
+            platform_targets, platform_rows = _seed_owned(s, PLATFORM_SCHEMA, owner, {})
             s.commit()
-            owned = {t: {k: synth.rows[t][k] for k in catalog[t].pk} for t in forced}
-            blind = {t: _blind_assignment(catalog[t]) for t in forced}
         with _session_as(engine, p1, user=b) as s:
             pb = seed_patient_row(s, b)
             s.commit()
         with _session_as(engine, p2, user=c) as s:
             pc = seed_patient_row(s, c)
             s.commit()
-        return pa, pb, pc, owned, blind
+        return pa, pb, pc, targets + platform_targets, platform_rows
 
-    pa, pb, pc, owned, blind = _in_fresh_context(seed)
-    yield World(p1, p2, a, b, c, pa, pb, pc, owned, blind)
-    with engine.connect() as conn:
-        conn.execute(text(f'DROP SCHEMA IF EXISTS "{p1}" CASCADE'))
-        conn.execute(text(f'DROP SCHEMA IF EXISTS "{p2}" CASCADE'))
-        conn.commit()
+    platform_rows: list[tuple[str, dict[str, Any]]] = []
+
+    def unseed() -> None:
+        # platform is shared and outlives this module: remove A's rows, as A,
+        # children first.
+        with _session_as(engine, p1, user=a) as s:
+            for table, pk in reversed(platform_rows):
+                where, params = _where(pk)
+                s.execute(text(f'DELETE FROM "{PLATFORM_SCHEMA}"."{table}" WHERE {where}'), params)  # noqa: S608
+            s.commit()
+
+    try:
+        pa, pb, pc, targets, platform_rows = _in_fresh_context(seed)
+        yield World(p1, p2, a, b, c, pa, pb, pc, targets)
+        _in_fresh_context(unseed)
+    finally:
+        # A failed seed rolls its session back, so platform needs nothing then;
+        # the two practice schemas were created before it and always go.
+        with engine.connect() as conn:
+            conn.execute(text(f'DROP SCHEMA IF EXISTS "{p1}" CASCADE'))
+            conn.execute(text(f'DROP SCHEMA IF EXISTS "{p2}" CASCADE'))
+            conn.commit()
 
 
 def _blind_assignment(table: Any) -> str:
@@ -390,6 +515,70 @@ class TestCoverage:
                 )
             ).one()
         assert row == (APP_ROLE, False, False), f"app role posture {row!r}"
+        # Not an assertion: owning the tables is the ordinary shape. Reported
+        # so a run against a deployed database records which of FORCE and
+        # non-ownership is what holds RLS on the app role.
+        with engine.connect() as conn:
+            owned, total = conn.execute(
+                text(
+                    "SELECT count(*) FILTER (WHERE c.relowner = (SELECT oid FROM pg_roles "
+                    "WHERE rolname = current_user)), count(*) "
+                    "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    "WHERE c.relkind IN ('r', 'p') AND c.relrowsecurity"
+                )
+            ).one()
+        print(
+            f"\n[rls-coverage] the app role owns {owned} of the {total} tables with RLS on; "
+            "on those RLS holds only through FORCE ROW LEVEL SECURITY"
+        )
+
+    def test_template_schema_holds_no_practice_rows(
+        self, engine: Engine, fresh_practice: str
+    ) -> None:
+        """The template has RLS off, which is safe only while no practice's rows are in it.
+
+        It does carry rows: its revision marker and the default intake packet
+        a new practice starts from, in tables that are not row-scoped in a
+        practice either. What must be empty is every table that is row-scoped
+        once provisioned, since those are the ones holding a clinician's or a
+        patient's rows; the rest are reported.
+        """
+        from app.db import DEFAULT_PRACTICE_SCHEMA  # noqa: PLC0415
+
+        with engine.connect() as conn:
+            states = _table_states(conn, fresh_practice)
+            tables = list(
+                conn.execute(
+                    text(
+                        "SELECT c.relname FROM pg_class c "
+                        "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                        "WHERE n.nspname = :s AND c.relkind IN ('r', 'p') ORDER BY 1"
+                    ),
+                    {"s": DEFAULT_PRACTICE_SCHEMA},
+                ).scalars()
+            )
+            assert tables, f"{DEFAULT_PRACTICE_SCHEMA} has no tables; nothing was checked"
+            # row_security = off makes Postgres raise rather than filter, so a
+            # zero below is every row there is, not every row the role may see.
+            conn.execute(text("SET LOCAL row_security = off"))
+            leaked: list[str] = []
+            seeded: list[str] = []
+            for name in tables:
+                sql = f'SELECT count(*) FROM "{DEFAULT_PRACTICE_SCHEMA}"."{name}"'  # noqa: S608
+                n = conn.execute(text(sql)).scalar_one()
+                if not n:
+                    continue
+                st = states.get(name)
+                (leaked if st is None or st.row_scoped else seeded).append(f"{name} ({n})")
+            conn.rollback()
+        assert not leaked, (
+            "the template holds rows in tables that are row-scoped (or absent) in a "
+            "provisioned practice:\n  " + "\n  ".join(leaked)
+        )
+        print(
+            f"\n[rls-coverage] template {DEFAULT_PRACTICE_SCHEMA}: {len(tables)} tables; "
+            f"0 rows in the row-scoped ones; seed rows in: {', '.join(seeded) or 'none'}"
+        )
 
     @pytest.mark.parametrize("which", ["fresh", "default"])
     def test_every_practice_table_is_accounted_for(
@@ -442,20 +631,27 @@ class TestCoverage:
 
 class TestEnforcement:
     def test_every_row_scoped_table_was_seeded(self, engine: Engine, world: World) -> None:
-        with engine.connect() as conn:
-            states = _table_states(conn, world.p1)
-        scoped = {n for n, st in states.items() if st.rls and st.forced}
-        assert scoped == set(world.owned), (
-            f"row-scoped but not probed: {sorted(scoped - set(world.owned))}"
-        )
-        print(f"\n[rls-enforcement] {len(world.owned)} row-scoped tables seeded and probed")
+        from app.db import PLATFORM_SCHEMA  # noqa: PLC0415
+
+        counts = []
+        for schema in (world.p1, PLATFORM_SCHEMA):
+            with engine.connect() as conn:
+                states = _table_states(conn, schema)
+            scoped = {n for n, st in states.items() if st.rls and st.forced}
+            seeded = {t.table for t in world.targets if t.schema == schema}
+            missing = sorted(scoped - seeded)
+            assert scoped == seeded, f"{schema}: row-scoped but not probed: {missing}"
+            assert seeded, f"{schema}: no row-scoped table was seeded; nothing was probed"
+            where = "platform" if schema == PLATFORM_SCHEMA else "practice"
+            counts.append(f"{len(seeded)} in {where}")
+        print(f"\n[rls-enforcement] row-scoped tables seeded and probed: {' + '.join(counts)}")
 
     def test_owner_sees_every_seeded_row(self, engine: Engine, world: World) -> None:
         """The control. A row its owner cannot see proves nothing when others cannot either."""
 
         def probe() -> list[str]:
             with _session_as(engine, world.p1, user=world.a) as s:
-                return [t for t, pk in world.owned.items() if _visible(s, f'"{t}"', pk) != 1]
+                return [t.qualified for t in world.targets if _visible(s, t.qualified, t.pk) != 1]
 
         unseen = _in_fresh_context(probe)
         assert not unseen, f"the owning clinician cannot see their own row in: {unseen}"
@@ -479,19 +675,21 @@ class TestEnforcement:
         def probe() -> list[str]:
             leaks: list[str] = []
             with open_session() as s:
-                for table, pk in world.owned.items():
-                    qualified = f'"{world.p1}"."{table}"'
-                    seen, updated, deleted = _attempt(s, qualified, pk)
+                for t in world.targets:
+                    seen, updated, deleted = _attempt(s, t.qualified, t.pk)
                     if (seen, updated, deleted) != (0, 0, 0):
-                        leaks.append(f"{table}: select={seen} update={updated} delete={deleted}")
-                    blind = _blind_writes(s, qualified, world.blind_assign[table])
+                        leaks.append(
+                            f"{t.qualified}: select={seen} update={updated} delete={deleted}"
+                        )
+                    blind = _blind_writes(s, t.qualified, t.blind_assign)
                     if blind:
-                        leaks.append(f"{table}: {blind}")
+                        leaks.append(f"{t.qualified}: {blind}")
             return leaks
 
         leaks = _in_fresh_context(probe)
         assert not leaks, f"{principal} reached rows it does not own:\n  " + "\n  ".join(leaks)
-        print(f"\n[rls-enforcement] {principal}: 0 rows over {len(world.owned)} tables x 5 probes")
+        n = len(world.targets)
+        print(f"\n[rls-enforcement] {principal}: 0 rows over {n} tables x 5 probes")
 
 
 # --------------------------------------------------------------------------
