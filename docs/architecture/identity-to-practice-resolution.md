@@ -96,3 +96,19 @@ Nothing above changes. `allowed_emails` and `email_tenant_mappings` stay,
 `AllowlistRepository.add` still writes both, and it is still how an
 address is admitted and how its first sign-in finds a practice. There is
 still one lookup and no counting: membership, then mapping, then nothing.
+
+Two things follow for the allowlist. Revoking a grant
+(`AllowlistRepository.remove`) also deletes the membership of the account
+with that address, if the membership is in the practice the grant named.
+Without that, the account's membership would keep resolving it to the
+practice after its grant and mapping were gone. A membership in a
+different practice, for example one reached by invitation, is left alone.
+
+Re-granting an address to another practice (`add` with a new
+`practice_id`) moves the mapping, but it no longer moves an account that
+has already claimed a membership. The membership wins, and the
+disagreement is logged. Moving a member is meant to be a deliberate act,
+and no tool performs it yet. Until one does, an admin can move a claimed
+account by revoking the grant and granting the new practice, and the
+account's next sign-in claims the new practice through the mapping.
+Invitations (PABLO-oqdx) are the natural home for that tool.

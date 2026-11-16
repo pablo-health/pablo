@@ -145,6 +145,7 @@ class _World:
     def cleanup(self) -> None:
         from app.db.platform_models import (  # noqa: PLC0415
             EmailTenantMappingRow,
+            PlatformAllowedEmailRow,
             PlatformUserRow,
             PracticeMemberRow,
             PracticeRow,
@@ -161,6 +162,11 @@ class _World:
             session.execute(delete(PlatformUserRow).where(PlatformUserRow.id.in_(self.user_ids)))
             session.execute(
                 delete(EmailTenantMappingRow).where(EmailTenantMappingRow.email.in_(self.emails))
+            )
+            session.execute(
+                delete(PlatformAllowedEmailRow).where(
+                    PlatformAllowedEmailRow.email.in_(self.emails)
+                )
             )
             session.execute(delete(PracticeRow).where(PracticeRow.id.in_(self.practice_ids)))
             session.commit()
@@ -506,3 +512,121 @@ def test_a_bulk_membership_update_drops_every_cached_answer(
         )
 
     assert _resolve(account.id, account.email) == (after.id, after.schema)
+
+
+# ---------------------------------------------------------------------------
+# Revoking an allowlist grant cuts the account off (Tom, round 1)
+# ---------------------------------------------------------------------------
+
+
+def _grant(engine: Engine, email: str, practice_id: str) -> None:
+    from app.repositories.postgres.allowlist import (  # noqa: PLC0415
+        PostgresAllowlistRepository,
+    )
+
+    with _orm(engine) as session:
+        PostgresAllowlistRepository(session).add(email, "admin-test", practice_id=practice_id)
+
+
+def _revoke(engine: Engine, email: str) -> bool:
+    from app.repositories.postgres.allowlist import (  # noqa: PLC0415
+        PostgresAllowlistRepository,
+    )
+
+    with _orm(engine) as session:
+        return PostgresAllowlistRepository(session).remove(email)
+
+
+def test_revoking_a_grant_removes_the_membership_it_led_to(
+    world: _World, engine: Engine, no_redis: None
+) -> None:
+    practice = world.practice("a")
+    account = world.account("revoked")
+    _grant(engine, account.email, practice.id)
+    assert _resolve(account.id, account.email) == (practice.id, practice.schema)
+    assert world.membership(account.id) == (practice.id, "email_claim")
+
+    assert _revoke(engine, account.email) is True
+
+    assert world.membership(account.id) is None
+    assert _resolve(account.id, account.email) is None
+
+
+def test_revoking_a_grant_removes_a_backfilled_membership(
+    world: _World, engine: Engine, no_redis: None
+) -> None:
+    """Every account mapped before the upgrade holds a backfilled row."""
+    practice = world.practice("a")
+    account = world.account("upgraded")
+    _grant(engine, account.email, practice.id)
+    world.join(account.id, practice.id, via="backfill")
+
+    assert _revoke(engine, account.email) is True
+
+    assert _resolve(account.id, account.email) is None
+
+
+def test_revoking_a_grant_is_honoured_past_a_cached_answer(
+    world: _World, engine: Engine, redis: FakeRedis
+) -> None:
+    practice = world.practice("a")
+    account = world.account("cached")
+    _grant(engine, account.email, practice.id)
+    assert _resolve(account.id, account.email) == (practice.id, practice.schema)
+    assert _resolve(account.id, account.email) == (practice.id, practice.schema)
+    assert redis.keys_with_prefix(_USER_PREFIX), "the membership answer is cached"
+
+    assert _revoke(engine, account.email) is True
+
+    assert _resolve(account.id, account.email) is None
+    assert redis.keys_with_prefix(_USER_PREFIX) == []
+
+
+def test_revoking_a_grant_leaves_a_membership_in_another_practice(
+    world: _World, engine: Engine, no_redis: None
+) -> None:
+    """Only the practice the grant named: an account invited elsewhere stays there."""
+    granted = world.practice("granted")
+    joined = world.practice("joined")
+    account = world.account("invited")
+    _grant(engine, account.email, granted.id)
+    world.join(account.id, joined.id)
+
+    assert _revoke(engine, account.email) is True
+
+    assert world.membership(account.id) == (joined.id, "invite")
+    assert _resolve(account.id, account.email) == (joined.id, joined.schema)
+
+
+def test_revoking_one_address_leaves_another_member_of_the_practice(
+    world: _World, engine: Engine, no_redis: None
+) -> None:
+    practice = world.practice("a")
+    revoked = world.account("revoked")
+    colleague = world.account("colleague")
+    _grant(engine, revoked.email, practice.id)
+    _grant(engine, colleague.email, practice.id)
+    assert _resolve(revoked.id, revoked.email) == (practice.id, practice.schema)
+    assert _resolve(colleague.id, colleague.email) == (practice.id, practice.schema)
+
+    assert _revoke(engine, revoked.email) is True
+
+    assert _resolve(revoked.id, revoked.email) is None
+    assert world.membership(colleague.id) == (practice.id, "email_claim")
+
+
+def test_revoking_then_granting_another_practice_moves_the_account(
+    world: _World, engine: Engine, no_redis: None
+) -> None:
+    """The documented way to move a claimed account until a move tool exists."""
+    before = world.practice("before")
+    after = world.practice("after")
+    account = world.account("moving")
+    _grant(engine, account.email, before.id)
+    assert _resolve(account.id, account.email) == (before.id, before.schema)
+
+    assert _revoke(engine, account.email) is True
+    _grant(engine, account.email, after.id)
+
+    assert _resolve(account.id, account.email) == (after.id, after.schema)
+    assert world.membership(account.id) == (after.id, "email_claim")
