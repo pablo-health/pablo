@@ -214,7 +214,21 @@ class _RecordingStorage:
         return []
 
 
-def _run_purge(schema: str, storage: _RecordingStorage) -> int:
+class _RecordingComplianceStorage:
+    """Records deletes by ``storage_uri``, the compliance backend's shape."""
+
+    def __init__(self) -> None:
+        self.deleted: list[str] = []
+
+    def delete(self, uri: str) -> None:
+        self.deleted.append(uri)
+
+
+def _run_purge(
+    schema: str,
+    storage: _RecordingStorage,
+    compliance: _RecordingComplianceStorage | None = None,
+) -> int:
     from app.jobs import hard_purge_cron  # noqa: PLC0415
     from app.jobs.hard_purge_retention_stub import (  # noqa: PLC0415
         register_compliance_retention_stub_writer,
@@ -231,6 +245,10 @@ def _run_purge(schema: str, storage: _RecordingStorage) -> int:
             return_value=(storage, "audio-bucket"),
         ),
         patch("app.jobs.hard_purge_cron._resolve_documents_storage", return_value=None),
+        patch(
+            "app.jobs.hard_purge_cron._resolve_compliance_storage",
+            return_value=compliance or _RecordingComplianceStorage(),
+        ),
     ):
         return hard_purge_cron.run([])
 
@@ -437,6 +455,15 @@ def _intake_form(engine: Engine, schema: str) -> dict[str, str]:
     return ids
 
 
+#: One file attached to a task, as ``POST /api/tasks/{id}/documents`` writes it.
+_COMPLIANCE_DOCUMENT_INSERT = (
+    "INSERT INTO compliance_documents (id, compliance_item_id, filename, mime_type, "
+    "size_bytes, storage_uri, document_type, uploaded_at, uploaded_by_user_id) "
+    "VALUES (gen_random_uuid(), CAST({item} AS uuid), 'release.pdf', 'application/pdf', "
+    "10, {uri}, 'other', now(), CAST(:u AS uuid))"
+)
+
+
 def _seed_left_behind_rows(
     engine: Engine, schema: str, client: dict[str, str], form: dict[str, str], clinician: str
 ) -> list[str]:
@@ -458,7 +485,7 @@ def _seed_left_behind_rows(
             "subtask",
         )
     }
-    tables = (*_LEFT_BEHIND_TABLES, "tasks")
+    tables = (*_LEFT_BEHIND_TABLES, "tasks", "compliance_documents")
     statements = (
         "INSERT INTO patient_intake_assignments (id, patient_id, version_id, status, "
         "assigned_at, updated_at) VALUES (CAST(:assignment AS uuid), CAST(:pid AS uuid), "
@@ -497,12 +524,14 @@ def _seed_left_behind_rows(
         "INSERT INTO patient_message_attachments (id, message_id, document_id, patient_id, "
         "created_at) VALUES (CAST(:attachment AS uuid), CAST(:message AS uuid), "
         "CAST(:document AS uuid), CAST(:pid AS uuid), now())",
-        "INSERT INTO tasks (id, user_id, item_type, label, patient_id, created_at, updated_at) "
-        "VALUES (CAST(:task AS uuid), CAST(:u AS uuid), 'todo', 'Send the release form', "
-        "CAST(:pid AS uuid), now(), now())",
-        "INSERT INTO tasks (id, user_id, item_type, label, parent_task_id, created_at, "
-        "updated_at) VALUES (CAST(:subtask AS uuid), CAST(:u AS uuid), 'todo', 'Print it', "
-        "CAST(:task AS uuid), now(), now())",
+        "INSERT INTO tasks (id, user_id, item_type, label, category, patient_id, created_at, "
+        "updated_at) VALUES (CAST(:task AS uuid), CAST(:u AS uuid), 'task', "
+        "'Send the release form', 'practice', CAST(:pid AS uuid), now(), now())",
+        "INSERT INTO tasks (id, user_id, item_type, label, category, parent_task_id, "
+        "created_at, updated_at) VALUES (CAST(:subtask AS uuid), CAST(:u AS uuid), 'task', "
+        "'Print it', 'practice', CAST(:task AS uuid), now(), now())",
+        _COMPLIANCE_DOCUMENT_INSERT.format(item=":task", uri=":task_uri"),
+        _COMPLIANCE_DOCUMENT_INSERT.format(item=":subtask", uri=":subtask_uri"),
     )
     params = {
         **ids,
@@ -511,6 +540,8 @@ def _seed_left_behind_rows(
         "version": form["version"],
         "item": form["item"],
         "path": f"documents/{pid}/form.pdf",
+        "task_uri": f"gs://compliance/{ids['task']}/release.pdf",
+        "subtask_uri": f"gs://compliance/{ids['subtask']}/release.pdf",
     }
     with engine.begin() as conn:
         _as(conn, schema)
@@ -533,7 +564,7 @@ def _left_behind(
     counts: dict[str, int] = {}
     with engine.begin() as conn:
         _as(conn, schema)
-        for table in (*_LEFT_BEHIND_TABLES, "tasks"):
+        for table in (*_LEFT_BEHIND_TABLES, "tasks", "compliance_documents"):
             conn.execute(text(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY"))
         for table in _LEFT_BEHIND_TABLES:
             counts[table] = int(
@@ -548,9 +579,88 @@ def _left_behind(
                 {"ids": task_ids},
             ).scalar_one()
         )
-        for table in (*_LEFT_BEHIND_TABLES, "tasks"):
+        counts["compliance_documents"] = int(
+            conn.execute(
+                text(
+                    "SELECT count(*) FROM compliance_documents "
+                    "WHERE compliance_item_id = ANY(CAST(:ids AS uuid[]))"
+                ),
+                {"ids": task_ids},
+            ).scalar_one()
+        )
+        for table in (*_LEFT_BEHIND_TABLES, "tasks", "compliance_documents"):
             conn.execute(text(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY"))
     return counts
+
+
+def _seed_compliance_task(
+    engine: Engine, schema: str, client: dict[str, str], clinician: str
+) -> dict[str, str]:
+    """A compliance task linked to the client, with a file and a supervision row."""
+    ids = {name: str(uuid.uuid4()) for name in ("task", "supervision")}
+    params = {
+        **ids,
+        "pid": client["patient"],
+        "u": clinician,
+        "uri": f"gs://compliance/{ids['task']}/supervision-log.pdf",
+    }
+    tables = ("tasks", "compliance_documents", "supervision_relationships")
+    with engine.begin() as conn:
+        _as(conn, schema)
+        for table in tables:
+            conn.execute(text(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY"))
+        conn.execute(
+            text(
+                "INSERT INTO tasks (id, user_id, item_type, label, category, patient_id, "
+                "created_at, updated_at) VALUES (CAST(:task AS uuid), CAST(:u AS uuid), "
+                "'supervision_review', 'Supervision review', 'compliance', "
+                "CAST(:pid AS uuid), now(), now())"
+            ),
+            params,
+        )
+        conn.execute(
+            text(_COMPLIANCE_DOCUMENT_INSERT.format(item=":task", uri=":uri")),
+            params,
+        )
+        conn.execute(
+            text(
+                "INSERT INTO supervision_relationships (id, user_id, compliance_item_id, "
+                "relationship_type, supervisor_name, status, created_at, updated_at) "
+                "VALUES (CAST(:supervision AS uuid), CAST(:u AS uuid), CAST(:task AS uuid), "
+                "'clinical', 'A supervisor', 'active', now(), now())"
+            ),
+            params,
+        )
+        for table in tables:
+            conn.execute(text(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY"))
+    return {**ids, "uri": params["uri"]}
+
+
+def _compliance_task_left(engine: Engine, schema: str, seeded: dict[str, str]) -> dict[str, Any]:
+    tables = ("tasks", "compliance_documents", "supervision_relationships")
+    with engine.begin() as conn:
+        _as(conn, schema)
+        for table in tables:
+            conn.execute(text(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY"))
+        task = conn.execute(
+            text("SELECT patient_id FROM tasks WHERE id = CAST(:t AS uuid)"),
+            {"t": seeded["task"]},
+        ).all()
+        documents = conn.execute(
+            text("SELECT count(*) FROM compliance_documents WHERE compliance_item_id = :t"),
+            {"t": seeded["task"]},
+        ).scalar_one()
+        supervision = conn.execute(
+            text("SELECT count(*) FROM supervision_relationships WHERE compliance_item_id = :t"),
+            {"t": seeded["task"]},
+        ).scalar_one()
+        for table in tables:
+            conn.execute(text(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY"))
+    return {
+        "task": [None if row[0] is None else str(row[0]) for row in task],
+        "documents": int(documents),
+        "supervision": int(supervision),
+    }
 
 
 def test_the_purge_leaves_none_of_the_rows_no_foreign_key_reached(
@@ -570,15 +680,36 @@ def test_the_purge_leaves_none_of_the_rows_no_foreign_key_reached(
     )
     old_tasks = _seed_left_behind_rows(engine, tenant_schema, old, form, _CLINICIAN_A)
     live_tasks = _seed_left_behind_rows(engine, tenant_schema, live, form, _CLINICIAN_A)
+    old_compliance = _seed_compliance_task(engine, tenant_schema, old, _CLINICIAN_A)
+    live_compliance = _seed_compliance_task(engine, tenant_schema, live, _CLINICIAN_A)
+    compliance_storage = _RecordingComplianceStorage()
 
-    assert _run_purge(tenant_schema, _RecordingStorage()) == 0
+    assert _run_purge(tenant_schema, _RecordingStorage(), compliance_storage) == 0
 
     assert _left_behind(engine, tenant_schema, old, old_tasks) == dict.fromkeys(
-        (*_LEFT_BEHIND_TABLES, "tasks"), 0
+        (*_LEFT_BEHIND_TABLES, "tasks", "compliance_documents"), 0
     )
     assert set(_rows_left(engine, tenant_schema, old).values()) == {0}
+    # The files on the to-do and its step leave storage with their rows; the
+    # compliance task's file is the clinician's and stays.
+    assert sorted(compliance_storage.deleted) == sorted(
+        f"gs://compliance/{task_id}/release.pdf" for task_id in old_tasks
+    )
+    # The compliance task is the clinician's record: kept, with its file and
+    # its supervision relationship, and no longer linked to the client.
+    assert _compliance_task_left(engine, tenant_schema, old_compliance) == {
+        "task": [None],
+        "documents": 1,
+        "supervision": 1,
+    }
     assert _left_behind(engine, tenant_schema, live, live_tasks) == {
         **dict.fromkeys(_LEFT_BEHIND_TABLES, 1),
         "tasks": 2,
+        "compliance_documents": 2,
     }
     assert set(_rows_left(engine, tenant_schema, live).values()) == {1}
+    assert _compliance_task_left(engine, tenant_schema, live_compliance) == {
+        "task": [live["patient"]],
+        "documents": 1,
+        "supervision": 1,
+    }

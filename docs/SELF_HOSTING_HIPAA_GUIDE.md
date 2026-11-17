@@ -220,8 +220,11 @@ What the code does today, not what is planned.
   sessions and their audio, appointments, chat history, messages, uploaded
   documents, intake forms and answers, charges and the saved card, portal
   sign-ins, calendar events matched to the client, and tasks about the
-  client. `hard_purge_cron` does this daily at 02:00 UTC on the VM, and
-  nightly before the backup on a local install.
+  client with any files attached to them. `hard_purge_cron` does this daily
+  at 02:00 UTC on the VM, and nightly before the backup on a local install.
+- **Compliance tasks stay.** A license, supervision or other compliance
+  task linked to the client is your record, not theirs. It is kept with
+  its files and no longer linked to the client.
 - **Charges are removed with the client.** If you keep financial records
   for longer, keep them outside Pablo: your card processor holds its own
   record of each payment.

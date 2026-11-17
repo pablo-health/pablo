@@ -28,9 +28,17 @@ regardless of the per-practice audio retention slider.
 
 The clinical-row delete removes every table that names the client: the ones
 in ``_PATIENT_ROW_TABLES`` by ``patient_id`` (those with no foreign key to
-``patients``, or one that would keep or block), then the patients row, whose
-delete cascades to the rest. A hard purge leaves zero rows and zero blobs for
-the client across all surfaces.
+``patients``, or one that would keep or block), the client's tasks, then the
+patients row, whose delete cascades to the rest. A hard purge leaves zero
+rows and zero blobs for the client across all surfaces.
+
+Tasks are the one table where the client's rows and the clinician's meet.
+A to-do about the client goes, and so do its steps and the files attached
+to any of them (``compliance_documents``, which cascade from the task and
+whose objects are deleted here first). A compliance task is the clinician's
+own licensure or supervision record; one linked to the client is kept, with
+its documents and supervision relationship, and the patients delete unlinks
+it. See ``_task_document_uris_for_patient``.
 
 Invoked from repo ``backend/``::
 
@@ -189,9 +197,6 @@ def _append_purge_audit(conn: Any, schema: str, patient_id: str) -> None:
 #:   events cascade from it), charges, the saved payment method, portal
 #:   sessions and sign-in challenges, and calendar events answered with the
 #:   client.
-#: * ``tasks`` cascades as ``SET NULL``, which would keep the task's text,
-#:   often naming the client, detached from any chart. Subtasks go with
-#:   their parent.
 #: * Message threads cascade from ``patients``, but a message attachment
 #:   holds its document with ``ON DELETE RESTRICT``, and the cascade can
 #:   reach the document first and fail the whole purge. Deleting the threads
@@ -200,6 +205,8 @@ def _append_purge_audit(conn: Any, schema: str, patient_id: str) -> None:
 #:   by name, as they always have been.
 #:
 #: Order matters only for the threads, which must precede the patients row.
+#: ``tasks`` is deleted after these, by ``_delete_clinical_rows`` itself:
+#: compliance tasks are kept (see ``_task_document_uris_for_patient``).
 _PATIENT_ROW_TABLES: tuple[str, ...] = (
     "appointments",
     "notes",
@@ -214,7 +221,6 @@ _PATIENT_ROW_TABLES: tuple[str, ...] = (
     "companion_sessions",
     "companion_auth_challenges",
     "external_calendar_events",
-    "tasks",
 )
 
 
@@ -237,6 +243,15 @@ def _delete_clinical_rows(conn: Any, schema: str, patient_id: str) -> None:
         # nosemgrep
         statement = text(f"DELETE FROM {table} WHERE patient_id = :pid")  # noqa: S608
         conn.execute(statement, {"pid": patient_id})
+    # ``tasks`` cascades as ``SET NULL``, which would keep a to-do's text,
+    # often naming the client, detached from any chart. Its steps and its
+    # attached documents cascade from it; run() deleted the documents'
+    # objects already. A compliance task is the clinician's record and is
+    # kept: the patients delete below unlinks it.
+    conn.execute(
+        text("DELETE FROM tasks WHERE patient_id = :pid AND category <> 'compliance'"),
+        {"pid": patient_id},
+    )
     # Everything else that names the client goes with the patients row by
     # foreign-key cascade, which row-level security does not apply to:
     # patient_documents (blobs removed in run() before this commit), the
@@ -244,6 +259,103 @@ def _delete_clinical_rows(conn: Any, schema: str, patient_id: str) -> None:
     # deleted above (intake answers, signatures and artifacts off their
     # assignment; message attachments off their message).
     conn.execute(text("DELETE FROM patients WHERE id = :pid"), {"pid": patient_id})
+
+
+#: The category of a clinician's own licensure and supervision tasks. Kept by
+#: the purge; everything else naming the client is deleted.
+_COMPLIANCE_CATEGORY = "compliance"
+
+
+def _task_document_uris_for_patient(conn: Any, schema: str, patient_id: str) -> list[str]:
+    """Return the files attached to the client's tasks that the purge deletes.
+
+    Every task naming the client except a compliance one is deleted by
+    ``_delete_clinical_rows``; its steps and their ``compliance_documents``
+    rows go with it by cascade. This returns those documents'
+    ``storage_uri`` values so run() can delete the objects before the rows:
+    a row gone with its object still in storage is a file nothing can find
+    or delete again.
+
+    A compliance task linked to the client is the clinician's licensure or
+    supervision record, not the client's. It is not deleted, so its
+    documents and supervision relationship stay, and the patients delete
+    unlinks it (``ON DELETE SET NULL``), as it did before the purge deleted
+    any task.
+
+    Tasks and their documents are row-scoped to the clinician who owns them,
+    and the purge policies reach only rows that name a soft-deleted client:
+    neither a step with no client of its own nor a document. So the job reads
+    as each owner in turn, with one fixed query filtered to that owner's
+    tasks about this client, and then restores its own id, which matches no
+    clinician.
+    """
+    _validate_schema_name(schema)
+    # Operator job: schema validated by _validate_schema_name(); not web-reachable.
+    # nosemgrep
+    conn.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
+    owners = [
+        str(row[0])
+        for row in conn.execute(
+            text(
+                "SELECT DISTINCT user_id FROM tasks "
+                "WHERE patient_id = :pid AND category <> :compliance ORDER BY user_id"
+            ),
+            {"pid": patient_id, "compliance": _COMPLIANCE_CATEGORY},
+        ).fetchall()
+    ]
+    uris: list[str] = []
+    try:
+        for owner in owners:
+            conn.execute(
+                text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": owner}
+            )
+            rows = conn.execute(
+                text(
+                    "WITH RECURSIVE doomed AS ("
+                    " SELECT id FROM tasks"
+                    " WHERE patient_id = :pid AND user_id = CAST(:uid AS uuid)"
+                    " AND category <> :compliance"
+                    " UNION"
+                    " SELECT t.id FROM tasks t JOIN doomed d ON t.parent_task_id = d.id"
+                    ") "
+                    "SELECT storage_uri FROM compliance_documents "
+                    "WHERE compliance_item_id IN (SELECT id FROM doomed)"
+                ),
+                {"pid": patient_id, "uid": owner, "compliance": _COMPLIANCE_CATEGORY},
+            ).fetchall()
+            uris.extend(str(raw).strip() for (raw,) in rows if raw and str(raw).strip())
+    finally:
+        conn.execute(
+            text("SELECT set_config('app.current_user_id', :uid, true)"),
+            {"uid": _RETENTION_JOB_USER_ID},
+        )
+    return uris
+
+
+def _resolve_compliance_storage() -> Any:
+    """Return the compliance-document storage backend. Patched in unit tests.
+
+    Deletes go by each document's own ``storage_uri``, so the backend needs no
+    configured root to remove an object written under an earlier one.
+    """
+    from ..services.compliance_storage import ComplianceStorageBackend  # noqa: PLC0415
+    from ..settings import get_settings  # noqa: PLC0415
+
+    settings = get_settings()
+    return ComplianceStorageBackend(settings.compliance_documents_storage_root, settings=settings)
+
+
+def _delete_task_document_blobs(uris: list[str]) -> None:
+    """Delete the stored files of documents attached to the client's tasks.
+
+    Deletes are idempotent on missing objects; any other storage failure
+    raises so the caller's transaction rolls back and the rows stay.
+    """
+    if not uris:
+        return
+    storage = _resolve_compliance_storage()
+    for uri in uris:
+        storage.delete(uri)
 
 
 def _audio_objects_for_patient(conn: Any, schema: str, patient_id: str) -> list[str]:
@@ -445,6 +557,8 @@ def run(argv: list[str] | None = None) -> int:
                     _delete_speech_sibling_blobs(audio_objects)
                     document_objects = _document_objects_for_patient(conn, schema_name, patient_id)
                     _delete_document_blobs(document_objects)
+                    task_documents = _task_document_uris_for_patient(conn, schema_name, patient_id)
+                    _delete_task_document_blobs(task_documents)
                     _delete_clinical_rows(conn, schema_name, patient_id)
                     processed += 1
             except Exception:

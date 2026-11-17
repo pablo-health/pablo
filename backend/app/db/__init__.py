@@ -2116,7 +2116,7 @@ def _patient_principal_policy_statements(
 #: ``session_dictations`` are read for their storage paths only; their rows go
 #: with the patient by foreign-key cascade, which row security does not apply to.
 #: The rest are deleted by ``patient_id`` first: the job's ``_PATIENT_ROW_TABLES``
-#: says why each one is.
+#: says why each one is, except ``tasks``, which keeps compliance tasks.
 PATIENT_PURGE_TABLES: dict[str, frozenset[str]] = {
     "patients": frozenset({"read", "lock", "delete"}),
     "appointments": frozenset({"read", "delete"}),

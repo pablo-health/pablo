@@ -349,6 +349,56 @@ def test_delete_document_blobs_propagates_errors() -> None:
         hard_purge_cron._delete_document_blobs(["docs/x.pdf"])
 
 
+def test_delete_clinical_rows_keeps_compliance_tasks() -> None:
+    """A compliance task is the clinician's record; the task delete never takes one."""
+    mock_conn = MagicMock()
+    hard_purge_cron._delete_clinical_rows(mock_conn, "practice", "pt-1")
+    (task_delete,) = [
+        str(call.args[0])
+        for call in mock_conn.execute.call_args_list
+        if str(call.args[0]).startswith("DELETE FROM tasks")
+    ]
+    assert "category <> 'compliance'" in task_delete
+
+
+def test_task_document_uris_restore_the_job_id_when_the_read_fails() -> None:
+    """Reading as a task's owner never outlives the query that needs it."""
+    mock_conn = MagicMock()
+    owners = MagicMock()
+    owners.fetchall.return_value = [("owner-1",)]
+
+    def execute(stmt: Any, params: dict[str, Any] | None = None) -> Any:
+        sql = str(stmt)
+        if "SELECT DISTINCT user_id" in sql:
+            return owners
+        if sql.startswith("WITH RECURSIVE"):
+            raise RuntimeError("boom")
+        return MagicMock()
+
+    mock_conn.execute.side_effect = execute
+    with pytest.raises(RuntimeError):
+        hard_purge_cron._task_document_uris_for_patient(mock_conn, "practice", "pt-1")
+    last = mock_conn.execute.call_args_list[-1]
+    assert "set_config('app.current_user_id'" in str(last.args[0])
+    assert last.args[1] == {"uid": "system:retention_job"}
+
+
+def test_delete_task_document_blobs_deletes_each_uri() -> None:
+    storage = MagicMock()
+    with patch("app.jobs.hard_purge_cron._resolve_compliance_storage", return_value=storage):
+        hard_purge_cron._delete_task_document_blobs(["gs://b/one", "file:///srv/two"])
+    assert [call.args[0] for call in storage.delete.call_args_list] == [
+        "gs://b/one",
+        "file:///srv/two",
+    ]
+
+
+def test_delete_task_document_blobs_noop_when_empty() -> None:
+    with patch("app.jobs.hard_purge_cron._resolve_compliance_storage") as resolver:
+        hard_purge_cron._delete_task_document_blobs([])
+    resolver.assert_not_called()
+
+
 # ─── purge ordering: blob deletes must precede the row deletes that ────────
 # ─── reference them ─────────────────────────────────────────────────────────
 
@@ -372,6 +422,16 @@ class _RecordingResult:
 
     def first(self) -> dict[str, Any] | None:
         return self._mapping
+
+
+#: What the fake connection answers each storage-path query with, by a
+#: fragment of its SQL.
+_CANNED_ROWS: dict[str, list[tuple[Any, ...]]] = {
+    "SELECT audio_gcs_path": [("2026/01/01/sess-1/audio.wav",)],
+    "SELECT gcs_path FROM patient_documents": [("docs/pt-1/intake.pdf",)],
+    "SELECT DISTINCT user_id FROM tasks": [("owner-1",)],
+    "SELECT storage_uri FROM compliance_documents": [("gs://compliance/u/t/release.pdf",)],
+}
 
 
 class _RecordingConn:
@@ -403,10 +463,9 @@ class _RecordingConn:
                     "date_of_birth": None,
                 }
             )
-        if "SELECT audio_gcs_path" in sql:
-            return _RecordingResult(rows=[("2026/01/01/sess-1/audio.wav",)])
-        if "SELECT gcs_path FROM patient_documents" in sql:
-            return _RecordingResult(rows=[("docs/pt-1/intake.pdf",)])
+        for marker, rows in _CANNED_ROWS.items():
+            if marker in sql:
+                return _RecordingResult(rows=rows)
         if sql.startswith("INSERT INTO audit_logs"):
             return _RecordingResult()
         if sql.startswith("DELETE FROM"):
@@ -426,6 +485,16 @@ class _RecordingStorage:
 
     def list_names(self, *, bucket: str, prefix: str) -> list[str]:
         return []
+
+
+class _RecordingComplianceStorage:
+    """Compliance storage deletes by URI, not by bucket and name."""
+
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+
+    def delete(self, uri: str) -> None:
+        self._events.append(f"blob_delete:compliance:{uri}")
 
 
 def test_hard_purge_cron_deletes_blobs_before_referencing_rows() -> None:
@@ -471,6 +540,10 @@ def test_hard_purge_cron_deletes_blobs_before_referencing_rows() -> None:
             "app.jobs.hard_purge_cron._resolve_documents_storage",
             return_value=(_RecordingStorage(events, "docs"), "docs-bucket"),
         ),
+        patch(
+            "app.jobs.hard_purge_cron._resolve_compliance_storage",
+            return_value=_RecordingComplianceStorage(events),
+        ),
     ):
         rc = hard_purge_cron.run([])
 
@@ -482,6 +555,9 @@ def test_hard_purge_cron_deletes_blobs_before_referencing_rows() -> None:
     assert max(blob_indices) < min(row_indices), (
         f"blob deletes must all precede row deletes, got order: {events}"
     )
+    # A file attached to the client's to-do goes from storage too, before the
+    # task row whose cascade takes its document row.
+    assert "blob_delete:compliance:gs://compliance/u/t/release.pdf" in events, events
     # The per-patient transaction arms the purge setting before touching a row.
     assert events[0] == "arm_purge", events
 
@@ -516,6 +592,10 @@ def test_purge_runs_with_no_writer_registered() -> None:
         patch(
             "app.jobs.hard_purge_cron._resolve_documents_storage",
             return_value=(_RecordingStorage(events, "docs"), "docs-bucket"),
+        ),
+        patch(
+            "app.jobs.hard_purge_cron._resolve_compliance_storage",
+            return_value=_RecordingComplianceStorage(events),
         ),
     ):
         assert hard_purge_cron.run([]) == 0
