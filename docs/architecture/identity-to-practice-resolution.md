@@ -82,8 +82,12 @@ per account). For now the row is recorded and compared, and decides nothing:
 the mapping above still routes every request.
 
 - **Who writes it.** A request whose address the sign-in token verified
-  (`get_tenant_context`, the schema middleware) writes the account's row the
-  first time it resolves through the mapping (`joined_via = 'email_claim'`).
+  (`get_tenant_context`, the schema middleware, and the guard that keeps a
+  first sign-in off the template) writes the account's row the first time it
+  resolves through the mapping (`joined_via = 'email_claim'`). On the request
+  that creates the account, the account's own row is not committed yet, so the
+  membership is written when that request commits; a request that fails
+  writes neither.
   Callers that pass the address stored on the account never write: that
   address is set once and not refreshed. The migrate step gives every
   already-mapped account its row (`'backfill'`) and prints how many mapped

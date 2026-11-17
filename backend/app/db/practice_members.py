@@ -26,7 +26,8 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from sqlalchemy import text
+from sqlalchemy import event, text
+from sqlalchemy.exc import IntegrityError
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
@@ -88,7 +89,20 @@ _CLAIM_SQL = text(
 )
 
 
-def claim(user_id: str, practice_id: str, email: str) -> bool:
+#: The foreign key from ``practice_members.user_id`` to ``users.id``. A claim
+#: that trips it names an account whose row is not committed yet: the request
+#: that creates an account writes its ``users`` row on the request session, and
+#: the claim runs on its own session, which cannot see that row until the
+#: request commits.
+_USER_FK = "practice_members_user_id_fkey"
+
+#: ``Session.info`` key: the claims waiting for that session to commit.
+_DEFERRED_CLAIMS_KEY = "practice_members_deferred_claims"
+#: ``Session.info`` key: whether this session's commit listeners are installed.
+_LISTENING_KEY = "practice_members_listening"
+
+
+def claim(user_id: str, practice_id: str, email: str, *, may_defer: bool = True) -> bool:
     """Record the practice an account's request resolved to by its address.
 
     ``email`` must be the address the request's sign-in token verified, never
@@ -104,6 +118,15 @@ def claim(user_id: str, practice_id: str, email: str) -> bool:
     the request's schema, and the row should land whether or not the request
     goes on to succeed. A failure is logged by type and swallowed; the request
     resolves the same either way, and the next one tries again.
+
+    One failure is expected rather than logged as one: on the request that
+    creates the account, its ``users`` row is not committed yet, so the insert
+    trips the account foreign key. That claim is tried again once the request
+    session commits (:func:`_claim_after_commit`), so the account's first
+    request still records its membership. A request that rolls back created no
+    account: a claim still queued tries again on the session's next commit, if
+    any, finds no account, and stays quiet. ``may_defer`` is False for that
+    second try, so it is never queued twice.
     """
     from . import create_standalone_session
 
@@ -114,12 +137,19 @@ def claim(user_id: str, practice_id: str, email: str) -> bool:
         with create_standalone_session() as db:
             result = db.execute(_CLAIM_SQL, params)
             db.commit()
-    except Exception as exc:
-        # Type only: a constraint message can carry row values.
-        logger.warning(
-            "practice_members: claim failed (%s); routing is unaffected",
-            type(exc).__name__,
+    except IntegrityError as exc:
+        if _constraint_name(exc) != _USER_FK:
+            _log_claim_failed(exc)
+            return False
+        deferred = may_defer and _claim_after_commit(user_id, practice_id, email)
+        logger.debug(
+            "practice_members: account %s is not committed yet; %s",
+            user_id,
+            "claiming when the request commits" if deferred else "the next request claims",
         )
+        return False
+    except Exception as exc:
+        _log_claim_failed(exc)
         return False
     claimed = bool(getattr(result, "rowcount", 0))
     if claimed:
@@ -130,6 +160,50 @@ def claim(user_id: str, practice_id: str, email: str) -> bool:
             extra={"user_id": user_id, "practice_id": practice_id},
         )
     return claimed
+
+
+def _log_claim_failed(exc: Exception) -> None:
+    # Type only: a constraint message can carry row values.
+    logger.warning(
+        "practice_members: claim failed (%s); routing is unaffected",
+        type(exc).__name__,
+    )
+
+
+def _constraint_name(exc: IntegrityError) -> str | None:
+    """The constraint the database named, from the driver's diagnostics."""
+    diag = getattr(exc.orig, "diag", None)
+    name = getattr(diag, "constraint_name", None)
+    return name if isinstance(name, str) else None
+
+
+def _claim_after_commit(user_id: str, practice_id: str, email: str) -> bool:
+    """Try the claim again once the request session commits. Whether it is queued.
+
+    The account's ``users`` row can only be uncommitted on the request session:
+    a session displaced from that role is committed when it is displaced
+    (``publish_request_session``). Each claim is queued once per session, so
+    the two claim sites a first request passes through retry it once.
+    """
+    from . import _request_session
+
+    session = _request_session.get()
+    if session is None:
+        return False
+    if not session.info.get(_LISTENING_KEY):
+        # Installed once and left in place: a listener cannot be removed while
+        # its own event is being dispatched, and a request's session is closed
+        # with the request. It drains only what is queued.
+        event.listen(session, "after_commit", _run_deferred_claims)
+        session.info[_LISTENING_KEY] = True
+    session.info.setdefault(_DEFERRED_CLAIMS_KEY, set()).add((user_id, practice_id, email))
+    return True
+
+
+def _run_deferred_claims(session: Session) -> None:
+    pending: set[tuple[str, str, str]] = session.info.pop(_DEFERRED_CLAIMS_KEY, None) or set()
+    for user_id, practice_id, email in sorted(pending):
+        claim(user_id, practice_id, email, may_defer=False)
 
 
 def remove_for_practice(db: Session | Connection, practice_id: str) -> int:

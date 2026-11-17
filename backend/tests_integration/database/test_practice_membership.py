@@ -17,6 +17,7 @@ Run: ``make test-integration``.
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import os
 import uuid
@@ -105,6 +106,24 @@ class _World:
                     )
                 )
             session.commit()
+        self.user_ids.append(user_id)
+        self.emails.append(email)
+        return SimpleNamespace(id=user_id, email=email)
+
+    def account_in_request(self, name: str, session: Session) -> SimpleNamespace:
+        """A platform user flushed on ``session`` and not committed.
+
+        What ``_resolve_user`` leaves behind on the request that creates an
+        account: the row is visible to that session and to no other until the
+        request commits.
+        """
+        from app.db.platform_models import PlatformUserRow  # noqa: PLC0415
+        from app.utcnow import utc_now  # noqa: PLC0415
+
+        user_id = str(uuid.uuid4())
+        email = f"{name}-{self.label}@example.invalid".lower()
+        session.add(PlatformUserRow(id=user_id, email=email, name=name, created_at=utc_now()))
+        session.flush()
         self.user_ids.append(user_id)
         self.emails.append(email)
         return SimpleNamespace(id=user_id, email=email)
@@ -349,6 +368,132 @@ def test_a_claim_into_an_inactive_practice_writes_nothing(world: _World) -> None
 
     assert claim(account.id, practice.id, account.email) is False
     assert world.membership(account.id) is None
+
+
+# --- the request that creates the account -----------------------------------
+
+
+def _claim_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [
+        r
+        for r in caplog.records
+        if r.name == "app.db.practice_members" and r.levelno >= logging.WARNING
+    ]
+
+
+def _in_request(session: Session, run: Any) -> Any:
+    """Run ``run()`` with ``session`` published as the request session.
+
+    In a copied context, so the request's ContextVars (the session, the schema
+    ``_keep_request_off_the_template`` sets) do not outlive it.
+    """
+
+    def body() -> Any:
+        from app.db import publish_request_session, restore_request_session  # noqa: PLC0415
+
+        binding = publish_request_session(session)
+        try:
+            return run()
+        finally:
+            restore_request_session(binding)
+
+    return contextvars.copy_context().run(body)
+
+
+def test_the_request_that_creates_the_account_claims_when_it_commits(
+    world: _World, engine: Engine, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The account's ``users`` row is only flushed when ``get_tenant_context``
+    runs, so a claim on its own session cannot reference it yet. It is written
+    when the request commits, on that first request, and nothing warns."""
+    practice = world.practice("p")
+    with Session(engine) as session:
+        account = world.account_in_request("signup", session)
+        world.map(account.email, practice.id)
+
+        with caplog.at_level(logging.DEBUG, logger="app.db.practice_members"):
+            context = _in_request(session, lambda: _tenant_context(account, account.email))
+            assert context.practice_id == practice.id
+            assert world.membership(account.id) is None, "not before the account commits"
+            session.commit()
+
+    membership = world.membership(account.id)
+    assert membership is not None
+    assert membership[:3] == (practice.id, "email_claim", account.email)
+    assert _claim_warnings(caplog) == []
+
+
+def test_keeping_a_first_request_off_the_template_claims_when_it_commits(
+    world: _World, engine: Engine, caplog: pytest.LogCaptureFixture
+) -> None:
+    """``_keep_request_off_the_template`` is the claim site the account-creating
+    request passes through after ``_resolve_user``: it claims too."""
+    from app.auth.service import _keep_request_off_the_template  # noqa: PLC0415
+    from app.db import _TENANT_SCHEMA_KEY  # noqa: PLC0415
+
+    practice = world.practice("p")
+    with Session(engine) as session:
+        account = world.account_in_request("offtpl", session)
+        world.map(account.email, practice.id)
+
+        with caplog.at_level(logging.DEBUG, logger="app.db.practice_members"):
+            _in_request(session, lambda: _keep_request_off_the_template(account.id, account.email))
+            assert session.info[_TENANT_SCHEMA_KEY] == practice.schema
+            assert world.membership(account.id) is None, "not before the account commits"
+            session.commit()
+
+    membership = world.membership(account.id)
+    assert membership is not None
+    assert membership[:3] == (practice.id, "email_claim", account.email)
+    assert _claim_warnings(caplog) == []
+
+
+def test_a_request_that_rolls_back_claims_nothing(
+    world: _World, engine: Engine, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The rollback takes the account with it; a later commit on the same
+    session tries the claim once more, finds no account, and stays quiet."""
+    from app.db.practice_members import _DEFERRED_CLAIMS_KEY  # noqa: PLC0415
+
+    practice = world.practice("p")
+    with Session(engine) as session:
+        account = world.account_in_request("rolledback", session)
+        world.map(account.email, practice.id)
+
+        with caplog.at_level(logging.DEBUG, logger="app.db.practice_members"):
+
+            def request() -> None:
+                _tenant_context(account, account.email)
+                session.rollback()
+                session.commit()
+
+            _in_request(session, request)
+            assert not session.info.get(_DEFERRED_CLAIMS_KEY), "the retry is not queued again"
+
+    assert world.membership(account.id) is None
+    assert _claim_warnings(caplog) == []
+
+
+def test_a_claim_outside_a_request_for_an_uncommitted_account_waits_quietly(
+    world: _World, engine: Engine, caplog: pytest.LogCaptureFixture
+) -> None:
+    """With no request session to wait on, the claim is left to the next
+    request: no row, no WARNING. Once the account commits, the claim writes."""
+    from app.db.practice_members import claim  # noqa: PLC0415
+
+    practice = world.practice("p")
+    with Session(engine) as session:
+        account = world.account_in_request("norequest", session)
+        world.map(account.email, practice.id)
+
+        with caplog.at_level(logging.DEBUG, logger="app.db.practice_members"):
+            assert claim(account.id, practice.id, account.email) is False
+        assert world.membership(account.id) is None
+        assert _claim_warnings(caplog) == []
+
+        session.commit()
+
+    assert claim(account.id, practice.id, account.email) is True
 
 
 # --- shadow mode: routing unchanged, disagreement logged ----------------------
