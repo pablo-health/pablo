@@ -93,6 +93,7 @@ export function IdleTimeout() {
    */
   const signInAgain = useCallback(() => {
     if (signingOutRef.current) {
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- a full load on purpose after an idle sign-out, so no stale session or cache survives
       window.location.assign(`/login?reason=idle_timeout${returnToParam()}`)
       return
     }

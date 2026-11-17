@@ -97,6 +97,7 @@ export function FirebaseNativeAuthScreen() {
             const returnParams = new URLSearchParams({ redirect_uri: redirectUri! })
             if (state) returnParams.set("state", state)
             const returnUrl = `/native-auth?${returnParams.toString()}`
+            // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- a full load so enrollment starts from the fresh sign-in, not this screen's state
             window.location.href = `/mfa-enrollment?returnTo=${encodeURIComponent(returnUrl)}`
             return
           }
