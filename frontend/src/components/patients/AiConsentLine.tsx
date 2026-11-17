@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useAiConsent, useRecordAiConsent } from "@/hooks/useAiConsent"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
+import { useUserTimeZone } from "@/hooks/usePreferences"
 import type { PeopleWords } from "@/lib/peopleTerm"
 import { formatCivilDate, MEDIUM_DATE, todayCivilDate } from "@/lib/dates"
 import type {
@@ -31,7 +32,6 @@ export function formatConsentDate(civil: string): string {
   return formatCivilDate(civil, MEDIUM_DATE, "en-US")
 }
 
-/** Today on the clinician's own calendar, as YYYY-MM-DD. */
 const DECISION_WORD: Record<AiConsentDecision, string> = {
   consented: "agreed",
   declined: "declined",
@@ -110,7 +110,15 @@ export function AiConsentDialog({
   modality: sessionModality,
 }: AiConsentDialogProps) {
   const [decision, setDecision] = useState<AiConsentDecision | null>(null)
-  const [effectiveOn, setEffectiveOn] = useState(todayCivilDate)
+  // The server refuses a date after the clinician's own today, taken from
+  // their timezone preference, so the default and the max come from that zone
+  // too: the browser's zone can be a day ahead of it. Worked out at render,
+  // not captured once, because the preference can arrive after the dialog
+  // mounts and the day can turn over while it sits closed.
+  const timeZone = useUserTimeZone()
+  const today = todayCivilDate(timeZone)
+  const [chosenOn, setChosenOn] = useState<string | null>(null)
+  const effectiveOn = chosenOn ?? today
   const [modality, setModality] = useState<AiConsentModality | undefined>(sessionModality)
   const [location, setLocation] = useState("")
   const [giver, setGiver] = useState<AiConsentGiver>("client")
@@ -121,7 +129,7 @@ export function AiConsentDialog({
   function handleOpenChange(next: boolean) {
     if (!next) {
       setDecision(null)
-      setEffectiveOn(todayCivilDate())
+      setChosenOn(null)
       setModality(sessionModality)
       setLocation("")
       setGiver("client")
@@ -185,8 +193,8 @@ export function AiConsentDialog({
               id="ai-consent-date"
               type="date"
               value={effectiveOn}
-              max={todayCivilDate()}
-              onChange={(e) => setEffectiveOn(e.target.value)}
+              max={today}
+              onChange={(e) => setChosenOn(e.target.value)}
             />
           </div>
 
