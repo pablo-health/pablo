@@ -139,6 +139,31 @@ describe("when we already have her NPI", () => {
   })
 })
 
+describe("while her record is still arriving", () => {
+  // The form shown here was replaced by her NPI's lookup the moment the record
+  // landed, taking whatever she had typed with it. The e2e spec lost the same
+  // race: it clicked "Look it up" as the button was removed (PABLO-czoq).
+  it("does not offer the form it may be about to take away", () => {
+    useSettingsUserStatus.mockReturnValue({ data: undefined, isLoading: true })
+
+    render(<NpiLookupStep />)
+
+    expect(screen.getByText(/checking what we already have/i)).toBeInTheDocument()
+    expect(screen.queryByLabelText(/your individual npi/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /don.t have one/i })).not.toBeInTheDocument()
+  })
+
+  it("asks for it once the record says there is none", () => {
+    useSettingsUserStatus.mockReturnValue({ data: undefined, isLoading: true })
+    const { rerender } = render(<NpiLookupStep />)
+
+    useSettingsUserStatus.mockReturnValue({ data: { npi_number: null }, isLoading: false })
+    rerender(<NpiLookupStep />)
+
+    expect(screen.getByLabelText(/your individual npi/i)).toBeInTheDocument()
+  })
+})
+
 describe("when we do not have it", () => {
   it("asks for it", () => {
     render(<NpiLookupStep />)

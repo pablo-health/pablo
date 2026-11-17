@@ -16,9 +16,36 @@
  * asserted here would be a real clinician's name in a public repository.
  */
 
+import type { Page } from "@playwright/test"
+import type { ApiClient } from "../fixtures/api"
 import { expect, test } from "../fixtures/auth"
 
 const SETUP = "/dashboard/settings/credentialing"
+
+/**
+ * Open the screen on the form, from a known starting point.
+ *
+ * A profile cannot be emptied once it holds an NPI, and every test in this
+ * file shares one clinician (so do other specs that seed an NPI), so "no NPI
+ * yet" is not a state a test here can count on. Instead each one says which
+ * NPI is on file, waits for its lookup to land, and answers "that's not me",
+ * which leaves the form open.
+ *
+ * Waiting for the card is the point. These tests used to type into a form the
+ * screen showed while the profile was still loading; when the profile landed,
+ * its NPI's lookup replaced the form and the click on "Look it up" hit a
+ * button being taken away (PABLO-czoq). The screen no longer shows the form
+ * before it knows, and this keeps the tests from depending on either order.
+ */
+async function openTheForm(page: Page, api: ApiClient): Promise<void> {
+  await api.request("PATCH", "/api/users/me/professional-info", {
+    npi_number: "1999999984",
+  })
+  await page.goto(SETUP)
+  await expect(page.getByText("TEST THERAPIST, LCSW")).toBeVisible()
+  await page.getByRole("button", { name: /that.s not me/i }).click()
+  await expect(page.getByLabel("Your individual NPI")).toBeVisible()
+}
 
 test.describe("looking herself up", () => {
   test("an NPI already on her profile is looked up on arrival", async ({
@@ -86,8 +113,9 @@ test.describe("looking herself up", () => {
 test.describe("when the answer is not a clean yes", () => {
   test("a number the registry has never heard of points at the number", async ({
     signedInPage: page,
+    api,
   }) => {
-    await page.goto(SETUP)
+    await openTheForm(page, api)
 
     await page.getByLabel("Your individual NPI").fill("1000000004")
     await page.getByRole("button", { name: /look it up/i }).click()
@@ -98,10 +126,11 @@ test.describe("when the answer is not a clean yes", () => {
 
   test("an organisation NPI is named as one rather than confirmed", async ({
     signedInPage: page,
+    api,
   }) => {
     // Tier 0 asks for an individual NPI and a billing NPI side by side, so
     // pasting the practice's number in is an easy mistake to make.
-    await page.goto(SETUP)
+    await openTheForm(page, api)
 
     await page.getByLabel("Your individual NPI").fill("1234567893")
     await page.getByRole("button", { name: /look it up/i }).click()
@@ -109,8 +138,8 @@ test.describe("when the answer is not a clean yes", () => {
     await expect(page.getByText(/organisation.s npi rather than a person.s/i)).toBeVisible()
   })
 
-  test("a deactivated registration is flagged", async ({ signedInPage: page }) => {
-    await page.goto(SETUP)
+  test("a deactivated registration is flagged", async ({ signedInPage: page, api }) => {
+    await openTheForm(page, api)
 
     await page.getByLabel("Your individual NPI").fill("1700000004")
     await page.getByRole("button", { name: /look it up/i }).click()
@@ -121,17 +150,7 @@ test.describe("when the answer is not a clean yes", () => {
 
 test.describe("the two ways past it", () => {
   test("she can find herself by name and state", async ({ signedInPage: page, api }) => {
-    // The tests above leave an NPI on her profile, and the profile cannot be
-    // emptied again, so say which one: a number that turns out not to be
-    // hers. Waiting for its card first means the screen has finished
-    // arriving before she starts — clicking into the form while her profile
-    // is still loading raced the lookup that replaces it.
-    await api.request("PATCH", "/api/users/me/professional-info", {
-      npi_number: "1999999984",
-    })
-    await page.goto(SETUP)
-    await expect(page.getByText("TEST THERAPIST, LCSW")).toBeVisible()
-    await page.getByRole("button", { name: /that.s not me/i }).click()
+    await openTheForm(page, api)
 
     await page.getByRole("button", { name: /don.t know my npi/i }).click()
     await page.getByLabel("Last name").fill("THERAPIST")
@@ -152,8 +171,8 @@ test.describe("the two ways past it", () => {
     await expect(page.getByRole("button", { name: /that.s me/i })).toBeVisible()
   })
 
-  test("no NPI at all is a next step rather than an error", async ({ signedInPage: page }) => {
-    await page.goto(SETUP)
+  test("no NPI at all is a next step rather than an error", async ({ signedInPage: page, api }) => {
+    await openTheForm(page, api)
 
     await page.getByRole("button", { name: /don.t have one/i }).click()
 
