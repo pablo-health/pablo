@@ -21,10 +21,6 @@ const repoRoot = fileURLToPath(new URL("../..", import.meta.url))
 
 export default defineConfig({
   testDir: "./specs",
-  // TEMPORARY (PABLO-czoq): repeat the NPI specs 20 times, first attempts only.
-  // Reverted before review.
-  testMatch: /(npi-lookup|credentialing-request-received)\.spec\.ts$/,
-  repeatEach: 20,
   outputDir: "./test-results",
 
   timeout: 180 * 1000,
@@ -36,7 +32,7 @@ export default defineConfig({
   workers: 1,
 
   forbidOnly: !!process.env.CI,
-  retries: 0,
+  retries: process.env.CI ? 1 : 0,
 
   reporter: process.env.CI
     ? [["list"], ["html", { open: "never", outputFolder: "playwright-report" }]]
