@@ -11,15 +11,24 @@
  * shows the history.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest"
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 
 import { AiConsentLine, formatConsentDate } from "../AiConsentLine"
+import { todayCivilDate } from "@/lib/dates"
 import type { AiConsentEntry, AiConsentRecord } from "@/types/aiConsent"
 
 const mockUseAiConsent = vi.fn()
 const mockMutateAsync = vi.fn()
+
+// The clinician's timezone preference. Tests run with the browser in UTC
+// (vitest.config.ts), so a zone west of it puts the clinician a day behind the
+// browser every evening.
+let mockTimeZone = "America/New_York"
+vi.mock("@/hooks/usePreferences", () => ({
+  useUserTimeZone: () => mockTimeZone,
+}))
 
 vi.mock("@/hooks/useAiConsent", () => ({
   useAiConsent: (...args: unknown[]) => mockUseAiConsent(...args),
@@ -42,15 +51,14 @@ function withRecord(record: AiConsentRecord | undefined) {
   mockUseAiConsent.mockReturnValue({ data: record })
 }
 
-function localToday(): string {
-  const now = new Date()
-  const pad = (n: number) => String(n).padStart(2, "0")
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+function clinicianToday(): string {
+  return todayCivilDate(mockTimeZone)
 }
 
 describe("AiConsentLine", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockTimeZone = "America/New_York"
     mockMutateAsync.mockResolvedValue({ current: null, history: [] })
   })
 
@@ -98,7 +106,7 @@ describe("AiConsentLine", () => {
     render(<AiConsentLine patientId="p1" />)
 
     await user.click(screen.getByTestId("ai-consent-line"))
-    expect(screen.getByLabelText("Date")).toHaveValue(localToday())
+    expect(screen.getByLabelText("Date")).toHaveValue(clinicianToday())
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled()
 
     await user.click(screen.getByLabelText("Client agreed"))
@@ -106,7 +114,7 @@ describe("AiConsentLine", () => {
 
     expect(mockMutateAsync).toHaveBeenCalledWith({
       patientId: "p1",
-      data: { decision: "consented", effective_on: localToday(), consented_by: "client" },
+      data: { decision: "consented", effective_on: clinicianToday(), consented_by: "client" },
     })
   })
 
@@ -127,7 +135,7 @@ describe("AiConsentLine", () => {
       patientId: "p1",
       data: {
         decision: "consented",
-        effective_on: localToday(),
+        effective_on: clinicianToday(),
         modality: "telehealth",
         client_stated_location: "At home",
         consented_by: "parent",
@@ -225,6 +233,82 @@ describe("AiConsentLine", () => {
     const items = screen.getByTestId("ai-consent-history").querySelectorAll("li")
     expect(items[0]).toHaveTextContent("Agreed Oct 6, 2026 · Telehealth · At home · Guardian")
     expect(items[1]).toHaveTextContent(/^Agreed Sep 1, 2026Recorded by Dr\. Rivera$/)
+  })
+})
+
+describe("AiConsentLine dates on the clinician's calendar", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockTimeZone = "America/New_York"
+    mockMutateAsync.mockResolvedValue({ current: null, history: [] })
+    withRecord({ current: null, history: [] })
+    vi.useFakeTimers({ toFake: ["Date"] })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it("defaults to the clinician's today in the evening, when the browser is already on tomorrow", async () => {
+    // 01:15 UTC on Nov 17 is 20:15 on Nov 16 in New York.
+    vi.setSystemTime(new Date("2026-11-17T01:15:00Z"))
+    const user = userEvent.setup()
+    render(<AiConsentLine patientId="p1" />)
+
+    await user.click(screen.getByTestId("ai-consent-line"))
+    const date = screen.getByLabelText("Date")
+    expect(date).toHaveValue("2026-11-16")
+    expect(date).toHaveAttribute("max", "2026-11-16")
+
+    await user.click(screen.getByLabelText("Client agreed"))
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(mockMutateAsync).toHaveBeenCalledWith({
+      patientId: "p1",
+      data: { decision: "consented", effective_on: "2026-11-16", consented_by: "client" },
+    })
+  })
+
+  it("lets a clinician east of the browser pick their own today", async () => {
+    // 20:00 UTC on Nov 16 is 05:00 on Nov 17 in Tokyo.
+    vi.setSystemTime(new Date("2026-11-16T20:00:00Z"))
+    mockTimeZone = "Asia/Tokyo"
+    const user = userEvent.setup()
+    render(<AiConsentLine patientId="p1" />)
+
+    await user.click(screen.getByTestId("ai-consent-line"))
+    const date = screen.getByLabelText("Date")
+    expect(date).toHaveValue("2026-11-17")
+    expect(date).toHaveAttribute("max", "2026-11-17")
+  })
+
+  it("follows the preference when it arrives after the chart has mounted", async () => {
+    vi.setSystemTime(new Date("2026-11-17T01:15:00Z"))
+    // Before preferences load, the zone falls back to the browser's (UTC).
+    mockTimeZone = "UTC"
+    const user = userEvent.setup()
+    const { rerender } = render(<AiConsentLine patientId="p1" />)
+    mockTimeZone = "America/New_York"
+    rerender(<AiConsentLine patientId="p1" />)
+
+    await user.click(screen.getByTestId("ai-consent-line"))
+    expect(screen.getByLabelText("Date")).toHaveValue("2026-11-16")
+  })
+
+  it("starts from the clinician's today again after a chosen day is cancelled", async () => {
+    vi.setSystemTime(new Date("2026-11-17T01:15:00Z"))
+    const user = userEvent.setup()
+    render(<AiConsentLine patientId="p1" />)
+
+    await user.click(screen.getByTestId("ai-consent-line"))
+    const date = screen.getByLabelText("Date")
+    await user.clear(date)
+    await user.type(date, "2026-11-02")
+    expect(date).toHaveValue("2026-11-02")
+    await user.keyboard("{Escape}")
+
+    await user.click(screen.getByTestId("ai-consent-line"))
+    expect(screen.getByLabelText("Date")).toHaveValue("2026-11-16")
   })
 })
 

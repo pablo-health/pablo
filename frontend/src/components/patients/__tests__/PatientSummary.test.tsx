@@ -41,7 +41,11 @@ vi.mock("@/components/ui/Toast", () => ({
 }))
 
 // The AI-notes line has tests of its own (AiConsentLine.test.tsx); here it
-// only has to be in the header.
+// only has to be in the header. Its dialog reads the clinician's timezone.
+vi.mock("@/hooks/usePreferences", () => ({
+  useUserTimeZone: () => "America/New_York",
+}))
+
 vi.mock("@/hooks/useAiConsent", () => ({
   useAiConsent: () => ({ data: { current: null, history: [] } }),
   useRecordAiConsent: () => ({ mutateAsync: vi.fn(), isPending: false }),
