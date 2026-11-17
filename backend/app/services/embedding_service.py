@@ -11,8 +11,11 @@ import struct
 from abc import ABC, abstractmethod
 from typing import Any
 
+import httpx
+
 from ..reliability import LLM_REQUEST, Idempotency, call_with_retry
 from .llm_telemetry import LLMSpanRequest, llm_span, usage_tokens
+from .model_standin import model_standin_base_url
 from .vertex_client import vertex_genai_client
 
 logger = logging.getLogger(__name__)
@@ -88,6 +91,12 @@ class GoogleEmbeddingService(EmbeddingService):
             msg = "Cannot embed an empty list of texts"
             raise ValueError(msg)
 
+        # Asked per call, not when the service is built: a practice listed in
+        # MODEL_STANDIN_PRACTICES has its texts embedded by the stand-in.
+        standin = model_standin_base_url()
+        if standin:
+            return HttpEmbeddingService(standin, self.model_name).embed_texts(texts)
+
         try:
             from google.genai import types
 
@@ -118,6 +127,41 @@ class GoogleEmbeddingService(EmbeddingService):
             logger.exception("Embedding API call failed")
             msg = f"Embedding API call failed: {err}"
             raise RuntimeError(msg) from err
+
+
+class HttpEmbeddingService(EmbeddingService):
+    """Embeddings answered by an HTTP service rather than a model.
+
+    For the practices routed to a stand-in (:mod:`.model_standin`): one
+    ``POST {base_url}/v1/embed`` per batch, answered with one vector per text.
+    """
+
+    _TIMEOUT_SECONDS = 10.0
+
+    def __init__(self, base_url: str, model_name: str = "", dimensions: int = 768) -> None:
+        self._url = base_url.rstrip("/") + "/v1/embed"
+        self._model_name = model_name
+        self._dimensions = dimensions
+
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            msg = "Cannot embed an empty list of texts"
+            raise ValueError(msg)
+        try:
+            response = httpx.post(
+                self._url,
+                json={"texts": texts, "model": self._model_name, "dimensions": self._dimensions},
+                timeout=self._TIMEOUT_SECONDS,
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as err:
+            msg = f"Embedding stand-in call failed: {type(err).__name__}"
+            raise RuntimeError(msg) from err
+        embeddings = response.json().get("embeddings")
+        if not isinstance(embeddings, list) or len(embeddings) != len(texts):
+            msg = "Embedding stand-in returned the wrong number of vectors"
+            raise RuntimeError(msg)
+        return [[float(value) for value in vector] for vector in embeddings]
 
 
 class MockEmbeddingService(EmbeddingService):

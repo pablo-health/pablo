@@ -19,8 +19,9 @@ question back — rather than with an error, so a spec that strays sees the
 product's own refusal instead of a server error.
 
 The same app also serves the stand-in a deployment names in
-``MODEL_STANDIN_BASE_URL``, under ``/standin``: structured calls, chat answers
-and dictated clips for the practices in ``MODEL_STANDIN_PRACTICES``.
+``MODEL_STANDIN_BASE_URL``, under ``/standin``: structured calls, chat answers,
+dictated clips, recorded sessions and embeddings for the practices in
+``MODEL_STANDIN_PRACTICES``.
 
 Run locally with ``uvicorn scripts.fake_llm:app --port 8083``; the compose
 stack builds it from ``scripts/e2e/fake-llm.Dockerfile``.
@@ -29,6 +30,8 @@ stack builds it from ``scripts/e2e/fake-llm.Dockerfile``.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import math
 import re
 from collections import Counter
 from dataclasses import dataclass, field
@@ -855,6 +858,59 @@ async def standin_chat() -> dict[str, str]:
 async def standin_transcribe() -> dict[str, str]:
     """Dictated clips for a routed practice, transcribed as ``/transcription`` does."""
     return {"text": DICTATION_TEXT}
+
+
+#: What every recorded session transcribes to: one exchange per channel, so
+#: both sides of the call carry words. Seconds from the start of the audio.
+SESSION_UTTERANCES: tuple[dict[str, Any], ...] = (
+    {
+        "speaker": "Therapist",
+        "start": 1.0,
+        "end": 4.0,
+        "text": "Stand-in session. How was the week?",
+    },
+    {
+        "speaker": "Client",
+        "start": 5.0,
+        "end": 9.0,
+        "text": "Stand-in session. The week was steady.",
+    },
+)
+
+
+@app.post("/standin/v1/transcribe-session")
+async def standin_transcribe_session() -> dict[str, Any]:
+    """A recorded session for a routed practice: the same exchange every time."""
+    return {"utterances": [dict(u) for u in SESSION_UTTERANCES]}
+
+
+class EmbedCall(BaseModel):
+    """Texts to embed; only the text decides its vector."""
+
+    texts: list[str]
+    model: str = ""
+    dimensions: int = 768
+
+
+def _vector(text: str, dimensions: int) -> list[float]:
+    """A unit vector from the text's hash: equal texts meet, different ones do not."""
+    values: list[float] = []
+    block = 0
+    while len(values) < dimensions:
+        digest = hashlib.sha256(f"{text}:{block}".encode()).digest()
+        values.extend(
+            int.from_bytes(digest[i : i + 4], "big") / 2147483647.5 - 1.0 for i in range(0, 32, 4)
+        )
+        block += 1
+    values = values[:dimensions]
+    norm = math.sqrt(sum(v * v for v in values)) or 1.0
+    return [v / norm for v in values]
+
+
+@app.post("/standin/v1/embed")
+async def standin_embed(call: EmbedCall) -> dict[str, Any]:
+    """Embeddings for a routed practice, one vector per text, in order."""
+    return {"embeddings": [_vector(text, call.dimensions) for text in call.texts]}
 
 
 @app.get("/_fake/health")

@@ -22,9 +22,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..reliability import LLM_REQUEST, Idempotency, call_with_retry
+from .http_structured_llm_gateway import HttpStructuredLLMGateway
 from .llm_json import extract_json_object
 from .llm_provider import strip_provider_prefix
 from .llm_telemetry import LLMSpanRequest, llm_span, usage_detail_tokens, usage_tokens
+from .model_standin import model_standin_base_url
 from .structured_llm_gateway import _to_gemini_schema
 from .vertex_client import vertex_genai_client
 
@@ -153,6 +155,21 @@ class GeminiAgentLLMGateway(AgentLLMGateway):
         max_output_tokens: int = 4096,
         temperature: float = 0.2,
     ) -> AgentResult:
+        # A practice listed in MODEL_STANDIN_PRACTICES gets the stand-in's
+        # answer to the final emit and calls no tools: there is no model to
+        # ask for them. Asked per run, with the caller's practice in scope.
+        standin = model_standin_base_url()
+        if standin:
+            completion = HttpStructuredLLMGateway(standin).complete_structured(
+                model=model,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_schema=response_schema,
+                max_output_tokens=max_output_tokens,
+                temperature=temperature,
+            )
+            return AgentResult(data=completion.data)
+
         from google.genai import types
 
         client = self._get_client()

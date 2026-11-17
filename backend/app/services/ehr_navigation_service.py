@@ -21,6 +21,8 @@ from starlette.concurrency import run_in_threadpool
 
 from ..models.ehr_route import GoalNavigationRequest, GoalNavigationResponse
 from ..reliability import LLM_REQUEST
+from .http_structured_llm_gateway import HttpStructuredLLMGateway
+from .model_standin import amodel_standin_base_url
 from .text_llm_gateway import generate_text
 from .vertex_client import vertex_genai_client
 
@@ -47,6 +49,21 @@ _FILL_GOAL_KEYWORDS = ("form", "field", "enter", "fill", "type")
 _MAX_FORM_FIELDS = 20
 _MAX_FORM_FIELD_VALUE_LENGTH = 512
 _ALLOWED_NAVIGATE_SCHEMES = ("http", "https")
+
+#: The reply's shape as JSON schema, for a stand-in that is sent one.
+NAVIGATION_RESPONSE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "action": {"type": "string", "enum": ["click", "navigate", "wait", "fill", "none"]},
+        "selector": {"type": "string"},
+        "reasoning": {"type": "string"},
+        "confidence": {"type": "number"},
+        "is_on_target_page": {"type": "boolean"},
+        "form_fields": {"type": "object", "nullable": True},
+        "alternative_plan": {"type": "string", "nullable": True},
+    },
+    "required": ["action", "selector", "reasoning", "confidence", "is_on_target_page"],
+}
 
 
 def _navigate_target_rejection_reason(target: str) -> str | None:
@@ -190,6 +207,21 @@ class GeminiEhrNavigationService(EhrNavigationService):
             system_prompt = await self.get_ehr_prompt(request.ehr_system.value)
             system_prompt = f"{system_prompt}\n\n{UNTRUSTED_DATA_NOTICE}"
             user_prompt = self.build_user_prompt(request)
+
+            # A practice listed in MODEL_STANDIN_PRACTICES is answered by the
+            # stand-in; its reply is checked exactly as a model's is.
+            standin = await amodel_standin_base_url()
+            if standin:
+                completion = await run_in_threadpool(
+                    HttpStructuredLLMGateway(standin).complete_structured,
+                    model=self.model,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    response_schema=NAVIGATION_RESPONSE_SCHEMA,
+                    max_output_tokens=2048,
+                    temperature=0.1,
+                )
+                return self._parse_response(json.dumps(completion.data), request.goal)
 
             type_ = types.Type
             response_schema = types.Schema(
