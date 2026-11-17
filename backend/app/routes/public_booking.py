@@ -272,6 +272,11 @@ def get_public_booking_context(
         # fail-closed answer for an unauthenticated caller.
         if link.practice_schema is None:
             raise NotFoundError(_LINK_NOT_FOUND)
+        # Before entering the schema, not after: a practice that is not
+        # ready may have no schema at all, and the first query in one would
+        # fail with "relation does not exist" rather than answer 404.
+        if link.practice_is_active is False:
+            raise NotFoundError(_LINK_NOT_FOUND)
         set_tenant_schema(session, link.practice_schema)
         arm_current_user_id(session, link.user_id)
 

@@ -246,12 +246,14 @@ class _CapturingEngine:
 
     def __init__(self) -> None:
         self.statements: list[str] = []
+        self.params: list[object] = []
 
     def connect(self) -> _CapturingEngine:
         return self
 
-    def execute(self, statement: object) -> _CapturingEngine:
+    def execute(self, statement: object, params: object = None) -> _CapturingEngine:
         self.statements.append(str(statement))
+        self.params.append(params)
         return self
 
     def fetchall(self) -> list[tuple[str, str]]:
@@ -286,3 +288,13 @@ def test_registry_includes_every_tenant_by_default() -> None:
     list_active_practice_registry(cast("Engine", engine))
 
     assert "is_pentest" not in engine.statements[0]
+
+
+def test_registry_reads_only_ready_practices_in_the_query() -> None:
+    """A practice with no schema, or a partial one, must never be walked."""
+    engine = _CapturingEngine()
+
+    list_active_practice_registry(cast("Engine", engine))
+
+    assert "provisioning_status = :ready" in engine.statements[0]
+    assert engine.params[0] == {"ready": "ready"}

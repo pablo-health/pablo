@@ -15,6 +15,7 @@ import { ToastProvider, useToast } from "@/components/ui/Toast"
 import { ThemeProvider } from "@/components/theme/ThemeProvider"
 import { installGlobalErrorReporter } from "@/lib/feErrorReporter"
 import { OidcSessionProviderWrapper } from "@/lib/auth/oidc/SessionProviderWrapper"
+import { PracticeSetupScreen } from "@/components/layout/PracticeSetupScreen"
 import { outerProviderWrappers } from "./providers.extensions"
 
 export function Providers({
@@ -35,6 +36,7 @@ export function Providers({
   return (
     <ToastProvider>
       <QueryProviders portalOnlyHost={portalOnlyHost}>{children}</QueryProviders>
+      <PracticeSetupScreen />
     </ToastProvider>
   )
 }

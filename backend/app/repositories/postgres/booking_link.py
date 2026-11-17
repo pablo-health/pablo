@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
-from ...db.platform_models import BookingLinkRow, PracticeRow
+from ...db.platform_models import SCHEMA_READY, BookingLinkRow, PracticeRow
 from ...models.booking_link import BookingLink
 from ...utcnow import utc_now
 from ..booking_link import BookingLinkRepository, SlugTakenError
@@ -58,6 +58,7 @@ class PostgresBookingLinkRepository(BookingLinkRepository):
                 PracticeRow.edition,
                 PracticeRow.is_active,
                 PracticeRow.deleted_at,
+                PracticeRow.provisioning_status,
             )
             .outerjoin(PracticeRow, PracticeRow.id == BookingLinkRow.practice_id)
             .where(BookingLinkRow.slug == slug, BookingLinkRow.deleted_at.is_(None))
@@ -65,12 +66,17 @@ class PostgresBookingLinkRepository(BookingLinkRepository):
         result = self._session.execute(stmt).one_or_none()
         if result is None:
             return None
-        row, schema_name, edition, practice_is_active, practice_deleted_at = result
+        row, schema_name, edition, practice_is_active, practice_deleted_at, provisioning = result
         link = _row_to_link(row)
         link.practice_schema = schema_name
         link.practice_edition = edition
         if schema_name is not None:
-            link.practice_is_active = practice_is_active and practice_deleted_at is None
+            # A practice whose schema is not built, archived, or still being
+            # provisioned has nothing to book against: closed, like an
+            # inactive one.
+            link.practice_is_active = (
+                practice_is_active and practice_deleted_at is None and provisioning == SCHEMA_READY
+            )
         return link
 
     def get(self, link_id: str, user_id: str) -> BookingLink | None:

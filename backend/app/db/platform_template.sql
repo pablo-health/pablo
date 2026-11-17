@@ -631,7 +631,7 @@ CREATE TABLE platform.practices (
     CONSTRAINT ck_practices_edition CHECK (((edition)::text = ANY (ARRAY[('therapist'::character varying)::text, ('personal'::character varying)::text]))),
     CONSTRAINT ck_practices_people_term CHECK (((people_term)::text = ANY (ARRAY[('clients'::character varying)::text, ('patients'::character varying)::text]))),
     CONSTRAINT practices_pentest_schema_name CHECK ((is_pentest = ((schema_name)::text ~~ like_escape('practice\_pentest\_%'::text, '\'::text)))),
-    CONSTRAINT practices_provisioning_status_chk CHECK (((provisioning_status)::text = ANY (ARRAY[('in_progress'::character varying)::text, ('ready'::character varying)::text, ('failed'::character varying)::text])))
+    CONSTRAINT practices_provisioning_status_chk CHECK (((provisioning_status)::text = ANY ((ARRAY['pending'::character varying, 'in_progress'::character varying, 'ready'::character varying, 'failed'::character varying, 'archived'::character varying])::text[])))
 );
 
 CREATE TABLE platform.processed_payment_events (

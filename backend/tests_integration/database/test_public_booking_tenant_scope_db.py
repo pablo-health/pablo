@@ -406,6 +406,31 @@ class TestSchemaRouting:
         with pytest.raises(NotFoundError):
             _resolve(_SLUG_ORPHAN, link_repo, user_repo)
 
+    @pytest.mark.parametrize("provisioning_status", ["pending", "archived", "in_progress"])
+    def test_practice_without_a_ready_schema_is_not_found_before_entering_it(
+        self, pg_session, provisioning_status
+    ):
+        """A practice whose schema is not built, archived, or mid-provisioning
+        answers the same 404 as an inactive one, and the session never points
+        at its schema, which may not exist. Rolled back with ``pg_session``."""
+        # A pooled connection can carry an earlier test's search_path.
+        pg_session.execute(text("SET search_path TO public"))
+        pg_session.execute(
+            text(
+                f"UPDATE {PLATFORM_SCHEMA}.practices"  # noqa: S608
+                " SET provisioning_status = :s WHERE id = :id"
+            ),
+            {"s": provisioning_status, "id": _PRACTICE_B},
+        )
+        link_repo = get_booking_link_repository()
+        user_repo = get_user_repository()
+
+        with pytest.raises(NotFoundError):
+            _resolve(_SLUG_B, link_repo, user_repo)
+
+        search_path = pg_session.execute(text("SHOW search_path")).scalar()
+        assert SCHEMA_B not in search_path
+
 
 class TestFreeSlotsScoping:
     """Free-slots reads must come from the resolved schema's own

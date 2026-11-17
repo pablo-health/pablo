@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import jwt
 from fastapi import Depends, HTTPException, Request, status
@@ -831,6 +831,46 @@ _PROVISIONING_POLL_ROUNDS = 5
 PROVISIONING_UNAVAILABLE_EVENT = "provisioning_unavailable"
 
 
+#: Statuses of a practice whose schema does not exist in the database: not
+#: built yet (``pending``) or stored outside it and dropped (``archived``).
+#: Neither changes by waiting a second, so the gate answers at once and leaves
+#: building or restoring to whoever handles the 503.
+_PROVISIONING_NOT_BUILT = frozenset({"pending", "archived"})
+
+
+def _raise_practice_not_built(practice_id: str, provisioning_status: str) -> NoReturn:
+    """Turn a request away from a practice whose schema is not in the database.
+
+    An expected state, not an incident: a practice registered but never signed
+    in to, or one archived while idle. INFO, under the same ``event`` as the
+    other provisioning answers so one query still finds them all.
+    """
+    logger.info(
+        "provisioning_unavailable practice_id=%s status=%s",
+        practice_id,
+        provisioning_status,
+        extra={
+            "event": PROVISIONING_UNAVAILABLE_EVENT,
+            "practice_id": practice_id,
+            "provisioning_status": provisioning_status,
+        },
+    )
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail={
+            "error": {
+                "code": "TENANT_PROVISIONING_PENDING",
+                "message": "Your practice is being set up.",
+                "details": {
+                    "practice_id": practice_id,
+                    "provisioning_status": provisioning_status,
+                },
+            }
+        },
+        headers={"Retry-After": "1"},
+    )
+
+
 def _await_provisioning_ready(practice_id: str) -> None:
     """Block until a freshly-async-provisioned tenant flips to ready.
 
@@ -842,7 +882,9 @@ def _await_provisioning_ready(practice_id: str) -> None:
     would try to read an empty per-tenant schema and 500.
 
     Polls the row up to ``_PROVISIONING_POLL_ROUNDS`` times with a
-    short interval. On ``ready`` returns; on ``failed`` raises 503 with
+    short interval. On ``ready`` returns; on ``pending`` or ``archived``
+    raises 503 at once, without polling (see ``_raise_practice_not_built``);
+    on ``failed`` raises 503 with
     a permanent message; on persistent ``in_progress`` raises 503 with
     Retry-After so the caller retries.
     """
@@ -856,6 +898,8 @@ def _await_provisioning_ready(practice_id: str) -> None:
             row = db.get(PracticeRow, practice_id)
         if row is None or row.provisioning_status == "ready":
             return
+        if row.provisioning_status in _PROVISIONING_NOT_BUILT:
+            _raise_practice_not_built(practice_id, row.provisioning_status)
         if row.provisioning_status == "failed":
             # Every request from this practice fails until an operator
             # intervenes, so this is an ERROR, not a client-side 503 to shrug

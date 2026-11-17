@@ -46,6 +46,15 @@ class PlatformBase(DeclarativeBase):
     __table_args__ = {"schema": PLATFORM_SCHEMA}
 
 
+#: The one ``provisioning_status`` whose schema is known to be complete. Every
+#: other value names a practice with no schema (``pending``, ``archived``) or a
+#: partial one (``in_progress``, ``failed``). Walkers filter on this rather than
+#: on what they exclude, so a status added later is skipped until someone
+#: decides otherwise: ``SET search_path`` to a missing schema succeeds silently
+#: and the first query then fails with ``relation does not exist``.
+SCHEMA_READY = "ready"
+
+
 class PracticeRow(PlatformBase):
     __tablename__ = "practices"
 
@@ -101,7 +110,10 @@ class PracticeRow(PlatformBase):
     # rows reach once the background ``provision_tenant`` task succeeds.
     # ``failed`` means the background task raised; operator intervention
     # required.  THERAPY-da7t (and the migration adding it,
-    # a4f7e2c81b9d, in the same commit).
+    # a4f7e2c81b9d, in the same commit). ``pending`` (registered, schema
+    # not built yet) and ``archived`` (schema stored outside the database
+    # and dropped) mean there is no schema at all: the auth path answers
+    # them at once, and every practice walker skips anything not ``ready``.
     provisioning_status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="ready", server_default="ready"
     )
@@ -161,9 +173,9 @@ class PracticeRow(PlatformBase):
             "people_term IN ('clients', 'patients')",
             name="ck_practices_people_term",
         ),
-        # Added by ``a4f7e2c81b9d``.
+        # Added by ``a4f7e2c81b9d``; ``e4b9c2d71a63`` added pending and archived.
         CheckConstraint(
-            "provisioning_status IN ('in_progress', 'ready', 'failed')",
+            "provisioning_status IN ('pending', 'in_progress', 'ready', 'failed', 'archived')",
             name="practices_provisioning_status_chk",
         ),
         # Added by ``d7a3f1c8e2b4``; ``b8e3f5a1c724`` lowered the floor from

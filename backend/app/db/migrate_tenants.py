@@ -57,6 +57,7 @@ from . import (
     _validate_schema_name,
     enable_rls_on_schema,
 )
+from .platform_models import SCHEMA_READY
 from .provisioning import _ALEMBIC_INI_PATH
 
 if TYPE_CHECKING:
@@ -140,7 +141,12 @@ def reconcile_tenant_rls(engine: Engine, schema: str) -> RlsReconcileCounts:
 
 
 def list_active_tenant_schemas(engine: Engine) -> list[str]:
-    """Return schema names for active practices, excluding the template."""
+    """Return schema names for active, ready practices, excluding the template.
+
+    Ready only (see :data:`SCHEMA_READY`): a practice whose schema is not built,
+    archived, or still being provisioned has nothing to migrate, and provisioning
+    builds a schema at head anyway.
+    """
     with engine.connect() as conn:
         rows = conn.execute(
             # Operator migration: only the PLATFORM_SCHEMA constant interpolated (noqa S608).
@@ -148,8 +154,10 @@ def list_active_tenant_schemas(engine: Engine) -> list[str]:
             text(
                 f"SELECT schema_name FROM {PLATFORM_SCHEMA}.practices"  # noqa: S608
                 " WHERE is_active = TRUE"
+                " AND provisioning_status = :ready"
                 " ORDER BY schema_name"
-            )
+            ),
+            {"ready": SCHEMA_READY},
         ).fetchall()
     return [row[0] for row in rows if row[0] != DEFAULT_PRACTICE_SCHEMA]
 
@@ -157,7 +165,10 @@ def list_active_tenant_schemas(engine: Engine) -> list[str]:
 def list_active_practice_registry(
     engine: Engine, *, include_pentest: bool = True
 ) -> list[tuple[str, str]]:
-    """Return ``(schema_name, practice_id)`` for every active practice row.
+    """Return ``(schema_name, practice_id)`` for every active, ready practice row.
+
+    Ready only, as in :func:`list_active_tenant_schemas`: a scheduled job that
+    walked into a practice with no schema would fail on its first query.
 
     Unlike :func:`list_active_tenant_schemas`, this **includes** the template
     ``practice`` schema so solo/Core installs (and any row whose
@@ -182,13 +193,14 @@ def list_active_practice_registry(
         # nosemgrep
         f"SELECT schema_name, id FROM {PLATFORM_SCHEMA}.practices"  # noqa: S608
         " WHERE is_active = TRUE"
+        " AND provisioning_status = :ready"
     )
     if not include_pentest:
         sql += " AND is_pentest = FALSE"
     sql += " ORDER BY schema_name"
 
     with engine.connect() as conn:
-        rows = conn.execute(text(sql)).fetchall()
+        rows = conn.execute(text(sql), {"ready": SCHEMA_READY}).fetchall()
     return [(row[0], row[1]) for row in rows]
 
 
