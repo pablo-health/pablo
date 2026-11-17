@@ -112,8 +112,11 @@ class PasskeyService:
             user_name=account_email,
             user_display_name=account_email,
             attestation=AttestationConveyancePreference(self._settings.webauthn_attestation),
+            # Sign-in is usernameless (empty allowCredentials), so only a
+            # discoverable credential can ever be used. PREFERRED let a key
+            # register a non-discoverable one that then fails every sign-in.
             authenticator_selection=AuthenticatorSelectionCriteria(
-                resident_key=ResidentKeyRequirement.PREFERRED,
+                resident_key=ResidentKeyRequirement.REQUIRED,
                 user_verification=UserVerificationRequirement.REQUIRED,
             ),
             exclude_credentials=[

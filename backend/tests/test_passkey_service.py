@@ -121,6 +121,17 @@ class TestEnrolmentGate:
         )
         assert "challenge" in options
 
+    def test_registration_requires_a_discoverable_credential(self) -> None:
+        # Sign-in sends an empty allowCredentials list, so a credential the
+        # authenticator does not keep (non-discoverable) can never sign in.
+        service, _credentials, _challenges = _build_service()
+        options = service.begin_registration(
+            user_id=USER_ID, account_email="t@pablo.health", session_mfa_satisfied=False
+        )
+        selection = options["authenticatorSelection"]
+        assert selection["residentKey"] == "required"
+        assert selection["requireResidentKey"] is True
+
 
 def _registration_credential(challenge: bytes) -> dict[str, Any]:
     client_data = json.dumps(
