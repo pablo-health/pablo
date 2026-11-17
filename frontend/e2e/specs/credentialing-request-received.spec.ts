@@ -66,5 +66,9 @@ test("a clinician who never asked is not told she has no applications", async ({
 
   // ...and the front door for somebody who has not started is still the
   // lookup, which is the screen this page exists to open on.
-  await expect(page.getByLabel(/NPI/i).first()).toBeVisible({ timeout: 15_000 })
+  // The step's heading, not its field: whether the field shows depends on
+  // whether an earlier spec left an NPI on this shared clinician's profile.
+  await expect(page.getByRole("heading", { name: "Let's start with your NPI" })).toBeVisible({
+    timeout: 15_000,
+  })
 })

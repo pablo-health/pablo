@@ -85,7 +85,12 @@ export function NpiLookupStep({ onConfirmed }: { onConfirmed?: (npi: string) => 
   const { data: lookup, isLoading: lookingUp, error } = useNpiLookup(activeNpi)
 
   const wellFormed = /^\d{10}$/.test(draft.trim())
-  const showForm = activeNpi === null || editing || (lookup !== undefined && !lookup.found)
+  // "Nothing to look up" only means she has no NPI once her record has
+  // arrived. Before that it means we do not know yet, and the form must wait:
+  // shown early, it is replaced by her NPI's lookup the moment the record
+  // lands, taking whatever she had started typing with it.
+  const showForm =
+    (activeNpi === null && !userLoading) || editing || (lookup !== undefined && !lookup.found)
 
   function search() {
     if (!wellFormed) return
