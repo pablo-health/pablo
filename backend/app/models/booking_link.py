@@ -88,7 +88,8 @@ class BookingLink:
     # Populated only by ``get_by_slug``, alongside practice_schema; None
     # in a single-schema deployment (no practice row) or when unset.
     practice_edition: str | None = None
-    # Whether the owning practice is active. Populated only by
+    # Whether the owning practice is active and its schema is ready to
+    # serve (``provisioning_status = 'ready'``). Populated only by
     # ``get_by_slug``, alongside practice_schema; None when there is no
     # practice row (single-tenant deployment), in which case the public
     # surface has no practice-level reason to refuse the link.

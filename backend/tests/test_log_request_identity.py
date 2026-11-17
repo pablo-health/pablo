@@ -271,6 +271,49 @@ class TestProvisioningUnavailableIsLogged:
         assert record["provisioning_status"] == "in_progress"
         assert record["practice_id"] == "practice-new"
 
+    @pytest.mark.parametrize("not_built", ["pending", "archived"])
+    def test_a_practice_with_no_schema_is_answered_at_once(self, not_built: str) -> None:
+        """No poll rounds and no sleep: waiting does not build a schema."""
+        db = MagicMock()
+        db.get.return_value = SimpleNamespace(provisioning_status=not_built)
+        session = MagicMock()
+        session.__enter__.return_value = db
+        with (
+            _json_logs("app.auth.service") as buf,
+            patch("app.db.create_standalone_session", return_value=session),
+            patch("time.sleep") as slept,
+            pytest.raises(HTTPException) as raised,
+        ):
+            _await_provisioning_ready("practice-later")
+
+        slept.assert_not_called()
+        assert db.get.call_count == 1
+        assert raised.value.status_code == 503
+        assert raised.value.headers == {"Retry-After": "1"}
+        assert raised.value.detail == {
+            "error": {
+                "code": "TENANT_PROVISIONING_PENDING",
+                "message": "Your practice is being set up.",
+                "details": {"practice_id": "practice-later", "provisioning_status": not_built},
+            }
+        }
+        (record,) = _records(buf)
+        assert record["level"] == "INFO"
+        assert record["event"] == PROVISIONING_UNAVAILABLE_EVENT
+        assert record["provisioning_status"] == not_built
+        assert record["practice_id"] == "practice-later"
+
+    def test_in_progress_and_failed_keep_their_answers(self) -> None:
+        with _practice_row("in_progress"), pytest.raises(HTTPException) as in_progress:
+            _await_provisioning_ready("practice-new")
+        assert in_progress.value.detail["error"]["code"] == "TENANT_PROVISIONING_IN_PROGRESS"
+        assert in_progress.value.headers == {"Retry-After": "5"}
+
+        with _practice_row("failed"), pytest.raises(HTTPException) as failed:
+            _await_provisioning_ready("practice-stuck")
+        assert failed.value.detail["error"]["code"] == "TENANT_PROVISIONING_FAILED"
+        assert failed.value.headers is None
+
     def test_ready_practice_logs_nothing(self) -> None:
         with _json_logs("app.auth.service") as buf, _practice_row("ready"):
             _await_provisioning_ready("practice-ok")

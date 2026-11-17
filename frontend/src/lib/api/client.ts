@@ -11,6 +11,7 @@ import { getClientAuthProvider } from "@/lib/auth/provider"
 import { BACKGROUND_REQUEST_HEADER, isBackgroundRequest } from "./backgroundRequests"
 import { apiErrorInterceptors } from "./client.extensions"
 import { forwardedClientHeaders } from "./clientForwarding"
+import { waitOutPracticeSetup } from "./practiceSetup"
 
 /**
  * Observe a failed response before its body is consumed and return a partial
@@ -482,6 +483,18 @@ export async function apiClient<T>(
       if (retryCodes.has(retryCode)) {
         response = await doFetch(true)
       }
+    }
+
+    // A practice that is still being set up answers 503 with a Retry-After.
+    // Hold the request and ask again, with the page showing a setup state,
+    // rather than fail it (see `practiceSetup.ts`). Client-side and
+    // client-managed tokens only: a server render cannot show the state, and
+    // a caller that owns its token owns its retries.
+    if (response.status === 503 && !token && auth !== "none" && typeof window !== "undefined") {
+      response = await waitOutPracticeSetup(response, {
+        codeOf: peekErrorCode,
+        refetch: () => doFetch(false),
+      })
     }
 
     // Response observers run on every response, before the body is consumed
