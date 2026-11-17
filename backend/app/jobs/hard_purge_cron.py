@@ -26,11 +26,11 @@ the whole purge back rather than leaving an audit row claiming a deletion that
 didn't happen. The BAA §7 Stage 2 promise covers audio of soft-deleted patients
 regardless of the per-practice audio retention slider.
 
-The clinical-row delete removes every patient-associated surface: appointments,
-notes, therapy_sessions, patient_source_mappings, chat history
-(chat_conversations + chat_messages — which have no FK cascade from patients),
-patient_documents (FK cascade), and the patients row itself. A hard purge
-leaves zero rows and zero blobs for the patient across all surfaces.
+The clinical-row delete removes every table that names the client: the ones
+in ``_PATIENT_ROW_TABLES`` by ``patient_id`` (those with no foreign key to
+``patients``, or one that would keep or block), then the patients row, whose
+delete cascades to the rest. A hard purge leaves zero rows and zero blobs for
+the client across all surfaces.
 
 Invoked from repo ``backend/``::
 
@@ -178,22 +178,53 @@ def _append_purge_audit(conn: Any, schema: str, patient_id: str) -> None:
     )
 
 
+#: Tables holding a client's rows that the ``patients`` delete does not
+#: reach, or reaches in the wrong order, deleted first by ``patient_id``.
+#: Each is in ``app.db.PATIENT_PURGE_TABLES`` with ``delete`` where row-level
+#: security applies to it; ``companion_sessions`` and
+#: ``companion_auth_challenges`` are not row-scoped.
+#:
+#: * No foreign key to ``patients`` at all: intake submissions and
+#:   assignments (an assignment's answers, signatures, artifacts and review
+#:   events cascade from it), charges, the saved payment method, portal
+#:   sessions and sign-in challenges, and calendar events answered with the
+#:   client.
+#: * ``tasks`` cascades as ``SET NULL``, which would keep the task's text,
+#:   often naming the client, detached from any chart. Subtasks go with
+#:   their parent.
+#: * Message threads cascade from ``patients``, but a message attachment
+#:   holds its document with ``ON DELETE RESTRICT``, and the cascade can
+#:   reach the document first and fail the whole purge. Deleting the threads
+#:   first takes the messages and attachments with them.
+#: * The first five cascade from ``patients`` too; they are deleted here
+#:   by name, as they always have been.
+#:
+#: Order matters only for the threads, which must precede the patients row.
+_PATIENT_ROW_TABLES: tuple[str, ...] = (
+    "appointments",
+    "notes",
+    "therapy_sessions",
+    "patient_source_mappings",
+    "chat_conversations",
+    "patient_message_threads",
+    "patient_intake_assignments",
+    "patient_intake_submissions",
+    "patient_charges",
+    "patient_payment_methods",
+    "companion_sessions",
+    "companion_auth_challenges",
+    "external_calendar_events",
+    "tasks",
+)
+
+
 def _delete_clinical_rows(conn: Any, schema: str, patient_id: str) -> None:
     _validate_schema_name(schema)
     # Operator job: schema validated by _validate_schema_name(); not web-reachable.
     # nosemgrep
     conn.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
-    conn.execute(text("DELETE FROM appointments WHERE patient_id = :pid"), {"pid": patient_id})
-    conn.execute(text("DELETE FROM notes WHERE patient_id = :pid"), {"pid": patient_id})
-    conn.execute(text("DELETE FROM therapy_sessions WHERE patient_id = :pid"), {"pid": patient_id})
-    conn.execute(
-        text("DELETE FROM patient_source_mappings WHERE patient_id = :pid"), {"pid": patient_id}
-    )
-    # Chat history is patient-associated but chat_conversations.patient_id has no
-    # FK to patients, so it is NOT removed by the patients-row cascade. Delete the
-    # messages (defensively, even though chat_messages cascades from its parent
-    # conversation) then the conversations, so a purged patient leaves no chat
-    # rows behind.
+    # chat_messages cascade from their conversation; deleted first anyway so
+    # the purge does not lean on that cascade.
     conn.execute(
         text(
             "DELETE FROM chat_messages WHERE conversation_id IN "
@@ -201,12 +232,17 @@ def _delete_clinical_rows(conn: Any, schema: str, patient_id: str) -> None:
         ),
         {"pid": patient_id},
     )
-    conn.execute(
-        text("DELETE FROM chat_conversations WHERE patient_id = :pid"), {"pid": patient_id}
-    )
-    # patient_documents rows DO cascade from the patients delete below (FK
-    # ON DELETE CASCADE); their GCS blobs are removed separately in run()
-    # before this commit (see _delete_document_blobs).
+    for table in _PATIENT_ROW_TABLES:
+        # Table names are this module's constants; the schema was validated above.
+        # nosemgrep
+        statement = text(f"DELETE FROM {table} WHERE patient_id = :pid")  # noqa: S608
+        conn.execute(statement, {"pid": patient_id})
+    # Everything else that names the client goes with the patients row by
+    # foreign-key cascade, which row-level security does not apply to:
+    # patient_documents (blobs removed in run() before this commit), the
+    # clinical chart tables, claims, and the rows hanging off the tables
+    # deleted above (intake answers, signatures and artifacts off their
+    # assignment; message attachments off their message).
     conn.execute(text("DELETE FROM patients WHERE id = :pid"), {"pid": patient_id})
 
 

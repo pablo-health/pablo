@@ -377,3 +377,208 @@ def test_the_setting_does_not_widen_a_clinicians_session(
     for user_id in (_CLINICIAN_A, _CLINICIAN_B):
         assert visible(user_id, armed=False) == visible(user_id, armed=True)
         assert set(visible(user_id, armed=False).values()) == {1}
+
+
+#: Tables the ``patients`` delete never reached (no foreign key, ``SET NULL``,
+#: or a cascade a ``RESTRICT`` could block), plus the rows that hang off them.
+_LEFT_BEHIND_TABLES = (
+    "patient_intake_assignments",
+    "patient_intake_responses",
+    "patient_intake_submissions",
+    "patient_charges",
+    "patient_payment_methods",
+    "companion_sessions",
+    "companion_auth_challenges",
+    "external_calendar_events",
+    "patient_message_threads",
+    "patient_messages",
+    "patient_message_attachments",
+    "patient_documents",
+)
+
+
+_INTAKE_FORM_TABLES = (
+    "intake_packet_templates",
+    "intake_packet_versions",
+    "intake_item_definitions",
+)
+
+
+def _intake_form(engine: Engine, schema: str) -> dict[str, str]:
+    """One practice intake form with one question. Not a client's row."""
+    ids = {name: str(uuid.uuid4()) for name in ("template", "version", "item")}
+    with engine.begin() as conn:
+        _as(conn, schema)
+        for table in _INTAKE_FORM_TABLES:
+            conn.execute(text(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY"))
+        conn.execute(
+            text(
+                "INSERT INTO intake_packet_templates (id, name, created_at) "
+                "VALUES (CAST(:id AS uuid), 'New client', now())"
+            ),
+            {"id": ids["template"]},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO intake_packet_versions (id, template_id, version, created_at) "
+                "VALUES (CAST(:id AS uuid), CAST(:t AS uuid), 1, now())"
+            ),
+            {"id": ids["version"], "t": ids["template"]},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO intake_item_definitions (id, version_id, key, position, item_type) "
+                "VALUES (CAST(:id AS uuid), CAST(:v AS uuid), 'reason', 0, 'free_text')"
+            ),
+            {"id": ids["item"], "v": ids["version"]},
+        )
+        for table in _INTAKE_FORM_TABLES:
+            conn.execute(text(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY"))
+    return ids
+
+
+def _seed_left_behind_rows(
+    engine: Engine, schema: str, client: dict[str, str], form: dict[str, str], clinician: str
+) -> list[str]:
+    """One of each row the purge used to leave; returns the client's task ids.
+
+    Written with row security un-forced for the transaction: what is under
+    test is the purge, not the paths that write these rows.
+    """
+    pid = client["patient"]
+    ids = {
+        name: str(uuid.uuid4())
+        for name in (
+            "assignment",
+            "thread",
+            "message",
+            "document",
+            "attachment",
+            "task",
+            "subtask",
+        )
+    }
+    tables = (*_LEFT_BEHIND_TABLES, "tasks")
+    statements = (
+        "INSERT INTO patient_intake_assignments (id, patient_id, version_id, status, "
+        "assigned_at, updated_at) VALUES (CAST(:assignment AS uuid), CAST(:pid AS uuid), "
+        "CAST(:version AS uuid), 'submitted', now(), now())",
+        "INSERT INTO patient_intake_responses (id, assignment_id, patient_id, item_id, value, "
+        "created_at, updated_at) VALUES (gen_random_uuid(), CAST(:assignment AS uuid), "
+        'CAST(:pid AS uuid), CAST(:item AS uuid), CAST(\'{"text": "an answer"}\' AS jsonb), '
+        "now(), now())",
+        "INSERT INTO patient_intake_submissions (id, patient_id, submitted_at, payload, "
+        "created_by, created_at) VALUES (CAST(gen_random_uuid() AS text), CAST(:pid AS uuid), "
+        "now(), CAST('{}' AS jsonb), :u, now())",
+        "INSERT INTO patient_charges (id, patient_id, amount_cents, status, kind, method, "
+        "created_by_user_id, created_at) VALUES (CAST(gen_random_uuid() AS text), "
+        "CAST(:pid AS uuid), 15000, 'succeeded', 'session', 'card', :u, now())",
+        "INSERT INTO patient_payment_methods (id, patient_id, stripe_customer_id, "
+        "created_by_user_id, created_at) VALUES (CAST(gen_random_uuid() AS text), "
+        "CAST(:pid AS uuid), 'cus_test', :u, now())",
+        "INSERT INTO companion_sessions (jti, patient_id, issued_at, expires_at, "
+        "chain_started_at) VALUES (CAST(gen_random_uuid() AS text), CAST(:pid AS uuid), "
+        "now(), now() + interval '1 hour', now())",
+        "INSERT INTO companion_auth_challenges (jti, patient_id, created_at, expires_at) "
+        "VALUES (CAST(gen_random_uuid() AS text), CAST(:pid AS uuid), now(), "
+        "now() + interval '10 minutes')",
+        "INSERT INTO external_calendar_events (id, user_id, source, source_event_id, start_at, "
+        "end_at, title, answer, patient_id) VALUES (gen_random_uuid(), CAST(:u AS uuid), "
+        "'ical:test', CAST(gen_random_uuid() AS text), now(), now() + interval '50 minutes', "
+        "'Session', 'client', CAST(:pid AS uuid))",
+        "INSERT INTO patient_documents (id, patient_id, filename, mime_type, gcs_path, "
+        "uploaded_by_patient_id) VALUES (CAST(:document AS uuid), CAST(:pid AS uuid), "
+        "'form.pdf', 'application/pdf', :path, CAST(:pid AS uuid))",
+        "INSERT INTO patient_message_threads (id, patient_id, status, created_at, "
+        "last_message_at) VALUES (CAST(:thread AS uuid), CAST(:pid AS uuid), 'open', now(), now())",
+        "INSERT INTO patient_messages (id, thread_id, patient_id, sender, body, created_at) "
+        "VALUES (CAST(:message AS uuid), CAST(:thread AS uuid), CAST(:pid AS uuid), 'patient', "
+        "'see attached', now())",
+        "INSERT INTO patient_message_attachments (id, message_id, document_id, patient_id, "
+        "created_at) VALUES (CAST(:attachment AS uuid), CAST(:message AS uuid), "
+        "CAST(:document AS uuid), CAST(:pid AS uuid), now())",
+        "INSERT INTO tasks (id, user_id, item_type, label, patient_id, created_at, updated_at) "
+        "VALUES (CAST(:task AS uuid), CAST(:u AS uuid), 'todo', 'Send the release form', "
+        "CAST(:pid AS uuid), now(), now())",
+        "INSERT INTO tasks (id, user_id, item_type, label, parent_task_id, created_at, "
+        "updated_at) VALUES (CAST(:subtask AS uuid), CAST(:u AS uuid), 'todo', 'Print it', "
+        "CAST(:task AS uuid), now(), now())",
+    )
+    params = {
+        **ids,
+        "pid": pid,
+        "u": clinician,
+        "version": form["version"],
+        "item": form["item"],
+        "path": f"documents/{pid}/form.pdf",
+    }
+    with engine.begin() as conn:
+        _as(conn, schema)
+        for table in tables:
+            conn.execute(text(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY"))
+        for statement in statements:
+            conn.execute(text(statement), params)
+        for table in tables:
+            conn.execute(text(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY"))
+    return [ids["task"], ids["subtask"]]
+
+
+def _left_behind(
+    engine: Engine, schema: str, client: dict[str, str], task_ids: list[str]
+) -> dict[str, int]:
+    """Rows left per table, counted with row security un-forced (see ``_rows_left``).
+
+    Tasks are counted by id, so a task the purge only detached still counts.
+    """
+    counts: dict[str, int] = {}
+    with engine.begin() as conn:
+        _as(conn, schema)
+        for table in (*_LEFT_BEHIND_TABLES, "tasks"):
+            conn.execute(text(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY"))
+        for table in _LEFT_BEHIND_TABLES:
+            counts[table] = int(
+                conn.execute(
+                    text(f"SELECT count(*) FROM {table} WHERE patient_id = :pid"),  # noqa: S608
+                    {"pid": client["patient"]},
+                ).scalar_one()
+            )
+        counts["tasks"] = int(
+            conn.execute(
+                text("SELECT count(*) FROM tasks WHERE id = ANY(CAST(:ids AS uuid[]))"),
+                {"ids": task_ids},
+            ).scalar_one()
+        )
+        for table in (*_LEFT_BEHIND_TABLES, "tasks"):
+            conn.execute(text(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY"))
+    return counts
+
+
+def test_the_purge_leaves_none_of_the_rows_no_foreign_key_reached(
+    engine: Engine, tenant_schema: str
+) -> None:
+    """Intake answers, charges, the card on file, portal sign-ins, calendar
+    links, tasks and messages with an attachment go with the client.
+
+    The attachment matters: it holds its document with ``ON DELETE RESTRICT``,
+    and before the threads were deleted first, a client who had sent one could
+    not be purged at all. The control client, not deleted, keeps every row.
+    """
+    form = _intake_form(engine, tenant_schema)
+    old = _seed_client(engine, tenant_schema, clinician=_CLINICIAN_A, deleted_days_ago=45, hour=9)
+    live = _seed_client(
+        engine, tenant_schema, clinician=_CLINICIAN_A, deleted_days_ago=None, hour=13
+    )
+    old_tasks = _seed_left_behind_rows(engine, tenant_schema, old, form, _CLINICIAN_A)
+    live_tasks = _seed_left_behind_rows(engine, tenant_schema, live, form, _CLINICIAN_A)
+
+    assert _run_purge(tenant_schema, _RecordingStorage()) == 0
+
+    assert _left_behind(engine, tenant_schema, old, old_tasks) == dict.fromkeys(
+        (*_LEFT_BEHIND_TABLES, "tasks"), 0
+    )
+    assert set(_rows_left(engine, tenant_schema, old).values()) == {0}
+    assert _left_behind(engine, tenant_schema, live, live_tasks) == {
+        **dict.fromkeys(_LEFT_BEHIND_TABLES, 1),
+        "tasks": 2,
+    }
+    assert set(_rows_left(engine, tenant_schema, live).values()) == {1}

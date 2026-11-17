@@ -2115,6 +2115,8 @@ def _patient_principal_policy_statements(
 #: tests that against the UPDATE policies. ``patient_documents`` and
 #: ``session_dictations`` are read for their storage paths only; their rows go
 #: with the patient by foreign-key cascade, which row security does not apply to.
+#: The rest are deleted by ``patient_id`` first: the job's ``_PATIENT_ROW_TABLES``
+#: says why each one is.
 PATIENT_PURGE_TABLES: dict[str, frozenset[str]] = {
     "patients": frozenset({"read", "lock", "delete"}),
     "appointments": frozenset({"read", "delete"}),
@@ -2125,6 +2127,13 @@ PATIENT_PURGE_TABLES: dict[str, frozenset[str]] = {
     "chat_messages": frozenset({"read", "delete"}),
     "patient_documents": frozenset({"read"}),
     "session_dictations": frozenset({"read"}),
+    "patient_message_threads": frozenset({"read", "delete"}),
+    "patient_intake_assignments": frozenset({"read", "delete"}),
+    "patient_intake_submissions": frozenset({"read", "delete"}),
+    "patient_charges": frozenset({"read", "delete"}),
+    "patient_payment_methods": frozenset({"read", "delete"}),
+    "external_calendar_events": frozenset({"read", "delete"}),
+    "tasks": frozenset({"read", "delete"}),
 }
 
 #: ``coalesce`` because a connection that never set the setting reads it as

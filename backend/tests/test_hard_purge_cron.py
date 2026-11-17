@@ -267,6 +267,37 @@ def test_delete_clinical_rows_purges_chat_and_documents_and_patient() -> None:
         assert table in executed, f"missing {table!r}"
 
 
+def test_delete_clinical_rows_reaches_every_table_no_cascade_does() -> None:
+    """Tables with no cascade from ``patients`` (or a SET NULL / RESTRICT one)
+    are deleted by name, each one armed for the purge, and before the patients
+    row. ``tests_integration/database/test_hard_purge_rls.py`` proves the rows go."""
+    from app.db import PATIENT_PURGE_TABLES  # noqa: PLC0415
+
+    mock_conn = MagicMock()
+    hard_purge_cron._delete_clinical_rows(mock_conn, "practice", "pt-1")
+    deleted = [
+        str(call.args[0]).split()[2]
+        for call in mock_conn.execute.call_args_list
+        if str(call.args[0]).startswith("DELETE FROM")
+    ]
+    for table in (
+        "patient_intake_assignments",
+        "patient_intake_submissions",
+        "patient_charges",
+        "patient_payment_methods",
+        "companion_sessions",
+        "companion_auth_challenges",
+        "external_calendar_events",
+        "patient_message_threads",
+        "tasks",
+    ):
+        assert table in deleted, f"missing {table!r}"
+    assert deleted[-1] == "patients"
+    not_row_scoped = {"companion_sessions", "companion_auth_challenges"}
+    for table in set(deleted) - not_row_scoped:
+        assert "delete" in PATIENT_PURGE_TABLES.get(table, frozenset()), table
+
+
 def test_document_objects_for_patient_collects_gcs_paths() -> None:
     mock_conn = MagicMock()
     mock_conn.execute.return_value.fetchall.return_value = [
