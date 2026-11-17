@@ -81,13 +81,17 @@ from ..services.assemblyai_transcription_service import (
 )
 from ..services.cloud_tasks_service import enqueue_cloud_task
 from ..services.file_storage import FileStorageProvider, file_storage_from_settings
+from ..services.model_standin import model_standin_base_url
 from ..services.session_audio_failure import session_audio_failure_extra
 from ..services.session_service import SessionService
+from ..services.session_transcription_standin import is_standin_job, standin_session_jobs
 from ..services.transcription_keyterms import session_keyterms
 from ..services.transcription_profile import transcription_profile_for_user
 from ..settings import get_settings
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from sqlalchemy.orm import Session
 
     from ..models.session import TherapySession
@@ -577,6 +581,35 @@ def _resolve_submit_target(
     return (therapist_object, client_object, 0.0)
 
 
+def _submit_to_provider(
+    db: Session,
+    storage: FileStorageProvider,
+    channel_objects: tuple[str, str],
+    *,
+    user_id: str,
+    stage: Callable[[str, bytes], str],
+    keyterms: list[str],
+) -> list[dict[str, Any]]:
+    """Submit both channels to the provider; one job each."""
+    settings = get_settings()
+    bucket = settings.transcription_audio_bucket
+    inline_max = settings.transcription_inline_audio_max_bytes
+    therapist_object, client_object = channel_objects
+    therapist_audio = _channel_audio(storage, bucket, therapist_object, inline_max)
+    client_audio = _channel_audio(storage, bucket, client_object, inline_max)
+    service = AssemblyAiTranscriptionService(settings)
+    transcription_profile = transcription_profile_for_user(db, user_id)
+    return asyncio.run(
+        service.submit_dual_channel(
+            therapist_audio=therapist_audio,
+            client_audio=client_audio,
+            audio_url_factory=stage,
+            keyterms=keyterms,
+            transcription_profile=transcription_profile,
+        )
+    )
+
+
 @router.post("/api/internal/assemblyai-submit", status_code=status.HTTP_200_OK)
 def assemblyai_submit(
     request: AssemblyAiSubmitRequest,
@@ -668,19 +701,23 @@ def assemblyai_submit(
             request.session_id,
             len(keyterms),
         )
+        # A practice listed in MODEL_STANDIN_PRACTICES is transcribed by the
+        # stand-in: its jobs come back complete, so the poll asks no provider.
+        standin = model_standin_base_url()
         try:
-            inline_max = settings.transcription_inline_audio_max_bytes
-            therapist_audio = _channel_audio(storage, bucket, therapist_object, inline_max)
-            client_audio = _channel_audio(storage, bucket, client_object, inline_max)
-            service = AssemblyAiTranscriptionService(settings)
-            transcription_profile = transcription_profile_for_user(db, request.user_id)
-            jobs = asyncio.run(
-                service.submit_dual_channel(
-                    therapist_audio=therapist_audio,
-                    client_audio=client_audio,
-                    audio_url_factory=_stage_prepared_audio,
+            jobs = (
+                standin_session_jobs(
+                    standin,
+                    offset_seconds=segment_offset_seconds if segment_index is not None else 0.0,
+                )
+                if standin
+                else _submit_to_provider(
+                    db,
+                    storage,
+                    (therapist_object, client_object),
+                    user_id=request.user_id,
+                    stage=_stage_prepared_audio,
                     keyterms=keyterms,
-                    transcription_profile=transcription_profile,
                 )
             )
         except Exception as exc:
@@ -698,7 +735,10 @@ def assemblyai_submit(
             return {"status": "error"}
 
         if segment_index is not None:
-            jobs = AssemblyAiTranscriptionService.shift_job_offsets(jobs, segment_offset_seconds)
+            if not standin:
+                jobs = AssemblyAiTranscriptionService.shift_job_offsets(
+                    jobs, segment_offset_seconds
+                )
             for job in jobs:
                 job["segment_index"] = segment_index
             session_row.transcription_job_metadata = {
@@ -1010,6 +1050,8 @@ def _delete_completed_jobs(api_key: str, jobs: list[dict]) -> None:
     leaves that job's transcript in AssemblyAI-side storage a bit longer.
     """
     for job in jobs:
+        if is_standin_job(job):
+            continue  # never held by the provider
         transcript_id = job["transcript_id"]
         try:
             AssemblyAiTranscriptionService.delete_transcript(api_key, transcript_id)

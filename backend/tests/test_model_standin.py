@@ -19,9 +19,21 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import pytest
 from app.db import _current_tenant_schema
-from app.models import ChatConversation
-from app.repositories import InMemoryChatRepository, InMemoryNotesRepository
-from app.services import http_chat_llm_gateway, model_standin, structured_llm_gateway
+from app.models import ChatConversation, EhrSystem
+from app.models.ehr_route import GoalNavigationRequest, GoalNavigationResponse
+from app.repositories import (
+    InMemoryChatRepository,
+    InMemoryEhrPromptRepository,
+    InMemoryNotesRepository,
+)
+from app.services import (
+    agent_llm_gateway,
+    ehr_navigation_service,
+    embedding_service,
+    http_chat_llm_gateway,
+    model_standin,
+    structured_llm_gateway,
+)
 from app.services.ai_features import AIFeature
 from app.services.chat_failover import FailoverChatLLMGateway, failover_chat_gateway
 from app.services.chat_llm_gateway import FakeChatLLMGateway, StreamEvent
@@ -672,3 +684,124 @@ class TestDictation:
         settings = get_settings().model_copy(update={"transcription_enabled": False})
 
         assert get_dictation_transcriber(settings) is None
+
+
+class _SentinelError(Exception):
+    """Raised where the real provider's client would have been built."""
+
+
+def _no_provider(*_args: object, **_kwargs: object) -> object:
+    raise _SentinelError
+
+
+class TestEmbeddings:
+    def test_a_listed_practice_is_embedded_by_the_stand_in(
+        self, listed: list[str], stand_in: list[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(embedding_service, "vertex_genai_client", _no_provider)
+        with practice(SCHEMA_A):
+            vectors = embedding_service.GoogleEmbeddingService().embed_texts(["a", "b", "a"])
+
+        assert stand_in == [f"{BASE_URL}/v1/embed"]
+        assert [len(v) for v in vectors] == [768, 768, 768]
+        assert vectors[0] == vectors[2]
+        assert vectors[0] != vectors[1]
+
+    def test_an_unlisted_practice_is_embedded_by_the_provider(
+        self, listed: list[str], stand_in: list[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(embedding_service, "vertex_genai_client", _no_provider)
+        with practice(SCHEMA_B), pytest.raises(RuntimeError) as raised:
+            embedding_service.GoogleEmbeddingService().embed_texts(["a"])
+
+        assert isinstance(raised.value.__cause__, _SentinelError)
+        assert stand_in == []
+
+
+def _tool_never_called(_arguments: dict[str, Any]) -> str:
+    raise AssertionError("the stand-in calls no tools")
+
+
+class TestAgent:
+    def _run(self) -> agent_llm_gateway.AgentResult:
+        return agent_llm_gateway.GeminiAgentLLMGateway().run_agent(
+            model="gemini-2.5-flash",
+            system_prompt="",
+            user_prompt="Look into it.",
+            tools=[agent_llm_gateway.ToolSpec("look", "", {"type": "object"}, _tool_never_called)],
+            response_schema=NOTE_SCHEMA,
+        )
+
+    def test_a_listed_practice_is_answered_by_the_stand_in(
+        self, listed: list[str], stand_in: list[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(agent_llm_gateway, "vertex_genai_client", _no_provider)
+        with practice(SCHEMA_A):
+            result = self._run()
+
+        assert stand_in == [f"{BASE_URL}/v1/structured"]
+        assert result.data == {"subjective": "Stand-in draft for subjective."}
+        assert result.tool_calls == []
+
+    def test_an_unlisted_practice_reaches_the_provider(
+        self, listed: list[str], stand_in: list[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(agent_llm_gateway, "vertex_genai_client", _no_provider)
+        with practice(SCHEMA_B), pytest.raises(_SentinelError):
+            self._run()
+
+        assert stand_in == []
+
+
+class TestEhrNavigation:
+    @staticmethod
+    def _navigate() -> GoalNavigationResponse:
+        service = ehr_navigation_service.GeminiEhrNavigationService(
+            model="gemini-2.5-flash-lite", prompt_repo=InMemoryEhrPromptRepository()
+        )
+
+        async def prompt(_ehr_system: str) -> str:
+            return "Navigate."
+
+        service.get_ehr_prompt = prompt  # type: ignore[method-assign,assignment]
+        request = GoalNavigationRequest(
+            ehr_system=next(iter(EhrSystem)),
+            goal="Open the note",
+            current_url="https://ehr.example/",
+            dom_snapshot="<a>Notes</a>",
+        )
+        return asyncio.run(service.navigate(request))
+
+    def test_a_listed_practice_is_answered_by_the_stand_in(
+        self, listed: list[str], stand_in: list[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(ehr_navigation_service, "vertex_genai_client", _no_provider)
+        monkeypatch.setattr(ehr_navigation_service, "generate_text", _no_provider)
+        with practice(SCHEMA_A):
+            response = self._navigate()
+
+        assert stand_in == [f"{BASE_URL}/v1/structured"]
+        # The stand-in's reply is checked as a model's: no action it names is taken.
+        assert response.action == "none"
+        assert response.is_on_target_page is False
+
+    def test_an_unlisted_practice_reaches_the_provider(
+        self, listed: list[str], stand_in: list[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sent: list[str] = []
+
+        def generate_text(**kwargs: Any) -> str:
+            sent.append(kwargs["model"])
+            return (
+                '{"action": "click", "selector": "a", "reasoning": "", '
+                '"confidence": 0.9, "is_on_target_page": false}'
+            )
+
+        monkeypatch.setattr(ehr_navigation_service, "vertex_genai_client", object)
+        monkeypatch.setattr(ehr_navigation_service, "generate_text", generate_text)
+        with practice(SCHEMA_B):
+            response = self._navigate()
+
+        assert sent == ["gemini-2.5-flash-lite"]
+        assert response.action == "click"
+        assert stand_in == []

@@ -17,6 +17,9 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import httpx
 import pytest
 from app.routes import internal_transcription as it
+from fastapi.testclient import TestClient
+
+from scripts.fake_llm import app as fake_llm_app
 
 _JOB = {"transcript_id": "t1", "speaker": "Therapist", "original_offset": 0.0}
 
@@ -1084,3 +1087,147 @@ def test_meeting_summaries_are_not_judged(caplog) -> None:  # type: ignore[no-un
         )
 
     assert not [r for r in caplog.records if getattr(r, "alert_type", None)]
+
+
+STANDIN_HOST = "http://fake-llm:8083"
+STANDIN_BASE = f"{STANDIN_HOST}/standin"
+
+
+@pytest.fixture
+def session_stand_in(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Answer the stand-in's POSTs from the real ``scripts/fake_llm.py``; return the URLs."""
+    client = TestClient(fake_llm_app)
+    urls: list[str] = []
+
+    def post(url: str, **kwargs: object) -> httpx.Response:
+        urls.append(url)
+        kwargs.pop("timeout", None)
+        response: httpx.Response = client.post(url.removeprefix(STANDIN_HOST), **kwargs)  # type: ignore[arg-type]
+        return response
+
+    monkeypatch.setattr(httpx, "post", post)
+    return urls
+
+
+class TestStandinPractice:
+    """A practice routed to the model stand-in is transcribed by it, never the provider."""
+
+    def _submit(
+        self, standin: str | None, session_row: object, segment_index: int | None = None
+    ) -> tuple[dict[str, str], MagicMock, MagicMock]:
+        cm, _db = _fake_session_db(session_row)
+        fake_storage = _small_channel_storage()
+        fake_storage.download_bytes.side_effect = [b"therapist-bytes", b"client-bytes"]
+        service = MagicMock()
+        service.submit_dual_channel = AsyncMock(return_value=[dict(_JOB)])
+        with (
+            patch.object(it, "model_standin_base_url", return_value=standin),
+            patch.object(it, "_resolve_schema_for_user", return_value="practice_a_schema"),
+            patch.object(it, "arm_current_user_id"),
+            patch.object(it, "create_standalone_session", return_value=cm),
+            patch.object(it, "file_storage_from_settings", return_value=fake_storage),
+            patch.object(it, "AssemblyAiTranscriptionService", return_value=service),
+            patch.object(it, "transcription_profile_for_user", return_value="standard"),
+            patch.object(it, "get_settings", return_value=_submit_settings()),
+            patch.object(it, "enqueue_cloud_task") as mock_enqueue,
+        ):
+            result = it.assemblyai_submit(
+                it.AssemblyAiSubmitRequest(
+                    session_id="s1", user_id="u1", segment_index=segment_index
+                ),
+                _invoker=None,
+            )
+        return result, service, mock_enqueue
+
+    @staticmethod
+    def _row(metadata: dict[str, object] | None = None) -> types.SimpleNamespace:
+        return types.SimpleNamespace(
+            video_platform=None,
+            patient_id="p1",
+            transcription_job_metadata=metadata,
+            audio_gcs_path="audio/s1/therapist.pcm,audio/s1/client.pcm",
+            status="transcribing",
+            error=None,
+        )
+
+    def test_a_listed_practice_is_submitted_to_the_stand_in(
+        self, session_stand_in: list[str]
+    ) -> None:
+        session_row = self._row()
+
+        result, service, mock_enqueue = self._submit(STANDIN_BASE, session_row)
+
+        assert result["status"] == "ok"
+        assert session_stand_in == [f"{STANDIN_BASE}/v1/transcribe-session"]
+        service.submit_dual_channel.assert_not_called()
+        jobs = session_row.transcription_job_metadata["jobs"]
+        assert [job["speaker"] for job in jobs] == ["Therapist", "Client"]
+        assert all(job["standin"] and job["utterances"] for job in jobs)
+        mock_enqueue.assert_called_once()
+
+    def test_an_unlisted_practice_is_submitted_to_the_provider(
+        self, session_stand_in: list[str]
+    ) -> None:
+        session_row = self._row()
+
+        result, service, _ = self._submit(None, session_row)
+
+        assert result["status"] == "ok"
+        service.submit_dual_channel.assert_awaited_once()
+        assert session_stand_in == []
+        assert session_row.transcription_job_metadata["jobs"] == [_JOB]
+
+    def test_a_listed_segment_lands_at_its_place_in_the_session(
+        self, session_stand_in: list[str]
+    ) -> None:
+        session_row = self._row(
+            {
+                "provider": "assemblyai",
+                "final": False,
+                "segments": [
+                    {
+                        "index": 0,
+                        "offset_seconds": 300.0,
+                        "therapist": "audio/s1/therapist.seg000.pcm",
+                        "client": "audio/s1/client.seg000.pcm",
+                    }
+                ],
+            }
+        )
+
+        self._submit(STANDIN_BASE, session_row, segment_index=0)
+
+        jobs = session_row.transcription_job_metadata["jobs"]
+        assert all(job["segment_index"] == 0 for job in jobs)
+        assert min(u["start"] for job in jobs for u in job["utterances"]) >= 300.0
+
+    def test_the_poll_asks_the_provider_nothing_for_stand_in_jobs(
+        self, session_stand_in: list[str]
+    ) -> None:
+        session_row = self._row()
+        self._submit(STANDIN_BASE, session_row)
+        cm, _db = _fake_session_db(session_row)
+
+        with (
+            patch.object(it, "_resolve_schema_for_user", return_value=None),
+            patch.object(it, "create_standalone_session", return_value=cm),
+            patch.object(it, "get_settings", return_value=_poll_settings()),
+            patch.object(it.AssemblyAiTranscriptionService, "check_job_status") as mock_check,
+            patch.object(it.AssemblyAiTranscriptionService, "delete_transcript") as mock_delete,
+            patch.object(
+                it,
+                "process_transcription_result",
+                return_value={"id": "s1", "status": "processing", "message": "ok"},
+            ) as mock_process,
+            patch.object(it, "_delete_staged_speech_objects"),
+        ):
+            it.transcription_poll(
+                it.TranscriptionPollRequest(session_id="s1", user_id="u1"),
+                _invoker=None,
+            )
+
+        mock_check.assert_not_called()
+        mock_delete.assert_not_called()
+        transcript = mock_process.call_args.kwargs["transcript_content"]
+        assert "Therapist: Stand-in session. How was the week?" in transcript
+        assert "Client: Stand-in session. The week was steady." in transcript
