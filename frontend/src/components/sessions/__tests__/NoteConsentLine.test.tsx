@@ -19,6 +19,11 @@ import type { AiConsentEntry, AiConsentRecord } from "@/types/aiConsent"
 const mockUseAiConsent = vi.fn()
 const mockAsks = vi.fn()
 
+// The consent dialog reads the clinician's timezone for its date field.
+vi.mock("@/hooks/usePreferences", () => ({
+  useUserTimeZone: () => "America/New_York",
+}))
+
 vi.mock("@/hooks/useAiConsent", () => ({
   useAiConsent: (...args: unknown[]) => mockUseAiConsent(...args),
   useAsksClientsAboutAiNotes: () => mockAsks(),
