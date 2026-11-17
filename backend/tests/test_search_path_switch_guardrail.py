@@ -35,7 +35,7 @@ _REVIEWED = {
     "db/provisioning.py": 4,
     "db/single_practice_migration.py": 1,
     "jobs/audit_retention_cron.py": 2,
-    "jobs/hard_purge_cron.py": 6,
+    "jobs/hard_purge_cron.py": 7,
     "jobs/hipaa_attestation.py": 1,
     "payments/reconcile.py": 1,
 }

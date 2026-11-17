@@ -217,14 +217,17 @@ What the code does today, not what is planned.
   confirms they have met their own record-retention obligations.
   (`backend/app/routes/patients.py`)
 - **After 30 days the client is permanently removed**: the record, notes,
-  sessions and their audio, appointments, chat history and uploaded
-  documents. `hard_purge_cron` does this daily at 02:00 UTC on the VM, and
-  nightly before the backup on a local install.
-- **Not yet removed by the purge:** intake questionnaires and their
-  answers, charges and saved payment methods, companion recording sessions,
-  links to calendar events, and tasks (which stay, detached from the
-  client). These stay in the database after the purge until the job covers
-  them.
+  sessions and their audio, appointments, chat history, messages, uploaded
+  documents, intake forms and answers, charges and the saved card, portal
+  sign-ins, calendar events matched to the client, and tasks about the
+  client with any files attached to them. `hard_purge_cron` does this daily
+  at 02:00 UTC on the VM, and nightly before the backup on a local install.
+- **Compliance tasks stay.** A license, supervision or other compliance
+  task linked to the client is your record, not theirs. It is kept with
+  its files and no longer linked to the client.
+- **Charges are removed with the client.** If you keep financial records
+  for longer, keep them outside Pablo: your card processor holds its own
+  record of each payment.
 - **The purge itself** leaves one audit entry with the client's internal ID
   and the time. No name or date of birth is kept.
 - **Session audio** can also be deleted sooner: when a note is signed, or
