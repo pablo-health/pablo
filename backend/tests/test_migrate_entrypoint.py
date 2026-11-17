@@ -22,9 +22,10 @@ test of a smaller claim.
 from __future__ import annotations
 
 import importlib.util
+import logging
 import sys
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -109,11 +110,17 @@ class _PreflightError(RuntimeError):
 
 
 def _install(
-    monkeypatch: pytest.MonkeyPatch, recorder: _Recorder, calls: list[str] | None = None
+    monkeypatch: pytest.MonkeyPatch,
+    recorder: _Recorder,
+    calls: list[str] | None = None,
+    *,
+    backfill: Any = None,
 ) -> None:
     """Point the entrypoint's lazy imports at the recorder.
 
-    ``calls`` records the order of the practice migration and provisioning.
+    ``calls`` records the order of the practice migration, provisioning and the
+    membership backfill. ``backfill`` replaces the backfill's return (or, as an
+    exception, what it raises).
     """
     db_mod = ModuleType("app.db")
     db_mod.get_engine = MagicMock  # type: ignore[attr-defined]
@@ -129,6 +136,17 @@ def _install(
 
         recorder.is_migrated = _recording_is_migrated  # type: ignore[method-assign]
     monkeypatch.setitem(sys.modules, "app.db.provisioning", provisioning)
+
+    members = ModuleType("app.db.practice_members")
+
+    def _backfill(_engine: Any) -> Any:
+        (calls if calls is not None else []).append("backfill")
+        if isinstance(backfill, BaseException):
+            raise backfill
+        return backfill or SimpleNamespace(inserted=0, unmembered=0)
+
+    members.backfill = _backfill  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "app.db.practice_members", members)
 
     spm = ModuleType("app.db.single_practice_migration")
     spm.PreflightError = _PreflightError  # type: ignore[attr-defined]
@@ -153,7 +171,60 @@ def test_an_upgrade_provisions_after_the_practice_migration(
     _install(monkeypatch, _Recorder(migrated=True), calls)
 
     assert migrate_entrypoint._after_upgrade() == 0
-    assert calls == ["practice-migration", "provision"]
+    assert calls == ["practice-migration", "provision", "backfill"]
+
+
+def test_the_backfill_reports_accounts_it_could_not_give_a_membership(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Nothing routes by membership yet, so an account left without one is an
+    ERROR to read, not a reason to stop the deploy."""
+    _install(
+        monkeypatch,
+        _Recorder(migrated=True),
+        [],
+        backfill=SimpleNamespace(inserted=3, unmembered=2),
+    )
+
+    with caplog.at_level(logging.ERROR, logger=migrate_entrypoint.logger.name):
+        assert migrate_entrypoint._after_upgrade() == 0
+
+    line = "practice_members backfill: 3 inserted; 2 mapped accounts without a membership"
+    assert line in capsys.readouterr().out
+    assert [r.getMessage() for r in caplog.records] == [line]
+
+
+def test_a_complete_backfill_logs_no_error(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _install(
+        monkeypatch,
+        _Recorder(migrated=True),
+        [],
+        backfill=SimpleNamespace(inserted=5, unmembered=0),
+    )
+
+    with caplog.at_level(logging.ERROR, logger=migrate_entrypoint.logger.name):
+        assert migrate_entrypoint._after_upgrade() == 0
+
+    assert "practice_members backfill: 5 inserted; 0 mapped" in capsys.readouterr().out
+    assert caplog.records == []
+
+
+def test_a_failing_backfill_does_not_stop_the_deploy(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _install(monkeypatch, _Recorder(migrated=True), [], backfill=RuntimeError("row (a@b.c)"))
+
+    assert migrate_entrypoint._after_upgrade() == 0
+    out = capsys.readouterr().out
+    assert "practice_members backfill failed (RuntimeError)" in out
+    assert "a@b.c" not in out
 
 
 def test_a_refusing_preflight_stops_before_provisioning(monkeypatch: pytest.MonkeyPatch) -> None:

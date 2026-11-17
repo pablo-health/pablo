@@ -72,3 +72,30 @@ route refuses rather than writing a grant that would resolve to nothing.
 That is a real behaviour change and it is deliberate: an invitation is
 into somebody's practice, and an invitation into no practice is an
 account that signs in successfully and lands nowhere.
+
+## Memberships are recorded beside the mapping (2026-11-17)
+
+An address is a poor key for an account: it can change, and an old address
+can later be granted somewhere else. So each account's practice is now also
+recorded against the account itself, in `platform.practice_members` (one row
+per account). For now the row is recorded and compared, and decides nothing:
+the mapping above still routes every request.
+
+- **Who writes it.** A request whose address the sign-in token verified
+  (`get_tenant_context`, the schema middleware) writes the account's row the
+  first time it resolves through the mapping (`joined_via = 'email_claim'`).
+  Callers that pass the address stored on the account never write: that
+  address is set once and not refreshed. The migrate step gives every
+  already-mapped account its row (`'backfill'`) and prints how many mapped
+  accounts are still without one.
+- **The grant is checked as the row is written.** The claim is one statement
+  that inserts only while the address is still mapped to that practice and the
+  practice is active, so a revoke that lands mid-request leaves nothing behind.
+- **Disagreement is logged, not acted on.** When an account's row names a
+  different practice than its address maps to, the request still goes where
+  the mapping says, and `practice_membership_disagrees` is logged at INFO with
+  the account and both practice ids, never the address. That log is the
+  evidence for letting the membership route.
+- **A membership does not outlive its practice.** Whatever deactivates a
+  practice calls `app.db.practice_members.remove_for_practice` in the same
+  transaction.

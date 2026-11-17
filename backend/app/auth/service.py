@@ -590,7 +590,7 @@ def get_tenant_context(
         # schema-resolving middleware and ``_resolve_user`` apply the same rule.
         raise _email_not_verified_error()
     if email:
-        practice = _resolve_practice(resolved_user_id, email)
+        practice = _resolve_practice(resolved_user_id, email, may_claim=True)
         if practice:
             practice_id, schema_name = practice
             # Bound before the provisioning wait so a 503 from it is
@@ -693,21 +693,79 @@ def _extract_email(decoded_token: dict[str, Any]) -> str:
     return email.lower() if email else ""
 
 
-def _resolve_practice(user_id: str | None, email: str | None) -> tuple[str, str] | None:
+def _resolve_practice(
+    user_id: str | None, email: str | None, *, may_claim: bool = False
+) -> tuple[str, str] | None:
     """The ``(practice_id, schema_name)`` a signed-in account resolves to, or None.
 
     Every caller that needs an account's practice asks here, with the account's
-    own id where it has one and its address. Today the practice is decided by
-    the address alone, through the platform email mapping
-    (``email_tenant_mappings``); ``user_id`` is accepted so the
-    account can take part in that decision without touching the callers again.
-    A caller that holds only the provider's subject id, before the identity row
-    exists, passes None.
+    own id where it has one and its address. The practice is decided by the
+    address alone, through the platform email mapping
+    (``email_tenant_mappings``). A caller that holds only the provider's
+    subject id, before the identity row exists, passes None.
+
+    ``may_claim`` is True only where ``email`` is the address the request's
+    sign-in token verified (``get_tenant_context``, the schema middleware and
+    ``_keep_request_off_the_template``). There the account's membership is
+    recorded and compared with the answer (:func:`_record_membership`). Every
+    other caller passes the address stored on the account, which is not
+    refreshed after it is created, so it never writes.
     """
-    del user_id  # Not consulted yet: the address decides.
     if not email:
         return None
-    return _resolve_practice_from_email(email)
+    practice = _resolve_practice_from_email(email)
+    if may_claim:
+        _record_membership(user_id, email, practice)
+    return practice
+
+
+def _record_membership(user_id: str | None, email: str, practice: tuple[str, str] | None) -> None:
+    """Record the account's membership beside the mapping's answer; decide nothing.
+
+    An account with no membership claims the practice its verified address
+    resolved to (``app.db.practice_members.claim``). An account with one is
+    compared with that answer, and a difference is logged with ids only
+    (``practice_membership_disagrees``), never the address. That log is the
+    evidence membership-first routing ships on: an account that would move is
+    seen before it moves.
+
+    Never raises: a failure here must not change how the request resolves.
+    """
+    from ..db import practice_members
+
+    if user_id is None or not practice_members.is_account_id(user_id):
+        return
+    mapped_practice_id = practice[0] if practice else None
+    try:
+        member_practice_id = practice_members.member_practice_id(user_id)
+    except Exception as exc:
+        # Type only: a database error message can carry row values.
+        logger.warning(
+            "practice_members: membership read failed (%s); routing is unaffected",
+            type(exc).__name__,
+        )
+        return
+    if member_practice_id is None:
+        if mapped_practice_id is not None:
+            practice_members.claim(user_id, mapped_practice_id, email)
+        return
+    if member_practice_id != mapped_practice_id:
+        # INFO, not WARNING: once invitations exist this is an ordinary state
+        # (an invited clinician whose address is mapped to a practice of their
+        # own), and it repeats on every request until routing changes.
+        logger.info(
+            "practice membership and email mapping disagree: user_id=%s "
+            "member_practice_id=%s mapped_practice_id=%s",
+            user_id,
+            member_practice_id,
+            mapped_practice_id,
+            extra={
+                "event": practice_members.MEMBERSHIP_DISAGREES_EVENT,
+                "user_id": user_id,
+                "practice_id": member_practice_id,
+                "mapped_practice_id": mapped_practice_id,
+            },
+        )
 
 
 def _resolve_practice_for_identity(
@@ -728,7 +786,8 @@ def _resolve_practice_for_identity(
             user_id = _lookup_pablo_user_id(
                 request, subject_id, PostgresIdentityRepository(db), provider=provider
             )
-    return _resolve_practice(user_id, email)
+    # The middleware only calls this for an address the issuer verified.
+    return _resolve_practice(user_id, email, may_claim=True)
 
 
 def _resolve_practice_from_email(email: str) -> tuple[str, str] | None:
@@ -923,7 +982,8 @@ def _keep_request_off_the_template(user_id: str, email: str) -> None:
     current = _current_tenant_schema.get()
     if session is None or current not in (None, DEFAULT_PRACTICE_SCHEMA):
         return
-    practice = _resolve_practice(user_id, email) if email else None
+    # ``email`` is the token's, and empty unless the issuer verified it.
+    practice = _resolve_practice(user_id, email, may_claim=True) if email else None
     if practice:
         set_tenant_schema(session, practice[1])
     elif current == DEFAULT_PRACTICE_SCHEMA:

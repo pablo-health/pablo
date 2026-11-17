@@ -145,6 +145,7 @@ PLATFORM_NO_RLS: dict[str, str] = {
     "practice_domain_apexes": f"{_APP_SCOPED} (practice_id, apex)",
     "practice_domains": f"{_APP_SCOPED} (practice_id, domain)",
     "practice_email_senders": f"{_APP_SCOPED} (practice_id)",
+    "practice_members": f"account to practice; {_APP_SCOPED} (user_id)",
     "practice_portal_settings": f"{_APP_SCOPED} (practice_id)",
     "practice_site_versions": f"{_APP_SCOPED} (practice_id)",
     "practice_sites": f"{_APP_SCOPED} (practice_id)",

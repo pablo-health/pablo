@@ -66,7 +66,7 @@ def test_an_unverified_email_is_never_looked_up(monkeypatch) -> None:  # type: i
     the issuer confirms the person controls it, the address identifies nobody —
     so the lookup is not even attempted, and the reason says why."""
 
-    def _must_not_be_called(_user_id: str | None, _email: str) -> None:
+    def _must_not_be_called(_user_id: str | None, _email: str, **_kw: object) -> None:
         raise AssertionError("an unverified email reached the practice lookup")
 
     monkeypatch.setattr("app.auth.service._resolve_practice", _must_not_be_called)
@@ -82,7 +82,7 @@ def test_an_unverified_email_is_never_looked_up(monkeypatch) -> None:  # type: i
 def test_authenticated_with_no_practice_mapping_is_named(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """A valid identity that maps to no practice — reported on its own so it is
     distinguishable from a lookup that failed."""
-    monkeypatch.setattr("app.auth.service._resolve_practice", lambda _user_id, _email: None)
+    monkeypatch.setattr("app.auth.service._resolve_practice", lambda _user_id, _email, **_kw: None)
 
     schema, reason = _resolve_schema_from_request(_request(_identity("someone@example.invalid")))
 
@@ -94,7 +94,7 @@ def test_a_raised_lookup_is_reported_not_swallowed_silently(monkeypatch) -> None
     """A lookup that raises is still swallowed, but it is reported rather than
     passing unremarked — the exception type is what makes it readable."""
 
-    def _boom(_user_id: str | None, _email: str) -> None:
+    def _boom(_user_id: str | None, _email: str, **_kw: object) -> None:
         raise TimeoutError("pool exhausted")
 
     monkeypatch.setattr("app.auth.service._resolve_practice", _boom)
@@ -110,7 +110,7 @@ def test_the_reason_never_carries_the_email_or_the_error_message(monkeypatch) ->
     """The reason is logged, and an exception message can echo the address or
     row that caused it, so only the type is carried."""
 
-    def _boom(_user_id: str | None, _email: str) -> None:
+    def _boom(_user_id: str | None, _email: str, **_kw: object) -> None:
         raise ValueError("no mapping for patient jane.doe@example.invalid")
 
     monkeypatch.setattr("app.auth.service._resolve_practice", _boom)
@@ -124,10 +124,25 @@ def test_the_reason_never_carries_the_email_or_the_error_message(monkeypatch) ->
 def test_a_resolved_identity_returns_its_schema(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setattr(
         "app.auth.service._resolve_practice",
-        lambda _user_id, _email: ("practice-id", "practice_abc123"),
+        lambda _user_id, _email, **_kw: ("practice-id", "practice_abc123"),
     )
 
     schema, reason = _resolve_schema_from_request(_request(_identity("someone@example.invalid")))
 
     assert schema == "practice_abc123"
     assert reason == "resolved"
+
+
+def test_the_middleware_may_record_a_membership(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The middleware resolves with the address the token verified, so it is one
+    of the callers allowed to record the account's membership."""
+    seen: list[bool] = []
+
+    def _resolve(_user_id: str | None, _email: str, *, may_claim: bool = False) -> None:
+        seen.append(may_claim)
+
+    monkeypatch.setattr("app.auth.service._resolve_practice", _resolve)
+
+    _resolve_schema_from_request(_request(_identity("someone@example.invalid")))
+
+    assert seen == [True]
