@@ -1624,6 +1624,103 @@ def register_overlay_not_row_scoped(*table_names: str) -> None:
     _OVERLAY_NOT_ROW_SCOPED.update(table_names)
 
 
+class OwnerScope(NamedTuple):
+    """How one owner-scoped tenant table names the user a row belongs to."""
+
+    #: The column holding the owning user's id, compared as text.
+    owner_column: str
+    #: Rows whose owner column is NULL are shared by every armed user.
+    shared_when_null: bool
+
+
+# Tenant tables a deployment added whose rows each belong to one user, named
+# by a column other than ``user_id`` (``owner_user_id``, ``clinician_id``,
+# ...). The column query in ``enable_rls_on_schema`` keys on ``id`` /
+# ``user_id`` / ``patient_id``, and the direct-ownership shape keys on
+# ``user_id`` alone, so without this registry such a table could only be
+# registered not-row-scoped: users of one practice would then be kept apart
+# by each query's own filter and nothing else. Core registers none; see
+# ``register_overlay_owner_scoped``.
+_OVERLAY_OWNER_SCOPED: dict[str, OwnerScope] = {}
+
+#: The policy every owner-scoped table gets. A name of its own, so the drop
+#: list in ``_plan_row_scoped_table`` can shed it from a table that is no
+#: longer registered without touching anything else's policy.
+OWNER_POLICY_NAME = "rls_owner_isolation"
+
+#: A user principal is armed. Same idiom as ``practice_answers``: a session
+#: that never set the setting reads NULL, which ``coalesce`` turns into ``''``.
+_USER_ARMED = "coalesce(current_setting('app.current_user_id', true), '') <> ''"
+
+
+def owner_scoped_tenant_tables() -> dict[str, OwnerScope]:
+    """Every tenant table registered through ``register_overlay_owner_scoped``."""
+    return dict(_OVERLAY_OWNER_SCOPED)
+
+
+def register_overlay_owner_scoped(
+    table_name: str, owner_column: str, *, shared_when_null: bool = False
+) -> None:
+    """Register a tenant table whose rows each belong to the user in ``owner_column``.
+
+    ``enable_rls_on_schema`` then enables and forces row-level security on the
+    table and gives it one policy, ``rls_owner_isolation``, for every command:
+    a row is visible and writable when ``owner_column`` (cast to text) equals
+    the armed ``app.current_user_id``. The cast is on the column, never the
+    setting, so an unarmed session matches nothing rather than erroring.
+
+    Args:
+        table_name: The tenant table.
+        owner_column: The column naming the owning user.
+        shared_when_null: Also admit rows whose ``owner_column`` is NULL, for
+            reading and writing, to any session with a user armed. For a table
+            that holds both one user's rows and rows the whole practice
+            shares. Off by default, so a NULL owner is nobody's.
+
+    The table need not carry ``id`` / ``user_id`` / ``patient_id``: a
+    registered table is planned whatever its columns. Registration happens at
+    bootstrap, like the other two seams. A registered table that lacks
+    ``owner_column``, or that is also registered not-row-scoped, makes
+    ``enable_rls_on_schema`` raise rather than ship a policy that matches
+    nothing or a registration that cannot take effect. The policy is
+    fingerprinted like every other, so one dropped or altered by hand is
+    rebuilt on the next reconcile, and one left on a table that is no longer
+    registered is dropped.
+    """
+    _OVERLAY_OWNER_SCOPED[table_name] = OwnerScope(owner_column, shared_when_null)
+
+
+def _refuse_owner_and_not_row_scoped(owner_scoped: set[str], not_row_scoped: set[str]) -> None:
+    """Raise for a table registered both owner-scoped and not-row-scoped.
+
+    The not-row-scoped branch wins in ``enable_rls_on_schema``'s loop, so the
+    owner policy the deployment asked for would never be created. A table is
+    one or the other, and which registration is wrong is not ours to guess.
+    """
+    both = owner_scoped & not_row_scoped
+    if both:
+        raise RuntimeError(
+            f"enable_rls_on_schema: {sorted(both)} registered both owner-scoped and "
+            f"not-row-scoped. A table is one or the other — refusing to guess which "
+            f"registration is wrong."
+        )
+
+
+def _owner_policy_statement(qualified: str, scope: OwnerScope) -> str:
+    """The ``rls_owner_isolation`` policy for one owner-scoped table.
+
+    ``owner_column`` reaches the string only after the caller checked it is a
+    column of the live table, so it is an existing identifier, never input.
+    """
+    predicate = f"{scope.owner_column}::text = current_setting('app.current_user_id', true)"
+    if scope.shared_when_null:
+        predicate = f"({predicate}) OR ({scope.owner_column} IS NULL AND {_USER_ARMED})"
+    return (
+        f"CREATE POLICY {OWNER_POLICY_NAME} ON {qualified} "
+        f"USING ({predicate}) WITH CHECK ({predicate})"
+    )
+
+
 # Tenant tables the PATIENT principal may reach, mapped to the column that
 # identifies which patient owns the row. A registry rather than column
 # inference on purpose: plenty of tables carry a ``patient_id`` without the
@@ -2215,7 +2312,8 @@ def engine_known_tenant_tables() -> set[str]:
 
     The ORM's own tables, plus whatever a deployment declared through the
     registration seams (``register_overlay_patient_scoped`` /
-    ``register_overlay_not_row_scoped``). A table in a practice schema
+    ``register_overlay_not_row_scoped`` / ``register_overlay_owner_scoped``).
+    A table in a practice schema
     that appears in none of them was put there by a layer above the
     engine, after provisioning, and the engine has no way to know what
     its isolation boundary is supposed to be — so it is not the engine's
@@ -2228,6 +2326,7 @@ def engine_known_tenant_tables() -> set[str]:
         | set(PATIENT_READABLE_TABLES)
         | set(PATIENT_WRITABLE_TABLES)
         | not_row_scoped_tenant_tables()
+        | set(_OVERLAY_OWNER_SCOPED)
     )
 
 
@@ -2274,6 +2373,10 @@ def _plan_row_scoped_table(  # noqa: PLR0912, PLR0915 — one policy arm per ten
     statements.append(f"DROP POLICY IF EXISTS rls_patient_purge_read ON {qualified}")
     statements.append(f"DROP POLICY IF EXISTS rls_patient_purge_lock ON {qualified}")
     statements.append(f"DROP POLICY IF EXISTS rls_patient_purge_delete ON {qualified}")
+    # The owner-scoped shape. Dropped from every table, like the patient arm
+    # above, so a table whose registration is withdrawn sheds it. The drop
+    # changes no table's fingerprint: that hashes the CREATE statements only.
+    statements.append(f"DROP POLICY IF EXISTS {OWNER_POLICY_NAME} ON {qualified}")
 
     # Additive: created before the clinician shape is chosen, because
     # several of those branches return early. Permissive policies OR
@@ -2295,6 +2398,22 @@ def _plan_row_scoped_table(  # noqa: PLR0912, PLR0915 — one policy arm per ten
     #   * Fallback to direct user_id ownership for tables that have
     #     a user_id column but no patient_id (e.g. availability_rules,
     #     google_calendar_tokens, ical_sync_configs).
+    #   * A table registered owner-scoped comes first: the registration
+    #     is the deployment saying which column owns the row, whatever
+    #     else the table carries.
+    owner_scope = _OVERLAY_OWNER_SCOPED.get(table_name)
+    if owner_scope is not None:
+        if owner_scope.owner_column not in columns:
+            raise RuntimeError(
+                f"enable_rls_on_schema: {qualified} is registered owner-scoped on "
+                f"'{owner_scope.owner_column}', but that column is not present "
+                f"(columns found: {sorted(columns)}). Refusing to create a policy "
+                f"that would match nothing — fix the registration or the table."
+            )
+        statements.append(_owner_policy_statement(qualified, owner_scope))
+        shared = ", NULL shared" if owner_scope.shared_when_null else ""
+        description = f"RLS (owner: {owner_scope.owner_column}{shared}) enabled on %s"
+        return TablePlan(tuple(statements), row_scoped=True, description=description)
     if table_name == "patient_documents":
         # Non-restricted categories (chart, consent) → patient_access
         # (co-treaters share). category IN ('therapist_private',
@@ -2717,6 +2836,11 @@ def enable_rls_on_schema(  # noqa: PLR0915 — planning, verify and the registra
     from before answers had a scope are their owner's alone. See
     ``practice_answers`` for the one definition every path applies.
 
+    A table a deployment registered through ``register_overlay_owner_scoped``
+    takes that shape whatever its columns: one ``rls_owner_isolation`` policy
+    keyed on the registered owner column. It is planned even when it carries
+    none of ``user_id`` / ``patient_id`` / ``id``.
+
     Two kinds of tables are deliberately NOT given a row policy:
       * Tables with none of ``user_id`` / ``patient_id`` / ``id`` (e.g.
         ehr_prompts) never reach the loop — the column query above
@@ -2820,10 +2944,14 @@ def enable_rls_on_schema(  # noqa: PLR0915 — planning, verify and the registra
         all_columns.setdefault(table_name, set()).add(column_name)
         if column_name == "patient_id":
             scoping_column_types[table_name] = data_type
+    # A table registered owner-scoped is planned whatever its columns: its
+    # owner column is usually none of the three, and keeping it out of the
+    # loop would make the registration a silent no-op.
+    owner_scoped = owner_scoped_tenant_tables()
     tables: dict[str, set[str]] = {
         table_name: columns
         for table_name, columns in all_columns.items()
-        if columns & scoping_columns
+        if columns & scoping_columns or table_name in owner_scoped
     }
 
     if not tables:
@@ -2875,7 +3003,14 @@ def enable_rls_on_schema(  # noqa: PLR0915 — planning, verify and the registra
         qualified = f"{schema_name}.{table_name}"
         if table_name in not_row_scoped:
             plans[table_name] = TablePlan(
-                (f"ALTER TABLE {qualified} DISABLE ROW LEVEL SECURITY",),
+                (
+                    f"ALTER TABLE {qualified} DISABLE ROW LEVEL SECURITY",
+                    # A table that was owner-scoped before it was registered
+                    # here keeps no stale owner policy behind. Runs only when
+                    # the table needs DISABLE at all: a not-row-scoped table
+                    # is verified on its flags alone (see ``table_matches``).
+                    f"DROP POLICY IF EXISTS {OWNER_POLICY_NAME} ON {qualified}",
+                ),
                 row_scoped=False,
                 description="RLS intentionally not applied to %s (not row-scoped)",
             )
@@ -2888,7 +3023,9 @@ def enable_rls_on_schema(  # noqa: PLR0915 — planning, verify and the registra
             logger.warning("rls reconcile: skipped unknown table %s", qualified)
             skipped.add(table_name)
             continue
-        sql_type = scoping_column_types.get(table_name)
+        # The owner shape never calls ``has_patient_access``, so the type
+        # of a ``patient_id`` it happens to carry does not matter to it.
+        sql_type = None if table_name in owner_scoped else scoping_column_types.get(table_name)
         if sql_type is not None and sql_type != "uuid":
             message = (
                 f"{qualified}: patient_id is {sql_type}, not uuid — "
@@ -2926,6 +3063,7 @@ def enable_rls_on_schema(  # noqa: PLR0915 — planning, verify and the registra
     unreachable = {
         table_name for table_name in PATIENT_READABLE_TABLES if table_name in not_row_scoped
     }
+    _refuse_owner_and_not_row_scoped(set(owner_scoped), not_row_scoped)
     if ungranted or unreachable:
         raise RuntimeError(
             f"enable_rls_on_schema: patient-scoped registrations got no policy in "
@@ -3011,6 +3149,7 @@ __all__ = [
     "PLATFORM_SCHEMA",
     "practice_resolution_cache",
     "register_overlay_not_row_scoped",
+    "register_overlay_owner_scoped",
     "rls_forced_tenant_tables",
     "run_in_tenant",
     "tenant_db_session",
