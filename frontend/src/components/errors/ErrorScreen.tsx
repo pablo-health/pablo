@@ -76,6 +76,7 @@ export function ErrorScreen({
           <Button onClick={onRetry} variant="default">
             Try again
           </Button>
+          {/* eslint-disable-next-line @next/next/no-location-assign-relative-destination -- the tree just crashed; a full load is the clean way home */}
           <Button onClick={() => (window.location.href = "/")} variant="outline">
             Go home
           </Button>

@@ -93,6 +93,7 @@ export function IdleTimeout() {
    */
   const signInAgain = useCallback(() => {
     if (signingOutRef.current) {
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- the stalled sign-out owns the router.push, and this button must never be inert, so it does not wait for it
       window.location.assign(`/login?reason=idle_timeout${returnToParam()}`)
       return
     }

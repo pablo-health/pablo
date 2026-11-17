@@ -90,6 +90,7 @@ export function handleTerminalAuthLogout(reason: "idle_timeout" | "session_expir
     } catch {
       // Provider not initialized — still redirect.
     }
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- a plain module with no router; the full load also discards the in-memory SDK user and query cache (the comment above tells the Safari story)
     window.location.assign(`/login?reason=${reason}${returnToParam()}`)
   })()
 }
@@ -115,6 +116,7 @@ function handleDashboardStepUp() {
   if (typeof window === "undefined" || dashboardStepUpInFlight) return
   if (!(window.location?.pathname ?? "").startsWith("/dashboard")) return
   dashboardStepUpInFlight = true
+  // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- a plain module with no router, going to a server-gated page
   window.location.assign("/mfa-step-up")
 }
 
