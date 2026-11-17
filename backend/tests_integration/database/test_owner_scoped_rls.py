@@ -244,6 +244,50 @@ class TestOwnerScoped:
         assert _visible(engine, schema, _USER_A) == {"a's row"}, "control"
         assert _visible(engine, schema, None) == set()
 
+    def test_an_empty_setting_does_not_match_an_empty_owner(
+        self, engine: Engine, schema: str
+    ) -> None:
+        """A pooled connection reads the setting back as '' once it was armed.
+
+        ``set_config(..., true)`` leaves ``''`` behind, not NULL, after its
+        transaction ends. The owner arm must still require a principal, or an
+        unarmed session matches every row whose owner column is ''.
+        """
+        register_overlay_owner_scoped(_TABLE, "owner_user_id")
+        _reconcile(engine, schema)
+
+        with engine.begin() as conn:
+            # Planted past the policy, as the table owner with FORCE lifted.
+            conn.execute(text(f"ALTER TABLE {schema}.{_TABLE} NO FORCE ROW LEVEL SECURITY"))
+            conn.execute(
+                text(f"INSERT INTO {schema}.{_TABLE} (owner_user_id, body) VALUES ('', 'empty')")  # noqa: S608
+            )
+            conn.execute(text(f"ALTER TABLE {schema}.{_TABLE} FORCE ROW LEVEL SECURITY"))
+
+        with engine.connect() as conn:
+            with conn.begin():
+                conn.execute(
+                    text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _USER_A}
+                )
+            with conn.begin():
+                setting = conn.execute(
+                    text("SELECT current_setting('app.current_user_id', true)")
+                ).scalar()
+                rows = conn.execute(text(f"SELECT body FROM {schema}.{_TABLE}")).scalars().all()  # noqa: S608
+                with (
+                    pytest.raises(ProgrammingError, match="row-level security"),
+                    conn.begin_nested(),
+                ):
+                    conn.execute(
+                        text(
+                            f"INSERT INTO {schema}.{_TABLE} (owner_user_id, body) "  # noqa: S608
+                            "VALUES ('', 'planted unarmed')"
+                        )
+                    )
+
+        assert setting == "", "control: the setting must read back empty, not NULL"
+        assert rows == []
+
     def test_shared_when_null(self, engine: Engine, schema: str) -> None:
         """(e) A NULL-owner row is everyone's; an owned row is still its owner's."""
         register_overlay_owner_scoped(_TABLE, "owner_user_id", shared_when_null=True)
@@ -329,17 +373,39 @@ class TestOwnerScoped:
         assert _reconcile(engine, schema).altered == 0, "healed state must verify, not rebuild"
 
 
+# Tables whose template fingerprint already differs from what the engine
+# writes on main, before this registry existed, so provisioning rebuilds them
+# on every fresh practice whatever the branch. Seen on Postgres 16.4 and
+# 16.16 alike; tracked as PABLO-2nk0. A policy change to one of
+# these two is invisible to the test below until that drift is fixed and the
+# set is emptied.
+_KNOWN_TEMPLATE_DRIFT = frozenset({"homework_assignments", "patient_documents"})
+
+
 def test_a_registration_changes_no_other_tables_policy(
-    engine: Engine, registry: dict[str, OwnerScope]
+    engine: Engine, registry: dict[str, OwnerScope], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Every table of a freshly provisioned practice verifies untouched.
+    """Provisioning a practice rebuilds no existing table's policy.
 
     The template carries the fingerprints of the policies as the engine wrote
-    them before this registry existed, so ``altered == 0`` is the engine
-    confirming that no existing table's policy text changed. The live state is
-    compared before and after as well. The registered table is absent from the
-    schema, which the registry allows: it is process-wide.
+    them before this registry existed. Provisioning applies the template and
+    then runs ``enable_rls_on_schema`` over it, and that pass rebuilds every
+    table whose plan no longer matches. So the tables it rebuilds are the
+    tables whose policy text this change touched. They are read off the
+    provisioning pass itself, through ``record_fingerprints``: a second pass
+    afterwards would find everything already rebuilt and prove nothing.
+
+    The registered table is absent from the schema, which the registry
+    allows: it is process-wide.
     """
+    rebuilt: set[str] = set()
+    real_record = app_db.record_fingerprints
+
+    def spy(session: OrmSession, schema_name: str, plans: dict[str, app_db.TablePlan]) -> None:
+        rebuilt.update(plans)
+        real_record(session, schema_name, plans)
+
+    monkeypatch.setattr(app_db, "record_fingerprints", spy)
     register_overlay_owner_scoped(_TABLE, "owner_user_id")
     name = _new_schema(engine)
     try:
@@ -353,7 +419,9 @@ def test_a_registration_changes_no_other_tables_policy(
             conn.execute(text(f'DROP SCHEMA IF EXISTS "{name}" CASCADE'))
             conn.commit()
 
-    assert counts.altered == 0
+    assert rebuilt, "the spy never saw the provisioning pass"
+    assert rebuilt - _KNOWN_TEMPLATE_DRIFT == set(), "provisioning rebuilt these policies"
+    assert counts.altered == 0, "a second pass must find the provisioned state verified"
     assert counts.applied > 0
     assert before == after
     assert registry == {_TABLE: OwnerScope("owner_user_id", False)}

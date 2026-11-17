@@ -1675,7 +1675,10 @@ def register_overlay_owner_scoped(
         shared_when_null: Also admit rows whose ``owner_column`` is NULL, for
             reading and writing, to any session with a user armed. For a table
             that holds both one user's rows and rows the whole practice
-            shares. Off by default, so a NULL owner is nobody's.
+            shares. Off by default, so a NULL owner is nobody's. Shared means
+            anyone may claim or delete it: any armed user can set the owner
+            of a shared row to themselves, or delete it, and it is then gone
+            for everyone else.
 
     The table need not carry ``id`` / ``user_id`` / ``patient_id``: a
     registered table is planned whatever its columns. Registration happens at
@@ -1711,10 +1714,18 @@ def _owner_policy_statement(qualified: str, scope: OwnerScope) -> str:
 
     ``owner_column`` reaches the string only after the caller checked it is a
     column of the live table, so it is an existing identifier, never input.
+    It is quoted all the same, so a mixed-case or reserved-word column name
+    still makes valid SQL.
+
+    Both arms require an armed principal. A pooled connection that once ran
+    ``set_config(..., true)`` reads the setting back as ``''``, not NULL,
+    after that transaction ends, so without the armed test an unarmed session
+    would match every row whose owner column holds an empty string.
     """
-    predicate = f"{scope.owner_column}::text = current_setting('app.current_user_id', true)"
+    column = '"' + scope.owner_column.replace('"', '""') + '"'
+    predicate = f"{column}::text = current_setting('app.current_user_id', true) AND {_USER_ARMED}"
     if scope.shared_when_null:
-        predicate = f"({predicate}) OR ({scope.owner_column} IS NULL AND {_USER_ARMED})"
+        predicate = f"({predicate}) OR ({column} IS NULL AND {_USER_ARMED})"
     return (
         f"CREATE POLICY {OWNER_POLICY_NAME} ON {qualified} "
         f"USING ({predicate}) WITH CHECK ({predicate})"
