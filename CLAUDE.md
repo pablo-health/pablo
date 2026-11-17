@@ -261,6 +261,31 @@ Four that are easy to get wrong:
     them.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
+## How `main` is governed
+
+`main` merges on green. A pull request needs the required checks to pass and
+**zero** approvals, so ordinary code lands without anyone clicking anything.
+
+The exception is every path in [`.github/CODEOWNERS`](.github/CODEOWNERS): the
+agent rules, CI and workflows, the audit-logging surface, the schema and
+migrations, and the deploy surface. A pull request touching any of them waits
+for `@kurtn-pablo`'s review ("Require review from Code Owners" is on, and a
+new push dismisses an earlier approval). Read that file's header for why the
+list is short and has no `*` fallback.
+
+For agents working in this repo:
+
+- **Human-merged does not mean human-edited.** You may, and should, edit
+  code-owned paths yourself and open the pull request. Do not hand the
+  maintainer a diff, a snippet or a "someone needs to add..." note instead;
+  the required review is the gate, not who typed the change.
+- On a pull request that touches a code-owned path: **never arm auto-merge,
+  never merge with `--admin`, and never merge it yourself.** Open it, say so
+  in the body, and leave the merge to the code owner.
+- On any other pull request, merge only once the required checks are green
+  at the head commit. No `--admin` merges, ever: if a check will not report,
+  that is a CI bug to fix, not a gate to step around.
+
 ## Beads Issue Tracker
 
 This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
