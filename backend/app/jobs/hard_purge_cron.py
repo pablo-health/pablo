@@ -27,10 +27,16 @@ didn't happen. The BAA §7 Stage 2 promise covers audio of soft-deleted patients
 regardless of the per-practice audio retention slider.
 
 The clinical-row delete removes every table that names the client: the ones
-in ``_PATIENT_ROW_TABLES`` by ``patient_id`` (those with no foreign key to
-``patients``, or one that would keep or block), the client's tasks, then the
-patients row, whose delete cascades to the rest. A hard purge leaves zero
-rows and zero blobs for the client across all surfaces.
+in ``_PATIENT_ROW_TABLES`` by ``patient_id`` (one whose cascade would be
+blocked, and the legacy five deleted by name as they always were), the
+client's tasks, then the patients row, whose delete cascades to the rest.
+Every ``patient_id`` column in a practice schema either cascades from
+``patients`` or is on a short reviewed list
+(``tests/test_patient_id_foreign_keys.py``), so a new table naming the client
+is covered by the database rather than by remembering to extend a list here.
+A hard purge leaves zero rows and zero blobs for the client across all
+surfaces; cascades never touch storage, so the blobs are collected and
+deleted first.
 
 Tasks are the one table where the client's rows and the clinician's meet.
 A to-do about the client goes, and so do its steps and the files attached
@@ -186,17 +192,10 @@ def _append_purge_audit(conn: Any, schema: str, patient_id: str) -> None:
     )
 
 
-#: Tables holding a client's rows that the ``patients`` delete does not
-#: reach, or reaches in the wrong order, deleted first by ``patient_id``.
-#: Each is in ``app.db.PATIENT_PURGE_TABLES`` with ``delete`` where row-level
-#: security applies to it; ``companion_sessions`` and
-#: ``companion_auth_challenges`` are not row-scoped.
+#: Tables holding a client's rows that are deleted by ``patient_id`` before
+#: the ``patients`` row. Each is in ``app.db.PATIENT_PURGE_TABLES`` with
+#: ``delete``.
 #:
-#: * No foreign key to ``patients`` at all: intake submissions and
-#:   assignments (an assignment's answers, signatures, artifacts and review
-#:   events cascade from it), charges, the saved payment method, portal
-#:   sessions and sign-in challenges, and calendar events answered with the
-#:   client.
 #: * Message threads cascade from ``patients``, but a message attachment
 #:   holds its document with ``ON DELETE RESTRICT``, and the cascade can
 #:   reach the document first and fail the whole purge. Deleting the threads
@@ -204,9 +203,13 @@ def _append_purge_audit(conn: Any, schema: str, patient_id: str) -> None:
 #: * The first five cascade from ``patients`` too; they are deleted here
 #:   by name, as they always have been.
 #:
-#: Order matters only for the threads, which must precede the patients row.
-#: ``tasks`` is deleted after these, by ``_delete_clinical_rows`` itself:
-#: compliance tasks are kept (see ``_task_document_uris_for_patient``).
+#: Everything else naming the client cascades from ``patients``, including
+#: intake, charges, the saved payment method, portal sessions and sign-in
+#: challenges, and calendar events answered with the client (foreign keys
+#: added by revision ``8c5e65a0e56a``). Order matters only for the threads,
+#: which must precede the patients row. ``tasks`` is deleted after these, by
+#: ``_delete_clinical_rows`` itself: compliance tasks are kept (see
+#: ``_task_document_uris_for_patient``).
 _PATIENT_ROW_TABLES: tuple[str, ...] = (
     "appointments",
     "notes",
@@ -214,13 +217,6 @@ _PATIENT_ROW_TABLES: tuple[str, ...] = (
     "patient_source_mappings",
     "chat_conversations",
     "patient_message_threads",
-    "patient_intake_assignments",
-    "patient_intake_submissions",
-    "patient_charges",
-    "patient_payment_methods",
-    "companion_sessions",
-    "companion_auth_challenges",
-    "external_calendar_events",
 )
 
 
@@ -255,9 +251,10 @@ def _delete_clinical_rows(conn: Any, schema: str, patient_id: str) -> None:
     # Everything else that names the client goes with the patients row by
     # foreign-key cascade, which row-level security does not apply to:
     # patient_documents (blobs removed in run() before this commit), the
-    # clinical chart tables, claims, and the rows hanging off the tables
-    # deleted above (intake answers, signatures and artifacts off their
-    # assignment; message attachments off their message).
+    # clinical chart tables, claims, intake (answers, signatures and
+    # artifacts off their assignment), charges, the saved payment method,
+    # portal sessions and challenges, calendar events, and message
+    # attachments off their message.
     conn.execute(text("DELETE FROM patients WHERE id = :pid"), {"pid": patient_id})
 
 

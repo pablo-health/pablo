@@ -2223,8 +2223,11 @@ def _patient_principal_policy_statements(
 #: tests that against the UPDATE policies. ``patient_documents`` and
 #: ``session_dictations`` are read for their storage paths only; their rows go
 #: with the patient by foreign-key cascade, which row security does not apply to.
-#: The rest are deleted by ``patient_id`` first: the job's ``_PATIENT_ROW_TABLES``
-#: says why each one is, except ``tasks``, which keeps compliance tasks.
+#: ``tasks`` is deleted by the job except for compliance tasks; the job's
+#: ``_PATIENT_ROW_TABLES`` says why the tables it deletes by name are. The
+#: intake, charge, payment-method and calendar tables keep their ``delete``
+#: here although they now go by foreign-key cascade (``8c5e65a0e56a``):
+#: narrowing a table's policies is a reconcile change of its own.
 PATIENT_PURGE_TABLES: dict[str, frozenset[str]] = {
     "patients": frozenset({"read", "lock", "delete"}),
     "appointments": frozenset({"read", "delete"}),
