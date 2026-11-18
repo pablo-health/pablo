@@ -1,18 +1,16 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Integration test: ``8c5e65a0e56a`` removes orphans, keeps the rest, and validates.
+"""Integration test: ``8c5e65a0e56a`` adds validated keys, and refuses an orphan loudly.
 
 The revision adds ``patient_id -> patients(id) ON DELETE CASCADE`` to seven
-tables that had no key, deleting first the rows whose client no longer exists.
-Those orphans are real: the purge before ``PABLO-8gna.37`` deleted the client
-and left these rows.
+tables that had no key, in one plain validated step per table. It deletes
+nothing and leaves row security alone.
 
-The dangerous mistake is the orphan check itself. The migration runs as a role
-without BYPASSRLS against force-RLS tables, with no principal armed; to it,
-``patients`` looks empty, so a naive ``NOT EXISTS (SELECT ... FROM patients)``
-finds every row orphaned and deletes the lot. So every table here holds a row
-for a client who exists as well as an orphan, and the test asserts the first
-survives. An empty tenant would pass whatever the migration did.
+Three cases: an empty tenant and a seeded one take the keys cleanly (the
+seeded one under forced RLS, which the key check must see through: a client
+the migration role cannot see is still a client). A tenant with a planted
+orphan fails with a message naming the table and the remedy, and the orphan is
+still there afterwards.
 
 The schema is provisioned at head and walked back to the parent with the
 revision's own ``downgrade()``, as ``test_patient_charge_method_backfill_rls``
@@ -171,12 +169,8 @@ def _counts(engine: Engine, schema: str, patient_id: str) -> dict[str, tuple[int
     return out
 
 
-@pytest.fixture
-def parent_schema(engine: Engine) -> Iterator[tuple[str, str]]:
-    """A practice at the parent revision: one client's rows plus an orphan of each.
-
-    Yields (schema, the existing client's id).
-    """
+def _at_parent(engine: Engine) -> str:
+    """Provision a practice at head and walk it back to the parent revision."""
     schema = f"practice_test_pidfk_{uuid.uuid4().hex[:8]}"
     create_practice_schema(engine, schema)
     with engine.begin() as conn:
@@ -185,7 +179,28 @@ def parent_schema(engine: Engine) -> Iterator[tuple[str, str]]:
         cfg.attributes["connection"] = conn
         cfg.attributes["version_table_schema"] = schema
         command.downgrade(cfg, _PARENT)
+    return schema
 
+
+def _drop(engine: Engine, schema: str) -> None:
+    with engine.begin() as conn:
+        conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+
+
+@pytest.fixture
+def empty_schema(engine: Engine) -> Iterator[str]:
+    schema = _at_parent(engine)
+    yield schema
+    _drop(engine, schema)
+
+
+@pytest.fixture
+def parent_schema(engine: Engine) -> Iterator[tuple[str, str]]:
+    """A practice at the parent revision holding one client's rows in every table.
+
+    Yields (schema, the client's id).
+    """
+    schema = _at_parent(engine)
     form = {name: str(uuid.uuid4()) for name in ("template", "version", "item")}
     client = str(uuid.uuid4())
     with engine.begin() as conn:
@@ -220,48 +235,72 @@ def parent_schema(engine: Engine) -> Iterator[tuple[str, str]]:
             ),
             {"id": form["item"], "v": form["version"]},
         )
-        # The orphan's client id names no patients row: what the old purge left.
-        for pid in (client, str(uuid.uuid4())):
-            params = {
-                "pid": pid,
-                "u": _CLINICIAN,
-                "assignment": str(uuid.uuid4()),
-                "version": form["version"],
-                "item": form["item"],
-            }
-            for statement in _ROWS:
-                conn.execute(text(statement), params)
+        params = {
+            "pid": client,
+            "u": _CLINICIAN,
+            "assignment": str(uuid.uuid4()),
+            "version": form["version"],
+            "item": form["item"],
+        }
+        for statement in _ROWS:
+            conn.execute(text(statement), params)
         _force(conn, _SEEDED)
 
     yield schema, client
 
-    with engine.begin() as conn:
-        conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+    _drop(engine, schema)
 
 
-def test_precondition_each_table_holds_a_client_row_and_an_orphan(
+def test_empty_tenant_takes_the_keys(engine: Engine, empty_schema: str) -> None:
+    assert _keys(engine, empty_schema) == {}, "the parent revision has none of these keys"
+
+    result = upgrade_tenant_schema(engine, empty_schema)
+
+    assert result.status is TenantStatus.SUCCESS, result.detail
+    assert _keys(engine, empty_schema) == dict.fromkeys(_KEYED, True)
+
+
+def test_seeded_tenant_takes_the_keys_and_keeps_every_row(
     engine: Engine, parent_schema: tuple[str, str]
 ) -> None:
     schema, client = parent_schema
-    assert _keys(engine, schema) == {}, "the parent revision has none of these keys"
-    counts = _counts(engine, schema, client)
-    assert counts == dict.fromkeys(counts, (1, 1))
-
-
-def test_upgrade_deletes_orphans_keeps_the_clients_rows_and_validates(
-    engine: Engine, parent_schema: tuple[str, str]
-) -> None:
-    schema, client = parent_schema
+    assert _keys(engine, schema) == {}
     flags_before = _rls_flags(engine, schema)
+    assert flags_before["patients"] == (True, True), "the check must see through forced RLS"
 
     result = upgrade_tenant_schema(engine, schema)
 
     assert result.status is TenantStatus.SUCCESS, result.detail
     counts = _counts(engine, schema, client)
-    assert counts == dict.fromkeys(counts, (1, 0)), (
-        "orphans (and an orphan assignment's answer) go; the existing client's rows stay"
-    )
+    assert counts == dict.fromkeys(counts, (1, 0))
     assert _keys(engine, schema) == dict.fromkeys(_KEYED, True)
+    assert _rls_flags(engine, schema) == flags_before
+
+
+def test_an_orphan_fails_the_migration_by_name_and_is_kept(
+    engine: Engine, parent_schema: tuple[str, str]
+) -> None:
+    schema, _client = parent_schema
+    orphan = str(uuid.uuid4())
+    with engine.begin() as conn:
+        _as_owner(conn, schema, ("patient_charges",))
+        # patient_charges (force-RLS): a client id with no patients row.
+        conn.execute(text(_ROWS[3]), {"pid": orphan, "u": _CLINICIAN})
+        _force(conn, ("patient_charges",))
+    flags_before = _rls_flags(engine, schema)
+
+    result = upgrade_tenant_schema(engine, schema)
+
+    assert result.status is TenantStatus.FAILED
+    assert f"{schema}.patient_charges has rows whose patient_id names no client" in (result.detail)
+    assert "delete those rows (or restore the clients) and re-run the migration" in (result.detail)
+    counts = _counts(engine, schema, orphan)
+    assert counts["patient_charges"] == (1, 1), "the orphan and the client's row are both kept"
+    assert _keys(engine, schema) == {}, "the tenant's upgrade rolled back whole"
+    with engine.connect() as conn:
+        query = f"SELECT version_num FROM {schema}.alembic_version"  # noqa: S608
+        version = conn.execute(text(query)).scalar()
+    assert version == _PARENT
     assert _rls_flags(engine, schema) == flags_before
 
 
