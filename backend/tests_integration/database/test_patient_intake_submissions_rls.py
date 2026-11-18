@@ -543,6 +543,20 @@ class TestFreshAndMigratedAgree:
                 conn.execute(text(f"DROP TABLE IF EXISTS {schema}.{_TABLE} CASCADE"))
                 conn.execute(text(_PRIOR_DDL))
                 conn.execute(text(_PRIOR_INDEX_DDL))
+                # The submission's client exists: ``8c5e65a0e56a`` keys
+                # patient_id to patients, and refuses a row naming no client.
+                conn.execute(text("ALTER TABLE patients NO FORCE ROW LEVEL SECURITY"))
+                conn.execute(
+                    text(
+                        "INSERT INTO patients (id, first_name, last_name, "
+                        "first_name_lower, last_name_lower, status, "
+                        "session_count, created_at, updated_at) "
+                        "VALUES (CAST(:pid AS uuid), 'Test', 'Client', 'test', 'client', "
+                        "'active', 0, now(), now())"
+                    ),
+                    {"pid": patient_id},
+                )
+                conn.execute(text("ALTER TABLE patients FORCE ROW LEVEL SECURITY"))
                 _submit(conn, patient_id, "intake-preexisting")
                 conn.execute(
                     text(f"UPDATE {schema}.alembic_version SET version_num = :r"),  # noqa: S608
