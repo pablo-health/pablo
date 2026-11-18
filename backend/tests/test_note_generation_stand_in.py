@@ -37,6 +37,7 @@ from app.services.hedged_structured_llm_gateway import generation_gateway
 from app.services.http_structured_llm_gateway import HttpStructuredLLMGateway
 from app.services.note_generation_service import RegistryNoteGenerationService
 from app.services.note_redraft import DICTATED_HEADING
+from app.services.source_attribution_service import build_claims_from_soap
 from app.settings import Settings, get_settings
 from fastapi.testclient import TestClient
 
@@ -45,6 +46,7 @@ from scripts.fake_llm import (
     FALLBACK_MODEL,
     PRIMARY_DOWN,
     REFUSES_DRAFT,
+    _attributions,
     _current_medications,
     _stated_updates,
 )
@@ -202,13 +204,56 @@ def test_every_dictated_clip_is_heard_as_the_same_words(monkeypatch: pytest.Monk
     assert transcriber.transcribe(b"\x1a\x45\xdf\xa3", "audio/webm") == DICTATION_TEXT
 
 
-def test_a_soap_draft_survives_its_second_call(stand_in: list[str]) -> None:
-    """SOAP asks again for sentence-to-transcript links; the stand-in answers none."""
-    generated = _service().generate_note("soap", TRANSCRIPT, PATIENT, NOW)
+def test_every_sentence_of_a_soap_draft_cites_a_segment_the_transcript_has(
+    stand_in: list[str],
+) -> None:
+    """SOAP asks again for sentence-to-transcript links; each sentence gets one.
+
+    A client that counts a sentence only when it is anchored to the transcript
+    sees the stand-in's note as drafted from the session, as a model's is.
+    """
+    transcript = Transcript(
+        format="txt",
+        content="\n".join(f"[00:0{n}] Client: Line {n}." for n in range(5)),
+    )
+
+    generated = _service().generate_note("soap", transcript, PATIENT, NOW)
 
     assert generated.soap_note is not None
     assert generated.soap_note.subjective.chief_complaint.text.startswith("Stand-in draft")
     assert len(stand_in) == 2
+    sentences = build_claims_from_soap(generated.soap_note)
+    assert sentences
+    for sentence in sentences.values():
+        assert sentence.source_segment_ids
+        assert set(sentence.source_segment_ids) <= set(range(5))
+    cited = {i for s in sentences.values() for i in s.source_segment_ids}
+    assert cited == set(range(5))
+
+
+def test_an_attribution_prompt_with_no_segments_cites_nothing() -> None:
+    prompt = (
+        'Transcript:\n\nClaims:\n1. [subjective.mood_affect]: "A."\n2. [plan.next_session]: "B."'
+    )
+
+    assert _attributions(prompt) == {
+        "attributions": [{"claim": 1, "segments": []}, {"claim": 2, "segments": []}]
+    }
+
+
+def test_an_attribution_cites_only_segments_the_prompt_numbers() -> None:
+    prompt = (
+        "Transcript:\n[S0] [00:01] Therapist: Hello\n[S1] [00:03] Client: Hi\n\n"
+        'Claims:\n1. [a.b]: "A."\n2. [a.c]: "B."\n3. [a.d]: "C."'
+    )
+
+    assert _attributions(prompt) == {
+        "attributions": [
+            {"claim": 1, "segments": [0]},
+            {"claim": 2, "segments": [1]},
+            {"claim": 3, "segments": [0]},
+        ]
+    }
 
 
 def test_a_refused_transcript_fails_its_draft_without_a_retry(stand_in: list[str]) -> None:
