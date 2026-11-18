@@ -149,8 +149,9 @@ def _stand_in(schema: dict[str, Any], path: str) -> Any:
 
     Text says which field it fills, so a spec can find it; a list of text
     holds one such entry; a list of stated diagnoses holds one diagnosis
-    with a code; any other list of objects (the sentence-to-transcript
-    links a SOAP draft asks for next) is empty, which a model may also say.
+    with a code; any other list of objects is empty, which a model may
+    also say. (The sentence-to-transcript links a SOAP draft asks for next
+    are answered by ``_attributions``, not here.)
     """
     kind = schema.get("type")
     if kind == "object":
@@ -470,6 +471,8 @@ async def draft_note(call: NoteCall) -> dict[str, Any]:
         return {"data": titled(call), "finish_reason": "stop"}
     if "runs" in call.response_schema.get("properties", {}):
         return {"data": _turn_labels(call.user_prompt), "finish_reason": "stop"}
+    if "attributions" in call.response_schema.get("properties", {}):
+        return {"data": _attributions(call.user_prompt), "finish_reason": "stop"}
     note = _source_note(call.user_prompt)
     if note is not None:
         return {"data": _extracted(call.response_schema, note), "finish_reason": "stop"}
@@ -482,6 +485,33 @@ async def draft_note(call: NoteCall) -> dict[str, Any]:
     if "psychotherapy_time_stated" in call.response_schema.get("properties", {}):
         draft["psychotherapy_time_stated"] = _stated_time(call.user_prompt)
     return {"data": draft, "finish_reason": "stop"}
+
+
+#: A transcript line as the backend numbers it for a call: "[S3] [00:12] Client: ...".
+_SEGMENT_LINE = re.compile(r"^\[S(\d+)\]")
+
+#: A claim an attribution call asks about: '4. [plan.next_steps.0]: "..."'.
+_CLAIM_LINE = re.compile(r"^(\d+)\. \[")
+
+
+def _attributions(user_prompt: str) -> dict[str, Any]:
+    """Which transcript segments support each claim of a drafted SOAP note.
+
+    Claim k cites one segment the prompt numbers, taken in turn, so every
+    sentence is anchored to a line that exists, as a model's would be. A
+    prompt that numbers no segment gets no citations.
+    """
+    lines = user_prompt.splitlines()
+    segments = [int(m.group(1)) for line in lines if (m := _SEGMENT_LINE.match(line))]
+    _, _, claims_block = user_prompt.partition("\nClaims:\n")
+    claims = [
+        int(m.group(1)) for line in claims_block.splitlines() if (m := _CLAIM_LINE.match(line))
+    ]
+
+    def cited(claim: int) -> list[int]:
+        return [segments[(claim - 1) % len(segments)]] if segments else []
+
+    return {"attributions": [{"claim": claim, "segments": cited(claim)} for claim in claims]}
 
 
 #: How the backend heads what a clinician dictated after the session
