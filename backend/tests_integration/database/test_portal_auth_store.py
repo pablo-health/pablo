@@ -81,7 +81,32 @@ def _new_schema(engine: Engine, label: str) -> str:
 
     schema = f"practice_test_{label}_{uuid.uuid4().hex[:8]}"
     create_practice_schema(engine, schema)
+    _seed_clients(engine, schema)
     return schema
+
+
+def _seed_clients(engine: Engine, schema: str) -> None:
+    """The two clients the portal rows name.
+
+    ``patient_id`` on both tables cascades from ``patients`` (revision
+    ``8c5e65a0e56a``), so a row naming no client is refused. Written as the
+    schema owner with row security un-forced for the transaction: the stores
+    are under test, not the paths that create a client.
+    """
+    with engine.begin() as conn:
+        conn.execute(text(f"SET LOCAL search_path = {schema}, platform, public"))
+        conn.execute(text("ALTER TABLE patients NO FORCE ROW LEVEL SECURITY"))
+        for pid in (_PATIENT_A, _PATIENT_B):
+            conn.execute(
+                text(
+                    "INSERT INTO patients (id, first_name, last_name, first_name_lower, "
+                    "last_name_lower, status, session_count, created_at, updated_at) "
+                    "VALUES (CAST(:pid AS uuid), 'Test', 'Client', 'test', 'client', "
+                    "'active', 0, now(), now())"
+                ),
+                {"pid": pid},
+            )
+        conn.execute(text("ALTER TABLE patients FORCE ROW LEVEL SECURITY"))
 
 
 def _drop_schema(engine: Engine, schema: str) -> None:

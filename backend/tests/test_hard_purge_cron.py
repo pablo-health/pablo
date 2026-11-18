@@ -268,9 +268,10 @@ def test_delete_clinical_rows_purges_chat_and_documents_and_patient() -> None:
 
 
 def test_delete_clinical_rows_reaches_every_table_no_cascade_does() -> None:
-    """Tables with no cascade from ``patients`` (or a SET NULL / RESTRICT one)
-    are deleted by name, each one armed for the purge, and before the patients
-    row. ``tests_integration/database/test_hard_purge_rls.py`` proves the rows go."""
+    """Tables whose cascade would keep or block (threads, tasks) are deleted by
+    name, each one armed for the purge, and before the patients row. The tables
+    that cascade from ``patients`` since ``8c5e65a0e56a`` are left to it.
+    ``tests_integration/database/test_hard_purge_rls.py`` proves the rows go."""
     from app.db import PATIENT_PURGE_TABLES  # noqa: PLC0415
 
     mock_conn = MagicMock()
@@ -280,6 +281,9 @@ def test_delete_clinical_rows_reaches_every_table_no_cascade_does() -> None:
         for call in mock_conn.execute.call_args_list
         if str(call.args[0]).startswith("DELETE FROM")
     ]
+    assert deleted.index("patient_message_threads") < deleted.index("patients")
+    assert deleted.index("tasks") < deleted.index("patients")
+    assert deleted[-1] == "patients"
     for table in (
         "patient_intake_assignments",
         "patient_intake_submissions",
@@ -288,13 +292,9 @@ def test_delete_clinical_rows_reaches_every_table_no_cascade_does() -> None:
         "companion_sessions",
         "companion_auth_challenges",
         "external_calendar_events",
-        "patient_message_threads",
-        "tasks",
     ):
-        assert table in deleted, f"missing {table!r}"
-    assert deleted[-1] == "patients"
-    not_row_scoped = {"companion_sessions", "companion_auth_challenges"}
-    for table in set(deleted) - not_row_scoped:
+        assert table not in deleted, f"{table!r} cascades from patients"
+    for table in set(deleted) - {"chat_messages"}:
         assert "delete" in PATIENT_PURGE_TABLES.get(table, frozenset()), table
 
 
