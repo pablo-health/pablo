@@ -13,7 +13,11 @@ locked PyAV, then:
 1. decodes it with ``faster_whisper.decode_audio`` and checks the length, so
    a silent decode failure cannot pass; and
 2. runs ``TranscriptionWorker.transcribe_channel`` on it, the call every
-   transcription job makes, with the ``tiny`` model on CPU.
+   transcription job makes, with the ``tiny`` model on CPU; and
+3. transcribes it again with VAD off. A tone holds no speech, so the worker's
+   VAD drops the whole clip and step 2 never reaches the encoder or decoder.
+   This call does, and it consumes the segments, so a lock that breaks
+   inference (``ctranslate2``, ``tokenizers``, ``numpy``) fails here.
 
 Run it from an environment holding exactly the lock:
 
@@ -113,6 +117,8 @@ def main() -> int:
                 if not SECONDS - 0.5 <= seconds <= SECONDS + 0.5:
                     raise AssertionError(f"decoded {seconds:.2f}s, expected about {SECONDS}s")
                 worker.transcribe_channel(path, "probe")
+                segments, _ = worker.model.transcribe(str(path), language="en", vad_filter=False)
+                list(segments)
             except Exception:
                 traceback.print_exc()
                 failed.append(suffix)
