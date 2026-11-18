@@ -20,6 +20,7 @@ from faster_whisper import WhisperModel
 from google.cloud import storage
 
 from config import TranscriptionSettings
+from device import resolve_device
 
 logger = logging.getLogger(__name__)
 
@@ -57,17 +58,9 @@ class TranscriptionWorker:
     @property
     def model(self) -> WhisperModel:
         if self._model is None:
-            device = self.settings.whisper_device
-            if device == "auto":
-                try:
-                    import torch
-                    device = "cuda" if torch.cuda.is_available() else "cpu"
-                except ImportError:
-                    device = "cpu"
-
-            compute_type = self.settings.whisper_compute_type
-            if device == "cpu" and compute_type == "float16":
-                compute_type = "int8"
+            device, compute_type = resolve_device(
+                self.settings.whisper_device, self.settings.whisper_compute_type
+            )
 
             logger.info(
                 "Loading Whisper model=%s device=%s compute=%s",
