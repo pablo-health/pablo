@@ -243,6 +243,18 @@ def test_the_client_s_notes_list_it_as_imported_not_as_a_draft(
     assert imported["note"]["imported"] is True
 
 
+def test_the_session_payload_marks_its_note_imported(
+    client: TestClient, imported: dict[str, Any]
+) -> None:
+    # The session page reads the note from here, not from /api/notes, and
+    # labels it from that flag, so it must say imported too.
+    detail = client.get(f"/api/sessions/{imported['id']}").json()
+    listed = client.get("/api/sessions").json()["data"]
+
+    assert detail["note"]["imported"] is True
+    assert [s["note"]["imported"] for s in listed if s["id"] == imported["id"]] == [True]
+
+
 SIGNER_FIELDS = {"signer_name": "Someone Here", "signer_credentials": "LCSW"}
 
 

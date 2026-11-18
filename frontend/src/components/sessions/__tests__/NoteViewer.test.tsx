@@ -211,8 +211,14 @@ describe("NoteViewer (SOAP)", () => {
       expect(screen.getByText("Edited subjective")).toBeInTheDocument()
     })
 
-    it("shows 'Based on transcript' zone in the Objective section", () => {
+    it("shows 'Based on transcript' zone in the Objective section of a drafted note", () => {
       renderViewer()
+
+      expect(screen.getByText("Based on transcript")).toBeInTheDocument()
+    })
+
+    it("keeps the zone once the clinician edits a drafted note", () => {
+      renderViewer({ noteEdited: asSoapContent(plainNarrative) })
 
       expect(screen.getByText("Based on transcript")).toBeInTheDocument()
     })
@@ -222,6 +228,28 @@ describe("NoteViewer (SOAP)", () => {
 
       expect(screen.getByText("Based on transcript")).toBeInTheDocument()
       expect(screen.getByText("Clinician Observations")).toBeInTheDocument()
+    })
+
+    describe("a note not drafted from a session transcript", () => {
+      const handWritten = noteContentToJson(asSoapContent(plainNarrative)!)
+
+      it.each([
+        ["written by hand on a session", { content: null, content_edited: handWritten }],
+        ["written by hand with no session", { session_id: null, content: null, content_edited: handWritten }],
+        ["dictated, with no session", { session_id: null, content: handWritten }],
+        ["imported", { content: handWritten, imported: true }],
+      ])("%s shows its Objective with no 'Based on transcript' label", (_case, fields) => {
+        render(
+          <NoteViewer
+            note={createMockNote({ ...fields, finalized_at: "2024-01-15T15:00:00Z" })}
+            readonly
+          />,
+        )
+
+        expect(screen.getByText("Objective")).toBeInTheDocument()
+        expect(screen.getByText("Patient appears calm")).toBeInTheDocument()
+        expect(screen.queryByText("Based on transcript")).not.toBeInTheDocument()
+      })
     })
   })
 
