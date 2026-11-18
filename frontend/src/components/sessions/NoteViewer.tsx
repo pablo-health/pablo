@@ -148,6 +148,7 @@ export function NoteViewer({
   return (
     <SOAPNoteView
       displayed={displayedNote(note, pendingEdited)}
+      fromTranscript={isFromTranscript(note)}
       readonly={viewOnly}
       pdfMetadata={pdfMetadata}
       onSave={onSave}
@@ -165,6 +166,16 @@ export function NoteViewer({
  */
 function isNewByHand(note: Note): boolean {
   return note.session_id === null && !note.content && note.updated_at === note.created_at
+}
+
+/**
+ * A note Pablo drafted from its session's transcript: it has a draft, belongs
+ * to a session, and is not a reference copy of a note written elsewhere. A
+ * note written by hand has no draft, only the clinician's copy; a dictated
+ * note belongs to no session.
+ */
+function isFromTranscript(note: Note): boolean {
+  return note.session_id !== null && note.content !== null && !note.imported
 }
 
 function asSOAP(n: NoteContent | null): SOAPNoteContent | null {
@@ -190,6 +201,12 @@ const SOAP_SECTIONS = [
 
 interface SOAPViewProps {
   displayed: DisplayedNote
+  /**
+   * The note was drafted from its session's transcript. Only then does the
+   * Objective section sit under "Based on transcript"; a note written by
+   * hand, dictated or imported says nothing about a transcript.
+   */
+  fromTranscript?: boolean
   readonly?: boolean
   pdfMetadata?: PDFExportMetadata
   onSave?: (editedNote: NoteContent) => void
@@ -207,6 +224,7 @@ const EMPTY_SOAP_NARRATIVE: SOAPNoteModel = {
 
 function SOAPNoteView({
   displayed,
+  fromTranscript = false,
   readonly = false,
   pdfMetadata,
   onSave,
@@ -296,6 +314,27 @@ function SOAPNoteView({
     }
   }
 
+  const objectiveBody =
+    editMode && editState ? (
+      <SubFieldEditor
+        sectionKey="objective"
+        data={editState.objective}
+        onChange={(updated) =>
+          setEditState((prev) =>
+            prev ? ({ ...prev, objective: updated } as StructuredEditState) : null,
+          )
+        }
+      />
+    ) : structured ? (
+      <StructuredContent
+        sectionKey="objective"
+        structured={structured}
+        onClaimClick={onClaimClick}
+      />
+    ) : displayNote ? (
+      <NarrativeContent text={displayNote.objective} />
+    ) : null
+
   if (!displayNote) {
     return (
       <div className={cn("card text-center py-12", className)}>
@@ -348,28 +387,16 @@ function SOAPNoteView({
 
             {section.key === "objective" ? (
               <>
-                <div className="rounded-lg border border-blue-200 bg-blue-50/50 p-4">
-                  <p className="text-xs font-medium text-blue-600 mb-3 uppercase tracking-wide">
-                    Based on transcript
-                  </p>
-                  {editMode && editState ? (
-                    <SubFieldEditor
-                      sectionKey={section.key}
-                      data={editState[section.key]}
-                      onChange={(updated) =>
-                        setEditState((prev) => prev ? { ...prev, [section.key]: updated } as StructuredEditState : null)
-                      }
-                    />
-                  ) : structured ? (
-                    <StructuredContent
-                      sectionKey={section.key}
-                      structured={structured}
-                      onClaimClick={onClaimClick}
-                    />
-                  ) : (
-                    <NarrativeContent text={displayNote[section.key]} />
-                  )}
-                </div>
+                {fromTranscript ? (
+                  <div className="rounded-lg border border-blue-200 bg-blue-50/50 p-4">
+                    <p className="text-xs font-medium text-blue-600 mb-3 uppercase tracking-wide">
+                      Based on transcript
+                    </p>
+                    {objectiveBody}
+                  </div>
+                ) : (
+                  objectiveBody
+                )}
                 {canEdit && (
                   <ClinicalObservationForm
                     value={clinicalObs}
