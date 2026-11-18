@@ -22,6 +22,35 @@ updates:
           - minor
           - patch
 
+  # The transcription worker's hashed lock (services/transcription/
+  # requirements.txt, compiled from requirements.in with `uv pip compile`).
+  # The uv ecosystem, not pip: it re-runs `uv pip compile` against
+  # requirements.in, so the floors and the av ceiling there hold, and it keeps
+  # --generate-hashes and --python-version from the lock's header. It does not
+  # carry --python-platform over; Dependabot resolves on x86_64 Linux, the
+  # image's platform, and CI's "Transcription lock decode" job installs the
+  # result as the image does and runs the worker's real decode.
+  - package-ecosystem: uv
+    directory: /services/transcription
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+      - python
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # Mirrors the av<19 ceiling in requirements.in: faster-whisper 1.2.1
+      # calls av.open(metadata_errors=...), which PyAV 19 rejects, so every
+      # transcription fails. Lift both together once faster-whisper supports
+      # PyAV 19.
+      - dependency-name: "av"
+        versions: [">=19"]
+
   - package-ecosystem: npm
     directory: /frontend
     schedule:
