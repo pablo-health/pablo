@@ -15,10 +15,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install Python deps
+# Install Python deps from the hashed lock (requirements.txt), compiled from
+# the floors in requirements.in. --require-hashes refuses any package or
+# version the lock does not name, so the image gets exactly the audited tree.
 COPY requirements.txt .
 RUN python3 -m venv /opt/venv && \
-    /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
+    /opt/venv/bin/pip install --no-cache-dir --require-hashes --only-binary :all: \
+        -r requirements.txt
 
 ENV PATH="/opt/venv/bin:$PATH"
 
