@@ -178,9 +178,10 @@ def test_keys_go_on_through_forced_rls_and_every_row_stays(
     result = upgrade_tenant_schema(engine, parent_schema)
 
     assert result.status is TenantStatus.SUCCESS, result.detail
+    # Before _counts, which re-forces the tables itself on its way out.
+    assert _forced(engine, parent_schema) == forced_before
     assert _keys(engine, parent_schema) == set(_KEYED)
     assert _counts(engine, parent_schema) == dict.fromkeys(_KEYED, 1)
-    assert _forced(engine, parent_schema) == forced_before
 
 
 def test_an_orphan_in_a_forced_table_fails_by_name_and_nothing_changes(
@@ -212,3 +213,18 @@ def test_deleting_the_client_empties_every_keyed_table(engine: Engine, parent_sc
         _set_force(conn, parent_schema, on=True)
 
     assert _counts(engine, parent_schema) == dict.fromkeys(_KEYED, 0)
+
+
+def test_a_second_run_over_existing_keys_is_a_no_op(engine: Engine, parent_schema: str) -> None:
+    assert upgrade_tenant_schema(engine, parent_schema).status is TenantStatus.SUCCESS
+    with engine.begin() as conn:
+        conn.execute(text(f"SET search_path = {parent_schema}, {PLATFORM_SCHEMA}, public"))
+        cfg = _alembic_config_for(parent_schema)
+        cfg.attributes["connection"] = conn
+        cfg.attributes["version_table_schema"] = parent_schema
+        command.stamp(cfg, _PARENT)
+
+    result = upgrade_tenant_schema(engine, parent_schema)
+
+    assert result.status is TenantStatus.SUCCESS, result.detail
+    assert _keys(engine, parent_schema) == set(_KEYED)
