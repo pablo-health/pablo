@@ -136,6 +136,14 @@ jobs:
           poetry export --only=main --without-hashes -f requirements.txt -o /tmp/requirements-audit.txt
           pipx run pip-audit -r /tmp/requirements-audit.txt --no-deps --disable-pip
 
+      - name: Audit transcription worker lock
+        if: steps.classify.outputs.substantive != 'false'
+        # The worker image installs this hashed lock, not the root project, so
+        # the step above never sees its pins. Runs on every pull request, not
+        # only ones that touch the lock: an advisory published against a pin
+        # we already ship should fail the next PR, not wait for a refresh.
+        run: pipx run pip-audit -r services/transcription/requirements.txt --no-deps --disable-pip
+
       - name: Lint (ruff + mypy)
         if: steps.classify.outputs.substantive != 'false'
         run: make lint
@@ -358,6 +366,49 @@ jobs:
             echo "::error::Then commit the updated backend/app/db/platform_template.sql."
             exit 1
           fi
+
+  transcription-decode:
+    name: Transcription lock decode
+    # The worker's /health never opens a file, so it passes on a lock in which
+    # every transcription fails (PyAV 19 broke faster-whisper's decode exactly
+    # that way). Whenever the lock or the worker changes, by hand or by a
+    # Dependabot refresh, install the lock as the image does and run the real
+    # decode on every allowlisted format. Python 3.12 on x86_64 matches the
+    # image and the lock's compile target.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - id: scope
+        # Fails open: anything other than a pull request that leaves the
+        # worker alone runs the probe.
+        run: |
+          relevant=true
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            changed="$(git diff --name-only "origin/${{ github.base_ref }}...HEAD" || true)"
+            if [ -n "${changed}" ] && ! echo "${changed}" | grep -qE '^(services/transcription/|scripts/transcription_decode_probe\.py$|\.github/workflows/ci\.yml$)'; then
+              relevant=false
+            fi
+          fi
+          echo "relevant=${relevant}" | tee -a "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        if: steps.scope.outputs.relevant == 'true'
+        with:
+          python-version: "3.12"
+
+      - name: Install the lock
+        if: steps.scope.outputs.relevant == 'true'
+        run: |
+          python -m venv /tmp/transcription-venv
+          /tmp/transcription-venv/bin/pip install --no-cache-dir --require-hashes \
+            --only-binary :all: -r services/transcription/requirements.txt
+
+      - name: Decode probe
+        if: steps.scope.outputs.relevant == 'true'
+        run: /tmp/transcription-venv/bin/python scripts/transcription_decode_probe.py
 
   frontend:
     name: Frontend checks
