@@ -8,11 +8,18 @@
 #
 # The target matches the image (Ubuntu 24.04, Python 3.12, x86_64). Then
 # check the lock: pip-audit --no-deps --disable-pip -r requirements.txt
+#
+# Dependabot refreshes the lock weekly (the uv entry in
+# .github/dependabot.yml). CI audits it on every pull request and, when it
+# changes, installs it and runs the worker's real decode
+# (scripts/transcription_decode_probe.py). Run that probe after a hand
+# regeneration too: /health passes on a lock that cannot decode audio.
 faster-whisper>=1.1.0
 # Ceiling: faster_whisper/audio.py (decode_audio) calls
 # av.open(..., metadata_errors="ignore"), which PyAV 19 rejects with a
 # TypeError, so every transcription fails. faster-whisper declares only
-# av>=11. Lift this once a faster-whisper release supports PyAV 19.
+# av>=11. Lift this once a faster-whisper release supports PyAV 19, together
+# with the matching av ignore in .github/dependabot.yml.
 av<19
 fastapi>=0.139.0
 starlette>=1.3.1
