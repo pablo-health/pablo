@@ -274,6 +274,22 @@ REPORTED_ERROR_EVENT_TYPE: Final[str] = (
 )
 _DEFAULT_SERVICE_NAME: Final[str] = "pablo"
 
+# Container log drivers split a stdout line at 16,384 bytes, and a collector
+# then files each piece as its own unstructured entry. An exception record is
+# kept under this bound by trimming its traceback (see _bound_record); the
+# headroom covers the newline and anything the driver adds.
+MAX_RECORD_BYTES: Final[int] = 15360
+
+_TRACEBACK_HEADER: Final[str] = "Traceback (most recent call last):"
+_CHAIN_SEPARATORS: Final[frozenset[str]] = frozenset(
+    {
+        "During handling of the above exception, another exception occurred:",
+        "The above exception was the direct cause of the following exception:",
+    }
+)
+_FRAME_LINE_RE: Final = re.compile(r'^[ |]*File "')
+_TRUNCATED_SUFFIX: Final[str] = "... [truncated]"
+
 
 def _scrub_text(text: str) -> str:
     for pattern, replacement in _SCRUBBERS:
@@ -419,7 +435,7 @@ class JSONFormatter(logging.Formatter):
             if record.levelno >= logging.ERROR and record.exc_info[0] is not None:
                 self._add_error_report(payload, http_request)
 
-        return json.dumps(payload, default=str, separators=(",", ":"))
+        return _bound_record(payload)
 
     def _add_trace(self, payload: dict[str, Any], trace: LogTrace) -> None:
         if self._project_id is None:
@@ -470,6 +486,130 @@ class JSONFormatter(logging.Formatter):
         # Stable ISO-8601 UTC with millisecond precision.
         ts = _dt.datetime.fromtimestamp(record.created, tz=_dt.UTC)
         return ts.strftime("%Y-%m-%dT%H:%M:%S.") + f"{int(record.msecs):03d}Z"
+
+
+def _dump(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, default=str, separators=(",", ":"))
+
+
+@dataclass
+class _Traceback:
+    """A formatted traceback split into the parts the trim works on.
+
+    ``frames`` are the last chain segment's frames, outermost first: each
+    is a ``File "..."`` line with its indented source and marker lines.
+    ``preamble`` is the segment's lines before its frames (its header),
+    ``tail`` the exception line(s) after them.
+    """
+
+    earlier_segments: int
+    earlier_frames: int
+    preamble: list[str]
+    frames: list[list[str]]
+    tail: str
+
+
+def _split_traceback(text: str) -> _Traceback:
+    lines = text.split("\n")
+    separators = [i for i, line in enumerate(lines) if line in _CHAIN_SEPARATORS]
+    start = 0
+    earlier_frames = 0
+    if separators:
+        start = separators[-1] + 1
+        while start < len(lines) and not lines[start]:
+            start += 1
+        earlier_frames = sum(1 for line in lines[:start] if _FRAME_LINE_RE.match(line))
+    segment = lines[start:]
+
+    preamble: list[str] = []
+    frames: list[list[str]] = []
+    rest = segment
+    if segment and segment[0] == _TRACEBACK_HEADER:
+        preamble = [segment[0]]
+        i = 1
+        while i < len(segment) and segment[i].startswith(" "):
+            if _FRAME_LINE_RE.match(segment[i]) or not frames:
+                frames.append([])
+            frames[-1].append(segment[i])
+            i += 1
+        rest = segment[i:]
+    return _Traceback(
+        earlier_segments=len(separators),
+        earlier_frames=earlier_frames,
+        preamble=preamble,
+        frames=frames,
+        tail="\n".join(rest),
+    )
+
+
+def _bound_record(payload: dict[str, Any]) -> str:
+    """Serialize the record, trimming its traceback if the line is too long.
+
+    A line within ``MAX_RECORD_BYTES`` is returned exactly as serialized.
+    Otherwise, in order, stopping as soon as the serialized line is within
+    ``MAX_RECORD_BYTES``: drop the earlier segments of a chained exception;
+    drop frames from the outermost end (always keeping the innermost one);
+    cut the exception message. A reader that walks header, frames, exception
+    line still finds all three, and the frames it keeps are the ones that
+    say where the error was raised. ``stack_trace``, when present, stays a
+    copy of ``exc_info``. The text is the already-scrubbed traceback and is
+    only ever shortened.
+    """
+    line = _dump(payload)
+    # A record with no traceback is left as it is, however long: the
+    # traceback is the one part of a record that is safe to shorten.
+    if len(line) <= MAX_RECORD_BYTES or "exc_info" not in payload:
+        return line
+
+    tb = _split_traceback(str(payload["exc_info"]))
+    chain_marker = (
+        [f"[{tb.earlier_segments} earlier chained traceback(s) omitted]"]
+        if tb.earlier_segments
+        else []
+    )
+
+    def attempt(dropped: int, tail: str) -> str:
+        kept = tb.frames[dropped:]
+        body = [*chain_marker, *tb.preamble]
+        if dropped:
+            body.append(f"  [{dropped} outer frames omitted]")
+        body.extend(frame_line for frame in kept for frame_line in frame)
+        text = "\n".join([*body, tail] if tail or not body else body)
+        payload["exc_info"] = text
+        if "stack_trace" in payload:
+            payload["stack_trace"] = text
+        payload["exc_info_frames_omitted"] = tb.earlier_frames + dropped
+        payload["exc_info_truncated"] = True
+        return _dump(payload)
+
+    line = attempt(0, tb.tail)
+    if len(line) <= MAX_RECORD_BYTES:
+        return line
+
+    # Fewest outer frames dropped that makes the line fit: the length only
+    # shrinks as frames go, so a binary search finds it.
+    max_drop = max(len(tb.frames) - 1, 0)
+    line = attempt(max_drop, tb.tail)
+    if len(line) <= MAX_RECORD_BYTES:
+        lo, hi = 0, max_drop
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if len(attempt(mid, tb.tail)) <= MAX_RECORD_BYTES:
+                hi = mid
+            else:
+                lo = mid + 1
+        return attempt(lo, tb.tail)
+
+    # Still too long with only the innermost frame: the exception message
+    # itself is the bulk. Keep the longest prefix of it that fits.
+    lo, hi = 0, len(tb.tail)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if len(attempt(max_drop, tb.tail[:mid] + _TRUNCATED_SUFFIX)) <= MAX_RECORD_BYTES:
+            lo = mid
+        else:
+            hi = mid - 1
+    return attempt(max_drop, tb.tail[:lo] + _TRUNCATED_SUFFIX)
 
 
 def configure_logging(level: str = "INFO") -> None:

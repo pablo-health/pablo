@@ -7,11 +7,13 @@ from __future__ import annotations
 import io
 import json
 import logging
+import re
 import sys
 from typing import TYPE_CHECKING, Any
 
 import pytest
 from app.logging_config import (
+    MAX_RECORD_BYTES,
     JSONFormatter,
     RedactPHIFilter,
     configure_logging,
@@ -189,6 +191,173 @@ class TestJSONFormatter:
         payload = json.loads(self.fmt.format(rec))
         assert "123-45-6789" not in payload["exc_info"]
         assert "[REDACTED-SSN]" in payload["exc_info"]
+
+
+def _raise_innermost(message: str, cause: BaseException | None = None) -> None:
+    if cause is not None:
+        raise RuntimeError(message) from cause
+    raise ValueError(message)
+
+
+def _descend_even(depth: int, message: str, cause: BaseException | None = None) -> None:
+    if depth <= 0:
+        _raise_innermost(message, cause)
+    _descend_odd(depth - 1, message, cause)
+
+
+def _descend_odd(depth: int, message: str, cause: BaseException | None) -> None:
+    # Two functions calling each other, so consecutive frames differ and the
+    # traceback prints every one of them (no "Previous line repeated").
+    _descend_even(depth - 1, message, cause)
+
+
+def _raise_chained(depth: int) -> None:
+    """``raise RuntimeError from ValueError``, both ``depth`` frames deep."""
+    try:
+        _descend_even(depth, "inner cause")
+    except ValueError as cause:
+        _descend_even(depth, "outer failure", cause)
+
+
+def _log_exception(fn: Any, *args: Any) -> str:
+    """Raise through ``fn`` and log it with logger.exception; return the line."""
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(JSONFormatter())
+    handler.addFilter(RedactPHIFilter())
+    logger = logging.getLogger("test.bounded")
+    logger.handlers = [handler]
+    logger.propagate = False
+    logger.setLevel(logging.DEBUG)
+    try:
+        fn(*args)
+    except Exception:
+        logger.exception("pablo.unhandled")
+    line = stream.getvalue()
+    assert line.endswith("\n")
+    assert line.count("\n") == 1
+    return line[:-1]
+
+
+_FRAME_FILE_RE = re.compile(r'^  File "')
+
+
+def _file_lines(text: str) -> list[str]:
+    return [line for line in text.split("\n") if _FRAME_FILE_RE.match(line)]
+
+
+class TestRecordBound:
+    """A record never exceeds MAX_RECORD_BYTES because of its traceback."""
+
+    def test_deep_traceback_keeps_header_innermost_frames_and_exception_line(self) -> None:
+        line = _log_exception(_descend_even, 300, "deep failure")
+        assert len(line.encode("utf-8")) <= MAX_RECORD_BYTES
+        payload = json.loads(line)
+
+        exc_info = payload["exc_info"]
+        assert payload["stack_trace"] == exc_info
+        assert payload["exc_info_truncated"] is True
+        assert exc_info.startswith("Traceback (most recent call last):\n")
+        omitted = payload["exc_info_frames_omitted"]
+        assert omitted > 0
+        assert f"\n  [{omitted} outer frames omitted]\n" in exc_info
+        assert "in _raise_innermost" in exc_info
+        assert exc_info.endswith("\nValueError: deep failure")
+        assert payload["message"] == "pablo.unhandled"
+        assert payload["error_class"] == "ValueError"
+
+    def test_marker_is_not_a_frame(self) -> None:
+        payload = json.loads(_log_exception(_descend_even, 300, "deep failure"))
+        marker = next(line for line in payload["exc_info"].split("\n") if "omitted]" in line)
+        assert marker.startswith("  [")
+        assert not _FRAME_FILE_RE.match(marker)
+
+    def test_kept_frames_are_the_innermost_in_original_order(self) -> None:
+        try:
+            _descend_even(300, "deep failure")
+        except ValueError:
+            original = _file_lines(JSONFormatter().formatException(sys.exc_info()))
+        payload = json.loads(_log_exception(_descend_even, 300, "deep failure"))
+        kept = _file_lines(payload["exc_info"])
+        assert 0 < len(kept) < len(original)
+        assert kept == original[-len(kept) :]
+        assert payload["exc_info_frames_omitted"] == len(original) - len(kept)
+
+    def test_trims_no_more_frames_than_needed(self) -> None:
+        line = _log_exception(_descend_even, 300, "deep failure")
+        # Frames go one at a time from the outer end until the line fits, so
+        # it lands within about one frame (written twice: exc_info and
+        # stack_trace) of the bound, not at the innermost frame alone.
+        assert MAX_RECORD_BYTES - 600 < len(line) <= MAX_RECORD_BYTES
+        assert len(_file_lines(json.loads(line)["exc_info"])) > 10
+
+    def test_chained_exception_drops_the_earlier_segment_first(self) -> None:
+        line = _log_exception(_raise_chained, 200)
+        assert len(line.encode("utf-8")) <= MAX_RECORD_BYTES
+        payload = json.loads(line)
+        exc_info = payload["exc_info"]
+        assert payload["stack_trace"] == exc_info
+        assert exc_info.startswith("[1 earlier chained traceback(s) omitted]\n")
+        assert "inner cause" not in exc_info
+        assert "The above exception was the direct cause" not in exc_info
+        assert "\nTraceback (most recent call last):\n" in exc_info
+        assert exc_info.endswith("\nRuntimeError: outer failure")
+        # The dropped segment's ~200 frames are counted with the outer ones.
+        assert payload["exc_info_frames_omitted"] > 200
+
+    def test_huge_exception_message_is_truncated(self) -> None:
+        line = _log_exception(_raise_innermost, "x" * 40_000)
+        assert len(line.encode("utf-8")) <= MAX_RECORD_BYTES
+        payload = json.loads(line)
+        exc_info = payload["exc_info"]
+        assert payload["stack_trace"] == exc_info
+        assert payload["exc_info_truncated"] is True
+        # Frame trimming runs first and leaves only the innermost frame
+        # (the caller's frame is the one dropped); then the message is cut.
+        assert payload["exc_info_frames_omitted"] == 1
+        assert exc_info.startswith(
+            "Traceback (most recent call last):\n  [1 outer frames omitted]\n"
+        )
+        assert _file_lines(exc_info)[-1].endswith("in _raise_innermost")
+        assert "\nValueError: xxx" in exc_info
+        assert exc_info.endswith("x... [truncated]")
+
+    def test_short_exception_record_is_unchanged(self) -> None:
+        line = _log_exception(_descend_even, 3, "short failure")
+        payload = json.loads(line)
+        assert "exc_info_truncated" not in payload
+        assert "exc_info_frames_omitted" not in payload
+        # Byte for byte what the formatter has always written: the payload
+        # serialized compactly, keys in insertion order, nothing re-ordered.
+        assert line == json.dumps(payload, default=str, separators=(",", ":"))
+        assert "omitted]" not in payload["exc_info"]
+
+    def test_long_record_without_exception_is_unchanged(self) -> None:
+        fmt = JSONFormatter()
+        rec = _make_record("op", extra={"detail": "y" * 40_000})
+        line = fmt.format(rec)
+        assert len(line) > MAX_RECORD_BYTES
+        payload = json.loads(line)
+        assert payload["detail"] == "y" * 40_000
+        assert "exc_info_truncated" not in payload
+
+    def test_warning_with_exception_has_no_stack_trace_and_is_bounded(self) -> None:
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        handler.setFormatter(JSONFormatter())
+        logger = logging.getLogger("test.bounded.warning")
+        logger.handlers = [handler]
+        logger.propagate = False
+        try:
+            _descend_even(300, "deep failure")
+        except ValueError:
+            logger.warning("retrying", exc_info=True)
+        line = stream.getvalue().rstrip("\n")
+        assert len(line) <= MAX_RECORD_BYTES
+        payload = json.loads(line)
+        assert "stack_trace" not in payload
+        assert payload["exc_info_truncated"] is True
+        assert payload["exc_info"].endswith("\nValueError: deep failure")
 
 
 class TestEndToEnd:
