@@ -20,17 +20,19 @@ from __future__ import annotations
 import contextvars
 import logging
 import os
+import threading
+import time
 import uuid
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
     from datetime import datetime
 
     from sqlalchemy.engine import Engine
@@ -638,3 +640,115 @@ def test_a_rolled_back_deactivation_keeps_its_memberships(world: _World, engine:
         session.rollback()
 
     assert world.membership(account.id) is not None
+
+
+# --- a writer racing a deactivation -----------------------------------------
+#
+# The deactivation runs on one connection and is left open; the writer runs on
+# its own connection in a thread. Without a lock on the practice row the writer
+# reads ``is_active`` from its snapshot, inserts at once, and the membership
+# outlives the practice once both commit.
+
+
+def _members_of(engine: Engine, practice_id: str) -> int:
+    from app.db.platform_models import PracticeMemberRow as M  # noqa: PLC0415
+
+    with Session(engine) as session:
+        return int(
+            session.execute(
+                select(func.count()).select_from(M).where(M.practice_id == practice_id)
+            ).scalar_one()
+        )
+
+
+def _waits_on(engine: Engine, blocker_pid: int, *, within: float = 10.0) -> bool:
+    """Whether some backend comes to wait on a lock ``blocker_pid`` holds."""
+    deadline = time.monotonic() + within
+    with engine.connect() as conn:
+        while time.monotonic() < deadline:
+            waiting = conn.execute(
+                text(
+                    "SELECT count(*) FROM pg_stat_activity WHERE :pid = ANY(pg_blocking_pids(pid))"
+                ),
+                {"pid": blocker_pid},
+            ).scalar_one()
+            if waiting:
+                return True
+            conn.rollback()
+            time.sleep(0.05)
+    return False
+
+
+def _race_a_deactivation(
+    engine: Engine, practice_id: str, write: Callable[[], object]
+) -> tuple[bool, bool, list[object]]:
+    """Run ``write`` in a thread while a deactivation of ``practice_id`` is open.
+
+    Returns whether the writer waited on the deactivation, whether it was still
+    running when that was checked, and what it returned (or raised).
+    """
+    from app.db.platform_models import PracticeRow  # noqa: PLC0415
+    from app.db.practice_members import remove_for_practice  # noqa: PLC0415
+
+    outcome: list[object] = []
+
+    def run() -> None:
+        try:
+            outcome.append(write())
+        except Exception as exc:  # surfaced by the caller's assertion
+            outcome.append(exc)
+
+    writer = threading.Thread(target=run, daemon=True)
+    with Session(engine) as deactivation:
+        try:
+            pid = int(deactivation.execute(text("SELECT pg_backend_pid()")).scalar_one())
+            deactivation.execute(
+                update(PracticeRow).where(PracticeRow.id == practice_id).values(is_active=False)
+            )
+            remove_for_practice(deactivation, practice_id)
+            writer.start()
+            waited = _waits_on(engine, pid)
+            still_running = writer.is_alive()
+            deactivation.commit()
+        finally:
+            deactivation.rollback()
+    writer.join(timeout=30)
+    assert not writer.is_alive(), "the writer never finished"
+    return waited, still_running, outcome
+
+
+def test_a_claim_racing_a_deactivation_waits_and_writes_nothing(
+    world: _World, engine: Engine
+) -> None:
+    from app.db.practice_members import claim  # noqa: PLC0415
+
+    practice = world.practice("racing")
+    account = world.account("racer")
+    world.map(account.email, practice.id)
+
+    waited, still_running, outcome = _race_a_deactivation(
+        engine, practice.id, lambda: claim(account.id, practice.id, account.email)
+    )
+
+    assert (waited, still_running) == (True, True)
+    assert outcome == [False]
+    assert _members_of(engine, practice.id) == 0
+
+
+def test_a_backfill_racing_a_deactivation_waits_and_writes_nothing(
+    world: _World, engine: Engine
+) -> None:
+    from app.db.practice_members import BackfillReport, backfill  # noqa: PLC0415
+
+    backfill(engine)
+    practice = world.practice("bfracing")
+    account = world.account("bfracer")
+    world.map(account.email, practice.id)
+
+    waited, still_running, outcome = _race_a_deactivation(
+        engine, practice.id, lambda: backfill(engine)
+    )
+
+    assert (waited, still_running) == (True, True)
+    assert outcome == [BackfillReport(inserted=0, unmembered=0)]
+    assert _members_of(engine, practice.id) == 0

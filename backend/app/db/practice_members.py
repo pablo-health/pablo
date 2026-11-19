@@ -76,6 +76,15 @@ def member_practice_id(user_id: str) -> str | None:
 # when the request read it: a revoke that commits between the two leaves no
 # mapping row, and nothing is inserted. The practice must still be active for
 # the same reason a deactivation removes its rows (``remove_for_practice``).
+#
+# ``FOR SHARE OF p`` makes that check wait for a deactivation in flight. A plain
+# join reads ``is_active`` from the statement's snapshot, so a claim racing a
+# deactivation that has run but not committed still sees the practice active,
+# inserts at once, and leaves a membership in a practice that is now inactive
+# (``remove_for_practice`` ran before the row existed). The share lock conflicts
+# with the deactivation's row lock: the claim waits for it to commit, then reads
+# the committed row, finds it inactive and inserts nothing. Held until the claim
+# commits, on one practice row.
 _CLAIM_SQL = text(
     """
     INSERT INTO platform.practice_members
@@ -84,6 +93,7 @@ _CLAIM_SQL = text(
     FROM platform.email_tenant_mappings m
     JOIN platform.practices p ON p.id = m.practice_id AND p.is_active
     WHERE m.email = :email AND m.practice_id = :practice_id
+    FOR SHARE OF p
     ON CONFLICT (user_id) DO NOTHING
     """
 )
@@ -236,6 +246,9 @@ class BackfillReport:
 # routed by: a row written from a stale address shows up as a disagreement on
 # the account's next sign-in (``MEMBERSHIP_DISAGREES_EVENT``) before anything
 # depends on it.
+#
+# ``FOR SHARE OF p`` for the reason ``_CLAIM_SQL`` takes it: a deactivation
+# committing during the backfill is waited for, not read past.
 _BACKFILL_SQL = text(
     """
     INSERT INTO platform.practice_members
@@ -244,6 +257,7 @@ _BACKFILL_SQL = text(
     FROM platform.users u
     JOIN platform.email_tenant_mappings m ON m.email = lower(u.email)
     JOIN platform.practices p ON p.id = m.practice_id AND p.is_active
+    FOR SHARE OF p
     ON CONFLICT (user_id) DO NOTHING
     """
 )
