@@ -16,15 +16,19 @@
 # Idempotent — safe to run multiple times.
 #
 # Usage:
-#   GCP_PROJECT_ID=pablohealth-dev  ./scripts/setup-transcription-queue.sh
-#   BACKEND_SA=<sa email> GCP_PROJECT_ID=... ./scripts/setup-transcription-queue.sh  (backend off Cloud Run)
-#   GCP_PROJECT_ID=pablohealth-prod ./scripts/setup-transcription-queue.sh
+#   GCP_PROJECT_ID=<project-id> ./scripts/setup-transcription-queue.sh
+#   BACKEND_SA=<sa email> GCP_PROJECT_ID=<project-id> ./scripts/setup-transcription-queue.sh  (backend off Cloud Run)
 
 set -euo pipefail
 
 # --- Configuration ---
 PROJECT_ID="${GCP_PROJECT_ID:?Set GCP_PROJECT_ID}"
 REGION="${GCP_REGION:-us-central1}"
+# Whatever the caller passed, kept for the re-run line at the end (BACKEND_SA
+# is filled in by auto-detection below when it was not passed).
+RERUN_ENV="GCP_PROJECT_ID=${PROJECT_ID}"
+[ -n "${GCP_REGION:-}" ] && RERUN_ENV="${RERUN_ENV} GCP_REGION=${GCP_REGION}"
+[ -n "${BACKEND_SA:-}" ] && RERUN_ENV="${RERUN_ENV} BACKEND_SA=${BACKEND_SA}"
 
 SA_NAME="cloud-tasks-invoker"
 SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
@@ -159,7 +163,5 @@ echo "=== Setup Complete ==="
 echo ""
 echo "Queues ready: ${QUEUE_NAMES[*]}"
 echo ""
-echo "Run for each environment:"
-echo "  Dev:  GCP_PROJECT_ID=pablohealth-dev  $0"
-echo "  Prod: GCP_PROJECT_ID=pablohealth-prod $0"
-echo "  OSS:  GCP_PROJECT_ID=pablohealth-oss  $0"
+echo "To re-run for this project (safe to repeat):"
+echo "  ${RERUN_ENV} $0"
