@@ -120,6 +120,17 @@ def lookup(user_id: str, email: str | None) -> Membership | None:
 # whether or not the caller's UPDATE has been flushed): the claim waits for it to commit, then reads
 # the committed row, finds it inactive and inserts nothing. Held until the claim
 # commits, on one practice row.
+#
+# ``OF m`` does the same for a revoke in flight. A revoke deletes the mapping and
+# then the memberships its address claimed, in one transaction
+# (``PostgresAllowlistRepository.remove``). Without a lock on the mapping row, a
+# claim landing between the two reads the still-committed mapping, inserts, and
+# leaves a membership the revoke never saw. The membership decides, so the
+# revoked account would keep entering the practice. With the lock, the claim
+# waits for the revoke to commit, rechecks, finds no mapping and inserts
+# nothing. A claim that locks first makes the revoke's ``DELETE`` wait instead,
+# and the revoke's membership read, a later statement, then sees the claimed
+# row and removes it.
 _CLAIM_SQL = text(
     """
     INSERT INTO platform.practice_members
@@ -128,7 +139,7 @@ _CLAIM_SQL = text(
     FROM platform.email_tenant_mappings m
     JOIN platform.practices p ON p.id = m.practice_id AND p.is_active
     WHERE m.email = :email AND m.practice_id = :practice_id
-    FOR SHARE OF p
+    FOR SHARE OF p, m
     ON CONFLICT (user_id) DO NOTHING
     """
 )
@@ -296,8 +307,8 @@ class BackfillReport:
 # (``MEMBERSHIP_DISAGREES_EVENT``) before anything depended on it. Now it only
 # reaches accounts mapped since then that have not signed in.
 #
-# ``FOR SHARE OF p`` for the reason ``_CLAIM_SQL`` takes it: a deactivation
-# committing during the backfill is waited for, not read past.
+# ``FOR SHARE OF p, m`` for the reasons ``_CLAIM_SQL`` takes it: a deactivation
+# or a revoke committing during the backfill is waited for, not read past.
 _BACKFILL_SQL = text(
     """
     INSERT INTO platform.practice_members
@@ -306,7 +317,7 @@ _BACKFILL_SQL = text(
     FROM platform.users u
     JOIN platform.email_tenant_mappings m ON m.email = lower(u.email)
     JOIN platform.practices p ON p.id = m.practice_id AND p.is_active
-    FOR SHARE OF p
+    FOR SHARE OF p, m
     ON CONFLICT (user_id) DO NOTHING
     """
 )

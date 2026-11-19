@@ -82,6 +82,12 @@ class PostgresAllowlistRepository(AllowlistRepository):
         mapping = self._session.get(EmailTenantMappingRow, normalized)
         if mapping is not None:
             self._session.delete(mapping)
+        # Flushed before the membership read, so this transaction holds the
+        # mapping's row lock by then. A claim in flight either holds its share
+        # lock already (this waits, and the read below sees its row) or waits
+        # for this commit and finds no mapping (``practice_members._CLAIM_SQL``).
+        # Autoflush would order it the same way; this does not depend on it.
+        self._session.flush()
         # And the membership the grant led to. A signed-in account resolves
         # from its membership before the mapping is read
         # (``app.auth.service._resolve_practice``), so with only the mapping

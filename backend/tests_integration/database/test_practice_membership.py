@@ -1137,6 +1137,128 @@ def test_revoking_after_a_regrant_elsewhere_removes_the_claimed_membership(
         _forget_grant(engine, account.email)
 
 
+# A revoke deletes the mapping and then the memberships its address claimed, in
+# one transaction. Without a lock on the mapping row, a claim between the two
+# reads the committed mapping, inserts at once, and leaves a membership the
+# revoke never saw, which then decides for the revoked account.
+
+
+def _race_a_revoke(engine: Engine, email: str, write: Callable[[], object]) -> list[object]:
+    """Run ``write`` in a thread while a revoke of ``email`` is open.
+
+    Asserts that the writer waited on the revoke and was still running when
+    that was checked. Returns what it returned (or raised).
+    """
+    from app.repositories.postgres.allowlist import (  # noqa: PLC0415
+        PostgresAllowlistRepository,
+    )
+
+    outcome: list[object] = []
+
+    def run() -> None:
+        try:
+            outcome.append(write())
+        except Exception as exc:  # surfaced by the caller's assertion
+            outcome.append(exc)
+
+    writer = threading.Thread(target=run, daemon=True)
+    with Session(engine) as revoke:
+        try:
+            pid = int(revoke.execute(text("SELECT pg_backend_pid()")).scalar_one())
+            assert PostgresAllowlistRepository(revoke).remove(email) is True
+            writer.start()
+            waited = _waits_on(engine, pid)
+            still_running = writer.is_alive()
+            revoke.commit()
+        finally:
+            revoke.rollback()
+    writer.join(timeout=30)
+    assert not writer.is_alive(), "the writer never finished"
+    assert (waited, still_running) == (True, True)
+    return outcome
+
+
+def test_a_claim_racing_a_revoke_waits_and_writes_nothing(world: _World, engine: Engine) -> None:
+    from app.db.practice_members import claim  # noqa: PLC0415
+
+    practice = world.practice("revoking")
+    account = world.account("revoked")
+    _grant(engine, account.email, practice.id)
+    try:
+        outcome = _race_a_revoke(
+            engine,
+            account.email,
+            lambda: claim(account.id, practice.id, account.email, may_defer=False),
+        )
+
+        assert outcome == [False]
+        assert world.membership(account.id) is None
+        assert _resolve(account, account.email) is None
+    finally:
+        _forget_grant(engine, account.email)
+
+
+def test_a_backfill_racing_a_revoke_waits_and_writes_nothing(world: _World, engine: Engine) -> None:
+    from app.db.practice_members import backfill  # noqa: PLC0415
+
+    backfill(engine)
+    practice = world.practice("bfrevoking")
+    account = world.account("bfrevoked")
+    _grant(engine, account.email, practice.id)
+    try:
+        outcome = _race_a_revoke(engine, account.email, lambda: backfill(engine))
+
+        assert len(outcome) == 1
+        assert not isinstance(outcome[0], Exception), outcome
+        assert world.membership(account.id) is None
+    finally:
+        _forget_grant(engine, account.email)
+
+
+def test_a_revoke_racing_a_claim_in_flight_removes_its_row(world: _World, engine: Engine) -> None:
+    """The claim goes first and is left uncommitted. The revoke's ``DELETE`` of
+    the mapping waits for it, and its membership read then sees the claimed row
+    and removes it."""
+    from app.db.practice_members import _CLAIM_SQL  # noqa: PLC0415
+
+    practice = world.practice("claimbeforerevoke")
+    account = world.account("claimer")
+    _grant(engine, account.email, practice.id)
+    revoked: list[object] = []
+
+    def revoke() -> None:
+        try:
+            revoked.append(_revoke(engine, account.email))
+        except Exception as exc:  # surfaced by the assertion below
+            revoked.append(exc)
+
+    revoking = threading.Thread(target=revoke, daemon=True)
+    try:
+        with engine.connect() as claiming:
+            try:
+                pid = int(claiming.execute(text("SELECT pg_backend_pid()")).scalar_one())
+                inserted = claiming.execute(
+                    _CLAIM_SQL,
+                    {"user_id": account.id, "email": account.email, "practice_id": practice.id},
+                ).rowcount
+                assert inserted == 1
+                revoking.start()
+                waited = _waits_on(engine, pid)
+                still_running = revoking.is_alive()
+                claiming.commit()
+            finally:
+                claiming.rollback()
+        revoking.join(timeout=30)
+        assert not revoking.is_alive(), "the revoke never finished"
+
+        assert (waited, still_running) == (True, True)
+        assert revoked == [True]
+        assert world.membership(account.id) is None
+        assert _resolve(account, account.email) is None
+    finally:
+        _forget_grant(engine, account.email)
+
+
 # --- with Redis on, a change is honoured on the next request --------------------
 
 
