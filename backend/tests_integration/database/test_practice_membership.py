@@ -679,17 +679,35 @@ def _waits_on(engine: Engine, blocker_pid: int, *, within: float = 10.0) -> bool
     return False
 
 
+def _deactivate(session: Session, practice_id: str, *, orm: bool) -> int:
+    """Deactivate ``practice_id`` on ``session`` without committing.
+
+    ``orm=False`` writes the ``UPDATE`` first. ``orm=True`` sets the attribute
+    and leaves it pending: a ``text()`` statement does not autoflush, so the
+    ``UPDATE`` reaches the database only at commit, after the ``DELETE``.
+    """
+    from app.db.platform_models import PracticeRow  # noqa: PLC0415
+    from app.db.practice_members import remove_for_practice  # noqa: PLC0415
+
+    if orm:
+        row = session.get(PracticeRow, practice_id)
+        assert row is not None
+        row.is_active = False
+    else:
+        session.execute(
+            update(PracticeRow).where(PracticeRow.id == practice_id).values(is_active=False)
+        )
+    return remove_for_practice(session, practice_id)
+
+
 def _race_a_deactivation(
-    engine: Engine, practice_id: str, write: Callable[[], object]
+    engine: Engine, practice_id: str, write: Callable[[], object], *, orm: bool = False
 ) -> tuple[bool, bool, list[object]]:
     """Run ``write`` in a thread while a deactivation of ``practice_id`` is open.
 
     Returns whether the writer waited on the deactivation, whether it was still
     running when that was checked, and what it returned (or raised).
     """
-    from app.db.platform_models import PracticeRow  # noqa: PLC0415
-    from app.db.practice_members import remove_for_practice  # noqa: PLC0415
-
     outcome: list[object] = []
 
     def run() -> None:
@@ -702,10 +720,7 @@ def _race_a_deactivation(
     with Session(engine) as deactivation:
         try:
             pid = int(deactivation.execute(text("SELECT pg_backend_pid()")).scalar_one())
-            deactivation.execute(
-                update(PracticeRow).where(PracticeRow.id == practice_id).values(is_active=False)
-            )
-            remove_for_practice(deactivation, practice_id)
+            _deactivate(deactivation, practice_id, orm=orm)
             writer.start()
             waited = _waits_on(engine, pid)
             still_running = writer.is_alive()
@@ -717,8 +732,9 @@ def _race_a_deactivation(
     return waited, still_running, outcome
 
 
+@pytest.mark.parametrize("orm", [False, True], ids=["update_first", "orm_unflushed"])
 def test_a_claim_racing_a_deactivation_waits_and_writes_nothing(
-    world: _World, engine: Engine
+    world: _World, engine: Engine, orm: bool
 ) -> None:
     from app.db.practice_members import claim  # noqa: PLC0415
 
@@ -727,7 +743,7 @@ def test_a_claim_racing_a_deactivation_waits_and_writes_nothing(
     world.map(account.email, practice.id)
 
     waited, still_running, outcome = _race_a_deactivation(
-        engine, practice.id, lambda: claim(account.id, practice.id, account.email)
+        engine, practice.id, lambda: claim(account.id, practice.id, account.email), orm=orm
     )
 
     assert (waited, still_running) == (True, True)
@@ -751,4 +767,49 @@ def test_a_backfill_racing_a_deactivation_waits_and_writes_nothing(
 
     assert (waited, still_running) == (True, True)
     assert outcome == [BackfillReport(inserted=0, unmembered=0)]
+    assert _members_of(engine, practice.id) == 0
+
+
+@pytest.mark.parametrize("orm", [False, True], ids=["update_first", "orm_unflushed"])
+def test_a_deactivation_racing_a_claim_in_flight_removes_its_row(
+    world: _World, engine: Engine, orm: bool
+) -> None:
+    """The claim goes first and is left uncommitted. The deactivation waits for
+    it, and its ``DELETE`` then sees the claimed row and removes it."""
+    from app.db.practice_members import _CLAIM_SQL  # noqa: PLC0415
+
+    practice = world.practice("claimfirst")
+    account = world.account("claimer")
+    world.map(account.email, practice.id)
+
+    removed: list[object] = []
+
+    def deactivate() -> None:
+        try:
+            with Session(engine) as session:
+                removed.append(_deactivate(session, practice.id, orm=orm))
+                session.commit()
+        except Exception as exc:  # surfaced by the assertion below
+            removed.append(exc)
+
+    deactivation = threading.Thread(target=deactivate, daemon=True)
+    with engine.connect() as claiming:
+        try:
+            pid = int(claiming.execute(text("SELECT pg_backend_pid()")).scalar_one())
+            inserted = claiming.execute(
+                _CLAIM_SQL,
+                {"user_id": account.id, "email": account.email.lower(), "practice_id": practice.id},
+            ).rowcount
+            assert inserted == 1
+            deactivation.start()
+            waited = _waits_on(engine, pid)
+            still_running = deactivation.is_alive()
+            claiming.commit()
+        finally:
+            claiming.rollback()
+    deactivation.join(timeout=30)
+    assert not deactivation.is_alive(), "the deactivation never finished"
+
+    assert (waited, still_running) == (True, True)
+    assert removed == [1]
     assert _members_of(engine, practice.id) == 0
