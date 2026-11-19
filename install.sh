@@ -39,8 +39,9 @@
 #   --machine-type T    Default e2-small (2 GB, about $12/month)
 #   --disk-gb N         Database disk size, default 20
 #   --version vX.Y.Z    Release to install (default: the latest)
-#   --deploy-ref REF    Git ref for the VM's deploy files, when testing a
-#                       branch before it is released (default: --version)
+#   --deploy-ref REF    Git ref for the VM's deploy files (a branch, a tag or a
+#                       full commit SHA), when testing before a release
+#                       (default: --version)
 #   --baa-accepted      Skip the BAA question (unattended runs)
 #   --google-signin     Turn on Google sign-in and calendar (one console step)
 #   --skip-google-signin  Email and password sign-in only (the default)
