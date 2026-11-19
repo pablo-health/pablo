@@ -62,6 +62,81 @@ def test_underscore_dependency_param_fails(tmp_path: Path, signature: str, param
     assert "dependencies=[Depends(...)]" in violations[0]
 
 
+_ALIASES = """
+Dep = Annotated[None, Depends(f)]
+SecDep: "TypeAlias" = Annotated[None, Security(f)]
+type NewDep = Annotated[None, Depends(f)]
+Plain = Annotated[int, "meta"]
+"""
+
+
+@pytest.mark.parametrize(
+    "signature",
+    [
+        "_x: Dep",
+        "_x: SecDep",
+        "_x: NewDep",
+        "_x: Dep | None = None",
+        "_x: None | Dep = None",
+        "_x: Optional[Dep] = None",
+        "*, _x: Dep",
+    ],
+)
+def test_underscore_param_typed_with_a_local_alias_fails(tmp_path: Path, signature: str) -> None:
+    body = (
+        f"{_ALIASES}\nfrom typing import Optional\n\n"
+        f'@router.get("/x")\ndef handler({signature}) -> None:\n    return None\n'
+    )
+    violations = _violations(tmp_path, body)
+    assert len(violations) == 1
+    assert "handler declares dependency parameter `_x`" in violations[0]
+
+
+def test_alias_without_depends_and_unrelated_names_pass(tmp_path: Path) -> None:
+    body = (
+        f"{_ALIASES}\n\n"
+        '@router.get("/x")\ndef handler(_a: Plain, _b: int = 0, _c: "Dep" = 0) -> None:\n'
+        "    return None\n"
+    )
+    assert _violations(tmp_path, body) == []
+
+
+@pytest.mark.parametrize(
+    "import_line",
+    [
+        "from .deps import Dep",
+        "from .deps import Dep as Renamed",
+        "from app.deps import Dep",
+        "from backend.app.deps import Dep",
+    ],
+)
+def test_underscore_param_typed_with_an_imported_alias_fails(
+    tmp_path: Path, import_line: str
+) -> None:
+    root = tmp_path / "app"
+    root.mkdir()
+    (root / "deps.py").write_text(_HEADER + "\nDep = Annotated[None, Depends(f)]\n")
+    name = import_line.rsplit(" ", 1)[-1]
+    module = root / "mod.py"
+    module.write_text(
+        f"{import_line}\nfrom fastapi import APIRouter\n\nrouter = APIRouter()\n\n\n"
+        f'@router.get("/x")\ndef handler(_x: {name}) -> None:\n    return None\n'
+    )
+    violations = guardrail.underscore_depends_violations(
+        [module], root=root, baseline=set(), full_scan=True
+    )
+    assert len(violations) == 1
+    assert "handler declares dependency parameter `_x`" in violations[0]
+
+
+def test_same_name_imported_from_outside_the_tree_passes(tmp_path: Path) -> None:
+    body = (
+        "\nfrom somewhere_else import Dep\n\n"
+        '@router.get("/x")\ndef handler(_x: Dep) -> None:\n    return None\n'
+    )
+    assert _violations(tmp_path, body) == []
+
+
 def test_underscore_param_in_a_plain_dependency_provider_fails(tmp_path: Path) -> None:
     body = "\n\ndef get_repo(_ctx: None = Depends(f)) -> int:\n    return 1\n"
     assert len(_violations(tmp_path, body)) == 1

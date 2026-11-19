@@ -30,8 +30,9 @@ spots; rule 5 covers every function under ``app/``:
      in the non-PHI list as a hard config error, so a lazy exemption cannot be
      used to dodge a PHI surface.
   5. No parameter whose name starts with ``_`` may be a ``Depends(...)`` /
-     ``Security(...)`` dependency (default or ``Annotated`` metadata). Run a
-     side-effect dependency from ``dependencies=[Depends(f)]`` instead. Sites
+     ``Security(...)`` dependency (default, ``Annotated`` metadata, or a type
+     alias for such an ``Annotated``, defined in the module or imported from
+     another one under ``app/``). Run a side-effect dependency from ``dependencies=[Depends(f)]`` instead. Sites
      older than the rule sit in ``underscore_depends_baseline.txt``, which can
      only shrink.
 
@@ -799,14 +800,103 @@ def _depends_defaults(func: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str,
     return out
 
 
+def _alias_target(node: ast.stmt) -> tuple[str, ast.expr] | None:
+    """``(name, value)`` for a module-level type alias: ``X = ...``,
+    ``X: TypeAlias = ...`` or ``type X = ...``."""
+    if isinstance(node, ast.Assign) and len(node.targets) == 1:
+        target = node.targets[0]
+        if isinstance(target, ast.Name):
+            return target.id, node.value
+    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value:
+        return node.target.id, node.value
+    if isinstance(node, ast.TypeAlias) and isinstance(node.name, ast.Name):
+        return node.name.id, node.value
+    return None
+
+
+def _local_depends_aliases(tree: ast.Module) -> set[str]:
+    """Names this module binds to an ``Annotated[T, Depends(f)]`` at top level."""
+    out: set[str] = set()
+    for node in tree.body:
+        alias = _alias_target(node)
+        if alias and _annotated_depends(alias[1]):
+            out.add(alias[0])
+    return out
+
+
+def _resolve_import(py_file: Path, node: ast.ImportFrom, root: Path) -> Path | None:
+    """The file under ``root`` that a ``from X import ...`` names, if it is one.
+
+    Handles relative imports and the absolute ``app.`` / ``backend.app.`` forms;
+    anything outside the tree (FastAPI, third parties) resolves to ``None``.
+    """
+    parts = (node.module or "").split(".") if node.module else []
+    if node.level:
+        base = py_file.resolve().parent
+        for _ in range(node.level - 1):
+            base = base.parent
+    else:
+        for prefix in (["backend", root.name], [root.name]):
+            if parts[: len(prefix)] == prefix:
+                parts = parts[len(prefix) :]
+                break
+        else:
+            return None
+        base = root.resolve()
+    target = base.joinpath(*parts) if parts else base
+    for candidate in (target.with_suffix(".py"), target / "__init__.py"):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _depends_aliases(
+    py_file: Path, tree: ast.Module, root: Path, cache: dict[Path, set[str]]
+) -> set[str]:
+    """Alias names usable in ``py_file`` that carry a ``Depends``: its own
+    top-level aliases plus any it imports (under the same or an ``as`` name)
+    from another module in the tree. One hop: a re-export of a re-export is
+    not followed."""
+    names = _local_depends_aliases(tree)
+    for node in tree.body:
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        source = _resolve_import(py_file, node, root)
+        if source is None:
+            continue
+        if source not in cache:
+            cache[source] = _local_depends_aliases(ast.parse(source.read_text()))
+        names.update(a.asname or a.name for a in node.names if a.name in cache[source])
+    return names
+
+
+def _names_alias(annotation: ast.expr | None, aliases: set[str]) -> bool:
+    """True for ``Alias``, ``Alias | None`` and ``Optional[Alias]``."""
+    if isinstance(annotation, ast.Name):
+        return annotation.id in aliases
+    if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
+        return _names_alias(annotation.left, aliases) or _names_alias(annotation.right, aliases)
+    if isinstance(annotation, ast.Subscript):
+        base = annotation.value
+        base_name = base.id if isinstance(base, ast.Name) else getattr(base, "attr", None)
+        if base_name == "Optional":
+            return _names_alias(annotation.slice, aliases)
+    return False
+
+
 def underscore_depends_sites(files: list[Path], root: Path) -> list[tuple[str, int, str, str]]:
     """Return ``(path relative to root's parent, line, function, param)`` for every
-    underscore-named parameter whose default or ``Annotated`` metadata is a
-    ``Depends(...)`` / ``Security(...)`` call."""
+    underscore-named parameter that FastAPI resolves as a dependency: its default
+    is a ``Depends(...)`` / ``Security(...)`` call, its annotation is an
+    ``Annotated[T, Depends(...)]``, or its annotation names a type alias for one
+    (defined in the module or imported from another module under ``root``)."""
     sites: list[tuple[str, int, str, str]] = []
+    alias_cache: dict[Path, set[str]] = {}
     for py_file in files:
         rel = py_file.resolve().relative_to(root.resolve().parent).as_posix()
-        for node in ast.walk(ast.parse(py_file.read_text())):
+        tree = ast.parse(py_file.read_text())
+        aliases = _depends_aliases(py_file, tree, root, alias_cache)
+        for node in ast.walk(tree):
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
             defaults = _depends_defaults(node)
@@ -814,7 +904,11 @@ def underscore_depends_sites(files: list[Path], root: Path) -> list[tuple[str, i
             for arg in all_args:
                 if not arg.arg.startswith("_"):
                     continue
-                if _is_depends_call(defaults.get(arg.arg)) or _annotated_depends(arg.annotation):
+                if (
+                    _is_depends_call(defaults.get(arg.arg))
+                    or _annotated_depends(arg.annotation)
+                    or _names_alias(arg.annotation, aliases)
+                ):
                     sites.append((rel, arg.lineno, node.name, arg.arg))
     return sorted(sites)
 
