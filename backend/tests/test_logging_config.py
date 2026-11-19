@@ -9,6 +9,7 @@ import json
 import logging
 import re
 import sys
+import traceback
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -297,13 +298,112 @@ class TestRecordBound:
         payload = json.loads(line)
         exc_info = payload["exc_info"]
         assert payload["stack_trace"] == exc_info
-        assert exc_info.startswith("[1 earlier chained traceback(s) omitted]\n")
+        # The marker follows the header, indented like the frames marker, so
+        # the text still opens with the header.
+        assert exc_info.startswith(
+            "Traceback (most recent call last):\n  [1 earlier chained traceback(s) omitted]\n"
+        )
         assert "inner cause" not in exc_info
         assert "The above exception was the direct cause" not in exc_info
-        assert "\nTraceback (most recent call last):\n" in exc_info
+        assert exc_info.count("Traceback (most recent call last):") == 1
         assert exc_info.endswith("\nRuntimeError: outer failure")
         # The dropped segment's ~200 frames are counted with the outer ones.
         assert payload["exc_info_frames_omitted"] > 200
+
+    def test_traceback_quoted_in_the_message_is_not_taken_for_the_chain(self) -> None:
+        # A worker error that embeds a remote, chained traceback in its own
+        # message. Its separator lines are message text, not a chain: the
+        # record must keep its own header, frames and exception line.
+        try:
+            _raise_chained(3)
+        except RuntimeError:
+            remote = traceback.format_exc()
+        message = "worker job failed, remote said:\n" + remote.rstrip("\n")
+        try:
+            _descend_even(300, message)
+        except ValueError:
+            original = _file_lines(JSONFormatter().formatException(sys.exc_info()))
+        line = _log_exception(_descend_even, 300, message)
+        assert MAX_RECORD_BYTES - 600 < len(line.encode("utf-8")) <= MAX_RECORD_BYTES
+        payload = json.loads(line)
+        exc_info = payload["exc_info"]
+        assert payload["stack_trace"] == exc_info
+        assert "earlier chained traceback(s) omitted" not in exc_info
+        assert exc_info.startswith("Traceback (most recent call last):\n  [")
+        omitted = payload["exc_info_frames_omitted"]
+        assert f"\n  [{omitted} outer frames omitted]\n" in exc_info
+        # The real innermost frame, then the real exception line, then the
+        # quoted traceback intact as the message.
+        assert "in _raise_innermost\n" in exc_info
+        assert exc_info.endswith("\nValueError: " + message)
+        kept = _file_lines(exc_info)
+        assert omitted + len(kept) == len(original)
+
+    def test_separator_in_an_earlier_message_counts_one_segment(self) -> None:
+        def raise_it() -> None:
+            try:
+                _descend_even(
+                    200,
+                    "cause\n\nDuring handling of the above exception, "
+                    "another exception occurred:\n\nquoted",
+                )
+            except ValueError as cause:
+                _descend_even(200, "outer failure", cause)
+
+        payload = json.loads(_log_exception(raise_it))
+        exc_info = payload["exc_info"]
+        assert "\n  [1 earlier chained traceback(s) omitted]\n" in exc_info
+        assert "quoted" not in exc_info
+        assert exc_info.endswith("\nRuntimeError: outer failure")
+
+    def test_suppressed_context_is_not_an_earlier_segment(self) -> None:
+        def raise_it() -> None:
+            try:
+                _descend_even(200, "hidden context")
+            except ValueError:
+                try:
+                    _descend_even(300, "visible failure")
+                except ValueError as exc:
+                    raise exc.with_traceback(exc.__traceback__) from None
+
+        try:
+            raise_it()
+        except ValueError:
+            full = JSONFormatter().formatException(sys.exc_info())
+        assert "hidden context" not in full
+        payload = json.loads(_log_exception(raise_it))
+        exc_info = payload["exc_info"]
+        assert "earlier chained" not in exc_info
+        assert exc_info.endswith("\nValueError: visible failure")
+        # Only the logged segment's own frames are counted: the suppressed
+        # context's 200 were never printed, so they were never omitted. (The
+        # outermost caller differs, this test against _log_exception, but
+        # each is one frame.)
+        kept = _file_lines(exc_info)
+        assert payload["exc_info_frames_omitted"] + len(kept) == len(_file_lines(full))
+
+    def test_record_trimming_cannot_bound_is_left_as_it_was(self) -> None:
+        fmt = JSONFormatter()
+        rec = _make_record("op", extra={"detail": "y" * 40_000}, level=logging.ERROR)
+        try:
+            _descend_even(3, "short failure")
+        except ValueError:
+            rec.exc_info = sys.exc_info()
+            full = fmt.formatException(rec.exc_info)
+        payload = json.loads(fmt.format(rec))
+        assert payload["exc_info"] == full
+        assert payload["stack_trace"] == full
+        assert "exc_info_truncated" not in payload
+        assert "exc_info_frames_omitted" not in payload
+
+    def test_trimmed_traceback_is_scrubbed(self) -> None:
+        # The trim formats the logged segment again on its own, so it must
+        # scrub it again: an oversized record is no exception to the scrub.
+        line = _log_exception(_descend_even, 300, "parse failed for ssn 123-45-6789")
+        payload = json.loads(line)
+        assert payload["exc_info_truncated"] is True
+        assert "123-45-6789" not in line
+        assert payload["exc_info"].endswith("[REDACTED-SSN]")
 
     def test_huge_exception_message_is_truncated(self) -> None:
         line = _log_exception(_raise_innermost, "x" * 40_000)
