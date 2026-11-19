@@ -8,9 +8,9 @@ deterministically anywhere: CI (via ``test_route_audit_guardrails.py``, which
 delegates here), a git pre-commit hook, or a Claude Code PostToolUse hook fired
 when a route file is edited.
 
-Four rules, all enforced against the *mounted* path (router prefix + decorator
+Rules 1-4 are enforced against the *mounted* path (router prefix + decorator
 arg) so prefixed routers (``APIRouter(prefix="/api/patients")``) are not blind
-spots:
+spots; rule 5 covers every function under ``app/``:
 
   1. No route handler may use an underscore-prefixed ``_audit`` /
      ``_http_request`` parameter — that silences every linter and is a silent
@@ -29,6 +29,11 @@ spots:
      ``AUDIT_EXEMPT_NON_PHI_ROUTES``. The engine treats a marker-matching entry
      in the non-PHI list as a hard config error, so a lazy exemption cannot be
      used to dodge a PHI surface.
+  5. No parameter whose name starts with ``_`` may be a ``Depends(...)`` /
+     ``Security(...)`` dependency (default or ``Annotated`` metadata). Run a
+     side-effect dependency from ``dependencies=[Depends(f)]`` instead. Sites
+     older than the rule sit in ``underscore_depends_baseline.txt``, which can
+     only shrink.
 
 Note on the two ``*AuditService`` types: only the *tenant* ``AuditService``
 (writes per-tenant ``audit_logs``, the HIPAA § 164.312(b) record) satisfies
@@ -746,6 +751,124 @@ def underscore_param_violations(files: list[Path]) -> list[str]:
     return out
 
 
+# Rule 5 (PABLO-8gna.19): no underscore-named dependency parameter anywhere
+# under app/. ``_: None = Depends(f)`` / ``_ctx: TenantContext = Depends(...)``
+# is the shape rule 1 bans for ``_audit``: it tells every linter the value is
+# unused, so it reads as dead and invites deletion or quiet reuse. A dependency
+# run only for its side effect belongs in ``dependencies=[Depends(f)]`` on the
+# route decorator, or on the ``APIRouter`` when every route needs it (see
+# routes/tasks.py). A value the body does read gets a real name.
+#
+# The sites that predate the rule are grandfathered in a committed baseline,
+# one ``path:function:param`` per line. The baseline can only shrink: a new
+# site fails, and so does a line naming a site that no longer exists.
+APP_ROOT = _BACKEND / "app"
+UNDERSCORE_DEPENDS_BASELINE = _BACKEND / "scripts" / "underscore_depends_baseline.txt"
+_DEPENDS_CALLS: frozenset[str] = frozenset({"Depends", "Security"})
+
+
+def _is_depends_call(node: ast.expr | None) -> bool:
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+    return name in _DEPENDS_CALLS
+
+
+def _annotated_depends(annotation: ast.expr | None) -> bool:
+    """True for ``Annotated[T, Depends(f)]`` (or ``Security``) in any metadata slot."""
+    if not isinstance(annotation, ast.Subscript):
+        return False
+    base = annotation.value
+    base_name = base.id if isinstance(base, ast.Name) else getattr(base, "attr", None)
+    if base_name != "Annotated" or not isinstance(annotation.slice, ast.Tuple):
+        return False
+    return any(_is_depends_call(meta) for meta in annotation.slice.elts[1:])
+
+
+def _depends_defaults(func: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, ast.expr | None]:
+    """Map every parameter name to its default expression (``None`` if it has none)."""
+    args = func.args
+    positional = [*args.posonlyargs, *args.args]
+    pos_defaults: list[ast.expr | None] = [None] * (len(positional) - len(args.defaults))
+    pos_defaults.extend(args.defaults)
+    out = {arg.arg: default for arg, default in zip(positional, pos_defaults, strict=True)}
+    out.update(
+        {arg.arg: default for arg, default in zip(args.kwonlyargs, args.kw_defaults, strict=True)}
+    )
+    return out
+
+
+def underscore_depends_sites(files: list[Path], root: Path) -> list[tuple[str, int, str, str]]:
+    """Return ``(path relative to root's parent, line, function, param)`` for every
+    underscore-named parameter whose default or ``Annotated`` metadata is a
+    ``Depends(...)`` / ``Security(...)`` call."""
+    sites: list[tuple[str, int, str, str]] = []
+    for py_file in files:
+        rel = py_file.resolve().relative_to(root.resolve().parent).as_posix()
+        for node in ast.walk(ast.parse(py_file.read_text())):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            defaults = _depends_defaults(node)
+            all_args = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+            for arg in all_args:
+                if not arg.arg.startswith("_"):
+                    continue
+                if _is_depends_call(defaults.get(arg.arg)) or _annotated_depends(arg.annotation):
+                    sites.append((rel, arg.lineno, node.name, arg.arg))
+    return sorted(sites)
+
+
+def load_underscore_depends_baseline(path: Path = UNDERSCORE_DEPENDS_BASELINE) -> set[str]:
+    """Read the grandfathered ``path:function:param`` lines (``#`` comments ignored)."""
+    if not path.is_file():
+        return set()
+    lines = (line.strip() for line in path.read_text().splitlines())
+    return {line for line in lines if line and not line.startswith("#")}
+
+
+def underscore_depends_violations(
+    files: list[Path],
+    *,
+    root: Path = APP_ROOT,
+    baseline: set[str] | None = None,
+    full_scan: bool = True,
+) -> list[str]:
+    """New underscore Depends sites, plus (on a full scan) stale baseline lines."""
+    if baseline is None:
+        baseline = load_underscore_depends_baseline()
+    out: list[str] = []
+    seen: set[str] = set()
+    for rel, line, func, param in underscore_depends_sites(files, root):
+        key = f"{rel}:{func}:{param}"
+        seen.add(key)
+        if key in baseline:
+            continue
+        out.append(
+            f"{rel}:{line} {func} declares dependency parameter `{param}` "
+            f"(underscore silences linters). Move it to dependencies=[Depends(...)] on "
+            f"the route decorator (or the APIRouter when every route needs it); if the "
+            f"body reads it, give it a real name"
+        )
+    if full_scan:
+        out.extend(
+            f"{UNDERSCORE_DEPENDS_BASELINE.name} lists `{key}`, which no longer exists: "
+            f"delete the line (the baseline only shrinks)"
+            for key in sorted(baseline - seen)
+        )
+    return out
+
+
+def _app_files(paths: list[Path] | None, root: Path = APP_ROOT) -> list[Path]:
+    """Every ``*.py`` under ``root`` (``None``), or the given paths that live there."""
+    if not root.is_dir():
+        return []
+    if paths is None:
+        return sorted(p for p in root.rglob("*.py") if "__pycache__" not in p.parts)
+    resolved = root.resolve()
+    return [p.resolve() for p in paths if p.suffix == ".py" and resolved in p.resolve().parents]
+
+
 def injected_but_uncalled_violations(files: list[Path]) -> list[str]:
     out: list[str] = []
     for path, method, func, py_file in _iter_route_handlers(files):
@@ -816,13 +939,17 @@ def iter_route_paths(paths: list[Path] | None = None) -> list[tuple[str, str]]:
 
 
 def find_violations(paths: list[Path] | None = None) -> list[str]:
+    # Rule 5 covers every module under app/, not just route files, and checks
+    # the baseline for stale lines only on a full scan (a hook passes one file).
+    depends = underscore_depends_violations(_app_files(paths), full_scan=paths is None)
     files = _route_files(paths)
     if not files:
-        # Non-route edit (e.g. a hook firing on an unrelated file) → no-op. The
-        # static config check still runs on any real scan, since a full scan or
-        # a route-file edit always yields files.
-        return []
+        # Non-route edit (e.g. a hook firing on an unrelated file) → only rule 5.
+        # The static config check still runs on any real scan, since a full scan
+        # or a route-file edit always yields files.
+        return depends
     return [
+        *depends,
         *_exempt_config_violations(),
         *underscore_param_violations(files),
         *injected_but_uncalled_violations(files),
@@ -838,7 +965,8 @@ _FIX_HINT = (
     "one-line reason. A PHI-marker path (e.g. /sessions, /patients) may only go in "
     "the reviewed AUDIT_EXEMPT_PHI_ROUTES list, never the non-PHI one. The platform "
     "PlatformAuditService does NOT satisfy this — PHI must hit the tenant AuditService. "
-    "(CLAUDE.md guardrail #1 — PHI access without an audit entry is a HIPAA gap.)"
+    "(CLAUDE.md guardrail #1 — PHI access without an audit entry is a HIPAA gap.) "
+    "An underscore Depends parameter (rule 5) names its own fix in its line above."
 )
 
 
