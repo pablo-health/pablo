@@ -219,7 +219,9 @@ def _resolve_schema_from_request(request: Request) -> tuple[str | None, str]:
     Reuses the identity ``_verify_and_stash_clinician_identity`` already
     verified for this request, looks up the account it belongs to, then
     resolves the practice schema through ``app.auth.service._resolve_practice``
-    (today from its email, so it is provider-agnostic).
+    (from the account's membership, or for an account without one from its
+    email, so it is provider-agnostic). The answer is kept on the request for
+    the auth dependencies that follow.
 
     Only an email the issuer has verified is looked up. An invite writes the
     email-to-practice mapping before the invitee has an account, and a

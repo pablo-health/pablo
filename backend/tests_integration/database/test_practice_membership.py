@@ -1,16 +1,18 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Each account's practice membership is recorded, against Postgres; routing is not.
+"""An account's practice membership decides where it signs in, against Postgres.
 
-A signed-in request still resolves its practice through the email mapping.
-Beside that answer, a request whose address the sign-in token verified records
-the account's membership (``platform.practice_members``) the first time, and
-afterwards compares the two and logs a disagreement with ids only. Callers that
-pass the address stored on the account never write.
+A signed-in request resolves the account's membership
+(``platform.practice_members``) first. The email mapping decides only for an
+account without one: that first request, when its address was verified by the
+sign-in token, records the mapping's answer as the account's membership.
+Callers that pass the address stored on the account never write. A membership
+that names a different practice than the address maps to wins, and the
+disagreement is logged with ids only.
 
-Nothing on the resolution path is patched except Redis (off) and the request
-session's RLS arm, which needs a live request. The rows are the ones the code
-reads and writes.
+Nothing on the resolution path is patched except Redis (off, or the in-memory
+stand-in the cache's own suite uses) and the request session's RLS arm, which
+needs a live request. The rows are the ones the code reads and writes.
 
 Run: ``make test-integration``.
 """
@@ -28,8 +30,10 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.orm import Session
+from tests.practice_resolution_fakes import FakeRedis
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -155,14 +159,25 @@ class _World:
             )
             session.commit()
 
-    def join(self, user_id: str, practice_id: str, *, via: str = "invite") -> None:
+    def join(
+        self,
+        user_id: str,
+        practice_id: str,
+        *,
+        via: str = "invite",
+        claimed_email: str | None = None,
+    ) -> None:
         from app.db.platform_models import PracticeMemberRow  # noqa: PLC0415
         from app.utcnow import utc_now  # noqa: PLC0415
 
         with Session(self.engine) as session:
             session.add(
                 PracticeMemberRow(
-                    user_id=user_id, practice_id=practice_id, joined_at=utc_now(), joined_via=via
+                    user_id=user_id,
+                    practice_id=practice_id,
+                    joined_at=utc_now(),
+                    joined_via=via,
+                    claimed_email=claimed_email,
                 )
             )
             session.commit()
@@ -498,10 +513,10 @@ def test_a_claim_outside_a_request_for_an_uncommitted_account_waits_quietly(
     assert claim(account.id, practice.id, account.email) is True
 
 
-# --- shadow mode: routing unchanged, disagreement logged ----------------------
+# --- the membership decides ----------------------------------------------------
 
 
-def test_a_disagreeing_membership_does_not_route_and_is_logged_with_ids_only(
+def test_a_disagreeing_membership_wins_and_is_logged_with_ids_only(
     world: _World, caplog: pytest.LogCaptureFixture
 ) -> None:
     p1, p2 = world.practice("one"), world.practice("two")
@@ -512,7 +527,7 @@ def test_a_disagreeing_membership_does_not_route_and_is_logged_with_ids_only(
     with caplog.at_level(logging.INFO):
         context = _tenant_context(account, account.email)
 
-    assert context.practice_id == p2.id, "the email mapping still decides"
+    assert context.practice_id == p1.id, "the membership decides, not the mapping"
     membership = world.membership(account.id)
     assert membership is not None
     assert membership[0] == p1.id, "the membership is not moved"
@@ -752,3 +767,417 @@ def test_a_backfill_racing_a_deactivation_waits_and_writes_nothing(
     assert (waited, still_running) == (True, True)
     assert outcome == [BackfillReport(inserted=0, unmembered=0)]
     assert _members_of(engine, practice.id) == 0
+
+
+# --- routing by membership ------------------------------------------------------
+
+_CACHE = "app.db.practice_resolution_cache"
+
+
+@pytest.fixture
+def redis() -> Iterator[FakeRedis]:
+    """Redis on, as the in-memory stand-in: replaces the autouse ``_no_redis``."""
+    fake = FakeRedis()
+    with patch(f"{_CACHE}.get_redis_client", return_value=fake):
+        yield fake
+
+
+def _middleware_request(subject_id: str, email: str) -> Any:
+    """What the schema middleware holds: the token's identity, nothing else."""
+    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
+
+    identity = VerifiedIdentity(
+        provider="firebase",
+        subject_id=subject_id,
+        email=email,
+        email_verified=True,
+        mfa_satisfied=True,
+        claims={"uid": subject_id, "email": email, "email_verified": True},
+    )
+    return SimpleNamespace(state=SimpleNamespace(verified_identity=identity))
+
+
+def _signed_in_request(subject_id: str, email: str) -> Any:
+    """One request through the middleware and then ``get_tenant_context``, as served.
+
+    Both run against the same request object, as they do in the app: the
+    middleware finds the account through its identity row and leaves what it
+    learned on the request for the dependency.
+    """
+    from app.auth.service import get_tenant_context  # noqa: PLC0415
+    from app.db.middleware import _resolve_schema_from_request  # noqa: PLC0415
+
+    request = _middleware_request(subject_id, email)
+    schema, _reason = _resolve_schema_from_request(request)
+    claims = request.state.verified_identity.claims
+    user_repo = MagicMock()
+    user_repo.get.return_value = None
+    with (
+        patch("app.db.get_db_session", return_value=MagicMock()),
+        patch("app.db.arm_current_user_id"),
+    ):
+        try:
+            context = get_tenant_context(request, claims, user_repo, MagicMock())
+        except HTTPException as exc:
+            return schema, exc.status_code
+    return schema, context.practice_id
+
+
+def _resolve(account: SimpleNamespace, email: str) -> tuple[str, str] | None:
+    """The auth path's resolution for a verified ``email``."""
+    from app.auth.service import _resolve_practice  # noqa: PLC0415
+
+    return _resolve_practice(account.id, email, may_claim=True)
+
+
+def test_a_member_whose_address_has_no_mapping_resolves_to_their_practice(
+    world: _World,
+) -> None:
+    """Joined other than through the mapping: the account decides, through the
+    middleware's real identity lookup and through ``get_tenant_context``."""
+    practice = world.practice("p")
+    subject_id = f"sub-{uuid.uuid4().hex[:12]}"
+    account = world.account("unmapped", subject_id=subject_id)
+    world.join(account.id, practice.id, via="invite")
+
+    assert _signed_in_request(subject_id, account.email) == (practice.schema, practice.id)
+
+
+def test_a_member_of_an_inactive_practice_resolves_to_nothing(world: _World) -> None:
+    """No fallback: the address maps to a live practice, and still nothing."""
+    closed, live = world.practice("closed", active=False), world.practice("live")
+    subject_id = f"sub-{uuid.uuid4().hex[:12]}"
+    account = world.account("closed", subject_id=subject_id)
+    world.join(account.id, closed.id, via="email_claim")
+    world.map(account.email, live.id)
+
+    assert _resolve(account, account.email) is None
+    assert _signed_in_request(subject_id, account.email) == (None, 403)
+    membership = world.membership(account.id)
+    assert membership is not None
+    assert membership[0] == closed.id, "nothing is claimed in its place"
+
+
+def test_an_account_without_a_membership_still_resolves_by_its_mapping(
+    world: _World,
+) -> None:
+    """The control for the cases above: the first sign-in goes where the
+    address maps, and claims it."""
+    practice = world.practice("p")
+    subject_id = f"sub-{uuid.uuid4().hex[:12]}"
+    account = world.account("newcomer", subject_id=subject_id)
+    world.map(account.email, practice.id)
+
+    assert _signed_in_request(subject_id, account.email) == (practice.schema, practice.id)
+    membership = world.membership(account.id)
+    assert membership is not None
+    assert membership[:2] == (practice.id, "email_claim")
+
+
+def test_a_signed_in_request_reads_the_membership_once_cold_and_never_warm(
+    world: _World, redis: FakeRedis, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The middleware and ``get_tenant_context`` share one answer per request:
+    one membership read on a cold cache, none on a warm one, and a disagreement
+    logged at most once per request."""
+    from app.db import practice_members  # noqa: PLC0415
+
+    p1, p2 = world.practice("one"), world.practice("two")
+    subject_id = f"sub-{uuid.uuid4().hex[:12]}"
+    account = world.account("counted", subject_id=subject_id)
+    world.join(account.id, p1.id, via="email_claim")
+    world.map(account.email, p2.id)
+
+    with (
+        patch.object(practice_members, "lookup", wraps=practice_members.lookup) as reads,
+        caplog.at_level(logging.INFO),
+    ):
+        assert _signed_in_request(subject_id, account.email) == (p1.schema, p1.id)
+        assert reads.call_count == 1, "cold: one read for the whole request"
+        assert len(_disagreements(caplog)) == 1, "logged once for the request"
+
+        reads.reset_mock()
+        caplog.clear()
+        assert _signed_in_request(subject_id, account.email) == (p1.schema, p1.id)
+        assert reads.call_count == 0, "warm: answered from the cache"
+
+
+def test_without_redis_a_signed_in_request_still_reads_the_membership_once(
+    world: _World, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The request keeps its own answer, so the middleware and
+    ``get_tenant_context`` share it with no cache at all; the same for a
+    membership in an inactive practice, which Redis never holds."""
+    from app.db import practice_members  # noqa: PLC0415
+
+    p1, p2 = world.practice("one"), world.practice("two")
+    closed = world.practice("closed", active=False)
+    member_sub, closed_sub = (f"sub-{uuid.uuid4().hex[:12]}" for _ in range(2))
+    member = world.account("uncached", subject_id=member_sub)
+    world.join(member.id, p1.id, via="email_claim")
+    world.map(member.email, p2.id)
+    shut_out = world.account("uncached-closed", subject_id=closed_sub)
+    world.join(shut_out.id, closed.id, via="email_claim")
+    world.map(shut_out.email, p2.id)
+
+    with (
+        patch.object(practice_members, "lookup", wraps=practice_members.lookup) as reads,
+        caplog.at_level(logging.INFO),
+    ):
+        assert _signed_in_request(member_sub, member.email) == (p1.schema, p1.id)
+        assert reads.call_count == 1
+        assert len(_disagreements(caplog)) == 1
+
+        reads.reset_mock()
+        caplog.clear()
+        assert _signed_in_request(closed_sub, shut_out.email) == (None, 403)
+        assert reads.call_count == 1
+        assert len(_disagreements(caplog)) == 1
+
+
+def test_the_membership_is_read_before_a_cached_email_answer(
+    world: _World, redis: FakeRedis
+) -> None:
+    """An address answer cached before the account had a membership cannot
+    outlive the membership being written."""
+    p1, p2 = world.practice("one"), world.practice("two")
+    account = world.account("joins")
+    world.map(account.email, p2.id)
+    from app.auth.service import _resolve_practice_from_email  # noqa: PLC0415
+
+    assert _resolve_practice_from_email(account.email) == (p2.id, p2.schema)
+    world.join(account.id, p1.id, via="invite")
+
+    assert _resolve(account, account.email) == (p1.id, p1.schema)
+
+
+# --- revoking a grant -------------------------------------------------------------
+
+
+def _grant(engine: Engine, email: str, practice_id: str) -> None:
+    from app.repositories.postgres.allowlist import (  # noqa: PLC0415
+        PostgresAllowlistRepository,
+    )
+
+    with Session(engine) as session:
+        PostgresAllowlistRepository(session).add(email, "admin", practice_id=practice_id)
+        session.commit()
+
+
+def _revoke(engine: Engine, email: str) -> bool:
+    from app.repositories.postgres.allowlist import (  # noqa: PLC0415
+        PostgresAllowlistRepository,
+    )
+
+    with Session(engine) as session:
+        removed = PostgresAllowlistRepository(session).remove(email)
+        session.commit()
+    return removed
+
+
+def _forget_grant(engine: Engine, email: str) -> None:
+    from app.db.platform_models import PlatformAllowedEmailRow  # noqa: PLC0415
+
+    with Session(engine) as session:
+        session.execute(
+            delete(PlatformAllowedEmailRow).where(PlatformAllowedEmailRow.email == email)
+        )
+        session.commit()
+
+
+def test_revoking_by_the_claimed_address_removes_a_member_whose_stored_address_differs(
+    world: _World, engine: Engine
+) -> None:
+    """``users.email`` is written once; the account signed in later under the
+    address it was granted. The revoke finds it by that address."""
+    practice = world.practice("p")
+    granted = f"granted-{world.label}@example.invalid"
+    account = world.account("drifted", stored_email=f"old-{world.label}@example.invalid")
+    _grant(engine, granted, practice.id)
+    world.emails.append(granted)
+    try:
+        assert _resolve(account, granted) == (practice.id, practice.schema)
+        membership = world.membership(account.id)
+        assert membership is not None
+        assert membership[:3] == (practice.id, "email_claim", granted)
+
+        assert _revoke(engine, granted) is True
+
+        assert world.membership(account.id) is None
+        assert _resolve(account, granted) is None, "the next request resolves to nothing"
+    finally:
+        _forget_grant(engine, granted)
+
+
+def test_revoking_a_grant_that_names_no_practice_removes_the_claimed_membership(
+    world: _World, engine: Engine
+) -> None:
+    from app.db.platform_models import PlatformAllowedEmailRow  # noqa: PLC0415
+    from app.utcnow import utc_now  # noqa: PLC0415
+
+    practice = world.practice("p")
+    account = world.account("bare")
+    world.join(account.id, practice.id, via="email_claim", claimed_email=account.email)
+    with Session(engine) as session:
+        session.add(
+            PlatformAllowedEmailRow(
+                email=account.email, added_by="admin", added_at=utc_now(), practice_id=None
+            )
+        )
+        session.commit()
+    try:
+        assert _revoke(engine, account.email) is True
+        assert world.membership(account.id) is None
+    finally:
+        _forget_grant(engine, account.email)
+
+
+def test_revoking_a_grant_removes_a_backfilled_membership_and_keeps_an_invited_one(
+    world: _World, engine: Engine
+) -> None:
+    practice, elsewhere = world.practice("p"), world.practice("elsewhere")
+    backfilled = world.account("backfilled")
+    world.join(backfilled.id, practice.id, via="backfill", claimed_email=backfilled.email)
+    invited = world.account("invited")
+    world.join(invited.id, elsewhere.id, via="invite", claimed_email=invited.email)
+    _grant(engine, backfilled.email, practice.id)
+    _grant(engine, invited.email, practice.id)
+    try:
+        assert _revoke(engine, backfilled.email) is True
+        assert _revoke(engine, invited.email) is True
+
+        assert world.membership(backfilled.id) is None
+        kept = world.membership(invited.id)
+        assert kept is not None
+        assert kept[:2] == (elsewhere.id, "invite")
+    finally:
+        _forget_grant(engine, backfilled.email)
+        _forget_grant(engine, invited.email)
+
+
+def test_revoking_after_a_regrant_elsewhere_removes_the_claimed_membership(
+    world: _World, engine: Engine
+) -> None:
+    """Revoke, then grant: the documented way to move a member."""
+    p1, p2 = world.practice("one"), world.practice("two")
+    account = world.account("moving")
+    _grant(engine, account.email, p1.id)
+    try:
+        assert _resolve(account, account.email) == (p1.id, p1.schema)
+        _grant(engine, account.email, p2.id)
+        assert _resolve(account, account.email) == (p1.id, p1.schema), "a re-grant moves nobody"
+
+        assert _revoke(engine, account.email) is True
+        assert world.membership(account.id) is None
+        _grant(engine, account.email, p2.id)
+
+        assert _resolve(account, account.email) == (p2.id, p2.schema)
+    finally:
+        _forget_grant(engine, account.email)
+
+
+# --- with Redis on, a change is honoured on the next request --------------------
+
+
+def test_moving_a_member_is_honoured_on_the_next_request(
+    world: _World, engine: Engine, redis: FakeRedis
+) -> None:
+    from app.db.platform_models import PracticeMemberRow  # noqa: PLC0415
+    from app.db.practice_resolution_cache import _USER_PREFIX  # noqa: PLC0415
+
+    p1, p2 = world.practice("one"), world.practice("two")
+    account = world.account("cached-move")
+    world.join(account.id, p1.id)
+    assert _resolve(account, account.email) == (p1.id, p1.schema)
+    assert redis.keys_with_prefix(_USER_PREFIX), "the membership answer is cached"
+
+    with Session(engine) as session:
+        row = session.get(PracticeMemberRow, account.id)
+        assert row is not None
+        row.practice_id = p2.id
+        session.commit()
+
+    assert _resolve(account, account.email) == (p2.id, p2.schema)
+
+
+def test_removing_a_membership_is_honoured_on_the_next_request(
+    world: _World, engine: Engine, redis: FakeRedis
+) -> None:
+    from app.db.platform_models import PracticeMemberRow  # noqa: PLC0415
+    from app.db.practice_resolution_cache import _USER_PREFIX  # noqa: PLC0415
+
+    practice = world.practice("p")
+    account = world.account("cached-remove")
+    world.join(account.id, practice.id)
+    assert _resolve(account, account.email) == (practice.id, practice.schema)
+
+    with Session(engine) as session:
+        row = session.get(PracticeMemberRow, account.id)
+        assert row is not None
+        session.delete(row)
+        session.commit()
+
+    assert redis.keys_with_prefix(_USER_PREFIX) == []
+    assert _resolve(account, account.email) is None
+
+
+def test_a_bulk_membership_update_is_honoured_on_the_next_request(
+    world: _World, engine: Engine, redis: FakeRedis
+) -> None:
+    from app.db.platform_models import PracticeMemberRow  # noqa: PLC0415
+
+    p1, p2 = world.practice("one"), world.practice("two")
+    account = world.account("cached-bulk")
+    world.join(account.id, p1.id)
+    assert _resolve(account, account.email) == (p1.id, p1.schema)
+
+    with Session(engine) as session:
+        session.execute(
+            update(PracticeMemberRow)
+            .where(PracticeMemberRow.practice_id == p1.id)
+            .values(practice_id=p2.id)
+        )
+        session.commit()
+
+    assert _resolve(account, account.email) == (p2.id, p2.schema)
+
+
+def test_revoking_a_grant_is_honoured_past_a_cached_answer(
+    world: _World, engine: Engine, redis: FakeRedis
+) -> None:
+    practice = world.practice("p")
+    account = world.account("cached-revoke")
+    _grant(engine, account.email, practice.id)
+    try:
+        assert _resolve(account, account.email) == (practice.id, practice.schema)
+        assert _resolve(account, account.email) == (practice.id, practice.schema)
+
+        _revoke(engine, account.email)
+
+        assert _resolve(account, account.email) is None
+    finally:
+        _forget_grant(engine, account.email)
+
+
+def test_deleting_an_account_drops_its_cached_answer(
+    world: _World, engine: Engine, redis: FakeRedis
+) -> None:
+    """The database removes the membership by cascade, which no flush shows;
+    deleting the account's row drops its entry itself."""
+    from app.db.platform_models import PlatformUserRow  # noqa: PLC0415
+    from app.db.practice_resolution_cache import _user_key  # noqa: PLC0415
+
+    practice = world.practice("p")
+    account = world.account("deleted")
+    world.join(account.id, practice.id)
+    assert _resolve(account, account.email) == (practice.id, practice.schema)
+    assert redis.get(_user_key(account.id)) is not None
+
+    with Session(engine) as session:
+        row = session.get(PlatformUserRow, account.id)
+        assert row is not None
+        session.delete(row)
+        session.commit()
+
+    assert redis.get(_user_key(account.id)) is None
+    assert world.membership(account.id) is None, "the cascade took the membership"

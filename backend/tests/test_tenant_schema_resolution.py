@@ -138,7 +138,9 @@ def test_the_middleware_may_record_a_membership(monkeypatch) -> None:  # type: i
     of the callers allowed to record the account's membership."""
     seen: list[bool] = []
 
-    def _resolve(_user_id: str | None, _email: str, *, may_claim: bool = False) -> None:
+    def _resolve(
+        _user_id: str | None, _email: str, *, may_claim: bool = False, request: object = None
+    ) -> None:
         seen.append(may_claim)
 
     monkeypatch.setattr("app.auth.service._resolve_practice", _resolve)

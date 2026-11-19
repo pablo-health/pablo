@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import jwt
 from fastapi import Depends, HTTPException, Request, status
@@ -47,6 +47,9 @@ from .route_access import (
     access_intent,
     resolve_access_level,
 )
+
+if TYPE_CHECKING:
+    from ..db.practice_members import Membership
 
 logger = logging.getLogger(__name__)
 
@@ -563,10 +566,9 @@ def get_tenant_context(
 ) -> TenantContext:
     """FastAPI dependency: resolve authenticated user to a TenantContext.
 
-    In single-tenant mode, returns a default context.
-    In multi-tenant mode, resolves the user's email to a practice via
-    Postgres. Platform admins without a practice mapping get admin-only
-    access.
+    Resolves the account's practice from its membership, or on its first
+    sign-in from its email mapping (``_resolve_practice``). Platform admins
+    without a practice get admin-only access.
     """
     identity = _identity_for_decoded(request, decoded_token)
     # An account with no identity row yet is known here only by the
@@ -590,7 +592,7 @@ def get_tenant_context(
         # schema-resolving middleware and ``_resolve_user`` apply the same rule.
         raise _email_not_verified_error()
     if email:
-        practice = _resolve_practice(resolved_user_id, email, may_claim=True)
+        practice = _resolve_practice(resolved_user_id, email, may_claim=True, request=request)
         if practice:
             practice_id, schema_name = practice
             # Bound before the provisioning wait so a 503 from it is
@@ -694,78 +696,154 @@ def _extract_email(decoded_token: dict[str, Any]) -> str:
 
 
 def _resolve_practice(
-    user_id: str | None, email: str | None, *, may_claim: bool = False
+    user_id: str | None,
+    email: str | None,
+    *,
+    may_claim: bool = False,
+    request: Request | None = None,
 ) -> tuple[str, str] | None:
     """The ``(practice_id, schema_name)`` a signed-in account resolves to, or None.
 
-    Every caller that needs an account's practice asks here, with the account's
-    own id where it has one and its address. The practice is decided by the
-    address alone, through the platform email mapping
-    (``email_tenant_mappings``). A caller that holds only the provider's
-    subject id, before the identity row exists, passes None.
+    The account decides, and its address decides only once:
+
+    1. An account with a ``practice_members`` row resolves to that practice.
+       A practice that is no longer active resolves to nothing, and the email
+       mapping is not read as a fallback: an address cannot route an account
+       around its membership. When the address maps somewhere else, the
+       membership still wins and the difference is logged with ids only
+       (``practice_membership_disagrees``).
+    2. An account without one resolves through the email mapping
+       (``email_tenant_mappings``). Where ``may_claim`` is True, that answer is
+       recorded as its membership (``app.db.practice_members.claim``), so the
+       account decides from its next request on.
+
+    ``user_id`` is the account's own id where the caller has one. A caller
+    that holds only the provider's subject id, before the identity row
+    exists, passes None (a value that is not an account id is treated the
+    same): the request resolves through the mapping and writes nothing.
 
     ``may_claim`` is True only where ``email`` is the address the request's
     sign-in token verified (``get_tenant_context``, the schema middleware and
-    ``_keep_request_off_the_template``). There the account's membership is
-    recorded and compared with the answer (:func:`_record_membership`). Every
-    other caller passes the address stored on the account, which is not
-    refreshed after it is created, so it never writes.
-    """
-    if not email:
-        return None
-    practice = _resolve_practice_from_email(email)
-    if may_claim:
-        _record_membership(user_id, email, practice)
-    return practice
+    ``_keep_request_off_the_template``). Every other caller passes the address
+    stored on the account, which is not refreshed after it is created, so it
+    never writes.
 
+    ``request``, where given, keeps the answer for the rest of the request, so
+    the middleware and the auth dependencies that follow it share one
+    resolution: one membership read on a cold cache, and at most one
+    disagreement logged. See :func:`_remember_resolution` for what is kept.
 
-def _record_membership(user_id: str | None, email: str, practice: tuple[str, str] | None) -> None:
-    """Record the account's membership beside the mapping's answer; decide nothing.
-
-    An account with no membership claims the practice its verified address
-    resolved to (``app.db.practice_members.claim``). An account with one is
-    compared with that answer, and a difference is logged with ids only
-    (``practice_membership_disagrees``), never the address. That log is the
-    evidence membership-first routing ships on: an account that would move is
-    seen before it moves.
-
-    Never raises: a failure here must not change how the request resolves.
+    The membership answer is repeated from Redis for a short time and dropped
+    when a membership or practice row commits a change
+    (``app.db.practice_resolution_cache``).
     """
     from ..db import practice_members
 
-    if user_id is None or not practice_members.is_account_id(user_id):
-        return
-    mapped_practice_id = practice[0] if practice else None
-    try:
-        member_practice_id = practice_members.member_practice_id(user_id)
-    except Exception as exc:
-        # Type only: a database error message can carry row values.
-        logger.warning(
-            "practice_members: membership read failed (%s); routing is unaffected",
-            type(exc).__name__,
-        )
-        return
-    if member_practice_id is None:
-        if mapped_practice_id is not None:
-            practice_members.claim(user_id, mapped_practice_id, email)
-        return
-    if member_practice_id != mapped_practice_id:
-        # INFO, not WARNING: once invitations exist this is an ordinary state
-        # (an invited clinician whose address is mapped to a practice of their
-        # own), and it repeats on every request until routing changes.
-        logger.info(
-            "practice membership and email mapping disagree: user_id=%s "
-            "member_practice_id=%s mapped_practice_id=%s",
-            user_id,
-            member_practice_id,
-            mapped_practice_id,
-            extra={
-                "event": practice_members.MEMBERSHIP_DISAGREES_EVENT,
-                "user_id": user_id,
-                "practice_id": member_practice_id,
-                "mapped_practice_id": mapped_practice_id,
-            },
-        )
+    account_id = user_id if practice_members.is_account_id(user_id) else None
+    memo_key = (account_id, email or "")
+    memo = _resolutions_this_request(request)
+    if memo is not None and memo_key in memo:
+        return memo[memo_key]
+
+    if account_id is not None:
+        decided, answer = _resolve_by_membership(account_id, email)
+        if decided:
+            return _remember_resolution(memo, memo_key, answer)
+
+    if not email:
+        return None
+    practice = _resolve_practice_from_email(email)
+    if practice is None:
+        # Not kept: a first sign-in writes its mapping partway through the
+        # request (``_ensure_tenant_mapping``), and the next ask must see it.
+        return None
+    if may_claim and account_id is not None:
+        practice_members.claim(account_id, practice[0], email)
+    return _remember_resolution(memo, memo_key, practice)
+
+
+def _resolve_by_membership(
+    account_id: str, email: str | None
+) -> tuple[bool, tuple[str, str] | None]:
+    """``(decided, answer)``: whether the account has a membership, and its answer.
+
+    A membership in a practice that is no longer active decides too, with no
+    answer. Read from Redis first, then from the database.
+    """
+    from ..db import practice_members, practice_resolution_cache
+
+    cached = practice_resolution_cache.get_for_user(account_id)
+    if cached is not None:
+        return True, cached
+    membership = practice_members.lookup(account_id, email)
+    if membership is None:
+        return False, None
+    if (
+        membership.mapped_practice_id is not None
+        and membership.mapped_practice_id != membership.practice_id
+    ):
+        _log_membership_disagrees(account_id, membership)
+    if not membership.practice_active:
+        return True, None
+    resolved = (membership.practice_id, membership.schema_name)
+    practice_resolution_cache.fill_for_user(account_id, *resolved)
+    return True, resolved
+
+
+#: ``request.state`` attribute holding this request's resolutions.
+_RESOLUTIONS_STATE_KEY = "practice_resolutions"
+
+
+def _resolutions_this_request(
+    request: Request | None,
+) -> dict[tuple[str | None, str], tuple[str, str] | None] | None:
+    if request is None:
+        return None
+    memo = getattr(request.state, _RESOLUTIONS_STATE_KEY, None)
+    if not isinstance(memo, dict):
+        memo = {}
+        setattr(request.state, _RESOLUTIONS_STATE_KEY, memo)
+    return memo
+
+
+def _remember_resolution(
+    memo: dict[tuple[str | None, str], tuple[str, str] | None] | None,
+    key: tuple[str | None, str],
+    answer: tuple[str, str] | None,
+) -> tuple[str, str] | None:
+    """Keep ``answer`` for the rest of the request, keyed by account and address.
+
+    Kept: every answer a membership decided (including "inactive, so nothing"),
+    and every practice the mapping found. Not kept: "the mapping has nothing",
+    which a first sign-in changes partway through its request.
+    """
+    if memo is not None:
+        memo[key] = answer
+    return answer
+
+
+def _log_membership_disagrees(account_id: str, membership: "Membership") -> None:
+    """Log that the membership and the address's mapping name different practices.
+
+    Ids only, never the address. INFO, not WARNING: once invitations exist this
+    is an ordinary state (an invited clinician whose address is mapped to a
+    practice of their own).
+    """
+    from ..db import practice_members
+
+    logger.info(
+        "practice membership and email mapping disagree: user_id=%s "
+        "member_practice_id=%s mapped_practice_id=%s",
+        account_id,
+        membership.practice_id,
+        membership.mapped_practice_id,
+        extra={
+            "event": practice_members.MEMBERSHIP_DISAGREES_EVENT,
+            "user_id": account_id,
+            "practice_id": membership.practice_id,
+            "mapped_practice_id": membership.mapped_practice_id,
+        },
+    )
 
 
 def _resolve_practice_for_identity(
@@ -787,7 +865,7 @@ def _resolve_practice_for_identity(
                 request, subject_id, PostgresIdentityRepository(db), provider=provider
             )
     # The middleware only calls this for an address the issuer verified.
-    return _resolve_practice(user_id, email, may_claim=True)
+    return _resolve_practice(user_id, email, may_claim=True, request=request)
 
 
 def _resolve_practice_from_email(email: str) -> tuple[str, str] | None:
@@ -997,7 +1075,9 @@ def _ensure_tenant_mapping(email: str) -> None:
     logger.info("Mapped auto-provisioned identity onto practice '%s'", DEFAULT_PRACTICE_ID)
 
 
-def _keep_request_off_the_template(user_id: str, email: str) -> None:
+def _keep_request_off_the_template(
+    user_id: str, email: str, request: Request | None = None
+) -> None:
     """Make sure an authenticated request runs on its practice's schema or on none.
 
     The schema middleware resolves the practice before any dependency runs. Two
@@ -1027,7 +1107,7 @@ def _keep_request_off_the_template(user_id: str, email: str) -> None:
     if session is None or current not in (None, DEFAULT_PRACTICE_SCHEMA):
         return
     # ``email`` is the token's, and empty unless the issuer verified it.
-    practice = _resolve_practice(user_id, email, may_claim=True) if email else None
+    practice = _resolve_practice(user_id, email, may_claim=True, request=request) if email else None
     if practice:
         set_tenant_schema(session, practice[1])
     elif current == DEFAULT_PRACTICE_SCHEMA:
@@ -1292,7 +1372,7 @@ def _resolve_user(
     from ..db import _request_session, arm_current_user_id
 
     if request is not None:
-        _keep_request_off_the_template(user.id, email if email_verified else "")
+        _keep_request_off_the_template(user.id, email if email_verified else "", request)
 
     db_session = _request_session.get()
     if db_session is not None:

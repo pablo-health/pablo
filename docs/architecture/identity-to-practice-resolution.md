@@ -78,8 +78,9 @@ account that signs in successfully and lands nowhere.
 An address is a poor key for an account: it can change, and an old address
 can later be granted somewhere else. So each account's practice is now also
 recorded against the account itself, in `platform.practice_members` (one row
-per account). For now the row is recorded and compared, and decides nothing:
-the mapping above still routes every request.
+per account). At first the row was recorded and compared, and decided
+nothing: the mapping above still routed every request. Since 2026-11-19 the
+membership decides (next section); the points below still hold.
 
 - **Who writes it.** A request whose address the sign-in token verified
   (`get_tenant_context`, the schema middleware, and the guard that keeps a
@@ -95,11 +96,50 @@ the mapping above still routes every request.
 - **The grant is checked as the row is written.** The claim is one statement
   that inserts only while the address is still mapped to that practice and the
   practice is active, so a revoke that lands mid-request leaves nothing behind.
-- **Disagreement is logged, not acted on.** When an account's row names a
-  different practice than its address maps to, the request still goes where
-  the mapping says, and `practice_membership_disagrees` is logged at INFO with
-  the account and both practice ids, never the address. That log is the
-  evidence for letting the membership route.
+- **Disagreement is logged.** When an account's row names a different
+  practice than its address maps to, `practice_membership_disagrees` is
+  logged at INFO with the account and both practice ids, never the address.
+  That log was the evidence for letting the membership route.
 - **A membership does not outlive its practice.** Whatever deactivates a
   practice calls `app.db.practice_members.remove_for_practice` in the same
   transaction.
+
+## The membership decides (2026-11-19)
+
+The comparison above ran on a deployed build and found no account whose
+membership and mapping disagreed, so the membership now routes. A signed-in
+request resolves the **account** first:
+
+- **An account with a membership goes to that practice.** If the practice is
+  no longer active, the account resolves to nothing; the mapping is not read
+  as a fallback, so an address cannot route an account around its
+  membership. When the address maps somewhere else, the membership still
+  wins and `practice_membership_disagrees` is logged with ids only.
+- **The mapping decides only the first sign-in.** An account with no
+  membership resolves through its address's mapping, and that request
+  writes its membership as before. From the next request on, the account
+  decides. There is still one lookup and no counting: membership, then
+  mapping, then nothing.
+- **One answer per request.** The schema middleware and the auth
+  dependencies after it share one resolution, so a request reads the
+  membership at most once and logs a disagreement at most once. The answer
+  is also cached in Redis per account for a short time
+  (`practice-resolution:v1:user:<user_id>`), and a membership written, moved
+  or removed, or an account deleted, drops that entry when it commits.
+
+What this means for the allowlist:
+
+- **Revoking a grant removes the membership it led to.**
+  `AllowlistRepository.remove` deletes the membership claimed with the
+  revoked address (`claimed_email`) through the grant (`email_claim` or
+  `backfill`), wherever it is. It matches the address the membership was
+  claimed with, not the one stored on the account, which is written once
+  and never refreshed. It works when the grant names no practice, and after
+  a re-grant has moved the mapping elsewhere. A membership reached by
+  invitation is left alone. The account's next request resolves to nothing.
+- **Re-granting does not move a member.** Granting an address to another
+  practice moves the mapping, but an account that has already claimed a
+  membership stays where it is, and the disagreement is logged. Until a
+  tool for moving a member exists, move an account by revoking its grant
+  and then granting the new practice: its next sign-in claims the new
+  practice through the mapping.
