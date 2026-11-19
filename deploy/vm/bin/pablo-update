@@ -63,6 +63,30 @@ print(json.dumps({
     mv -f "$tmp" "${UPDATE_DIR}/host/latest.json"
 }
 
+# Fetch the deploy files at REF into DIR, sparse: deploy/vm, and backend/bin
+# for allow_email.py. REF is a branch, a tag or a full commit SHA; fetch takes
+# all three, where clone --branch takes only a name. A tag never moves, so a
+# release fetched at one is not fetched again; a branch or a commit is. The
+# directory starts again from nothing until a fetch has checked something out,
+# so an interrupted first fetch heals on the next run.
+# boot-stub.sh and pablo-update carry this function byte for byte (the stub
+# cannot source a file it has not fetched yet); test_deploy_fetch_ref.py runs
+# both copies and checks they match.
+fetch_release() {
+    local url="$1" ref="$2" dir="$3"
+    if ! { [ -d "${dir}/.git" ] && git -C "$dir" rev-parse -q --verify HEAD >/dev/null 2>&1; }; then
+        rm -rf "${dir:?}"
+        git init -q "$dir"
+        git -C "$dir" remote add origin "$url"
+    elif [[ "$ref" == v* ]]; then
+        git -C "$dir" sparse-checkout set deploy/vm backend/bin
+        return 0
+    fi
+    git -C "$dir" sparse-checkout set deploy/vm backend/bin
+    git -C "$dir" fetch -q --depth 1 --filter=blob:none origin "$ref"
+    git -C "$dir" checkout -q --force --detach FETCH_HEAD
+}
+
 # shellcheck source=/dev/null
 source /etc/pablo/config.env
 # shellcheck source=/dev/null
@@ -92,17 +116,8 @@ fi
 RELEASE_DIR="/opt/pablo/deploy/${REF//\//_}"
 
 # --- Deploy files ------------------------------------------------------------
-if [ ! -d "${RELEASE_DIR}/.git" ]; then
-    log "fetching deploy files at ${REF}"
-    rm -rf "$RELEASE_DIR"
-    git clone -q --depth 1 --branch "$REF" --filter=blob:none --sparse "$REPO_URL" "$RELEASE_DIR"
-elif [[ "$REF" != v* ]]; then
-    git -C "$RELEASE_DIR" fetch -q --depth 1 origin "$REF"
-    git -C "$RELEASE_DIR" reset -q --hard FETCH_HEAD
-fi
-# Directories only (sparse-checkout's cone mode); backend/bin is for
-# allow_email.py. Set every run, so an interrupted first fetch heals.
-git -C "$RELEASE_DIR" sparse-checkout set deploy/vm backend/bin
+[ -d "${RELEASE_DIR}/.git" ] || log "fetching deploy files at ${REF}"
+fetch_release "$REPO_URL" "$REF" "$RELEASE_DIR"
 ln -sfn "${RELEASE_DIR}/deploy/vm" /opt/pablo/current
 install -m 0644 /opt/pablo/current/crontab /etc/cron.d/pablo
 # New deploy files can bring a new version of this script; run that one.
