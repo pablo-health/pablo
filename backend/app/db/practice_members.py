@@ -76,6 +76,16 @@ def member_practice_id(user_id: str) -> str | None:
 # when the request read it: a revoke that commits between the two leaves no
 # mapping row, and nothing is inserted. The practice must still be active for
 # the same reason a deactivation removes its rows (``remove_for_practice``).
+#
+# ``FOR SHARE OF p`` makes that check wait for a deactivation in flight. A plain
+# join reads ``is_active`` from the statement's snapshot, so a claim racing a
+# deactivation that has run but not committed still sees the practice active,
+# inserts at once, and leaves a membership in a practice that is now inactive
+# (``remove_for_practice`` ran before the row existed). The share lock conflicts
+# with the row lock the deactivation holds (``remove_for_practice`` takes it
+# whether or not the caller's UPDATE has been flushed): the claim waits for it to commit, then reads
+# the committed row, finds it inactive and inserts nothing. Held until the claim
+# commits, on one practice row.
 _CLAIM_SQL = text(
     """
     INSERT INTO platform.practice_members
@@ -84,6 +94,7 @@ _CLAIM_SQL = text(
     FROM platform.email_tenant_mappings m
     JOIN platform.practices p ON p.id = m.practice_id AND p.is_active
     WHERE m.email = :email AND m.practice_id = :practice_id
+    FOR SHARE OF p
     ON CONFLICT (user_id) DO NOTHING
     """
 )
@@ -215,7 +226,21 @@ def remove_for_practice(db: Session | Connection, practice_id: str) -> int:
     an account signs in, one left behind would hold the account to a practice
     that no longer serves it. A later sign-in through a live mapping claims
     again.
+
+    It locks the practice row before it deletes, so the order of the caller's
+    ``UPDATE`` does not matter. An ORM deactivation (``row.is_active = False``)
+    is not flushed by a ``text()`` statement and reaches the database only at
+    commit, after this ``DELETE``; without the lock nothing would hold the row
+    in between, and a claim would read the practice active and insert a
+    membership the ``DELETE`` had already passed. With it, a claim that comes
+    later waits on the lock (``_CLAIM_SQL``'s ``FOR SHARE OF p``), and a claim
+    already in flight is waited for, so the ``DELETE``, a new statement, sees
+    its row and removes it.
     """
+    db.execute(
+        text("SELECT 1 FROM platform.practices WHERE id = :practice_id FOR NO KEY UPDATE"),
+        {"practice_id": practice_id},
+    )
     result = db.execute(
         text("DELETE FROM platform.practice_members WHERE practice_id = :practice_id"),
         {"practice_id": practice_id},
@@ -236,6 +261,9 @@ class BackfillReport:
 # routed by: a row written from a stale address shows up as a disagreement on
 # the account's next sign-in (``MEMBERSHIP_DISAGREES_EVENT``) before anything
 # depends on it.
+#
+# ``FOR SHARE OF p`` for the reason ``_CLAIM_SQL`` takes it: a deactivation
+# committing during the backfill is waited for, not read past.
 _BACKFILL_SQL = text(
     """
     INSERT INTO platform.practice_members
@@ -244,6 +272,7 @@ _BACKFILL_SQL = text(
     FROM platform.users u
     JOIN platform.email_tenant_mappings m ON m.email = lower(u.email)
     JOIN platform.practices p ON p.id = m.practice_id AND p.is_active
+    FOR SHARE OF p
     ON CONFLICT (user_id) DO NOTHING
     """
 )
