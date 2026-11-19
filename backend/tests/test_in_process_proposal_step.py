@@ -47,7 +47,7 @@ def test_the_in_process_redraft_gets_a_proposal_step(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(
         redraft_routes,
         "redraft_note_job",
-        lambda _job, _req, _inv, service, *_a: seen.append(service),
+        lambda _job, _req, service, *_a: seen.append(service),
     )
 
     redraft_routes._run_redraft_in_process(MagicMock(), MagicMock(), MagicMock())

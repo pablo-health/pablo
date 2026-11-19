@@ -416,10 +416,11 @@ def process_transcription_result(
         restore_request_session(binding)
 
 
-@router.post("/api/internal/transcription-complete")
+@router.post(
+    "/api/internal/transcription-complete", dependencies=[Depends(require_cloud_tasks_invoker)]
+)
 def transcription_complete(
     request: TranscriptionCompleteRequest,
-    _invoker: None = Depends(require_cloud_tasks_invoker),
 ) -> dict[str, str]:
     """Receive a completed transcript from an external worker and start SOAP."""
     _validate_tenant_db(request.tenant_db)
@@ -610,10 +611,13 @@ def _submit_to_provider(
     )
 
 
-@router.post("/api/internal/assemblyai-submit", status_code=status.HTTP_200_OK)
+@router.post(
+    "/api/internal/assemblyai-submit",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_cloud_tasks_invoker)],
+)
 def assemblyai_submit(
     request: AssemblyAiSubmitRequest,
-    _invoker: None = Depends(require_cloud_tasks_invoker),
 ) -> dict[str, str]:
     """Submit uploaded dual-channel audio to AssemblyAI (Cloud Tasks worker).
 
@@ -888,10 +892,11 @@ def _warn_if_one_sided(
     )
 
 
-@router.post("/api/internal/transcription-poll")
+@router.post(
+    "/api/internal/transcription-poll", dependencies=[Depends(require_cloud_tasks_invoker)]
+)
 def transcription_poll(
     request: TranscriptionPollRequest,
-    _invoker: None = Depends(require_cloud_tasks_invoker),
 ) -> dict[str, str]:
     """Poll AssemblyAI for transcription completion (called by Cloud Tasks).
 

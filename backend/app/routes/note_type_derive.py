@@ -147,11 +147,12 @@ def get_note_type_derive_service() -> NoteTypeDeriveService:
     return NoteTypeDeriveService(NoteImportService())
 
 
-@router.get("/derive/references", response_model=ReferenceListResponse)
-def list_derive_references(
-    _user: User = Depends(get_current_user),
-    _: None = Depends(subscription_exempt),
-) -> ReferenceListResponse:
+@router.get(
+    "/derive/references",
+    response_model=ReferenceListResponse,
+    dependencies=[Depends(get_current_user), Depends(subscription_exempt)],
+)
+def list_derive_references() -> ReferenceListResponse:
     """References registered with this deployment.
 
     Any note type's key also serves as a reference; these are the ones that

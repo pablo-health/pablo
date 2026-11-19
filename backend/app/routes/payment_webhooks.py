@@ -112,11 +112,10 @@ _HANDLED_EVENTS = frozenset(
 )
 
 
-@router.post(PAYMENT_WEBHOOK_PATH)
+@router.post(PAYMENT_WEBHOOK_PATH, dependencies=[Depends(truly_public)])
 async def payment_webhook(
     request: Request,
     stripe_signature: Annotated[str | None, Header()] = None,
-    _public: None = Depends(truly_public),
 ) -> dict[str, str]:
     """Receive card-payment events and reconcile the charge ledger.
 

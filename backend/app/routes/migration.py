@@ -286,11 +286,14 @@ def _run_step(
     return owner
 
 
-@internal_jobs_router.post("/api/internal/jobs/import-preview", status_code=status.HTTP_200_OK)
+@internal_jobs_router.post(
+    "/api/internal/jobs/import-preview",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_cloud_tasks_invoker)],
+)
 def import_preview_job(
     payload: ImportStepJob,
     http_request: Request,
-    _invoker: None = Depends(require_cloud_tasks_invoker),
     user_repo: UserRepository = Depends(get_user_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> dict[str, str]:
@@ -309,11 +312,14 @@ def import_preview_job(
     return {"status": "done"}
 
 
-@internal_jobs_router.post("/api/internal/jobs/import-apply", status_code=status.HTTP_200_OK)
+@internal_jobs_router.post(
+    "/api/internal/jobs/import-apply",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_cloud_tasks_invoker)],
+)
 def import_apply_job(
     payload: ImportStepJob,
     http_request: Request,
-    _invoker: None = Depends(require_cloud_tasks_invoker),
     user_repo: UserRepository = Depends(get_user_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> dict[str, str]:
@@ -399,11 +405,12 @@ def list_imports(
     return ImportRunList(runs=[ImportRunSummary(**_summary(r)) for r in runs])
 
 
-@router.get("/runs/{run_id}", response_model=ImportRunDetail)
+@router.get(
+    "/runs/{run_id}", response_model=ImportRunDetail, dependencies=[Depends(get_tenant_context)]
+)
 def get_import(
     run_id: str,
     request: Request,
-    _ctx: Annotated[TenantContext, Depends(get_tenant_context)],
     user: Annotated[User, Depends(require_baa_acceptance)],
     patients: Annotated[PatientRepository, Depends(get_patient_repository)],
     audit: Annotated[AuditService, Depends(get_audit_service)],

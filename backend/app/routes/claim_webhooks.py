@@ -84,13 +84,12 @@ router = APIRouter(tags=["claim-webhooks"])
 CLEARINGHOUSE_WEBHOOK_PATH = "/api/webhooks/clearinghouse"
 
 
-@router.post(CLEARINGHOUSE_WEBHOOK_PATH)
+@router.post(CLEARINGHOUSE_WEBHOOK_PATH, dependencies=[Depends(truly_public)])
 async def clearinghouse_webhook(
     request: Request,
     webhook_signature: Annotated[str | None, Header()] = None,
     webhook_timestamp: Annotated[str | None, Header()] = None,
     webhook_id: Annotated[str | None, Header()] = None,
-    _public: None = Depends(truly_public),
 ) -> dict[str, str]:
     """Receive clearinghouse transaction events and apply acknowledgements.
 

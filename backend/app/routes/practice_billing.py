@@ -25,10 +25,8 @@ router = APIRouter(
 )
 
 
-@router.get("", response_model=BillingProfileResponse)
-def get_billing_profile(
-    _ctx: TenantContext = Depends(get_tenant_context),
-) -> BillingProfileResponse:
+@router.get("", response_model=BillingProfileResponse, dependencies=[Depends(get_tenant_context)])
+def get_billing_profile() -> BillingProfileResponse:
     """The practice's billing identity.
 
     A practice that has never saved one gets an all-``None`` response

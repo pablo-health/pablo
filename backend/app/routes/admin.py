@@ -88,9 +88,8 @@ class AddToAllowlistRequest(BaseModel):
 # --- User Management Endpoints ---
 
 
-@router.get("/api/admin/users")
+@router.get("/api/admin/users", dependencies=[Depends(require_admin_hardware_key)])
 def list_users(
-    _admin: User = Depends(require_admin_hardware_key),
     user_repo: UserRepository = Depends(get_user_repository),
 ) -> UserListResponse:
     """List all users with status information."""
@@ -148,9 +147,8 @@ def enable_user(
 # --- Allowlist Endpoints ---
 
 
-@router.get("/api/admin/allowlist")
+@router.get("/api/admin/allowlist", dependencies=[Depends(require_admin_hardware_key)])
 def list_allowlist(
-    _admin: User = Depends(require_admin_hardware_key),
     allowlist_repo: AllowlistRepository = Depends(get_allowlist_repository),
 ) -> AllowlistResponse:
     """List all allowlisted emails."""

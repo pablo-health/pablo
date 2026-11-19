@@ -79,7 +79,6 @@ class TestAssemblyAiSubmitWorker:
         ):
             result = it.assemblyai_submit(
                 it.AssemblyAiSubmitRequest(session_id="s1", user_id="u1"),
-                _invoker=None,
             )
 
         assert result["status"] == "ok"
@@ -131,9 +130,7 @@ class TestAssemblyAiSubmitWorker:
             patch.object(it, "session_keyterms", return_value=["Sertraline", "Zoloft"]) as read,
             patch.object(it, "enqueue_cloud_task"),
         ):
-            it.assemblyai_submit(
-                it.AssemblyAiSubmitRequest(session_id="s1", user_id="u1"), _invoker=None
-            )
+            it.assemblyai_submit(it.AssemblyAiSubmitRequest(session_id="s1", user_id="u1"))
 
         sent = service.submit_dual_channel.await_args.kwargs["keyterms"]
         if enabled:
@@ -168,7 +165,6 @@ class TestAssemblyAiSubmitWorker:
         ):
             result = it.assemblyai_submit(
                 it.AssemblyAiSubmitRequest(session_id="s1", user_id="u1"),
-                _invoker=None,
             )
 
         assert result["status"] == "already_submitted"
@@ -195,7 +191,6 @@ class TestAssemblyAiSubmitWorker:
         ):
             result = it.assemblyai_submit(
                 it.AssemblyAiSubmitRequest(session_id="s1", user_id="u1"),
-                _invoker=None,
             )
 
         assert result["status"] == "error"
@@ -214,7 +209,6 @@ class TestAssemblyAiSubmitWorker:
         ):
             result = it.assemblyai_submit(
                 it.AssemblyAiSubmitRequest(session_id="s1", user_id="u1"),
-                _invoker=None,
             )
 
         assert result["status"] == "not_found"
@@ -273,7 +267,6 @@ class TestAssemblyAiSubmitWorker:
             mock_cls.shift_job_offsets = real_shift_job_offsets
             result = it.assemblyai_submit(
                 it.AssemblyAiSubmitRequest(session_id="s1", user_id="u1", segment_index=0),
-                _invoker=None,
             )
 
         assert result["status"] == "ok"
@@ -335,7 +328,6 @@ class TestAssemblyAiSubmitWorker:
             mock_cls.shift_job_offsets = real_shift_job_offsets
             result = it.assemblyai_submit(
                 it.AssemblyAiSubmitRequest(session_id="s1", user_id="u1", segment_index=1),
-                _invoker=None,
             )
 
         assert result["status"] == "ok"
@@ -384,9 +376,7 @@ class TestLargeChannelSubmit:
             patch.object(it, "get_settings", return_value=_submit_settings()),
             patch.object(it, "enqueue_cloud_task"),
         ):
-            it.assemblyai_submit(
-                it.AssemblyAiSubmitRequest(session_id="s1", user_id="u1"), _invoker=None
-            )
+            it.assemblyai_submit(it.AssemblyAiSubmitRequest(session_id="s1", user_id="u1"))
         return session_row, storage, service
 
     def test_a_large_wav_channel_is_submitted_by_url_without_downloading_it(self) -> None:
@@ -457,7 +447,6 @@ class TestTranscriptionPoll:
         ):
             it.transcription_poll(
                 it.TranscriptionPollRequest(session_id="s1", user_id="u1"),
-                _invoker=None,
             )
 
         assert mock_process.call_args.kwargs["transcript_format"] == "google_meet"
@@ -493,7 +482,6 @@ class TestTranscriptionPoll:
         ):
             it.transcription_poll(
                 it.TranscriptionPollRequest(session_id="s1", user_id="u1"),
-                _invoker=None,
             )
 
         mock_process.assert_called_once()
@@ -534,7 +522,6 @@ class TestTranscriptionPoll:
         ):
             result = it.transcription_poll(
                 it.TranscriptionPollRequest(session_id="s1", user_id="u1"),
-                _invoker=None,
             )
 
         assert result["status"] == "processing"
@@ -572,7 +559,6 @@ class TestTranscriptionPoll:
         ):
             result = it.transcription_poll(
                 it.TranscriptionPollRequest(session_id="s1", user_id="u1"),
-                _invoker=None,
             )
 
         assert result["status"] == "polling"
@@ -626,7 +612,6 @@ class TestTranscriptionPoll:
         ):
             it.transcription_poll(
                 it.TranscriptionPollRequest(session_id="s1", user_id="u1"),
-                _invoker=None,
             )
 
         # Only the pending job hit the provider.
@@ -660,7 +645,6 @@ class TestTranscriptionPoll:
         ):
             result = it.transcription_poll(
                 it.TranscriptionPollRequest(session_id="s1", user_id="u1"),
-                _invoker=None,
             )
 
         assert result["status"] == "error"
@@ -701,7 +685,6 @@ class TestTranscriptionPoll:
         ):
             result = it.transcription_poll(
                 it.TranscriptionPollRequest(session_id="s1", user_id="u1"),
-                _invoker=None,
             )
 
         assert result["status"] == "polling"
@@ -743,7 +726,6 @@ class TestTranscriptionPoll:
         ):
             result = it.transcription_poll(
                 it.TranscriptionPollRequest(session_id="s1", user_id="u1"),
-                _invoker=None,
             )
 
         assert result["status"] == "polling"
@@ -792,7 +774,6 @@ class TestTranscriptionPoll:
         ):
             result = it.transcription_poll(
                 it.TranscriptionPollRequest(session_id="s1", user_id="u1"),
-                _invoker=None,
             )
 
         assert result["status"] == "polling"
@@ -836,7 +817,6 @@ class TestTranscriptionPoll:
         ):
             result = it.transcription_poll(
                 it.TranscriptionPollRequest(session_id="s1", user_id="u1"),
-                _invoker=None,
             )
 
         assert result["status"] == "polling"
@@ -902,7 +882,6 @@ class TestTranscriptionPoll:
         ):
             result = it.transcription_poll(
                 it.TranscriptionPollRequest(session_id="s1", user_id="u1"),
-                _invoker=None,
             )
 
         assert result["status"] == "processing"
@@ -1135,7 +1114,6 @@ class TestStandinPractice:
                 it.AssemblyAiSubmitRequest(
                     session_id="s1", user_id="u1", segment_index=segment_index
                 ),
-                _invoker=None,
             )
         return result, service, mock_enqueue
 
@@ -1223,7 +1201,6 @@ class TestStandinPractice:
         ):
             it.transcription_poll(
                 it.TranscriptionPollRequest(session_id="s1", user_id="u1"),
-                _invoker=None,
             )
 
         mock_check.assert_not_called()

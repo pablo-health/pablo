@@ -162,9 +162,7 @@ def _submit(session_row: types.SimpleNamespace, service: MagicMock) -> None:
         patch.object(it, "get_settings", return_value=settings),
         patch.object(it, "enqueue_cloud_task"),
     ):
-        it.assemblyai_submit(
-            it.AssemblyAiSubmitRequest(session_id="s1", user_id="u1"), _invoker=None
-        )
+        it.assemblyai_submit(it.AssemblyAiSubmitRequest(session_id="s1", user_id="u1"))
 
 
 def _row(audio_gcs_path: str | None) -> types.SimpleNamespace:
@@ -223,9 +221,7 @@ def _poll(poll_cycles: int, job_status: tuple[str, dict[str, str] | None]) -> ty
         ),
         patch.object(it, "enqueue_cloud_task"),
     ):
-        it.transcription_poll(
-            it.TranscriptionPollRequest(session_id="s1", user_id="u1"), _invoker=None
-        )
+        it.transcription_poll(it.TranscriptionPollRequest(session_id="s1", user_id="u1"))
     return session_row
 
 

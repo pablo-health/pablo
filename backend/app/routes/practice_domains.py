@@ -134,10 +134,13 @@ def list_practice_domains(
     return _list(service, practice_id)
 
 
-@router.get("/describe", response_model=DomainNameResponse)
+@router.get(
+    "/describe",
+    response_model=DomainNameResponse,
+    dependencies=[Depends(require_active_subscription)],
+)
 def describe_practice_domain(
     domain: str = Query(max_length=512),
-    _user: User = Depends(require_active_subscription),
     service: PracticeDomainService = Depends(get_practice_domain_service),
 ) -> DomainNameResponse:
     """What a name would be stored as, its registrable domain, and whether it

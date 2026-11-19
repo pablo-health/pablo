@@ -265,9 +265,7 @@ class TestPollMeasuresFromProviderTimings:
             patch.object(it, "_delete_staged_speech_objects"),
             patch.object(it, "_delete_completed_jobs"),
         ):
-            it.transcription_poll(
-                it.TranscriptionPollRequest(session_id="s1", user_id="u1"), _invoker=None
-            )
+            it.transcription_poll(it.TranscriptionPollRequest(session_id="s1", user_id="u1"))
 
         assert mock_process.call_args.kwargs["client_present_end_seconds"] == 2161.5
 
