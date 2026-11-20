@@ -431,7 +431,8 @@ if [ "$TARGET" = local ]; then
     install_local_backups
     echo
     done_ "Pablo is running on this machine: ${PUBLIC_ORIGIN}"
-    echo "Sign in with ${ADMIN_EMAIL}. Notes and transcription finish only while this machine is awake."
+    echo "Open it and choose Create account with ${ADMIN_EMAIL}: a password of 15 or more characters, then verify the email."
+    echo "Steps: docs/self-hosting/start-here.md, section 4. Notes and transcription finish only while this machine is awake."
     echo "Backups:  nightly to gs://${BACKUP_BUCKET}/workstation/, kept 30 days"
     echo "          check a restore with ${PABLO_LOCAL_DIR}/bin/pablo-local restore-drill"
     echo "Stop it:  PABLO_LOCAL_DIR=${PABLO_LOCAL_DIR} PABLO_VERSION=${PABLO_VERSION} docker compose -f deploy/workstation/compose.yaml down"
@@ -500,7 +501,8 @@ done
 
 echo
 done_ "Pablo is running: https://${PABLO_HOST}"
-echo "Sign in with ${ADMIN_EMAIL}. You will add a passkey or an authenticator app the first time."
+echo "Open it and choose Create account with ${ADMIN_EMAIL}: a password of 15 or more characters, then verify the email."
+echo "Then add a passkey or an authenticator app. Steps: docs/self-hosting/start-here.md, section 4."
 echo
 echo "Updates:  gcloud compute ssh ${VM_NAME} --zone=${ZONE} --tunnel-through-iap -- sudo pablo-update vX.Y.Z"
 echo "Backups:  daily to gs://${BACKUP_BUCKET}, restore-tested monthly (sudo pablo-backup info)"

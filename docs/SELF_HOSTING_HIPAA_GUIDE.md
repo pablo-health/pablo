@@ -95,8 +95,10 @@ triggers), `backend/app/routes/admin.py` (disable).
 
 Do these once the installer prints "Pablo is running".
 
-1. **Sign in and enroll your authenticator app.** The first sign-in asks
-   for it.
+1. **Create your account and sign in.** Choose **Create account** with the
+   email you gave the installer, use a password of 15 or more characters,
+   then verify the email and add a second factor. See
+   [sign in for the first time](self-hosting/start-here.md#4-sign-in-for-the-first-time).
 2. **Prove a restore works, today.** The drill also runs monthly.
 
    ```bash
