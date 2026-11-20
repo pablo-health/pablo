@@ -1917,19 +1917,32 @@ class Settings(BaseSettings):
         ),
     )
 
-    # Anthropic's own API, for ``anthropic-api:``-prefixed models: a
+    # Anthropic's own API, for ``anthropic-direct:``-prefixed models: a
     # deployment that holds its own Anthropic key calls the API directly
     # rather than through a cloud provider.
-    anthropic_api_route_key: SecretStr = Field(
+    anthropic_direct_api_key: SecretStr = Field(
         default=SecretStr(""),
         description=(
-            "API key for ``anthropic-api:<model>`` calls, which go to "
+            "API key for ``anthropic-direct:<model>`` calls, which go to "
             "Anthropic's API directly. Deliberately not ANTHROPIC_API_KEY, "
             "which SDKs and CLIs pick up on their own: this key reaches only "
-            "calls that name the ``anthropic-api:`` prefix. Empty (default) "
-            "means the route is not configured and such a call fails before "
-            "contacting the API. Check the data processing terms that cover "
-            "this key before sending it anything sensitive."
+            "calls that name the ``anthropic-direct:`` prefix, from a feature "
+            "listed in anthropic_direct_features. Empty (default) means the "
+            "route is not configured, and such a call fails before contacting "
+            "the API."
+        ),
+    )
+    anthropic_direct_features: str = Field(
+        default="",
+        description=(
+            "Comma-separated AI features (the labels on the usage record) "
+            "allowed to call ``anthropic-direct:`` models, or ``*`` for any. "
+            "A call from any other feature fails before contacting the API, "
+            "so a model setting naming the prefix cannot send a feature's "
+            "data somewhere the deployment did not mean it to go. Check the "
+            "data processing terms that cover the key before listing a "
+            "feature that sends anything sensitive. Empty (default) allows "
+            "none."
         ),
     )
 

@@ -41,7 +41,7 @@ DEFAULT_SCAN_DIR = "backend/app"
 ALLOWED: frozenset[str] = frozenset(
     {
         "backend/app/services/vertex_client.py",
-        "backend/app/services/anthropic_api_client.py",
+        "backend/app/services/anthropic_direct_client.py",
         "backend/app/services/structured_llm_gateway.py",
         "backend/app/services/bedrock_structured_llm_gateway.py",
         "backend/app/services/hedged_structured_llm_gateway.py",

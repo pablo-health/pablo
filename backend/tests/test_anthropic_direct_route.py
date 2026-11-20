@@ -1,6 +1,8 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""The ``anthropic-api:`` route: Anthropic's API called directly with the deployment's key.
+"""The ``anthropic-direct:`` route: Anthropic's API called directly with the deployment's key.
+
+Only from a feature the deployment allows (``anthropic_direct_features``).
 
 The API is faked at the HTTP transport, so the real SDK builds and sends the
 request and these tests read what would have gone over the wire.
@@ -16,14 +18,15 @@ import httpx
 import pytest
 
 from backend.app.services import structured_llm_gateway as structured_module
-from backend.app.services.anthropic_api_client import (
-    AnthropicApiRouteNotConfiguredError,
-    anthropic_api_client,
-    anthropic_api_route_configured,
+from backend.app.services.anthropic_direct_client import (
+    AnthropicDirectNotConfiguredError,
+    anthropic_direct_client,
+    anthropic_direct_configured,
 )
 from backend.app.services.llm_provider import LLMProvider, strip_provider_prefix
+from backend.app.services.llm_telemetry import llm_feature
 from backend.app.services.structured_llm_gateway import (
-    AnthropicApiStructuredLLMGateway,
+    AnthropicDirectStructuredLLMGateway,
     AnthropicStructuredLLMGateway,
     resolve_structured_llm_gateway,
 )
@@ -33,7 +36,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
 KEY = "sk-route-test-0123456789abcdef"
-MODEL = "anthropic-api:claude-haiku-5-5"
+MODEL = "anthropic-direct:claude-haiku-5-5"
+FEATURE = "file_sorting"
 SCHEMA = {
     "type": "object",
     "properties": {"kind": {"type": "string"}},
@@ -42,20 +46,22 @@ SCHEMA = {
 
 
 @pytest.fixture
-def route_key(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[str], None]]:
-    """Set (or clear) the route's key; the settings and gateway caches are reset around it."""
+def route_key(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..., None]]:
+    """Set the route's key and allowed features; caches are reset around it."""
 
-    def set_key(value: str) -> None:
-        monkeypatch.setenv("ANTHROPIC_API_ROUTE_KEY", value)
+    def set_key(value: str, features: str = FEATURE) -> None:
+        monkeypatch.setenv("ANTHROPIC_DIRECT_API_KEY", value)
+        monkeypatch.setenv("ANTHROPIC_DIRECT_FEATURES", features)
         get_settings.cache_clear()
-        structured_module._anthropic_api_gateways.clear()
+        structured_module._anthropic_direct_gateways.clear()
 
-    monkeypatch.delenv("ANTHROPIC_API_ROUTE_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_DIRECT_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_DIRECT_FEATURES", raising=False)
     get_settings.cache_clear()
-    structured_module._anthropic_api_gateways.clear()
+    structured_module._anthropic_direct_gateways.clear()
     yield set_key
     get_settings.cache_clear()
-    structured_module._anthropic_api_gateways.clear()
+    structured_module._anthropic_direct_gateways.clear()
 
 
 def _tool_use_body() -> dict[str, Any]:
@@ -94,39 +100,40 @@ class _Api:
         return httpx.Client(transport=httpx.MockTransport(self.handle))
 
 
-def _gateway(api: _Api) -> AnthropicApiStructuredLLMGateway:
+def _gateway(api: _Api) -> AnthropicDirectStructuredLLMGateway:
     gateway = resolve_structured_llm_gateway(MODEL)
-    assert isinstance(gateway, AnthropicApiStructuredLLMGateway)
-    gateway._client = anthropic_api_client(http_client=api.client())
+    assert isinstance(gateway, AnthropicDirectStructuredLLMGateway)
+    gateway._client = anthropic_direct_client(http_client=api.client())
     return gateway
 
 
-def _complete(gateway: AnthropicStructuredLLMGateway) -> Any:
-    return gateway.complete_structured(
-        model=MODEL,
-        system_prompt="Sort the file.",
-        user_prompt="file text",
-        response_schema=SCHEMA,
-        max_output_tokens=64,
-    )
+def _complete(gateway: AnthropicStructuredLLMGateway, feature: str | None = FEATURE) -> Any:
+    with llm_feature(feature):
+        return gateway.complete_structured(
+            model=MODEL,
+            system_prompt="Sort the file.",
+            user_prompt="file text",
+            response_schema=SCHEMA,
+            max_output_tokens=64,
+        )
 
 
 def test_the_prefix_is_a_known_provider_and_is_stripped() -> None:
-    assert LLMProvider.ANTHROPIC_API == "anthropic-api"
+    assert LLMProvider.ANTHROPIC_DIRECT == "anthropic-direct"
     assert strip_provider_prefix(MODEL) == "claude-haiku-5-5"
 
 
 def test_the_prefix_resolves_to_the_direct_gateway_and_anthropic_still_to_vertex(
-    route_key: Callable[[str], None],
+    route_key: Callable[..., None],
 ) -> None:
     route_key(KEY)
     direct = resolve_structured_llm_gateway(MODEL)
     vertex = resolve_structured_llm_gateway("anthropic:claude-haiku-5-5")
-    assert isinstance(direct, AnthropicApiStructuredLLMGateway)
+    assert isinstance(direct, AnthropicDirectStructuredLLMGateway)
     assert type(vertex) is AnthropicStructuredLLMGateway
 
 
-def test_a_call_goes_to_the_api_with_the_configured_key(route_key: Callable[[str], None]) -> None:
+def test_a_call_goes_to_the_api_with_the_configured_key(route_key: Callable[..., None]) -> None:
     route_key(KEY)
     api = _Api()
     result = _complete(_gateway(api))
@@ -144,7 +151,7 @@ def test_a_call_goes_to_the_api_with_the_configured_key(route_key: Callable[[str
 
 
 def test_the_usage_record_names_anthropic_as_the_provider(
-    route_key: Callable[[str], None], monkeypatch: pytest.MonkeyPatch
+    route_key: Callable[..., None], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     route_key(KEY)
     seen: list[str] = []
@@ -159,17 +166,47 @@ def test_the_usage_record_names_anthropic_as_the_provider(
     assert seen == ["anthropic"]
 
 
-def test_no_key_means_not_configured_and_no_request(route_key: Callable[[str], None]) -> None:
+def test_no_key_means_not_configured_and_no_request(route_key: Callable[..., None]) -> None:
     route_key("  ")
-    assert anthropic_api_route_configured() is False
+    assert anthropic_direct_configured(FEATURE) is False
     gateway = resolve_structured_llm_gateway(MODEL)
-    with pytest.raises(AnthropicApiRouteNotConfiguredError):
+    with pytest.raises(AnthropicDirectNotConfiguredError):
         _complete(gateway)
+    assert gateway._client is None
 
 
-def test_a_key_means_configured(route_key: Callable[[str], None]) -> None:
+def test_a_key_and_an_allowed_feature_mean_configured(route_key: Callable[..., None]) -> None:
     route_key(KEY)
-    assert anthropic_api_route_configured() is True
+    assert anthropic_direct_configured(FEATURE) is True
+    assert anthropic_direct_configured("note_generation") is False
+    assert anthropic_direct_configured(None) is False
+
+
+@pytest.mark.parametrize("feature", ["note_generation", None])
+def test_a_feature_not_allowed_is_refused_before_any_request(
+    route_key: Callable[..., None], feature: str | None
+) -> None:
+    route_key(KEY)
+    api = _Api()
+    gateway = _gateway(api)
+    with pytest.raises(AnthropicDirectNotConfiguredError, match="not allowed"):
+        _complete(gateway, feature)
+    assert api.requests == []
+
+
+def test_no_features_listed_allows_none(route_key: Callable[..., None]) -> None:
+    route_key(KEY, features="")
+    api = _Api()
+    with pytest.raises(AnthropicDirectNotConfiguredError):
+        _complete(_gateway(api))
+    assert api.requests == []
+
+
+def test_a_star_allows_any_feature(route_key: Callable[..., None]) -> None:
+    route_key(KEY, features=" * ")
+    api = _Api()
+    _complete(_gateway(api), "note_generation")
+    assert len(api.requests) == 1
 
 
 @pytest.mark.parametrize(
@@ -180,7 +217,7 @@ def test_a_key_means_configured(route_key: Callable[[str], None]) -> None:
     ],
 )
 def test_a_failed_call_never_carries_the_key(
-    route_key: Callable[[str], None],
+    route_key: Callable[..., None],
     caplog: pytest.LogCaptureFixture,
     status: int,
     error_type: str,
@@ -204,5 +241,8 @@ def test_a_failed_call_never_carries_the_key(
     assert all(KEY not in record.getMessage() for record in caplog.records)
 
 
-def test_the_missing_key_error_does_not_echo_a_value() -> None:
-    assert "sk-" not in str(AnthropicApiRouteNotConfiguredError())
+def test_the_missing_key_error_does_not_echo_a_value(route_key: Callable[..., None]) -> None:
+    route_key("")
+    with pytest.raises(AnthropicDirectNotConfiguredError) as raised:
+        anthropic_direct_client()
+    assert "sk-" not in str(raised.value)
