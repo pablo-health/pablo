@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import pytest
 
+from backend.app.reliability import LLM_REQUEST, RetryPolicy
 from backend.app.services import structured_llm_gateway as structured_module
 from backend.app.services.anthropic_direct_client import (
     AnthropicDirectNotConfiguredError,
@@ -35,7 +36,7 @@ from backend.app.settings import get_settings
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
-KEY = "sk-route-test-0123456789abcdef"
+KEY = "sk-dummy-route-key-0123456789abcdef"
 MODEL = "anthropic-direct:claude-haiku-5-5"
 FEATURE = "file_sorting"
 SCHEMA = {
@@ -107,15 +108,35 @@ def _gateway(api: _Api) -> AnthropicDirectStructuredLLMGateway:
     return gateway
 
 
-def _complete(gateway: AnthropicStructuredLLMGateway, feature: str | None = FEATURE) -> Any:
+def _complete(
+    gateway: AnthropicStructuredLLMGateway,
+    feature: str | None = FEATURE,
+    *,
+    model: str = MODEL,
+    retry_policy: RetryPolicy | None = None,
+) -> Any:
     with llm_feature(feature):
         return gateway.complete_structured(
-            model=MODEL,
+            model=model,
             system_prompt="Sort the file.",
             user_prompt="file text",
             response_schema=SCHEMA,
             max_output_tokens=64,
+            retry_policy=retry_policy,
         )
+
+
+def _providers_seen(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record the ``provider`` of every structured span opened from now on."""
+    seen: list[str] = []
+    real_span = structured_module.llm_span
+
+    def spy(request: Any) -> Any:
+        seen.append(request.provider)
+        return real_span(request)
+
+    monkeypatch.setattr(structured_module, "llm_span", spy)
+    return seen
 
 
 def test_the_prefix_is_a_known_provider_and_is_stripped() -> None:
@@ -150,20 +171,54 @@ def test_a_call_goes_to_the_api_with_the_configured_key(route_key: Callable[...,
     assert body["system"][0]["cache_control"] == {"type": "ephemeral"}
 
 
-def test_the_usage_record_names_anthropic_as_the_provider(
+def test_the_usage_record_names_the_direct_route_as_the_provider(
     route_key: Callable[..., None], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Not ``anthropic``, which Claude-on-Vertex chat calls carry: a report
+    # splitting spend by provider must tell Anthropic's invoice from Google's.
     route_key(KEY)
-    seen: list[str] = []
-    real_span = structured_module.llm_span
-
-    def spy(request: Any) -> Any:
-        seen.append(request.provider)
-        return real_span(request)
-
-    monkeypatch.setattr(structured_module, "llm_span", spy)
+    seen = _providers_seen(monkeypatch)
     _complete(_gateway(_Api()))
-    assert seen == ["anthropic"]
+    assert seen == ["anthropic-direct"]
+
+
+def test_claude_on_vertex_structured_calls_are_still_labelled_google(
+    route_key: Callable[..., None], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The Vertex gateway's label is the record every existing Claude
+    # structured usage row carries; the direct route must not move it.
+    route_key(KEY)
+    seen = _providers_seen(monkeypatch)
+    vertex = AnthropicStructuredLLMGateway(
+        client=anthropic_direct_client(http_client=_Api().client())
+    )
+    _complete(vertex, model="anthropic:claude-haiku-5-5")
+    assert seen == ["google"]
+
+
+def test_the_feature_effort_reaches_the_direct_route(
+    route_key: Callable[..., None], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AI_EFFORTS", json.dumps({FEATURE: "low"}))
+    route_key(KEY)
+    api = _Api()
+    gateway = resolve_structured_llm_gateway(MODEL, feature=FEATURE)
+    assert isinstance(gateway, AnthropicDirectStructuredLLMGateway)
+    gateway._client = anthropic_direct_client(http_client=api.client())
+    _complete(gateway)
+    (sent,) = api.requests
+    assert json.loads(sent.content)["output_config"] == {"effort": "low"}
+
+
+def test_a_rate_limit_is_retried_by_the_policy_alone(route_key: Callable[..., None]) -> None:
+    # The SDK must not retry on its own: its retries would multiply with
+    # ``call_with_retry``'s, all on the deployment's own rate limit.
+    route_key(KEY)
+    api = _Api(429, {"type": "error", "error": {"type": "rate_limit_error", "message": "slow"}})
+    policy = RetryPolicy(max_attempts=LLM_REQUEST.max_attempts, base_delay=0.0, max_delay=0.0)
+    with pytest.raises(RuntimeError):
+        _complete(_gateway(api), retry_policy=policy)
+    assert len(api.requests) == LLM_REQUEST.max_attempts
 
 
 def test_no_key_means_not_configured_and_no_request(route_key: Callable[..., None]) -> None:

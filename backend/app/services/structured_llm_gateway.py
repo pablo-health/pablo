@@ -634,7 +634,9 @@ class AnthropicDirectStructuredLLMGateway(AnthropicStructuredLLMGateway):
     :func:`resolve_structured_llm_gateway`.
     """
 
-    _PROVIDER = LLMProvider.ANTHROPIC
+    #: Distinct from ``anthropic``, which Claude-on-Vertex chat calls carry:
+    #: this spend is invoiced by Anthropic, not by the cloud provider.
+    _PROVIDER = LLMProvider.ANTHROPIC_DIRECT
 
     def _get_client(self) -> Any:
         if self._client is None:

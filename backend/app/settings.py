@@ -1929,7 +1929,8 @@ class Settings(BaseSettings):
             "calls that name the ``anthropic-direct:`` prefix, from a feature "
             "listed in anthropic_direct_features. Empty (default) means the "
             "route is not configured, and such a call fails before contacting "
-            "the API."
+            "the API. A rotated key reaches calls only after a restart: the "
+            "client is built once per process, with the key set at the time."
         ),
     )
     anthropic_direct_features: str = Field(
