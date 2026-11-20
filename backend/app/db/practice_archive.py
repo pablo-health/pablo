@@ -584,10 +584,39 @@ def _run(args: list[str], conn_params: PgConnection, what: str) -> None:
         args, env=conn_params.environ(), capture_output=True, text=True, check=False
     )
     if result.returncode != 0:
-        # The program's own stderr names the failing object; it carries no
-        # row data (pg_restore stops at the first error, before printing any).
-        msg = f"{what} failed (exit {result.returncode}): {result.stderr.strip()[-2000:]}"
+        detail = _redacted_stderr(result.stderr, what)
+        msg = f"{what} failed (exit {result.returncode}): {detail}"
         raise PracticeArchiveError(msg)
+
+
+# Words that introduce an object name in a PostgreSQL or pg_dump message
+# (``table "patients"``, ``constraint "x_check"``). A quoted string after
+# anything else may be a value, as in ``invalid input syntax for type
+# integer: "..."``, and is replaced.
+_OBJECT_WORDS = (
+    "table|relation|constraint|schema|role|user|database|index|function|column|type"
+    "|extension|sequence|view|policy|trigger|operator|collation|domain|server|file"
+)
+_QUOTED = re.compile(r"(?P<word>\b(?:" + _OBJECT_WORDS + r') )?"[^"]*"', re.IGNORECASE)
+
+
+def _redacted_stderr(stderr: str, program: str) -> str:
+    """The parts of a failed tool's stderr that are safe to put in an exception.
+
+    The exception is meant to be logged, and stderr can carry rows: a COPY
+    that fails a constraint prints the row in ``DETAIL: Failing row
+    contains (...)`` and again as the raw COPY line in ``CONTEXT``, and a
+    unique or exclusion failure prints ``DETAIL: Key (...)=(...)``. Only the
+    program's own lines are kept (``pg_restore: error: ...``), and within
+    them any quoted string that is not an object name is replaced.
+    """
+    kept: list[str] = []
+    for raw in stderr.splitlines():
+        line = raw.strip()
+        if not line.startswith(f"{program}:"):
+            continue
+        kept.append(_QUOTED.sub(lambda m: m.group(0) if m.group("word") else '"<redacted>"', line))
+    return " | ".join(kept)[-2000:] or "(no diagnostic lines from the program)"
 
 
 def _verify_in_throwaway_database(

@@ -233,11 +233,49 @@ def _forced_rls_tables(admin: Engine, schema: str) -> int:
         )
 
 
+# What isolation is made of, beyond table owners: function owners and
+# SECURITY DEFINER settings, ACLs on relations, functions and the schema,
+# RLS flags, policies and constraints. pg_dump keeps table owners and the
+# RLS flags by itself; the directory role's function ownership and its
+# schema grant come back only through the RLS reconcile, so this is the
+# check that notices the reconcile missing. Policies are compared by name
+# and command, because pg_dump re-renders their expressions.
+_CATALOG_SQL = """
+SELECT 'rel ' || c.relname || ' kind=' || c.relkind::text
+       || ' owner=' || pg_get_userbyid(c.relowner)
+       || ' acl=' || coalesce(c.relacl::text, '-')
+       || ' rls=' || c.relrowsecurity || '/' || c.relforcerowsecurity
+  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = :s
+UNION ALL
+SELECT 'fn ' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')'
+       || ' owner=' || pg_get_userbyid(p.proowner) || ' secdef=' || p.prosecdef
+       || ' acl=' || coalesce(p.proacl::text, '-') || ' cfg=' || coalesce(p.proconfig::text, '-')
+  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = :s
+UNION ALL
+SELECT 'ns owner=' || pg_get_userbyid(nspowner) || ' acl=' || coalesce(nspacl::text, '-')
+  FROM pg_namespace WHERE nspname = :s
+UNION ALL
+SELECT 'pol ' || tablename || '.' || policyname || ' ' || cmd
+  FROM pg_policies WHERE schemaname = :s
+UNION ALL
+SELECT 'con ' || conrelid::regclass::text || '.' || conname || ' type=' || contype::text
+       || ' valid=' || convalidated
+  FROM pg_constraint k JOIN pg_namespace n ON n.oid = k.connamespace WHERE n.nspname = :s
+"""
+
+
+def _catalog(admin: Engine, schema: str) -> list[str]:
+    with admin.connect() as conn:
+        rows = conn.execute(text(_CATALOG_SQL), {"s": schema}).fetchall()
+    return sorted(r[0] for r in rows)
+
+
 def test_round_trip(admin: Engine, practice: tuple[str, str], store: LocalDirectoryArchive) -> None:
     practice_id, schema = practice
     before = _counts(admin, schema)
     owners_before = _owners(admin, schema)
     forced_before = _forced_rls_tables(admin, schema)
+    catalog_before = _catalog(admin, schema)
     assert before["patients"] == _PATIENTS
 
     manifest = archive_practice_schema(admin, practice_id, schema, store)
@@ -259,6 +297,7 @@ def test_round_trip(admin: Engine, practice: tuple[str, str], store: LocalDirect
     # Owned and isolated the way provisioning left it, not by the superuser.
     assert _owners(admin, schema) == owners_before
     assert _forced_rls_tables(admin, schema) == forced_before
+    assert _catalog(admin, schema) == catalog_before
 
 
 def test_older_revision_is_migrated_to_head(

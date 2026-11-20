@@ -8,9 +8,11 @@ The dump, verify, drop and restore run against Postgres in
 
 from __future__ import annotations
 
+import subprocess
 from typing import TYPE_CHECKING
 
 import pytest
+from app.db import practice_archive as pa
 from app.db.practice_archive import (
     ArchiveManifest,
     LocalDirectoryArchive,
@@ -144,3 +146,42 @@ class TestPgConnection:
         engine = create_engine("postgresql+psycopg2://", creator=lambda: None)
         with pytest.raises(PracticeArchiveError, match="Pass connection="):
             PgConnection.from_engine(engine)
+
+
+# What pg_restore 16 printed for a COPY row that failed a CHECK (Tom's
+# reproduction on PR #2015), plus a primary message that carries a value.
+_COPY_FAILURE_STDERR = (
+    'pg_restore: error: COPY failed for table "patients": ERROR:  new row for relation '
+    '"patients" violates check constraint "patients_first_name_check"\n'
+    "DETAIL:  Failing row contains (1, Siobhan-Probe).\n"
+    'CONTEXT:  COPY patients, line 1: "1\tSiobhan-Probe"\n'
+    "pg_restore: error: could not execute query: ERROR:  invalid input syntax for type "
+    'integer: "Siobhan-Probe"\n'
+    "DETAIL:  Key (email)=(siobhan@example.com) already exists.\n"
+)
+
+
+def test_a_failed_tool_never_puts_row_data_in_the_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_run(*_a: object, **_k: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess([], 1, stdout="", stderr=_COPY_FAILURE_STDERR)
+
+    monkeypatch.setattr(pa.subprocess, "run", fake_run)
+    conn = PgConnection(dbname="d", host="h", port=5432, user="u")
+
+    with pytest.raises(PracticeArchiveError) as err:
+        pa._run(["/x/pg_restore"], conn, "pg_restore")
+
+    message = str(err.value)
+    assert "Siobhan" not in message
+    assert "siobhan@example.com" not in message
+    assert "Failing row" not in message
+    # What the operator needs to find the cause is still there.
+    assert 'table "patients"' in message
+    assert 'constraint "patients_first_name_check"' in message
+    assert "exit 1" in message
+
+
+def test_stderr_with_no_program_lines_says_so() -> None:
+    assert pa._redacted_stderr("DETAIL:  Failing row contains (x).\n", "pg_dump") == (
+        "(no diagnostic lines from the program)"
+    )
