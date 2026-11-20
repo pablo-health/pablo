@@ -20,6 +20,8 @@ class LLMProvider(StrEnum):
 
     GOOGLE = "google"
     ANTHROPIC = "anthropic"
+    #: Anthropic's own API, called directly with a deployment's key.
+    ANTHROPIC_API = "anthropic-api"
     MISTRALAI = "mistralai"
     BEDROCK = "bedrock"
 

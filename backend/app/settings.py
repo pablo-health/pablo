@@ -1917,6 +1917,22 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Anthropic's own API, for ``anthropic-api:``-prefixed models: a
+    # deployment that holds its own Anthropic key calls the API directly
+    # rather than through a cloud provider.
+    anthropic_api_route_key: SecretStr = Field(
+        default=SecretStr(""),
+        description=(
+            "API key for ``anthropic-api:<model>`` calls, which go to "
+            "Anthropic's API directly. Deliberately not ANTHROPIC_API_KEY, "
+            "which SDKs and CLIs pick up on their own: this key reaches only "
+            "calls that name the ``anthropic-api:`` prefix. Empty (default) "
+            "means the route is not configured and such a call fails before "
+            "contacting the API. Check the data processing terms that cover "
+            "this key before sending it anything sensitive."
+        ),
+    )
+
     @property
     def flash_fallback_models(self) -> tuple[str, ...]:
         """``ai_model_flash_fallbacks`` split into model ids, in order."""
