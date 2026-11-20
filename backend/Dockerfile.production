@@ -67,6 +67,46 @@ RUN set -eu; \
     mkdir -p /staging/usr/bin; \
     cp -a /usr/bin/uvicorn /staging/usr/bin/uvicorn
 
+# pg_dump and pg_restore, for archiving and restoring a practice schema
+# (app.db.practice_archive). Their major version must equal the server's,
+# which is PostgreSQL 16 (docker-compose, the test container, Cloud SQL), so
+# the package names a major on purpose: moving to another is this edit plus
+# the server's. A builder that already carries the packages (the apko
+# builder lists them) skips the install.
+#
+# The runtime stage has no package manager, so the two programs and the
+# libraries they load are staged under /opt/pgclient: the programs in bin/
+# with an rpath to lib/, the libraries in lib/ with an rpath to themselves.
+# The C library and its loader are left to the runtime's own copy. Nothing
+# else in the image looks in /opt/pgclient, so Python keeps its own
+# libraries.
+# $need is split into package names on purpose; '$ORIGIN' is patchelf's, not
+# the shell's. The package carries its major in its name; Wolfi drops old
+# builds from its index, so pinning a build would break a later rebuild.
+# hadolint ignore=DL3018,SC2016,SC2086
+RUN set -eu; \
+    need=""; \
+    [ -x /usr/libexec/postgresql16/pg_dump ] || need="$need postgresql-16-client-base"; \
+    command -v patchelf >/dev/null 2>&1 || need="$need patchelf"; \
+    if [ -n "$need" ]; then apk add --no-cache $need; fi; \
+    loader=$(ls /lib/ld-linux-*.so.* /lib64/ld-linux-*.so.* 2>/dev/null | head -n 1); \
+    test -n "$loader"; \
+    mkdir -p /staging/opt/pgclient/bin /staging/opt/pgclient/lib; \
+    for prog in pg_dump pg_restore; do \
+        cp -L "/usr/libexec/postgresql16/$prog" "/staging/opt/pgclient/bin/$prog"; \
+        libs=$("$loader" --list "/usr/libexec/postgresql16/$prog" | awk '$2 == "=>" && $3 ~ /^\// { print $3 }'); \
+        test -n "$libs"; \
+        for lib in $libs; do \
+            case "$(basename "$lib")" in \
+                libc.so.*|libm.so.*|libdl.so.*|libpthread.so.*|librt.so.*|libresolv.so.*|libutil.so.*|ld-linux-*) ;; \
+                *) cp -L "$lib" "/staging/opt/pgclient/lib/$(basename "$lib")" ;; \
+            esac; \
+        done; \
+        patchelf --force-rpath --set-rpath '$ORIGIN/../lib' "/staging/opt/pgclient/bin/$prog"; \
+    done; \
+    for lib in /staging/opt/pgclient/lib/*; do patchelf --set-rpath '$ORIGIN' "$lib"; done; \
+    /staging/opt/pgclient/bin/pg_dump --version | grep -q '(PostgreSQL) 16\.'
+
 
 # ---------- Stage 2: Runtime ----------
 FROM ${RUNTIME_IMAGE}
@@ -82,6 +122,12 @@ COPY --from=builder /staging/ /
 # another CPython minor's site-packages (the two base images disagree).
 # Exec form, because the runtime image has no shell.
 RUN ["python", "-c", "import fastapi, uvicorn"]
+
+# The same for the PostgreSQL client staged above: fail the build if either
+# program cannot load its libraries against the runtime's C library.
+RUN ["/opt/pgclient/bin/pg_dump", "--version"]
+RUN ["/opt/pgclient/bin/pg_restore", "--version"]
+ENV PATH=/opt/pgclient/bin:$PATH
 
 # Application code
 COPY --chown=nonroot:nonroot backend/ ./backend/

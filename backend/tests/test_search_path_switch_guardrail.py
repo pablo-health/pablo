@@ -32,6 +32,8 @@ _REVIEWED = {
     "db/__init__.py": 5,
     "db/intake_seed.py": 1,
     "db/migrate_tenants.py": 2,
+    # A fresh Session on a dedicated connection, for the RLS reconcile.
+    "db/practice_archive.py": 1,
     "db/provisioning.py": 4,
     "db/single_practice_migration.py": 1,
     "jobs/audit_retention_cron.py": 2,
