@@ -9,6 +9,9 @@
 #   pablo-name wait [SECONDS]  until the zone's nameservers answer with this VM
 #   pablo-name status [NAME]   what the service and DNS say about the name
 #   pablo-name release NAME    give up a name this VM no longer uses
+#   pablo-name release --teardown
+#                              give up the name this VM uses and stop renewing
+#                              it, just before the VM or project is deleted
 #
 # The service keeps DNS and nothing else: one A record, always to the address
 # the request came from, which is this VM's static IP. It never sees traffic;
@@ -20,6 +23,8 @@
 set -euo pipefail
 
 readonly CONFIG_DIR=/etc/pablo
+# Holds the name `release --teardown` gave up; renew leaves that name alone.
+readonly RELEASED=/var/lib/pablo/hosted-name-released
 readonly METADATA=http://metadata.google.internal/computeMetadata/v1/instance
 # Seconds before the first retry; doubled each time, unless the service says
 # how long to wait (Retry-After).
@@ -30,7 +35,7 @@ log() { echo "[pablo-name] $*" >&2; }
 die() { log "$*"; exit 1; }
 
 usage() {
-    echo "usage: pablo-name claim | renew | wait [SECONDS] | status [NAME] | release NAME" >&2
+    echo "usage: pablo-name claim | renew | wait [SECONDS] | status [NAME] | release NAME | release --teardown" >&2
     exit 2
 }
 
@@ -116,11 +121,17 @@ require_name() {
     exit "${1:-0}"
 }
 
+# released — `release --teardown` gave up the name this VM uses.
+released() { [ "$(cat "$RELEASED" 2>/dev/null)" = "$HOSTED_NAME" ]; }
+
 # claim [quiet] — POST is both: 201 the first time, 200 when this project
 # already holds the name.
 claim() {
     local quiet="${1:-}" hostname
     valid_name "$HOSTED_NAME" || die "${HOSTED_NAME} is not a name the service accepts."
+    # A claim takes the name back after a teardown release, whether someone
+    # asked for it or the VM booted again; the weekly renewal resumes with it.
+    rm -f "$RELEASED"
     request POST /v1/names "{\"name\": \"${HOSTED_NAME}\"}"
     case "$CODE" in
         200 | 201)
@@ -241,6 +252,10 @@ case "${1:-}" in
     renew)
         [ $# -eq 1 ] || usage
         [ -n "$HOSTED_NAME" ] || exit 0
+        if released; then
+            echo '{"event":"name_renewal","status":"released"}' | logger -t pablo-name
+            exit 0
+        fi
         # One line for Cloud Logging either way: a name that stops renewing
         # is gone in 30 days, so its failure is worth an alert.
         if claim quiet; then
@@ -292,19 +307,41 @@ case "${1:-}" in
         echo "This VM    ${address:-unknown}"
         ;;
     release)
-        [ $# -eq 2 ] || usage
-        name="$2"
+        teardown=false
+        if [ "${2:-}" = --teardown ]; then
+            [ $# -le 3 ] || usage
+            require_name 1
+            teardown=true
+            name="${3:-$HOSTED_NAME}"
+            [ "$name" = "$HOSTED_NAME" ] \
+                || die "This VM uses ${HOSTED_NAME}.${NAMES_ZONE}, not ${name}. For another name: pablo-name release ${name}"
+        else
+            [ $# -eq 2 ] || usage
+            name="$2"
+            # The next boot would only claim it back, after the site had gone.
+            [ "$name" != "$HOSTED_NAME" ] \
+                || die "This VM still uses ${name}.${NAMES_ZONE}. Run install.sh with another address first, or, to take this VM down: pablo-name release --teardown"
+        fi
         valid_name "$name" || die "${name} is not a name the service accepts."
-        # The next boot would only claim it back, after the site had gone.
-        [ "$name" != "$HOSTED_NAME" ] \
-            || die "This VM still uses ${name}.${NAMES_ZONE}. Run install.sh with another address first."
+        # Written before the release, so a renewal that runs meanwhile cannot
+        # claim the name back; removed again if the release fails, so the
+        # name keeps renewing until it is released.
+        if [ "$teardown" = true ]; then
+            mkdir -p "$(dirname "$RELEASED")"
+            echo "$name" > "$RELEASED"
+        fi
         request DELETE "/v1/names/${name}"
         case "$CODE" in
             204) log "released ${name}.${NAMES_ZONE}" ;;
             404) log "${name}.${NAMES_ZONE} is not registered; nothing to release" ;;
-            403) die "${name}.${NAMES_ZONE} belongs to another project." ;;
-            *) die "could not release ${name}.${NAMES_ZONE}: $(refusal)" ;;
+            *)
+                [ "$teardown" = false ] || rm -f "$RELEASED"
+                [ "$CODE" != 403 ] || die "${name}.${NAMES_ZONE} belongs to another project."
+                die "could not release ${name}.${NAMES_ZONE}: $(refusal)"
+                ;;
         esac
+        [ "$teardown" = false ] \
+            || log "this VM no longer renews it; if the VM starts again before it is deleted, it claims the name back"
         ;;
     *)
         usage
