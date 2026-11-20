@@ -39,6 +39,7 @@ if TYPE_CHECKING:
 
 from ..reliability import LLM_JOB, LLM_REQUEST, Idempotency, call_with_retry
 from ..settings import get_settings
+from .anthropic_direct_client import anthropic_direct_client, check_anthropic_direct_call
 from .claude_models import (
     capabilities_for,
     effort_kwargs,
@@ -456,6 +457,8 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
     """
 
     _TOOL_NAME = "emit_structured_output"
+    #: The ``llm_provider`` the call's usage record carries: Vertex serves it.
+    _PROVIDER: str = LLMProvider.GOOGLE
 
     def __init__(self, client: Any = None, *, effort: str | None = None) -> None:
         # Injectable for tests; lazily built from the shared factory otherwise.
@@ -517,7 +520,9 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
                 return {}
             return {"timeout": _attempt_timeout(bound, started, policy)}
 
-        with llm_span(LLMSpanRequest(operation="structured", model=normalized_model)) as span:
+        with llm_span(
+            LLMSpanRequest(operation="structured", model=normalized_model, provider=self._PROVIDER)
+        ) as span:
             try:
                 response = call_with_retry(
                     lambda: client.messages.create(
@@ -611,6 +616,59 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
             provider="Anthropic",
             output_tokens=output_tokens,
             finish_reason=finish_reason,
+        )
+
+
+class AnthropicDirectStructuredLLMGateway(AnthropicStructuredLLMGateway):
+    """The same structured Claude call, sent to Anthropic's own API.
+
+    For a deployment with its own Anthropic key (see
+    :mod:`.anthropic_direct_client`). Identical request and parsing to
+    :class:`AnthropicStructuredLLMGateway`; only the client differs, and a call
+    is sent only from a feature the deployment allows and with a key set.
+    Otherwise it raises
+    :class:`~.anthropic_direct_client.AnthropicDirectNotConfiguredError` before
+    anything is sent.
+
+    Selected for ``anthropic-direct:``-prefixed model ids by
+    :func:`resolve_structured_llm_gateway`.
+    """
+
+    #: Distinct from ``anthropic``, which Claude-on-Vertex chat calls carry:
+    #: this spend is invoiced by Anthropic, not by the cloud provider.
+    _PROVIDER = LLMProvider.ANTHROPIC_DIRECT
+
+    def _get_client(self) -> Any:
+        if self._client is None:
+            self._client = anthropic_direct_client(timeout_seconds=_STRUCTURED_LLM_TIMEOUT_SECONDS)
+        return self._client
+
+    def complete_structured(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        response_schema: dict[str, Any],
+        max_output_tokens: int,
+        temperature: float = 0.3,
+        thinking_budget: int | None = None,
+        timeout_seconds: float | None = None,
+        retry_policy: RetryPolicy | None = None,
+    ) -> StructuredCompletion:
+        # Before the client is built: a feature not allowed the route never
+        # reaches the key.
+        check_anthropic_direct_call()
+        return super().complete_structured(
+            model=model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            response_schema=response_schema,
+            max_output_tokens=max_output_tokens,
+            temperature=temperature,
+            thinking_budget=thinking_budget,
+            timeout_seconds=timeout_seconds,
+            retry_policy=retry_policy,
         )
 
 
@@ -886,6 +944,7 @@ def get_default_structured_llm_gateway() -> StructuredLLMGateway:
 #: One Claude-on-Vertex gateway per effort, so a feature asking for ``low`` and
 #: one asking for nothing do not share a client's settings.
 _anthropic_gateways: dict[str | None, StructuredLLMGateway] = {}
+_anthropic_direct_gateways: dict[str | None, StructuredLLMGateway] = {}
 _mistral_gateway_holder: list[StructuredLLMGateway] = []
 _bedrock_gateway_holder: list[StructuredLLMGateway] = []
 
@@ -895,6 +954,13 @@ def _get_anthropic_structured_llm_gateway(effort: str | None = None) -> Structur
     if effort not in _anthropic_gateways:
         _anthropic_gateways[effort] = AnthropicStructuredLLMGateway(effort=effort)
     return _anthropic_gateways[effort]
+
+
+def _get_anthropic_direct_structured_llm_gateway(effort: str | None = None) -> StructuredLLMGateway:
+    """Return the process-wide :class:`AnthropicDirectStructuredLLMGateway` for ``effort``."""
+    if effort not in _anthropic_direct_gateways:
+        _anthropic_direct_gateways[effort] = AnthropicDirectStructuredLLMGateway(effort=effort)
+    return _anthropic_direct_gateways[effort]
 
 
 def _get_mistral_structured_llm_gateway() -> StructuredLLMGateway:
@@ -940,6 +1006,7 @@ def resolve_structured_llm_gateway(
 
     A prefix registered with :func:`register_structured_llm_provider` →
     its gateway; ``anthropic:claude-...`` → Claude on Vertex,
+    ``anthropic-direct:claude-...`` → Anthropic's API with the deployment's key,
     ``mistralai:mistral-...`` → Mistral on Vertex; a bare id or any other
     prefix (e.g. ``google:``) → the default Gemini gateway. Lets a single
     caller target any provider by model string alone, the same way
@@ -964,6 +1031,8 @@ def resolve_structured_llm_gateway(
         return _registered_providers[provider]()
     if sep and provider == LLMProvider.ANTHROPIC:
         return _get_anthropic_structured_llm_gateway(get_settings().effort_for(feature))
+    if sep and provider == LLMProvider.ANTHROPIC_DIRECT:
+        return _get_anthropic_direct_structured_llm_gateway(get_settings().effort_for(feature))
     if sep and provider == LLMProvider.MISTRALAI:
         return _get_mistral_structured_llm_gateway()
     return get_default_structured_llm_gateway()
@@ -975,6 +1044,7 @@ register_structured_llm_provider(LLMProvider.BEDROCK, _get_bedrock_structured_ll
 
 
 __all__ = [
+    "AnthropicDirectStructuredLLMGateway",
     "AnthropicStructuredLLMGateway",
     "FakeStructuredLLMGateway",
     "GeminiStructuredLLMGateway",

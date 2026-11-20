@@ -9,7 +9,7 @@ tokens), go through the shared retry engine, and use a client built in one
 place. A call made straight on an SDK client does none of that, and a cost
 report built on the records silently under-counts it.
 
-So only the gateway modules and the client factory may build an SDK client
+So only the gateway modules and the client factories may build an SDK client
 or call the model API:
 
     genai.Client(...), AnthropicVertex(...), Anthropic(...)
@@ -41,6 +41,7 @@ DEFAULT_SCAN_DIR = "backend/app"
 ALLOWED: frozenset[str] = frozenset(
     {
         "backend/app/services/vertex_client.py",
+        "backend/app/services/anthropic_direct_client.py",
         "backend/app/services/structured_llm_gateway.py",
         "backend/app/services/bedrock_structured_llm_gateway.py",
         "backend/app/services/hedged_structured_llm_gateway.py",
