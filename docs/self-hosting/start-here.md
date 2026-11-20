@@ -327,3 +327,24 @@ More detail: [deploy/vm/README.md](../../deploy/vm/README.md) for the server,
 [Operating the VM install](operations.md) for day-to-day care, and the
 [Self-Hosting HIPAA Guide](../SELF_HOSTING_HIPAA_GUIDE.md) for what is yours
 to look after.
+
+## 12. Taking Pablo down
+
+Deleting your Google Cloud project deletes the server, your records and every
+backup with it. Keep a copy of anything you need first.
+
+1. If you use a pablo.clinic name, release it:
+
+   ```bash
+   gcloud compute ssh pablo --project=<your-project-id> --zone=us-central1-a --tunnel-through-iap -- sudo pablo-name release --teardown
+   ```
+
+2. Delete the project:
+
+   ```bash
+   gcloud projects delete <your-project-id>
+   ```
+
+If you delete the project without releasing the name, it stops pointing
+anywhere 30 days after its last renewal, but the name may stay unavailable,
+to a new project of yours as much as anyone else's.

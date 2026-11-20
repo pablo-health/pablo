@@ -95,12 +95,17 @@ Cloud Logging under `pablo-name`, for an alert on `"status":"failed"`.
 sudo pablo-name status           # what the service and DNS say about the name
 sudo pablo-name claim            # claim or renew it now
 sudo pablo-name release OLDNAME  # give up a name this VM no longer uses
+sudo pablo-name release --teardown  # give up this VM's name before deleting it
 ```
 
 To move to your own domain later, add its A record, run `install.sh` again
 with `--hostname clinic.example.com`, then release the old name. The installer
 reminds you how; it never releases one on its own. A VM refuses to release the
 name it still uses, since the next boot would only claim it back.
+
+Before deleting the VM or its project, `pablo-name release --teardown` gives
+up the name the VM uses and stops the weekly renewal. If the VM starts again
+first, its boot claims the name back.
 
 A name belongs to the Google Cloud project, not the VM. After deleting the VM
 and installing again in the same project, the installer's check sees the name
