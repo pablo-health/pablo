@@ -1259,6 +1259,99 @@ def test_a_revoke_racing_a_claim_in_flight_removes_its_row(world: _World, engine
         _forget_grant(engine, account.email)
 
 
+# --- a writer racing an offboarding ------------------------------------------
+#
+# Offboarding a practice deletes its mappings and then updates the practice row,
+# in one transaction. A writer that meets the deleted mapping must wait on it
+# holding nothing. If it locked the practice row first (``FOR SHARE OF p, m``),
+# the offboarding's practice update would wait on the writer while the writer
+# waits on the mapping, and Postgres would end one of them as a deadlock.
+
+
+def _race_an_offboarding(
+    engine: Engine, email: str, practice_id: str, write: Callable[[], object]
+) -> list[object]:
+    """Run ``write`` in a thread while ``email``'s mapping is deleted, uncommitted;
+    once it waits, deactivate ``practice_id`` in the same transaction and commit.
+
+    Asserts that the writer waited and that the offboarding committed without an
+    error. Returns what the writer returned (or raised).
+    """
+    from app.db.platform_models import EmailTenantMappingRow, PracticeRow  # noqa: PLC0415
+
+    outcome: list[object] = []
+
+    def run() -> None:
+        try:
+            outcome.append(write())
+        except Exception as exc:  # surfaced by the caller's assertion
+            outcome.append(exc)
+
+    writer = threading.Thread(target=run, daemon=True)
+    offboarded: object = None
+    with Session(engine) as offboarding:
+        try:
+            pid = int(offboarding.execute(text("SELECT pg_backend_pid()")).scalar_one())
+            offboarding.execute(
+                delete(EmailTenantMappingRow).where(EmailTenantMappingRow.email == email)
+            )
+            writer.start()
+            waited = _waits_on(engine, pid)
+            still_running = writer.is_alive()
+            try:
+                offboarding.execute(
+                    update(PracticeRow).where(PracticeRow.id == practice_id).values(is_active=False)
+                )
+                offboarding.commit()
+            except Exception as exc:  # a deadlock victim, asserted below
+                offboarded = exc
+        finally:
+            offboarding.rollback()
+    writer.join(timeout=30)
+    assert not writer.is_alive(), "the writer never finished"
+    assert offboarded is None, offboarded
+    assert (waited, still_running) == (True, True)
+    return outcome
+
+
+def test_a_claim_racing_an_offboarding_waits_and_writes_nothing(
+    world: _World, engine: Engine, caplog: pytest.LogCaptureFixture
+) -> None:
+    from app.db.practice_members import claim  # noqa: PLC0415
+
+    practice = world.practice("offboarding")
+    account = world.account("offboarded")
+    world.map(account.email, practice.id)
+
+    with caplog.at_level(logging.WARNING, logger="app.db.practice_members"):
+        outcome = _race_an_offboarding(
+            engine,
+            account.email,
+            practice.id,
+            lambda: claim(account.id, practice.id, account.email, may_defer=False),
+        )
+
+    assert outcome == [False]
+    assert _claim_warnings(caplog) == []
+    assert world.membership(account.id) is None
+
+
+def test_a_backfill_racing_an_offboarding_waits_and_writes_nothing(
+    world: _World, engine: Engine
+) -> None:
+    from app.db.practice_members import BackfillReport, backfill  # noqa: PLC0415
+
+    backfill(engine)
+    practice = world.practice("bfoffboarding")
+    account = world.account("bfoffboarded")
+    world.map(account.email, practice.id)
+
+    outcome = _race_an_offboarding(engine, account.email, practice.id, lambda: backfill(engine))
+
+    assert outcome == [BackfillReport(inserted=0, unmembered=0)]
+    assert world.membership(account.id) is None
+
+
 # --- with Redis on, a change is honoured on the next request --------------------
 
 

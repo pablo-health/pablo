@@ -131,6 +131,14 @@ def lookup(user_id: str, email: str | None) -> Membership | None:
 # nothing. A claim that locks first makes the revoke's ``DELETE`` wait instead,
 # and the revoke's membership read, a later statement, then sees the claimed
 # row and removes it.
+#
+# The order ``OF m, p`` is deliberate: Postgres takes the row locks in the order
+# the list names them. Mapping first means a claim that meets a deleted mapping
+# waits on it while holding nothing, so a writer that deletes a practice's
+# mappings and then updates the practice row (offboarding does) is only ever
+# waited on. With ``OF p, m`` the claim would hold the practice row while it
+# waits on the mapping, the writer's practice update would wait on the claim,
+# and the two would deadlock.
 _CLAIM_SQL = text(
     """
     INSERT INTO platform.practice_members
@@ -139,7 +147,7 @@ _CLAIM_SQL = text(
     FROM platform.email_tenant_mappings m
     JOIN platform.practices p ON p.id = m.practice_id AND p.is_active
     WHERE m.email = :email AND m.practice_id = :practice_id
-    FOR SHARE OF p, m
+    FOR SHARE OF m, p
     ON CONFLICT (user_id) DO NOTHING
     """
 )
@@ -307,8 +315,10 @@ class BackfillReport:
 # (``MEMBERSHIP_DISAGREES_EVENT``) before anything depended on it. Now it only
 # reaches accounts mapped since then that have not signed in.
 #
-# ``FOR SHARE OF p, m`` for the reasons ``_CLAIM_SQL`` takes it: a deactivation
-# or a revoke committing during the backfill is waited for, not read past.
+# ``FOR SHARE OF m, p``, in that order, for the reasons ``_CLAIM_SQL`` takes it:
+# a deactivation or a revoke committing during the backfill is waited for, not
+# read past, and an offboarding that deletes mappings before it updates the
+# practice cannot deadlock it.
 _BACKFILL_SQL = text(
     """
     INSERT INTO platform.practice_members
@@ -317,7 +327,7 @@ _BACKFILL_SQL = text(
     FROM platform.users u
     JOIN platform.email_tenant_mappings m ON m.email = lower(u.email)
     JOIN platform.practices p ON p.id = m.practice_id AND p.is_active
-    FOR SHARE OF p, m
+    FOR SHARE OF m, p
     ON CONFLICT (user_id) DO NOTHING
     """
 )
