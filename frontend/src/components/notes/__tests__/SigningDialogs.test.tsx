@@ -24,6 +24,7 @@ const updates = {
 
 vi.mock("@/hooks/useNoteSigning", () => ({
   useSignerDefaults: () => defaults,
+  useRememberSigner: () => async () => {},
 }))
 vi.mock("@/hooks/usePreferences", () => ({
   useUserTimeZone: () => "America/New_York",

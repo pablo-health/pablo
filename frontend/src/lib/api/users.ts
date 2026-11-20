@@ -202,10 +202,9 @@ export async function getUserProfile(
 }
 
 /**
- * Partial update of the current user's profile. Currently the backend
- * persists `name` and `provider_type`; `title` / `credentials` are
- * accepted by the schema but live on the per-practice clinician
- * profile and are not wired through yet.
+ * Partial update of the current user's profile. `name` and `provider_type`
+ * persist on the user; `title` and `credentials` on the clinician's profile
+ * in their practice. An omitted field keeps its stored value.
  */
 export async function updateUserProfile(
   data: UpdateUserRequest,
