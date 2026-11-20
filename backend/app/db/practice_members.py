@@ -2,10 +2,10 @@
 
 """The practice an account belongs to (``platform.practice_members``).
 
-Recorded, not yet routed by. A signed-in request resolves its practice through
-the email mapping (``app.auth.service._resolve_practice``); this table is
-written beside that answer and compared with it, so a wrong row costs nothing
-while the comparison shows whether the two ever disagree.
+An account's membership decides which practice its signed-in requests reach
+(``app.auth.service._resolve_practice``). The email mapping decides only for
+an account with no membership yet: its first sign-in resolves through the
+mapping and claims that practice here, and from then on the account decides.
 
 Writers, one row per account, none of which overwrites a row that exists:
 
@@ -15,8 +15,10 @@ Writers, one row per account, none of which overwrites a row that exists:
   before this table existed;
 * an invitation redeemed (not written anywhere yet).
 
-And one remover: :func:`remove_for_practice`, for whatever deactivates a
-practice, so a membership does not outlive it.
+And two removers: :func:`remove_for_practice`, for whatever deactivates a
+practice, so a membership does not outlive it; and revoking an allowlist grant
+(``app.repositories.postgres.allowlist``), which removes the membership that
+grant led to.
 """
 
 from __future__ import annotations
@@ -58,18 +60,50 @@ def is_account_id(user_id: str | None) -> bool:
     return True
 
 
-_MEMBER_PRACTICE_SQL = text(
-    "SELECT practice_id FROM platform.practice_members WHERE user_id = :user_id"
+@dataclass(frozen=True)
+class Membership:
+    """An account's membership, read with what resolution needs beside it."""
+
+    practice_id: str
+    schema_name: str
+    practice_active: bool
+    #: The practice the request's address maps to, if any. Read only to log a
+    #: disagreement; it never changes the answer.
+    mapped_practice_id: str | None
+
+
+# One statement: the membership, its practice, and whatever the address maps
+# to. The practice join is inner because the foreign key guarantees the row.
+_LOOKUP_SQL = text(
+    """
+    SELECT pm.practice_id, p.schema_name, p.is_active, m.practice_id AS mapped_practice_id
+    FROM platform.practice_members pm
+    JOIN platform.practices p ON p.id = pm.practice_id
+    LEFT JOIN platform.email_tenant_mappings m ON m.email = :email
+    WHERE pm.user_id = CAST(:user_id AS uuid)
+    """
 )
 
 
-def member_practice_id(user_id: str) -> str | None:
-    """The practice the account is a member of, or ``None`` when it has no row."""
+def lookup(user_id: str, email: str | None) -> Membership | None:
+    """The account's membership, or ``None`` when it has none.
+
+    ``email`` is used only to report what the address maps to
+    (``Membership.mapped_practice_id``).
+    """
     from . import create_standalone_session
 
     with create_standalone_session() as db:
-        value = db.execute(_MEMBER_PRACTICE_SQL, {"user_id": user_id}).scalar_one_or_none()
-    return None if value is None else str(value)
+        row = db.execute(_LOOKUP_SQL, {"user_id": user_id, "email": email or ""}).first()
+    if row is None:
+        return None
+    practice_id, schema_name, is_active, mapped_practice_id = row
+    return Membership(
+        practice_id=str(practice_id),
+        schema_name=str(schema_name),
+        practice_active=bool(is_active),
+        mapped_practice_id=None if mapped_practice_id is None else str(mapped_practice_id),
+    )
 
 
 # One statement, so the grant is checked at the moment of writing rather than
@@ -86,6 +120,25 @@ def member_practice_id(user_id: str) -> str | None:
 # whether or not the caller's UPDATE has been flushed): the claim waits for it to commit, then reads
 # the committed row, finds it inactive and inserts nothing. Held until the claim
 # commits, on one practice row.
+#
+# ``OF m`` does the same for a revoke in flight. A revoke deletes the mapping and
+# then the memberships its address claimed, in one transaction
+# (``PostgresAllowlistRepository.remove``). Without a lock on the mapping row, a
+# claim landing between the two reads the still-committed mapping, inserts, and
+# leaves a membership the revoke never saw. The membership decides, so the
+# revoked account would keep entering the practice. With the lock, the claim
+# waits for the revoke to commit, rechecks, finds no mapping and inserts
+# nothing. A claim that locks first makes the revoke's ``DELETE`` wait instead,
+# and the revoke's membership read, a later statement, then sees the claimed
+# row and removes it.
+#
+# The order ``OF m, p`` is deliberate: Postgres takes the row locks in the order
+# the list names them. Mapping first means a claim that meets a deleted mapping
+# waits on it while holding nothing, so a writer that deletes a practice's
+# mappings and then updates the practice row (offboarding does) is only ever
+# waited on. With ``OF p, m`` the claim would hold the practice row while it
+# waits on the mapping, the writer's practice update would wait on the claim,
+# and the two would deadlock.
 _CLAIM_SQL = text(
     """
     INSERT INTO platform.practice_members
@@ -94,7 +147,7 @@ _CLAIM_SQL = text(
     FROM platform.email_tenant_mappings m
     JOIN platform.practices p ON p.id = m.practice_id AND p.is_active
     WHERE m.email = :email AND m.practice_id = :practice_id
-    FOR SHARE OF p
+    FOR SHARE OF m, p
     ON CONFLICT (user_id) DO NOTHING
     """
 )
@@ -257,13 +310,15 @@ class BackfillReport:
 
 
 # Reads the address stored on the account, which is not refreshed after it is
-# created. That is acceptable only while memberships are recorded and not
-# routed by: a row written from a stale address shows up as a disagreement on
-# the account's next sign-in (``MEMBERSHIP_DISAGREES_EVENT``) before anything
-# depends on it.
+# created. It ran first while memberships were recorded and not yet routed by,
+# so a row written from a stale address showed up as a disagreement
+# (``MEMBERSHIP_DISAGREES_EVENT``) before anything depended on it. Now it only
+# reaches accounts mapped since then that have not signed in.
 #
-# ``FOR SHARE OF p`` for the reason ``_CLAIM_SQL`` takes it: a deactivation
-# committing during the backfill is waited for, not read past.
+# ``FOR SHARE OF m, p``, in that order, for the reasons ``_CLAIM_SQL`` takes it:
+# a deactivation or a revoke committing during the backfill is waited for, not
+# read past, and an offboarding that deletes mappings before it updates the
+# practice cannot deadlock it.
 _BACKFILL_SQL = text(
     """
     INSERT INTO platform.practice_members
@@ -272,7 +327,7 @@ _BACKFILL_SQL = text(
     FROM platform.users u
     JOIN platform.email_tenant_mappings m ON m.email = lower(u.email)
     JOIN platform.practices p ON p.id = m.practice_id AND p.is_active
-    FOR SHARE OF p
+    FOR SHARE OF m, p
     ON CONFLICT (user_id) DO NOTHING
     """
 )

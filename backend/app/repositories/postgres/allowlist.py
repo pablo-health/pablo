@@ -8,12 +8,21 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 
-from ...db.platform_models import EmailTenantMappingRow, PlatformAllowedEmailRow
+from ...db.platform_models import (
+    EmailTenantMappingRow,
+    PlatformAllowedEmailRow,
+    PracticeMemberRow,
+)
 from ...utcnow import utc_now
 from ..allowlist import AllowlistRepository
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+#: The memberships a grant leads to: the first sign-in's claim, and the
+#: migrate step's backfill of accounts mapped before memberships existed. A
+#: membership reached any other way (an invitation) is not the grant's to take.
+_JOINED_BY_GRANT = ("email_claim", "backfill")
 
 
 class PostgresAllowlistRepository(AllowlistRepository):
@@ -73,6 +82,29 @@ class PostgresAllowlistRepository(AllowlistRepository):
         mapping = self._session.get(EmailTenantMappingRow, normalized)
         if mapping is not None:
             self._session.delete(mapping)
+        # Flushed before the membership read, so this transaction holds the
+        # mapping's row lock by then. A claim in flight either holds its share
+        # lock already (this waits, and the read below sees its row) or waits
+        # for this commit and finds no mapping (``practice_members._CLAIM_SQL``).
+        # Autoflush would order it the same way; this does not depend on it.
+        self._session.flush()
+        # And the membership the grant led to. A signed-in account resolves
+        # from its membership before the mapping is read
+        # (``app.auth.service._resolve_practice``), so with only the mapping
+        # gone a revoked account would still enter. Matched on the address
+        # the membership was claimed with, not the one stored on the account
+        # (written once and never refreshed), and wherever the membership is,
+        # so it is found after a re-grant moved the mapping elsewhere, or for a
+        # grant that names no practice. In this session, so the resolution
+        # cache drops the account's answer when the revoke commits.
+        members = self._session.execute(
+            select(PracticeMemberRow).where(
+                PracticeMemberRow.claimed_email == normalized,
+                PracticeMemberRow.joined_via.in_(_JOINED_BY_GRANT),
+            )
+        ).scalars()
+        for member in members:
+            self._session.delete(member)
         self._session.flush()
         return True
 

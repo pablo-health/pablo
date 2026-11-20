@@ -237,10 +237,10 @@ PRACTICE_MEMBER_JOINED_VIA = ("email_claim", "invite", "backfill")
 class PracticeMemberRow(PlatformBase):
     """The practice an account belongs to, keyed by the account, not its address.
 
-    Recorded only, for now: a signed-in request still resolves its practice
-    through the email mapping, and this row is compared with that answer
-    (``app.auth.service._resolve_practice``). ``user_id`` is the primary key,
-    so an account belongs to one practice.
+    Decides where a signed-in account goes: an account with a row resolves to
+    its practice, and the email mapping decides only for an account without
+    one (``app.auth.service._resolve_practice``). ``user_id`` is the primary
+    key, so an account belongs to one practice.
 
     ``claimed_email`` is the mapped address the row was written from, as the
     mapping stores it (lowercased); NULL for an invitation.
