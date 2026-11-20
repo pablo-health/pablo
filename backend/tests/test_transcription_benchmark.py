@@ -130,12 +130,16 @@ def test_matched_pairs(ref: str, hyp: str, expected: list[tuple[int, int]]) -> N
 def test_a_preference_breaks_ties_but_never_costs_a_match() -> None:
     ref = ["a", "b", "a"]
     assert bench.matched_pairs(ref, ["a"], [False, False, True]) == [(2, 0)]
-    # Preferring the last "a" would lose the "b" match: the count wins.
-    assert bench.matched_pairs(ref, ["a", "b"], [False, False, True]) == [(0, 0), (1, 1)]
+    # Two preferred matches (b c at the start) against three plain ones
+    # (a b c after them): the count wins, however the bonus is weighed.
+    preferred = [True, True, False, False, False]
+    pairs = bench.matched_pairs(["b", "c", "a", "b", "c"], ["a", "b", "c"], preferred)
+    assert pairs == [(2, 0), (3, 1), (4, 2)]
 
 
 def test_scores_pool_as_sums_not_averaged_rates() -> None:
     total = bench.Score()
+    assert (total.wer, total.attribution) == (0.0, 0.0)  # nothing scored yet
     total.add(bench.Score(ref_words=10, edits=1, attributed_right=9, attributed_wrong=1))
     total.add(bench.Score(ref_words=90, edits=29, attributed_right=81, attributed_wrong=9))
     assert total.wer == pytest.approx(30 / 100)  # not mean(10%, 32%)
