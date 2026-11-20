@@ -28,6 +28,7 @@ concurrency:
 jobs:
   live:
     name: Live suite (vendor test mode)
+    environment: clearinghouse-test
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -52,10 +53,11 @@ jobs:
       - name: Install dependencies
         run: poetry install --no-interaction --no-ansi
 
-      # The key is only in scope for this step. A pull request from a fork
-      # (or Dependabot) gets no repository secrets, so the variable is empty
-      # there; the suite then skips every test with a reason and the step
-      # succeeds — the notice makes that visible instead of a quiet green.
+      # The key is only in scope for this step, and it lives in the
+      # `clearinghouse-test` environment, which admits main only. A run that
+      # cannot see it (a dispatch from another branch, or a fork) gets an
+      # empty variable; the suite then skips every test with a reason and the
+      # step succeeds — the notice makes that visible instead of a quiet green.
       # The make target's own exit code is the step's exit code: nothing is
       # piped after it.
       - name: Run the live suite
@@ -66,8 +68,8 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${CLEARINGHOUSE_LIVE_API_KEY:-}" ]; then
-            echo "::notice title=Clearinghouse live suite::skipped: no key — CLEARINGHOUSE_TEST_API_KEY is not available to this run (fork pull request?), so every test skips."
-            echo "**Clearinghouse live suite skipped: no key.** The repository secret is not available to this run, so every test in the lane skips." >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice title=Clearinghouse live suite::skipped: no key — CLEARINGHOUSE_TEST_API_KEY is not available to this run (not on main?), so every test skips."
+            echo "**Clearinghouse live suite skipped: no key.** The environment secret is not available to this run, so every test in the lane skips." >> "$GITHUB_STEP_SUMMARY"
           fi
           make test-clearinghouse-live
 

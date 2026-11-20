@@ -19,6 +19,12 @@ permissions:
   contents: read
   id-token: write
 
+# Every job that authenticates to Google Cloud runs in the `deploy`
+# environment, and the two deploy credentials (OSS_GCP_WIF_PROVIDER,
+# OSS_GCP_DEPLOY_SA) live there rather than at repository level. The
+# environment admits main only, so a workflow pushed on any other branch,
+# or a dispatch from one, cannot read them.
+
 concurrency:
   group: deploy-${{ github.workflow }}
   cancel-in-progress: false
@@ -40,6 +46,7 @@ jobs:
   build-backend:
     name: Build Backend
     needs: [ci, e2e]
+    environment: deploy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -80,6 +87,7 @@ jobs:
   build-frontend:
     name: Build Frontend
     needs: [ci, e2e]
+    environment: deploy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -123,6 +131,7 @@ jobs:
   build-pentest:
     name: Build Pentest Image
     needs: [ci, e2e]
+    environment: deploy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -162,6 +171,7 @@ jobs:
     name: Run DB Migrations
     needs: [build-backend]
     if: github.event_name == 'push' || inputs.run_migrations == true
+    environment: deploy
     runs-on: ubuntu-latest
     outputs:
       db_parked: ${{ steps.db.outputs.parked }}
@@ -237,6 +247,7 @@ jobs:
       always() && !failure() && !cancelled()
       && needs.build-backend.result == 'success'
       && needs.migrate.outputs.db_parked != 'true'
+    environment: deploy
     runs-on: ubuntu-latest
     steps:
       - id: auth
@@ -261,6 +272,7 @@ jobs:
   deploy-frontend:
     name: Deploy Frontend
     needs: [build-frontend]
+    environment: deploy
     runs-on: ubuntu-latest
     steps:
       - id: auth
@@ -285,6 +297,7 @@ jobs:
   update-pentest-job:
     name: Update Pentest Job
     needs: [build-pentest]
+    environment: deploy
     runs-on: ubuntu-latest
     steps:
       - id: auth
@@ -317,6 +330,7 @@ jobs:
     # there is nothing to probe — the sha check would fail against the old
     # revision by design, not by regression.
     if: always() && !failure() && !cancelled() && needs.deploy-backend.result == 'success'
+    environment: deploy
     runs-on: ubuntu-latest
     steps:
       - id: auth
