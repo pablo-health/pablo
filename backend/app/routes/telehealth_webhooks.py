@@ -80,11 +80,10 @@ _EVENT_COLUMNS: Final[dict[str, str]] = {
 }
 
 
-@router.post(TELEHEALTH_WEBHOOK_PATH)
+@router.post(TELEHEALTH_WEBHOOK_PATH, dependencies=[Depends(truly_public)])
 async def room_webhook(
     request: Request,
     x_pablo_room_secret: Annotated[str | None, Header()] = None,
-    _public: None = Depends(truly_public),
 ) -> dict[str, str]:
     """Record what the waiting room says happened.
 

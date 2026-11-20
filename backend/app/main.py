@@ -646,8 +646,8 @@ if settings.enable_patient_portal:
 app.include_router(patient_profile.router)
 
 
-@app.get("/api/health")
-def health_check(response: Response, _public: None = Depends(truly_public)) -> dict[str, object]:
+@app.get("/api/health", dependencies=[Depends(truly_public)])
+def health_check(response: Response) -> dict[str, object]:
     """Health check endpoint.
 
     Returns server status, deployed git SHA, and minimum required

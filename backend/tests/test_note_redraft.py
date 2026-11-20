@@ -771,7 +771,6 @@ class TestJob:
         return note_redraft_routes.redraft_note_job(
             RedraftNoteJob(session_id=session_id, user_id=USER, keep_edits=False),
             MagicMock(headers={}),
-            None,
             service,
             MagicMock(),
             MagicMock(),

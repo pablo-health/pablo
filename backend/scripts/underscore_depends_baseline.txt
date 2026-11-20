@@ -5,9 +5,6 @@
 app/chart_history/dependencies.py:get_chart_history_repository:_ctx
 app/chart_proposals/dependencies.py:get_chart_proposal_repository:_ctx
 app/chart_proposals/dependencies.py:get_proposal_medication_repository:_ctx
-app/diagnostics/router.py:get_prescribing_support:_user
-app/diagnostics/router.py:list_definitions:_user
-app/main.py:health_check:_public
 app/medications/router.py:get_medication_repository:_ctx
 app/outcome_measures/router.py:get_outcome_measure_repository:_ctx
 app/portal/host_routes.py:booking_link_on_host_route:_public
@@ -16,8 +13,6 @@ app/portal/invite_composer.py:get_invite_form_names:_ctx
 app/portal/practice_routes.py:resolve_portal_practice:_public
 app/preferences/dependencies.py:get_preference_repository:_ctx
 app/problems/dependencies.py:get_problem_repository:_ctx
-app/routes/admin.py:list_allowlist:_admin
-app/routes/admin.py:list_users:_admin
 app/routes/auth.py:create_native_code:_
 app/routes/auth.py:create_native_code:_public
 app/routes/auth.py:exchange_native_code:_
@@ -26,7 +21,6 @@ app/routes/booking_links.py:get_link_repository:_ctx
 app/routes/booking_links.py:get_link_scheduling_policy:_ctx
 app/routes/booking_links.py:get_link_type_repository:_ctx
 app/routes/calendar_import.py:get_patient_source_mapping_repository:_ctx
-app/routes/claim_webhooks.py:clearinghouse_webhook:_public
 app/routes/compliance.py:complete_compliance_item:_exempt
 app/routes/compliance.py:create_compliance_item:_exempt
 app/routes/compliance.py:delete_compliance_document:_exempt
@@ -95,17 +89,8 @@ app/routes/intake_packets.py:get_version:_user
 app/routes/intake_packets.py:list_templates:_user
 app/routes/intake_packets.py:replace_items:_user
 app/routes/intake_packets.py:update_template:_user
-app/routes/internal_transcription.py:assemblyai_submit:_invoker
-app/routes/internal_transcription.py:transcription_complete:_invoker
-app/routes/internal_transcription.py:transcription_poll:_invoker
 app/routes/launch.py:get_appointment_repository:_ctx
 app/routes/launch.py:get_patient_repository:_ctx
-app/routes/migration.py:get_import:_ctx
-app/routes/migration.py:import_apply_job:_invoker
-app/routes/migration.py:import_preview_job:_invoker
-app/routes/note_redraft.py:redraft_note_job:_invoker
-app/routes/note_type_derive.py:list_derive_references:_
-app/routes/note_type_derive.py:list_derive_references:_user
 app/routes/note_types.py:get_note_type:_
 app/routes/note_types.py:list_note_type_bases:_
 app/routes/note_types.py:list_note_types:_
@@ -179,12 +164,9 @@ app/routes/patients.py:get_clinical_record_source:_ctx
 app/routes/patients.py:get_notes_repository:_ctx
 app/routes/patients.py:get_patient_repository:_ctx
 app/routes/patients.py:get_therapy_session_repository:_ctx
-app/routes/payment_webhooks.py:payment_webhook:_public
 app/routes/people_term.py:get_people_term:_
 app/routes/people_term.py:set_people_term:_
 app/routes/people_term.py:set_practice_people_term:_
-app/routes/practice_billing.py:get_billing_profile:_ctx
-app/routes/practice_domains.py:describe_practice_domain:_user
 app/routes/refill_requests.py:create_refill_request:_
 app/routes/refill_requests.py:get_clinician_refill_request_repository:_ctx
 app/routes/refill_requests.py:list_my_medications:_
@@ -220,7 +202,6 @@ app/routes/sessions.py:get_patient_repository:_ctx
 app/routes/sessions.py:get_session_repository:_ctx
 app/routes/sessions.py:import_session:_ctx
 app/routes/sessions.py:upload_audio:_ctx
-app/routes/software_update.py:get_software_update:_practice
 app/routes/supervision.py:add_supervision_hours:_exempt
 app/routes/supervision.py:create_supervision_relationship:_exempt
 app/routes/supervision.py:delete_supervision_relationship:_exempt
@@ -241,7 +222,6 @@ app/routes/tasks.py:upload_task_document:_exempt
 app/routes/telehealth.py:get_zoom_store:_ctx
 app/routes/telehealth.py:zoom_authorize:_user
 app/routes/telehealth.py:zoom_callback:_user
-app/routes/telehealth_webhooks.py:room_webhook:_public
 app/routes/users.py:get_baa_text:_user
 app/routes/users.py:get_current_baa:_public
 app/routes/users.py:get_current_user_profile:_

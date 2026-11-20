@@ -67,9 +67,12 @@ def get_diagnostic_service(
     return DiagnosticService(repo, provider)
 
 
-@diagnostic_definitions_router.get("", response_model=DiagnosticDefinitionListResponse)
+@diagnostic_definitions_router.get(
+    "",
+    response_model=DiagnosticDefinitionListResponse,
+    dependencies=[Depends(require_baa_acceptance)],
+)
 def list_definitions(
-    _user: User = Depends(require_baa_acceptance),
     service: DiagnosticService = Depends(get_diagnostic_service),
 ) -> DiagnosticDefinitionListResponse:
     """List the available diagnostic definitions (for rendering the form).
@@ -82,11 +85,12 @@ def list_definitions(
 
 
 @diagnostic_definitions_router.get(
-    "/{code}/prescribing-support", response_model=PrescribingSupportResponse
+    "/{code}/prescribing-support",
+    response_model=PrescribingSupportResponse,
+    dependencies=[Depends(require_baa_acceptance)],
 )
 def get_prescribing_support(
     code: str,
-    _user: User = Depends(require_baa_acceptance),
     service: DiagnosticService = Depends(get_diagnostic_service),
 ) -> PrescribingSupportResponse:
     """Return a definition's optional prescribing-support reference data.

@@ -177,11 +177,12 @@ def _is_final_attempt(request: Request) -> bool:
     return retry_count >= get_settings().soap_generation_max_attempts - 1
 
 
-@router.post(_JOB_PATH, status_code=status.HTTP_200_OK)
+@router.post(
+    _JOB_PATH, status_code=status.HTTP_200_OK, dependencies=[Depends(require_cloud_tasks_invoker)]
+)
 def redraft_note_job(
     payload: RedraftNoteJob,
     http_request: Request,
-    _invoker: None = Depends(require_cloud_tasks_invoker),
     redraft_service: NoteRedraftService = Depends(get_worker_note_redraft_service),
     user_repo: UserRepository = Depends(get_user_repository),
     audit: AuditService = Depends(get_audit_service),
@@ -240,7 +241,6 @@ def _run_redraft_in_process(
         redraft_note_job(
             job,
             http_request,
-            None,
             get_worker_note_redraft_service(note_generation_service, get_worker_proposal_step()),
             get_user_repository(),
             get_audit_service(),

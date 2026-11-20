@@ -130,9 +130,8 @@ def _write_atomically(path: Path, payload: dict[str, str]) -> None:
         raise
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(require_practice_admin)])
 def get_software_update(
-    _practice: PracticeRow = Depends(require_practice_admin),
     settings: Settings = Depends(get_settings),
 ) -> SoftwareUpdateResponse:
     """The running and the latest release, and any update under way."""
