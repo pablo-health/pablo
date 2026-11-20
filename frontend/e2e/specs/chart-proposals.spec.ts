@@ -14,7 +14,7 @@
 
 import { randomBytes } from "node:crypto"
 
-import type { Page } from "@playwright/test"
+import type { Locator, Page } from "@playwright/test"
 
 import { test, expect } from "../fixtures/auth"
 import type { ApiClient } from "../fixtures/api"
@@ -71,6 +71,15 @@ async function openSignStep(page: Page, sessionId: string) {
   return dialog
 }
 
+/**
+ * Sign once the chart is decided. A new account has no name of its own, so the
+ * dialog opens with the name empty and the clinician types it, as here.
+ */
+async function signAs(dialog: Locator) {
+  await dialog.getByLabel("Your name").fill("Sam Ortiz")
+  await dialog.getByRole("button", { name: "Sign and lock" }).click()
+}
+
 test.describe("chart updates at sign", () => {
   test("an accepted update changes the chart from the note, and a discarded one does not", async ({
     api,
@@ -119,7 +128,7 @@ test.describe("chart updates at sign", () => {
       await work.getByRole("button", { name: "Accept" }).click()
       await supports.getByRole("button", { name: "Discard" }).click()
       await expect(dialog.getByRole("heading", { name: "Update the chart" })).toBeHidden()
-      await dialog.getByRole("button", { name: "Sign and lock" }).click()
+      await signAs(dialog)
       await expect
         .poll(async () => (await api.get<Session>(`/api/sessions/${session.id}`)).status)
         .toBe("finalized")
@@ -189,7 +198,7 @@ test.describe("chart updates at sign", () => {
       await start.getByRole("button", { name: "Accept" }).click()
       await stop.getByRole("button", { name: "Accept" }).click()
       await expect(dialog.getByRole("heading", { name: "Update the chart" })).toBeHidden()
-      await dialog.getByRole("button", { name: "Sign and lock" }).click()
+      await signAs(dialog)
       await expect
         .poll(async () => (await api.get<Session>(`/api/sessions/${session.id}`)).status)
         .toBe("finalized")
@@ -260,7 +269,7 @@ test.describe("chart updates at sign", () => {
           .getByRole("button", { name: "Accept" })
           .click()
       }
-      await dialog.getByRole("button", { name: "Sign and lock" }).click()
+      await signAs(dialog)
       await expect
         .poll(async () => (await historyText(api, patient.id, "relationships"))?.text)
         .toBe("Stand-in draft for social_history.relationships.")

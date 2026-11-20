@@ -294,6 +294,8 @@ test("homework is decided at signing, with the note's other chart updates", asyn
     name: "Discard",
   }).click()
   await expect(dialog.getByRole("heading", { name: "Update the chart" })).toBeHidden()
+  // A new account has no name of its own; the clinician types it once.
+  await dialog.getByLabel("Your name").fill("Sam Ortiz")
   await dialog.getByRole("button", { name: "Sign and lock" }).click()
   await expect
     .poll(async () => (await api.get<{ status: string }>(`/api/sessions/${session.id}`)).status)
