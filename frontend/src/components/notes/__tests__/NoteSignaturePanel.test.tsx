@@ -32,6 +32,7 @@ vi.mock("@/hooks/useNoteSigning", () => ({
     credentials: "LMFT",
     loaded: true,
   }),
+  useRememberSigner: () => async () => {},
 }))
 vi.mock("@/hooks/usePreferences", () => ({
   useUserTimeZone: () => "America/New_York",

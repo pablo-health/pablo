@@ -106,6 +106,8 @@ test("a commitment from the session, added at sign, is the clinician's task for 
     await dialog.getByRole("region", { name: "Homework" }).getByRole("button", { name: "Discard" }).click()
     await expect(dialog.getByRole("heading", { name: "Update the chart" })).toHaveCount(0)
 
+    // A new account has no name of its own; the clinician types it once.
+    await dialog.getByLabel("Your name").fill("Sam Ortiz")
     await dialog.getByRole("button", { name: "Sign and lock" }).click()
     await expect
       .poll(async () => (await api.get<Session>(`/api/sessions/${session.id}`)).status)

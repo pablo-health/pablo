@@ -14,6 +14,7 @@ import * as useSessions from "@/hooks/useSessions"
 
 vi.mock("@/hooks/useNoteSigning", () => ({
   useSignerDefaults: () => ({ name: "Sam Ortiz", credentials: "LMFT", loaded: true }),
+  useRememberSigner: () => async () => {},
 }))
 vi.mock("@/hooks/usePreferences", () => ({
   useUserTimeZone: () => "America/New_York",

@@ -5,8 +5,11 @@
  * addendum, and unlock to correct an error.
  *
  * The name and credentials start from the clinician's profile and can be
- * changed for this one signature; the preview shows the block exactly as it
- * will read. What is stored is what was entered — see `NoteService.sign_note`.
+ * changed in any one dialog; the preview shows the block exactly as it will
+ * read. What is stored is what was entered — see `NoteService.sign_note`.
+ * Once the signature is stored, what was signed with is kept on the profile,
+ * so the next dialog starts from it. A cancelled or failed signature keeps
+ * nothing.
  *
  * The sign dialog shows its form only once what the form shows is known: the
  * profile the name starts from, and the chart updates that decide what the
@@ -29,7 +32,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { useSignerDefaults } from "@/hooks/useNoteSigning"
+import { useRememberSigner, useSignerDefaults } from "@/hooks/useNoteSigning"
 import { useUserTimeZone } from "@/hooks/usePreferences"
 import { formatSignedAt, signedByLine } from "@/lib/utils/signatureBlock"
 import type { Note, NoteSignerFields } from "@/types/notes"
@@ -85,9 +88,13 @@ function SignatureFields({
   )
 }
 
-/** Signer fields that reset to the profile each time a dialog opens. */
+/**
+ * Signer fields that reset to the profile each time a dialog opens, and
+ * `remember`, which keeps a stored signature's fields on the profile.
+ */
 function useSignerState() {
   const defaults = useSignerDefaults()
+  const rememberSigner = useRememberSigner()
   const [edited, setEdited] = useState<{ name?: string; credentials?: string }>({})
   return {
     loaded: defaults.loaded,
@@ -96,6 +103,7 @@ function useSignerState() {
     setName: (name: string) => setEdited((prev) => ({ ...prev, name })),
     setCredentials: (credentials: string) => setEdited((prev) => ({ ...prev, credentials })),
     reset: () => setEdited({}),
+    remember: (signer: NoteSignerFields) => void rememberSigner(signer, defaults),
   }
 }
 
@@ -160,14 +168,17 @@ function SignDialog({
     e.preventDefault()
     setPending(true)
     setError(null)
+    const fields = toSigner(signer.name, signer.credentials)
     try {
-      await onSign(toSigner(signer.name, signer.credentials))
-      handleOpenChange(false)
+      await onSign(fields)
     } catch (err) {
       setError(errorText(err))
+      return
     } finally {
       setPending(false)
     }
+    signer.remember(fields)
+    handleOpenChange(false)
   }
 
   return (
@@ -242,14 +253,17 @@ export function AddAddendumDialog({
     e.preventDefault()
     setPending(true)
     setError(null)
+    const fields = toSigner(signer.name, signer.credentials)
     try {
-      await onAdd(text.trim(), toSigner(signer.name, signer.credentials))
-      handleOpenChange(false)
+      await onAdd(text.trim(), fields)
     } catch (err) {
       setError(errorText(err))
+      return
     } finally {
       setPending(false)
     }
+    signer.remember(fields)
+    handleOpenChange(false)
   }
 
   return (
