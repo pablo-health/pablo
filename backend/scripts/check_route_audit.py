@@ -472,6 +472,10 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
             "get",
             "/api/practice/admins",
         ),  # the practice's clinicians and who is an admin; no patient data
+        # practice_invites.py — invitations for clinicians to join the
+        # practice; create, revoke and redeem are audited.
+        ("get", "/api/practice/invites"),  # pending clinician invitations; no patient data
+        ("post", "/api/invites/preview"),  # practice name and invited address; no patient data
         # sites/routes.py and sites/public_routes.py — the practice's public
         # website: its files, versions and hosts. Uploads, publishes and roll
         # backs are audited by app.sites.service, whoever calls it.

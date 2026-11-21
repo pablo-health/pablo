@@ -543,6 +543,19 @@ CREATE TABLE platform.practice_email_senders (
     updated_by character varying(128)
 );
 
+CREATE TABLE platform.practice_invites (
+    id uuid NOT NULL,
+    practice_id character varying(128) NOT NULL,
+    email text NOT NULL,
+    token_hash character varying(64) NOT NULL,
+    invited_by uuid,
+    created_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    redeemed_at timestamp with time zone,
+    redeemed_by_user_id uuid,
+    revoked_at timestamp with time zone
+);
+
 CREATE TABLE platform.practice_members (
     user_id uuid NOT NULL,
     practice_id character varying(128) NOT NULL,
@@ -814,6 +827,12 @@ ALTER TABLE ONLY platform.practice_domains
 ALTER TABLE ONLY platform.practice_email_senders
     ADD CONSTRAINT practice_email_senders_pkey PRIMARY KEY (practice_id);
 
+ALTER TABLE ONLY platform.practice_invites
+    ADD CONSTRAINT practice_invites_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY platform.practice_invites
+    ADD CONSTRAINT practice_invites_token_hash_key UNIQUE (token_hash);
+
 ALTER TABLE ONLY platform.practice_members
     ADD CONSTRAINT practice_members_pkey PRIMARY KEY (user_id);
 
@@ -960,6 +979,8 @@ CREATE INDEX ix_practice_domain_apexes_practice_id ON platform.practice_domain_a
 
 CREATE INDEX ix_practice_domains_practice_id ON platform.practice_domains USING btree (practice_id);
 
+CREATE INDEX ix_practice_invites_practice_id ON platform.practice_invites USING btree (practice_id);
+
 CREATE INDEX ix_practice_members_practice_id ON platform.practice_members USING btree (practice_id);
 
 CREATE UNIQUE INDEX uq_practice_domains_primary ON platform.practice_domains USING btree (practice_id, purpose) WHERE is_primary;
@@ -988,6 +1009,15 @@ ALTER TABLE ONLY platform.payer_participation_events
 
 ALTER TABLE ONLY platform.practice_booking_buttons
     ADD CONSTRAINT practice_booking_buttons_practice_id_fkey FOREIGN KEY (practice_id) REFERENCES platform.practices(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY platform.practice_invites
+    ADD CONSTRAINT practice_invites_invited_by_fkey FOREIGN KEY (invited_by) REFERENCES platform.users(id) ON DELETE SET NULL;
+
+ALTER TABLE ONLY platform.practice_invites
+    ADD CONSTRAINT practice_invites_practice_id_fkey FOREIGN KEY (practice_id) REFERENCES platform.practices(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY platform.practice_invites
+    ADD CONSTRAINT practice_invites_redeemed_by_user_id_fkey FOREIGN KEY (redeemed_by_user_id) REFERENCES platform.users(id) ON DELETE SET NULL;
 
 ALTER TABLE ONLY platform.practice_members
     ADD CONSTRAINT practice_members_invited_by_fkey FOREIGN KEY (invited_by) REFERENCES platform.users(id) ON DELETE SET NULL;

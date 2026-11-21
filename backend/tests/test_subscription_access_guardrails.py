@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING
 # conftest.py mocks the DB engine + session factory and sets
 # ENVIRONMENT=development before any app code is imported, so this
 # import does not need a live Postgres.
+from app.auth.invite_identity import get_verified_invitee
 from app.auth.route_access import (
     _INTENT_OVERRIDES,
     AccessIntent,
@@ -77,6 +78,9 @@ AUTH_POSTURE_EXEMPT: tuple = (
     truly_public,
     get_current_user_no_mfa,
     get_session_peek_claims,
+    # Redeeming an invitation: the caller has no practice yet, so no
+    # subscription to check.
+    get_verified_invitee,
     require_pentest_runner,
     require_cloud_tasks_invoker,
     require_admin_hardware_key,

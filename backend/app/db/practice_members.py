@@ -13,13 +13,17 @@ Writers, one row per account, none of which overwrites a row that exists:
   address its sign-in token verified, for an account with no row yet;
 * :func:`backfill`, run by the migrate step for accounts that were mapped
   before this table existed;
-* an invitation redeemed (not written anywhere yet).
+* an invitation redeemed (``app.services.practice_invites.redeem``).
 
 And three removers: :func:`remove_for_practice`, for whatever deactivates a
 practice, so a membership does not outlive it; revoking an allowlist grant
 (``app.repositories.postgres.allowlist``), which removes the membership that
 grant led to; and :func:`remove_unmapped_claims`, run by the migrate step for
 memberships left behind by revokes made before revoking removed them.
+
+A deployment that reacts to who belongs to a practice registers a membership
+hook (:func:`register_membership_hook`); it is called once a membership change
+has committed (:func:`notify_membership_change`).
 """
 
 from __future__ import annotations
@@ -27,12 +31,14 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from sqlalchemy import event, text
 from sqlalchemy.exc import IntegrityError
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from sqlalchemy.engine import Connection, Engine
     from sqlalchemy.orm import Session
 
@@ -41,6 +47,47 @@ logger = logging.getLogger(__name__)
 #: ``event`` on the log line written when an account's membership names a
 #: different practice than its sign-in address maps to. Ids only.
 MEMBERSHIP_DISAGREES_EVENT = "practice_membership_disagrees"
+
+
+#: What happened to a membership, as a membership hook is told it.
+type MembershipChange = Literal["joined", "left"]
+type MembershipHook = Callable[[str, str, MembershipChange], None]
+
+# Hooks called after a membership change has committed, as
+# ``hook(practice_id, user_id, change)``. A deployment registers one to react to
+# a practice's member count without this package knowing what it does.
+_membership_hooks: list[MembershipHook] = []
+
+
+def register_membership_hook(hook: MembershipHook) -> None:
+    """Register a callback for membership changes, modelled on
+    ``app.db.provisioning.register_post_provision_hook``.
+
+    Called with ``change='joined'`` after an invitation is redeemed and
+    committed; a pending invitation changes nothing a hook sees. Registering
+    the same hook twice calls it twice; the registering code guards against
+    that.
+    """
+    _membership_hooks.append(hook)
+
+
+def notify_membership_change(practice_id: str, user_id: str, change: MembershipChange) -> None:
+    """Call every membership hook, after the change has committed.
+
+    A hook that raises is logged by type and skipped: the change it reports
+    has already happened, so a hook's failure never undoes or fails it.
+    """
+    for hook in list(_membership_hooks):
+        try:
+            hook(practice_id, user_id, change)
+        except Exception as exc:
+            # Type only: a hook's message is not ours to vouch for.
+            logger.warning(
+                "practice_members: membership hook failed (%s); the %s change stands",
+                type(exc).__name__,
+                change,
+                extra={"practice_id": practice_id, "user_id": user_id},
+            )
 
 
 def is_account_id(user_id: str | None) -> bool:
@@ -314,8 +361,9 @@ def remove_for_practice(db: Session | Connection, practice_id: str) -> int:
 # ``_BACKFILL_SQL``), so there is nothing to fold, and folding it again would be
 # wrong: Postgres ``lower()`` changes some codepoints Python's ``str.lower()``
 # leaves alone, so a re-folded key can miss its own, still-present mapping.
-# A row reached by invitation (``joined_via = 'invite'``, no claimed address)
-# was never a grant's to remove, and is left alone.
+# A row reached by invitation (``joined_via = 'invite'``) is left alone: a
+# redeem writes it together with its grant and mapping, and revoking that
+# grant removes all three in one transaction, so none was left behind.
 #
 # Nothing written today leaves such a row: a claim and the backfill insert only
 # while the mapping exists, under a share lock on it (``_CLAIM_SQL``), and a

@@ -128,6 +128,13 @@ class ConflictError(APIError):
     code = "CONFLICT"
 
 
+class GoneError(APIError):
+    """What the request names existed and is no longer usable (a spent link)."""
+
+    status_code = status.HTTP_410_GONE
+    code = "GONE"
+
+
 class UnprocessableEntityError(APIError):
     status_code = 422
     code = "UNPROCESSABLE_ENTITY"
