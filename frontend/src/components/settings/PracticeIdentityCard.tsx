@@ -15,7 +15,7 @@ import type {
   UpdateBillingProfileRequest,
 } from "@/types/practiceBilling"
 import { Field, type PracticeDetails, textPatch } from "./billingProfileShared"
-import { PracticeAdminOnlyNote, usePracticeAdminAccess } from "./practiceAdminAccess"
+import { PracticeAdminAccessNote, usePracticeAdminAccess } from "./practiceAdminAccess"
 import { useSettingsSaved } from "./SettingsSavedContext"
 import { useSettingsUserStatus } from "./useSettingsPreferences"
 
@@ -50,7 +50,7 @@ export function PracticeIdentityCard({
 }) {
   const update = useUpdateBillingProfile()
   const { flashSaved } = useSettingsSaved()
-  const { canEdit, readOnly } = usePracticeAdminAccess()
+  const { canEdit, note } = usePracticeAdminAccess()
   const { data: user } = useSettingsUserStatus()
   const { data: preferences } = usePreferences()
   const [legalName, setLegalName] = useState(profile.legal_name ?? "")
@@ -133,7 +133,7 @@ export function PracticeIdentityCard({
       {/* A disabled fieldset turns off every control inside it at once:
           inputs, the tax ID's Change, the prefill links and Save. */}
       <fieldset disabled={!canEdit} className="m-0 min-w-0 space-y-4 border-0 p-0">
-        {readOnly && <PracticeAdminOnlyNote />}
+        {note && <PracticeAdminAccessNote note={note} />}
         {canEdit && canPrefill && (
           <p className="text-[12.5px] text-muted-foreground">
             <Button

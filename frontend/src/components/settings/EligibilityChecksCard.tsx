@@ -16,12 +16,12 @@
 
 import { SettingsCard, SettingsRow, Toggle } from "@/components/settings/ui"
 import { useBillingProfile, useUpdateBillingProfile } from "@/hooks/useBillingProfile"
-import { PracticeAdminOnlyNote, usePracticeAdminAccess } from "./practiceAdminAccess"
+import { PracticeAdminAccessNote, usePracticeAdminAccess } from "./practiceAdminAccess"
 
 export function EligibilityChecksCard() {
   const { data: profile } = useBillingProfile()
   const update = useUpdateBillingProfile()
-  const { canEdit, readOnly } = usePracticeAdminAccess()
+  const { canEdit, note } = usePracticeAdminAccess()
   const enabled = profile?.eligibility_auto_check ?? true
 
   return (
@@ -30,9 +30,9 @@ export function EligibilityChecksCard() {
       description="Checks run through your own clearinghouse account. A check tells you what the payer knew when it was asked; it is not a promise to pay."
       flush
     >
-      {readOnly && (
+      {note && (
         <div className="px-[22px] pt-1.5">
-          <PracticeAdminOnlyNote />
+          <PracticeAdminAccessNote note={note} />
         </div>
       )}
       <SettingsRow
