@@ -22,15 +22,20 @@ vi.mock("@/hooks/useBillingProfile", () => ({
 }))
 
 let isPracticeAdmin = true
+let statusFailed = false
 
 vi.mock("../useSettingsPreferences", () => ({
-  useSettingsUserStatus: () => ({ data: { is_practice_admin: isPracticeAdmin } }),
+  useSettingsUserStatus: () =>
+    statusFailed
+      ? { data: undefined, isError: true }
+      : { data: { is_practice_admin: isPracticeAdmin }, isError: false },
 }))
 
 describe("EligibilityChecksCard", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     isPracticeAdmin = true
+    statusFailed = false
   })
 
   it("reads as on when the practice has it on", () => {
@@ -68,6 +73,22 @@ describe("EligibilityChecksCard", () => {
     render(<EligibilityChecksCard />)
 
     expect(screen.getByTestId("practice-admin-only")).toBeInTheDocument()
+    expect(screen.getByRole("switch")).toBeDisabled()
+    await user.click(screen.getByRole("switch"))
+    expect(mockUpdate).not.toHaveBeenCalled()
+  })
+
+  it("says it could not check, and stays disabled, when the status request fails", async () => {
+    statusFailed = true
+    mockUseBillingProfile.mockReturnValue({ data: { eligibility_auto_check: true } })
+    const user = userEvent.setup()
+
+    render(<EligibilityChecksCard />)
+
+    expect(screen.getByTestId("practice-admin-status-unavailable")).toHaveTextContent(
+      "Could not check who can change this. Reload to try again.",
+    )
+    expect(screen.queryByTestId("practice-admin-only")).not.toBeInTheDocument()
     expect(screen.getByRole("switch")).toBeDisabled()
     await user.click(screen.getByRole("switch"))
     expect(mockUpdate).not.toHaveBeenCalled()
