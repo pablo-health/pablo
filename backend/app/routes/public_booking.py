@@ -450,7 +450,8 @@ def _require_owner_may_accept_bookings(owner: User) -> None:
 
     try:
         # SaaS-overlay-only module; the same late import
-        # require_active_subscription does.
+        # require_active_subscription does, and the same hook
+        # signature: ``_fetch_subscription(email, settings, *, user_id)``.
         from ..routes.subscription import (  # type: ignore[import-not-found]
             _fetch_subscription,
         )
@@ -462,7 +463,7 @@ def _require_owner_may_accept_bookings(owner: User) -> None:
         # answer than letting a deployment that does not bill anyone book.
         return
 
-    sub = _fetch_subscription(owner.email, settings)
+    sub = _fetch_subscription(owner.email, settings, user_id=owner.id)
     if not sub:
         # No subscription record — might be mid-provisioning; let through,
         # matching require_active_subscription.

@@ -48,7 +48,10 @@ from ..db.platform_models import PlatformUserRow, PracticeRow
 # Optional billing extension point, mirroring the trial gate in
 # ``routes/sessions.py``. When a billing overlay is installed it registers
 # ``app.routes.subscription``; otherwise the import fails and metering
-# becomes a no-op, so OSS runs with no billing behaviour at all.
+# becomes a no-op, so OSS runs with no billing behaviour at all. The hook
+# is called as ``record_recorded_session(email, session_id, settings, *,
+# user_id)``; the account id rides along as a keyword so an implementation
+# need not look the account up again by address.
 try:
     from ..routes.subscription import (  # type: ignore[import-not-found]  # subscription routes exist only in the SaaS overlay
         record_recorded_session,
@@ -180,7 +183,7 @@ def _meter_recorded_session(user_id: str, session_id: str) -> None:
             user_row = tmp.get(PlatformUserRow, user_id)
             email = user_row.email if user_row else None
         if email:
-            record_recorded_session(email, session_id, get_settings())
+            record_recorded_session(email, session_id, get_settings(), user_id=user_id)
     except Exception:
         logger.exception("Could not meter recorded session %s", session_id)
 

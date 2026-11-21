@@ -160,7 +160,10 @@ from .patient_documents import get_patient_documents_service
 
 # Optional subscription extension point. When a billing overlay is
 # installed it registers ``app.routes.subscription``; otherwise the
-# import fails and the gate becomes a no-op.
+# import fails and the gate becomes a no-op. Each hook is called as
+# ``hook(email, settings, *, user_id)``: the account's address and
+# settings positionally, and the account id as a keyword so an
+# implementation need not look the account up again by address.
 try:
     from ..routes.subscription import (  # type: ignore[import-not-found]  # subscription routes exist only in the SaaS overlay; absent here
         TrialLimitReachedError,
@@ -185,18 +188,19 @@ except ImportError:  # pragma: no cover -- overlay absent or predates the hook
     check_recording_allowed = None  # type: ignore[assignment]  # subscription routes exist only in the SaaS overlay; absent here
 
 
-def _gate_recording(user_email: str) -> None:
+def _gate_recording(user: User) -> None:
     """Refuse audio uploads when the deployment's recording policy says no.
 
     No-op when no policy hook is installed — recording stays available on
     a plain deployment. Only the AUDIO path consults this; transcript
-    uploads and pasted notes are never policy-gated.
+    uploads and pasted notes are never policy-gated. The hook is called
+    as ``check_recording_allowed(email, settings, *, user_id)``.
     """
     if check_recording_allowed is None:
         return
     settings = get_settings()
     try:
-        check_recording_allowed(user_email, settings)
+        check_recording_allowed(user.email, settings, user_id=user.id)
     except Exception as exc:
         if RecordingNotEnabledError is None or not isinstance(exc, RecordingNotEnabledError):
             raise
@@ -212,17 +216,19 @@ def _gate_recording(user_email: str) -> None:
         ) from exc
 
 
-def _gate_trial_session(user_email: str) -> None:
+def _gate_trial_session(user: User) -> None:
     """Increment the trial-session counter and 402 if exhausted.
 
     No-op when no subscription overlay is installed. Wrapping the call
-    in a helper keeps the per-route callsites a single line each.
+    in a helper keeps the per-route callsites a single line each. The
+    hook is called as
+    ``check_and_count_trial_session(email, settings, *, user_id)``.
     """
     if check_and_count_trial_session is None:
         return
     settings = get_settings()
     try:
-        check_and_count_trial_session(user_email, settings)
+        check_and_count_trial_session(user.email, settings, user_id=user.id)
     except Exception as exc:
         if TrialLimitReachedError is None or not isinstance(exc, TrialLimitReachedError):
             raise
@@ -371,7 +377,7 @@ def upload_session(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Note type {request.note_type!r} not allowed for this subscription",
         )
-    _gate_trial_session(user.email)
+    _gate_trial_session(user)
     try:
         session, patient = session_service.create_session_for_generation(
             patient_id, user.id, request
@@ -746,7 +752,7 @@ async def import_session(
     paragraphs that state it, and they are decided on the session's page.
     """
     definition = _importable_note_type(note_type, registry, authorizer, user)
-    _gate_trial_session(user.email)
+    _gate_trial_session(user)
     chart = None
     if proposes_chart_updates(definition):
         charted = session_service.patient_repo.get(patient_id, user.id)
@@ -1216,7 +1222,7 @@ def schedule_session(
         telehealth=request.video_link is not None,
         asking_on_recording=request.asking_consent_on_recording,
     )
-    _gate_trial_session(user.email)
+    _gate_trial_session(user)
     # Authorize an explicitly requested note type — same gate as
     # /api/appointments/{id}/start-session; falling back to the default
     # is always allowed.
@@ -1735,7 +1741,7 @@ async def upload_audio(
     """
     # Deployment recording policy first — a refused caller shouldn't burn
     # rate-limit budget on a request that was never going to transcribe.
-    _gate_recording(user.email)
+    _gate_recording(user)
 
     # Per-user burst guard: each upload spawns a transcription job, so cap how
     # fast a single caller can trigger them (per-minute + per-hour). Raises 429.
@@ -1960,7 +1966,7 @@ def init_audio_upload(
     """
     # Same recording policy as the multipart ``upload_audio``: a refused
     # caller gets no upload URLs.
-    _gate_recording(user.email)
+    _gate_recording(user)
 
     settings = get_settings()
     if not settings.transcription_enabled:
@@ -2049,7 +2055,7 @@ def finalize_audio_upload(
     """
     # Checked again here, not only at init: URLs minted before the policy
     # changed must not reach transcription.
-    _gate_recording(user.email)
+    _gate_recording(user)
 
     settings = get_settings()
 

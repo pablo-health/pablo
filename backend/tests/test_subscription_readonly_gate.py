@@ -69,10 +69,10 @@ class _SubscriptionStub:
 
     def __init__(self) -> None:
         self.row: dict[str, Any] | None = None
-        self.calls: list[tuple[str, Settings]] = []
+        self.calls: list[tuple[str, Settings, str]] = []
 
-    def fetch(self, email: str, settings: Settings) -> dict[str, Any] | None:
-        self.calls.append((email, settings))
+    def fetch(self, email: str, settings: Settings, *, user_id: str) -> dict[str, Any] | None:
+        self.calls.append((email, settings, user_id))
         return self.row
 
 
@@ -265,7 +265,7 @@ def test_missing_subscription_row_allows_every_method(
     subscription.row = None
 
     assert client.request(method, "/api/things").status_code == 200
-    assert subscription.calls[0] == (gate_user.email, enforcing_settings)
+    assert subscription.calls[0] == (gate_user.email, enforcing_settings, gate_user.id)
 
 
 @pytest.mark.parametrize("method", ALL_METHODS)

@@ -98,7 +98,7 @@ def readonly_client(
 
     module = ModuleType(SUBSCRIPTION_MODULE)
 
-    def fetch_subscription(_email: str, _settings: Settings) -> dict[str, str]:
+    def fetch_subscription(_email: str, _settings: Settings, *, user_id: str) -> dict[str, str]:
         return {"status": "canceled", "access_level": "read_only"}
 
     module._fetch_subscription = fetch_subscription  # type: ignore[attr-defined]
