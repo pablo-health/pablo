@@ -1331,7 +1331,17 @@ def _resolve_user(
         # The grant path writes the mapping alongside the grant; this path has
         # no grant, so it writes it here. Without this the user is created
         # successfully and then gets NO_PRACTICE on every request.
-        if email:
+        #
+        # Except for a reserved test address. Its practice is the one the
+        # test-tenant service provisions for it, which writes the mapping
+        # before the address first signs in. An unmapped reserved address is
+        # therefore one whose practice is gone: its tenant was deprovisioned,
+        # which removes the user row and the mapping but not the identity at
+        # the provider. Mapping it here would put a test identity in the
+        # deployment's own practice, and the membership claimed on that
+        # mapping would outlive any later grant. It resolves to nothing until
+        # it is provisioned again.
+        if email and not _is_reserved_test_email(email):
             _ensure_tenant_mapping(email)
         logger.info("Auto-provisioned user %s", user.id)
 

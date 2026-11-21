@@ -52,6 +52,7 @@ from ..repositories import (
     ClinicianProfile,
     ClinicianProfileRepository,
     IdentityRepository,
+    InMemoryClinicianProfileRepository,
     UserRepository,
     get_clinician_profile_repository,
     get_identity_repository,
@@ -162,8 +163,16 @@ def get_user_status(
     state. These differ when an account with a Pablo passkey signs in through
     Firebase without asserting that passkey.
     """
+    from ..auth.service import _resolve_practice
     from ..settings import get_settings
 
+    practice = _resolve_practice(user.id, user.email)
+    if practice is None:
+        # A clinician profile lives in the practice's schema. An account with
+        # no practice has none, and the request runs on no practice schema, so
+        # reading one would fail the whole status call. This is the call that
+        # tells such an account it has no practice; it has to answer.
+        profile_repo = InMemoryClinicianProfileRepository()
     profile = profile_repo.get(user.id)
 
     # The same decision require_mfa makes for this token, bypasses included,
@@ -213,10 +222,8 @@ def get_user_status(
         "import_prompted_at": user.import_prompted_at,
     }
 
-    from ..auth.service import _resolve_practice
     from ..payments.provider import get_payment_credential_provider
 
-    practice = _resolve_practice(user.id, user.email)
     # Whether this practice takes cards, so the chart never asks for a card
     # or a charge amount in a practice that cannot take one. Resolved for the
     # same practice the payment routes resolve, through the same provider;
