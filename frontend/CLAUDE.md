@@ -7,7 +7,7 @@ Frontend rules that apply to every file under `frontend/`. The root
 
 - **shadcn/ui** components with Pablo brand palette (warm cream, honey, sage)
 - **DM Sans** for body, **Fraunces** for headings
-- See `docs/design-system/` for full design tokens
+- See `design/brand.md` for full design tokens
 
 ## Guardrails (load-bearing, don't skip)
 
