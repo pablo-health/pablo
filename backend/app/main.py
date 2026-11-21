@@ -126,6 +126,7 @@ from .routes import (
     practice_billing,
     practice_client_video_link,
     practice_domains,
+    practice_invites,
     public_booking,
     refill_requests,
     scheduling,
@@ -372,6 +373,8 @@ app.include_router(patient_chart_history.router)
 app.include_router(practice_billing.router)
 app.include_router(practice_domains.router)
 app.include_router(practice_admins.router)
+app.include_router(practice_invites.router)
+app.include_router(practice_invites.invitee_router)
 # The single-VM install's update notice; answers 404 unless SELF_UPDATE_ENABLED.
 app.include_router(software_update.router)
 # The practice's website: managed in Settings > Website, served to its hosts.

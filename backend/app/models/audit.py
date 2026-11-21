@@ -200,6 +200,10 @@ class AuditAction(StrEnum):
     # away. No PHI; ``changes`` carries the clinician's user id.
     PRACTICE_ADMIN_GRANTED = "practice_admin_granted"
     PRACTICE_ADMIN_REVOKED = "practice_admin_revoked"
+    # Practice invitations (app.services.practice_invites). Ids only.
+    PRACTICE_INVITE_CREATED = "practice_invite_created"
+    PRACTICE_INVITE_REVOKED = "practice_invite_revoked"
+    PRACTICE_INVITE_REDEEMED = "practice_invite_redeemed"
 
     # A practice admin asking the host to install the latest release. No PHI;
     # ``changes`` carries the running and the requested version.

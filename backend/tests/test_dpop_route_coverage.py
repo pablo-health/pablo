@@ -35,6 +35,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from app.auth.invite_identity import get_verified_invitee
 from app.auth.patient_context import get_patient_context
 from app.auth.route_security import truly_public
 from app.auth.service import (
@@ -62,7 +63,8 @@ _MARKERS: dict[str, tuple] = {
     "mfa-required": (require_mfa,),
     # get_session_peek_claims resolves the bearer to a verified user
     # (no MFA, no idle touch) — the DPoP middleware can bind a proof.
-    "pre-mfa-onboarding": (get_current_user_no_mfa, get_session_peek_claims),
+    # get_verified_invitee (invitation redeem) verifies the bearer the same way.
+    "pre-mfa-onboarding": (get_current_user_no_mfa, get_session_peek_claims, get_verified_invitee),
     "service-account-auth": (require_pentest_runner, require_cloud_tasks_invoker),
     "truly-public": (truly_public,),
     "patient-principal": (get_patient_context,),
@@ -148,6 +150,9 @@ DPOP_UNCOVERABLE: dict[str, str] = {
     "POST /api/portal/practices/{slug}/recover": (
         "pre-auth: mails a fresh sign-in link to an address already on the chart"
     ),
+    # --- The invitation page's first call, made before the invitee signs in:
+    # a link token in, the practice's name and the invited address out. ---
+    "POST /api/invites/preview": "public: what an invitation link is for; the token is the grant",
     # --- Public BAA document fetch (the legal text shown pre-acceptance);
     # no authenticated user. ---
     "GET /api/users/baa": "public: serves the current BAA document text, no user",
