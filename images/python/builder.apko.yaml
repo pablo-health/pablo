@@ -19,6 +19,10 @@ contents:
     - python-3.14-dev
     - py3.14-pip
     - py3.14-setuptools
+    # pg_dump / pg_restore at the server's major, and the tool that points
+    # them at the libraries staged beside them (backend/Dockerfile.production).
+    - postgresql-16-client-base
+    - patchelf
 
 accounts:
   groups:

@@ -7,7 +7,7 @@ Two image definitions for the backend, built with
 | File | Role | Contents |
 |---|---|---|
 | `runtime.apko.yaml` | final stage of `backend/Dockerfile.production` | CPython, its shared libraries, CA certificates; no shell, no package manager; runs as `nonroot` (65532) |
-| `builder.apko.yaml` | build stage | the same CPython plus busybox, bash, pip, setuptools and a C toolchain |
+| `builder.apko.yaml` | build stage | the same CPython plus busybox, bash, pip, setuptools, a C toolchain, and the PostgreSQL 16 client with patchelf (staged into the runtime by the Dockerfile) |
 
 ## Why
 
