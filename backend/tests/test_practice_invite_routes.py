@@ -6,6 +6,8 @@
   other clinician gets 403 and nothing is written, audited or sent;
 * the owner's invitation is emailed with its link, and the response never
   carries the token; only the token's hash is stored;
+* the token never travels in a URL: the link carries it in the fragment, and
+  the invitee's routes take it in a POST body, with no path parameter;
 * ``get_verified_invitee`` is used by the redeem route and by no other route,
   and refuses a sign-in whose address the issuer has not verified;
 * a membership hook that raises is logged and never stops the others.
@@ -187,7 +189,8 @@ def test_the_owner_invites_by_email_and_the_response_never_carries_the_token(
     assert email.kind == invites.INVITE_EMAIL_KIND
     assert "Harbor Counseling" in email.text
     assert "Olive Owner" in email.text
-    token = email.text.split("/invite/", 1)[1].split()[0]
+    assert "/invite/" not in email.text, "the token is never a path segment"
+    token = email.text.split("/invite#", 1)[1].split()[0]
     assert invites.hash_token(token) == stored.token_hash, "only the hash is stored"
     assert token not in response.text, "the response never carries the token"
     assert token not in stored.token_hash
@@ -226,6 +229,19 @@ def test_something_that_is_not_an_address_is_refused(client: TestClient, email: 
     assert client.post(URL, json={"email": email}).status_code == 422
 
 
+def test_no_route_takes_the_link_token_in_its_url() -> None:
+    """A platform request log records the full URL, so the token is only ever
+    in a request body: both invitee routes are POSTs with a fixed path."""
+    routes = sorted(
+        (method, path)
+        for path, route in iter_api_routes(real_app)
+        if path.startswith("/api/invites")
+        for method in route.methods or ()
+        if method != "HEAD"
+    )
+    assert routes == [("POST", "/api/invites/preview"), ("POST", "/api/invites/redeem")]
+
+
 # --- the no-practice identity -----------------------------------------------
 
 
@@ -245,7 +261,7 @@ def test_only_the_redeem_route_uses_the_no_practice_identity() -> None:
         for method in route.methods or ()
         if method != "HEAD"
     )
-    assert users == [("POST", "/api/invites/{token}/redeem")]
+    assert users == [("POST", "/api/invites/redeem")]
 
 
 def _invitee(email: str, *, verified: bool, user_id: str | None = None) -> Any:

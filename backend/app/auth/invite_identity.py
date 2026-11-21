@@ -21,7 +21,7 @@ It resolves no practice, writes nothing, and arms no row-level security
 principal. It asks for no second factor: the invitee has had no chance to
 enrol one, and everything past the redeem asks for it as usual.
 
-ONLY ``POST /api/invites/{token}/redeem`` may depend on it.
+ONLY ``POST /api/invites/redeem`` may depend on it.
 ``tests/test_practice_invite_routes.py`` walks the route table and fails if
 any other route does, and the route guardrails list it as a pre-MFA marker.
 """

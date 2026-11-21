@@ -152,7 +152,7 @@ DPOP_UNCOVERABLE: dict[str, str] = {
     ),
     # --- The invitation page's first call, made before the invitee signs in:
     # a link token in, the practice's name and the invited address out. ---
-    "GET /api/invites/{token}": "public: what an invitation link is for; the token is the grant",
+    "POST /api/invites/preview": "public: what an invitation link is for; the token is the grant",
     # --- Public BAA document fetch (the legal text shown pre-acceptance);
     # no authenticated user. ---
     "GET /api/users/baa": "public: serves the current BAA document text, no user",

@@ -193,7 +193,7 @@ class _Harness:
         """The owner invites ``email``: the invitation's id, and the emailed token."""
         response = self.as_owner().post("/api/practice/invites", json={"email": email})
         assert response.status_code == 201, response.text
-        token = self.sender.sent[-1].text.split("/invite/", 1)[1].split()[0]
+        token = self.sender.sent[-1].text.split("/invite#", 1)[1].split()[0]
         return str(response.json()["id"]), token
 
     # --- the invitee's side ---
@@ -212,12 +212,16 @@ class _Harness:
         self.signed_in["current"] = identity
         return identity
 
+    def preview(self, token: str) -> Any:
+        """``POST /api/invites/preview``, signed out: the token in the body."""
+        return self.client.post("/api/invites/preview", json={"token": token})
+
     def redeem(self, token: str, *, confirm_mismatch: bool = False) -> Any:
-        """``POST /redeem`` as the current sign-in, on a request with no practice."""
+        """``POST /api/invites/redeem`` as the current sign-in, on a request with no practice."""
         clear_tenant_schema(self.session)
         return self.client.post(
-            f"/api/invites/{token}/redeem",
-            json={"confirm_mismatch": confirm_mismatch},
+            "/api/invites/redeem",
+            json={"token": token, "confirm_mismatch": confirm_mismatch},
             headers={"Authorization": "Bearer stand-in"},
         )
 
@@ -332,7 +336,7 @@ def test_an_account_with_another_address_redeems_and_is_in_the_practice(
 ) -> None:
     invited = _address("a")
     _invite_id, token = harness.invite(invited)
-    preview = harness.client.get(f"/api/invites/{token}")
+    preview = harness.preview(token)
     assert preview.status_code == 200
     assert preview.json() == {"practice_name": _PRACTICE_NAME, "email": invited}
 
@@ -365,7 +369,7 @@ def test_an_account_with_another_address_redeems_and_is_in_the_practice(
     assert bee.email in [c["email"] for c in listed.json()["clinicians"]]
 
     assert harness.hook_calls == [(_PRACTICE_ID, account, "joined")]
-    assert harness.client.get(f"/api/invites/{token}").status_code == 410
+    assert harness.preview(token).status_code == 410
 
 
 def test_revoking_the_granted_address_takes_the_invited_member_out(harness: _Harness) -> None:
@@ -425,7 +429,7 @@ def test_an_expired_link_is_gone_and_writes_nothing(harness: _Harness) -> None:
             ),
             {"i": invite_id},
         )
-    assert harness.client.get(f"/api/invites/{token}").status_code == 410
+    assert harness.preview(token).status_code == 410
     harness.sign_in(invited)
     before = harness.footprint()
     assert harness.redeem(token).status_code == 410
@@ -468,7 +472,7 @@ def test_a_link_into_an_inactive_practice_is_gone_and_writes_nothing(
         )
     try:
         before = harness.footprint()
-        assert harness.client.get(f"/api/invites/{token}").status_code == 410
+        assert harness.preview(token).status_code == 410
         assert harness.redeem(token).status_code == 410
         assert harness.footprint() == before
         assert harness.hook_calls == []
@@ -487,7 +491,7 @@ def test_an_unknown_link_is_not_found(harness: _Harness) -> None:
     harness.sign_in(_address("nobody"))
     before = harness.footprint()
     assert harness.redeem("not-a-real-token").status_code == 404
-    assert harness.client.get("/api/invites/not-a-real-token").status_code == 404
+    assert harness.preview("not-a-real-token").status_code == 404
     assert harness.footprint() == before
 
 
@@ -508,7 +512,7 @@ def test_a_different_address_without_confirming_is_refused_with_both(harness: _H
     assert harness.footprint() == before, "not even the account is created"
     assert harness.account_id(signed_in) is None
     assert harness.hook_calls == []
-    assert harness.client.get(f"/api/invites/{token}").status_code == 200, "still open"
+    assert harness.preview(token).status_code == 200, "still open"
 
 
 def test_the_same_address_in_another_case_needs_no_confirming(harness: _Harness) -> None:

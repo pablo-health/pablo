@@ -5,7 +5,9 @@
 A practice's owner or an admin invites a clinician by address
 (:func:`create_invite`). The invitation is a link carrying a random token;
 only the token's sha256 is stored (``platform.practice_invites``), and the
-token itself exists only in the link that is emailed. The link works for
+token itself exists only in the fragment of the link that is emailed
+(``/invite#<token>``), and comes back in a request body, never a URL. The
+link works for
 :data:`INVITE_TTL`, once.
 
 Whoever redeems the link (:func:`redeem`) joins the practice, whatever address
@@ -97,8 +99,12 @@ def hash_token(token: str) -> str:
 
 
 def invite_link(app_url: str, token: str) -> str:
-    """The page a clinician opens to accept."""
-    return f"{app_url.rstrip('/')}/invite/{token}"
+    """The page a clinician opens to accept, with the token in the fragment.
+
+    A browser never sends a fragment to a server, so the token reaches no
+    request log on the way to the page.
+    """
+    return f"{app_url.rstrip('/')}/invite#{token}"
 
 
 def is_open(invite: PracticeInviteRow, now: datetime) -> bool:

@@ -12,10 +12,15 @@ always on the caller's own practice:
 
 The invitee's side:
 
-* ``GET /api/invites/{token}`` — public: the practice's name and the invited
+* ``POST /api/invites/preview`` — public: the practice's name and the invited
   address, or 410 once the link is spent.
-* ``POST /api/invites/{token}/redeem`` — a verified sign-in with no practice
+* ``POST /api/invites/redeem`` — a verified sign-in with no practice
   (``app.auth.invite_identity``) joins the practice.
+
+The link token travels in the JSON body of both, never in a URL path or query:
+a platform request log records the full URL, and anyone who can read that log
+and sign in could otherwise redeem a pending link. The emailed link carries it
+in the fragment (``/invite#<token>``), which a browser never sends to a server.
 
 The rules live in ``app.services.practice_invites``. Create, revoke and redeem
 are audited with ids only.
@@ -36,6 +41,7 @@ from ..models.audit import AuditAction, ResourceType
 from ..models.practice_invite import (
     CreatePracticeInviteRequest,
     CreatePracticeInviteResponse,
+    InvitePreviewRequest,
     InvitePreviewResponse,
     PracticeInvite,
     PracticeInvitesResponse,
@@ -135,20 +141,19 @@ def revoke_practice_invite(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@invitee_router.get("/{token}", dependencies=[Depends(truly_public)])
-def preview_invite(token: str) -> InvitePreviewResponse:
+@invitee_router.post("/preview", dependencies=[Depends(truly_public)])
+def preview_invite(body: InvitePreviewRequest) -> InvitePreviewResponse:
     """The practice an open invitation is for, and the address it was sent to.
 
     Public, so the page can say who invited whom before anyone signs in. The
     token is 32 random bytes; nothing else about the practice is returned.
     """
-    practice_name, email = invites.preview(get_db_session(), token)
+    practice_name, email = invites.preview(get_db_session(), body.token)
     return InvitePreviewResponse(practice_name=practice_name, email=email)
 
 
-@invitee_router.post("/{token}/redeem")
+@invitee_router.post("/redeem")
 def redeem_invite(
-    token: str,
     body: RedeemInviteRequest,
     http_request: Request,
     invitee: VerifiedInvitee = Depends(get_verified_invitee),
@@ -162,7 +167,7 @@ def redeem_invite(
     ``confirm_mismatch`` is false. Nothing is written on any refusal.
     """
     db = get_db_session()
-    redeemed = invites.redeem(db, token, invitee, confirm_mismatch=body.confirm_mismatch)
+    redeemed = invites.redeem(db, body.token, invitee, confirm_mismatch=body.confirm_mismatch)
     # The audit row lives in the practice the account just joined, written as
     # that account, in the same transaction as the membership.
     set_tenant_schema(db, redeemed.schema_name)

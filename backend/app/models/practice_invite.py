@@ -46,6 +46,12 @@ class PracticeInvitesResponse(BaseModel):
     invites: list[PracticeInvite]
 
 
+class InvitePreviewRequest(BaseModel):
+    """The link token, from the invitation link's fragment. Never sent in a URL."""
+
+    token: str = Field(min_length=1, max_length=128)
+
+
 class InvitePreviewResponse(BaseModel):
     """What the invitation page shows before anyone signs in."""
 
@@ -54,8 +60,9 @@ class InvitePreviewResponse(BaseModel):
 
 
 class RedeemInviteRequest(BaseModel):
-    """Redeem with this account even though its address differs from the invited one."""
+    """The link token, and whether to redeem with an account whose address differs."""
 
+    token: str = Field(min_length=1, max_length=128)
     confirm_mismatch: bool = False
 
 

@@ -68,7 +68,7 @@ SECURITY_MARKERS: dict[str, tuple] = {
     # get_session_peek_claims: verified-token, no MFA, no idle touch — used
     # ONLY by the /api/auth/session liveness endpoints (no user data).
     # get_verified_invitee: verified token, idle-checked, no MFA, no practice —
-    # used ONLY by POST /api/invites/{token}/redeem, pinned by
+    # used ONLY by POST /api/invites/redeem, pinned by
     # tests/test_practice_invite_routes.py.
     "pre-mfa-onboarding": (get_current_user_no_mfa, get_session_peek_claims, get_verified_invitee),
     "service-account-auth": (require_pentest_runner, require_cloud_tasks_invoker),
