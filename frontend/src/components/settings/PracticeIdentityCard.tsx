@@ -15,6 +15,7 @@ import type {
   UpdateBillingProfileRequest,
 } from "@/types/practiceBilling"
 import { Field, type PracticeDetails, textPatch } from "./billingProfileShared"
+import { PracticeAdminOnlyNote, usePracticeAdminAccess } from "./practiceAdminAccess"
 import { useSettingsSaved } from "./SettingsSavedContext"
 import { useSettingsUserStatus } from "./useSettingsPreferences"
 
@@ -36,6 +37,9 @@ const OWNED = ["legal_name", "billing_npi"] as const
  * Change action that opens an empty field. Only the last four digits ever
  * reach the browser, and saving is an explicit act rather than something that
  * happens on the way past.
+ *
+ * Read-only unless she owns the practice or is its admin: the server refuses
+ * anyone else's save (`require_practice_admin`).
  */
 export function PracticeIdentityCard({
   profile,
@@ -46,6 +50,7 @@ export function PracticeIdentityCard({
 }) {
   const update = useUpdateBillingProfile()
   const { flashSaved } = useSettingsSaved()
+  const { canEdit, readOnly } = usePracticeAdminAccess()
   const { data: user } = useSettingsUserStatus()
   const { data: preferences } = usePreferences()
   const [legalName, setLegalName] = useState(profile.legal_name ?? "")
@@ -125,8 +130,11 @@ export function PracticeIdentityCard({
       title="Practice identity"
       description="The details insurers use to identify your practice. They match these against what they hold for your tax ID."
     >
-      <div className="space-y-4">
-        {canPrefill && (
+      {/* A disabled fieldset turns off every control inside it at once:
+          inputs, the tax ID's Change, the prefill links and Save. */}
+      <fieldset disabled={!canEdit} className="m-0 min-w-0 space-y-4 border-0 p-0">
+        {readOnly && <PracticeAdminOnlyNote />}
+        {canEdit && canPrefill && (
           <p className="text-[12.5px] text-muted-foreground">
             <Button
               type="button"
@@ -220,7 +228,7 @@ export function PracticeIdentityCard({
           />
         </Field>
 
-        {canPrefillNpi && (
+        {canEdit && canPrefillNpi && (
           <p className="text-[12.5px] text-muted-foreground">
             <Button
               type="button"
@@ -253,7 +261,7 @@ export function PracticeIdentityCard({
             {update.isPending ? "Saving..." : "Save"}
           </Button>
         )}
-      </div>
+      </fieldset>
     </SettingsCard>
   )
 }

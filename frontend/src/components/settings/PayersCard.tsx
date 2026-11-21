@@ -15,6 +15,10 @@
  * has been asked for and is not on file yet. "Check for updates" polls every
  * open request across every payer in one pass and says what changed,
  * including nothing.
+ *
+ * Changing any of it is for the practice owner or an admin, as the server
+ * requires (`require_practice_admin`). Anyone else sees the same list and the
+ * same statuses read-only, and can still check for updates, which only reads.
  */
 
 "use client"
@@ -27,6 +31,10 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { AddPayerFromDirectory } from "@/components/settings/AddPayerFromDirectory"
 import { EnrollmentTaskForm } from "@/components/settings/EnrollmentTaskForm"
+import {
+  PracticeAdminOnlyNote,
+  usePracticeAdminAccess,
+} from "@/components/settings/practiceAdminAccess"
 import { RemittanceCutoverDialog } from "@/components/settings/RemittanceCutoverDialog"
 import { SettingsCard } from "@/components/settings/ui"
 import {
@@ -105,9 +113,11 @@ const REQUEST_STATUS_LABELS: Record<EnrollmentRequestStatus, string> = {
 function EnrollmentRequestRow({
   payerRowId,
   request,
+  canEdit,
 }: {
   payerRowId: string
   request: PayerEnrollmentResponse
+  canEdit: boolean
 }) {
   const needsAction = request.status === "provider_action_required"
   return (
@@ -127,7 +137,11 @@ function EnrollmentRequestRow({
         </p>
       )}
       {IN_FLIGHT.includes(request.status) && (
-        <EnrollmentTaskForm payerRowId={payerRowId} transactionType={request.transaction_type} />
+        <EnrollmentTaskForm
+          payerRowId={payerRowId}
+          transactionType={request.transaction_type}
+          canEdit={canEdit}
+        />
       )}
     </li>
   )
@@ -172,9 +186,11 @@ function enrollChoices(
 function PayerTransactionChoice({
   payer,
   onChange,
+  canEdit,
 }: {
   payer: PayerResponse
   onChange: (patch: UpdatePayerRequest) => void
+  canEdit: boolean
 }) {
   const people = usePeopleTerm()
   return (
@@ -188,6 +204,7 @@ function PayerTransactionChoice({
             <Checkbox
               id={`${field}-${payer.id}`}
               checked={payer[field]}
+              disabled={!canEdit}
               onCheckedChange={(checked) => onChange({ [field]: checked === true })}
               className="mt-0.5"
             />
@@ -212,7 +229,7 @@ function PayerTransactionChoice({
   )
 }
 
-function PayerEnrollments({ payer }: { payer: PayerResponse }) {
+function PayerEnrollments({ payer, canEdit }: { payer: PayerResponse; canEdit: boolean }) {
   const { data } = usePayerEnrollments(payer.id)
   const request = useRequestPayerEnrollments()
   const requests = data?.data ?? []
@@ -243,15 +260,17 @@ function PayerEnrollments({ payer }: { payer: PayerResponse }) {
         <span className="text-sm font-semibold text-foreground">
           {ENROLLMENT_STATUS_LABELS[data?.enrollment_status ?? payer.enrollment_status]}
         </span>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={enroll}
-          disabled={request.isPending || nothingChosen}
-        >
-          Enroll with payer
-        </Button>
+        {canEdit && (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={enroll}
+            disabled={request.isPending || nothingChosen}
+          >
+            Enroll with payer
+          </Button>
+        )}
       </div>
 
       {/* Mounted only while she is actually confirming. It reads the billing
@@ -270,7 +289,12 @@ function PayerEnrollments({ payer }: { payer: PayerResponse }) {
       {requests.length > 0 && (
         <ul className="m-0 list-none divide-y divide-border p-0">
           {requests.map((r) => (
-            <EnrollmentRequestRow key={r.transaction_type} payerRowId={payer.id} request={r} />
+            <EnrollmentRequestRow
+              key={r.transaction_type}
+              payerRowId={payer.id}
+              request={r}
+              canEdit={canEdit}
+            />
           ))}
         </ul>
       )}
@@ -285,11 +309,13 @@ function PayerRow({
   open,
   onToggle,
   onChange,
+  canEdit,
 }: {
   payer: PayerResponse
   open: boolean
   onToggle: () => void
   onChange: (patch: UpdatePayerRequest) => void
+  canEdit: boolean
 }) {
   function commitDays(field: DeadlineField, raw: string) {
     const days = Number(raw)
@@ -321,6 +347,8 @@ function PayerRow({
               <Input
                 id={`payer-name-${payer.id}`}
                 defaultValue={payer.name}
+                readOnly={!canEdit}
+                aria-readonly={!canEdit}
                 onBlur={(e) => {
                   const name = e.target.value.trim()
                   if (name && name !== payer.name) onChange({ name })
@@ -332,6 +360,8 @@ function PayerRow({
               <Input
                 id={`payer-id-${payer.id}`}
                 defaultValue={payer.payer_id}
+                readOnly={!canEdit}
+                aria-readonly={!canEdit}
                 onBlur={(e) => {
                   const payerId = e.target.value.trim()
                   if (payerId && payerId !== payer.payer_id) onChange({ payer_id: payerId })
@@ -348,14 +378,16 @@ function PayerRow({
                   type="number"
                   min={1}
                   defaultValue={payer[field]}
+                  readOnly={!canEdit}
+                  aria-readonly={!canEdit}
                   onBlur={(e) => commitDays(field, e.target.value)}
                 />
               </div>
             ))}
           </div>
           <p className="text-[12.5px] text-muted-foreground">{DEADLINE_HELP}</p>
-          <PayerTransactionChoice payer={payer} onChange={onChange} />
-          <PayerEnrollments payer={payer} />
+          <PayerTransactionChoice payer={payer} onChange={onChange} canEdit={canEdit} />
+          <PayerEnrollments payer={payer} canEdit={canEdit} />
         </div>
       )}
     </li>
@@ -401,6 +433,7 @@ export function PayersCard() {
   const people = usePeopleTerm()
   const createPayer = useCreatePayer()
   const updatePayer = useUpdatePayer()
+  const { canEdit, readOnly } = usePracticeAdminAccess()
   const [openId, setOpenId] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
   const [newName, setNewName] = useState("")
@@ -434,10 +467,16 @@ export function PayersCard() {
       flush
     >
       <div className="px-[22px] pt-1.5 pb-5">
+        {readOnly && (
+          <div className="mb-3">
+            <PracticeAdminOnlyNote />
+          </div>
+        )}
         <RefreshEnrollmentsControl />
         {payers.length === 0 && !adding && (
           <p className="py-3 text-sm text-muted-foreground">
-            No payers yet. One is added the first time a {people.one}&apos;s coverage names it, or add one here.
+            No payers yet. One is added the first time a {people.one}&apos;s coverage names it
+            {canEdit ? ", or add one here." : "."}
           </p>
         )}
         <ul className="m-0 list-none p-0">
@@ -448,10 +487,11 @@ export function PayersCard() {
               open={openId === payer.id}
               onToggle={() => setOpenId(openId === payer.id ? null : payer.id)}
               onChange={(patch) => updatePayer.mutate({ id: payer.id, data: patch })}
+              canEdit={canEdit}
             />
           ))}
         </ul>
-        {adding ? (
+        {!canEdit ? null : adding ? (
           <AddPayerFromDirectory
             pending={createPayer.isPending}
             onPick={(match) => handleAdd(match.name, match.payer_id)}

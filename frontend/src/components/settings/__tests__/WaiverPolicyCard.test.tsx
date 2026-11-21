@@ -26,9 +26,16 @@ vi.mock("../SettingsSavedContext", () => ({
   useSettingsSaved: () => ({ saved: false, flashSaved: vi.fn() }),
 }))
 
+let isPracticeAdmin = true
+
+vi.mock("../useSettingsPreferences", () => ({
+  useSettingsUserStatus: () => ({ data: { is_practice_admin: isPracticeAdmin } }),
+}))
+
 describe("WaiverPolicyCard", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    isPracticeAdmin = true
   })
 
   it("reads the courtesy switch off by default", () => {
@@ -70,5 +77,34 @@ describe("WaiverPolicyCard", () => {
       { small_balance_cents: 1250 },
       expect.anything(),
     )
+  })
+
+  it("is read-only, with the reason, for a clinician who is not an admin", async () => {
+    isPracticeAdmin = false
+    mockUseBillingProfile.mockReturnValue({
+      data: { allow_courtesy_writeoffs: false, small_balance_cents: 500 },
+    })
+    const user = userEvent.setup()
+
+    render(<WaiverPolicyCard />)
+
+    expect(screen.getByTestId("practice-admin-only")).toBeInTheDocument()
+    expect(screen.getByRole("switch")).toBeDisabled()
+    const input = screen.getByDisplayValue("5.00")
+    expect(input).toBeDisabled()
+    await user.click(screen.getByRole("switch"))
+    expect(mockUpdate).not.toHaveBeenCalled()
+    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument()
+  })
+
+  it("shows no read-only line to an admin", () => {
+    mockUseBillingProfile.mockReturnValue({
+      data: { allow_courtesy_writeoffs: false, small_balance_cents: 500 },
+    })
+
+    render(<WaiverPolicyCard />)
+
+    expect(screen.queryByTestId("practice-admin-only")).not.toBeInTheDocument()
+    expect(screen.getByRole("switch")).toBeEnabled()
   })
 })

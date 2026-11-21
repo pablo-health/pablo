@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input"
 import { useUpdateBillingProfile } from "@/hooks/useBillingProfile"
 import type { BillingProfileResponse } from "@/types/practiceBilling"
 import { Field, type PracticeDetails, type TextField, textPatch } from "./billingProfileShared"
+import { PracticeAdminOnlyNote, usePracticeAdminAccess } from "./practiceAdminAccess"
 import { useSettingsSaved } from "./SettingsSavedContext"
 
 export const CONTACT_EMAIL_HELP =
@@ -38,6 +39,9 @@ const OWNED: readonly TextField[] = [
  * and nonsense for a solo one, where she IS the practice; it sent a therapist
  * working alone looking for an inbox that does not exist. What matters is that
  * she reads it.
+ *
+ * Read-only unless she owns the practice or is its admin, as the server
+ * requires of a save (`require_practice_admin`).
  */
 export function BillingContactCard({
   profile,
@@ -48,6 +52,7 @@ export function BillingContactCard({
 }) {
   const update = useUpdateBillingProfile()
   const { flashSaved } = useSettingsSaved()
+  const { canEdit, readOnly } = usePracticeAdminAccess()
   const [draft, setDraft] = useState<Record<TextField, string>>(() => ({
     legal_name: "",
     billing_npi: "",
@@ -104,8 +109,11 @@ export function BillingContactCard({
       title="Billing contact"
       description="Where insurers and your clearinghouse should contact you about enrollments and claims."
     >
-      <div className="space-y-4">
-        {canPrefill && (
+      {/* A disabled fieldset turns off every control inside it at once:
+          inputs, the tax ID's Change, the prefill links and Save. */}
+      <fieldset disabled={!canEdit} className="m-0 min-w-0 space-y-4 border-0 p-0">
+        {readOnly && <PracticeAdminOnlyNote />}
+        {canEdit && canPrefill && (
           <p className="text-[12.5px] text-muted-foreground">
             <Button
               type="button"
@@ -210,7 +218,7 @@ export function BillingContactCard({
             {update.isPending ? "Saving..." : "Save"}
           </Button>
         )}
-      </div>
+      </fieldset>
     </SettingsCard>
   )
 }

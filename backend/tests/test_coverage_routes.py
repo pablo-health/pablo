@@ -10,12 +10,18 @@ What these pin down:
 * the payer picker's free-text fallback adds a ``payers`` row on the way
   through, with deadlines defaulted for the payer id (Medicare gets a year);
 * an unknown or ungranted client is 404, never 403;
+* adding or editing a payer, enrolling with one and answering an enrollment
+  task are for the practice owner or an admin: any other clinician gets 403
+  ``NOT_PRACTICE_ADMIN`` and nothing is written or sent;
 * the audit rows for every coverage access carry the coverage and payer row
   ids and nothing off the card — no member id, no subscriber.
 
 Hermetic: the repositories are the in-memory implementations the public
 booking tests share, and the audit service writes to an in-memory repository
-so the rows can be read back and inspected.
+so the rows can be read back and inspected. The owner-or-admin check runs for
+real, against a practice row stood in for the session, as in
+``test_software_update_routes.py``; the signed-in clinician owns it unless a
+test says otherwise.
 """
 
 from __future__ import annotations
@@ -24,11 +30,15 @@ import json
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any
+from unittest.mock import MagicMock
 
 import pytest
+from app.api_errors import register_exception_handlers
 from app.auth.service import (
     TenantContext,
+    get_current_user,
     get_tenant_context,
     require_active_subscription,
     require_baa_acceptance,
@@ -49,6 +59,9 @@ from app.routes import coverage as coverage_routes
 from app.services import AuditService, get_audit_service
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+if TYPE_CHECKING:
+    from app.repositories.practice_admin import InMemoryPracticeAdminRepository
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "clearinghouse"
 
@@ -90,6 +103,21 @@ def _user() -> User:
     )
 
 
+_COLLEAGUE_ID = "user-2"
+
+
+def _colleague() -> User:
+    """A second clinician in the same practice, who does not own it."""
+    return User(
+        id=_COLLEAGUE_ID,
+        email="colleague@example.com",
+        name="Test Colleague",
+        created_at=datetime.now(UTC),
+        baa_accepted_at=datetime.now(UTC),
+        baa_version="2024-01-01",
+    )
+
+
 class _FakeClearinghouse:
     """Answers every 270 with one recorded 271, or raises what it was told to."""
 
@@ -107,7 +135,7 @@ class _FakeClearinghouse:
 
 
 @pytest.fixture
-def harness() -> dict[str, Any]:
+def harness(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     payers = InMemoryPayerRepository()
     coverage = InMemoryPatientCoverageRepository()
     patients = _FakePatients()
@@ -119,6 +147,7 @@ def harness() -> dict[str, Any]:
     )
 
     app = FastAPI()
+    register_exception_handlers(app)
     app.include_router(coverage_routes.payers_router)
     app.include_router(coverage_routes.router)
     app.dependency_overrides[require_baa_acceptance] = _user
@@ -126,6 +155,17 @@ def harness() -> dict[str, Any]:
     app.dependency_overrides[get_tenant_context] = lambda: TenantContext(
         user_id=_USER_ID, practice_id="practice-1", practice_schema="practice_x"
     )
+    # Who the owner-or-admin check sees signed in; a test switches it.
+    acting = {"user": _user()}
+    app.dependency_overrides[get_current_user] = lambda: acting["user"]
+    practice_session = MagicMock()
+    practice_session.get.return_value = SimpleNamespace(
+        id="practice-1", owner_email="therapist@example.com", schema_name="practice_x"
+    )
+    monkeypatch.setattr(
+        "app.auth.service._resolve_practice", lambda *_a: ("practice-1", "practice_x")
+    )
+    monkeypatch.setattr("app.db.get_db_session", lambda: practice_session)
     app.dependency_overrides[get_payer_repository] = lambda: payers
     app.dependency_overrides[get_patient_coverage_repository] = lambda: coverage
     app.dependency_overrides[get_patient_repository] = lambda: patients
@@ -150,6 +190,8 @@ def harness() -> dict[str, Any]:
         "queued": queued,
         "auto_check": auto_check,
         "app": app,
+        "acting": acting,
+        "practice": practice_session.get.return_value,
     }
 
 
@@ -428,6 +470,72 @@ class TestAccess:
         harness["patients"].visible = False
         resp = harness["client"].get(f"/api/patients/{_PATIENT_ID}/coverage")
         assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Who may change the payer list and enrollment
+# ---------------------------------------------------------------------------
+
+
+class TestOnlyTheOwnerOrAnAdminChangesPayers:
+    """Each write refuses a clinician who neither owns the practice nor is its admin."""
+
+    @pytest.fixture
+    def payer_id(self, harness: dict[str, Any]) -> str:
+        """A payer on the list, added by the owner, before a colleague signs in."""
+        resp = harness["client"].post("/api/payers", json={"name": "Aetna", "payer_id": "60054"})
+        assert resp.status_code == 201
+        harness["acting"]["user"] = _colleague()
+        return str(resp.json()["id"])
+
+    def _assert_refused(self, resp: Any) -> None:
+        assert resp.status_code == 403
+        assert resp.json()["error"]["code"] == "NOT_PRACTICE_ADMIN"
+
+    def test_adding_a_payer(self, harness: dict[str, Any], payer_id: str) -> None:
+        resp = harness["client"].post("/api/payers", json={"name": "Cigna", "payer_id": "62308"})
+        self._assert_refused(resp)
+        assert [p.name for p in harness["payers"].list()] == ["Aetna"]
+
+    def test_editing_a_payer(self, harness: dict[str, Any], payer_id: str) -> None:
+        resp = harness["client"].patch(f"/api/payers/{payer_id}", json={"timely_filing_days": 30})
+        self._assert_refused(resp)
+        assert harness["payers"].get(payer_id).timely_filing_days == 90
+
+    def test_enrolling_with_a_payer(self, harness: dict[str, Any], payer_id: str) -> None:
+        resp = harness["client"].post(f"/api/payers/{payer_id}/enrollments")
+        self._assert_refused(resp)
+        assert harness["payers"].get(payer_id).enrollment_status == "none"
+
+    def test_answering_an_enrollment_task(self, harness: dict[str, Any], payer_id: str) -> None:
+        resp = harness["client"].post(
+            f"/api/payers/{payer_id}/enrollments/837P/tasks/task-1",
+            data={"values": "{}"},
+        )
+        self._assert_refused(resp)
+
+    def test_the_list_stays_readable(self, harness: dict[str, Any], payer_id: str) -> None:
+        resp = harness["client"].get("/api/payers")
+        assert resp.status_code == 200
+        assert resp.json()["total"] == 1
+
+    def test_an_admin_the_owner_named_may(
+        self,
+        harness: dict[str, Any],
+        payer_id: str,
+        practice_admins: InMemoryPracticeAdminRepository,
+    ) -> None:
+        practice_admins.grant(_COLLEAGUE_ID, _USER_ID, datetime.now(UTC))
+        resp = harness["client"].patch(f"/api/payers/{payer_id}", json={"timely_filing_days": 30})
+        assert resp.status_code == 200
+        assert resp.json()["timely_filing_days"] == 30
+
+    def test_a_practice_with_no_owner_on_record_lets_anyone_in(
+        self, harness: dict[str, Any], payer_id: str
+    ) -> None:
+        harness["practice"].owner_email = ""
+        resp = harness["client"].post("/api/payers", json={"name": "Cigna", "payer_id": "62308"})
+        assert resp.status_code == 201
 
 
 # ---------------------------------------------------------------------------

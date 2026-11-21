@@ -15,6 +15,10 @@
  *
  * Every field is required: the clearinghouse takes an answer whole or not at
  * all, so the button stays disabled rather than sending half of one.
+ *
+ * Answering is for the practice owner or an admin (`canEdit`). Anyone else
+ * still sees what the payer is waiting for, its links and the documents sent,
+ * with the fields turned off and no button.
  */
 
 "use client"
@@ -37,6 +41,11 @@ export const NOTHING_OUTSTANDING = "Nothing outstanding — the payer has what i
 interface Props {
   payerRowId: string
   transactionType: EnrollmentTransactionType
+}
+
+interface FormProps extends Props {
+  /** Whether she may answer; otherwise the tasks show read-only. */
+  canEdit?: boolean
 }
 
 function DocumentRow({
@@ -129,7 +138,8 @@ function TaskForm({
   payerRowId,
   transactionType,
   task,
-}: Props & { task: EnrollmentTaskResponse }) {
+  canEdit,
+}: Props & { task: EnrollmentTaskResponse; canEdit: boolean }) {
   const [values, setValues] = useState<Record<string, string>>({})
   const [documents, setDocuments] = useState<Record<string, File>>({})
   const answer = useAnswerEnrollmentTask()
@@ -164,6 +174,7 @@ function TaskForm({
               id={`${task.id}-${field.key}`}
               type="file"
               accept="application/pdf"
+              disabled={!canEdit}
               data-testid={`enrollment-field-${field.key}`}
               onChange={(event) => {
                 const file = event.target.files?.[0]
@@ -176,6 +187,7 @@ function TaskForm({
             <Input
               id={`${task.id}-${field.key}`}
               data-testid={`enrollment-field-${field.key}`}
+              disabled={!canEdit}
               value={values[field.key] ?? ""}
               onChange={(event) =>
                 setValues((current) => ({ ...current, [field.key]: event.target.value }))
@@ -187,6 +199,7 @@ function TaskForm({
           )}
         </div>
       ))}
+      {canEdit && (
       <Button
         type="button"
         size="sm"
@@ -204,12 +217,13 @@ function TaskForm({
       >
         {task.fields.length === 0 ? "Mark as done" : "Send to the payer"}
       </Button>
+      )}
       {error && <p className="text-[12.5px] text-destructive">{error}</p>}
     </li>
   )
 }
 
-export function EnrollmentTaskForm({ payerRowId, transactionType }: Props) {
+export function EnrollmentTaskForm({ payerRowId, transactionType, canEdit = true }: FormProps) {
   const { data, isLoading, error } = useEnrollmentTasks(payerRowId, transactionType)
 
   if (isLoading) {
@@ -238,6 +252,7 @@ export function EnrollmentTaskForm({ payerRowId, transactionType }: Props) {
               payerRowId={payerRowId}
               transactionType={transactionType}
               task={task}
+              canEdit={canEdit}
             />
           ))}
         </ul>

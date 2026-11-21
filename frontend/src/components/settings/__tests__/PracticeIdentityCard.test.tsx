@@ -38,9 +38,12 @@ vi.mock("../SettingsSavedContext", () => ({
 }))
 
 let clinicianNpi: string | null = null
+let isPracticeAdmin = true
 
 vi.mock("../useSettingsPreferences", () => ({
-  useSettingsUserStatus: () => ({ data: { npi_number: clinicianNpi } }),
+  useSettingsUserStatus: () => ({
+    data: { npi_number: clinicianNpi, is_practice_admin: isPracticeAdmin },
+  }),
 }))
 
 let billingSetupState: string[] = []
@@ -83,6 +86,7 @@ const onFile = () =>
 beforeEach(() => {
   vi.clearAllMocks()
   clinicianNpi = null
+  isPracticeAdmin = true
   billingSetupState = []
 })
 
@@ -264,5 +268,33 @@ describe("what it says about how a practice is structured", () => {
     expect(mockUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ billing_npi: "1999999984" }),
     )
+  })
+})
+
+describe("for a clinician who neither owns the practice nor is its admin", () => {
+  beforeEach(() => {
+    isPracticeAdmin = false
+  })
+
+  it("shows the identity read-only and says who can change it", () => {
+    render(<PracticeIdentityCard profile={onFile()} practiceDetails={{ name: "Acme" }} />)
+
+    expect(
+      screen.getByText("Only the practice owner or a practice admin can change this."),
+    ).toBeInTheDocument()
+    expect(screen.getByLabelText("Legal business name")).toBeDisabled()
+    expect(screen.getByLabelText("Billing NPI")).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Change" })).toBeDisabled()
+    expect(screen.getByRole("radio", { name: "EIN" })).toBeDisabled()
+    expect(screen.queryByRole("button", { name: "Use my practice name" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull()
+  })
+
+  it("says nothing extra to the owner or an admin", () => {
+    isPracticeAdmin = true
+    render(<PracticeIdentityCard profile={onFile()} />)
+
+    expect(screen.queryByTestId("practice-admin-only")).toBeNull()
+    expect(screen.getByLabelText("Legal business name")).toBeEnabled()
   })
 })

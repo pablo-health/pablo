@@ -49,6 +49,12 @@ vi.mock("@/hooks/useCoverage", () => ({
   usePayerDirectory: (...args: unknown[]) => mockUseDirectory(...args),
 }))
 
+let isPracticeAdmin = true
+
+vi.mock("../useSettingsPreferences", () => ({
+  useSettingsUserStatus: () => ({ data: { is_practice_admin: isPracticeAdmin } }),
+}))
+
 const AETNA: PayerResponse = {
   id: "payer-1",
   name: "Aetna",
@@ -119,6 +125,7 @@ const TASKS: EnrollmentTaskListResponse = {
 describe("PayersCard", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    isPracticeAdmin = true
     mockUseDirectory.mockReturnValue({ data: undefined, isLoading: false })
     mockUsePayers.mockReturnValue({ data: { data: [AETNA], total: 1 } })
     mockUseEnrollments.mockReturnValue({ data: undefined })
@@ -471,5 +478,55 @@ describe("PayersCard", () => {
     render(<PayersCard />)
 
     expect(screen.getByText(/2 enrollments changed/)).toBeInTheDocument()
+  })
+
+  describe("for a clinician who neither owns the practice nor is its admin", () => {
+    beforeEach(() => {
+      isPracticeAdmin = false
+    })
+
+    it("shows the payers read-only, with nothing to add, edit, enroll or answer", async () => {
+      mockUseEnrollments.mockReturnValue({ data: ENROLLMENTS })
+      mockUseTasks.mockReturnValue({ data: TASKS, isLoading: false, error: null })
+      const user = userEvent.setup()
+      render(<PayersCard />)
+
+      expect(
+        screen.getByText("Only the practice owner or a practice admin can change this."),
+      ).toBeInTheDocument()
+      expect(screen.queryByRole("button", { name: /Add a payer/ })).toBeNull()
+
+      await user.click(screen.getByRole("button", { name: /Aetna/ }))
+
+      expect(screen.getByLabelText("Name")).toHaveAttribute("readonly")
+      expect(screen.getByLabelText("Timely filing (days)")).toHaveAttribute("readonly")
+      expect(screen.getByRole("checkbox", { name: "File claims" })).toBeDisabled()
+      expect(screen.queryByRole("button", { name: "Enroll with payer" })).toBeNull()
+      // What the payer is waiting for still shows; answering it does not.
+      expect(screen.getByLabelText("Medicaid provider id")).toBeDisabled()
+      expect(screen.queryByRole("button", { name: "Send to the payer" })).toBeNull()
+
+      await user.click(screen.getByRole("checkbox", { name: "File claims" }))
+      expect(mockUpdate).not.toHaveBeenCalled()
+      expect(mockCreate).not.toHaveBeenCalled()
+      expect(mockRequestEnrollments).not.toHaveBeenCalled()
+      expect(mockAnswerTask).not.toHaveBeenCalled()
+    })
+
+    it("can still check for updates, which only reads", async () => {
+      const user = userEvent.setup()
+      render(<PayersCard />)
+
+      await user.click(screen.getByRole("button", { name: "Check for updates" }))
+
+      expect(mockRefreshEnrollments).toHaveBeenCalledWith()
+    })
+
+    it("is not invited to add a payer when there are none", () => {
+      mockUsePayers.mockReturnValue({ data: { data: [], total: 0 } })
+      render(<PayersCard />)
+
+      expect(screen.getByText(/No payers yet/)).not.toHaveTextContent("add one here")
+    })
   })
 })

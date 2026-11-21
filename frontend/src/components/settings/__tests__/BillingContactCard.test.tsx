@@ -30,6 +30,12 @@ vi.mock("../SettingsSavedContext", () => ({
   useSettingsSaved: () => ({ flashSaved: vi.fn() }),
 }))
 
+let isPracticeAdmin = true
+
+vi.mock("../useSettingsPreferences", () => ({
+  useSettingsUserStatus: () => ({ data: { is_practice_admin: isPracticeAdmin } }),
+}))
+
 function profile(overrides: Partial<BillingProfileResponse> = {}): BillingProfileResponse {
   return {
     legal_name: "Acme Therapy LLC",
@@ -53,6 +59,7 @@ function profile(overrides: Partial<BillingProfileResponse> = {}): BillingProfil
 
 beforeEach(() => {
   vi.clearAllMocks()
+  isPracticeAdmin = true
 })
 
 describe("BillingContactCard", () => {
@@ -112,5 +119,25 @@ describe("BillingContactCard", () => {
     render(<BillingContactCard profile={profile({ city: "Atlanta" })} />)
 
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument()
+  })
+})
+
+describe("for a clinician who neither owns the practice nor is its admin", () => {
+  it("shows the contact details read-only and says who can change them", () => {
+    isPracticeAdmin = false
+    render(
+      <BillingContactCard
+        profile={profile({ city: "Atlanta" })}
+        practiceDetails={{ phone: "4045550100", address: "1 Test St" }}
+      />,
+    )
+
+    expect(
+      screen.getByText("Only the practice owner or a practice admin can change this."),
+    ).toBeInTheDocument()
+    expect(screen.getByLabelText("City")).toBeDisabled()
+    expect(screen.getByLabelText("Billing email")).toBeDisabled()
+    expect(screen.queryByRole("button", { name: /use my practice details/i })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull()
   })
 })

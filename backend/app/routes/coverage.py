@@ -50,6 +50,12 @@ invoker.
 Access
 ------
 
+Changing the practice's payer list or its enrollment with a payer is a
+practice-wide setting, so those writes take ``require_practice_admin``: the
+practice owner or an admin the owner named, and 403 ``NOT_PRACTICE_ADMIN``
+for any other clinician. Reading the list, and refreshing where open
+requests stand, stay open to every clinician in the practice.
+
 The client must be one the caller can see. That is decided by reading them
 through the request's tenant-scoped repository, exactly as the payments
 routes do, and the answer for a client who is absent or ungranted is **404,
@@ -167,6 +173,7 @@ from ..services.coverage_intake import new_payer
 from ..services.session_generation_worker import resolve_tenant_for_user
 from ..utcnow import utc_now
 from ._deps import client_not_found, visible_patient
+from .users import require_practice_admin
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -393,7 +400,12 @@ def search_payer_directory(
     )
 
 
-@payers_router.post("", response_model=PayerResponse, status_code=status.HTTP_201_CREATED)
+@payers_router.post(
+    "",
+    response_model=PayerResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_practice_admin)],
+)
 def create_payer(
     payload: CreatePayerRequest,
     payers: PayersRepo,
@@ -416,7 +428,11 @@ def create_payer(
     return _to_payer_response(payer)
 
 
-@payers_router.patch("/{payer_row_id}", response_model=PayerResponse)
+@payers_router.patch(
+    "/{payer_row_id}",
+    response_model=PayerResponse,
+    dependencies=[Depends(require_practice_admin)],
+)
 def update_payer(
     payer_row_id: str,
     payload: UpdatePayerRequest,
@@ -470,7 +486,11 @@ def get_payer_enrollments(
     return _enrollments_response(session, payers, payer_row_id)
 
 
-@payers_router.post("/{payer_row_id}/enrollments", response_model=PayerEnrollmentListResponse)
+@payers_router.post(
+    "/{payer_row_id}/enrollments",
+    response_model=PayerEnrollmentListResponse,
+    dependencies=[Depends(require_practice_admin)],
+)
 def request_payer_enrollments(
     payer_row_id: str,
     payers: PayersRepo,
@@ -510,6 +530,10 @@ def request_payer_enrollments(
     return _enrollments_response(session, payers, payer_row_id)
 
 
+# Open to every clinician, unlike the enrollment writes around it: a refresh
+# files nothing and answers nothing. It asks the clearinghouse where requests
+# already on file stand and records what it reports, which is what reading a
+# single enrollment already does for anyone in the practice.
 @payers_router.post("/enrollments/refresh", response_model=PayerEnrollmentRefreshResponse)
 def refresh_payer_enrollments(
     session: DbSession,
@@ -725,6 +749,7 @@ def get_enrollment_tasks(
 @payers_router.post(
     "/{payer_row_id}/enrollments/{transaction_type}/tasks/{task_id}",
     response_model=EnrollmentTaskListResponse,
+    dependencies=[Depends(require_practice_admin)],
 )
 def answer_enrollment_task(
     payer_row_id: str,
