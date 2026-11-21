@@ -1416,6 +1416,11 @@ def require_active_subscription(
     default), and no-op when there is no subscription record yet — a
     practice mid-provisioning is not a lapsed one.
 
+    The subscription comes from the optional ``app.routes.subscription``
+    extension point: ``_fetch_subscription(email, settings, *, user_id)``.
+    The account id rides along as a keyword so an implementation can
+    identify the account without looking it up again by address.
+
     Otherwise the subscription's access level decides (see
     :mod:`app.auth.route_access`). Full access allows everything.
     Read-only access allows read-intent routes and refuses the rest,
@@ -1436,7 +1441,7 @@ def require_active_subscription(
     # The subscription routes exist only in the SaaS overlay.
     from ..routes.subscription import _fetch_subscription  # type: ignore[import-not-found]
 
-    sub = _fetch_subscription(user.email, settings)
+    sub = _fetch_subscription(user.email, settings, user_id=user.id)
     if not sub:
         # No subscription record — might be mid-provisioning; let through
         return user

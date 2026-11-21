@@ -2199,7 +2199,7 @@ def _stub_subscription_module(monkeypatch: pytest.MonkeyPatch, sub: dict[str, An
     loads it; the stub lets the enforcing branch be exercised here.
     """
     module = types.ModuleType("app.routes.subscription")
-    module._fetch_subscription = lambda _email, _settings: sub  # type: ignore[attr-defined]  # stub module, no stub-file to declare against
+    module._fetch_subscription = lambda _email, _settings, **_hook_kwargs: sub  # type: ignore[attr-defined]  # stub module, no stub-file to declare against
     monkeypatch.setitem(sys.modules, "app.routes.subscription", module)
     monkeypatch.setattr(public_booking_module, "get_settings", _FakeSaasSettings)
 

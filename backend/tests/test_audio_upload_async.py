@@ -528,7 +528,7 @@ class _RecordingRefusedError(Exception):
     """Stand-in for the deployment's recording-policy refusal."""
 
 
-def _refuse_recording(_email: str, _settings: object) -> None:
+def _refuse_recording(_email: str, _settings: object, *, user_id: str) -> None:
     raise _RecordingRefusedError
 
 
