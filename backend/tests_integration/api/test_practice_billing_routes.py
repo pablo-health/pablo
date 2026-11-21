@@ -33,6 +33,7 @@ from app.db import arm_current_user_id, set_tenant_schema
 from app.db.provisioning import create_practice_schema
 from app.models import User
 from app.routes import practice_billing as practice_billing_routes
+from app.routes.users import require_practice_admin
 from app.settings import get_settings
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -130,6 +131,9 @@ def harness(
     app = FastAPI()
     app.include_router(practice_billing_routes.router)
     app.dependency_overrides[require_active_subscription] = _user
+    # Signed in as the practice owner; who else may change this is pinned in
+    # the unit tests, against the real owner-or-admin check.
+    app.dependency_overrides[require_practice_admin] = lambda: None
     app.dependency_overrides[get_tenant_context] = _tenant
     # The handlers read the request-scoped session directly rather than
     # through ``Depends``, so the swap is on the module, not the app.

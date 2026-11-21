@@ -6,6 +6,11 @@ Practice-level configuration — same shape and same audit posture as
 ``/api/scheduling/policy``: no patient data crosses this route, so it is
 not a PHI-access surface, and there is nothing here for ``AuditService``
 to attribute a chart read or write to.
+
+Every clinician in the practice can read it. Changing it is for the practice
+owner or an admin the owner named (``require_practice_admin``): it carries the
+tax id and billing NPI that claims are filed under, and a completed save
+registers the practice with its clearinghouse.
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ from ..claims.enrollment import sync_provider_record
 from ..db import get_db_session
 from ..models.practice_billing import BillingProfileResponse, UpdateBillingProfileRequest
 from ..services.practice_billing_profile import load_billing_profile, update_billing_profile
+from .users import require_practice_admin
 
 router = APIRouter(
     prefix="/api/practice/billing-profile",
@@ -35,7 +41,9 @@ def get_billing_profile() -> BillingProfileResponse:
     return BillingProfileResponse(**load_billing_profile(get_db_session()))
 
 
-@router.patch("", response_model=BillingProfileResponse)
+@router.patch(
+    "", response_model=BillingProfileResponse, dependencies=[Depends(require_practice_admin)]
+)
 def update_billing_profile_route(
     request: UpdateBillingProfileRequest,
     ctx: TenantContext = Depends(get_tenant_context),

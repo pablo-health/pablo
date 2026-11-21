@@ -47,6 +47,7 @@ from app.repositories.audit import InMemoryAuditRepository
 from app.repositories.coverage import InMemoryPatientCoverageRepository, InMemoryPayerRepository
 from app.repositories.postgres.coverage import PostgresPayerRepository
 from app.routes import coverage as coverage_routes
+from app.routes.users import require_practice_admin
 from app.services import AuditService, get_audit_service
 from app.services.coverage_intake import new_payer
 from app.services.practice_billing_profile import update_billing_profile
@@ -169,6 +170,9 @@ def payer_harness(engine: Engine, clearinghouse: FakeClearinghouse) -> Iterator[
     app = FastAPI()
     app.include_router(coverage_routes.payers_router)
     app.dependency_overrides[require_active_subscription] = _user
+    # Signed in as the practice owner; who else may change this is pinned in
+    # the unit tests, against the real owner-or-admin check.
+    app.dependency_overrides[require_practice_admin] = lambda: None
     app.dependency_overrides[get_tenant_context] = _tenant
     app.dependency_overrides[get_payer_repository] = lambda: payers
     app.dependency_overrides[get_db_session] = lambda: session
