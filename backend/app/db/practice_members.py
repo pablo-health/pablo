@@ -361,8 +361,9 @@ def remove_for_practice(db: Session | Connection, practice_id: str) -> int:
 # ``_BACKFILL_SQL``), so there is nothing to fold, and folding it again would be
 # wrong: Postgres ``lower()`` changes some codepoints Python's ``str.lower()``
 # leaves alone, so a re-folded key can miss its own, still-present mapping.
-# A row reached by invitation (``joined_via = 'invite'``, no claimed address)
-# was never a grant's to remove, and is left alone.
+# A row reached by invitation (``joined_via = 'invite'``) is left alone: a
+# redeem writes it together with its grant and mapping, and revoking that
+# grant removes all three in one transaction, so none was left behind.
 #
 # Nothing written today leaves such a row: a claim and the backfill insert only
 # while the mapping exists, under a share lock on it (``_CLAIM_SQL``), and a

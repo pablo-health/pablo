@@ -1093,27 +1093,36 @@ def test_revoking_a_grant_that_names_no_practice_removes_the_claimed_membership(
         _forget_grant(engine, account.email)
 
 
-def test_revoking_a_grant_removes_a_backfilled_membership_and_keeps_an_invited_one(
+def test_revoking_a_grant_removes_backfilled_and_invited_memberships_by_address(
     world: _World, engine: Engine
 ) -> None:
+    """A redeemed invitation records the address its redeem granted, so revoking
+    that grant removes the member, wherever the membership is (a re-grant may
+    have moved the mapping). An invited row with no recorded address is kept."""
     practice, elsewhere = world.practice("p"), world.practice("elsewhere")
     backfilled = world.account("backfilled")
     world.join(backfilled.id, practice.id, via="backfill", claimed_email=backfilled.email)
     invited = world.account("invited")
     world.join(invited.id, elsewhere.id, via="invite", claimed_email=invited.email)
+    unaddressed = world.account("invited-unaddressed")
+    world.join(unaddressed.id, practice.id, via="invite")
     _grant(engine, backfilled.email, practice.id)
     _grant(engine, invited.email, practice.id)
+    _grant(engine, unaddressed.email, practice.id)
     try:
         assert _revoke(engine, backfilled.email) is True
         assert _revoke(engine, invited.email) is True
+        assert _revoke(engine, unaddressed.email) is True
 
         assert world.membership(backfilled.id) is None
-        kept = world.membership(invited.id)
+        assert world.membership(invited.id) is None
+        kept = world.membership(unaddressed.id)
         assert kept is not None
-        assert kept[:2] == (elsewhere.id, "invite")
+        assert kept[:2] == (practice.id, "invite")
     finally:
         _forget_grant(engine, backfilled.email)
         _forget_grant(engine, invited.email)
+        _forget_grant(engine, unaddressed.email)
 
 
 def test_revoking_after_a_regrant_elsewhere_removes_the_claimed_membership(
@@ -1519,8 +1528,9 @@ def test_the_cleanup_keeps_invited_and_mapped_members_and_runs_once(
     # Joined by invitation, with no mapping at all: never a grant's to remove.
     invited = world.account("invited")
     world.join(invited.id, practice.id, via="invite")
-    # Nothing writes an invitation with an address today; if something does,
-    # it is still not a grant's to remove.
+    # An invitation with an address: a redeem writes it with its grant and
+    # mapping, and a revoke removes all three together, so the cleanup (which
+    # only repairs revokes made before revokes removed memberships) leaves it.
     addressed = world.account("invited-addressed")
     world.join(addressed.id, practice.id, via="invite", claimed_email=addressed.email)
     # Claimed and still mapped: the claim stored the mapping's key verbatim, as

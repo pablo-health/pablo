@@ -22,8 +22,9 @@ Redeeming, in one transaction on the request session:
 4. create the account if this is its first sign-in;
 5. grant and map the account's address (``AllowlistRepository.add``), so the
    member is listed with the practice's other clinicians, and write the
-   account's membership (``joined_via = 'invite'``), which is what its next
-   request resolves through;
+   account's membership (``joined_via = 'invite'``, ``claimed_email`` the
+   granted address, so revoking the grant removes the member), which is what
+   its next request resolves through;
 6. mark the invitation redeemed, and audit it in the practice.
 
 Membership is created here and nowhere else: a pending invitation changes no
@@ -370,7 +371,10 @@ def redeem(
                 joined_at=now,
                 joined_via="invite",
                 invited_by=invite.invited_by,
-                claimed_email=None,
+                # The address the grant above was written for, as the mapping
+                # keys it, so revoking that grant takes this membership too
+                # (``PostgresAllowlistRepository.remove``).
+                claimed_email=email.lower(),
             )
         )
         db.flush()

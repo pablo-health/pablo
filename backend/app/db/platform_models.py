@@ -243,7 +243,8 @@ class PracticeMemberRow(PlatformBase):
     key, so an account belongs to one practice.
 
     ``claimed_email`` is the mapped address the row was written from, as the
-    mapping stores it (lowercased); NULL for an invitation.
+    mapping stores it (lowercased). A redeemed invitation records the address
+    its redeem granted, so revoking that grant removes the membership.
 
     No PHI: account and practice ids, a time, how the row was written, and the
     address the account signs in with.

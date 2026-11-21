@@ -358,7 +358,7 @@ def test_an_account_with_another_address_redeems_and_is_in_the_practice(
         u=account,
         p=_PRACTICE_ID,
     )
-    assert membership == f"invite/{_OWNER_ID}/"
+    assert membership == f"invite/{_OWNER_ID}/{bee.email}", "records the granted address"
 
     listed = harness.as_owner().get("/api/practice/admins")
     assert listed.status_code == 200, listed.text
@@ -366,6 +366,33 @@ def test_an_account_with_another_address_redeems_and_is_in_the_practice(
 
     assert harness.hook_calls == [(_PRACTICE_ID, account, "joined")]
     assert harness.client.get(f"/api/invites/{token}").status_code == 410
+
+
+def test_revoking_the_granted_address_takes_the_invited_member_out(harness: _Harness) -> None:
+    """``DELETE /api/admin/allowlist/{email}`` is how an operator removes a
+    clinician; for an invited member it has to remove the membership too."""
+    from app.repositories.postgres.allowlist import PostgresAllowlistRepository  # noqa: PLC0415
+
+    _id, token = harness.invite(_address("revoked-invited"))
+    bee = harness.sign_in(_address("revoked-redeemer"))
+    assert harness.redeem(token, confirm_mismatch=True).status_code == 200
+    assert harness.next_request(bee) == (_SCHEMA, _PRACTICE_ID), "and now cached"
+
+    clear_tenant_schema(harness.session)
+    assert PostgresAllowlistRepository(harness.session).remove(bee.email) is True
+    harness.session.commit()
+
+    account = harness.account_id(bee)
+    assert harness.redis.get(f"practice-resolution:v1:user:{account}") is None
+    assert harness.next_request(bee) == (None, 403)
+    for table in ("practice_members", "email_tenant_mappings", "allowed_emails"):
+        column = "user_id::text" if table == "practice_members" else "email"
+        value = account if table == "practice_members" else bee.email
+        found = harness.scalar(
+            f"SELECT count(*) FROM platform.{table} WHERE {column} = :v",  # noqa: S608 — fixed names
+            v=value,
+        )
+        assert found == 0, table
 
 
 # --- AC2: reuse, expiry and revocation ----------------------------------------
@@ -414,7 +441,8 @@ def test_a_withdrawn_link_is_gone_and_writes_nothing(harness: _Harness) -> None:
     pending = harness.as_owner().get("/api/practice/invites").json()["invites"]
     assert invite_id in [i["id"] for i in pending]
 
-    assert harness.as_owner().delete(f"/api/practice/invites/{invite_id}").status_code == 204
+    withdrawn = harness.as_owner().delete(f"/api/practice/invites/{invite_id}")
+    assert withdrawn.status_code == 204
     pending = harness.as_owner().get("/api/practice/invites").json()["invites"]
     assert invite_id not in [i["id"] for i in pending]
 
@@ -423,6 +451,36 @@ def test_a_withdrawn_link_is_gone_and_writes_nothing(harness: _Harness) -> None:
     assert harness.redeem(token).status_code == 410
     assert harness.footprint() == before
     assert harness.hook_calls == []
+
+
+def test_a_link_into_an_inactive_practice_is_gone_and_writes_nothing(
+    harness: _Harness,
+) -> None:
+    """Offboarding sets ``is_active`` false, with ``deleted_at``: a deleted
+    practice is refused by the same check."""
+    invited = _address("inactive")
+    _id, token = harness.invite(invited)
+    harness.sign_in(invited)
+    with harness.engine.begin() as conn:
+        conn.execute(
+            text("UPDATE platform.practices SET is_active = FALSE WHERE id = :p"),
+            {"p": _PRACTICE_ID},
+        )
+    try:
+        before = harness.footprint()
+        assert harness.client.get(f"/api/invites/{token}").status_code == 410
+        assert harness.redeem(token).status_code == 410
+        assert harness.footprint() == before
+        assert harness.hook_calls == []
+    finally:
+        # The refused redeem's share lock on the practice row is still held by
+        # the harness session (the request's own session would have closed).
+        harness.session.rollback()
+        with harness.engine.begin() as conn:
+            conn.execute(
+                text("UPDATE platform.practices SET is_active = TRUE WHERE id = :p"),
+                {"p": _PRACTICE_ID},
+            )
 
 
 def test_an_unknown_link_is_not_found(harness: _Harness) -> None:
@@ -524,9 +582,11 @@ def test_the_practice_owner_cannot_redeem_into_a_second_practice(harness: _Harne
 def test_create_revoke_and_redeem_are_audited_with_ids_only(harness: _Harness) -> None:
     withdrawn = _address("audit-withdrawn")
     withdrawn_id, _ = harness.invite(withdrawn)
-    assert harness.as_owner().delete(f"/api/practice/invites/{withdrawn_id}").status_code == 204
+    first = harness.as_owner().delete(f"/api/practice/invites/{withdrawn_id}")
+    assert first.status_code == 204
     # Withdrawing again changes nothing and records nothing.
-    assert harness.as_owner().delete(f"/api/practice/invites/{withdrawn_id}").status_code == 204
+    again = harness.as_owner().delete(f"/api/practice/invites/{withdrawn_id}")
+    assert again.status_code == 204
 
     accepted = _address("audit-accepted")
     accepted_id, token = harness.invite(accepted)

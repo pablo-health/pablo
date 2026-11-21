@@ -19,10 +19,15 @@ from ..allowlist import AllowlistRepository
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-#: The memberships a grant leads to: the first sign-in's claim, and the
-#: migrate step's backfill of accounts mapped before memberships existed. A
-#: membership reached any other way (an invitation) is not the grant's to take.
-_JOINED_BY_GRANT = ("email_claim", "backfill")
+#: The memberships revoking a grant takes with it: the first sign-in's claim,
+#: the migrate step's backfill of accounts mapped before memberships existed,
+#: and a redeemed invitation, which writes the grant and the mapping for the
+#: account's address and records that address on the membership
+#: (``app.services.practice_invites.redeem``). Revoking is today the only way
+#: an operator takes a clinician out of a practice, so an invited member who
+#: kept access after it would be a silent gap. A membership with no recorded
+#: address is never matched.
+_REMOVED_WITH_GRANT = ("email_claim", "backfill", "invite")
 
 
 class PostgresAllowlistRepository(AllowlistRepository):
@@ -100,7 +105,7 @@ class PostgresAllowlistRepository(AllowlistRepository):
         members = self._session.execute(
             select(PracticeMemberRow).where(
                 PracticeMemberRow.claimed_email == normalized,
-                PracticeMemberRow.joined_via.in_(_JOINED_BY_GRANT),
+                PracticeMemberRow.joined_via.in_(_REMOVED_WITH_GRANT),
             )
         ).scalars()
         for member in members:
