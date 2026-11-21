@@ -102,6 +102,19 @@ export async function deleteEmulatorUser(idToken: string): Promise<void> {
   await identityToolkit<Record<string, never>>("accounts:delete", { idToken })
 }
 
+/**
+ * Change an emulator account's address, as a user changing it with the
+ * provider would. The account keeps its uid; tokens minted after this carry
+ * the new address.
+ */
+export async function changeEmulatorEmail(uid: string, email: string): Promise<void> {
+  await identityToolkit(
+    "accounts:update",
+    { localId: uid, email, emailVerified: true },
+    { Authorization: "Bearer owner" },
+  )
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,

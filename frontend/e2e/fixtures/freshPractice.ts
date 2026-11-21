@@ -39,11 +39,24 @@ export type FreshPracticeName =
   | "admins"
   | "away"
   | "coverage"
+  | "membership-one"
+  | "membership-two"
+  | "membership-gone"
 
 const PASSWORD = "E2e-fresh-practice-password-long-enough"
 
 function addressOf(name: FreshPracticeName): string {
   return `e2e-fresh-${name}@example.com`
+}
+
+/**
+ * A bearer client for the owner of the fresh practice *name*, with no browser.
+ * Every clinician is an admin on the local stack (ENVIRONMENT=development), so
+ * this is also that practice's admin: what it invites, it invites into *name*.
+ */
+export async function freshPracticeApi(name: FreshPracticeName): Promise<ApiClient> {
+  await ensureEmulatorUser(addressOf(name), PASSWORD)
+  return ApiClient.forUser(addressOf(name), PASSWORD)
 }
 
 export interface FreshPractice {
