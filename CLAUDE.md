@@ -37,18 +37,14 @@ make test       # Pytest (backend), vitest (frontend)
 make format     # Auto-fix formatting
 ```
 
-## Backend Conventions
+## Rules that live beside the code
 
-- **Python 3.13+** with Poetry — always use `poetry run`
-- **Type annotations** everywhere: `str | None` not `Optional[str]`
-- **Pydantic models** for API request/response validation
-- **FastAPI `Depends()`** for dependency injection
+A `CLAUDE.md` in a subdirectory loads once you read or edit a file there, and
+each has an `AGENTS.md` symlink. A guardrail about one place is written out in
+full there; its numbered line below is enough to follow before that loads.
 
-## Frontend Conventions
-
-- **shadcn/ui** components with Pablo brand palette (warm cream, honey, sage)
-- **DM Sans** for body, **Fraunces** for headings
-- See `docs/design-system/` for full design tokens
+- [`backend/CLAUDE.md`](backend/CLAUDE.md) — backend conventions: Python 3.13+, Poetry (always `poetry run`), type annotations, Pydantic, `Depends()`. Below it, [`backend/app/routes/CLAUDE.md`](backend/app/routes/CLAUDE.md) holds guardrails 1–3 and [`backend/app/db/CLAUDE.md`](backend/app/db/CLAUDE.md) guardrail 4.
+- [`frontend/CLAUDE.md`](frontend/CLAUDE.md) — frontend conventions (shadcn/ui, brand palette, fonts) and guardrail 6.
 
 ## Writing copy a clinician will read
 
@@ -75,148 +71,14 @@ Four that are easy to get wrong:
 
 ## Guardrails (load-bearing, don't skip)
 
-1. **Audit every PHI route.** New routes in `backend/app/routes/` that
-   touch patients, sessions, soap_notes, or appointments must take
-   `audit: AuditService = Depends(get_audit_service)` and call the
-   matching `audit.log_*` helper before returning. PHI access without
-   an audit entry is a HIPAA § 164.312(b) gap. Enforced in CI by
-   `backend/tests/test_route_audit_guardrails.py`.
-2. **No underscore-prefixed `_audit` / `_http_request` parameters.**
-   The `_` prefix tells Python and every linter the value is
-   intentionally unused — a silent bypass of guardrail #1. If the
-   route genuinely doesn't need audit, it probably isn't a PHI route;
-   talk to a human before adding one with that pattern. Enforced at
-   pre-commit time by `scripts/check_audit_params.py` and in CI.
-3. **No raw SQL in route handlers.** Route handlers in
-   `backend/app/routes/` must not call `session.execute(select(...))`
-   directly — go through `backend/app/repositories/`. Keeps tenant
-   scoping and error shapes in one place.
-4. **Models and migrations ship together.** Every change to a
-   SQLAlchemy model in `backend/app/db/models.py` (or
-   `platform_models.py`) must include a same-commit Alembic migration.
-   Don't land a model change and "add the migration later" — that
-   boots a broken dev env for everyone else.
-
-   **Two chains, and the model tells you which one.** They are separate
-   graphs with separate bookkeeping, and a revision belongs to exactly
-   one:
-
-   | Model | Chain | Version table | Run with |
-   |---|---|---|---|
-   | `models.py` (per-tenant) | `backend/alembic/versions/` | `<practice_*>.alembic_version` | `alembic upgrade head` |
-   | `platform_models.py` (shared) | `backend/alembic_platform/versions/` | `platform.alembic_version_platform` | `alembic -n platform upgrade head` |
-
-   Put platform DDL in the platform chain, **not** the tenant chain.
-   The tenant chain is fanned out once per practice schema, so anything
-   platform-shaped in it executes once per tenant and has to be
-   hand-written idempotent to survive that; and because a new tenant is
-   built from the template and stamped rather than migrated, the chain
-   is not what builds anything on a fresh provision. 35 tenant-chain
-   revisions touch `platform.` for historical reasons — that is the
-   problem being unwound, not the pattern to copy (`PABLO-k7it`).
-
-   **Same commit, regenerate the template for whichever chain you
-   touched.** Both schemas are built from a captured template and
-   evolved by their chain:
-
-   ```
-   poetry run python backend/scripts/regen_tenant_template.py    # backend/alembic/
-   poetry run python backend/scripts/regen_platform_schema.py    # backend/alembic_platform/
-   ```
-
-   The template is the canonical schema applied to every freshly-
-   provisioned tenant — `create_practice_schema` reads it directly
-   (it does **not** run alembic per tenant, by design). DDL outside
-   the ORM (functions, triggers, custom types, raw `op.execute(...)`
-   SQL) is invisible to `Base.metadata.create_all`; if you forget to
-   regenerate, new tenants land at HEAD-stamped but **missing your
-   DDL**, and every code path that touches it 500s. This is exactly
-   how patient-create regressed on 2026-05-17. CI enforces this for
-   both templates: the `Tenant template matches alembic head` job
-   regenerates each one and fails on any diff.
-
-   The platform template is the same contract for the shared schema —
-   it carries the row policy, trigger, function, CHECK constraints and
-   partial indexes that no ORM model expresses, which is exactly why it
-   is a capture rather than something generated from the models. A
-   platform revision that lands without a regen leaves a fresh install
-   short of whatever it added.
-
-   **Nothing builds a schema from ORM metadata any more, and the order
-   is load-bearing.** `create_all` used to run at boot and in the tenant
-   chain's `env.py`; both are gone. So:
-
-   - **The migrate job builds and provisions schemas; boot touches no
-     database.** `python backend/bin/migrate.py` runs both chains in
-     order, then `ensure_schemas`: the template, and on an empty database
-     the deployment's own practice. It refuses if the platform schema is
-     missing. Importing `app.main` must not connect — a slow first
-     connection on a new instance crashed the import while it did.
-   - **The platform chain runs before the tenant chain**, always. Tenant
-     revisions declare foreign keys into `platform.users` and create
-     nothing in that schema, so the tenant chain cannot run first — it
-     fails with `PlatformSchemaMissingError` naming the fix. That
-     ordering is explicit at every call site (`bin/migrate.py`, the
-     Makefile, both regen scripts, the test fixtures) rather than hidden
-     in `env.py`, because a nested `command.upgrade` inside an alembic
-     `env.py` tears down alembic's module-level proxies and dies with
-     `KeyError: 'config'`.
-   - **Platform DDL belongs in the platform chain**, not in a tenant
-     revision. A tenant revision touching `platform.` is re-run once per
-     practice schema, so it must be idempotent by hand, and it runs
-     *after* the platform chain — so it can silently undo platform-side
-     work on every fresh install. That is where 15 duplicate indexes
-     came from, and why the revision that drops them has to sit at the
-     end of the tenant chain rather than in the platform chain: the
-     eight revisions that create them are there, and they run second.
-     35 tenant revisions still touch `platform.` for historical reasons.
-     Don't add the 36th (`PABLO-k7it`).
-
-   **RLS enforcement** — every per-tenant table that carries a
-   `user_id`, `patient_id`, or `id` column is force-RLS'd by
-   `enable_rls_on_schema`. A newly-added table MUST have a policy
-   branch in that function or be explicitly listed as not-row-scoped
-   via `register_overlay_not_row_scoped()`, otherwise it silently
-   ships as deny-all.
-
-   The tenant template carries that function's output: its last section
-   (after the row-level security marker) is captured by running the real
-   `enable_rls_on_schema` over a scratch practice during regen, and
-   provisioning applies it to every new practice. `enable_rls_on_schema`
-   still runs afterwards as a verify — it rebuilds only tables whose flags,
-   policies or policy fingerprints differ, so it stays the repair pass for
-   existing practices. **So a change to a policy in that function is a
-   template change too: regenerate the template in the same commit**, or
-   the `Tenant template matches alembic head` job fails. That isolation
-   contract is verified at **three layers**:
-
-   - **L2 real-time hook** — `.claude/settings.json` PostToolUse hook runs
-     `poetry run python .claude/skills/rls-coverage-check/check.py`
-     automatically after any Edit/Write to `backend/app/db/models.py`.
-   - **L3 unit guard (CI)** — `backend/tests/test_enable_rls_policy_coverage.py`
-     contains `test_every_real_tenant_table_is_classified` (iterates real ORM
-     metadata to catch unclassified tables before integration) and
-     `test_rls_forced_tables_are_covered_by_rls_invariants` (asserts the
-     invariant suite covers every auto-derived RLS-forced table).
-   - **L3 agent skill** — run `python .claude/skills/rls-coverage-check/check.py`
-     before finishing any change that adds or alters a per-tenant table.
-   - **L4 self-healing** — `rls_forced_tenant_tables()` in
-     `backend/app/db/__init__.py` derives the set of every RLS-forced tenant table from the ORM,
-     and `test_rls_invariants.py` unions it into `_EFFECTIVE_TABLES` so
-     a new RLS-bearing table (patient-access, user-owned, or special-cased)
-     is automatically covered by the RLS-forced and fail-closed invariants
-     with zero manual edits.
-
-   Any new patient-scoped table needs an integration test that seeds two
-   clinicians and asserts one cannot read or write the other's patient's rows.
-
+1. **Audit every PHI route.** A route in `backend/app/routes/` that touches patients, sessions, soap_notes or appointments takes `audit: AuditService = Depends(get_audit_service)` and calls the matching `audit.log_*` before returning — full rule in [`backend/app/routes/CLAUDE.md`](backend/app/routes/CLAUDE.md).
+2. **No underscore-prefixed `_audit` / `_http_request` parameters.** The `_` marks the value unused and silently bypasses #1 — full rule in [`backend/app/routes/CLAUDE.md`](backend/app/routes/CLAUDE.md).
+3. **No raw SQL in route handlers.** No `session.execute(select(...))` in a route; go through `backend/app/repositories/` — full rule in [`backend/app/routes/CLAUDE.md`](backend/app/routes/CLAUDE.md).
+4. **Models and migrations ship together.** A model change carries a same-commit migration in its own chain (`models.py` → `backend/alembic/`, `platform_models.py` → `backend/alembic_platform/`; platform DDL never goes in the tenant chain), the regenerated template for whichever chain you touched (`backend/scripts/regen_tenant_template.py` / `regen_platform_schema.py`), and an RLS classification for any new tenant table — full rule, migration order and RLS layers in [`backend/app/db/CLAUDE.md`](backend/app/db/CLAUDE.md).
 5. **PHI never enters stdout.** No `logger.info("... {patient_name}
    ...")` or `print(patient.*)` in `backend/app/`. Use `AuditService`
    for intentional PHI-adjacent records; keep everything else PHI-free.
-6. **Mock data never ships.** Imports from frontend `mockData.ts` (or
-   equivalent) in a component that is mounted in production routes
-   are forbidden. Mock data lives behind `process.env.NODE_ENV !==
-   'production'` or inside `src/test/`.
+6. **Mock data never ships.** No import from `frontend/src/lib/mockData.ts` (or its like) in a component mounted in a production route — full rule in [`frontend/CLAUDE.md`](frontend/CLAUDE.md).
 7. **Type-cast escape hatches require a reason.** Every `as any`,
    `as unknown as X`, `@ts-ignore`, `@ts-expect-error`, or
    `# type: ignore` must be followed by a one-line comment naming the

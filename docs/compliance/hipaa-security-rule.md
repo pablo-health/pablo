@@ -84,7 +84,7 @@ the gate ran.
 | §164.308(a)(3)(ii)(B) | Workforce authorization | Met | Role enforcement in `backend/app/routes/admin.py` + tenant scoping in repositories. |
 | §164.308(a)(3)(ii)(C) | Termination procedures — revoke access on departure | Met | Firebase Auth account disable + `UPDATE users SET is_active = false` via admin route. Pentest §11 verifies the admin endpoints exist and require MFA. |
 | §164.308(a)(4)(ii)(A) | Isolating healthcare clearinghouse functions | N/A | Pablo is not a clearinghouse. |
-| §164.308(a)(4)(ii)(B) | Access authorization — granted per role | Met | `clinician`, `admin`, `owner` roles enforced in route handlers; tenant isolation enforced in repositories (see CLAUDE.md guardrail #2 — "no raw SQL in route handlers"). |
+| §164.308(a)(4)(ii)(B) | Access authorization — granted per role | Met | `clinician`, `admin`, `owner` roles enforced in route handlers; tenant isolation enforced in repositories (see CLAUDE.md guardrail #3 — "no raw SQL in route handlers"). |
 | §164.308(a)(4)(ii)(C) | Access establishment & modification | Met | Admin routes create/modify users; every change is audit-logged. |
 | §164.308(a)(5)(i) | Security awareness & training | Partial / Operator-responsibility | Covered Entity owns workforce training. Pablo publishes `docs/SELF_HOSTING_HIPAA_GUIDE.md` for operator-level awareness. |
 | §164.308(a)(5)(ii)(A) | Security reminders | Operator-responsibility | — |
@@ -131,7 +131,7 @@ run. Every row has an observable runtime artifact.
 
 | Control | Requirement | Status | Evidence |
 |---|---|---|---|
-| §164.312(a)(1) | Unique user identification | Met | Firebase UID per user; `firebase_uid` column on `users` table. JWT carries the UID; it is stamped into every `audit_logs` row. Tenant isolation enforced in `backend/app/repositories/` (CLAUDE.md guardrail #2). |
+| §164.312(a)(1) | Unique user identification | Met | Firebase UID per user; `firebase_uid` column on `users` table. JWT carries the UID; it is stamped into every `audit_logs` row. Tenant isolation enforced in `backend/app/repositories/` (CLAUDE.md guardrail #3). |
 | §164.312(a)(2)(i) | Unique user identification (req) | Met | Same as above. |
 | §164.312(a)(2)(ii) | Emergency access procedure | Partial / Operator-responsibility | There is no impersonation feature. Emergency access to a clinician's records is a coverage grant (a colleague gets access to that clinician's clients for a date range, audit-logged like any other access) or, for the operator, direct database access through IAP SSH, which Google's admin activity log records. The procedure for invoking either is the operator's to write. |
 | §164.312(a)(2)(iii) | Automatic logoff / session timeout | Met (code) | The backend ends a session after 15 minutes without activity (`idle_timeout_seconds`, `backend/app/settings.py`), tracked in Redis; requests the frontend makes on a timer carry `X-Pablo-Background: 1` and are checked without counting as activity, so a visible but unattended tab still times out; when that check cannot run the request is refused rather than allowed (`idle_session_fail_open=false`). The frontend warns and signs out proactively (`frontend/src/components/IdleTimeout.tsx`). Identity Platform ID tokens also expire hourly, which is not the control. |

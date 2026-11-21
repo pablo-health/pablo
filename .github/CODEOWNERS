@@ -21,8 +21,11 @@
 # included, and nothing could merge on green.
 
 # ---- Agent rules and skills (load-bearing, see CLAUDE.md guardrails) -------
-/CLAUDE.md                                  @kurtn-pablo
-/AGENTS.md                                  @kurtn-pablo
+# No leading slash: these match at every depth, so a folder CLAUDE.md (which
+# loads when an agent works in that folder) and its AGENTS.md symlink get the
+# same review as the root one.
+CLAUDE.md                                   @kurtn-pablo
+AGENTS.md                                   @kurtn-pablo
 /.claude/                                   @kurtn-pablo
 /.claude/skills/                            @kurtn-pablo
 /.claude/settings.json                      @kurtn-pablo

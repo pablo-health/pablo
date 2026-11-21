@@ -13,6 +13,9 @@ load-bearing and CI-enforced.
 
 - [README](README.md): product overview, quickstart, deploy paths.
 - [CLAUDE.md](CLAUDE.md): engineering rules, guardrails, commands. Required reading.
+  Rules about one directory live in a CLAUDE.md there: [backend/](backend/CLAUDE.md),
+  [frontend/](frontend/CLAUDE.md), [backend/app/routes/](backend/app/routes/CLAUDE.md),
+  [backend/app/db/](backend/app/db/CLAUDE.md).
 - [AGENTS.md](AGENTS.md): symlink to CLAUDE.md for cross-vendor agent compatibility.
 - [CONTRIBUTING.md](CONTRIBUTING.md): contribution flow.
 - [SECURITY.md](SECURITY.md): vulnerability disclosure.
