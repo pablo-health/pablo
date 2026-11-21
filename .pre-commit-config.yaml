@@ -41,12 +41,10 @@ repos:
           - "sqlalchemy>=2.0"
         args: ["--config-file=pyproject.toml"]
 
-  - repo: https://github.com/pre-commit/mirrors-prettier
-    rev: v4.0.0-alpha.8
-    hooks:
-      - id: prettier
-        files: \.(ts|tsx|js|jsx|json|md|yml|yaml)$
-        exclude: ^(poetry\.lock|package-lock\.json|frontend/\.next/)
+  # No prettier hook. The tree is not prettier-formatted (the TypeScript omits
+  # semicolons, and no prettier config reproduces its style), CI never runs it,
+  # and ESLint in `make lint` owns frontend style. A prettier hook here rewrites
+  # every file it touches.
 
   - repo: local
     hooks:
