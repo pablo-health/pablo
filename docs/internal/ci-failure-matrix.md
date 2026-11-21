@@ -76,7 +76,7 @@ CI surface (see `.github/workflows/ci.yml`):
 
 | Symptom | Cause | Action |
 |---------|-------|--------|
-| `trailing-whitespace`, `end-of-file-fixer`, `check-yaml`, `prettier` | Cosmetic. | **Fix locally** by re-running pre-commit. |
+| `trailing-whitespace`, `end-of-file-fixer`, `check-yaml` | Cosmetic. | **Fix locally** by re-running pre-commit. |
 | `check-added-large-files` (>500kb) | Probably a binary that shouldn't be in git. | **Investigate** before forcing through. |
 
 ## When to NOT just retry
