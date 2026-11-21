@@ -257,6 +257,25 @@ jobs:
             docker save "$img" -o "$tar"
           fi
 
+      # The practice archive tests shell out to pg_dump/pg_restore, and the
+      # archive code refuses a client whose major version differs from the
+      # server's. The runner image's own client follows the Ubuntu release
+      # (18 on ubuntu-26.04), while the test server is postgres:16-alpine, so
+      # install the matching 16 client from PGDG and put it first on PATH.
+      # Keep this major in step with the image above.
+      - name: Install PostgreSQL 16 client programs
+        if: steps.classify.outputs.substantive != 'false'
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-16
+          echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
+
+      - name: Show PostgreSQL client version
+        if: steps.classify.outputs.substantive != 'false'
+        run: pg_dump --version | grep '(PostgreSQL) 16\.'
+
       - name: Run integration tests
         if: steps.classify.outputs.substantive != 'false'
         run: make test-integration

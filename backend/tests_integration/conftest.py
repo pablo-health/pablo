@@ -197,6 +197,11 @@ def pytest_configure(config: pytest.Config) -> None:
     # Advertise the pablo-scoped URL so app + tests use the non-super
     # role. Replace ``postgres:postgres_dev@`` with ``pablo:pablo_dev@``.
     pablo_url = bootstrap_url.replace("postgres:postgres_dev@", "pablo:pablo_dev@", 1)
+    # The superuser address, for the few tests whose subject must bypass
+    # row-level security (archiving a practice dumps every row of it). The app
+    # and every other test keep the non-super role above. A bring-your-own
+    # database sets this itself, or those tests skip and say why.
+    os.environ.setdefault("INTEGRATION_SUPERUSER_DATABASE_URL", bootstrap_url)
     os.environ["DATABASE_URL"] = pablo_url
     os.environ["DATABASE_BACKEND"] = "postgres"
 
