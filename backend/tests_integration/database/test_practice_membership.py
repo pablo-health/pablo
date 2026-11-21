@@ -1457,3 +1457,108 @@ def test_deleting_an_account_drops_its_cached_answer(
 
     assert redis.get(_user_key(account.id)) is None
     assert world.membership(account.id) is None, "the cascade took the membership"
+
+
+# --- memberships left behind by revokes -------------------------------------------
+
+
+def _revoke_without_the_membership(engine: Engine, email: str) -> None:
+    """A revoke as it was made before revoking removed the membership too.
+
+    The grant and the mapping go; the membership stays.
+    """
+    _forget_grant(engine, email)
+    from app.db.platform_models import EmailTenantMappingRow  # noqa: PLC0415
+
+    with Session(engine) as session:
+        session.execute(delete(EmailTenantMappingRow).where(EmailTenantMappingRow.email == email))
+        session.commit()
+
+
+def test_the_cleanup_removes_a_membership_a_revoke_left_behind(
+    world: _World, engine: Engine
+) -> None:
+    """Left behind, the membership routes the removed account back into its old
+    practice; after the cleanup the account resolves nowhere, through the
+    middleware and ``get_tenant_context`` as served."""
+    from app.db.practice_members import remove_unmapped_claims  # noqa: PLC0415
+
+    practice = world.practice("p")
+    subject_id = f"sub-{uuid.uuid4().hex[:12]}"
+    account = world.account("left-behind", subject_id=subject_id)
+    _grant(engine, account.email, practice.id)
+    assert _signed_in_request(subject_id, account.email) == (practice.schema, practice.id)
+    assert world.membership(account.id) is not None, "the first sign-in claimed"
+
+    _revoke_without_the_membership(engine, account.email)
+    # What the cleanup is for: the membership alone still lets the account in.
+    assert _signed_in_request(subject_id, account.email) == (practice.schema, practice.id)
+
+    assert remove_unmapped_claims(engine) >= 1
+
+    assert world.membership(account.id) is None
+    schema, outcome = _signed_in_request(subject_id, account.email)
+    assert schema != practice.schema
+    assert outcome == 403
+
+
+def test_the_cleanup_keeps_invited_and_mapped_members_and_runs_once(
+    world: _World, engine: Engine
+) -> None:
+    from app.db.practice_members import remove_unmapped_claims  # noqa: PLC0415
+
+    # Whatever earlier tests left behind goes first, so the counts below are
+    # this test's own.
+    remove_unmapped_claims(engine)
+
+    practice = world.practice("p")
+    claimed = world.account("claimed-left")
+    world.join(claimed.id, practice.id, via="email_claim", claimed_email=claimed.email)
+    backfilled = world.account("backfilled-left")
+    world.join(backfilled.id, practice.id, via="backfill", claimed_email=backfilled.email)
+    # Joined by invitation, with no mapping at all: never a grant's to remove.
+    invited = world.account("invited")
+    world.join(invited.id, practice.id, via="invite")
+    # Nothing writes an invitation with an address today; if something does,
+    # it is still not a grant's to remove.
+    addressed = world.account("invited-addressed")
+    world.join(addressed.id, practice.id, via="invite", claimed_email=addressed.email)
+    # Claimed and still mapped. Its claimed address has capitals the mapping's
+    # key does not, so only a case-blind comparison keeps it.
+    mapped = world.account("mapped")
+    world.map(mapped.email, practice.id)
+    world.join(mapped.id, practice.id, via="email_claim", claimed_email=mapped.email.upper())
+    kept = {a.id: world.membership(a.id) for a in (invited, addressed, mapped)}
+
+    assert remove_unmapped_claims(engine) == 2
+
+    assert world.membership(claimed.id) is None
+    assert world.membership(backfilled.id) is None
+    assert {a.id: world.membership(a.id) for a in (invited, addressed, mapped)} == kept
+    assert _resolve(invited, invited.email) == (practice.id, practice.schema)
+    assert _resolve(mapped, mapped.email) == (practice.id, practice.schema)
+
+    assert remove_unmapped_claims(engine) == 0
+    assert {a.id: world.membership(a.id) for a in (invited, addressed, mapped)} == kept
+
+
+def test_the_cleanup_drops_the_removed_accounts_cached_answers(
+    world: _World, engine: Engine, redis: FakeRedis
+) -> None:
+    """The cleanup writes through no ``Session``, so the cache's listener never
+    sees it; the cleanup drops the answers itself."""
+    from app.db.practice_members import remove_unmapped_claims  # noqa: PLC0415
+    from app.db.practice_resolution_cache import _user_key  # noqa: PLC0415
+
+    practice = world.practice("p")
+    account = world.account("cached-left")
+    _grant(engine, account.email, practice.id)
+    assert _resolve(account, account.email) == (practice.id, practice.schema)
+    _revoke_without_the_membership(engine, account.email)
+    assert _resolve(account, account.email) == (practice.id, practice.schema)
+    assert redis.get(_user_key(account.id)) is not None
+
+    remove_unmapped_claims(engine)
+
+    assert redis.get(_user_key(account.id)) is None
+    assert _resolve(account, account.email) is None
