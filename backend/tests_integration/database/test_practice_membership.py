@@ -1523,23 +1523,34 @@ def test_the_cleanup_keeps_invited_and_mapped_members_and_runs_once(
     # it is still not a grant's to remove.
     addressed = world.account("invited-addressed")
     world.join(addressed.id, practice.id, via="invite", claimed_email=addressed.email)
-    # Claimed and still mapped. Its claimed address has capitals the mapping's
-    # key does not, so only a case-blind comparison keeps it.
+    # Claimed and still mapped: the claim stored the mapping's key verbatim, as
+    # ``_CLAIM_SQL`` and ``_BACKFILL_SQL`` do.
     mapped = world.account("mapped")
     world.map(mapped.email, practice.id)
-    world.join(mapped.id, practice.id, via="email_claim", claimed_email=mapped.email.upper())
-    kept = {a.id: world.membership(a.id) for a in (invited, addressed, mapped)}
+    world.join(mapped.id, practice.id, via="email_claim", claimed_email=mapped.email)
+    # Still mapped, under a key that Postgres ``lower()`` would change. Python
+    # lowercases the keys, but on some codepoints Postgres ``lower()`` folds
+    # further than Python does (U+A7CE is one), so re-folding the stored key
+    # would miss its own mapping and delete a live membership. Capitals stand
+    # in for those codepoints: they fold under every collation. The key is
+    # compared as stored, as revoking compares it.
+    unfolded = world.account("mapped-unfolded")
+    unfolded_key = unfolded.email.upper()
+    world.map(unfolded_key, practice.id)
+    world.join(unfolded.id, practice.id, via="email_claim", claimed_email=unfolded_key)
+    survivors = (invited, addressed, mapped, unfolded)
+    kept = {a.id: world.membership(a.id) for a in survivors}
 
     assert remove_unmapped_claims(engine) == 2
 
     assert world.membership(claimed.id) is None
     assert world.membership(backfilled.id) is None
-    assert {a.id: world.membership(a.id) for a in (invited, addressed, mapped)} == kept
+    assert {a.id: world.membership(a.id) for a in survivors} == kept
     assert _resolve(invited, invited.email) == (practice.id, practice.schema)
     assert _resolve(mapped, mapped.email) == (practice.id, practice.schema)
 
     assert remove_unmapped_claims(engine) == 0
-    assert {a.id: world.membership(a.id) for a in (invited, addressed, mapped)} == kept
+    assert {a.id: world.membership(a.id) for a in survivors} == kept
 
 
 def test_the_cleanup_drops_the_removed_accounts_cached_answers(

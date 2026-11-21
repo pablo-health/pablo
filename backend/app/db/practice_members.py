@@ -309,7 +309,11 @@ def remove_for_practice(db: Session | Connection, practice_id: str) -> int:
 # second half left the membership behind, and that row would now route the
 # removed account back into its old practice on its next sign-in.
 #
-# Matched on the address the row was claimed with, as revoking matches it.
+# Matched on the address the row was claimed with, exactly, as revoking matches
+# it. ``claimed_email`` is the mapping's key copied verbatim (``_CLAIM_SQL``,
+# ``_BACKFILL_SQL``), so there is nothing to fold, and folding it again would be
+# wrong: Postgres ``lower()`` changes some codepoints Python's ``str.lower()``
+# leaves alone, so a re-folded key can miss its own, still-present mapping.
 # A row reached by invitation (``joined_via = 'invite'``, no claimed address)
 # was never a grant's to remove, and is left alone.
 #
@@ -326,7 +330,7 @@ _UNMAPPED_CLAIMS_SQL = text(
       AND pm.claimed_email IS NOT NULL
       AND NOT EXISTS (
           SELECT 1 FROM platform.email_tenant_mappings m
-          WHERE m.email = lower(pm.claimed_email)
+          WHERE m.email = pm.claimed_email
       )
     RETURNING pm.user_id
     """
