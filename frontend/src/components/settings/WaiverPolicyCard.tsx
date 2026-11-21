@@ -9,6 +9,10 @@
  * or at their conservative default, until a practice opens this card — a
  * write-off route that let money go without a stated policy would be an
  * unlogged discount.
+ *
+ * Both are practice-wide policy, saved through the billing profile route,
+ * which only the practice owner or a practice admin may change. Anyone else
+ * sees the card read-only, with the line that says why.
  */
 
 "use client"
@@ -20,6 +24,7 @@ import { SettingsCard, SettingsRow, Toggle } from "@/components/settings/ui"
 import { useBillingProfile, useUpdateBillingProfile } from "@/hooks/useBillingProfile"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { centsToDollars, dollarsToCents } from "@/lib/money"
+import { PracticeAdminOnlyNote, usePracticeAdminAccess } from "./practiceAdminAccess"
 import { useSettingsSaved } from "./SettingsSavedContext"
 
 export function WaiverPolicyCard() {
@@ -27,6 +32,7 @@ export function WaiverPolicyCard() {
   const update = useUpdateBillingProfile()
   const { flashSaved } = useSettingsSaved()
   const people = usePeopleTerm()
+  const { canEdit, readOnly } = usePracticeAdminAccess()
 
   const [draft, setDraft] = useState<string | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
@@ -62,6 +68,11 @@ export function WaiverPolicyCard() {
       description={`What a clinician may write off from a ${people.one}'s balance without collecting it, and what stops it from happening by accident.`}
       flush
     >
+      {readOnly && (
+        <div className="px-[22px] pt-1.5">
+          <PracticeAdminOnlyNote />
+        </div>
+      )}
       <SettingsRow
         label="Allow courtesy write-offs"
         description={`A waiver with no financial-hardship or billing-error basis behind it. Off by default — a ${people.one}'s balance can still be written off as hardship or error either way.`}
@@ -69,7 +80,7 @@ export function WaiverPolicyCard() {
         <Toggle
           label="Allow courtesy write-offs"
           checked={allowCourtesy}
-          disabled={update.isPending}
+          disabled={!canEdit || update.isPending}
           onChange={(next) => update.mutate({ allow_courtesy_writeoffs: next })}
         />
       </SettingsRow>
@@ -85,8 +96,9 @@ export function WaiverPolicyCard() {
             onBlur={() => problem && setProblem(null)}
             className="w-24"
             inputMode="decimal"
+            disabled={!canEdit}
           />
-          {isDirty && (
+          {canEdit && isDirty && (
             <Button type="button" size="sm" onClick={handleSaveThreshold} disabled={update.isPending}>
               Save
             </Button>

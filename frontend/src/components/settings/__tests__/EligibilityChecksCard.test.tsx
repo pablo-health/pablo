@@ -21,9 +21,16 @@ vi.mock("@/hooks/useBillingProfile", () => ({
   useUpdateBillingProfile: () => ({ mutate: mockUpdate, isPending: false }),
 }))
 
+let isPracticeAdmin = true
+
+vi.mock("../useSettingsPreferences", () => ({
+  useSettingsUserStatus: () => ({ data: { is_practice_admin: isPracticeAdmin } }),
+}))
+
 describe("EligibilityChecksCard", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    isPracticeAdmin = true
   })
 
   it("reads as on when the practice has it on", () => {
@@ -51,5 +58,18 @@ describe("EligibilityChecksCard", () => {
 
     expect(screen.getByRole("switch")).toBeDisabled()
     expect(screen.getByRole("switch")).toBeChecked()
+  })
+
+  it("is read-only, with the reason, for a clinician who is not an admin", async () => {
+    isPracticeAdmin = false
+    mockUseBillingProfile.mockReturnValue({ data: { eligibility_auto_check: true } })
+    const user = userEvent.setup()
+
+    render(<EligibilityChecksCard />)
+
+    expect(screen.getByTestId("practice-admin-only")).toBeInTheDocument()
+    expect(screen.getByRole("switch")).toBeDisabled()
+    await user.click(screen.getByRole("switch"))
+    expect(mockUpdate).not.toHaveBeenCalled()
   })
 })
