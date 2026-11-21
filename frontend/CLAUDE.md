@@ -16,4 +16,6 @@ The number matches the root list, which keeps a one-line summary.
 6. **Mock data never ships.** Imports from frontend `mockData.ts` (or
    equivalent) in a component that is mounted in production routes
    are forbidden. Mock data lives behind `process.env.NODE_ENV !==
-   'production'` or inside `src/test/`.
+   'production'` or inside `src/test/`. Enforced in CI by ESLint
+   `no-restricted-imports` in `frontend/eslint.config.mjs`, which blocks a
+   static import of `mockData` by any path.

@@ -55,9 +55,11 @@ const config = [
       "no-restricted-imports": [
         "error",
         {
-          paths: [
+          // A pattern rather than a single path, so a relative import of the
+          // same module (../lib/mockData) is caught too (guardrail #6).
+          patterns: [
             {
-              name: "@/lib/mockData",
+              group: ["**/mockData", "**/mockData.ts"],
               message:
                 "mockData pulls sample sessions and notes into the bundle. Load it with a dynamic import behind the relevant runtime check instead of a static import.",
             },

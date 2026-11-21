@@ -36,6 +36,7 @@ CI surface (see `.github/workflows/ci.yml`):
 | `pytest` fails on `test_route_audit_guardrails.py` | New PHI route is missing `audit: AuditService = Depends(...)` or an `audit.log_*` call (guardrail #1). | **Fix locally.** Inject and call. See `.claude/skills/audit-coverage-check`. |
 | `pytest` fails on `tests_integration/database/test_audit_writes.py` | Audit-write contract regression. | **Escalate** — this is the HIPAA-relevant write path. |
 | `pre-commit` `no-underscore-audit-params` (also runs in CI) | Route handler uses `_audit` / `_http_request` (guardrail #2). | **Fix locally.** Remove the underscore prefix or remove the param if the route is non-PHI. If non-PHI, ask a human. |
+| `pytest` fails on `test_route_raw_sql_guardrail.py` | A route handler runs a query itself (`session.execute(select(...))` and its kin), or a baseline line names a call that has moved (guardrail #3). | **Fix locally.** Move the query into a repository under `backend/app/repositories/` and call that. If the failure is a stale baseline line, delete it. Never add a line to `route_raw_sql_baseline.txt`. |
 | `migration-lint` fails | Model changed but no Alembic migration in same commit (guardrail #4). | **Fix locally.** Generate the migration with `cd backend && poetry run alembic revision --autogenerate -m "..."`, review, commit. |
 | `pip-audit` finds CVE | Vulnerable dep. | **Fix locally** if a patch version exists. **Escalate** if no patch (need risk-accept decision). |
 | `Cache restore failed` / `network` in setup steps | Transient runner / GHA flake. | **Retry.** |

@@ -21,4 +21,7 @@ root list, which keeps a one-line summary of each.
 3. **No raw SQL in route handlers.** Route handlers in
    `backend/app/routes/` must not call `session.execute(select(...))`
    directly — go through `backend/app/repositories/`. Keeps tenant
-   scoping and error shapes in one place.
+   scoping and error shapes in one place. Enforced in CI by
+   `backend/tests/test_route_raw_sql_guardrail.py`; calls older than the
+   check are listed in `backend/scripts/route_raw_sql_baseline.txt`,
+   which only shrinks. Never add a line to it.
