@@ -757,6 +757,40 @@ class TestGetCurrentUser:
                 f"{email!r} unexpectedly allowed"
             )
 
+    @pytest.mark.parametrize("restrict_signups", [True, False])
+    @pytest.mark.parametrize(
+        "email", ["e2etest-deadbeef@pablo.health", "pentestuser-cafebabe@pablo.health"]
+    )
+    def test_an_unmapped_reserved_address_is_not_mapped_to_the_default_practice(
+        self, email: str, restrict_signups: bool
+    ) -> None:
+        """Its practice is the one the test-tenant service provisions, which
+        writes the mapping before the first sign-in. One with no mapping had
+        its practice deprovisioned; mapping it onto the deployment's practice
+        would put a test identity there (and claim a membership under it)."""
+        decoded = {"uid": "reserved", "email": email, "email_verified": True, "firebase": {}}
+        user_repo = InMemoryUserRepository()
+
+        with (
+            patch("app.auth.service.get_settings") as mock_settings,
+            patch("app.auth.service._email_has_tenant_mapping", return_value=False),
+            patch("app.auth.service._ensure_tenant_mapping") as mock_map,
+        ):
+            mock_settings.return_value.require_mfa = False
+            mock_settings.return_value.restrict_signups = restrict_signups
+            mock_settings.return_value.is_prod_project = False
+
+            user = get_current_user(
+                _mock_request(),
+                decoded,
+                user_repo,
+                InMemoryAllowlistRepository(),
+                _identity_repo_for(),
+            )
+
+        assert user.email == email
+        mock_map.assert_not_called()
+
     @patch("app.auth.service.verify_firebase_token")
     def test_e2e_prefix_matches_case_insensitively(self, mock_verify: MagicMock) -> None:
         """_extract_email lowercases before regex match — uppercase passes."""
