@@ -32,7 +32,7 @@ import { Label } from "@/components/ui/label"
 import { AddPayerFromDirectory } from "@/components/settings/AddPayerFromDirectory"
 import { EnrollmentTaskForm } from "@/components/settings/EnrollmentTaskForm"
 import {
-  PracticeAdminOnlyNote,
+  PracticeAdminAccessNote,
   usePracticeAdminAccess,
 } from "@/components/settings/practiceAdminAccess"
 import { RemittanceCutoverDialog } from "@/components/settings/RemittanceCutoverDialog"
@@ -433,7 +433,7 @@ export function PayersCard() {
   const people = usePeopleTerm()
   const createPayer = useCreatePayer()
   const updatePayer = useUpdatePayer()
-  const { canEdit, readOnly } = usePracticeAdminAccess()
+  const { canEdit, note } = usePracticeAdminAccess()
   const [openId, setOpenId] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
   const [newName, setNewName] = useState("")
@@ -467,9 +467,9 @@ export function PayersCard() {
       flush
     >
       <div className="px-[22px] pt-1.5 pb-5">
-        {readOnly && (
+        {note && (
           <div className="mb-3">
-            <PracticeAdminOnlyNote />
+            <PracticeAdminAccessNote note={note} />
           </div>
         )}
         <RefreshEnrollmentsControl />
