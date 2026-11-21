@@ -207,6 +207,15 @@ def forget_practice(practice_id: str) -> None:
     _drop({practice_id}, set(), set(), drop_all=False)
 
 
+def forget_accounts(user_ids: set[str]) -> None:
+    """Drop the cached membership resolutions of these accounts.
+
+    For a writer the listener cannot see, such as the migrate step's raw
+    ``DELETE`` of memberships left behind by revokes.
+    """
+    _drop(set(), set(), user_ids, drop_all=False)
+
+
 # ---------------------------------------------------------------------------
 # The session listener
 # ---------------------------------------------------------------------------

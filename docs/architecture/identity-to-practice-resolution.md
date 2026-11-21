@@ -137,6 +137,10 @@ What this means for the allowlist:
   and never refreshed. It works when the grant names no practice, and after
   a re-grant has moved the mapping elsewhere. A membership reached by
   invitation is left alone. The account's next request resolves to nothing.
+  Revokes made before revoking removed memberships left theirs behind; the
+  migrate step deletes any membership claimed through a grant whose address
+  no longer has a mapping, and prints how many it removed. A failure there
+  fails the migrate job.
 - **Re-granting does not move a member.** Granting an address to another
   practice moves the mapping, but an account that has already claimed a
   membership stays where it is, and the disagreement is logged. Until a

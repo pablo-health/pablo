@@ -115,12 +115,14 @@ def _install(
     calls: list[str] | None = None,
     *,
     backfill: Any = None,
+    cleanup: Any = None,
 ) -> None:
     """Point the entrypoint's lazy imports at the recorder.
 
-    ``calls`` records the order of the practice migration, provisioning and the
-    membership backfill. ``backfill`` replaces the backfill's return (or, as an
-    exception, what it raises).
+    ``calls`` records the order of the practice migration, provisioning, the
+    membership cleanup and the membership backfill. ``backfill`` and
+    ``cleanup`` replace those steps' returns (or, as an exception, what they
+    raise).
     """
     db_mod = ModuleType("app.db")
     db_mod.get_engine = MagicMock  # type: ignore[attr-defined]
@@ -145,7 +147,14 @@ def _install(
             raise backfill
         return backfill or SimpleNamespace(inserted=0, unmembered=0)
 
+    def _cleanup(_engine: Any) -> int:
+        (calls if calls is not None else []).append("cleanup")
+        if isinstance(cleanup, BaseException):
+            raise cleanup
+        return int(cleanup or 0)
+
     members.backfill = _backfill  # type: ignore[attr-defined]
+    members.remove_unmapped_claims = _cleanup  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "app.db.practice_members", members)
 
     spm = ModuleType("app.db.single_practice_migration")
@@ -171,7 +180,39 @@ def test_an_upgrade_provisions_after_the_practice_migration(
     _install(monkeypatch, _Recorder(migrated=True), calls)
 
     assert migrate_entrypoint._after_upgrade() == 0
-    assert calls == ["practice-migration", "provision", "backfill"]
+    assert calls == ["practice-migration", "provision", "cleanup", "backfill"]
+
+
+def test_the_cleanup_prints_how_many_memberships_it_removed(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _install(monkeypatch, _Recorder(migrated=True), [], cleanup=4)
+
+    assert migrate_entrypoint._after_upgrade() == 0
+    out = capsys.readouterr().out
+    assert "practice_members cleanup: 4 memberships left by revoked grants removed" in out
+
+
+def test_a_failing_cleanup_stops_the_deploy_before_the_backfill(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Memberships decide where an account signs in, so a revision must not
+    roll out over rows that would let a removed account back in. The database's
+    message is not repeated: it can carry row values."""
+    calls: list[str] = []
+    _install(monkeypatch, _Recorder(migrated=True), calls, cleanup=RuntimeError("row (a@b.c)"))
+
+    with caplog.at_level(logging.ERROR, logger=migrate_entrypoint.logger.name):
+        assert migrate_entrypoint._after_upgrade() == 1
+
+    assert calls == ["practice-migration", "provision", "cleanup"]
+    out = capsys.readouterr().out
+    assert "practice_members cleanup failed (RuntimeError)" in out
+    assert "a@b.c" not in out
+    assert all("a@b.c" not in r.getMessage() for r in caplog.records)
 
 
 def test_the_backfill_reports_accounts_it_could_not_give_a_membership(

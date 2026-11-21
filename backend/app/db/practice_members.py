@@ -15,10 +15,11 @@ Writers, one row per account, none of which overwrites a row that exists:
   before this table existed;
 * an invitation redeemed (not written anywhere yet).
 
-And two removers: :func:`remove_for_practice`, for whatever deactivates a
-practice, so a membership does not outlive it; and revoking an allowlist grant
+And three removers: :func:`remove_for_practice`, for whatever deactivates a
+practice, so a membership does not outlive it; revoking an allowlist grant
 (``app.repositories.postgres.allowlist``), which removes the membership that
-grant led to.
+grant led to; and :func:`remove_unmapped_claims`, run by the migrate step for
+memberships left behind by revokes made before revoking removed them.
 """
 
 from __future__ import annotations
@@ -299,6 +300,58 @@ def remove_for_practice(db: Session | Connection, practice_id: str) -> int:
         {"practice_id": practice_id},
     )
     return int(getattr(result, "rowcount", 0) or 0)
+
+
+# A membership a grant led to (written by a claim or the backfill) whose address
+# no longer has a mapping. Revoking a grant deletes the mapping and, since
+# memberships decide where an account signs in, the membership too
+# (``PostgresAllowlistRepository.remove``). A revoke made before it did the
+# second half left the membership behind, and that row would now route the
+# removed account back into its old practice on its next sign-in.
+#
+# Matched on the address the row was claimed with, as revoking matches it.
+# A row reached by invitation (``joined_via = 'invite'``, no claimed address)
+# was never a grant's to remove, and is left alone.
+#
+# Nothing written today leaves such a row: a claim and the backfill insert only
+# while the mapping exists, under a share lock on it (``_CLAIM_SQL``), and a
+# revoke removes both in one transaction. A mapping committed while this runs is
+# not seen by it, so at worst it deletes a row whose address was granted again a
+# moment ago, and that account's next sign-in claims it again through the new
+# mapping.
+_UNMAPPED_CLAIMS_SQL = text(
+    """
+    DELETE FROM platform.practice_members pm
+    WHERE pm.joined_via IN ('email_claim', 'backfill')
+      AND pm.claimed_email IS NOT NULL
+      AND NOT EXISTS (
+          SELECT 1 FROM platform.email_tenant_mappings m
+          WHERE m.email = lower(pm.claimed_email)
+      )
+    RETURNING pm.user_id
+    """
+)
+
+
+def remove_unmapped_claims(engine: Engine) -> int:
+    """Delete memberships left behind by revokes. Returns how many went.
+
+    A membership that a grant led to is removed when the grant is revoked; one
+    whose address has no mapping any more was left by a revoke made before
+    revoking removed memberships, and is removed here (``_UNMAPPED_CLAIMS_SQL``
+    says which rows). Invitations are untouched.
+
+    Idempotent: a second run finds nothing. Run by the migrate step, before the
+    backfill. The accounts' cached answers are dropped after the commit, since
+    this writes through no ``Session`` the cache's listener can see.
+    """
+    from . import practice_resolution_cache
+
+    with engine.begin() as conn:
+        user_ids = {str(user_id) for user_id in conn.execute(_UNMAPPED_CLAIMS_SQL).scalars()}
+    if user_ids:
+        practice_resolution_cache.forget_accounts(user_ids)
+    return len(user_ids)
 
 
 @dataclass(frozen=True)

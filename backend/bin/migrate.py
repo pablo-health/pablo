@@ -150,6 +150,37 @@ def _provision_schemas() -> None:
     ensure_schemas(get_engine())
 
 
+def _remove_memberships_left_by_revokes() -> int:
+    """Delete memberships whose grant was revoked before revoking removed them.
+
+    A signed-in account resolves from its membership, so one left behind by an
+    earlier revoke would route the removed account back into the practice it
+    was removed from (``app.db.practice_members.remove_unmapped_claims``).
+    Idempotent; a fresh install has nothing to remove.
+
+    A process exit code. A failure fails the job, so that a revision which
+    routes by membership does not roll out over rows that would re-admit
+    removed accounts. Prints a count only, never an address or an id, for the
+    reason ``_backfill_practice_members`` prints rather than logs.
+    """
+    from app.db import get_engine  # noqa: PLC0415
+    from app.db.practice_members import remove_unmapped_claims  # noqa: PLC0415
+
+    try:
+        removed = remove_unmapped_claims(get_engine())
+    except Exception as exc:
+        # Type only: a database error message can carry row values.
+        line = f"practice_members cleanup failed ({type(exc).__name__})"
+        print(line, flush=True)
+        logger.error("%s", line)
+        return 1
+    print(
+        f"practice_members cleanup: {removed} memberships left by revoked grants removed",
+        flush=True,
+    )
+    return 0
+
+
 def _backfill_practice_members() -> None:
     """Give every account whose address maps to a practice a membership.
 
@@ -186,7 +217,7 @@ def _backfill_practice_members() -> None:
 
 
 def _after_upgrade() -> int:
-    """The practice migration, provisioning, then the membership backfill.
+    """The practice migration, provisioning, the membership cleanup, then the backfill.
 
     A process exit code.
     """
@@ -194,6 +225,9 @@ def _after_upgrade() -> int:
     if rc != 0:
         return rc
     _provision_schemas()
+    rc = _remove_memberships_left_by_revokes()
+    if rc != 0:
+        return rc
     _backfill_practice_members()
     return 0
 
