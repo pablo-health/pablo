@@ -52,7 +52,10 @@ AGENTS.md                                   @kurtn-pablo
 # ---- Database models + migrations (guardrail #4) --------------------------
 /backend/app/db/models.py                   @kurtn-pablo
 /backend/app/db/platform_models.py          @kurtn-pablo
+/backend/app/db/tenant_template.sql         @kurtn-pablo
+/backend/app/db/platform_template.sql       @kurtn-pablo
 /backend/alembic/                           @kurtn-pablo
+/backend/alembic_platform/                  @kurtn-pablo
 
 # ---- Deploy + secrets surface ---------------------------------------------
 /run.sh                                     @kurtn-pablo
