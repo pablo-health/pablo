@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING
 # conftest.py mocks the DB engine + session factory and sets
 # ENVIRONMENT=development before any app code is imported, so this
 # import does not need a live Postgres.
+from app.auth.invite_identity import get_verified_invitee
 from app.auth.patient_context import get_patient_context
 from app.auth.route_security import truly_public
 from app.auth.service import (
@@ -66,7 +67,10 @@ SECURITY_MARKERS: dict[str, tuple] = {
     "mfa-required": (require_mfa,),
     # get_session_peek_claims: verified-token, no MFA, no idle touch — used
     # ONLY by the /api/auth/session liveness endpoints (no user data).
-    "pre-mfa-onboarding": (get_current_user_no_mfa, get_session_peek_claims),
+    # get_verified_invitee: verified token, idle-checked, no MFA, no practice —
+    # used ONLY by POST /api/invites/{token}/redeem, pinned by
+    # tests/test_practice_invite_routes.py.
+    "pre-mfa-onboarding": (get_current_user_no_mfa, get_session_peek_claims, get_verified_invitee),
     "service-account-auth": (require_pentest_runner, require_cloud_tasks_invoker),
     "truly-public": (truly_public,),
     # A patient authenticated as themselves. Authenticated, but not as a

@@ -278,6 +278,49 @@ class PracticeMemberRow(PlatformBase):
     claimed_email: Mapped[str | None] = mapped_column(Text)
 
 
+class PracticeInviteRow(PlatformBase):
+    """An invitation for a clinician to join a practice, until it is redeemed.
+
+    Created by the practice's owner or an admin
+    (``app.services.practice_invites``). The link carries a random token; only
+    its sha256 is stored here, so a copy of this table opens nothing. The
+    account that redeems the link joins the practice, whatever address it signs
+    in with: ``email`` is where the link was sent, as the inviter typed it.
+
+    An invitation is open until it is redeemed, revoked or past
+    ``expires_at``, whichever comes first, and is never reopened.
+
+    No PHI: ids, times, a hash, and a clinician's work address.
+    """
+
+    __tablename__ = "practice_invites"
+    __table_args__ = (  # type: ignore[assignment]  # PlatformBase types this dict-only; the tuple form is valid SQLAlchemy
+        Index("ix_practice_invites_practice_id", "practice_id"),
+        {"schema": PLATFORM_SCHEMA},
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    practice_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey(f"{PLATFORM_SCHEMA}.practices.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    email: Mapped[str] = mapped_column(Text, nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    invited_by: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey(f"{PLATFORM_SCHEMA}.users.id", ondelete="SET NULL"),
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    redeemed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    redeemed_by_user_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey(f"{PLATFORM_SCHEMA}.users.id", ondelete="SET NULL"),
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class ClaimRouteRow(PlatformBase):
     """Which practice filed the claim carrying this control number.
 
