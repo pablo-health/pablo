@@ -274,6 +274,7 @@ test.describe("@membership a signed-in account reaches the practice its membersh
     const two = await freshPracticeApi("membership-two")
     const email = addressFor("deactivated", testInfo.retry)
     const grants = new Grants()
+    let deactivated = false
 
     try {
       await grants.grant(gone, email)
@@ -282,30 +283,88 @@ test.describe("@membership a signed-in account reaches the practice its membersh
       // Deactivated with its membership left in place. The engine's own
       // deactivation removes memberships in the same transaction
       // (practice_members.remove_for_practice), but the resolver must not
-      // depend on that: a membership in an inactive practice decides, and
-      // decides "nothing". There is no deactivation route on this stack, so
-      // the row is changed directly and the practice's cached answers, which
-      // a commit through the engine would drop, are dropped here.
+      // depend on that. There is no deactivation route on this stack, so the
+      // row is changed directly and the practice's cached answers, which a
+      // commit through the engine would drop, are dropped here.
       sql(`UPDATE platform.practices SET is_active = false WHERE id = '${GONE}'`)
+      deactivated = true
       dropCachedResolutions(GONE)
       await expectNoPractice(member, "a member of an inactive practice still reached it")
 
-      // As remove_for_practice leaves it: the membership is gone too. The
-      // address still maps to the inactive practice, which resolves to nothing.
-      sql(`DELETE FROM platform.practice_members WHERE practice_id = '${GONE}'`)
-      dropCachedResolutions(GONE)
-      await expectNoPractice(member, "the address led back into an inactive practice")
-
-      // Granted into TWO: the next request claims it.
+      // TWO's admin grants the address, so it now maps to a LIVE practice. The
+      // membership in the inactive practice still decides, and decides
+      // "nothing": a resolver that fell through to the mapping would reach TWO
+      // here. Before the membership decided, it did.
       await two.post("/api/admin/allowlist", { email })
+      await expectNoPractice(member, "an inactive membership fell through to the address mapping")
+      await expectNoPractice(
+        await ApiClient.forUser(email, PASSWORD),
+        "a new token fell through to the address mapping",
+      )
+
+      // As remove_for_practice leaves it: the member's own row is gone. The
+      // account has no membership, so its address decides, and it reaches TWO.
+      sql(
+        `DELETE FROM platform.practice_members WHERE practice_id = '${GONE}' AND claimed_email = '${email}'`,
+      )
+      dropCachedResolutions(GONE)
       expect(await practiceOf(member)).toBe(TWO)
       await signInTo(browser, email, TWO)
     } finally {
-      sql(`UPDATE platform.practices SET is_active = true WHERE id = '${GONE}'`)
-      dropCachedResolutions(GONE)
       await grants.revokeAll()
       // The grant into TWO was made by TWO's admin; revoke it as well.
       await two.delete(allowlistPath(email)).catch(() => undefined)
+      if (deactivated) {
+        sql(`UPDATE platform.practices SET is_active = true WHERE id = '${GONE}'`)
+        dropCachedResolutions(GONE)
+      }
+    }
+  })
+
+  test("a revoke racing a first sign-in leaves no account in a practice it has no grant for", async ({}, testInfo) => {
+    const one = await freshPracticeApi("membership-one")
+    const runs = 20
+
+    for (let run = 0; run < runs; run++) {
+      const email = addressFor(`race-${run}`, testInfo.retry)
+      await ensureEmulatorUser(email, PASSWORD)
+      // The token is minted before the race: signing in with the provider
+      // touches no backend. The first request carrying it is the first sign-in
+      // the backend sees, the one that claims a membership.
+      const invitee = await ApiClient.forUser(email, PASSWORD)
+      const grants = new Grants()
+
+      try {
+        await grants.grant(one, email)
+        // The revoke starts a little later on each run, so the twenty runs
+        // land it at different points of the first request's claim.
+        const delay = run * 5
+        const [firstSignIn, revoked] = await Promise.allSettled([
+          patientIds(invitee),
+          new Promise((resolve) => setTimeout(resolve, delay)).then(() => grants.revoke(email)),
+        ])
+        if (revoked.status === "rejected") throw revoked.reason
+        // Either side may win, so the first request may reach ONE or nothing.
+        // Anything other than a NO_PRACTICE refusal is a real failure.
+        if (firstSignIn.status === "rejected") {
+          const error = firstSignIn.reason as unknown
+          expect(error, `run ${run}: first sign-in failed oddly`).toBeInstanceOf(ApiError)
+          expect((error as ApiError).body).toContain("NO_PRACTICE")
+        }
+
+        // After the revoke has answered, the account holds no grant, so it
+        // reaches nothing: on the token that raced and on a new one.
+        await expectNoPractice(
+          invitee,
+          `run ${run} (revoke after ${delay}ms): the raced session kept a practice`,
+        )
+        await expectNoPractice(
+          await ApiClient.forUser(email, PASSWORD),
+          `run ${run} (revoke after ${delay}ms): a new token reached a practice`,
+        )
+      } finally {
+        await grants.revokeAll()
+      }
     }
   })
 })
