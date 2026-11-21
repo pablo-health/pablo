@@ -73,12 +73,12 @@ Four that are easy to get wrong:
 
 1. **Audit every PHI route.** A route in `backend/app/routes/` that touches patients, sessions, soap_notes or appointments takes `audit: AuditService = Depends(get_audit_service)` and calls the matching `audit.log_*` before returning — full rule in [`backend/app/routes/CLAUDE.md`](backend/app/routes/CLAUDE.md).
 2. **No underscore-prefixed `_audit` / `_http_request` parameters.** The `_` marks the value unused and silently bypasses #1 — full rule in [`backend/app/routes/CLAUDE.md`](backend/app/routes/CLAUDE.md).
-3. **No raw SQL in route handlers.** No `session.execute(select(...))` in a route; go through `backend/app/repositories/` — full rule in [`backend/app/routes/CLAUDE.md`](backend/app/routes/CLAUDE.md).
+3. **No raw SQL in route handlers.** No `session.execute(select(...))` in a route; go through `backend/app/repositories/`; CI-enforced — full rule in [`backend/app/routes/CLAUDE.md`](backend/app/routes/CLAUDE.md).
 4. **Models and migrations ship together.** A model change carries a same-commit migration in its own chain (`models.py` → `backend/alembic/`, `platform_models.py` → `backend/alembic_platform/`; platform DDL never goes in the tenant chain), the regenerated template for whichever chain you touched (`backend/scripts/regen_tenant_template.py` / `regen_platform_schema.py`), and an RLS classification for any new tenant table — full rule, migration order and RLS layers in [`backend/app/db/CLAUDE.md`](backend/app/db/CLAUDE.md).
 5. **PHI never enters stdout.** No `logger.info("... {patient_name}
    ...")` or `print(patient.*)` in `backend/app/`. Use `AuditService`
    for intentional PHI-adjacent records; keep everything else PHI-free.
-6. **Mock data never ships.** No import from `frontend/src/lib/mockData.ts` (or its like) in a component mounted in a production route — full rule in [`frontend/CLAUDE.md`](frontend/CLAUDE.md).
+6. **Mock data never ships.** No import from `frontend/src/lib/mockData.ts` (or its like) in a component mounted in a production route; CI-enforced by ESLint — full rule in [`frontend/CLAUDE.md`](frontend/CLAUDE.md).
 7. **Type-cast escape hatches require a reason.** Every `as any`,
    `as unknown as X`, `@ts-ignore`, `@ts-expect-error`, or
    `# type: ignore` must be followed by a one-line comment naming the

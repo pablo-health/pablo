@@ -1,0 +1,11 @@
+# Grandfathered raw queries in route handlers (check_route_raw_sql.py, guardrail #3).
+# One path:function line per call; a function with two calls has two lines.
+# This file only shrinks: a PR that moves a query into app/repositories/
+# deletes its line, and a line with no matching call fails the check.
+# Never add a line.
+app/routes/internal_transcription.py:_validate_tenant_db
+app/routes/internal_transcription.py:assemblyai_submit
+app/routes/internal_transcription.py:transcription_poll
+app/routes/internal_transcription.py:transcription_poll
+app/routes/telehealth_webhooks.py:_record_event
+app/routes/users.py:update_professional_info

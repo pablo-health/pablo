@@ -35,6 +35,9 @@ AGENTS.md                                   @kurtn-pablo
 # a change to what every later run is allowed to do.
 /.pre-commit-config.yaml                    @kurtn-pablo
 /scripts/check_audit_params.py              @kurtn-pablo
+/backend/scripts/check_route_raw_sql.py     @kurtn-pablo
+/backend/scripts/route_raw_sql_baseline.txt @kurtn-pablo
+/backend/tests/test_route_raw_sql_guardrail.py @kurtn-pablo
 /.github/                                   @kurtn-pablo
 /.github/workflows/                         @kurtn-pablo
 /.github/CODEOWNERS                         @kurtn-pablo
