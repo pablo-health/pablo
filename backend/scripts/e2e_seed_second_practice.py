@@ -216,6 +216,29 @@ FRESH_COVERAGE = SeededPractice(
     name="Fresh Practice Coverage",
     colleagues=("e2e-fresh-coverage-colleague@example.com",),
 )
+# Three practices for the membership specs (frontend/e2e/specs/membership.spec.ts):
+# an account is granted into one, re-granted to another, and moved between
+# them, and the third is deactivated and brought back. Their own, because a
+# grant, a revoke or a deactivation in a practice another spec signs into
+# would change what that spec sees.
+FRESH_MEMBERSHIP_ONE = SeededPractice(
+    id="e2e-fresh-membership-one",
+    schema="practice_e2e_fresh_membership_one",
+    email="e2e-fresh-membership-one@example.com",
+    name="Fresh Practice Membership One",
+)
+FRESH_MEMBERSHIP_TWO = SeededPractice(
+    id="e2e-fresh-membership-two",
+    schema="practice_e2e_fresh_membership_two",
+    email="e2e-fresh-membership-two@example.com",
+    name="Fresh Practice Membership Two",
+)
+FRESH_MEMBERSHIP_GONE = SeededPractice(
+    id="e2e-fresh-membership-gone",
+    schema="practice_e2e_fresh_membership_gone",
+    email="e2e-fresh-membership-gone@example.com",
+    name="Fresh Practice Membership Gone",
+)
 SEEDED = (
     SECOND_PRACTICE,
     FRESH_YES,
@@ -230,6 +253,9 @@ SEEDED = (
     FRESH_RETENTION,
     FRESH_ADMINS,
     FRESH_COVERAGE,
+    FRESH_MEMBERSHIP_ONE,
+    FRESH_MEMBERSHIP_TWO,
+    FRESH_MEMBERSHIP_GONE,
 )
 
 # Kept for anything that still reads the second practice by its old names.
