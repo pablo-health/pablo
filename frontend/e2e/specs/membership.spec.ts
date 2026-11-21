@@ -67,6 +67,22 @@ function sql(statement: string): string {
   )
 }
 
+/**
+ * Drop every cached resolution filled for *practiceId*, account and address
+ * entries alike, as a commit to its practices row does through the engine
+ * (app.db.practice_resolution_cache). A write made with psql skips that.
+ */
+function dropCachedResolutions(practiceId: string): void {
+  compose(
+    "redis",
+    "redis-cli",
+    "EVAL",
+    "local ks = redis.call('SMEMBERS', KEYS[1]) for _, k in ipairs(ks) do redis.call('DEL', k) end redis.call('DEL', KEYS[1]) return #ks",
+    "1",
+    `practice-resolution:v1:practice:${practiceId}`,
+  )
+}
+
 function addressFor(scenario: string, retry: number): string {
   return `e2e-membership-${scenario}-${Date.now()}-${retry}@example.com`
 }
@@ -262,23 +278,22 @@ test.describe("@membership a signed-in account reaches the practice its membersh
     try {
       await grants.grant(gone, email)
       const member = await signInTo(browser, email, GONE)
-      const { id: userId } = await member.get<{ id: string }>("/api/users/me")
 
       // Deactivated with its membership left in place. The engine's own
       // deactivation removes memberships in the same transaction
       // (practice_members.remove_for_practice), but the resolver must not
       // depend on that: a membership in an inactive practice decides, and
       // decides "nothing". There is no deactivation route on this stack, so
-      // the row is changed directly and the account's cached answer, which a
-      // commit through the engine would drop, is dropped here.
+      // the row is changed directly and the practice's cached answers, which
+      // a commit through the engine would drop, are dropped here.
       sql(`UPDATE platform.practices SET is_active = false WHERE id = '${GONE}'`)
-      compose("redis", "redis-cli", "DEL", `practice-resolution:v1:user:${userId}`)
+      dropCachedResolutions(GONE)
       await expectNoPractice(member, "a member of an inactive practice still reached it")
 
       // As remove_for_practice leaves it: the membership is gone too. The
       // address still maps to the inactive practice, which resolves to nothing.
       sql(`DELETE FROM platform.practice_members WHERE practice_id = '${GONE}'`)
-      compose("redis", "redis-cli", "DEL", `practice-resolution:v1:user:${userId}`)
+      dropCachedResolutions(GONE)
       await expectNoPractice(member, "the address led back into an inactive practice")
 
       // Granted into TWO: the next request claims it.
@@ -287,6 +302,7 @@ test.describe("@membership a signed-in account reaches the practice its membersh
       await signInTo(browser, email, TWO)
     } finally {
       sql(`UPDATE platform.practices SET is_active = true WHERE id = '${GONE}'`)
+      dropCachedResolutions(GONE)
       await grants.revokeAll()
       // The grant into TWO was made by TWO's admin; revoke it as well.
       await two.delete(allowlistPath(email)).catch(() => undefined)
