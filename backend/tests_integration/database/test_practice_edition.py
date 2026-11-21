@@ -46,7 +46,7 @@ def engine() -> Iterator[Engine]:
 def pg_session(engine: Engine) -> Iterator[Session]:
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     session = factory()
-    # booking_links, practice_booking_buttons and practice_members reference
+    # booking_links, practice_booking_buttons, practice_invites and practice_members reference
     # practices, so practices can no longer be truncated alone. Each table is named
     # explicitly rather than using CASCADE: this stays an exact list of what the fixture resets, and
     # a future FK to practices fails loudly here instead of silently widening
@@ -54,7 +54,7 @@ def pg_session(engine: Engine) -> Iterator[Session]:
     session.execute(
         text(
             "TRUNCATE TABLE platform.practice_booking_buttons, platform.booking_links,"
-            " platform.practice_members, platform.practices"
+            " platform.practice_invites, platform.practice_members, platform.practices"
         )
     )
     session.commit()

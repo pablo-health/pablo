@@ -41,7 +41,6 @@ pytestmark = pytest.mark.skipif(
 )
 
 _BACKEND_DIR = Path(__file__).resolve().parents[2]
-_REVISION = "e4b9c2d71a63"
 _BEFORE = "c5d1e8a27f43"
 
 
@@ -122,6 +121,10 @@ def test_downgrade_refuses_while_a_row_is_pending_and_succeeds_once_none_is(
     engine = create_engine(platform_db)
     try:
         _insert_practice(engine, "pend2", "pending")
+        with engine.connect() as conn:
+            head = conn.execute(
+                text("SELECT version_num FROM platform.alembic_version_platform")
+            ).scalar_one()
 
         refused = _alembic(platform_db, "downgrade", _BEFORE)
         assert refused.returncode != 0
@@ -138,7 +141,7 @@ def test_downgrade_refuses_while_a_row_is_pending_and_succeeds_once_none_is(
                 conn.execute(
                     text("SELECT version_num FROM platform.alembic_version_platform")
                 ).scalar_one()
-                == _REVISION
+                == head
             )
 
         with engine.begin() as conn:
