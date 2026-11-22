@@ -24,7 +24,10 @@ Three kinds of case:
   it on Avery's object and gets 404, never 403 or 409, with nothing of
   Xavier's in the body. Afterwards every note row on Xavier's chart, every
   signed version, every addendum and the audit trail are exactly as they
-  were before Blake's request.
+  were before Blake's request. That includes a restricted note Blake might
+  have written there: the new-note route is tried with a psychotherapy note
+  too, and the chart is read as Blake as well as Avery, because a restricted
+  row is visible to its author alone.
 * **Blake's own client**, so Blake is a working clinician whose requests
   read their own rows and the 404s above are not an unarmed principal's.
 * **Lookups by an id that names nothing**, so a 404 for Blake is the same
@@ -398,52 +401,64 @@ def _rows(conn: Any, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
 def _footprint(engine: Engine, schema: str, seed: _Seed) -> dict[str, Any]:
     """Every note-side row on Xavier's chart, and the whole audit trail.
 
-    The chart is read as Avery, who holds its grant and so sees every row on
-    it whoever wrote them. The audit trail is read under the purge GUC, the
-    one setting that sees every actor's rows (``audit_logs`` is FORCE RLS).
+    The chart is read twice, as Avery and as Blake. Avery holds its grant and
+    so sees every unrestricted row on it, whoever wrote them; a restricted row
+    (a psychotherapy note, and its signatures and addenda) is visible to its
+    author alone (``rls_note_access``), so one Blake wrote there would be
+    invisible to Avery. Read as Blake, the chart shows exactly the restricted
+    rows Blake authored. Together the two reads cover every row a request by
+    Blake could leave. The audit trail is read under the purge GUC, the one
+    setting that sees every actor's rows (``audit_logs`` is FORCE RLS).
     """
+    footprint: dict[str, Any] = {}
     with engine.connect() as conn:
         conn.execute(text(f"SET search_path = {schema}, platform, public"))
-        conn.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _AVERY})
         conn.execute(text("SET LOCAL app.allow_audit_purge = 'on'"))
-        pid = {"pid": seed.xavier}
-        footprint = {
-            "notes": _rows(
-                conn,
-                "SELECT id::text, status, content::text AS content, "
-                "content_edited::text AS content_edited, finalized_at, updated_at, "
-                "quality_rating, deleted_at FROM notes "
-                "WHERE patient_id = CAST(:pid AS uuid) ORDER BY id",
-                pid,
-            ),
-            "signatures": _rows(
-                conn,
-                "SELECT id::text, note_id::text, version, signed_by::text, signed_at, "
-                "unlocked_at, unlocked_by::text, unlock_reason FROM note_signatures "
-                "WHERE patient_id = CAST(:pid AS uuid) ORDER BY id",
-                pid,
-            ),
-            "addenda": _rows(
-                conn,
-                "SELECT id::text, note_id::text, text, created_by::text FROM note_addenda "
-                "WHERE patient_id = CAST(:pid AS uuid) ORDER BY id",
-                pid,
-            ),
-            "proposals": _rows(
-                conn,
-                "SELECT id::text FROM note_chart_proposals "
-                "WHERE patient_id = CAST(:pid AS uuid) ORDER BY id",
-                pid,
-            ),
-            "audit": _rows(
-                conn,
-                "SELECT id::text, user_id::text, action, resource_id, "
-                "patient_id::text, changes::text AS changes FROM audit_logs ORDER BY id",
-                {},
-            ),
-        }
+        for reader in (_AVERY, _BLAKE):
+            conn.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": reader})
+            footprint[reader] = _chart(conn, seed)
+        footprint["audit"] = _rows(
+            conn,
+            "SELECT id::text, user_id::text, action, resource_id, "
+            "patient_id::text, changes::text AS changes FROM audit_logs ORDER BY id",
+            {},
+        )
         conn.rollback()
     return footprint
+
+
+def _chart(conn: Any, seed: _Seed) -> dict[str, Any]:
+    """The note-side rows on Xavier's chart that the armed reader can see."""
+    pid = {"pid": seed.xavier}
+    return {
+        "notes": _rows(
+            conn,
+            "SELECT id::text, status, content::text AS content, "
+            "content_edited::text AS content_edited, finalized_at, updated_at, "
+            "quality_rating, deleted_at FROM notes "
+            "WHERE patient_id = CAST(:pid AS uuid) ORDER BY id",
+            pid,
+        ),
+        "signatures": _rows(
+            conn,
+            "SELECT id::text, note_id::text, version, signed_by::text, signed_at, "
+            "unlocked_at, unlocked_by::text, unlock_reason FROM note_signatures "
+            "WHERE patient_id = CAST(:pid AS uuid) ORDER BY id",
+            pid,
+        ),
+        "addenda": _rows(
+            conn,
+            "SELECT id::text, note_id::text, text, created_by::text FROM note_addenda "
+            "WHERE patient_id = CAST(:pid AS uuid) ORDER BY id",
+            pid,
+        ),
+        "proposals": _rows(
+            conn,
+            "SELECT id::text FROM note_chart_proposals "
+            "WHERE patient_id = CAST(:pid AS uuid) ORDER BY id",
+            pid,
+        ),
+    }
 
 
 def _assert_nothing_of_xaviers(resp: Response, seed: _Seed) -> None:
@@ -503,6 +518,17 @@ _ROUTES = (
     _Route("addendum", "POST", _note("/addenda"), "signed", {"text": _B_TEXT, **_SIGNER}, 201),
     _Route("client_notes_list", "GET", _client_notes, "none", None, 200),
     _Route("client_note_create", "POST", _client_notes, "none", {"note_type": "soap"}, 201),
+    # A restricted note is the one write the database does not refuse on its
+    # own: its row policy checks authorship, not the grant. Only the client
+    # lookup stands between Blake and a psychotherapy note on Xavier's chart.
+    _Route(
+        "client_note_create_restricted",
+        "POST",
+        _client_notes,
+        "none",
+        {"note_type": "psychotherapy"},
+        201,
+    ),
 )
 
 
@@ -540,6 +566,8 @@ def _assert_control(route: _Route, resp: Response) -> None:
         assert _X_BODY in resp.text
     elif route.name == "client_note_create":
         assert body["note_type"] == "soap"
+    elif route.name == "client_note_create_restricted":
+        assert (body["note_type"], body["restricted"]) == ("psychotherapy", True)
 
 
 @pytest.mark.parametrize("route", _ROUTES, ids=lambda r: r.name)
