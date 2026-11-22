@@ -12,7 +12,8 @@ a client the clinician cannot see answering anything but 404; positions
 that stop being dense after an insert at the top, a removal or a reorder; a
 reorder that accepts an entry not on the caller's list; an add for a client
 without a grant in force that the engine lets through once the route's own
-lookup is out of the way; a pause or an
+lookup is out of the way; a grant check that leans on the row policies
+instead of its own join, expiry, start and deleted-client tests; a pause or an
 auto-offer switch that moves the entry; the suggested session type and
 modality not read from the client's own visits; and an audit row that
 carries the days or times wanted instead of ids.
@@ -381,6 +382,82 @@ def test_the_engine_refuses_a_client_without_a_grant_on_its_own(
         refused = client.post(f"/api/patients/{pid}/waitlist", json=_PREFS)
         assert refused.status_code == 404, refused.text
         assert _entries_for(engine, tenant_schema, pid) == 0
+
+
+_OTHER = "8e4b2d6a-1f3c-4b7e-a5d9-2c6f0e8b4a13"
+
+
+def test_the_grant_check_decides_by_its_own_predicate(engine: Engine, tenant_schema: str) -> None:
+    """``holds_grant`` answers for the user it is asked about, not the session's user.
+
+    Every client here is one the session can see, so the ``patients`` row
+    policy hides nothing and only the query's own join and predicate decide.
+    Scoped to the clinician, it is asked about another clinician (``_OTHER``)
+    who holds no grant, an expired one, or one not yet started. The expiry and
+    start checks are then asked again as ``_OTHER`` on a client the session sees
+    through the client's own policy, because the grant table shows a session
+    only its own user's grants.
+    """
+    from app.waitlist.repository import WaitlistRepository  # noqa: PLC0415
+    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+
+    now = datetime.now(UTC).replace(microsecond=0)
+    held, lapsed, not_yet, deleted = (str(uuid.uuid4()) for _ in range(4))
+    grants = [
+        (held, _CLINICIAN, None, None),
+        (lapsed, _CLINICIAN, None, None),
+        (lapsed, _OTHER, None, now - timedelta(days=1)),
+        (not_yet, _CLINICIAN, None, None),
+        (not_yet, _OTHER, now + timedelta(days=1), None),
+        (deleted, _CLINICIAN, None, None),
+    ]
+    with engine.begin() as conn:
+        conn.execute(text(f"SET LOCAL search_path = {tenant_schema}, platform, public"))
+        conn.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": _CLINICIAN})
+        for pid in (held, lapsed, not_yet, deleted):
+            conn.execute(
+                text(
+                    "INSERT INTO patients (id, first_name, last_name, first_name_lower, "
+                    "last_name_lower, status, session_count, created_at, updated_at, deleted_at) "
+                    "VALUES (CAST(:pid AS uuid), 'Grant', 'Check', 'grant', 'check', 'active', 0, "
+                    ":now, :now, :deleted)"
+                ),
+                {"pid": pid, "now": now, "deleted": now if pid == deleted else None},
+            )
+        for pid, user, starts, expires in grants:
+            conn.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": user})
+            conn.execute(
+                text(
+                    "INSERT INTO patient_clinicians (patient_id, user_id, granted_by, "
+                    "starts_at, expires_at) "
+                    "VALUES (CAST(:pid AS uuid), :u, :u, :starts, :expires)"
+                ),
+                {"pid": pid, "u": user, "starts": starts, "expires": expires},
+            )
+
+    def _scoped(session: OrmSession, user: str, patient: str = "") -> WaitlistRepository:
+        session.execute(text(f"SET LOCAL search_path = {tenant_schema}, platform, public"))
+        session.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": user})
+        session.execute(
+            text("SELECT set_config('app.current_patient_id', :p, true)"), {"p": patient}
+        )
+        return WaitlistRepository(session)
+
+    with OrmSession(bind=engine) as session:
+        repo = _scoped(session, _CLINICIAN)
+        assert repo.holds_grant(_CLINICIAN, held)
+        assert not repo.holds_grant(_OTHER, held), "no grant at all"
+        assert not repo.holds_grant(_OTHER, lapsed), "a grant that expired yesterday"
+        assert not repo.holds_grant(_OTHER, not_yet), "a grant that starts tomorrow"
+        assert not repo.holds_grant(_CLINICIAN, deleted), "a deleted client"
+        assert not repo.holds_grant(_CLINICIAN, "not-a-uuid")
+        session.rollback()
+
+    for pid in (lapsed, not_yet):
+        with OrmSession(bind=engine) as session:
+            repo = _scoped(session, _OTHER, pid)
+            assert not repo.holds_grant(_OTHER, pid), "the grant row is visible, not in force"
+            session.rollback()
 
 
 def test_preferences_must_name_days_times_and_a_known_modality(
