@@ -8,6 +8,11 @@ ever reads and orders their own list. Names come from a join to
 ``patients``, whose own policy decides which clients this clinician may see:
 an entry for a client they no longer hold a grant on drops out of the list.
 
+Adding an entry first asks whether the clinician holds a grant in force on
+the client (:meth:`WaitlistRepository.holds_grant`), the same test the chart's
+own patient lookup makes. The callers already look the client up that way;
+this is the engine's own check, so an add never rests on the caller alone.
+
 Positions are dense from 1 among the clinician's open entries. Every change
 to them locks those rows first, so two changes at once cannot leave two
 entries in one place.
@@ -21,7 +26,8 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, select, update
 
-from ..db.models import AppointmentRow, PatientRow, WaitlistEntryRow
+from ..db.models import AppointmentRow, PatientClinicianRow, PatientRow, WaitlistEntryRow
+from ..repositories.postgres._grants import live_grant
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -75,6 +81,27 @@ def _name(first: str | None, last: str | None) -> str:
 class WaitlistRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
+
+    def holds_grant(self, user_id: str, patient_id: str) -> bool:
+        """Whether ``user_id`` holds a grant in force on this client, who is not deleted.
+
+        A malformed id is a client nobody holds a grant on.
+        """
+        try:
+            uuid.UUID(patient_id)
+        except ValueError:
+            return False
+        found = self._session.scalar(
+            select(PatientRow.id)
+            .join(PatientClinicianRow, PatientClinicianRow.patient_id == PatientRow.id)
+            .where(
+                PatientRow.id == patient_id,
+                PatientRow.deleted_at.is_(None),
+                *live_grant(user_id),
+            )
+            .limit(1)
+        )
+        return found is not None
 
     def list_open(self, user_id: str) -> list[WaitlistEntry]:
         """The clinician's open entries, in their order, with each client's name."""
