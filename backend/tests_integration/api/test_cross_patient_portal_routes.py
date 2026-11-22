@@ -74,10 +74,6 @@ pytestmark = pytest.mark.skipif(
 )
 
 os.environ.setdefault("ENVIRONMENT", "development")
-# The client-facing chat router is mounted only when this is on. Off, every
-# chat URL 404s for everyone; the controls below would then fail, so this
-# module cannot pass vacuously, but it would prove nothing about chat.
-os.environ.setdefault("ENABLE_PATIENT_PORTAL_CHAT", "true")
 
 _SUFFIX = uuid.uuid4().hex[:8]
 _SCHEMA = f"practice_test_xpp_{_SUFFIX}"
@@ -402,7 +398,33 @@ def _client_for(app: FastAPI) -> TestClient:
 
 
 @pytest.fixture(scope="module")
-def portal(engine: Engine, fastapi_app: FastAPI, _portal_settings: None) -> Iterator[_Portal]:
+def _portal_chat_mounted(fastapi_app: FastAPI) -> Iterator[None]:
+    """The client-facing chat routes, as a deployment with them switched on serves them.
+
+    ``app.main`` mounts them at import when ``enable_patient_portal_chat`` is
+    on, and in a full run whichever module imports the app first decides
+    that. So they are mounted here, the same router the same way, when the
+    app came up without them, and taken off again afterwards so no later
+    module sees a route its deployment would not have.
+    """
+    from app.routes import patient_chat  # noqa: PLC0415
+
+    routes = fastapi_app.router.routes
+    if any(getattr(r, "path", "").startswith(patient_chat.router.prefix) for r in routes):
+        yield
+        return
+    before = list(routes)
+    fastapi_app.include_router(patient_chat.router)
+    try:
+        yield
+    finally:
+        routes[:] = before
+
+
+@pytest.fixture(scope="module")
+def portal(
+    engine: Engine, fastapi_app: FastAPI, _portal_settings: None, _portal_chat_mounted: None
+) -> Iterator[_Portal]:
     pat, quinn, rowan = _seed_practice(engine)
     client = _client_for(fastapi_app)
     tokens = {pid: _sign_in(client, pid) for pid in (pat, quinn, rowan)}
