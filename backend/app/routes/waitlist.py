@@ -49,6 +49,7 @@ from ..waitlist.schemas import (
 from ..waitlist.service import (
     AlreadyWaitingError,
     ClientNotEligibleError,
+    ClientNotFoundError,
     OrderMismatchError,
     WaitlistNotFoundError,
     WaitlistService,
@@ -234,6 +235,8 @@ def add_to_waitlist(
             paused=body.paused,
             no_auto_offer=body.no_auto_offer,
         )
+    except ClientNotFoundError as exc:
+        raise patient_not_found(patient_id) from exc
     except ClientNotEligibleError as exc:
         raise ConflictError(NOT_ACTIVE_MESSAGE, {"patient_id": patient_id}) from exc
     except AlreadyWaitingError as exc:

@@ -2,6 +2,10 @@
 
 """The waitlist's rules, over :class:`~.repository.WaitlistRepository`.
 
+**Only a client the clinician holds a grant on waits.** An add naming any
+other client is refused before anything is written, whatever the caller
+checked first.
+
 **Only an active client waits.** A client on hold or no longer seen is
 refused before anything is written; the chart's status is the practice's
 own answer to whether this person is being seen.
@@ -46,6 +50,10 @@ class WaitlistError(Exception):
 
 class WaitlistNotFoundError(WaitlistError):
     """No open entry with this id on the caller's list."""
+
+
+class ClientNotFoundError(WaitlistError):
+    """The clinician holds no grant in force on this client, or there is no such client."""
 
 
 class ClientNotEligibleError(WaitlistError):
@@ -116,6 +124,8 @@ class WaitlistService:
         ``session_type`` defaults to the client's usual one. ``position``
         defaults to the end; a named place moves everyone from there down one.
         """
+        if not self._repo.holds_grant(user_id, patient_id):
+            raise ClientNotFoundError(patient_id)
         if patient_status != "active":
             raise ClientNotEligibleError(patient_status)
         if self._repo.open_for_patient(user_id, patient_id) is not None:
