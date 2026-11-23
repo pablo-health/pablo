@@ -56,6 +56,7 @@ RESERVED_SLUGS = frozenset(
         "book",
         "dashboard",
         "fbauth-proxy",
+        "invite",
         "launch",
         "login",
         "mfa-enrollment",

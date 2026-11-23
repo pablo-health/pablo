@@ -78,6 +78,7 @@ export const CLINICIAN_ROUTE_SEGMENTS: ReadonlySet<string> = new Set([
   "book",
   "dashboard",
   "fbauth-proxy",
+  "invite",
   "launch",
   "login",
   "mfa-enrollment",
