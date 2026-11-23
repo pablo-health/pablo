@@ -239,6 +239,15 @@ FRESH_MEMBERSHIP_GONE = SeededPractice(
     email="e2e-fresh-membership-gone@example.com",
     name="Fresh Practice Membership Gone",
 )
+# A practice for the invitation spec (frontend/e2e/specs/practice-invite.spec.ts):
+# its owner invites an address and another account accepts. Its own, because
+# each run adds a member, and the admins spec reads its practice's members.
+FRESH_INVITES = SeededPractice(
+    id="e2e-fresh-invites",
+    schema="practice_e2e_fresh_invites",
+    email="e2e-fresh-invites@example.com",
+    name="Fresh Practice Invites",
+)
 SEEDED = (
     SECOND_PRACTICE,
     FRESH_YES,
@@ -256,6 +265,7 @@ SEEDED = (
     FRESH_MEMBERSHIP_ONE,
     FRESH_MEMBERSHIP_TWO,
     FRESH_MEMBERSHIP_GONE,
+    FRESH_INVITES,
 )
 
 # Kept for anything that still reads the second practice by its old names.

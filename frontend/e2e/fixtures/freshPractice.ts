@@ -42,6 +42,7 @@ export type FreshPracticeName =
   | "membership-one"
   | "membership-two"
   | "membership-gone"
+  | "invites"
 
 const PASSWORD = "E2e-fresh-practice-password-long-enough"
 

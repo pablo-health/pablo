@@ -9,10 +9,13 @@
  * left to `EXTRA_PUBLIC_PATHS` because every deployment that serves the
  * portal needs it, so no deployment should have to remember it.
  *
+ * The invitation page is another: the person opening an invitation link may
+ * have no account yet, and the page itself offers the sign-in.
+ *
  * Prefix-matched, exactly like the deployment-contributed entries below.
  */
 export function builtInPublicPaths(): string[] {
-  return ["/portal"]
+  return ["/portal", "/invite"]
 }
 
 /**

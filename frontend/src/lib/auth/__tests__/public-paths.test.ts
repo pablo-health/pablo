@@ -25,6 +25,10 @@ describe("builtInPublicPaths", () => {
     vi.stubEnv("EXTRA_PUBLIC_PATHS", undefined)
     expect(builtInPublicPaths()).toContain("/portal")
   })
+
+  it("admits the invitation page, whose reader may not have an account yet", () => {
+    expect(builtInPublicPaths()).toContain("/invite")
+  })
 })
 
 describe("extraPublicPaths", () => {
