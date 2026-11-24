@@ -560,7 +560,7 @@ class TestAPortalBooking:
             lambda _session: MagicMock(get=lambda _id: user),
         )
         monkeypatch.setattr(
-            patient_booking, "_owner_calendar", lambda _session: (service, calendar)
+            patient_booking, "_clinician_calendar", lambda _session: (service, calendar)
         )
         return patient_booking._push_to_calendar(MagicMock(), appt.user_id, appt)
 
