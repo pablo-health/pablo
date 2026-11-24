@@ -1586,6 +1586,10 @@ NOTE_CHILD_TABLES: frozenset[str] = frozenset(
     {"note_signatures", "note_addenda", "session_dictations"}
 )
 
+#: Clinician-owned tables that any clinician with a live grant on the row's
+#: client may also read. Writes stay with the row's ``user_id``.
+GRANT_READABLE_TABLES: frozenset[str] = frozenset({"therapy_sessions", "appointments"})
+
 
 def not_row_scoped_tenant_tables() -> set[str]:
     """Every tenant table row-level security is deliberately left OFF for.
@@ -2400,6 +2404,7 @@ def _plan_row_scoped_table(  # noqa: PLR0912, PLR0915 — one policy arm per ten
     # above, so a table whose registration is withdrawn sheds it. The drop
     # changes no table's fingerprint: that hashes the CREATE statements only.
     statements.append(f"DROP POLICY IF EXISTS {OWNER_POLICY_NAME} ON {qualified}")
+    statements.append(f"DROP POLICY IF EXISTS rls_grant_read ON {qualified}")
 
     # Additive: created before the clinician shape is chosen, because
     # several of those branches return early. Permissive policies OR
@@ -2734,7 +2739,7 @@ def _plan_row_scoped_table(  # noqa: PLR0912, PLR0915 — one policy arm per ten
     elif "user_id" in columns:
         # Tables where a row has a direct owning clinician
         # (therapy_sessions, appointments, audit_logs, etc.).
-        # Each user sees only their own rows. WITH CHECK matches
+        # Each user sees their own rows (and grant reads). WITH CHECK matches
         # USING explicitly so INSERTs are permitted as long as the
         # new row's ``user_id`` matches the current user — no
         # chicken-and-egg, and you can't insert a row claiming
@@ -2753,6 +2758,16 @@ def _plan_row_scoped_table(  # noqa: PLR0912, PLR0915 — one policy arm per ten
             f"WITH CHECK (user_id::text = current_setting('app.current_user_id', true))"
         )
         description = "RLS (user_id) enabled on %s"
+        if table_name in GRANT_READABLE_TABLES and "patient_id" in columns:
+            # Permissive policies OR together per command, so this widens
+            # SELECT only; UPDATE, DELETE and INSERT still need user_id.
+            statements.append(
+                f"CREATE POLICY rls_grant_read ON {qualified} "
+                f"FOR SELECT USING (has_patient_access("
+                f"  patient_id, current_setting('app.current_user_id', true)"
+                f"))"
+            )
+            description = "RLS (user_id; reads also by patient grant) enabled on %s"
     elif "patient_id" in columns:
         statements.append(
             f"CREATE POLICY rls_patient_access ON {qualified} "
@@ -2824,9 +2839,9 @@ def enable_rls_on_schema(  # noqa: PLR0915 — planning, verify and the registra
     * **user_id column** (clinician owns the row directly — patients,
       therapy_sessions, appointments, etc.): policy matches rows where
       ``user_id::text = current_setting('app.current_user_id', true)``.
-      This is the original direct-ownership shape; preserves prior
-      behavior so multi-clinician sharing on these tables remains a
-      follow-up. The ``::text`` cast compares the native-``uuid``
+      ``GRANT_READABLE_TABLES`` add a SELECT-only ``rls_grant_read``: a
+      live grant on the client reads them; writes stay with the owner.
+      The ``::text`` cast compares the native-``uuid``
       ``user_id`` column against the always-text GUC: an unset/empty
       GUC yields NULL/'' and matches nothing (fail-closed), with no
       ``invalid input syntax for uuid`` risk that casting the GUC the

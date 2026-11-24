@@ -3736,6 +3736,14 @@ CREATE POLICY rls_chat_message_access ON __TENANT_SCHEMA__.chat_messages USING (
 
 COMMENT ON POLICY rls_chat_message_access ON __TENANT_SCHEMA__.chat_messages IS 'rls-fingerprint-v1-43f34a525db9372464cd27c0fdaf30345fb53e90f9f78514230bd89e5d7b9bef';
 
+CREATE POLICY rls_grant_read ON __TENANT_SCHEMA__.appointments FOR SELECT USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_grant_read ON __TENANT_SCHEMA__.appointments IS 'rls-fingerprint-v1-78cde86433e089c471584841ad716d278f99080bbe15444144af7ff191b334d5';
+
+CREATE POLICY rls_grant_read ON __TENANT_SCHEMA__.therapy_sessions FOR SELECT USING (__TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying));
+
+COMMENT ON POLICY rls_grant_read ON __TENANT_SCHEMA__.therapy_sessions IS 'rls-fingerprint-v1-b784731885ee3ba703eb70c91a3fe08c77c22d4a82872429590988408c8bcc12';
+
 CREATE POLICY rls_note_access ON __TENANT_SCHEMA__.notes USING ((((NOT restricted) AND __TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying)) OR (restricted AND ((author_user_id)::text = current_setting('app.current_user_id'::text, true)))));
 
 COMMENT ON POLICY rls_note_access ON __TENANT_SCHEMA__.notes IS 'rls-fingerprint-v1-32ba5c337260ce18807032cf7189eff3c9e3e445c239c91400afa41480ff8743';
@@ -3916,7 +3924,7 @@ CREATE POLICY rls_patient_purge_delete ON __TENANT_SCHEMA__.appointments FOR DEL
    FROM __TENANT_SCHEMA__.patients p
   WHERE ((p.id = appointments.patient_id) AND (p.deleted_at IS NOT NULL))))));
 
-COMMENT ON POLICY rls_patient_purge_delete ON __TENANT_SCHEMA__.appointments IS 'rls-fingerprint-v1-192dc6aff35fc3d87af085e1c16bf6a5e13f501fcced843c03ae853d4dea0684';
+COMMENT ON POLICY rls_patient_purge_delete ON __TENANT_SCHEMA__.appointments IS 'rls-fingerprint-v1-78cde86433e089c471584841ad716d278f99080bbe15444144af7ff191b334d5';
 
 CREATE POLICY rls_patient_purge_delete ON __TENANT_SCHEMA__.chat_conversations FOR DELETE USING (((COALESCE(current_setting('app.allow_patient_purge'::text, true), ''::text) = 'on'::text) AND (EXISTS ( SELECT 1
    FROM __TENANT_SCHEMA__.patients p
@@ -3993,7 +4001,7 @@ CREATE POLICY rls_patient_purge_delete ON __TENANT_SCHEMA__.therapy_sessions FOR
    FROM __TENANT_SCHEMA__.patients p
   WHERE ((p.id = therapy_sessions.patient_id) AND (p.deleted_at IS NOT NULL))))));
 
-COMMENT ON POLICY rls_patient_purge_delete ON __TENANT_SCHEMA__.therapy_sessions IS 'rls-fingerprint-v1-f3d648e1eb7f091b640e9310ab0051a512a973d82c45dfd9e8712de075fc47aa';
+COMMENT ON POLICY rls_patient_purge_delete ON __TENANT_SCHEMA__.therapy_sessions IS 'rls-fingerprint-v1-b784731885ee3ba703eb70c91a3fe08c77c22d4a82872429590988408c8bcc12';
 
 CREATE POLICY rls_patient_purge_lock ON __TENANT_SCHEMA__.patients FOR UPDATE USING (((COALESCE(current_setting('app.allow_patient_purge'::text, true), ''::text) = 'on'::text) AND (deleted_at IS NOT NULL))) WITH CHECK (false);
 
@@ -4003,7 +4011,7 @@ CREATE POLICY rls_patient_purge_read ON __TENANT_SCHEMA__.appointments FOR SELEC
    FROM __TENANT_SCHEMA__.patients p
   WHERE ((p.id = appointments.patient_id) AND (p.deleted_at IS NOT NULL))))));
 
-COMMENT ON POLICY rls_patient_purge_read ON __TENANT_SCHEMA__.appointments IS 'rls-fingerprint-v1-192dc6aff35fc3d87af085e1c16bf6a5e13f501fcced843c03ae853d4dea0684';
+COMMENT ON POLICY rls_patient_purge_read ON __TENANT_SCHEMA__.appointments IS 'rls-fingerprint-v1-78cde86433e089c471584841ad716d278f99080bbe15444144af7ff191b334d5';
 
 CREATE POLICY rls_patient_purge_read ON __TENANT_SCHEMA__.chat_conversations FOR SELECT USING (((COALESCE(current_setting('app.allow_patient_purge'::text, true), ''::text) = 'on'::text) AND (EXISTS ( SELECT 1
    FROM __TENANT_SCHEMA__.patients p
@@ -4092,7 +4100,7 @@ CREATE POLICY rls_patient_purge_read ON __TENANT_SCHEMA__.therapy_sessions FOR S
    FROM __TENANT_SCHEMA__.patients p
   WHERE ((p.id = therapy_sessions.patient_id) AND (p.deleted_at IS NOT NULL))))));
 
-COMMENT ON POLICY rls_patient_purge_read ON __TENANT_SCHEMA__.therapy_sessions IS 'rls-fingerprint-v1-f3d648e1eb7f091b640e9310ab0051a512a973d82c45dfd9e8712de075fc47aa';
+COMMENT ON POLICY rls_patient_purge_read ON __TENANT_SCHEMA__.therapy_sessions IS 'rls-fingerprint-v1-b784731885ee3ba703eb70c91a3fe08c77c22d4a82872429590988408c8bcc12';
 
 CREATE POLICY rls_patient_self_delete ON __TENANT_SCHEMA__.chat_conversations FOR DELETE USING ((((patient_id)::text = current_setting('app.current_patient_id'::text, true)) AND (owner_user_id IS NULL)));
 
@@ -4180,7 +4188,7 @@ COMMENT ON POLICY rls_patient_self_insert ON __TENANT_SCHEMA__.refill_requests I
 
 CREATE POLICY rls_patient_self_read ON __TENANT_SCHEMA__.appointments FOR SELECT USING (((patient_id)::text = current_setting('app.current_patient_id'::text, true)));
 
-COMMENT ON POLICY rls_patient_self_read ON __TENANT_SCHEMA__.appointments IS 'rls-fingerprint-v1-192dc6aff35fc3d87af085e1c16bf6a5e13f501fcced843c03ae853d4dea0684';
+COMMENT ON POLICY rls_patient_self_read ON __TENANT_SCHEMA__.appointments IS 'rls-fingerprint-v1-78cde86433e089c471584841ad716d278f99080bbe15444144af7ff191b334d5';
 
 CREATE POLICY rls_patient_self_read ON __TENANT_SCHEMA__.chat_conversations FOR SELECT USING ((((patient_id)::text = current_setting('app.current_patient_id'::text, true)) AND (owner_user_id IS NULL)));
 
@@ -4338,7 +4346,7 @@ COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.appointment_types IS '
 
 CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.appointments USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
 
-COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.appointments IS 'rls-fingerprint-v1-192dc6aff35fc3d87af085e1c16bf6a5e13f501fcced843c03ae853d4dea0684';
+COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.appointments IS 'rls-fingerprint-v1-78cde86433e089c471584841ad716d278f99080bbe15444144af7ff191b334d5';
 
 CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.availability_rules USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
 
@@ -4402,7 +4410,7 @@ COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.telehealth_connections
 
 CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.therapy_sessions USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
 
-COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.therapy_sessions IS 'rls-fingerprint-v1-f3d648e1eb7f091b640e9310ab0051a512a973d82c45dfd9e8712de075fc47aa';
+COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.therapy_sessions IS 'rls-fingerprint-v1-b784731885ee3ba703eb70c91a3fe08c77c22d4a82872429590988408c8bcc12';
 
 CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.waitlist_entries USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
 
