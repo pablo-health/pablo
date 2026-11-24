@@ -28,7 +28,6 @@ from app.auth.service import (
     get_tenant_context,
     require_active_subscription,
 )
-from app.models import User
 from app.portal import invite_template_routes, settings_routes, welcome_routes
 from app.portal.delivery import CapturingRenderedInviteDelivery
 from app.portal.factory import get_invite_delivery
@@ -48,6 +47,8 @@ from app.services.audit_service import get_audit_service
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from tests.user_fakes import clinician
+
 if TYPE_CHECKING:
     from app.repositories.practice_admin import InMemoryPracticeAdminRepository
 
@@ -59,19 +60,8 @@ OWNER_ID = "11111111-1111-1111-1111-111111111111"
 COLLEAGUE_ID = "22222222-2222-2222-2222-222222222222"
 
 
-def _user(user_id: str, email: str) -> User:
-    return User(
-        id=user_id,
-        email=email,
-        name="Test Clinician",
-        created_at=datetime(2026, 1, 1, tzinfo=UTC),
-        baa_accepted_at=datetime(2026, 1, 1, tzinfo=UTC),
-        baa_version="2024-01-01",
-    )
-
-
-OWNER = _user(OWNER_ID, "owner@example.com")
-COLLEAGUE = _user(COLLEAGUE_ID, "colleague@example.com")
+OWNER = clinician(OWNER_ID, "owner@example.com")
+COLLEAGUE = clinician(COLLEAGUE_ID, "colleague@example.com")
 
 #: What the practice had before anyone signed in, so a refused reset shows.
 SAVED_WELCOME = PortalWelcome(heading="Hello", body="Welcome to {practice_name}.")

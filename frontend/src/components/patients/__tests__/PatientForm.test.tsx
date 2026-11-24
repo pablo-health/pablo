@@ -1,11 +1,5 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-/**
- * PatientForm Component Tests
- *
- * Tests form validation, create/edit modes, and error handling.
- */
-
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
@@ -63,11 +57,9 @@ vi.mock("@/lib/api/portalSettings", async (importOriginal) => ({
   savePortalSettings: (...a: unknown[]) => mockSavePortalSettings(...a),
 }))
 
-// Whether the signed-in clinician may change the portal. Yes unless a test says otherwise.
-let isPracticeAdmin = true
-vi.mock("@/components/settings/useSettingsPreferences", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/components/settings/useSettingsPreferences")>()),
-  useSettingsUserStatus: () => ({ data: { is_practice_admin: isPracticeAdmin } }),
+// An admin, who may answer the portal question. PatientForm.portalAccess.test.tsx has the rest.
+vi.mock("@/components/settings/practiceAdminAccess", () => ({
+  usePracticeAdminAccess: () => ({ canEdit: true, note: null }),
 }))
 
 const createWrapper = () => {
@@ -114,7 +106,6 @@ describe("PatientForm", () => {
     vi.clearAllMocks()
     mockFeature.mockImplementation(() => false)
     peopleTerm.current = "clients"
-    isPracticeAdmin = true
   })
 
   it("says patients when that is the clinician's word", () => {
@@ -573,15 +564,6 @@ describe("PatientForm", () => {
 
       expect(await screen.findByTestId("new-client-next-step")).toBeInTheDocument()
       expect(screen.queryByTestId("portal-offer-prompt")).not.toBeInTheDocument()
-    })
-
-    it("does not ask a clinician who cannot change the portal", async () => {
-      isPracticeAdmin = false
-      await addRobin()
-
-      expect(await screen.findByTestId("new-client-next-step")).toBeInTheDocument()
-      expect(screen.queryByTestId("portal-offer-prompt")).not.toBeInTheDocument()
-      expect(mockSavePortalSettings).not.toHaveBeenCalled()
     })
 
     it("will not turn it on with nothing in it", async () => {

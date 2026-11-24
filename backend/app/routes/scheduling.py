@@ -2319,16 +2319,11 @@ def _appointment_type_to_response(appointment_type: AppointmentType) -> Appointm
 def get_scheduling_policy(
     _ctx: TenantContext = Depends(get_tenant_context),
 ) -> SchedulingPolicyResponse:
-    """The practice's scheduling policy.
+    """The practice's scheduling policy, or the off-or-strict defaults if none is stored.
 
-    A practice that has never opened the settings has no stored row; it gets
-    the defaults, which are uniformly off or strict. Reading never creates a
-    row, so this stays safe to call from anywhere.
+    Reading never creates a row, so this stays safe to call from anywhere.
     """
-    # Taken from the request-scoped session rather than injected: the tenant
-    # context dependency above has already pointed the search path at this
-    # practice, and every other read in this module resolves its session the
-    # same way.
+    # The tenant context dependency already set this session's search path.
     return SchedulingPolicyResponse(**load_policy(get_db_session()))
 
 
@@ -2341,7 +2336,7 @@ def update_scheduling_policy(
     request: UpdateSchedulingPolicyRequest,
     _ctx: TenantContext = Depends(get_tenant_context),
 ) -> SchedulingPolicyResponse:
-    """Change part of the scheduling policy: the owner or a practice admin only.
+    """Change part of the scheduling policy.
 
     Partial: a field the caller did not send keeps its current value, so a
     settings page can save one row without resending the rest.
