@@ -337,6 +337,16 @@ class TestReadIsPerClinician:
         unread = repo.list_inbox_messages(_COLLEAGUE, unread_only=True)
         assert [row.message.body for row in unread] == ["later"]
 
+    def test_an_older_mark_does_not_move_the_marker_back(
+        self, repo: InMemoryPatientMessageRepository, mock_user_id: str
+    ) -> None:
+        _thread(repo, _ADA, "t1", at=_T0)
+        _say(repo, _ADA, "t1", "m2", at=_T0 + timedelta(minutes=2), body="later")
+        repo.mark_thread_read_by_clinician("t1", mock_user_id, _T0 + timedelta(minutes=3))
+        repo.mark_thread_read_by_clinician("t1", mock_user_id, _T0 + timedelta(minutes=1))
+
+        assert repo.count_unread_threads(mock_user_id) == 0
+
 
 # ── the badge ───────────────────────────────────────────────────────────
 

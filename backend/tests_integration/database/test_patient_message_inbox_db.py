@@ -12,7 +12,8 @@ absent from both views and the count; a deleted patient's threads are left
 out; the grouped view orders unread first then newest; and the ungrouped
 view lists each client message on its own row, newest first, with the
 practice's replies left out; and one clinician reading a shared client's
-thread leaves it unread for the other.
+thread leaves it unread for the other; and reading again after a new message
+moves that clinician's marker forward, never back.
 
 The route wiring and audit rows are covered in
 ``tests/test_patient_message_inbox_api.py``.
@@ -55,6 +56,8 @@ _OTHER_CLINICIAN = "8e2d4a61-3c9f-4b07-a5d2-6f1e0b9c3a48"
 # do not move.
 _SHARING_A = "1f6a2c84-9d3e-4b51-8a07-c4e2b9d61f35"
 _SHARING_B = "6c3e8b17-2a94-4f0d-b5e6-91d7a4c2e083"
+# Reads one client's thread twice, kept apart from everyone above.
+_REREADER = "a47d2e19-5b83-4c6f-9e0a-3d8b1f72c5e4"
 _T0 = datetime(2026, 9, 1, 9, 0, tzinfo=UTC)
 
 
@@ -310,3 +313,23 @@ def test_reading_a_shared_clients_thread_is_one_clinicians_read(practice: _Pract
         assert repo.count_unread_threads(_SHARING_B) == 1
         assert [row.unread for row in repo.list_inbox_messages(_SHARING_B)] == [True]
         assert [n for _, n in repo.list_threads_for_patient(mary, _SHARING_B)] == [1]
+
+
+def test_reading_again_after_a_new_message_moves_the_marker_forward(
+    practice: _Practice,
+) -> None:
+    ida = _patient(practice, "Ida", "Noddack", clinician=_REREADER)
+    thread = _thread(practice, ida, at=_T0)
+    _mark_read(practice, _REREADER, thread, at=_T0 + timedelta(minutes=1))
+    _message(practice, (ida, thread), at=_T0 + timedelta(minutes=5), body="ida again")
+
+    with _inbox_as(practice, _REREADER) as repo:
+        assert repo.count_unread_threads(_REREADER) == 1
+
+    _mark_read(practice, _REREADER, thread, at=_T0 + timedelta(minutes=6))
+    # A stale tab's mark-read, committed last, does not move the marker back.
+    _mark_read(practice, _REREADER, thread, at=_T0 + timedelta(minutes=2))
+
+    with _inbox_as(practice, _REREADER) as repo:
+        assert repo.count_unread_threads(_REREADER) == 0
+        assert [row.unread_count for row in repo.list_inbox_threads(_REREADER)] == [0]

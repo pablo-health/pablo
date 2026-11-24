@@ -209,7 +209,8 @@ class PatientMessageRepository(ABC):
     ) -> PatientMessageThread:
         """Record that this clinician has read the thread up to ``read_at``.
 
-        Per clinician: a colleague's unread count is untouched. Never
+        Per clinician: a colleague's unread count is untouched. The marker
+        only moves forward; an older ``read_at`` leaves it. Never
         touches the per-message ``read_at``, which is the patient's.
 
         Raises :class:`PatientMessageAccessDeniedError` without a grant.
@@ -572,7 +573,8 @@ class InMemoryPatientMessageRepository(PatientMessageRepository):
         self, thread_id: str, user_id: str, read_at: datetime
     ) -> PatientMessageThread:
         thread = self._writable_thread(thread_id, user_id)
-        self._reads[(thread_id, user_id)] = read_at
+        key = (thread_id, user_id)
+        self._reads[key] = max(read_at, self._reads.get(key, read_at))
         return thread
 
     # --- patient arm ---

@@ -445,7 +445,8 @@ class PostgresPatientMessageRepository(PatientMessageRepository):
             .values(thread_id=thread_id, user_id=user_id, last_read_at=read_at)
             .on_conflict_do_update(
                 index_elements=[reads.thread_id, reads.user_id],
-                set_={"last_read_at": read_at},
+                # Two tabs can commit out of order; the marker only moves forward.
+                set_={"last_read_at": func.greatest(reads.last_read_at, read_at)},
             )
         )
         return _thread(row)
