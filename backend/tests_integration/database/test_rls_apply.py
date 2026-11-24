@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from app.db import RlsReconcileCounts
+    from app.db.rls_state import LiveRls
     from sqlalchemy.engine import Engine
 
 _DB_URL = os.environ.get("DATABASE_URL", "")
@@ -59,6 +60,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 _TEMPLATE = Path(__file__).resolve().parents[2] / "app" / "db" / "tenant_template.sql"
+# Read at import, for the test that takes each table in turn: the list has to
+# exist when the tests are collected. Reading the file touches no database.
+_TEMPLATE_TABLES = sorted(desired_from_sql(_TEMPLATE.read_text()))
 
 # Holds a grant on both seeded patients.
 _TREATING = "3a7e1c82-45bd-5f19-8c62-0e4d7b3a9f15"
@@ -602,17 +606,11 @@ def _damages(schema: str, table: str, desired: DesiredTable) -> Iterator[tuple[s
         yield "forced", [f"ALTER TABLE {qualified} FORCE ROW LEVEL SECURITY"]
 
 
-def test_every_single_damage_to_every_table_is_found_and_undone(
-    engine: Engine, desired: dict[str, DesiredTable]
-) -> None:
-    """Not a sample. Each policy and each table in the template, damaged each way.
+@pytest.fixture(scope="module")
+def settled(engine: Engine, desired: dict[str, DesiredTable]) -> Iterator[tuple[str, LiveRls]]:
+    """A schema built from the file and settled by one pass, and what it then holds.
 
-    For every damage: the read-only report names that table and no other, one
-    pass puts it right, and the schema is back to exactly what it was. The
-    tests above do this to ``patients``; a bug that only shows on some other
-    policy's shape would get past them and cannot get past this.
-
-    Built from the file and settled first, so that a policy put back from the
+    Built from the file, not provisioned, so that a policy put back from the
     file reads the same as the one that was there before.
     """
     from app.db.provisioning import (  # noqa: PLC0415
@@ -624,36 +622,49 @@ def test_every_single_damage_to_every_table_is_found_and_undone(
     body, _, row_security = _TEMPLATE.read_text().partition(TEMPLATE_ROW_SECURITY_MARKER)
     apply_template_sql(engine, schema, body)
     apply_template_sql(engine, schema, row_security)
-    try:
-        _apply(engine, schema, desired, leave=())
-        cases = 0
-        failures: list[str] = []
-        # One session for the lot, and the applier's own catalog reads for the
-        # comparison: seven hundred cases through ``pg_policies`` take a minute.
-        with OrmSession(engine) as session:
-            settled = read_live_rls(session, schema)
-            for table in sorted(desired):
-                for what, statements in _damages(schema, table, desired[table]):
-                    cases += 1
-                    cursor = session.connection().connection.cursor()
-                    for statement in statements:
-                        cursor.execute(statement)
-                    session.commit()
+    _apply(engine, schema, desired, leave=())
+    with OrmSession(engine) as session:
+        holds = read_live_rls(session, schema)
+    yield schema, holds
+    _drop_schema(engine, schema)
 
-                    found = tenant_rls_differences(session, schema, desired)
-                    if list(found) != [table]:
-                        failures.append(f"{table}: {what}: reported {sorted(found)}")
-                    apply_tenant_rls(session, schema, desired)
-                    session.commit()
-                    after = read_live_rls(session, schema)
-                    if after != settled:
-                        failures.append(f"{table}: {what}: not put back")
-                        # Start the next case from a known state, not from this one.
-                        settled = after
-        assert not failures, f"{len(failures)} of {cases} damages got through:\n" + "\n".join(
-            failures[:40]
+
+@pytest.mark.parametrize("table", _TEMPLATE_TABLES)
+def test_every_single_damage_to_this_table_is_found_and_undone(
+    engine: Engine, desired: dict[str, DesiredTable], settled: tuple[str, LiveRls], table: str
+) -> None:
+    """Not a sample. Each table in the template, and each policy on it, damaged each way.
+
+    For every damage: the read-only report names this table and no other, one
+    pass puts it right, and the schema is back to exactly what it was. The
+    tests above do this to ``patients``; a bug that only shows on some other
+    policy's shape would get past them and cannot get past this.
+
+    One test per table, so a failure names the table and the run stays inside
+    the suite's time limit for a single test.
+    """
+    schema, holds = settled
+    failures: list[str] = []
+    cases = 0
+    with OrmSession(engine) as session:
+        assert read_live_rls(session, schema) == holds, (
+            "the schema was not as it should be before this table was touched; "
+            "an earlier table's test left it damaged"
         )
-        policies = sum(len(table.policies) for table in desired.values())
-        assert cases == 3 * policies + 3 * len(desired)
-    finally:
-        _drop_schema(engine, schema)
+        for what, statements in _damages(schema, table, desired[table]):
+            cases += 1
+            cursor = session.connection().connection.cursor()
+            for statement in statements:
+                cursor.execute(statement)
+            session.commit()
+
+            found = tenant_rls_differences(session, schema, desired)
+            if list(found) != [table]:
+                failures.append(f"{what}: reported {sorted(found)}")
+            apply_tenant_rls(session, schema, desired)
+            session.commit()
+            if read_live_rls(session, schema) != holds:
+                failures.append(f"{what}: not put back")
+                break
+    assert not failures, f"{table}: {len(failures)} of {cases} damages got through: {failures}"
+    assert cases == 3 * len(desired[table].policies) + 3
