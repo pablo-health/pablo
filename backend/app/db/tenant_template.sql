@@ -1142,6 +1142,14 @@ CREATE TABLE __TENANT_SCHEMA__.patient_message_attachments (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.patient_message_thread_reads (
+    thread_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    last_read_at timestamp with time zone NOT NULL
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.patient_message_threads (
     id uuid NOT NULL,
     patient_id uuid NOT NULL,
@@ -2018,6 +2026,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_medications
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_attachments
     ADD CONSTRAINT patient_message_attachments_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_thread_reads
+    ADD CONSTRAINT patient_message_thread_reads_pkey PRIMARY KEY (thread_id, user_id);
 
 
 
@@ -3299,6 +3312,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_medications
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_thread_reads
+    ADD CONSTRAINT patient_message_thread_reads_thread_id_fkey FOREIGN KEY (thread_id) REFERENCES __TENANT_SCHEMA__.patient_message_threads(id) ON DELETE CASCADE;
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_threads
     ADD CONSTRAINT patient_message_threads_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
 
@@ -3556,6 +3574,8 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_medications FORCE ROW LEVEL SECURITY;
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_attachments FORCE ROW LEVEL SECURITY;
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_thread_reads FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_message_threads FORCE ROW LEVEL SECURITY;
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_messages FORCE ROW LEVEL SECURITY;
@@ -3679,6 +3699,8 @@ ALTER TABLE __TENANT_SCHEMA__.patient_intake_submissions ENABLE ROW LEVEL SECURI
 ALTER TABLE __TENANT_SCHEMA__.patient_medications ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE __TENANT_SCHEMA__.patient_message_attachments ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE __TENANT_SCHEMA__.patient_message_thread_reads ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE __TENANT_SCHEMA__.patient_message_threads ENABLE ROW LEVEL SECURITY;
 
@@ -4383,6 +4405,10 @@ COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.llm_usage IS 'rls-fing
 CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.patient_clinicians USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
 
 COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.patient_clinicians IS 'rls-fingerprint-v1-1ee24a53860df4af1410859b56fd179235521d720d2f49bf2d455e9a18283c33';
+
+CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.patient_message_thread_reads USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
+
+COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.patient_message_thread_reads IS 'rls-fingerprint-v1-7d07464e95f89b1ada668065d51d33e57d690956212c84af2889b2d023a2860b';
 
 CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.supervision_hours USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
 

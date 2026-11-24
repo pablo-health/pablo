@@ -45,8 +45,8 @@ class PatientMessageThread:
     routing hint and never an access rule: every clinician with a grant on
     the patient reads and answers the thread regardless of it.
 
-    ``clinician_last_read_at`` is the practice side's single "we looked"
-    mark, which is what the clinician unread count is measured from. The
+    What the practice has read is per clinician and is not on the thread:
+    each clinician's unread count is measured from their own last read. The
     patient's own read state is per message and lives on
     :class:`PatientMessage`.
     """
@@ -60,7 +60,6 @@ class PatientMessageThread:
     closed_at: datetime | None = None
     closed_by: str | None = None
     assigned_user_id: str | None = None
-    clinician_last_read_at: datetime | None = None
 
 
 @dataclass(frozen=True)

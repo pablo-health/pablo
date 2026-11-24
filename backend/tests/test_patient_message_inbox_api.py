@@ -46,6 +46,7 @@ UNREAD = "/api/message-threads/unread-count"
 _ADA = "11111111-1111-4111-8111-111111111111"
 _GRACE = "22222222-2222-4222-8222-222222222222"
 _STRANGER = "33333333-3333-4333-8333-333333333333"
+_COLLEAGUE = "44444444-4444-4444-8444-444444444444"
 _T0 = datetime(2026, 9, 1, 9, 0, tzinfo=UTC)
 
 
@@ -294,6 +295,47 @@ class TestEveryMessage:
         ]
         # Counts only: the words are in the store, never in the record.
         assert not any("one" in str(e.changes) for e in viewed)
+
+
+# ── read state is each clinician's own ──────────────────────────────────
+
+
+class TestReadIsPerClinician:
+    """Two clinicians with a grant on one client: opening the thread is one
+    clinician's read, never the colleague's."""
+
+    def test_opening_a_thread_leaves_it_unread_for_a_colleague(
+        self, inbox: TestClient, repo: InMemoryPatientMessageRepository
+    ) -> None:
+        repo.grant_access(_ADA, _COLLEAGUE)
+        _thread(repo, _ADA, "t1", at=_T0, body="hello")
+
+        assert inbox.post(f"{INBOX}/t1/read").status_code == 200
+
+        [mine] = inbox.get(INBOX).json()["data"]
+        assert mine["unread_count"] == 0
+        assert inbox.get(UNREAD).json() == {"threads_with_unread": 0}
+        assert inbox.get(MESSAGES, params={"unread_only": True}).json()["data"] == []
+
+        [theirs] = repo.list_inbox_threads(_COLLEAGUE)
+        assert theirs.unread_count == 1
+        assert repo.count_unread_threads(_COLLEAGUE) == 1
+        assert [row.unread for row in repo.list_inbox_messages(_COLLEAGUE)] == [True]
+        assert [n for _, n in repo.list_threads_for_patient(_ADA, _COLLEAGUE)] == [1]
+
+    def test_each_mark_counts_from_its_own_time(
+        self, repo: InMemoryPatientMessageRepository, mock_user_id: str
+    ) -> None:
+        repo.grant_access(_ADA, _COLLEAGUE)
+        _thread(repo, _ADA, "t1", at=_T0)
+        repo.mark_thread_read_by_clinician("t1", _COLLEAGUE, _T0 + timedelta(minutes=1))
+        _say(repo, _ADA, "t1", "m2", at=_T0 + timedelta(minutes=2), body="later")
+        repo.mark_thread_read_by_clinician("t1", mock_user_id, _T0 + timedelta(minutes=3))
+
+        assert repo.count_unread_threads(mock_user_id) == 0
+        assert repo.count_unread_threads(_COLLEAGUE) == 1
+        unread = repo.list_inbox_messages(_COLLEAGUE, unread_only=True)
+        assert [row.message.body for row in unread] == ["later"]
 
 
 # ── the badge ───────────────────────────────────────────────────────────

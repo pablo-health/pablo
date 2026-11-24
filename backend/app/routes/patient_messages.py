@@ -1096,25 +1096,22 @@ def mark_thread_read_by_clinician(
     repo: PatientMessageRepository = Depends(get_patient_message_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> PatientMessageThreadResponse:
-    """Mark the thread as seen by the practice, which zeroes its unread count.
+    """Mark the thread as seen by this clinician, which zeroes their unread count.
 
     Audited under the same action as the patient's own mark-read, separated
     by ``actor_type`` the way sends already are: "this was seen, and when"
     is the fact, and who saw it is a different column.
     """
     thread = _accessible_thread(thread_id, user, repo)
-    marked = repo.mark_thread_read_by_clinician(thread.id, user.id, utc_now())
+    read_at = utc_now()
+    marked = repo.mark_thread_read_by_clinician(thread.id, user.id, read_at)
     audit.log_patient_message_action(
         action=AuditAction.PATIENT_MESSAGE_THREAD_READ,
         user=user,
         request=request,
         resource_id=marked.id,
         patient_id=marked.patient_id,
-        changes={
-            "clinician_last_read_at": marked.clinician_last_read_at.isoformat()
-            if marked.clinician_last_read_at
-            else None
-        },
+        changes={"clinician_last_read_at": read_at.isoformat()},
     )
     return PatientMessageThreadResponse.from_thread(marked)
 

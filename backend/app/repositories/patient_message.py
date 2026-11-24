@@ -76,9 +76,9 @@ class PatientMessageRepository(ABC):
         narrows what may be read, so a clinician who filters to ``me`` and
         then opens somebody else's thread by id still gets it.
 
-        Unread here means a message the *patient* sent after
-        ``clinician_last_read_at``. A thread nobody at the practice has
-        opened counts all of them.
+        Unread here means a message the *patient* sent after this
+        clinician last read the thread. A thread they never opened counts
+        all of them, whoever else at the practice has.
         """
 
     @abstractmethod
@@ -106,8 +106,8 @@ class PatientMessageRepository(ABC):
 
         Newest first; scoped exactly as :meth:`list_inbox_threads` is. Only
         the client's own messages — the practice's replies are not new to the
-        practice. ``unread_only`` keeps the ones sent since the practice last
-        marked their thread read. At most ``limit`` rows.
+        practice. ``unread_only`` keeps the ones sent since this clinician
+        last marked their thread read. At most ``limit`` rows.
         """
 
     def practice_schema(self) -> str | None:
@@ -207,10 +207,9 @@ class PatientMessageRepository(ABC):
     def mark_thread_read_by_clinician(
         self, thread_id: str, user_id: str, read_at: datetime
     ) -> PatientMessageThread:
-        """Stamp the practice's "we have seen this" mark on the thread.
+        """Record that this clinician has read the thread up to ``read_at``.
 
-        One mark for the practice, not one per clinician — see
-        :class:`app.models.patient_message.PatientMessageThread`. Never
+        Per clinician: a colleague's unread count is untouched. Never
         touches the per-message ``read_at``, which is the patient's.
 
         Raises :class:`PatientMessageAccessDeniedError` without a grant.
@@ -353,6 +352,8 @@ class InMemoryPatientMessageRepository(PatientMessageRepository):
         self._patient_names: dict[str, str] = {}
         self._deleted_patients: set[str] = set()
         self._inbox_states: InboxItemStateRepository | None = None
+        # (thread_id, user_id) -> last_read_at, as patient_message_thread_reads.
+        self._reads: dict[tuple[str, str], datetime] = {}
 
     # --- test setup helpers (mirror has_patient_access semantics) ---
 
@@ -406,7 +407,7 @@ class InMemoryPatientMessageRepository(PatientMessageRepository):
         elif assigned == "unassigned":
             rows = [t for t in rows if t.assigned_user_id is None]
         rows.sort(key=lambda t: t.last_message_at, reverse=True)
-        return [(t, self._clinician_unread_count(t)) for t in rows]
+        return [(t, self._clinician_unread_count(t, user_id)) for t in rows]
 
     def _inbox_candidates(self, user_id: str) -> list[PatientMessageThread]:
         return [
@@ -431,7 +432,7 @@ class InMemoryPatientMessageRepository(PatientMessageRepository):
             rows = [t for t in rows if t.assigned_user_id == user_id]
         elif assigned == "unassigned":
             rows = [t for t in rows if t.assigned_user_id is None]
-        counted = [(t, self._clinician_unread_count(t)) for t in rows]
+        counted = [(t, self._clinician_unread_count(t, user_id)) for t in rows]
         counted.sort(key=lambda pair: (pair[1] > 0, pair[0].last_message_at), reverse=True)
         return [
             InboxThread(
@@ -445,7 +446,7 @@ class InMemoryPatientMessageRepository(PatientMessageRepository):
     ) -> list[InboxMessage]:
         found: list[InboxMessage] = []
         for thread in self._inbox_candidates(user_id):
-            since = thread.clinician_last_read_at
+            since = self._reads.get((thread.id, user_id))
             for message in self._messages.get(thread.id, []):
                 if message.sender != SENDER_PATIENT:
                     continue
@@ -506,11 +507,11 @@ class InMemoryPatientMessageRepository(PatientMessageRepository):
         return sum(
             1
             for t in self._inbox_candidates(user_id)
-            if t.status == THREAD_STATUS_OPEN and self._clinician_unread_count(t)
+            if t.status == THREAD_STATUS_OPEN and self._clinician_unread_count(t, user_id)
         )
 
-    def _clinician_unread_count(self, thread: PatientMessageThread) -> int:
-        since = thread.clinician_last_read_at
+    def _clinician_unread_count(self, thread: PatientMessageThread, user_id: str) -> int:
+        since = self._reads.get((thread.id, user_id))
         return sum(
             1
             for m in self._messages.get(thread.id, [])
@@ -571,7 +572,7 @@ class InMemoryPatientMessageRepository(PatientMessageRepository):
         self, thread_id: str, user_id: str, read_at: datetime
     ) -> PatientMessageThread:
         thread = self._writable_thread(thread_id, user_id)
-        thread.clinician_last_read_at = read_at
+        self._reads[(thread_id, user_id)] = read_at
         return thread
 
     # --- patient arm ---
