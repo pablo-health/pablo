@@ -11,6 +11,7 @@ cases the real file does not happen to contain today.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from app.db.provisioning import TEMPLATE_ROW_SECURITY_MARKER
@@ -18,10 +19,15 @@ from app.db.rls_apply import (
     APPLIED_PREFIX,
     DesiredTable,
     applied_fingerprint,
+    apply_tenant_rls,
     desired_from_sql,
     render_policy,
+    tenant_rls_differences,
 )
 from app.db.rls_state import FINGERPRINT_PREFIX, LivePolicy
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _TEMPLATE = Path(__file__).resolve().parents[1] / "app" / "db" / "tenant_template.sql"
 
@@ -233,3 +239,26 @@ def test_the_applied_fingerprint_changes_with_either_half() -> None:
     assert base != applied_fingerprint(
         "CREATE POLICY p ON t USING (c);", "CREATE POLICY p ON t USING (b);"
     )
+
+
+def test_a_quoted_table_name_is_refused() -> None:
+    """Names are compared as plain text all the way through, so a quoted one cannot be read."""
+    with pytest.raises(ValueError, match="qualified"):
+        desired_from_sql(
+            _TABLES + '\nALTER TABLE __TENANT_SCHEMA__."Notes" ENABLE ROW LEVEL SECURITY;\n'
+        )
+
+
+@pytest.mark.parametrize("entry_point", [apply_tenant_rls, tenant_rls_differences])
+def test_a_schema_name_that_is_not_a_plain_identifier_is_refused_before_any_query(
+    entry_point: Callable[..., object],
+) -> None:
+    """The name goes into DDL as text. Nothing is asked of the session first."""
+
+    class NoSession:
+        def __getattr__(self, name: str) -> object:
+            msg = f"the session was used ({name}) before the schema name was checked"
+            raise AssertionError(msg)
+
+    with pytest.raises(ValueError, match="Invalid schema name"):
+        entry_point(NoSession(), 'practice"; DROP SCHEMA practice CASCADE; --', {})

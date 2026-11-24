@@ -18,7 +18,7 @@ from scripts.mutation import run
 from scripts.mutation.generate import generate_module
 from scripts.mutation.presets import PRESETS
 from scripts.mutation.run import mutated_source, unmutated_source
-from scripts.mutation.score import content_keys
+from scripts.mutation.score import classify_run, content_keys
 
 if TYPE_CHECKING:
     import pytest
@@ -190,3 +190,17 @@ def test_every_preset_names_files_that_exist() -> None:
             assert (run.BACKEND / rel).is_file(), f"{name}: {rel}"
         assert all(rel.startswith("tests/") for rel in preset.tests), name
         assert all(rel.startswith("tests_integration/") for rel in preset.integration_tests), name
+
+
+def test_a_run_that_never_finished_counts_as_caught() -> None:
+    """An endless loop fails every run of the suite; it is not a survivor to judge."""
+    mutants = _mutants()[:3]
+    results = {
+        mutants[0]["id"]: {"id": mutants[0]["id"], "status": "killed"},
+        mutants[1]["id"]: {"id": mutants[1]["id"], "status": "timeout"},
+        mutants[2]["id"]: {"id": mutants[2]["id"], "status": "survived"},
+    }
+
+    judged = [cls for _mutant, cls in classify_run(mutants, results, {})]
+
+    assert judged == ["K", "K", "?"]

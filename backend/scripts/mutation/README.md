@@ -71,6 +71,10 @@ annotations are left alone.
 
 ## Reading the score
 
+A mutant is caught when a test fails, or when the run never finishes: a
+change that makes a loop endless leaves the tests failing on their own time
+limit until the run's runs out, and no run of the suite passes with it in.
+
 A surviving mutant is not automatically a gap: some changes cannot alter
 behaviour, and some code has no caller. Those judgements are recorded in
 `classified.json`, under a key made of what the mutant is (file, function,

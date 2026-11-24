@@ -7,7 +7,8 @@ From ``backend/``::
     python -m scripts.mutation.score /tmp/mutation/calendar [/tmp/mutation/older ...]
     python -m scripts.mutation.score /tmp/mutation/calendar --survivors
 
-A killed mutant is caught. A surviving one is looked up in ``classified.json``
+A killed mutant is caught, and so is one whose run never finished (it made a
+loop endless). A surviving one is looked up in ``classified.json``
 by what it is (file, function, operator, description, source text, and which
 occurrence of that combination it is), not by id or line number, so a
 judgement made once holds while the module around it changes:
@@ -38,6 +39,11 @@ if TYPE_CHECKING:
 CLASSIFIED = Path(__file__).with_name("classified.json")
 EXCLUDED = frozenset({"B", "C", "E", "F"})
 SURVIVING = ("A", "D", "?")
+#: Run statuses that mean a test noticed. ``timeout`` is the whole run not
+#: finishing: the mutant made a loop endless, and the tests went on failing on
+#: their own time limit until the run's ran out. No run of the suite passes
+#: with that change in, so it is caught, not survived.
+CAUGHT = frozenset({"killed", "timeout"})
 
 Key = tuple[str, str, str, str, str, int]
 
@@ -82,7 +88,7 @@ def classify_run(
         record = results.get(m["id"])
         if record is None or record["status"] in {"noop", "gen_error"}:
             continue
-        cls = "K" if record["status"] == "killed" else classified.get(keys[m["id"]], "?")
+        cls = "K" if record["status"] in CAUGHT else classified.get(keys[m["id"]], "?")
         out.append((m, cls))
     return out
 

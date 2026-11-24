@@ -519,6 +519,11 @@ def _execute(session: Session, statements: Iterable[str]) -> None:
     nothing else on the path means a name can only resolve to what the file
     says, whatever the caller's session had on its own path. The caller's path
     is put back before returning.
+
+    If a statement fails, the path is not put back here, and must not be: the
+    transaction is aborted, so one more statement would raise its own error
+    and hide the one that matters. The empty path was set for this transaction
+    only, and goes when the caller rolls it back.
     """
     statements = list(statements)
     if not statements:
@@ -529,10 +534,8 @@ def _execute(session: Session, statements: Iterable[str]) -> None:
         row = cursor.fetchone()
         previous = row[0] if row else ""
         cursor.execute("SELECT pg_catalog.set_config('search_path', '', true)")
-        try:
-            for statement in statements:
-                cursor.execute(statement)
-        finally:
-            cursor.execute("SELECT pg_catalog.set_config('search_path', %s, true)", (previous,))
+        for statement in statements:
+            cursor.execute(statement)
+        cursor.execute("SELECT pg_catalog.set_config('search_path', %s, true)", (previous,))
     finally:
         cursor.close()
