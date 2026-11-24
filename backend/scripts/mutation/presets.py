@@ -4,6 +4,12 @@
 
 Paths are relative to ``backend/``. A preset's tests are the files that
 claim to cover its modules; a mutant only one of them catches still counts.
+
+``integration_tests`` are files under ``tests_integration/``, which need a
+Postgres. They run as a second pytest invocation, and only for a mutant the
+unit tests let through: the two suites cannot share one (each has its own
+``conftest.py`` and the integration one refuses the other's placeholder
+database), and a database is the expensive half.
 """
 
 from __future__ import annotations
@@ -15,6 +21,7 @@ from dataclasses import dataclass
 class Preset:
     modules: tuple[str, ...]
     tests: tuple[str, ...]
+    integration_tests: tuple[str, ...] = ()
 
 
 PRESETS: dict[str, Preset] = {
@@ -35,5 +42,13 @@ PRESETS: dict[str, Preset] = {
             "tests/test_ical_sync.py",
             "tests/test_calendar_practice_import.py",
         ),
+    ),
+    # Making a practice schema's row-level security match the tenant template.
+    # The unit tests cover reading the template; what it does to a schema is
+    # only visible in a database.
+    "rls-apply": Preset(
+        modules=("app/db/rls_apply.py",),
+        tests=("tests/test_rls_apply_desired.py",),
+        integration_tests=("tests_integration/database/test_rls_apply.py",),
     ),
 }
