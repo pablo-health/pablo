@@ -61,6 +61,7 @@ from ..auth.route_access import subscription_exempt
 from ..db import (
     arm_current_user_id,
     create_standalone_session,
+    get_db_session,
     release_db_connection,
     request_principal_restored,
     set_tenant_schema,
@@ -118,7 +119,7 @@ from ..settings import get_settings
 from .scheduling import _push_cancellation_to_google, _sync_appointment_to_google
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
     from datetime import tzinfo
 
     from sqlalchemy.orm import Session
@@ -167,37 +168,23 @@ def _refuse(message: str, code: str, http_status: int) -> HTTPException:
 
 
 def _as_utc(value: datetime) -> datetime:
-    """A timezone-aware UTC instant.
-
-    A naive datetime off the wire is read as UTC rather than rejected: the
-    comparisons below are all against ``datetime.now(UTC)``, and comparing a
-    naive value to an aware one raises rather than returning a wrong answer, so
-    the failure would be a 500 on a field the caller controls.
-    """
+    """A timezone-aware UTC instant; a naive value off the wire is read as UTC, not a 500."""
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def _slot_instant(iso: str) -> datetime:
-    """One end of a ``TimeSlot``, which the engine hands back as an ISO string.
-
-    ``Z`` is spelled out for ``fromisoformat`` because the engine renders UTC
-    that way and Python did not accept it before 3.11 — the substitution is
-    what every other reader of these slots does, and doing it differently here
-    would be the interesting kind of inconsistency.
-    """
+    """One end of a ``TimeSlot``, which the engine hands back as an ISO string ending ``Z``."""
     return _as_utc(datetime.fromisoformat(iso.replace("Z", "+00:00")))
 
 
 @contextlib.contextmanager
-def _primary_clinician_armed(
-    patient: PatientContext,
+def _clinician_armed(
+    patient: PatientContext, choose: Callable[[Session, str], str | None]
 ) -> Iterator[tuple[Session, str, str] | None]:
-    """A second session, armed as the client's own primary clinician.
+    """A second session, armed as the clinician *choose* names on it, or ``None``.
 
     Separate from the request's patient-armed session on purpose — see the
-    module docstring. Yields ``(session, clinician_user_id, practice_id)``, or
-    ``None`` when the client has no live primary clinician: a booking with
-    nobody to make it with is not a booking, and the owner is not a stand-in.
+    module docstring. Yields ``(session, clinician_user_id, practice_id)``.
 
     The request's own connection is released first. These routes do all their
     work on this session, and it stays open across the calendar push and the
@@ -206,10 +193,6 @@ def _primary_clinician_armed(
     for short lookups (``app.db.get_nested_engine``), and two bookings at once
     could each hold one of those connections while waiting for another.
     Released first, it comes from the main pool, like any unit of work.
-
-    The clinician is found one clinician at a time through
-    :func:`app.portal.clinicians.primary_clinician_id`, because a patient
-    cannot read ``patient_clinicians``; nothing stays armed after that read.
     """
     from ..db.platform_models import PracticeRow
 
@@ -222,7 +205,7 @@ def _primary_clinician_armed(
         try:
             schema = patient.practice_schema
             set_tenant_schema(session, schema)
-            clinician = primary_clinician_id(session, schema, patient.patient_id)
+            clinician = choose(session, schema)
             if clinician is None:
                 yield None
                 return
@@ -235,12 +218,43 @@ def _primary_clinician_armed(
             session.close()
 
 
+def _primary_clinician_armed(
+    patient: PatientContext,
+) -> contextlib.AbstractContextManager[tuple[Session, str, str] | None]:
+    """Armed as the client's live primary clinician; ``None`` when there is none.
+
+    The owner is not a stand-in. :func:`app.portal.clinicians.primary_clinician_id`
+    asks one clinician at a time, because a patient cannot read ``patient_clinicians``.
+    """
+    return _clinician_armed(
+        patient, lambda session, schema: primary_clinician_id(session, schema, patient.patient_id)
+    )
+
+
 @contextlib.contextmanager
 def clinician_session(patient: PatientContext) -> Iterator[tuple[Session, str, str]]:
     """:func:`_primary_clinician_armed`, refusing 409 ``NO_CLINICIAN`` when there is none."""
     with _primary_clinician_armed(patient) as armed:
         if armed is None:
             raise _refuse(_NO_CLINICIAN, "NO_CLINICIAN", status.HTTP_409_CONFLICT)
+        yield armed
+
+
+@contextlib.contextmanager
+def booked_clinician_session(
+    patient: PatientContext, appointment_id: str
+) -> Iterator[tuple[Session, str, str]]:
+    """Armed as the clinician whose diary holds the client's appointment, else 404.
+
+    Not the primary: a booking made with the owner before portal booking followed
+    the primary, or with a covering clinician, is still the client's to change.
+    """
+    clinician = PostgresAppointmentRepository(get_db_session()).clinician_for_patient_principal(
+        appointment_id, patient.patient_id
+    )
+    with _clinician_armed(patient, lambda _session, _schema: clinician) as armed:
+        if armed is None:
+            raise _refuse(_NO_SUCH_APPOINTMENT, "NOT_FOUND", status.HTTP_404_NOT_FOUND)
         yield armed
 
 
@@ -264,18 +278,10 @@ def _clinician_engine(session: Session) -> AvailabilityEngine:
 
 
 def _clinician_timezone(session: Session, clinician: str) -> tzinfo:
-    """The clinician's own timezone — the frame their availability rules mean.
+    """The clinician's own timezone, the frame their working hours and dates are in.
 
-    Working hours, blocked days and per-day caps are all expressed in the
-    clinician's local time, and ``get_free_slots`` takes the calendar date in
-    that frame. Defaulting to UTC (which is what omitting ``tz`` does) silently
-    computes a different day for every practice that is not on UTC: a London
-    clinician's Monday 09:00-17:00 is evaluated against a UTC Monday, and in
-    summer the two disagree by an hour at both ends.
-
-    Falls back to UTC on an unresolvable preference rather than failing the
-    request, matching ``routes.scheduling._owner_timezone``. The raw preference
-    string stays out of logs — it is caller-controlled.
+    Falls back to UTC on an unresolvable preference, as ``routes.scheduling``
+    does. The raw preference stays out of logs: it is caller-controlled.
     """
     try:
         raw = PostgresUserRepository(session).get_preferences(clinician).timezone
@@ -290,17 +296,9 @@ def _clinician_timezone(session: Session, clinician: str) -> tzinfo:
 def _require_stepped_up(patient: PatientContext) -> None:
     """Refuse a single-factor principal on a route that changes the diary.
 
-    ``AuthStrength`` is recorded by the resolver and enforced by each route,
-    and this is the first route to need the strong half. Booking creates a real
-    appointment in a clinician's calendar; cancelling destroys one. An invite
-    link that reached the wrong inbox is one factor in a stranger's hands, and
-    "somebody who found a forwarded email filled the therapist's Tuesday" is
-    not a failure mode worth accepting for the convenience of skipping a code.
-
-    Reading is deliberately not gated this way — ``patient_appointments`` lets a
-    single-factor principal see their own times, because failing to show
-    somebody their own appointment is its own harm and the blast radius of a
-    read is one person's schedule. Writing is where the asymmetry bites.
+    An invite link that reached the wrong inbox is one factor in a stranger's
+    hands. Reading is not gated this way: the blast radius of a read is one
+    person's own schedule.
     """
     if patient.auth_strength is not AuthStrength.STEPPED_UP:
         raise _refuse(
@@ -807,7 +805,7 @@ def reschedule_appointment(
     """
     _require_stepped_up(patient)
     now = datetime.now(UTC)
-    with clinician_session(patient) as (session, clinician, practice_id):
+    with booked_clinician_session(patient, appointment_id) as (session, clinician, practice_id):
         policy = load_policy(session)
         _require_self_booking(policy)
 
@@ -931,7 +929,7 @@ def cancel_appointment(
     """
     _require_stepped_up(patient)
     now = datetime.now(UTC)
-    with clinician_session(patient) as (session, clinician, _practice_id):
+    with booked_clinician_session(patient, appointment_id) as (session, clinician, _practice_id):
         policy = load_policy(session)
 
         service = SchedulingService(PostgresAppointmentRepository(session))

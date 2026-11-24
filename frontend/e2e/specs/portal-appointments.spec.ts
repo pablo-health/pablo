@@ -253,7 +253,10 @@ test.describe("portal appointments with two clinicians", () => {
       )
       await openPortalSection(page, "appointments")
       await page.getByTestId("portal-appointments-book").click()
+      // The notice period can leave one opening on the first open day, and the
+      // second client needs another, so book on the whole day after it.
       await walkToAnOpening(page)
+      await walkToAnOpening(page, 1)
       await page.getByTestId("appointments-slot").first().click()
       await page.getByTestId("appointments-confirm-submit").click()
       await expect(page.getByTestId("appointments-confirmation")).toBeVisible()

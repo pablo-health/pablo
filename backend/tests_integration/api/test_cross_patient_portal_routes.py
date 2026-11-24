@@ -41,7 +41,6 @@ Run: ``make test-integration``.
 
 from __future__ import annotations
 
-import contextvars
 import logging
 import os
 import uuid
@@ -52,6 +51,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import text
+
+from tests_integration.api._patient_client import fresh_context_client
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -384,24 +385,6 @@ def _sign_in(client: TestClient, patient_id: str) -> str:
     return str(redeemed.json()["session_token"])
 
 
-def _client_for(app: FastAPI) -> TestClient:
-    """A test client whose every request starts from an empty context.
-
-    The diary seeding arms Avery in the pytest thread, which sets the request
-    ContextVars there, and TestClient hands the calling thread's context to
-    the app. A patient request would then carry a clinician id no production
-    request can.
-    """
-    from fastapi.testclient import TestClient  # noqa: PLC0415
-
-    class _Fresh(TestClient):
-        def request(self, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
-            return contextvars.Context().run(super().request, *args, **kwargs)
-
-    # https: SecurityHeadersMiddleware refuses plain HTTP on PHI routes.
-    return _Fresh(app, base_url="https://testserver", raise_server_exceptions=False)
-
-
 @pytest.fixture(scope="module")
 def _portal_chat_mounted(fastapi_app: FastAPI) -> Iterator[None]:
     """The client-facing chat routes, as a deployment with them switched on serves them.
@@ -431,7 +414,7 @@ def portal(
     engine: Engine, fastapi_app: FastAPI, _portal_settings: None, _portal_chat_mounted: None
 ) -> Iterator[_Portal]:
     pat, quinn, rowan = _seed_practice(engine)
-    client = _client_for(fastapi_app)
+    client = fresh_context_client(fastapi_app)
     tokens = {pid: _sign_in(client, pid) for pid in (pat, quinn, rowan)}
 
     yield _Portal(pat=pat, quinn=quinn, rowan=rowan, tokens=tokens)
@@ -559,7 +542,7 @@ def client(
     fastapi_app.dependency_overrides[get_patient_documents_service_for_patient] = _documents_service
     fastapi_app.dependency_overrides[get_chat_llm_gateway] = lambda: fake_gateway
     try:
-        yield _client_for(fastapi_app)
+        yield fresh_context_client(fastapi_app)
     finally:
         fastapi_app.dependency_overrides.clear()
 

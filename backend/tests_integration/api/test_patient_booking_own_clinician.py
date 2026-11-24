@@ -13,7 +13,6 @@ Requires ``DATABASE_URL`` + ``DATABASE_BACKEND=postgres``.
 
 from __future__ import annotations
 
-import contextvars
 import os
 import uuid
 from datetime import UTC, date, datetime, time, timedelta
@@ -21,15 +20,13 @@ from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 import pytest
-from app.auth.patient_context import AuthStrength, PatientContext, get_patient_context
+from app.auth.patient_context import get_patient_context
 from app.auth.route_access import subscription_exempt
 from app.db import (
     _current_patient_id,
     _current_tenant_schema,
     _current_user_id,
-    arm_current_patient_id,
     arm_current_user_id,
-    get_db_session,
     set_tenant_schema,
 )
 from app.db.platform_models import EmailTenantMappingRow, PlatformUserRow, PracticeRow
@@ -39,16 +36,17 @@ from app.repositories.postgres.availability_rule import PostgresAvailabilityRule
 from app.repositories.postgres.user import PostgresUserRepository
 from app.scheduling_engine.models.availability import AvailabilityRule, EnforcementLevel, RuleType
 from app.scheduling_engine.services.scheduling_policy import update_policy
-from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.orm import Session as OrmSession
 
+from tests_integration.api._patient_client import armed_patient_context, fresh_context_client
 from tests_integration.database.patient_rows import seed_patient_row
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from fastapi import FastAPI
+    from fastapi.testclient import TestClient
     from sqlalchemy.engine import Engine
 
 pytestmark = pytest.mark.skipif(
@@ -211,30 +209,11 @@ def practice(engine: Engine) -> Iterator[dict[str, str]]:
 def as_client(fastapi_app: FastAPI) -> Iterator[Any]:
     """``as_client(patient_id)``: a TestClient whose stepped-up patient principal is that id."""
     current: dict[str, str] = {}
-
-    def _context() -> PatientContext:
-        context = PatientContext(
-            patient_id=current["id"],
-            practice_schema=_SCHEMA,
-            credential_kind="bearer",
-            auth_strength=AuthStrength.STEPPED_UP,
-        )
-        session = get_db_session()
-        set_tenant_schema(session, _SCHEMA)
-        arm_current_patient_id(session, context.patient_id)
-        return context
-
-    class _FreshContextClient(TestClient):
-        """Each request starts from an empty context, as it does under a server."""
-
-        def request(self, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
-            return contextvars.Context().run(super().request, *args, **kwargs)
-
-    fastapi_app.dependency_overrides[get_patient_context] = _context
-    fastapi_app.dependency_overrides[subscription_exempt] = lambda: None
-    client = _FreshContextClient(
-        fastapi_app, base_url="https://testserver", raise_server_exceptions=False
+    fastapi_app.dependency_overrides[get_patient_context] = lambda: armed_patient_context(
+        _SCHEMA, current["id"]
     )
+    fastapi_app.dependency_overrides[subscription_exempt] = lambda: None
+    client = fresh_context_client(fastapi_app)
 
     def make(patient_id: str) -> TestClient:
         current["id"] = patient_id
@@ -336,3 +315,61 @@ def test_a_client_with_no_live_clinician_is_refused_not_given_the_owner(
     assert options.status_code == 200, options.text
     assert options.json()["self_booking"] is False
     assert _diary(engine, _OWNER) == _diary(engine, _COLLEAGUE) == []
+
+
+def _o_covers(engine: Engine, patient_id: str) -> None:
+    """O covers *patient_id*, and every appointment in O's diary becomes theirs."""
+    with _as(engine, _OWNER) as s:
+        s.execute(
+            text(
+                "INSERT INTO patient_clinicians (patient_id, user_id, role, granted_at, granted_by)"
+                " VALUES (CAST(:p AS uuid), CAST(:o AS uuid), 'covering', now(), CAST(:b AS uuid))"
+            ),
+            {"p": patient_id, "o": _OWNER, "b": _COLLEAGUE},
+        )
+        s.execute(
+            text(
+                "UPDATE appointments SET patient_id = CAST(:p AS uuid)"
+                " WHERE user_id = CAST(:o AS uuid)"
+            ),
+            {"p": patient_id, "o": _OWNER},
+        )
+        s.commit()
+
+
+def test_a_booking_in_the_owners_diary_can_still_be_changed_by_a_colleagues_client(
+    engine: Engine, practice: dict[str, str], as_client: Any
+) -> None:
+    _clear_appointments(engine)
+    cancelled_one = _book(as_client(practice["o"]), _TYPES[_OWNER], 10).json()["id"]
+    moved_one = _book(as_client(practice["o"]), _TYPES[_OWNER], 9).json()["id"]
+    _o_covers(engine, practice["b"])
+    client = as_client(practice["b"])
+
+    listed = client.get("/api/patient/appointments").json()["data"]
+    assert {row["id"] for row in listed} == {cancelled_one, moved_one}
+
+    cancelled = client.post(f"/api/patient/booking/{cancelled_one}/cancel", json={})
+    assert cancelled.status_code == 200, cancelled.text
+    assert cancelled.json()["status"] == "cancelled"
+
+    moved = client.post(
+        f"/api/patient/booking/{moved_one}/reschedule", json={"start_at": _at(11).isoformat()}
+    )
+    assert moved.status_code == 200, moved.text
+    assert moved.json()["id"] in _diary(engine, _OWNER)
+    assert _diary(engine, _COLLEAGUE) == []
+
+
+def test_another_clients_appointment_is_not_found(
+    engine: Engine, practice: dict[str, str], as_client: Any
+) -> None:
+    _clear_appointments(engine)
+    theirs = _book(as_client(practice["b2"]), _TYPES[_COLLEAGUE], 14).json()["id"]
+
+    client = as_client(practice["b"])
+    for path in (f"{theirs}/cancel", f"{theirs}/reschedule"):
+        body = {"start_at": _at(15).isoformat()} if path.endswith("reschedule") else {}
+        response = client.post(f"/api/patient/booking/{path}", json=body)
+        assert response.status_code == 404, response.text
+    assert _diary(engine, _COLLEAGUE) == [theirs]

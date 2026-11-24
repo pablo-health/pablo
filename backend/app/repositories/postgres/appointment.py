@@ -230,6 +230,15 @@ class PostgresAppointmentRepository(AppointmentRepository):
         )
         return [_row_to_appointment(r) for r in rows]
 
+    def clinician_for_patient_principal(self, appointment_id: str, patient_id: str) -> str | None:
+        """Whose diary holds the patient's own appointment, read as the patient; else ``None``."""
+        user_id = self._session.execute(
+            select(AppointmentRow.user_id).where(
+                AppointmentRow.id == appointment_id, AppointmentRow.patient_id == patient_id
+            )
+        ).scalar_one_or_none()
+        return None if user_id is None else str(user_id)
+
     def list_for_patient_principal(self, patient_id: str) -> list[PatientAppointmentResponse]:
         """A patient's own appointments, read as the patient.
 
