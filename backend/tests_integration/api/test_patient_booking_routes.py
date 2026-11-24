@@ -13,7 +13,7 @@ offers AND that nothing about that patient, that appointment, or its owner
 appears anywhere in the response body.
 
 **A booking cannot land on a taken slot.** The conflict check runs on the
-owner-armed session; on the patient's own session it would see only the
+clinician-armed session; on the patient's own session it would see only the
 caller's rows and every hour another patient holds would look free. The test
 books directly on top of another patient's appointment and requires a refusal.
 
@@ -937,7 +937,7 @@ def test_a_booking_is_audited_as_the_patient(
 # --- reschedule and cancel -------------------------------------------------
 #
 # The route these exercise is keyed on the CLINICIAN's user id, because that is
-# what SchedulingService takes and the owner-armed session satisfies it for
+# what SchedulingService takes and the clinician-armed session satisfies it for
 # every appointment in the practice. Ownership is therefore checked in the
 # route and nowhere else, which makes the cross-patient tests below the load-
 # bearing ones rather than a formality.
@@ -1788,7 +1788,7 @@ def test_the_options_document_names_no_appointment_of_anybody(
     """It is about the practice, so it must carry nothing about a person.
 
     Seeded with the other patient's appointment on the day, because the route
-    opens an owner-armed session — the same session that can see the whole
+    opens a clinician-armed session — the same session that can see the whole
     diary — and a document that leaked from it would leak from there.
     """
     _open_policy(engine)
@@ -2220,7 +2220,7 @@ def test_a_move_sends_the_client_the_new_time_with_the_standing_room(
 ) -> None:
     """A pasted room has no vendor handle, so it follows the move, and the client hears once.
 
-    The send runs over the owner-armed session after the move commits; the
+    The send runs over the clinician-armed session after the move commits; the
     practice is found from the patient's own schema.
     """
     from app.main import app  # noqa: PLC0415

@@ -13,10 +13,11 @@ avoid:
 * The **patient-armed** session — the one ``get_patient_context`` set up —
   reads the patient's own rows and writes their audit entries. It sees only
   this patient.
-* A separate **owner-armed** session does everything that must see the WHOLE
-  diary: computing free slots, and the conflict check inside a booking. A slot
-  is free precisely because nobody else holds it, so that computation has to
-  read every appointment in the practice.
+* A separate **clinician-armed** session, armed as the client's own primary
+  clinician, does everything that must see that clinician's WHOLE diary:
+  computing free slots, and the conflict check inside a booking. A slot is
+  free precisely because nobody else holds it, so that computation has to
+  read every appointment the clinician has, whoever the client.
 
 Arming both GUCs on one session would be the shortcut, and it is the bug. Under
 the patient GUC alone the conflict check sees only the caller's own
@@ -24,14 +25,14 @@ appointments — so every hour another patient holds looks free, the engine
 offers it, and two people are booked into the same slot. The review of the
 patient principal found six defects of exactly that one class.
 
-**Nothing the owner-armed session reads reaches the response.** It exists to
+**Nothing the clinician-armed session reads reaches the response.** It exists to
 answer "is this time taken", and the answer that travels is a time, never the
 appointment that made it unavailable. :class:`PatientSlotResponse` carries
 three fields for that reason.
 
 **Every change reaches the clinician's calendar.** A booking the practice
 takes outright, a move and a cancellation each go to the clinician's connected
-Google Calendar the same way an in-app change does, over the owner-armed
+Google Calendar the same way an in-app change does, over the clinician-armed
 session, after the change has committed. A pending request is not pushed here:
 it goes when the clinician confirms it in-app. The push is best-effort, so a
 calendar that fails never fails the client's change (:func:`_push_to_calendar`).
@@ -53,6 +54,7 @@ from typing import TYPE_CHECKING, Annotated
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import select
 
 from ..auth.patient_context import AuthStrength, PatientContext, get_patient_context
 from ..auth.route_access import subscription_exempt
@@ -74,6 +76,7 @@ from ..models.scheduling import (
     PatientSlotListResponse,
     PatientSlotResponse,
 )
+from ..portal.clinicians import primary_clinician_id
 from ..repositories.postgres.appointment import PostgresAppointmentRepository
 from ..repositories.postgres.appointment_type import PostgresAppointmentTypeRepository
 from ..repositories.postgres.audit import PostgresAuditRepository
@@ -186,11 +189,15 @@ def _slot_instant(iso: str) -> datetime:
 
 
 @contextlib.contextmanager
-def owner_session(patient: PatientContext) -> Iterator[tuple[Session, str, str]]:
-    """A second session, armed as the clinician whose diary is in question.
+def _primary_clinician_armed(
+    patient: PatientContext,
+) -> Iterator[tuple[Session, str, str] | None]:
+    """A second session, armed as the client's own primary clinician.
 
     Separate from the request's patient-armed session on purpose — see the
-    module docstring. Yields ``(session, clinician_user_id, practice_id)``.
+    module docstring. Yields ``(session, clinician_user_id, practice_id)``, or
+    ``None`` when the client has no live primary clinician: a booking with
+    nobody to make it with is not a booking, and the owner is not a stand-in.
 
     The request's own connection is released first. These routes do all their
     work on this session, and it stays open across the calendar push and the
@@ -198,18 +205,11 @@ def owner_session(patient: PatientContext) -> Iterator[tuple[Session, str, str]]
     request still held a connection, it would come from the small pool kept
     for short lookups (``app.db.get_nested_engine``), and two bookings at once
     could each hold one of those connections while waiting for another.
-    Released first, it comes from the main pool, like any unit of work. The
-    practice id is yielded so nothing inside has to look it up again.
+    Released first, it comes from the main pool, like any unit of work.
 
-    The clinician is the practice's owner. For the single-clinician practice
-    this serves, that is exactly right, and it is the only answer available
-    without widening what a patient may read: ``patient_clinicians`` is gated
-    on the clinician's own GUC, so a patient cannot be asked who their
-    clinician is. Booking with a chosen clinician in a multi-clinician practice
-    needs that seam opened deliberately and is not this route's to assume.
-
-    ``platform.practices`` carries no row policies, which is what makes it a
-    non-circular place to find a principal.
+    The clinician is found one clinician at a time through
+    :func:`app.portal.clinicians.primary_clinician_id`, because a patient
+    cannot read ``patient_clinicians``; nothing stays armed after that read.
     """
     from ..db.platform_models import PracticeRow
 
@@ -220,24 +220,32 @@ def owner_session(patient: PatientContext) -> Iterator[tuple[Session, str, str]]
     with request_principal_restored():
         session = create_standalone_session()
         try:
-            practice = (
-                session.query(PracticeRow)
-                .filter(PracticeRow.schema_name == patient.practice_schema)
-                .one_or_none()
-            )
-            owner = practice.owner_user_id if practice is not None else None
-            if practice is None or not owner:
-                raise _refuse(_NO_CLINICIAN, "NO_CLINICIAN", status.HTTP_409_CONFLICT)
-
-            set_tenant_schema(session, patient.practice_schema)
-            arm_current_user_id(session, owner)
-            yield session, owner, practice.id
+            schema = patient.practice_schema
+            set_tenant_schema(session, schema)
+            clinician = primary_clinician_id(session, schema, patient.patient_id)
+            if clinician is None:
+                yield None
+                return
+            practice_id = session.execute(
+                select(PracticeRow.id).where(PracticeRow.schema_name == schema)
+            ).scalar_one()
+            arm_current_user_id(session, clinician)
+            yield session, clinician, practice_id
         finally:
             session.close()
 
 
-def _owner_engine(session: Session) -> AvailabilityEngine:
-    """The availability engine over the owner-armed session, busy time included.
+@contextlib.contextmanager
+def clinician_session(patient: PatientContext) -> Iterator[tuple[Session, str, str]]:
+    """:func:`_primary_clinician_armed`, refusing 409 ``NO_CLINICIAN`` when there is none."""
+    with _primary_clinician_armed(patient) as armed:
+        if armed is None:
+            raise _refuse(_NO_CLINICIAN, "NO_CLINICIAN", status.HTTP_409_CONFLICT)
+        yield armed
+
+
+def _clinician_engine(session: Session) -> AvailabilityEngine:
+    """The availability engine over the clinician-armed session, busy time included.
 
     Busy time on the clinician's calendar, and sessions there nobody has
     sorted yet, are left out of what a patient is offered — and, through the
@@ -255,7 +263,7 @@ def _owner_engine(session: Session) -> AvailabilityEngine:
     return AvailabilityEngine(PostgresAvailabilityRuleRepository(session), appointments, busy)
 
 
-def _owner_timezone(session: Session, owner: str) -> tzinfo:
+def _clinician_timezone(session: Session, clinician: str) -> tzinfo:
     """The clinician's own timezone — the frame their availability rules mean.
 
     Working hours, blocked days and per-day caps are all expressed in the
@@ -270,10 +278,12 @@ def _owner_timezone(session: Session, owner: str) -> tzinfo:
     string stays out of logs — it is caller-controlled.
     """
     try:
-        raw = PostgresUserRepository(session).get_preferences(owner).timezone
+        raw = PostgresUserRepository(session).get_preferences(clinician).timezone
         return ZoneInfo(raw)
     except (ZoneInfoNotFoundError, ValueError, AttributeError):
-        logger.warning("patient booking: unresolvable timezone for owner %s, using UTC", owner)
+        logger.warning(
+            "patient booking: unresolvable timezone for clinician %s, using UTC", clinician
+        )
         return UTC
 
 
@@ -312,7 +322,7 @@ def _require_self_booking(policy: Row) -> None:
         raise _refuse(_SELF_BOOKING_OFF, "SELF_BOOKING_DISABLED", status.HTTP_403_FORBIDDEN)
 
 
-def _bookable_type(session: Session, owner: str, session_type: str) -> AppointmentType:
+def _bookable_type(session: Session, clinician: str, session_type: str) -> AppointmentType:
     """The named appointment type, if the practice marked it self-bookable.
 
     An allow-list, not a deny-list. A type nobody opted in is not bookable, so
@@ -321,21 +331,21 @@ def _bookable_type(session: Session, owner: str, session_type: str) -> Appointme
     appointment type patient-bookable the moment the switch flips, including
     ones that exist for internal bookkeeping.
     """
-    for candidate in PostgresAppointmentTypeRepository(session).list_by_user(owner):
+    for candidate in PostgresAppointmentTypeRepository(session).list_by_user(clinician):
         if candidate.name == session_type and candidate.self_bookable:
             return candidate
     raise _refuse(_TYPE_NOT_BOOKABLE, "TYPE_NOT_BOOKABLE", status.HTTP_403_FORBIDDEN)
 
 
 def _own_appointment(
-    service: SchedulingService, owner: str, patient: PatientContext, appointment_id: str
+    service: SchedulingService, clinician: str, patient: PatientContext, appointment_id: str
 ) -> Appointment:
     """One appointment, only if it belongs to the calling patient.
 
     This is the load-bearing check on both change routes, and the reason they
     cannot simply hand the path id to the service. ``get_appointment`` and
     ``cancel_appointment`` are keyed on the CLINICIAN's user id, which on the
-    owner-armed session is satisfied by every appointment in the practice. Pass
+    clinician-armed session is satisfied by every appointment in the diary. Pass
     the id through unchecked and a patient can cancel or move a stranger's
     Tuesday by guessing a uuid — the same "two principals on one transaction"
     shape the slot computation has, arriving through the write path instead.
@@ -346,7 +356,7 @@ def _own_appointment(
     attacker than the row itself.
     """
     try:
-        appointment = service.get_appointment(appointment_id, owner)
+        appointment = service.get_appointment(appointment_id, clinician)
     except AppointmentNotFoundError as exc:
         raise _refuse(_NO_SUCH_APPOINTMENT, "NOT_FOUND", status.HTTP_404_NOT_FOUND) from exc
     if str(appointment.patient_id) != str(patient.patient_id):
@@ -431,7 +441,7 @@ def _require_inside_window(policy: Row, start_at: datetime, *, now: datetime) ->
 
 def _require_offered_slot(
     engine: AvailabilityEngine,
-    owner: str,
+    clinician: str,
     start_at: datetime,
     duration_minutes: int,
     *,
@@ -462,7 +472,7 @@ def _require_offered_slot(
     """
     date_str = start_at.astimezone(tz).date().isoformat()
     free = engine.get_free_slots(
-        owner, date_str, duration_minutes, tz=tz, appointment_type_id=appointment_type_id
+        clinician, date_str, duration_minutes, tz=tz, appointment_type_id=appointment_type_id
     )
     if not any(_slot_instant(slot.start) == start_at for slot in free.slots):
         raise _refuse(_SLOT_TAKEN, "SLOT_TAKEN", status.HTTP_409_CONFLICT)
@@ -481,30 +491,20 @@ def _to_patient_view(appointment: Appointment) -> PatientAppointmentResponse:
     return PatientAppointmentResponse.from_appointment(appointment)
 
 
-def _practice_directory(schema: str) -> tuple[str | None, str | None]:
-    """The owning clinician and published phone number of the practice in *schema*.
-
-    The same platform row :func:`owner_session` resolves a principal from, read
-    for the two facts the options document needs before it knows whether a
-    tenant session is worth opening. ``(None, None)`` when nothing lives in
-    that schema, which for a principal off a live session means the practice
-    was removed underneath them.
+def _practice_phone(schema: str) -> str | None:
+    """The published phone number of the practice in *schema*, if it has one.
 
     ``platform.practices`` carries no row policies, so this is reachable
-    without arming anything — the same property that makes it a non-circular
-    place to find a principal.
+    without arming anything.
     """
     from ..db.platform_models import PracticeRow
 
     release_db_connection()
     session = create_standalone_session()
     try:
-        practice = (
-            session.query(PracticeRow).filter(PracticeRow.schema_name == schema).one_or_none()
-        )
-        if practice is None:
-            return None, None
-        return practice.owner_user_id, practice.phone
+        return session.execute(
+            select(PracticeRow.phone).where(PracticeRow.schema_name == schema)
+        ).scalar_one_or_none()
     finally:
         session.close()
 
@@ -525,7 +525,7 @@ def get_booking_options(
 
     **Single factor is enough, for the same reason
     ``/api/patient/capabilities`` is.** Nothing here is about the caller: two
-    patients of the same practice get the identical document. It names no
+    clients of the same clinician get the identical document. It names no
     appointment, carries no id and counts nothing, so there is no per-patient
     fact for a second factor to protect. The routes that change the diary keep
     their own step-up bar, and this document does not soften it.
@@ -542,15 +542,24 @@ def get_booking_options(
     record, and logging a read of them would put a row on a chart for
     something that disclosed nothing about the person.
     """
-    owner, phone = _practice_directory(patient.practice_schema)
+    phone = _practice_phone(patient.practice_schema)
 
-    if owner:
-        with owner_session(patient) as (session, clinician, _practice_id):
+    with _primary_clinician_armed(patient) as armed:
+        if armed is None:
+            # Nobody to book with. The acting routes refuse with NO_CLINICIAN,
+            # but this one exists so the portal can render, and "this practice
+            # does not take bookings online" is a true and complete answer.
+            policy = deepcopy(POLICY_DEFAULTS)
+            self_booking = False
+            timezone = str(UTC)
+            types = []
+        else:
+            session, clinician, _practice_id = armed
             policy = load_policy(session)
             self_booking = may_self_book(policy, is_new_patient=False)
             # The same frame ``list_bookable_slots`` computes openings in, so a
             # patient reads back the time the slot was offered for.
-            timezone = str(_owner_timezone(session, clinician))
+            timezone = str(_clinician_timezone(session, clinician))
             types = [
                 PatientBookableTypeResponse(
                     name=candidate.name, duration_minutes=candidate.duration_minutes
@@ -558,17 +567,6 @@ def get_booking_options(
                 for candidate in PostgresAppointmentTypeRepository(session).list_by_user(clinician)
                 if candidate.self_bookable
             ]
-    else:
-        # No clinician owns this practice, so there is nothing to book against.
-        # A refusal would be defensible on the acting routes — they say so with
-        # NO_CLINICIAN — but this one exists so the portal can render, and
-        # "this practice does not take bookings online" is a true and complete
-        # answer. The strict defaults describe the windows, which is what an
-        # unconfigured practice's policy would have said anyway.
-        policy = deepcopy(POLICY_DEFAULTS)
-        self_booking = False
-        timezone = str(UTC)
-        types = []
 
     return PatientBookingOptionsResponse(
         self_booking=self_booking,
@@ -596,7 +594,7 @@ def list_bookable_slots(
 ) -> PatientSlotListResponse:
     """Openings a patient could book on one date.
 
-    Computed on the owner-armed session, because a slot is only free relative
+    Computed on the clinician-armed session, because a slot is only free relative
     to the whole diary, then narrowed to the practice's notice and horizon
     windows. Offering a slot the booking endpoint would refuse is worse than
     not offering it, so the same window is applied in both places.
@@ -606,16 +604,18 @@ def list_bookable_slots(
     nothing to book, and saying which would leak whether the practice has
     finished setting itself up.
     """
-    with owner_session(patient) as (session, owner, _practice_id):
+    with clinician_session(patient) as (session, clinician, _practice_id):
         policy = load_policy(session)
         _require_self_booking(policy)
 
-        engine = _owner_engine(session)
-        tz = _owner_timezone(session, owner)
+        engine = _clinician_engine(session)
+        tz = _clinician_timezone(session, clinician)
         # No type is named: this surface offers a duration, not a type, and
         # the patient picks one when they book. Practice-wide rules only,
         # which is what this endpoint has always listed against.
-        free = engine.get_free_slots(owner, date, duration_minutes, tz=tz, appointment_type_id=None)
+        free = engine.get_free_slots(
+            clinician, date, duration_minutes, tz=tz, appointment_type_id=None
+        )
 
         earliest, latest = _window(policy, now=datetime.now(UTC))
         offered = [
@@ -658,7 +658,7 @@ def book_appointment(
     has no field for it, so there is no id to smuggle and no comparison for
     anyone to forget.
 
-    The conflict check runs on the owner-armed session inside the same
+    The conflict check runs on the clinician-armed session inside the same
     transaction as the insert. On the patient's session it would see only the
     caller's own appointments, so every hour another patient holds would look
     free and the booking would land on top of it.
@@ -668,10 +668,10 @@ def book_appointment(
     a request rather than a commitment; ``auto`` books it outright.
     """
     _require_stepped_up(patient)
-    with owner_session(patient) as (session, owner, practice_id):
+    with clinician_session(patient) as (session, clinician, practice_id):
         policy = load_policy(session)
         _require_self_booking(policy)
-        appointment_type = _bookable_type(session, owner, payload.session_type)
+        appointment_type = _bookable_type(session, clinician, payload.session_type)
 
         start_at = _as_utc(payload.start_at)
         _require_inside_window(policy, start_at, now=datetime.now(UTC))
@@ -703,8 +703,8 @@ def book_appointment(
                 datetime.now(UTC) + timedelta(hours=hold_hours), start_at
             )
 
-        tz = _owner_timezone(session, owner)
-        engine = _owner_engine(session)
+        tz = _clinician_timezone(session, clinician)
+        engine = _clinician_engine(session)
 
         # The client is never trusted about availability. Two independent
         # guards, because they fail differently:
@@ -728,13 +728,13 @@ def book_appointment(
         # model, guard 2 is the only thing between a patient's arbitrary instant
         # and the diary.
         _require_offered_slot(
-            engine, owner, start_at, duration, tz=tz, appointment_type_id=appointment_type.id
+            engine, clinician, start_at, duration, tz=tz, appointment_type_id=appointment_type.id
         )
 
         try:
             created = SchedulingService(
                 PostgresAppointmentRepository(session), engine
-            ).create_appointment(owner, data=data, tz=tz)
+            ).create_appointment(clinician, data=data, tz=tz)
         except AppointmentConflictError as exc:
             # Somebody took it between the slot listing and this request, or the
             # caller never looked. Either way the answer is the same, and it
@@ -753,8 +753,8 @@ def book_appointment(
         # Only a booking the practice has taken. A request is pushed when the
         # clinician confirms it in-app, by that route's own push.
         if created.status == AppointmentStatus.CONFIRMED:
-            created = _push_to_calendar(session, owner, created)
-            created = _send_video_link(session, owner, practice_id, created, notifier)
+            created = _push_to_calendar(session, clinician, created)
+            created = _send_video_link(session, clinician, practice_id, created, notifier)
 
     audit.log_patient_principal_action(
         action=AuditAction.APPOINTMENT_CREATED,
@@ -807,15 +807,15 @@ def reschedule_appointment(
     """
     _require_stepped_up(patient)
     now = datetime.now(UTC)
-    with owner_session(patient) as (session, owner, practice_id):
+    with clinician_session(patient) as (session, clinician, practice_id):
         policy = load_policy(session)
         _require_self_booking(policy)
 
-        tz = _owner_timezone(session, owner)
-        engine = _owner_engine(session)
+        tz = _clinician_timezone(session, clinician)
+        engine = _clinician_engine(session)
         service = SchedulingService(PostgresAppointmentRepository(session), engine)
 
-        appointment = _own_appointment(service, owner, patient, appointment_id)
+        appointment = _own_appointment(service, clinician, patient, appointment_id)
         _require_changeable(appointment)
         late = _late_change(
             appointment,
@@ -846,7 +846,7 @@ def reschedule_appointment(
         # worked around here.
         _require_offered_slot(
             engine,
-            owner,
+            clinician,
             start_at,
             duration,
             tz=tz,
@@ -856,7 +856,7 @@ def reschedule_appointment(
         try:
             moved = service.reschedule_appointment(
                 appointment_id,
-                owner,
+                clinician,
                 start_at=start_at,
                 tz=tz,
                 record=ChangeRecord(
@@ -879,10 +879,10 @@ def reschedule_appointment(
         # time's event comes off and the new time goes on. The replacement
         # carries no event id of its own (the engine leaves the old one
         # behind on purpose), so the push creates its event fresh.
-        _remove_from_calendar(session, owner, appointment)
+        _remove_from_calendar(session, clinician, appointment)
         if moved.status == AppointmentStatus.CONFIRMED:
-            moved = _push_to_calendar(session, owner, moved)
-            moved = _send_video_link(session, owner, practice_id, moved, notifier)
+            moved = _push_to_calendar(session, clinician, moved)
+            moved = _send_video_link(session, clinician, practice_id, moved, notifier)
 
     audit.log_patient_principal_action(
         action=AuditAction.APPOINTMENT_UPDATED,
@@ -931,11 +931,11 @@ def cancel_appointment(
     """
     _require_stepped_up(patient)
     now = datetime.now(UTC)
-    with owner_session(patient) as (session, owner, _practice_id):
+    with clinician_session(patient) as (session, clinician, _practice_id):
         policy = load_policy(session)
 
         service = SchedulingService(PostgresAppointmentRepository(session))
-        appointment = _own_appointment(service, owner, patient, appointment_id)
+        appointment = _own_appointment(service, clinician, patient, appointment_id)
         _require_changeable(appointment)
 
         late = _late_change(
@@ -946,7 +946,7 @@ def cancel_appointment(
         )
         cancelled = service.cancel_appointment(
             appointment_id,
-            owner,
+            clinician,
             record=ChangeRecord(
                 by=CancellationActor.PATIENT,
                 by_id=patient.patient_id,
@@ -959,7 +959,7 @@ def cancel_appointment(
             _record_open_slot(session, opened)
         session.commit()
 
-        _remove_from_calendar(session, owner, cancelled)
+        _remove_from_calendar(session, clinician, cancelled)
 
     audit.log_patient_principal_action(
         action=AuditAction.APPOINTMENT_CANCELLED,
@@ -973,11 +973,11 @@ def cancel_appointment(
     return _to_patient_view(cancelled)
 
 
-def _owner_calendar(session: Session) -> tuple[SchedulingService, GoogleCalendarService]:
-    """The scheduling and calendar services the push needs, over the owner session.
+def _clinician_calendar(session: Session) -> tuple[SchedulingService, GoogleCalendarService]:
+    """The scheduling and calendar services the push needs, over the clinician session.
 
     Built the way the in-app routes build theirs (patients included, so the
-    event reads the way the clinician chose), but over the owner-armed session:
+    event reads the way the clinician chose), but over the clinician-armed session:
     the request session is armed as the patient and cannot see the clinician's
     calendar connection at all.
     """
@@ -991,12 +991,12 @@ def _owner_calendar(session: Session) -> tuple[SchedulingService, GoogleCalendar
     return SchedulingService(appointments), calendar
 
 
-def _push_to_calendar(session: Session, owner: str, appointment: Appointment) -> Appointment:
+def _push_to_calendar(session: Session, clinician: str, appointment: Appointment) -> Appointment:
     """Put a committed appointment on the clinician's calendar. Never raises.
 
     The in-app push already swallows a Google failure and marks the row
     ``google_sync_status='error'``. This also catches anything around it (the
-    owner lookup, the write of the event id) because the client's booking has
+    clinician lookup, the write of the event id) because the client's booking has
     already committed by now, and a 5xx would tell them it had not. Returns
     the row as the push left it, or as it was if the push never got that far.
 
@@ -1008,11 +1008,13 @@ def _push_to_calendar(session: Session, owner: str, appointment: Appointment) ->
     trail = LinkTrail()
     synced = appointment
     try:
-        user = PostgresUserRepository(session).get(owner)
+        user = PostgresUserRepository(session).get(clinician)
         if user is None:
-            logger.warning("patient booking: no user row for owner %s, calendar not updated", owner)
+            logger.warning(
+                "patient booking: no user row for clinician %s, calendar not updated", clinician
+            )
         else:
-            service, calendar = _owner_calendar(session)
+            service, calendar = _clinician_calendar(session)
             synced = _sync_appointment_to_google(service, calendar, user, appointment, trail=trail)
             session.commit()
     except Exception:
@@ -1025,19 +1027,19 @@ def _push_to_calendar(session: Session, owner: str, appointment: Appointment) ->
 
 def _send_video_link(
     session: Session,
-    owner: str,
+    clinician: str,
     practice_id: str,
     appointment: Appointment,
     notifier: ClientVideoLinkNotifier,
 ) -> Appointment:
     """Send the client the link to a committed video appointment. Never raises.
 
-    Over the owner-armed session, like the calendar push, and committed on its
+    Over the clinician-armed session, like the calendar push, and committed on its
     own for the same reason: the booking has already committed, and a failed
     send must not read to the client as a failed booking. Nothing goes out for
     an appointment without a link (see :mod:`app.services.client_video_link_notice`).
 
-    The owner session's connection is released before the send. The notifier
+    The clinician session's connection is released before the send. The notifier
     reads the practice's facts on a session of its own, and that lookup should
     not run while this one holds a connection.
     """
@@ -1050,7 +1052,7 @@ def _send_video_link(
             appointment,
             practice_id=practice_id,
             patients=PostgresPatientRepository(session),
-            zone=lambda: _owner_timezone(session, owner),
+            zone=lambda: _clinician_timezone(session, clinician),
         )
         session.commit()
     except Exception:
@@ -1062,7 +1064,7 @@ def _send_video_link(
     return sent
 
 
-def _remove_from_calendar(session: Session, owner: str, appointment: Appointment) -> None:
+def _remove_from_calendar(session: Session, clinician: str, appointment: Appointment) -> None:
     """Take a cancelled or moved appointment's event off the clinician's calendar.
 
     Best-effort for the same reason as :func:`_push_to_calendar`. A row that
@@ -1071,11 +1073,13 @@ def _remove_from_calendar(session: Session, owner: str, appointment: Appointment
     if not appointment.google_event_id:
         return
     try:
-        user = PostgresUserRepository(session).get(owner)
+        user = PostgresUserRepository(session).get(clinician)
         if user is None:
-            logger.warning("patient booking: no user row for owner %s, calendar not updated", owner)
+            logger.warning(
+                "patient booking: no user row for clinician %s, calendar not updated", clinician
+            )
             return
-        _, calendar = _owner_calendar(session)
+        _, calendar = _clinician_calendar(session)
         _push_cancellation_to_google(calendar, user, appointment)
     except Exception:
         logger.exception(
@@ -1086,7 +1090,7 @@ def _remove_from_calendar(session: Session, owner: str, appointment: Appointment
 def _record_open_slot(session: Session, slot: OpenSlot) -> None:
     """Note in the clinician's trail that this cancellation opened a slot.
 
-    Written on the owner-armed session, inside the cancellation's own
+    Written on the clinician-armed session, inside the cancellation's own
     transaction, so the row exists exactly when the cancellation does. It is
     scoped to the clinician — the slot is in their diary — and written as the
     system, because nobody chose to raise the event. Ids only: the type and

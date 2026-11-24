@@ -216,6 +216,16 @@ FRESH_COVERAGE = SeededPractice(
     name="Fresh Practice Coverage",
     colleagues=("e2e-fresh-coverage-colleague@example.com",),
 )
+# A practice with two clinicians, for the spec about portal self-booking: a
+# client of the colleague books into the colleague's diary, not the owner's.
+# Its own, because it needs a clinician who is not the practice's owner.
+FRESH_SELF_BOOKING = SeededPractice(
+    id="e2e-fresh-self-booking",
+    schema="practice_e2e_fresh_self_booking",
+    email="e2e-fresh-self-booking@example.com",
+    name="Fresh Practice Self Booking",
+    colleagues=("e2e-fresh-self-booking-colleague@example.com",),
+)
 # Three practices for the membership specs (frontend/e2e/specs/membership.spec.ts):
 # an account is granted into one, re-granted to another, and moved between
 # them, and the third is deactivated and brought back. Their own, because a
@@ -253,6 +263,7 @@ SEEDED = (
     FRESH_RETENTION,
     FRESH_ADMINS,
     FRESH_COVERAGE,
+    FRESH_SELF_BOOKING,
     FRESH_MEMBERSHIP_ONE,
     FRESH_MEMBERSHIP_TWO,
     FRESH_MEMBERSHIP_GONE,

@@ -21,8 +21,15 @@
 
 import type { Locator, Page } from "@playwright/test"
 import { expect, test } from "../fixtures/auth"
-import { givePortalInvitation, openPortalSection, signInToPortal } from "../fixtures/portal"
+import { signInAs, signInToFreshPractice } from "../fixtures/freshPractice"
 import {
+  givePortalInvitation,
+  givePortalSession,
+  openPortalSection,
+  signInToPortal,
+} from "../fixtures/portal"
+import {
+  diaryFor,
   diaryOnceItHolds,
   givePortalPatient,
   giveSelfBookableType,
@@ -30,6 +37,7 @@ import {
   letExistingClientsSelfBook,
   walkToAnOpening,
 } from "../fixtures/portal-appointments"
+import { BACKEND_URL } from "../fixtures/stack"
 
 /**
  * The upcoming list, and the list of what is over.
@@ -52,14 +60,11 @@ test.describe("portal appointments", () => {
    * This one also proves something none of its assertions mention: that the
    * practice knows which account owns it.
    *
-   * `owner_session` in `backend/app/routes/patient_booking.py` resolves the
-   * clinician whose diary is in question from
-   * `platform.practices.owner_user_id`, so every route walked below refuses
-   * with `NO_CLINICIAN` until that column is filled. Nothing filled it when
-   * this spec was first written, and the integration suite did not notice
-   * because its fixture set the column by hand. The clinician here signs in
-   * through the product's own login, into a practice registered before they
-   * existed — which is precisely the path that has to record it.
+   * `clinician_session` in `backend/app/routes/patient_booking.py` books with
+   * the client's own clinician, found among the practice's members, and the
+   * owner recorded in `platform.practices.owner_user_id` is one of them. The
+   * clinician here signs in through the product's own login, into a practice
+   * registered before they existed — the path that has to record it.
    */
   // The hours a test opened, taken away again whether or not it passed: they
   // live on the worker's clinician and would otherwise fence in later specs.
@@ -211,5 +216,86 @@ test.describe("portal appointments", () => {
     await expect(page.getByTestId("portal-appointments-book")).toBeHidden()
     await expect(page.getByTestId("appointments-row-reschedule")).toBeHidden()
     await expect(page.getByTestId("appointments-row-cancel")).toBeHidden()
+  })
+})
+
+/**
+ * In a practice of two, a client books with their own clinician. Its own
+ * practice (fixtures/freshPractice.ts, "self-booking"), seeded with a
+ * colleague who is not the owner. Only the colleague opens hours, so any
+ * opening the portal offers is the colleague's.
+ */
+test.describe("portal appointments with two clinicians", () => {
+  const COLLEAGUE = {
+    email: "e2e-fresh-self-booking-colleague@example.com",
+    password: "E2e-fresh-self-booking-colleague-password-long-enough",
+  }
+
+  test("a colleague's client books into the colleague's diary, and a second client cannot take that time", async ({
+    browser,
+    page,
+    request,
+  }) => {
+    const owner = await signInToFreshPractice(browser, "self-booking")
+    const colleague = await signInAs(browser, COLLEAGUE.email, COLLEAGUE.password)
+    const hours = await giveWorkingHoursAllWeek(colleague.api)
+    try {
+      await owner.api.put("/api/portal/settings", { enabled: true })
+      await letExistingClientsSelfBook(owner.api)
+      const kind = `Colleague session ${Date.now().toString(36)}`
+      await giveSelfBookableType(colleague.api, kind)
+
+      // --- the colleague's client books in the portal ------------------------
+      const first = await givePortalPatient(colleague.api)
+      await signInToPortal(
+        page,
+        await givePortalInvitation(colleague.api, first.patient.id, first.email, first.phone),
+      )
+      await openPortalSection(page, "appointments")
+      await page.getByTestId("portal-appointments-book").click()
+      await walkToAnOpening(page)
+      await page.getByTestId("appointments-slot").first().click()
+      await page.getByTestId("appointments-confirm-submit").click()
+      await expect(page.getByTestId("appointments-confirmation")).toBeVisible()
+
+      // On the colleague's diary, and not on the owner's.
+      const [booked] = await diaryOnceItHolds(colleague.api, first.patient.id, 1)
+      expect(await diaryFor(owner.api, first.patient.id)).toEqual([])
+
+      // --- another of the colleague's clients, the same time -----------------
+      const second = await givePortalPatient(colleague.api)
+      const token = await givePortalSession(
+        colleague.api,
+        request,
+        second.patient.id,
+        second.email,
+        second.phone,
+      )
+      const headers = { Authorization: `Bearer ${token}` }
+      const options = await request.get(`${BACKEND_URL}/api/patient/booking/options`, { headers })
+      const { practice_timezone: zone } = (await options.json()) as { practice_timezone: string }
+      const day = new Intl.DateTimeFormat("en-CA", { timeZone: zone }).format(new Date(booked.start_at))
+
+      const slots = await request.get(`${BACKEND_URL}/api/patient/booking/slots?date=${day}`, {
+        headers,
+      })
+      expect(slots.status(), await slots.text()).toBe(200)
+      const offered = ((await slots.json()) as { data: { start_at: string }[] }).data.map((slot) =>
+        new Date(slot.start_at).getTime(),
+      )
+      expect(offered.length, "the colleague has other openings that day").toBeGreaterThan(0)
+      expect(offered).not.toContain(new Date(booked.start_at).getTime())
+
+      const taken = await request.post(`${BACKEND_URL}/api/patient/booking`, {
+        headers,
+        data: { session_type: kind, start_at: booked.start_at },
+      })
+      expect(taken.status(), await taken.text()).toBe(409)
+      expect(await taken.text()).toContain("SLOT_TAKEN")
+    } finally {
+      await hours.cleanup()
+      await owner.context.close()
+      await colleague.context.close()
+    }
   })
 })

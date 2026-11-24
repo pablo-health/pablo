@@ -1346,7 +1346,7 @@ _nested_pool_sessions: ContextVar[tuple[Session, ...]] = ContextVar(
 # nested-pool session in their context still holds a connection, each with the
 # reason it is safe. Keep this short: the usual fix is to close the nested
 # session first, or to ``release_db_connection()`` before opening it so it
-# comes from the main pool (as ``app.db.practice_owner.owner_session`` does).
+# comes from the main pool (as ``app.routes.patient_booking.clinician_session`` does).
 NESTED_OPEN_ALLOWED: dict[str, str] = {}
 
 # Tests raise on a guard hit (``raise_on_nested_open``); a server logs each call

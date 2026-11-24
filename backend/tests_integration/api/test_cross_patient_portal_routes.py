@@ -7,7 +7,7 @@ One practice, two clinicians. Avery (the practice owner) holds the
 Rowan. Pat owns every object below. Each other client is tried against them:
 
 * **Quinn, the same clinician's client.** The worst case: anything a check
-  inherits from the clinician side (a grant, a caseload, the owner-armed
+  inherits from the clinician side (a grant, a caseload, the clinician-armed
   session the booking routes run on) is satisfied for Quinn exactly as it is
   for Pat, so only the patient-principal scoping can tell them apart.
 * **Rowan, another clinician's client.** The ordinary case.
@@ -81,6 +81,7 @@ _PRACTICE_ID = f"practice-xpp-{_SUFFIX}"
 _AVERY = str(uuid.uuid4())  # the practice owner; Pat's and Quinn's clinician
 _BLAKE = str(uuid.uuid4())  # Rowan's clinician
 _OWNER_EMAIL = f"{_PRACTICE_ID}@example.test"
+_BLAKE_EMAIL = f"blake-{_SUFFIX}@example.test"
 
 _SIGNING_KEY = "cross-patient-portal-signing-key-not-a-real-secret"
 _PORTAL_ORIGIN = "https://portal.example.test"
@@ -176,6 +177,7 @@ def _at(hour: int) -> datetime:
 def _seed_practice(engine: Engine) -> tuple[str, str, str]:
     """The practice, both clinicians, three clients and Avery's diary."""
     from app.db.platform_models import (  # noqa: PLC0415
+        EmailTenantMappingRow,
         PlatformUserRow,
         PracticePortalSettingsRow,
         PracticeRow,
@@ -193,11 +195,7 @@ def _seed_practice(engine: Engine) -> tuple[str, str, str]:
     now = datetime.now(UTC)
     with OrmSession(bind=engine) as s:
         s.add(PlatformUserRow(id=_AVERY, email=_OWNER_EMAIL, name="Avery", created_at=now))
-        s.add(
-            PlatformUserRow(
-                id=_BLAKE, email=f"blake-{_SUFFIX}@example.test", name="Blake", created_at=now
-            )
-        )
+        s.add(PlatformUserRow(id=_BLAKE, email=_BLAKE_EMAIL, name="Blake", created_at=now))
         s.add(
             PracticeRow(
                 id=_PRACTICE_ID,
@@ -211,6 +209,13 @@ def _seed_practice(engine: Engine) -> tuple[str, str, str]:
         s.add(
             PracticePortalSettingsRow(
                 practice_id=_PRACTICE_ID, enabled=True, decided_at=now, updated_at=now
+            )
+        )
+        # Blake is a member, as an invited clinician is: the booking routes
+        # find a client's clinician among the practice's members.
+        s.add(
+            EmailTenantMappingRow(
+                email=_BLAKE_EMAIL, tenant_id=_PRACTICE_ID, practice_id=_PRACTICE_ID, created_at=now
             )
         )
         s.commit()
@@ -251,8 +256,8 @@ def _seed_practice(engine: Engine) -> tuple[str, str, str]:
 def _seed_diary(engine: Engine) -> None:
     """Avery's zone, a weekday 09:00-17:00 on the hour, and a bookable type.
 
-    The booking routes run on a session armed as the practice owner, so the
-    reschedule control needs an hour the engine will actually offer.
+    The booking routes run on a session armed as the client's own clinician,
+    Avery for Pat, so the reschedule control needs an hour Avery offers.
     """
     from app.db import arm_current_user_id, set_tenant_schema  # noqa: PLC0415
     from app.models.user import UserPreferences  # noqa: PLC0415
@@ -441,6 +446,10 @@ def portal(
                 text(f"DELETE FROM platform.{table} WHERE practice_id = :i"),  # noqa: S608
                 {"i": _PRACTICE_ID},
             )
+        conn.execute(
+            text("DELETE FROM platform.email_tenant_mappings WHERE practice_id = :i"),
+            {"i": _PRACTICE_ID},
+        )
         conn.execute(text("DELETE FROM platform.practices WHERE id = :i"), {"i": _PRACTICE_ID})
         conn.execute(
             text("DELETE FROM platform.users WHERE id IN (CAST(:a AS uuid), CAST(:b AS uuid))"),
