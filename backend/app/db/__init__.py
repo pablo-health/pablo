@@ -2738,10 +2738,10 @@ def _plan_row_scoped_table(  # noqa: PLR0912, PLR0915 — one policy arm per ten
         description = "RLS (audit actor access + retention purge) enabled on %s"
     elif "user_id" in columns:
         # Tables where a row has a direct owning clinician
-        # (therapy_sessions, appointments, tasks, etc.).
-        # Each user sees only their own rows, plus the grant reads
-        # below. WITH CHECK matches USING explicitly so INSERTs are
-        # permitted as long as the new row's ``user_id`` matches the current user — no
+        # (therapy_sessions, appointments, audit_logs, etc.).
+        # Each user sees their own rows (and grant reads). WITH CHECK matches
+        # USING explicitly so INSERTs are permitted as long as the
+        # new row's ``user_id`` matches the current user — no
         # chicken-and-egg, and you can't insert a row claiming
         # someone else's user_id from a normal request path.
         #
@@ -2839,12 +2839,11 @@ def enable_rls_on_schema(  # noqa: PLR0915 — planning, verify and the registra
     * **user_id column** (clinician owns the row directly — patients,
       therapy_sessions, appointments, etc.): policy matches rows where
       ``user_id::text = current_setting('app.current_user_id', true)``.
-      ``therapy_sessions`` and ``appointments`` (``GRANT_READABLE_TABLES``)
-      add a SELECT-only ``rls_grant_read`` policy through
-      ``has_patient_access``, so a clinician with a live grant on the
-      client reads them; writes stay with the owner. The ``::text`` cast
-      compares the native-``uuid`` ``user_id`` column against the
-      always-text GUC: an unset/empty GUC yields NULL/'' and matches nothing (fail-closed), with no
+      ``GRANT_READABLE_TABLES`` add a SELECT-only ``rls_grant_read``: a
+      live grant on the client reads them; writes stay with the owner.
+      The ``::text`` cast compares the native-``uuid``
+      ``user_id`` column against the always-text GUC: an unset/empty
+      GUC yields NULL/'' and matches nothing (fail-closed), with no
       ``invalid input syntax for uuid`` risk that casting the GUC the
       other way would carry.
     * **patient_id column with no user_id** (row is owned indirectly
