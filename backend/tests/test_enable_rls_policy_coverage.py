@@ -250,6 +250,25 @@ def test_appointments_gets_both_the_clinician_and_patient_arms() -> None:
     assert "CREATE POLICY rls_patient_self_insert ON practice_test.appointments" not in ddl
 
 
+@pytest.mark.parametrize("table", ["therapy_sessions", "appointments"])
+def test_grant_readable_tables_add_a_select_only_grant_policy(table: str) -> None:
+    """A live grant reads the client's sessions and appointments, and writes nothing."""
+    session = _run({table: {"id", "user_id", "patient_id"}})
+    ddl = " ".join(session.executed)
+
+    assert (
+        f"CREATE POLICY rls_grant_read ON practice_test.{table} "
+        "FOR SELECT USING (has_patient_access(" in ddl
+    )
+    assert f"CREATE POLICY rls_user_isolation ON practice_test.{table} " in ddl
+
+
+def test_other_user_owned_tables_get_no_grant_read() -> None:
+    """``tasks`` carries a patient_id too, but a grant does not open a colleague's tasks."""
+    session = _run({"tasks": {"id", "user_id", "patient_id"}})
+    assert "CREATE POLICY rls_grant_read" not in " ".join(session.executed)
+
+
 def test_chat_tables_get_all_four_patient_arms() -> None:
     """The two chat tables are the only patient-deletable ones.
 

@@ -51,7 +51,7 @@ from sqlalchemy.orm import Session as OrmSession
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from sqlalchemy.engine import Engine
+    from sqlalchemy.engine import Connection, Engine
 
 
 _db_url = os.environ.get("DATABASE_URL", "")
@@ -815,3 +815,164 @@ class TestOverlayNotRowScopedRegistry:
             assert forcesec is False
         finally:
             _OVERLAY_NOT_ROW_SCOPED.discard("overlay_only_table")
+
+
+_GRANT_READ_TABLES = ("therapy_sessions", "appointments")
+
+
+def _armed(conn: Connection, schema: str, user_id: str) -> None:
+    conn.execute(text(f"SET LOCAL search_path = {schema}, platform, public"))
+    conn.execute(text("SELECT set_config('app.current_user_id', :u, true)"), {"u": user_id})
+
+
+def _seed_client_of(engine: Engine, schema: str, owner: str) -> str:
+    """A client with ``owner``'s primary grant, one session and one appointment."""
+    patient_id = str(uuid.uuid4())
+    with engine.begin() as conn:
+        _armed(conn, schema, owner)
+        conn.execute(
+            text(
+                "INSERT INTO patients (id, first_name, last_name, first_name_lower, "
+                "last_name_lower, status, session_count, created_at, updated_at) "
+                "VALUES (CAST(:pid AS uuid), 'Ada', 'Lovelace', 'ada', 'lovelace', "
+                "'active', 0, now(), now())"
+            ),
+            {"pid": patient_id},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO patient_clinicians (patient_id, user_id, granted_by) "
+                "VALUES (CAST(:pid AS uuid), :u, :u)"
+            ),
+            {"pid": patient_id, "u": owner},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO therapy_sessions (id, user_id, patient_id, session_date, "
+                "session_number, status, transcript, created_at) "
+                "VALUES (gen_random_uuid(), :u, CAST(:pid AS uuid), now(), 1, "
+                "'scheduled', '{}'::jsonb, now())"
+            ),
+            {"pid": patient_id, "u": owner},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO appointments (id, user_id, patient_id, title, start_at, "
+                "end_at, duration_minutes, status, session_type, is_exception, "
+                "reminder_24h_sent, reminder_1h_sent, created_at) "
+                "VALUES (gen_random_uuid(), :u, CAST(:pid AS uuid), 'Session', "
+                "now() + make_interval(hours => :h), "
+                "now() + make_interval(hours => :h, mins => 50), 50, 'confirmed', "
+                "'individual', false, false, false, now())"
+            ),
+            # One owner's active appointments may not overlap.
+            {"pid": patient_id, "u": owner, "h": uuid.UUID(patient_id).int % 100_000},
+        )
+    return patient_id
+
+
+def _grant(engine: Engine, schema: str, patient_id: str, user_id: str, *, expired: bool) -> None:
+    with engine.begin() as conn:
+        # The grant table's own policy admits only the grantee's row.
+        _armed(conn, schema, user_id)
+        conn.execute(
+            text(
+                "INSERT INTO patient_clinicians (patient_id, user_id, role, granted_by, "
+                "expires_at) VALUES (CAST(:pid AS uuid), :u, 'co_treating', :u, "
+                "CASE WHEN :expired THEN now() - interval '1 day' END)"
+            ),
+            {"pid": patient_id, "u": user_id, "expired": expired},
+        )
+
+
+def _visible(engine: Engine, schema: str, reader: str, table: str, patient_id: str) -> int:
+    with engine.begin() as conn:
+        _armed(conn, schema, reader)
+        count = conn.execute(
+            text(f"SELECT count(*) FROM {table} WHERE patient_id = CAST(:pid AS uuid)"),  # noqa: S608
+            {"pid": patient_id},
+        ).scalar_one()
+    return int(count)
+
+
+class TestGrantReadsSessionsAndAppointments:
+    """A live grant on a client reads that client's sessions and appointments.
+
+    Writes stay with the row's own clinician: the read is a separate
+    SELECT-only policy, and the owner's policy still gates every write.
+    """
+
+    @pytest.mark.parametrize("table", _GRANT_READ_TABLES)
+    def test_live_grant_reads_and_expired_grant_does_not(
+        self, engine: Engine, tenant_schema: str, table: str
+    ) -> None:
+        owner, colleague = str(uuid.uuid4()), str(uuid.uuid4())
+        live = _seed_client_of(engine, tenant_schema, owner)
+        expired = _seed_client_of(engine, tenant_schema, owner)
+        _grant(engine, tenant_schema, live, colleague, expired=False)
+        _grant(engine, tenant_schema, expired, colleague, expired=True)
+
+        assert _visible(engine, tenant_schema, colleague, table, live) == 1
+        assert _visible(engine, tenant_schema, colleague, table, expired) == 0
+        assert _visible(engine, tenant_schema, owner, table, live) == 1
+
+    @pytest.mark.parametrize("table", _GRANT_READ_TABLES)
+    def test_no_grant_reads_only_own_rows(
+        self, engine: Engine, tenant_schema: str, table: str
+    ) -> None:
+        owner, stranger = str(uuid.uuid4()), str(uuid.uuid4())
+        theirs = _seed_client_of(engine, tenant_schema, owner)
+        mine = _seed_client_of(engine, tenant_schema, stranger)
+
+        assert _visible(engine, tenant_schema, stranger, table, theirs) == 0
+        assert _visible(engine, tenant_schema, stranger, table, mine) == 1
+
+    @pytest.mark.parametrize("granted", [True, False])
+    @pytest.mark.parametrize("table", _GRANT_READ_TABLES)
+    def test_colleague_cannot_update_or_delete_the_owners_rows(
+        self, engine: Engine, tenant_schema: str, table: str, granted: bool
+    ) -> None:
+        owner, colleague = str(uuid.uuid4()), str(uuid.uuid4())
+        patient_id = _seed_client_of(engine, tenant_schema, owner)
+        if granted:
+            _grant(engine, tenant_schema, patient_id, colleague, expired=False)
+
+        where = "WHERE patient_id = CAST(:pid AS uuid)"
+        with engine.begin() as conn:
+            _armed(conn, tenant_schema, colleague)
+            updated = conn.execute(
+                text(f"UPDATE {table} SET updated_at = now() {where}"),  # noqa: S608
+                {"pid": patient_id},
+            ).rowcount
+            deleted = conn.execute(
+                text(f"DELETE FROM {table} {where}"),  # noqa: S608
+                {"pid": patient_id},
+            ).rowcount
+
+        assert (updated, deleted) == (0, 0)
+        assert _visible(engine, tenant_schema, owner, table, patient_id) == 1
+
+    def test_reconcile_gives_an_existing_schema_the_grant_read(self, engine: Engine) -> None:
+        """A practice provisioned before the policy gets it from the migrate fan-out."""
+        from app.db.migrate_tenants import reconcile_tenant_rls  # noqa: PLC0415
+        from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+
+        schema = f"practice_test_grant_{uuid.uuid4().hex[:8]}"
+        create_practice_schema(engine, schema)
+        try:
+            owner, colleague = str(uuid.uuid4()), str(uuid.uuid4())
+            patient_id = _seed_client_of(engine, schema, owner)
+            _grant(engine, schema, patient_id, colleague, expired=False)
+            with engine.begin() as conn:
+                for table in _GRANT_READ_TABLES:
+                    conn.execute(text(f"DROP POLICY rls_grant_read ON {schema}.{table}"))
+            for table in _GRANT_READ_TABLES:
+                assert _visible(engine, schema, colleague, table, patient_id) == 0
+
+            reconcile_tenant_rls(engine, schema)
+
+            for table in _GRANT_READ_TABLES:
+                assert _visible(engine, schema, colleague, table, patient_id) == 1
+        finally:
+            with engine.begin() as conn:
+                conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))

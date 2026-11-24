@@ -817,13 +817,15 @@ class TestTwoFollowersOfOneCalendar:
 
         assert a_row.appointment_id is not None
         assert (b_row.answer, b_row.appointment_id) == (ANSWER_CLIENT, a_row.appointment_id)
-        # B cannot read A's appointment, only learn its id for the link.
-        assert PostgresAppointmentRepository(theirs).get(a_row.appointment_id, _B) is None
+        # B holds a grant on the client, so B reads A's appointment; it stays A's.
+        b_view = PostgresAppointmentRepository(theirs).get(a_row.appointment_id, _B)
+        assert b_view is not None
+        assert b_view.user_id == _A
         assert (
             theirs.execute(
                 text("SELECT count(*) FROM appointments WHERE outside_event_id = 'e1'")
             ).scalar_one()
-            == 0
+            == 1
         )
         assert (
             PostgresAppointmentRepository(theirs).outside_appointment_id(
