@@ -240,6 +240,32 @@ describe("firebase middleware CSP", () => {
     expect(namedDirective(csp, "connect-src")).toContain("https://api.stripe.com")
   })
 
+  it("adds the deployment's extra sources to their directives", async () => {
+    vi.stubEnv("CSP_EXTRA_SCRIPT_SRC", "https://cdn.example.com/link/v2/stable/init.js")
+    vi.stubEnv("CSP_EXTRA_FRAME_SRC", "https://cdn.example.com")
+    vi.stubEnv("CSP_EXTRA_CONNECT_SRC", "https://sandbox.example.com")
+    vi.resetModules()
+
+    const { default: firebaseAuthMiddleware } = await import("../middleware")
+    const csp = (
+      await firebaseAuthMiddleware(new NextRequest("https://app.example.com/"))
+    ).headers.get("Content-Security-Policy")!
+
+    expect(namedDirective(csp, "script-src")).toContain(
+      "https://cdn.example.com/link/v2/stable/init.js"
+    )
+    expect(namedDirective(csp, "frame-src")).toContain("https://cdn.example.com")
+    expect(namedDirective(csp, "connect-src")).toContain("https://sandbox.example.com")
+    expect(namedDirective(csp, "script-src")).not.toContain("sandbox.example.com")
+  })
+
+  it("fails at startup on an extra source that would widen the policy", async () => {
+    vi.stubEnv("CSP_EXTRA_SCRIPT_SRC", "'unsafe-inline'")
+    vi.resetModules()
+
+    await expect(import("../middleware")).rejects.toThrow(/CSP_EXTRA_SCRIPT_SRC/)
+  })
+
   it("does not allow Stripe products this app does not use", async () => {
     // Checkout, Connect embedded components, Link and the crypto onramp all
     // have their own hosts in Stripe's CSP guide. None are used here, and a

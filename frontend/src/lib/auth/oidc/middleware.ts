@@ -22,6 +22,7 @@ import { builtInPublicPaths, extraPublicPaths } from "@/lib/auth/public-paths"
 import {
   browserApiOrigin,
   browserStorageOrigin,
+  extraSources,
   generateNonce,
   requestHeadersWithNonce,
   STRIPE_CONNECT_SRC,
@@ -64,15 +65,19 @@ const API_ORIGIN = browserApiOrigin()
 // ``browserStorageOrigin``.
 const STORAGE_ORIGIN = browserStorageOrigin()
 
+const EXTRA_SCRIPT_SRC = extraSources("CSP_EXTRA_SCRIPT_SRC")
+const EXTRA_FRAME_SRC = extraSources("CSP_EXTRA_FRAME_SRC")
+const EXTRA_CONNECT_SRC = extraSources("CSP_EXTRA_CONNECT_SRC")
+
 function buildCsp(nonce: string): string {
   return [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' ${STRIPE_SCRIPT_SRC}`,
+    `script-src 'self' 'nonce-${nonce}' ${STRIPE_SCRIPT_SRC} ${EXTRA_SCRIPT_SRC}`.replace(/\s+/g, " ").trim(),
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
     "img-src 'self' https: data:",
-    `connect-src 'self' ${API_ORIGIN} ${keycloakOrigin} ${STORAGE_ORIGIN} ${STRIPE_CONNECT_SRC}`.replace(/\s+/g, " ").trim(),
-    `frame-src 'self' ${keycloakOrigin} ${STRIPE_FRAME_SRC}`.replace(/\s+/g, " ").trim(),
+    `connect-src 'self' ${API_ORIGIN} ${keycloakOrigin} ${STORAGE_ORIGIN} ${STRIPE_CONNECT_SRC} ${EXTRA_CONNECT_SRC}`.replace(/\s+/g, " ").trim(),
+    `frame-src 'self' ${keycloakOrigin} ${STRIPE_FRAME_SRC} ${EXTRA_FRAME_SRC}`.replace(/\s+/g, " ").trim(),
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self' https://accounts.google.com",

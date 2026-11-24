@@ -15,6 +15,7 @@ import { builtInPublicPaths, extraPublicPaths } from "@/lib/auth/public-paths"
 import {
   browserApiOrigin,
   browserStorageOrigin,
+  extraSources,
   generateNonce,
   NONCE_HEADER,
   requestHeadersWithNonce,
@@ -34,6 +35,10 @@ const API_ORIGIN = browserApiOrigin()
 // ``browserStorageOrigin``.
 const STORAGE_ORIGIN = browserStorageOrigin()
 
+const EXTRA_SCRIPT_SRC = extraSources("CSP_EXTRA_SCRIPT_SRC")
+const EXTRA_FRAME_SRC = extraSources("CSP_EXTRA_FRAME_SRC")
+const EXTRA_CONNECT_SRC = extraSources("CSP_EXTRA_CONNECT_SRC")
+
 // The Firebase Auth emulator serves plain HTTP on a loopback host, so a
 // local end-to-end build must let the SDK reach it; unset (every deployed
 // build) this contributes nothing to the policy.
@@ -44,12 +49,12 @@ const AUTH_EMULATOR_ORIGIN = process.env.NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST
 function buildCsp(nonce: string): string {
   return [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' https://apis.google.com ${STRIPE_SCRIPT_SRC}`,
+    `script-src 'self' 'nonce-${nonce}' https://apis.google.com ${STRIPE_SCRIPT_SRC} ${EXTRA_SCRIPT_SRC}`.replace(/\s+/g, " ").trim(),
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
     "img-src 'self' https: data:",
-    `connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.cloudfunctions.net https://*.pablo.health ${API_ORIGIN} ${AUTH_EMULATOR_ORIGIN} ${STORAGE_ORIGIN} wss://*.firebaseio.com ${STRIPE_CONNECT_SRC}`.replace(/\s+/g, " ").trim(),
-    `frame-src 'self' https://*.firebaseapp.com https://accounts.google.com ${STRIPE_FRAME_SRC}`,
+    `connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.cloudfunctions.net https://*.pablo.health ${API_ORIGIN} ${AUTH_EMULATOR_ORIGIN} ${STORAGE_ORIGIN} wss://*.firebaseio.com ${STRIPE_CONNECT_SRC} ${EXTRA_CONNECT_SRC}`.replace(/\s+/g, " ").trim(),
+    `frame-src 'self' https://*.firebaseapp.com https://accounts.google.com ${STRIPE_FRAME_SRC} ${EXTRA_FRAME_SRC}`.replace(/\s+/g, " ").trim(),
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self' https://accounts.google.com",
