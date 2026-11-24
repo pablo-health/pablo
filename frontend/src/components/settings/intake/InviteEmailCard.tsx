@@ -17,6 +17,7 @@ import {
 } from "@/hooks/useInviteTemplate"
 import type { InviteTemplate, InviteTemplateDraft } from "@/lib/api/inviteTemplate"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
+import { PracticeAdminAccessNote, usePracticeAdminAccess } from "../practiceAdminAccess"
 
 const PREVIEW_DELAY_MS = 400
 
@@ -29,6 +30,9 @@ const PREVIEW_DELAY_MS = 400
  *
  * The preview beside it is rendered by the server for an example client, by
  * the same code that renders the real email.
+ *
+ * Only the practice owner or a practice admin may change it; anyone else
+ * sees it read-only, with the line that says why.
  */
 export function InviteEmailCard() {
   const { data: template } = useInviteTemplate()
@@ -40,6 +44,7 @@ function InviteEmailEditor({ template }: { template: InviteTemplate }) {
   const save = useSaveInviteTemplate()
   const people = usePeopleTerm()
   const resetToDefault = useResetInviteTemplate()
+  const { canEdit, note } = usePracticeAdminAccess()
   const bodyRef = useRef<HTMLTextAreaElement>(null)
 
   const [draft, setDraft] = useState<InviteTemplateDraft>({
@@ -86,7 +91,8 @@ function InviteEmailEditor({ template }: { template: InviteTemplate }) {
       description={`What a ${people.one} receives when you invite them to the portal. The text message carries only their sign-in code.`}
     >
       <div className="grid gap-6 lg:grid-cols-2" data-testid="invite-email-card">
-        <div className="space-y-4">
+        <fieldset disabled={!canEdit} className="m-0 min-w-0 space-y-4 border-0 p-0">
+          {note && <PracticeAdminAccessNote note={note} />}
           <div className="form-group">
             <Label htmlFor="invite-subject">Subject</Label>
             <Input
@@ -160,7 +166,7 @@ function InviteEmailEditor({ template }: { template: InviteTemplate }) {
             )}
             {saved && unchanged && <span className="text-sm text-neutral-600">Saved</span>}
           </div>
-        </div>
+        </fieldset>
 
         <div className="space-y-2">
           <p className="text-xs font-medium text-neutral-500">Preview for an example {people.one}</p>

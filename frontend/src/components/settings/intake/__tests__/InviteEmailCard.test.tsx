@@ -28,6 +28,13 @@ vi.mock("@/lib/api/inviteTemplate", async (importOriginal) => ({
   previewInviteTemplate: (...a: unknown[]) => mockPreview(...a),
 }))
 
+let isPracticeAdmin = true
+
+vi.mock("@/components/settings/useSettingsPreferences", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/components/settings/useSettingsPreferences")>()),
+  useSettingsUserStatus: () => ({ data: { is_practice_admin: isPracticeAdmin } }),
+}))
+
 const PLACEHOLDERS = [
   { name: "portal_link", label: "Sign-in link", required: true },
   { name: "client_first_name", label: "Client's first name", required: false },
@@ -45,6 +52,7 @@ const DEFAULT = {
 describe("InviteEmailCard", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    isPracticeAdmin = true
     mockGet.mockResolvedValue(DEFAULT)
     mockPreview.mockImplementation((draft: { subject: string; body: string }) =>
       Promise.resolve({
@@ -126,6 +134,18 @@ describe("InviteEmailCard", () => {
       "Include {{portal_link}}",
     )
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled()
+  })
+
+  it("is read-only, with the reason, for a clinician who is not an admin", async () => {
+    isPracticeAdmin = false
+    mockGet.mockResolvedValue({ ...DEFAULT, is_default: false })
+    renderWithProviders(<InviteEmailCard />)
+
+    expect(await screen.findByLabelText("Subject")).toBeDisabled()
+    expect(screen.getByLabelText("Message")).toBeDisabled()
+    expect(screen.getByTestId("practice-admin-only")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Use the standard wording" })).toBeDisabled()
   })
 
   it("goes back to the standard wording", async () => {

@@ -63,6 +63,13 @@ vi.mock("@/lib/api/portalSettings", async (importOriginal) => ({
   savePortalSettings: (...a: unknown[]) => mockSavePortalSettings(...a),
 }))
 
+// Whether the signed-in clinician may change the portal. Yes unless a test says otherwise.
+let isPracticeAdmin = true
+vi.mock("@/components/settings/useSettingsPreferences", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/components/settings/useSettingsPreferences")>()),
+  useSettingsUserStatus: () => ({ data: { is_practice_admin: isPracticeAdmin } }),
+}))
+
 const createWrapper = () => {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -107,6 +114,7 @@ describe("PatientForm", () => {
     vi.clearAllMocks()
     mockFeature.mockImplementation(() => false)
     peopleTerm.current = "clients"
+    isPracticeAdmin = true
   })
 
   it("says patients when that is the clinician's word", () => {
@@ -565,6 +573,15 @@ describe("PatientForm", () => {
 
       expect(await screen.findByTestId("new-client-next-step")).toBeInTheDocument()
       expect(screen.queryByTestId("portal-offer-prompt")).not.toBeInTheDocument()
+    })
+
+    it("does not ask a clinician who cannot change the portal", async () => {
+      isPracticeAdmin = false
+      await addRobin()
+
+      expect(await screen.findByTestId("new-client-next-step")).toBeInTheDocument()
+      expect(screen.queryByTestId("portal-offer-prompt")).not.toBeInTheDocument()
+      expect(mockSavePortalSettings).not.toHaveBeenCalled()
     })
 
     it("will not turn it on with nothing in it", async () => {

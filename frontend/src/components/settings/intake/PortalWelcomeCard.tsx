@@ -17,6 +17,7 @@ import {
 import { ApiError } from "@/lib/api/client"
 import type { PortalWelcome, PortalWelcomeDraft } from "@/lib/api/portalWelcome"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
+import { PracticeAdminAccessNote, usePracticeAdminAccess } from "../practiceAdminAccess"
 
 /** Mirrors `backend/app/portal/welcome.py`; the server checks them again. */
 const MAX_HEADING_LENGTH = 120
@@ -32,6 +33,9 @@ const PRACTICE_NAME_RE = /\{+\s*practice_name\s*\}+/g
  * The preview is drawn here rather than by the server: filling in one name
  * needs no round trip. Text is rendered as text, never as markup, exactly as
  * the portal shows it.
+ *
+ * Only the practice owner or a practice admin may change it; anyone else
+ * sees it read-only, with the line that says why.
  */
 export function PortalWelcomeCard() {
   const { data: welcome } = usePortalWelcome()
@@ -53,6 +57,7 @@ function PortalWelcomeEditor({ welcome }: { welcome: PortalWelcome }) {
   const save = useSavePortalWelcome()
   const people = usePeopleTerm()
   const resetToDefault = useResetPortalWelcome()
+  const { canEdit, note } = usePracticeAdminAccess()
   const bodyRef = useRef<HTMLTextAreaElement>(null)
 
   const [draft, setDraft] = useState<PortalWelcomeDraft>({
@@ -94,7 +99,8 @@ function PortalWelcomeEditor({ welcome }: { welcome: PortalWelcome }) {
       description={`The first thing a ${people.one} reads when they open the portal.`}
     >
       <div className="grid gap-6 lg:grid-cols-2" data-testid="portal-welcome-card">
-        <div className="space-y-4">
+        <fieldset disabled={!canEdit} className="m-0 min-w-0 space-y-4 border-0 p-0">
+          {note && <PracticeAdminAccessNote note={note} />}
           <div className="form-group">
             <Label htmlFor="portal-welcome-heading">Heading</Label>
             <Input
@@ -172,7 +178,7 @@ function PortalWelcomeEditor({ welcome }: { welcome: PortalWelcome }) {
             )}
             {saved && unchanged && <span className="text-sm text-neutral-600">Saved</span>}
           </div>
-        </div>
+        </fieldset>
 
         <div className="space-y-2">
           <p className="text-xs font-medium text-neutral-500">Preview</p>
