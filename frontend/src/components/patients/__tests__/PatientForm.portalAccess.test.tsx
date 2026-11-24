@@ -1,10 +1,10 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 // The first-client portal question, for a clinician who may not change the
-// portal: the server would refuse any answer, so the form must not ask.
+// portal or whose permission is not known yet: the form must not ask.
 
-import { describe, it, expect, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { beforeEach, describe, it, expect, vi } from "vitest"
+import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { PatientForm } from "../PatientForm"
@@ -53,9 +53,10 @@ vi.mock("@/lib/api/portalSettings", async (importOriginal) => ({
   savePortalSettings: (...a: unknown[]) => mockSavePortalSettings(...a),
 }))
 
+let userStatus: { data?: { is_practice_admin: boolean }; isError: boolean }
 vi.mock("@/components/settings/useSettingsPreferences", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/components/settings/useSettingsPreferences")>()),
-  useSettingsUserStatus: () => ({ data: { is_practice_admin: false } }),
+  useSettingsUserStatus: () => userStatus,
 }))
 
 const robin: PatientResponse = {
@@ -82,22 +83,55 @@ const robin: PatientResponse = {
   sex: null,
 }
 
+async function createRobin(): Promise<QueryClient> {
+  vi.mocked(patientsApi.createPatient).mockResolvedValue(robin)
+  vi.mocked(patientsApi.getPatient).mockResolvedValue(robin)
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  })
+  const user = userEvent.setup()
+  render(
+    <QueryClientProvider client={queryClient}>
+      <PatientForm mode="create" open={true} onOpenChange={vi.fn()} />
+    </QueryClientProvider>,
+  )
+  await user.type(screen.getByLabelText(/first name/i), "Robin")
+  await user.type(screen.getByLabelText(/last name/i), "Reyes")
+  await user.click(screen.getByRole("button", { name: /create client/i }))
+  return queryClient
+}
+
+beforeEach(() => {
+  mockSavePortalSettings.mockClear()
+})
+
 describe("PatientForm, for a clinician who cannot change the portal", () => {
   it("does not ask about the portal and goes on to the next step", async () => {
-    vi.mocked(patientsApi.createPatient).mockResolvedValue(robin)
-    vi.mocked(patientsApi.getPatient).mockResolvedValue(robin)
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-    })
-    const user = userEvent.setup()
-    render(
-      <QueryClientProvider client={queryClient}>
-        <PatientForm mode="create" open={true} onOpenChange={vi.fn()} />
-      </QueryClientProvider>,
-    )
-    await user.type(screen.getByLabelText(/first name/i), "Robin")
-    await user.type(screen.getByLabelText(/last name/i), "Reyes")
-    await user.click(screen.getByRole("button", { name: /create client/i }))
+    userStatus = { data: { is_practice_admin: false }, isError: false }
+    await createRobin()
+
+    expect(await screen.findByTestId("new-client-next-step")).toBeInTheDocument()
+    expect(screen.queryByTestId("portal-offer-prompt")).not.toBeInTheDocument()
+    expect(mockSavePortalSettings).not.toHaveBeenCalled()
+  })
+})
+
+describe("PatientForm, before the clinician's status is known", () => {
+  it("holds the next step while the status loads", async () => {
+    userStatus = { data: undefined, isError: false }
+    const queryClient = await createRobin()
+
+    // Wait for the portal settings, so only the status is still unknown.
+    await waitFor(() => expect(queryClient.isFetching()).toBe(0))
+    expect(screen.getByText("Loading")).toBeInTheDocument()
+    expect(screen.queryByTestId("new-client-next-step")).not.toBeInTheDocument()
+    expect(screen.queryByTestId("portal-offer-prompt")).not.toBeInTheDocument()
+    expect(mockSavePortalSettings).not.toHaveBeenCalled()
+  })
+
+  it("skips the question when the status request fails", async () => {
+    userStatus = { data: undefined, isError: true }
+    await createRobin()
 
     expect(await screen.findByTestId("new-client-next-step")).toBeInTheDocument()
     expect(screen.queryByTestId("portal-offer-prompt")).not.toBeInTheDocument()
