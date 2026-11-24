@@ -26,6 +26,7 @@ against no policy at all. Run: ``make test-integration``.
 from __future__ import annotations
 
 import os
+import re
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -38,6 +39,7 @@ from app.db.rls_apply import (
     desired_from_sql,
     tenant_rls_differences,
 )
+from app.db.rls_state import read_live_rls
 from sqlalchemy import text
 from sqlalchemy.orm import Session as OrmSession
 
@@ -556,3 +558,102 @@ def test_the_differences_are_reported_without_changing_anything(
     assert list(found) == ["patients"]
     assert any("CREATE POLICY rls_patient_access" in statement for statement in found["patients"])
     assert ("patients", "rls_patient_access") not in _policies(engine, practice)
+
+
+# ── Every single damage, to every policy and every table ────────────────────
+
+_DAMAGED_BODY = "(('damaged'::text) = ('by hand'::text))"
+_POLICY_HEAD = re.compile(r"^(CREATE POLICY \w+ ON \S+(?: AS RESTRICTIVE)?)( FOR \w+)?")
+
+
+def _with_another_command(statement: str) -> str:
+    """The same policy for a different command: all of them, or only UPDATE.
+
+    UPDATE because it is the one single command that takes both USING and
+    WITH CHECK, so any policy for every command can be narrowed to it.
+    """
+    head = _POLICY_HEAD.match(statement)
+    assert head is not None, statement
+    replacement = "" if head.group(2) else " FOR UPDATE"
+    return head.group(1) + replacement + statement[head.end() :]
+
+
+def _damages(schema: str, table: str, desired: DesiredTable) -> Iterator[tuple[str, list[str]]]:
+    """Each way one table's row-level security can be made wrong, one at a time."""
+    qualified = f'"{schema}"."{table}"'
+    for policy, statement in sorted(desired.policies.items()):
+        drop = f'DROP POLICY "{policy}" ON {qualified}'
+        yield f"{policy} dropped", [drop]
+        clause = "WITH CHECK" if " USING (" not in statement else "USING"
+        yield (
+            f"{policy} body edited",
+            [f'ALTER POLICY "{policy}" ON {qualified} {clause} ({_DAMAGED_BODY})'],
+        )
+        recreated = _with_another_command(statement).replace("__TENANT_SCHEMA__", schema)
+        yield f"{policy} for another command", [drop, recreated.rstrip(";")]
+    yield "a policy added", [f"CREATE POLICY zz_added ON {qualified} USING (true)"]
+    if desired.enabled:
+        yield "row security disabled", [f"ALTER TABLE {qualified} DISABLE ROW LEVEL SECURITY"]
+    else:
+        yield "row security enabled", [f"ALTER TABLE {qualified} ENABLE ROW LEVEL SECURITY"]
+    if desired.forced:
+        yield "no longer forced", [f"ALTER TABLE {qualified} NO FORCE ROW LEVEL SECURITY"]
+    else:
+        yield "forced", [f"ALTER TABLE {qualified} FORCE ROW LEVEL SECURITY"]
+
+
+def test_every_single_damage_to_every_table_is_found_and_undone(
+    engine: Engine, desired: dict[str, DesiredTable]
+) -> None:
+    """Not a sample. Each policy and each table in the template, damaged each way.
+
+    For every damage: the read-only report names that table and no other, one
+    pass puts it right, and the schema is back to exactly what it was. The
+    tests above do this to ``patients``; a bug that only shows on some other
+    policy's shape would get past them and cannot get past this.
+
+    Built from the file and settled first, so that a policy put back from the
+    file reads the same as the one that was there before.
+    """
+    from app.db.provisioning import (  # noqa: PLC0415
+        TEMPLATE_ROW_SECURITY_MARKER,
+        apply_template_sql,
+    )
+
+    schema = f"practice_test_apply_all_{uuid.uuid4().hex[:8]}"
+    body, _, row_security = _TEMPLATE.read_text().partition(TEMPLATE_ROW_SECURITY_MARKER)
+    apply_template_sql(engine, schema, body)
+    apply_template_sql(engine, schema, row_security)
+    try:
+        _apply(engine, schema, desired, leave=())
+        cases = 0
+        failures: list[str] = []
+        # One session for the lot, and the applier's own catalog reads for the
+        # comparison: seven hundred cases through ``pg_policies`` take a minute.
+        with OrmSession(engine) as session:
+            settled = read_live_rls(session, schema)
+            for table in sorted(desired):
+                for what, statements in _damages(schema, table, desired[table]):
+                    cases += 1
+                    cursor = session.connection().connection.cursor()
+                    for statement in statements:
+                        cursor.execute(statement)
+                    session.commit()
+
+                    found = tenant_rls_differences(session, schema, desired)
+                    if list(found) != [table]:
+                        failures.append(f"{table}: {what}: reported {sorted(found)}")
+                    apply_tenant_rls(session, schema, desired)
+                    session.commit()
+                    after = read_live_rls(session, schema)
+                    if after != settled:
+                        failures.append(f"{table}: {what}: not put back")
+                        # Start the next case from a known state, not from this one.
+                        settled = after
+        assert not failures, f"{len(failures)} of {cases} damages got through:\n" + "\n".join(
+            failures[:40]
+        )
+        policies = sum(len(table.policies) for table in desired.values())
+        assert cases == 3 * policies + 3 * len(desired)
+    finally:
+        _drop_schema(engine, schema)
