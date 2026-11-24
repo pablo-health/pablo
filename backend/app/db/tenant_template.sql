@@ -7,8 +7,9 @@
 -- with the real schema name before execution.
 --
 -- The section after the row-level security marker near the end is what
--- enable_rls_on_schema gives a practice schema. Provisioning applies it to
--- practice schemas and not to the template schema itself.
+-- enable_rls_on_schema gives a practice schema, followed by the practice
+-- directory's access. Provisioning applies it to practice schemas and not to
+-- the template schema itself.
 --
 -- Regenerate after any alembic revision that touches DDL:
 --   poetry run python backend/scripts/regen_tenant_template.py
@@ -4332,6 +4333,12 @@ CREATE POLICY rls_practice_answers ON __TENANT_SCHEMA__.patient_source_mappings 
 
 COMMENT ON POLICY rls_practice_answers ON __TENANT_SCHEMA__.patient_source_mappings IS 'rls-fingerprint-v1-bc8d9708a09ae42abf5743aa22b7049ae939ca0813f7077247a98f0c0c14b40a';
 
+CREATE POLICY rls_practice_directory_read ON __TENANT_SCHEMA__.appointments FOR SELECT TO pablo_practice_directory USING ((COALESCE(current_setting('app.current_user_id'::text, true), ''::text) <> ''::text));
+
+CREATE POLICY rls_practice_directory_read ON __TENANT_SCHEMA__.patient_clinicians FOR SELECT TO pablo_practice_directory USING ((COALESCE(current_setting('app.current_user_id'::text, true), ''::text) <> ''::text));
+
+CREATE POLICY rls_practice_directory_read ON __TENANT_SCHEMA__.patients FOR SELECT TO pablo_practice_directory USING ((COALESCE(current_setting('app.current_user_id'::text, true), ''::text) <> ''::text));
+
 CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.appointment_types USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
 
 COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.appointment_types IS 'rls-fingerprint-v1-6e98419bf5a40c0bc01b8b370a27670bf9f0a47985e7bf5b249ea6d3f6bd03b5';
@@ -4407,3 +4414,29 @@ COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.therapy_sessions IS 'r
 CREATE POLICY rls_user_isolation ON __TENANT_SCHEMA__.waitlist_entries USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((user_id)::text = current_setting('app.current_user_id'::text, true)));
 
 COMMENT ON POLICY rls_user_isolation ON __TENANT_SCHEMA__.waitlist_entries IS 'rls-fingerprint-v1-6c650e863fa6178eec9df9bb53691b1168f969f224a9f1cf1d455c71d6370e50';
+
+-- Practice directory access: grants, pinned search paths and function ownership.
+
+GRANT USAGE ON SCHEMA __TENANT_SCHEMA__ TO pablo_practice_directory;
+
+GRANT SELECT (id, first_name, last_name, date_of_birth, email, status, deleted_at) ON __TENANT_SCHEMA__.patients TO pablo_practice_directory;
+
+GRANT SELECT (patient_id, user_id, starts_at, expires_at) ON __TENANT_SCHEMA__.patient_clinicians TO pablo_practice_directory;
+
+GRANT SELECT (id, outside_source, outside_calendar_id, outside_event_id, status, created_at) ON __TENANT_SCHEMA__.appointments TO pablo_practice_directory;
+
+ALTER FUNCTION __TENANT_SCHEMA__.practice_client_directory() SET search_path = pg_catalog, __TENANT_SCHEMA__, pg_temp;
+
+GRANT CREATE ON SCHEMA __TENANT_SCHEMA__ TO pablo_practice_directory;
+
+ALTER FUNCTION __TENANT_SCHEMA__.practice_client_directory() OWNER TO pablo_practice_directory;
+
+REVOKE CREATE ON SCHEMA __TENANT_SCHEMA__ FROM pablo_practice_directory;
+
+ALTER FUNCTION __TENANT_SCHEMA__.practice_outside_appointment(text, text, text) SET search_path = pg_catalog, __TENANT_SCHEMA__, pg_temp;
+
+GRANT CREATE ON SCHEMA __TENANT_SCHEMA__ TO pablo_practice_directory;
+
+ALTER FUNCTION __TENANT_SCHEMA__.practice_outside_appointment(text, text, text) OWNER TO pablo_practice_directory;
+
+REVOKE CREATE ON SCHEMA __TENANT_SCHEMA__ FROM pablo_practice_directory;

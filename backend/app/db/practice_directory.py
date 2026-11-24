@@ -31,10 +31,22 @@ else. The app's role is a member that can hand it ownership but does not
 inherit its privileges, so every ordinary read keeps exactly the policy it
 had.
 
-The template carries the functions, not their owner or grants (the capture
-strips both), so :func:`apply_practice_directory_access` puts them on every
-practice schema: at provisioning and on every migrate fan-out, through
-``enable_rls_on_schema``, and in the revisions that add each function.
+**Where the access comes from.** The tenant template carries all of it, so a
+new practice has it once the template is applied: the three read policies,
+captured like every other policy, and the grants, pinned paths and ownership,
+written out by :func:`directory_access_sql`. Provisioning runs nothing else
+for it, and nothing sets any of it when the app starts.
+
+:func:`apply_practice_directory_access` does the same work as code, for the
+places a schema's objects are created or moved outside provisioning: the
+revisions that add each function (a practice that already exists gets its
+access there), a practice restored from an archive (the dump keeps neither
+owners nor grants), and the one-time conversion of a single-practice install
+(a renamed schema leaves each function's path naming the old one). The migrate
+fan-out still calls it after its reconcile, which does not manage the
+directory's read policy. It is also what the template's capture runs, so the
+file and the code cannot say different things. A later change to a grant, an
+owner or a path ships as a revision that calls it.
 
 **Changing a function later.** Once a schema's function belongs to the
 directory role, the role that runs migrations no longer owns it and cannot
@@ -97,7 +109,9 @@ APPOINTMENT_COLUMNS = (
     "created_at",
 )
 
-_POLICY = "rls_practice_directory_read"
+#: The read policy on each table a directory function reads, for the role alone.
+DIRECTORY_POLICY = "rls_practice_directory_read"
+_POLICY = DIRECTORY_POLICY
 #: The same principal check the functions make, on the policies too: a
 #: ``SET ROLE`` from a connection with no clinician armed reads nothing.
 _ARMED = "coalesce(current_setting('app.current_user_id', true), '') <> ''"
@@ -320,6 +334,49 @@ def apply_practice_directory_access(db: Session | Connection, schema: str) -> No
             db.execute(text(f"REVOKE CREATE ON SCHEMA {schema} FROM {DIRECTORY_ROLE}"))
 
 
+def directory_access_sql(schema: str) -> str:
+    """What gives a schema at head its directory access, apart from the policies.
+
+    The schema usage, the column grants, each function's pinned search path and
+    its owner: the same end state :func:`apply_practice_directory_access`
+    leaves, written out as SQL. The tenant template carries this with the
+    schema placeholder for ``schema``, so a new practice gets it when the
+    template is applied. The three read policies are not here: the template
+    captures those as it captures every other policy.
+
+    Statement order matters. The path is pinned while the function still
+    belongs to whoever created it, and the owner changes last; the role holds
+    ``CREATE`` on the schema only for that one statement.
+    """
+    statements = [f"GRANT USAGE ON SCHEMA {schema} TO {DIRECTORY_ROLE};"]
+    for definer in _DEFINERS:
+        statements.extend(
+            f"GRANT SELECT ({', '.join(columns)}) ON {schema}.{table} TO {DIRECTORY_ROLE};"
+            for table, columns in definer.reads
+        )
+    for definer in _DEFINERS:
+        function = definer.regprocedure(schema)
+        statements.extend(
+            [
+                f"ALTER FUNCTION {function} SET search_path = pg_catalog, {schema}, pg_temp;",
+                f"GRANT CREATE ON SCHEMA {schema} TO {DIRECTORY_ROLE};",
+                f"ALTER FUNCTION {function} OWNER TO {DIRECTORY_ROLE};",
+                f"REVOKE CREATE ON SCHEMA {schema} FROM {DIRECTORY_ROLE};",
+            ]
+        )
+    return "\n\n".join(statements) + "\n"
+
+
+def require_directory_role(db: Session | Connection) -> None:
+    """Fail with the fix if the directory role is missing or cannot be assumed.
+
+    Provisioning calls this before it applies the template's row-level
+    security section, which names the role: Postgres' own "role does not
+    exist" would name neither the cause nor the remedy.
+    """
+    _require_role(db)
+
+
 def _existing_columns(
     db: Session | Connection, schema: str, table: str, columns: tuple[str, ...]
 ) -> list[str]:
@@ -394,6 +451,7 @@ def _require_role(db: Session | Connection) -> None:
 __all__ = [
     "APPOINTMENT_COLUMNS",
     "DIRECTORY_FUNCTION",
+    "DIRECTORY_POLICY",
     "DIRECTORY_ROLE",
     "GRANT_COLUMNS",
     "OUTSIDE_APPOINTMENT_FUNCTION",
@@ -403,8 +461,10 @@ __all__ = [
     "create_directory_function",
     "create_directory_function_sql",
     "create_outside_appointment_function",
+    "directory_access_sql",
     "directory_function_owner",
     "drop_directory_function",
     "drop_outside_appointment_function",
     "outside_appointment_function_sql",
+    "require_directory_role",
 ]

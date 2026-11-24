@@ -13,6 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from app.db.practice_directory import DIRECTORY_POLICY
 from app.db.provisioning import TEMPLATE_ROW_SECURITY_MARKER
 from app.db.rls_apply import (
     APPLIED_PREFIX,
@@ -63,8 +64,15 @@ def test_the_committed_template_reads_whole() -> None:
         # A forced table with no policy denies every row; an unforced one with
         # a policy has a policy that does nothing.
         assert bool(table.policies) == table.forced, name
-        assert set(table.comments) == set(table.policies), name
+        # Every policy the reconcile manages carries its fingerprint. The
+        # practice directory's read policy is not the reconcile's, and has none.
+        assert set(table.comments) == set(table.policies) - {DIRECTORY_POLICY}, name
         assert all(c.startswith(FINGERPRINT_PREFIX) for c in table.comments.values()), name
+    assert {name for name, table in desired.items() if DIRECTORY_POLICY in table.policies} == {
+        "appointments",
+        "patient_clinicians",
+        "patients",
+    }
 
 
 def test_a_table_the_sql_creates_with_no_row_security_is_still_listed() -> None:

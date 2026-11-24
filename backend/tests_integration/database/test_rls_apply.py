@@ -152,23 +152,15 @@ def practice(engine: Engine) -> Iterator[str]:
     _drop_schema(engine, schema)
 
 
-# The one policy the template does not carry. It names the directory role, and
-# ``practice_directory.apply_practice_directory_access`` creates it with the
-# grants and the function ownership that go with it.
+# The practice directory's read policy. The template carries it like any other,
+# on the three tables the directory functions read.
 _DIRECTORY_POLICY = "rls_practice_directory_read"
 _DIRECTORY_TABLES = {"appointments", "patient_clinicians", "patients"}
-_LEAVE = tuple((table, _DIRECTORY_POLICY) for table in sorted(_DIRECTORY_TABLES))
 
 
-def _apply(
-    engine: Engine,
-    schema: str,
-    desired: dict[str, DesiredTable],
-    *,
-    leave: tuple[tuple[str, str], ...] = _LEAVE,
-) -> RlsReconcileCounts:
+def _apply(engine: Engine, schema: str, desired: dict[str, DesiredTable]) -> RlsReconcileCounts:
     with OrmSession(engine) as session:
-        counts = apply_tenant_rls(session, schema, desired, leave=leave)
+        counts = apply_tenant_rls(session, schema, desired)
         session.commit()
     return counts
 
@@ -269,28 +261,32 @@ def test_a_practice_the_reconcile_just_finished_needs_nothing(
     assert (_policies(engine, practice), _flags(engine, practice)) == before
 
 
-def test_the_directory_policy_is_kept_only_because_the_caller_names_it(
+def test_the_directory_policy_is_the_files_like_any_other(
     engine: Engine, practice: str, desired: dict[str, DesiredTable]
 ) -> None:
-    """The template has no directory policy, so it stays only when ``leave`` says so.
+    """It is in the template, so nothing has to be told to spare it.
 
-    The second half is the rule with nothing left out: a live policy the SQL
-    does not have, on a table the SQL creates, is dropped.
+    Dropped, it comes back; and the directory role is the only one it admits,
+    which is the part of the statement a careless capture would lose.
     """
+    assert {
+        table for table, policy in _policies(engine, practice) if policy == _DIRECTORY_POLICY
+    } == _DIRECTORY_TABLES
+    for table in _DIRECTORY_TABLES:
+        assert " TO pablo_practice_directory " in desired[table].policies[_DIRECTORY_POLICY]
 
-    def directory_tables() -> set[str]:
-        return {
-            table for table, policy in _policies(engine, practice) if policy == _DIRECTORY_POLICY
-        }
+    _ddl(engine, f'DROP POLICY {_DIRECTORY_POLICY} ON "{practice}".appointments')
+    assert _apply(engine, practice, desired).altered == 1
 
-    assert directory_tables() == _DIRECTORY_TABLES
-    assert all(_DIRECTORY_POLICY not in desired[table].policies for table in _DIRECTORY_TABLES)
-
-    assert _apply(engine, practice, desired).altered == 0
-    assert directory_tables() == _DIRECTORY_TABLES
-
-    assert _apply(engine, practice, desired, leave=()).altered == len(_DIRECTORY_TABLES)
-    assert directory_tables() == set()
+    with engine.connect() as conn:
+        roles = conn.execute(
+            text(
+                "SELECT roles FROM pg_policies "
+                "WHERE schemaname = :s AND tablename = 'appointments' AND policyname = :p"
+            ),
+            {"s": practice, "p": _DIRECTORY_POLICY},
+        ).scalar_one()
+    assert roles == ["pablo_practice_directory"]
 
 
 def test_a_missing_policy_is_created(
@@ -374,24 +370,18 @@ def test_a_practice_with_no_row_security_at_all_ends_up_as_the_file_says(
     engine: Engine, practice: str, from_the_file: str, desired: dict[str, DesiredTable]
 ) -> None:
     for table, policy in _policies(engine, practice):
-        if policy != _DIRECTORY_POLICY:
-            _ddl(engine, f'DROP POLICY "{policy}" ON "{practice}"."{table}"')
+        _ddl(engine, f'DROP POLICY "{policy}" ON "{practice}"."{table}"')
     for table, (enabled, _forced) in _flags(engine, practice).items():
         if enabled:
             _ddl(engine, f'ALTER TABLE "{practice}"."{table}" NO FORCE ROW LEVEL SECURITY')
             _ddl(engine, f'ALTER TABLE "{practice}"."{table}" DISABLE ROW LEVEL SECURITY')
-    assert {policy for _table, policy in _policies(engine, practice)} == {_DIRECTORY_POLICY}
+    assert not _policies(engine, practice)
     forced = sum(table.forced for table in desired.values())
 
     counts = _apply(engine, practice, desired)
 
     assert counts.altered == forced
-    rebuilt = {
-        key: value
-        for key, value in _policies(engine, practice).items()
-        if key[1] != _DIRECTORY_POLICY
-    }
-    assert rebuilt == _policies(engine, from_the_file)
+    assert _policies(engine, practice) == _policies(engine, from_the_file)
     assert _flags(engine, practice) == _flags(engine, from_the_file)
     assert _patients_read_by(engine, practice, _TREATING) == 2
     assert _patients_read_by(engine, practice, _COLLEAGUE) == 0
@@ -435,7 +425,7 @@ def test_nothing_is_kept_unless_the_caller_commits(
     with OrmSession(engine) as session:
         session.execute(text(f"SET search_path = {practice}, platform, public"))
         path = session.execute(text("SHOW search_path")).scalar_one()
-        counts = apply_tenant_rls(session, practice, desired, leave=_LEAVE)
+        counts = apply_tenant_rls(session, practice, desired)
         assert counts.altered == 1
         # It ran its statements under an empty path and put the caller's back.
         assert session.execute(text("SHOW search_path")).scalar_one() == path
@@ -447,7 +437,7 @@ def test_nothing_is_kept_unless_the_caller_commits(
 def test_the_directory_policys_name_protects_nothing_on_another_table(
     engine: Engine, practice: str, desired: dict[str, DesiredTable]
 ) -> None:
-    """``leave`` is a table and a policy together, never a name on its own."""
+    """The file puts that policy on three tables; anywhere else it is a stray."""
     _ddl(
         engine,
         f'CREATE POLICY {_DIRECTORY_POLICY} ON "{practice}".therapy_sessions USING (true)',
@@ -478,7 +468,7 @@ def test_an_edit_to_a_policy_the_applier_itself_recorded_is_put_back(
     apply_template_sql(engine, schema, body)
     apply_template_sql(engine, schema, row_security)
     try:
-        assert _apply(engine, schema, desired, leave=()).altered == 0
+        assert _apply(engine, schema, desired).altered == 0
         with engine.connect() as conn:
             table, policy, command = conn.execute(
                 text(
@@ -497,7 +487,7 @@ def test_an_edit_to_a_policy_the_applier_itself_recorded_is_put_back(
         _ddl(engine, f'ALTER POLICY "{policy}" ON "{schema}"."{table}" {clause} (true)')
         assert _policies(engine, schema) != settled, "the damage was not done"
 
-        assert _apply(engine, schema, desired, leave=()).altered == 1
+        assert _apply(engine, schema, desired).altered == 1
         assert _policies(engine, schema) == settled
     finally:
         _drop_schema(engine, schema)
@@ -548,11 +538,11 @@ def test_the_differences_are_reported_without_changing_anything(
     engine: Engine, practice: str, desired: dict[str, DesiredTable]
 ) -> None:
     with OrmSession(engine) as session:
-        assert tenant_rls_differences(session, practice, desired, leave=_LEAVE) == {}
+        assert tenant_rls_differences(session, practice, desired) == {}
 
     _ddl(engine, f'DROP POLICY rls_patient_access ON "{practice}".patients')
     with OrmSession(engine) as session:
-        found = tenant_rls_differences(session, practice, desired, leave=_LEAVE)
+        found = tenant_rls_differences(session, practice, desired)
         session.commit()
 
     assert list(found) == ["patients"]
@@ -625,7 +615,7 @@ def test_every_single_damage_to_every_table_is_found_and_undone(
     apply_template_sql(engine, schema, body)
     apply_template_sql(engine, schema, row_security)
     try:
-        _apply(engine, schema, desired, leave=())
+        _apply(engine, schema, desired)
         cases = 0
         failures: list[str] = []
         # One session for the lot, and the applier's own catalog reads for the

@@ -16,11 +16,9 @@ can hold tables that came from somewhere else; their isolation is not this
 module's to decide, so they are counted, named in one log line and left exactly
 as they are.
 
-**Which policies it leaves.** On a table it does touch, every live policy the
-file lacks is dropped, except the ``(table, policy)`` pairs the caller says
-belong to something else (``leave``). The file cannot carry a policy that names
-a role along with the grants that role needs, so the code that sets those up
-keeps its policy, and is responsible for it.
+**Which policies it drops.** On a table it does touch, every live policy the
+file lacks, whatever its name and whoever created it. There are no exceptions
+to name: a policy that should exist is in the file.
 
 **How a difference is found.** Each live policy is rendered the way ``pg_dump``
 writes one and compared with the file's statement, which ``pg_dump`` also
@@ -68,7 +66,7 @@ from typing import TYPE_CHECKING, NamedTuple
 from .rls_state import SCHEMA_PLACEHOLDER, LivePolicy, LiveRls, read_live_rls, schema_neutral
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Iterable, Iterator, Mapping
+    from collections.abc import Iterable, Iterator, Mapping
 
     from sqlalchemy.orm import Session
 
@@ -298,13 +296,12 @@ def _ident(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
-def _plan_table(  # noqa: PLR0913 — one table's whole state, in and out
+def _plan_table(
     schema_name: str,
     table_name: str,
     desired: DesiredTable,
     flags: tuple[bool, bool],
     live: Mapping[str, LivePolicy],
-    leave: Collection[tuple[str, str]],
 ) -> tuple[list[str], list[str]]:
     """What takes one table from its live state to the desired one.
 
@@ -324,7 +321,7 @@ def _plan_table(  # noqa: PLR0913 — one table's whole state, in and out
     statements.extend(
         f"DROP POLICY {_ident(name)} ON {qualified}"
         for name in sorted(live)
-        if name not in desired.policies and (table_name, name) not in leave
+        if name not in desired.policies
     )
 
     for name in sorted(desired.policies):
@@ -365,7 +362,6 @@ def _plan_schema(
     session: Session,
     schema_name: str,
     desired: Mapping[str, DesiredTable],
-    leave: Collection[tuple[str, str]],
 ) -> _SchemaPlan:
     plan = _SchemaPlan(before=read_live_rls(session, schema_name))
     for table_name in sorted(desired):
@@ -380,7 +376,6 @@ def _plan_schema(
             desired[table_name],
             flags,
             plan.before.policies.get(table_name, {}),
-            leave,
         )
         if statements:
             plan.statements[table_name] = statements
@@ -390,11 +385,7 @@ def _plan_schema(
 
 
 def tenant_rls_differences(
-    session: Session,
-    schema_name: str,
-    desired: Mapping[str, DesiredTable],
-    *,
-    leave: Collection[tuple[str, str]] = (),
+    session: Session, schema_name: str, desired: Mapping[str, DesiredTable]
 ) -> dict[str, list[str]]:
     """What :func:`apply_tenant_rls` would run on this schema, by table. Reads only.
 
@@ -406,15 +397,11 @@ def tenant_rls_differences(
     from . import _validate_schema_name
 
     _validate_schema_name(schema_name)
-    return _plan_schema(session, schema_name, desired, leave).statements
+    return _plan_schema(session, schema_name, desired).statements
 
 
 def apply_tenant_rls(
-    session: Session,
-    schema_name: str,
-    desired: Mapping[str, DesiredTable],
-    *,
-    leave: Collection[tuple[str, str]] = (),
+    session: Session, schema_name: str, desired: Mapping[str, DesiredTable]
 ) -> RlsReconcileCounts:
     """Make ``schema_name``'s row-level security equal ``desired``.
 
@@ -424,14 +411,6 @@ def apply_tenant_rls(
     they started. Does not commit: each table it changes stays locked until
     the caller does, so commit once per schema.
 
-    ``leave`` is ``(table, policy)`` pairs that something else creates and the
-    SQL cannot carry. A live policy that is one of those pairs is neither
-    dropped nor compared; whatever creates it is responsible for it. The
-    practice directory's read policy is the case today: it names a role, and it
-    is put in place with the grants and function ownership that go with it
-    (``practice_directory.apply_practice_directory_access``). The same policy
-    name on any other table is dropped like any policy the SQL does not have.
-
     Do not run this and ``enable_rls_on_schema`` over the same schema. Each
     reads the other's comment on a policy as not its own and rebuilds it.
     """
@@ -439,7 +418,7 @@ def apply_tenant_rls(
     from . import RlsReconcileCounts, _validate_schema_name
 
     _validate_schema_name(schema_name)
-    plan = _plan_schema(session, schema_name, desired, leave)
+    plan = _plan_schema(session, schema_name, desired)
 
     if plan.missing:
         logger.warning(

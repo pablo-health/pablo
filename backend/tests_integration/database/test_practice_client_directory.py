@@ -857,3 +857,93 @@ class TestMatchingAColleaguesClient:
             [practice["shared_mine"], practice["shared_theirs"]]
         )
         assert result.hidden_ids == [practice["shared_theirs"]]
+
+
+def _directory_access(engine: Engine, schema: str) -> dict[str, object]:
+    """Everything the directory's access consists of, read from the catalog."""
+    with engine.connect() as conn:
+        functions = conn.execute(
+            text(
+                "SELECT p.proname, pg_get_userbyid(p.proowner), p.proconfig FROM pg_proc p "
+                "JOIN pg_namespace n ON n.oid = p.pronamespace "
+                "WHERE n.nspname = :s AND p.proname LIKE 'practice\\_%' ORDER BY 1"
+            ),
+            {"s": schema},
+        ).all()
+        columns = conn.execute(
+            text(
+                "SELECT table_name, column_name, privilege_type "
+                "FROM information_schema.column_privileges "
+                "WHERE table_schema = :s AND grantee = :r ORDER BY 1, 2, 3"
+            ),
+            {"s": schema, "r": _ROLE},
+        ).all()
+        usage, create = conn.execute(
+            text(
+                "SELECT has_schema_privilege(:r, :s, 'USAGE'), "
+                "has_schema_privilege(:r, :s, 'CREATE')"
+            ),
+            {"s": schema, "r": _ROLE},
+        ).one()
+        policies = conn.execute(
+            text(
+                "SELECT tablename, cmd, roles, qual FROM pg_policies "
+                "WHERE schemaname = :s AND policyname = 'rls_practice_directory_read' ORDER BY 1"
+            ),
+            {"s": schema},
+        ).all()
+    return {
+        "functions": [tuple(row) for row in functions],
+        "columns": [tuple(row) for row in columns],
+        "schema": (usage, create),
+        "policies": [tuple(row) for row in policies],
+    }
+
+
+class TestTheTemplateCarriesTheAccess:
+    """Provisioning applies the template and runs nothing else for the directory."""
+
+    def test_a_new_practice_has_all_of_it_and_the_access_pass_finds_nothing_to_change(
+        self, engine: Engine
+    ) -> None:
+        from app.db.practice_directory import (  # noqa: PLC0415
+            APPOINTMENT_COLUMNS,
+            GRANT_COLUMNS,
+            PATIENT_COLUMNS,
+            apply_practice_directory_access,
+        )
+
+        schema = _new_schema(engine, "dir_template")
+        try:
+            provisioned = _directory_access(engine, schema)
+
+            path = [f"search_path=pg_catalog, {schema}, pg_temp"]
+            assert provisioned["functions"] == [
+                ("practice_client_directory", _ROLE, path),
+                ("practice_outside_appointment", _ROLE, path),
+            ]
+            assert provisioned["columns"] == sorted(
+                (table, column, "SELECT")
+                for table, columns in (
+                    ("appointments", APPOINTMENT_COLUMNS),
+                    ("patient_clinicians", GRANT_COLUMNS),
+                    ("patients", PATIENT_COLUMNS),
+                )
+                for column in columns
+            )
+            # It may use the schema, and it kept none of the right to create in it.
+            assert provisioned["schema"] == (True, False)
+            policies = provisioned["policies"]
+            assert isinstance(policies, list)
+            assert [(table, cmd, roles) for table, cmd, roles, _ in policies] == [
+                ("appointments", "SELECT", [_ROLE]),
+                ("patient_clinicians", "SELECT", [_ROLE]),
+                ("patients", "SELECT", [_ROLE]),
+            ]
+
+            # The code that does the same work, run over it: nothing differs.
+            with engine.begin() as conn:
+                apply_practice_directory_access(conn, schema)
+            assert _directory_access(engine, schema) == provisioned
+        finally:
+            _drop(engine, schema)

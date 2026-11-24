@@ -442,6 +442,44 @@ def test_rls_is_actually_on_afterwards(old_shape) -> None:
     assert forced == (True, True), "patients is not force-RLS'd after the migration"
 
 
+def test_the_practice_directory_reaches_the_renamed_schema(old_shape) -> None:
+    """The directory functions move with the rename and have to be re-pointed.
+
+    They come from the template schema, which never had the directory role's
+    grants or policies, and each carries a search path naming the schema it
+    was created in. The migration gives the renamed schema its access itself;
+    nothing else would.
+    """
+    engine = old_shape
+    with engine.begin() as conn:
+        _seed_patient(conn, DEFAULT_PRACTICE_SCHEMA, str(uuid.uuid4()))
+
+    migrate(engine)
+
+    with engine.connect() as conn:
+        functions = conn.execute(
+            text(
+                "SELECT p.proname, pg_get_userbyid(p.proowner), p.proconfig FROM pg_proc p "
+                "JOIN pg_namespace n ON n.oid = p.pronamespace "
+                "WHERE n.nspname = :s AND p.proname LIKE 'practice\\_%' ORDER BY 1"
+            ),
+            {"s": DEFAULT_PRACTICE_OWN_SCHEMA},
+        ).all()
+        policies = conn.execute(
+            text(
+                "SELECT tablename FROM pg_policies WHERE schemaname = :s "
+                "AND policyname = 'rls_practice_directory_read' ORDER BY 1"
+            ),
+            {"s": DEFAULT_PRACTICE_OWN_SCHEMA},
+        ).scalars()
+        assert list(policies) == ["appointments", "patient_clinicians", "patients"]
+    path = [f"search_path=pg_catalog, {DEFAULT_PRACTICE_OWN_SCHEMA}, pg_temp"]
+    assert [tuple(row) for row in functions] == [
+        ("practice_client_directory", "pablo_practice_directory", path),
+        ("practice_outside_appointment", "pablo_practice_directory", path),
+    ]
+
+
 def test_the_template_comes_back(old_shape, superuser_engine) -> None:
     """The migration renames the template away; every future practice is cloned
     from it, so it has to be rebuilt — empty, and a template again."""
