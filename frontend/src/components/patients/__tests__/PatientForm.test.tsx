@@ -1,11 +1,5 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-/**
- * PatientForm Component Tests
- *
- * Tests form validation, create/edit modes, and error handling.
- */
-
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
@@ -61,6 +55,11 @@ vi.mock("@/lib/api/portalSettings", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api/portalSettings")>()),
   getPortalSettings: (...a: unknown[]) => mockPortalSettings(...a),
   savePortalSettings: (...a: unknown[]) => mockSavePortalSettings(...a),
+}))
+
+// An admin, who may answer the portal question. PatientForm.portalAccess.test.tsx has the rest.
+vi.mock("@/components/settings/practiceAdminAccess", () => ({
+  usePracticeAdminAccess: () => ({ canEdit: true, note: null }),
 }))
 
 const createWrapper = () => {

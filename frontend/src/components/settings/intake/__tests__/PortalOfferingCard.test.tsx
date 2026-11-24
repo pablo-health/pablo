@@ -33,6 +33,13 @@ vi.mock("@/lib/api/schedulingPolicy", async (importOriginal) => ({
   getSchedulingPolicy: (...a: unknown[]) => mockPolicy(...a),
 }))
 
+let isPracticeAdmin = true
+
+vi.mock("@/components/settings/useSettingsPreferences", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/components/settings/useSettingsPreferences")>()),
+  useSettingsUserStatus: () => ({ data: { is_practice_admin: isPracticeAdmin } }),
+}))
+
 type Modules = Record<string, boolean>
 const ALL_ON: Modules = { intake: true, messaging: true, appointments: true, refills: true }
 
@@ -45,6 +52,7 @@ function settingsAre(enabled: boolean, modules: Modules = ALL_ON) {
 describe("PortalOfferingCard", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    isPracticeAdmin = true
     current = { enabled: false, decided: false, modules: ALL_ON, refill_turnaround_days: 2, message_reply_target_days: 2 }
     mockGet.mockImplementation(() => Promise.resolve(current))
     mockSave.mockImplementation(
@@ -215,6 +223,28 @@ describe("PortalOfferingCard", () => {
 
     await screen.findByRole("combobox", { name: "Refill request target" })
     expect(screen.queryByTestId("message-reply-target")).not.toBeInTheDocument()
+  })
+
+  it("is read-only, with the reason, for a clinician who is not an admin", async () => {
+    isPracticeAdmin = false
+    settingsAre(true)
+    renderWithProviders(<PortalOfferingCard />)
+
+    const toggle = await screen.findByRole("switch", { name: "Client portal" })
+    expect(screen.getByTestId("practice-admin-only")).toBeInTheDocument()
+    for (const control of screen.getAllByRole("switch")) expect(control).toBeDisabled()
+    expect(screen.getByTestId("refill-turnaround")).toBeDisabled()
+    await userEvent.click(toggle)
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+    expect(mockSave).not.toHaveBeenCalled()
+  })
+
+  it("shows no read-only line to an admin", async () => {
+    settingsAre(true)
+    renderWithProviders(<PortalOfferingCard />)
+
+    expect(await screen.findByRole("switch", { name: "Client portal" })).toBeEnabled()
+    expect(screen.queryByTestId("practice-admin-only")).not.toBeInTheDocument()
   })
 
   it("renders nothing where the deployment has no portal", async () => {
