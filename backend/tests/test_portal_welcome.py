@@ -28,6 +28,7 @@ from app.portal.welcome import (
 )
 from app.portal.welcome_store import InMemoryPortalWelcomeStore, get_portal_welcome_store
 from app.routes import _deps
+from app.routes.users import require_practice_admin
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -115,6 +116,9 @@ def client(mock_user: User, welcomes: InMemoryPortalWelcomeStore) -> TestClient:
     overrides = application.dependency_overrides
     overrides[get_current_user] = lambda: mock_user
     overrides[require_active_subscription] = lambda: mock_user
+    # Signed in as the practice owner; who else may save is pinned against the
+    # real owner-or-admin check in test_portal_and_scheduling_admin_gate.py.
+    overrides[require_practice_admin] = lambda: None
     overrides[get_portal_welcome_store] = lambda: welcomes
     return TestClient(application)
 

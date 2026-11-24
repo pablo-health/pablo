@@ -209,6 +209,7 @@ from ..services.telehealth import (
 from ..services.video_default import default_to_meet_on_calendar_connect
 from ..settings import get_settings
 from ..utcnow import utc_now
+from .users import require_practice_admin
 
 #: Where an authorization code may be delivered. Shared with every other
 #: OAuth connect flow — see ``app.auth.oauth_redirect``.
@@ -2331,12 +2332,16 @@ def get_scheduling_policy(
     return SchedulingPolicyResponse(**load_policy(get_db_session()))
 
 
-@router.patch("/api/scheduling/policy", response_model=SchedulingPolicyResponse)
+@router.patch(
+    "/api/scheduling/policy",
+    response_model=SchedulingPolicyResponse,
+    dependencies=[Depends(require_practice_admin)],
+)
 def update_scheduling_policy(
     request: UpdateSchedulingPolicyRequest,
     _ctx: TenantContext = Depends(get_tenant_context),
 ) -> SchedulingPolicyResponse:
-    """Change part of the scheduling policy.
+    """Change part of the scheduling policy: the owner or a practice admin only.
 
     Partial: a field the caller did not send keeps its current value, so a
     settings page can save one row without resending the rest.

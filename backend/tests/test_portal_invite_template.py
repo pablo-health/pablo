@@ -48,6 +48,7 @@ from app.portal.store import InMemoryPortalAuthStore, InMemoryPortalSessionStore
 from app.portal.tenant_gateway import PortalStores, get_portal_stores
 from app.repositories import get_patient_repository
 from app.routes import _deps
+from app.routes.users import require_practice_admin
 from app.services.audit_service import get_audit_service
 from app.settings import get_settings
 from fastapi import FastAPI
@@ -319,6 +320,9 @@ def _app(
     overrides = application.dependency_overrides
     overrides[get_current_user] = lambda: user
     overrides[require_active_subscription] = lambda: user
+    # Signed in as the practice owner; who else may save is pinned against the
+    # real owner-or-admin check in test_portal_and_scheduling_admin_gate.py.
+    overrides[require_practice_admin] = lambda: None
     overrides[get_patient_repository] = _FakePatientRepository
     overrides[get_portal_stores] = lambda: stores
     overrides[get_audit_service] = lambda: recording_audit
