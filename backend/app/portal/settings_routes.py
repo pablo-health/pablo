@@ -149,7 +149,8 @@ def get_portal_settings(
 @router.put(
     "/api/portal/settings",
     response_model=PortalSettingsResponse,
-    dependencies=[Depends(require_practice_admin)],
+    # Subscription first, so a read-only practice hears that rather than this.
+    dependencies=[Depends(require_active_subscription), Depends(require_practice_admin)],
 )
 def save_portal_settings(
     body: PortalSettingsRequest,

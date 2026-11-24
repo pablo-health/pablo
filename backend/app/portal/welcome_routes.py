@@ -89,7 +89,8 @@ def get_portal_welcome(
 @router.put(
     "/api/portal/welcome",
     response_model=PortalWelcomeResponse,
-    dependencies=[Depends(require_practice_admin)],
+    # Subscription first, so a read-only practice hears that rather than this.
+    dependencies=[Depends(require_active_subscription), Depends(require_practice_admin)],
 )
 def save_portal_welcome(
     body: PortalWelcomeRequest,
@@ -111,7 +112,8 @@ def save_portal_welcome(
 @router.delete(
     "/api/portal/welcome",
     response_model=PortalWelcomeResponse,
-    dependencies=[Depends(require_practice_admin)],
+    # Subscription first, so a read-only practice hears that rather than this.
+    dependencies=[Depends(require_active_subscription), Depends(require_practice_admin)],
 )
 def reset_portal_welcome(
     user: Annotated[User, Depends(require_active_subscription)],

@@ -140,7 +140,8 @@ def get_invite_template(
 @router.put(
     "/api/portal/invite-template",
     response_model=InviteTemplateResponse,
-    dependencies=[Depends(require_practice_admin)],
+    # Subscription first, so a read-only practice hears that rather than this.
+    dependencies=[Depends(require_active_subscription), Depends(require_practice_admin)],
 )
 def save_invite_template(
     body: InviteTemplateRequest,
@@ -169,7 +170,8 @@ def save_invite_template(
 @router.delete(
     "/api/portal/invite-template",
     response_model=InviteTemplateResponse,
-    dependencies=[Depends(require_practice_admin)],
+    # Subscription first, so a read-only practice hears that rather than this.
+    dependencies=[Depends(require_active_subscription), Depends(require_practice_admin)],
 )
 def reset_invite_template(
     user: Annotated[User, Depends(require_active_subscription)],
