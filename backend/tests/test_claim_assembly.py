@@ -9,6 +9,7 @@ builders run against the in-memory repositories.
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -19,6 +20,7 @@ from app.claims.assembly import (
     ClaimSources,
     ClientNotFoundError,
     NoActiveCoverageError,
+    RenderingClinicianNotFoundError,
     assemble_draft,
     build_claim_from_session,
     build_corrected_claim,
@@ -37,6 +39,7 @@ from app.repositories.clinician_profile import (
 )
 from app.repositories.coverage import InMemoryPatientCoverageRepository, InMemoryPayerRepository
 from app.repositories.patient import InMemoryPatientRepository
+from app.repositories.user import InMemoryUserRepository
 from app.scheduling_engine.models.appointment import Appointment
 from app.scheduling_engine.models.appointment_type import AppointmentType
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
@@ -49,6 +52,8 @@ from tests.claims_fixtures import APPOINTMENT_ID, COVERAGE_ID, PATIENT_ID, PAYER
 _NOW = datetime(2026, 9, 2, 15, 0, tzinfo=UTC)
 _TYPE_ID = "66666666-6666-4666-8666-666666666666"
 _EASTERN = ZoneInfo("America/New_York")
+_COLLEAGUE_ID = "77777777-7777-4777-8777-777777777777"
+_COLLEAGUE_APPOINTMENT_ID = "88888888-8888-4888-8888-888888888888"
 
 # 01:30 UTC on the 2nd is the evening of the 1st in New York.
 _START_UTC = datetime(2026, 9, 2, 1, 30, tzinfo=UTC)
@@ -77,6 +82,10 @@ def _user(**overrides: Any) -> User:
     }
     fields.update(overrides)
     return User(**fields)
+
+
+def _colleague() -> User:
+    return _user(id=_COLLEAGUE_ID, email="colleague@example.com", name="Ana Ruiz", legal_name=None)
 
 
 def _appointment(**overrides: Any) -> Appointment:
@@ -179,7 +188,7 @@ def _draft(**overrides: Any) -> Any:
         "appointment_type": _appointment_type(),
         "billing_profile": _BILLING_PROFILE,
         "rendering_provider": _profile(),
-        "user": _user(),
+        "clinician": _user(),
         "timezone": _EASTERN,
         "now": _NOW,
     }
@@ -374,6 +383,10 @@ def sources() -> ClaimSources:
     payers.create(_payer())
     profiles = InMemoryClinicianProfileRepository()
     profiles.create(_profile())
+    profiles.create(_profile(user_id=_COLLEAGUE_ID, npi_number="1245319599", taxonomy_code=None))
+    users = InMemoryUserRepository()
+    users.update(_user())
+    users.update(_colleague())
     return ClaimSources(
         appointments=appointments,
         appointment_types=appointment_types,
@@ -381,6 +394,7 @@ def sources() -> ClaimSources:
         coverage=coverage,
         payers=payers,
         clinician_profiles=profiles,
+        users=users,
         billing_profile=lambda: _BILLING_PROFILE,
         timezone=_EASTERN,
     )
@@ -420,6 +434,53 @@ def test_build_from_session_refuses_a_client_the_clinician_cannot_see(
     sources.appointments.grant_access(PATIENT_ID, "other-clinician")
     with pytest.raises(ClientNotFoundError):
         build_claim_from_session(APPOINTMENT_ID, _user(id="other-clinician"), sources)
+
+
+def _colleagues_session(sources: ClaimSources) -> None:
+    """A session the colleague held with the same client, visible to both clinicians."""
+    sources.appointments.grant_access(PATIENT_ID, _COLLEAGUE_ID)
+    sources.patients.grant_access(PATIENT_ID, _COLLEAGUE_ID)
+    sources.appointments.create(
+        _appointment(id=_COLLEAGUE_APPOINTMENT_ID, user_id=_COLLEAGUE_ID, appointment_type_id=None)
+    )
+
+
+def test_the_sessions_clinician_renders_whoever_builds_the_claim(sources: ClaimSources) -> None:
+    _colleagues_session(sources)
+    practice_npi = {**_BILLING_PROFILE, "billing_npi": "1234567893"}
+    sources = dataclasses.replace(sources, billing_profile=lambda: practice_npi)
+
+    by_colleague = build_claim_from_session(_COLLEAGUE_APPOINTMENT_ID, _colleague(), sources)
+    by_grant_holder = build_claim_from_session(_COLLEAGUE_APPOINTMENT_ID, _user(), sources)
+
+    for claim in (by_colleague, by_grant_holder):
+        billing = claim.billing_snapshot
+        assert billing.rendering_provider.user_id == _COLLEAGUE_ID
+        assert billing.rendering_provider.npi == "1245319599"
+        assert billing.rendering_provider.taxonomy_code is None
+        assert (billing.rendering_provider.first_name, billing.rendering_provider.last_name) == (
+            "Ana",
+            "Ruiz",
+        )
+        assert billing.billing_provider.npi == "1234567893"
+    assert by_colleague.billing_snapshot == by_grant_holder.billing_snapshot
+
+
+def test_a_correction_keeps_the_sessions_clinician(sources: ClaimSources) -> None:
+    _colleagues_session(sources)
+    parent = build_claim_from_session(_COLLEAGUE_APPOINTMENT_ID, _colleague(), sources)
+    child = build_corrected_claim(parent, _user(), sources)
+    assert child.billing_snapshot.rendering_provider.user_id == _COLLEAGUE_ID
+    assert child.billing_snapshot.rendering_provider.npi == "1245319599"
+
+
+def test_a_session_whose_clinician_has_no_user_record_is_refused(sources: ClaimSources) -> None:
+    sources.appointments.grant_access(PATIENT_ID, "gone")
+    sources.appointments.create(
+        _appointment(id=_COLLEAGUE_APPOINTMENT_ID, user_id="gone", appointment_type_id=None)
+    )
+    with pytest.raises(RenderingClinicianNotFoundError):
+        build_claim_from_session(_COLLEAGUE_APPOINTMENT_ID, _user(), sources)
 
 
 # ---------------------------------------------------------------------------

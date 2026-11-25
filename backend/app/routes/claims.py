@@ -63,6 +63,7 @@ from ..claims.assembly import (
     ClientNotFoundError,
     NoActiveCoverageError,
     PayerNotFoundError,
+    RenderingClinicianNotFoundError,
     build_claim_from_session,
     build_corrected_claim,
     build_void_claim,
@@ -199,6 +200,7 @@ def get_claim_sources(
         coverage=coverage,
         payers=payers,
         clinician_profiles=clinician_profiles,
+        users=users,
         billing_profile=lambda: billing_profile,
         timezone=_practice_timezone(users, user.id),
     )
@@ -380,6 +382,11 @@ def build_claim(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="The client's coverage names a payer that is no longer on file.",
+        ) from exc
+    except RenderingClinicianNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="The clinician who held this session is no longer on file.",
         ) from exc
 
     created = claims.create(claim)
@@ -851,6 +858,11 @@ def correct_claim(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="The client's coverage names a payer that is no longer on file.",
+        ) from exc
+    except RenderingClinicianNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="The clinician who held this session is no longer on file.",
         ) from exc
 
     created = claims.create(child)
