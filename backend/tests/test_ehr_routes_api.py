@@ -6,9 +6,16 @@ from datetime import datetime
 from typing import Any
 from unittest.mock import patch
 
+from app.auth.service import require_baa_acceptance
+from app.main import app
+from app.models import User
+from app.models.audit import AuditAction, ResourceType
 from app.models.ehr_route import EhrRoute, EhrRouteStep
 from app.repositories import InMemoryEhrRouteRepository
+from app.services import AuditService
 from fastapi import HTTPException, status
+
+from .conftest import audited_entries
 
 # Helpers
 
@@ -292,3 +299,66 @@ def test_update_step_preserves_unchanged_fields(
     # Other steps unchanged
     assert route.steps[0].selector == "nav[aria-label='Clients']"
     assert route.steps[2].selector == "button:contains('New Note')"
+
+
+# Gating and audit: any clinician's companion may teach the shared route,
+# behind the BAA gate, and every change is audited.
+
+
+def test_update_step_is_audited_without_the_selector(
+    client: Any,
+    mock_ehr_route_repo: InMemoryEhrRouteRepository,
+    mock_audit_service: AuditService,
+    mock_user: User,
+) -> None:
+    _seed_simplepractice_route(mock_ehr_route_repo)
+
+    response = client.patch(
+        "/api/ehr-routes/simplepractice/steps/2",
+        json={"selector": "button.new-note", "a11y_fingerprint": "AXButton | New Note"},
+    )
+
+    assert response.status_code == 200
+    entries = [
+        e
+        for e in audited_entries(mock_audit_service)
+        if e.action == AuditAction.EHR_ROUTE_STEP_UPDATED
+    ]
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry.user_id == mock_user.id
+    assert entry.resource_type == ResourceType.EHR_ROUTE
+    assert entry.resource_id == "simplepractice"
+    assert entry.changes == {"step_index": 2}
+
+
+def test_update_step_not_found_is_not_audited(
+    client: Any, mock_audit_service: AuditService
+) -> None:
+    response = client.patch(
+        "/api/ehr-routes/simplepractice/steps/0",
+        json={"selector": "div.new", "a11y_fingerprint": "AXGroup | New"},
+    )
+
+    assert response.status_code == 404
+    assert audited_entries(mock_audit_service) == []
+
+
+def test_update_step_requires_baa_acceptance(
+    client: Any, mock_ehr_route_repo: InMemoryEhrRouteRepository
+) -> None:
+    _seed_simplepractice_route(mock_ehr_route_repo)
+
+    def refuse() -> User:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="BAA_NOT_ACCEPTED")
+
+    app.dependency_overrides[require_baa_acceptance] = refuse
+    response = client.patch(
+        "/api/ehr-routes/simplepractice/steps/0",
+        json={"selector": "div.new", "a11y_fingerprint": "AXGroup | New"},
+    )
+
+    assert response.status_code == 403
+    route = mock_ehr_route_repo.get("simplepractice")
+    assert route is not None
+    assert route.steps[0].selector == "nav[aria-label='Clients']"

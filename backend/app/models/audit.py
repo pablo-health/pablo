@@ -148,6 +148,7 @@ class AuditAction(StrEnum):
 
     # EHR navigation
     EHR_NAVIGATE = "ehr_navigate"
+    EHR_ROUTE_STEP_UPDATED = "ehr_route_step_updated"
 
     # User reading their own audit trail (meta-audit).
     SELF_AUDIT_VIEWED = "self_audit_viewed"
