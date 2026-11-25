@@ -2,9 +2,8 @@
 
 """A practice learns which account owns it, and never learns it twice.
 
-``platform.practices.owner_user_id`` is what ``owner_session`` in
-``app.routes.patient_booking`` arms before it reads a diary, so a practice
-that does not know its owner cannot offer a patient a time. These tests are
+``platform.practices.owner_user_id`` names the account that answers for the
+practice, which the audit log's owner-read policy tests. These tests are
 over the real registry because the rules that matter are in the statements:
 ``owner_user_id IS NULL`` is what makes the write one-time, and the email
 test is what keeps it off the wrong account. Both are SQL, and neither is

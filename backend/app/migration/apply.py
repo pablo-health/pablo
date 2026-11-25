@@ -161,7 +161,7 @@ class _Run:
     providers: dict[str, str]
     landable: dict[tuple[str, str], dict[str, Any]]
     report: ApplyReport
-    visits: dict[tuple[str, str], str] = field(default_factory=dict)
+    visits: dict[tuple[str, str, str], str] = field(default_factory=dict)
 
 
 def _key(record_type: str, source_id: str) -> str:
@@ -371,11 +371,14 @@ class ArchiveApplier:
         if info is None:
             return None
         starts = info.starts_at
-        visit_key = (patient_id, starts.isoformat())
+        visit_key = (user_id, patient_id, starts.isoformat())
         if visit_key in run.visits:
             return run.visits[visit_key]
+        # The author's own calendar only: a colleague with a grant on the client
+        # also reads theirs, and a co-therapy visit there is not this one.
         existing = self._session.execute(
             select(AppointmentRow.id).where(
+                AppointmentRow.user_id == user_id,
                 AppointmentRow.patient_id == patient_id,
                 AppointmentRow.start_at == starts,
                 AppointmentRow.status != AppointmentStatus.CANCELLED.value,

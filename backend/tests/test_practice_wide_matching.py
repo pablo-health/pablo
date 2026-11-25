@@ -5,7 +5,7 @@ charts or books a colleague's client for someone who doesn't see them.
 
 Two clinicians in one practice. ``ME`` imports and answers; ``COLLEAGUE``
 sees a client ``ME`` does not. The same promises are proven against real
-Postgres in ``tests_integration/database/test_practice_client_directory.py``.
+Postgres in ``tests_integration/database/practice_directory/``.
 """
 
 from __future__ import annotations

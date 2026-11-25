@@ -25,6 +25,7 @@ import {
   REFILL_TURNAROUND_MIN_DAYS,
 } from "@/lib/api/portalSettings"
 import { portalModuleLabel } from "@/lib/portalModules"
+import { PracticeAdminAccessNote, usePracticeAdminAccess } from "../practiceAdminAccess"
 
 /**
  * Whether the practice offers its clients the portal, and what clients can
@@ -40,14 +41,19 @@ import { portalModuleLabel } from "@/lib/portalModules"
  * one is the practice's scheduling policy, which lives with the rest of
  * scheduling — so the Appointments row says where that stands and links to
  * it, rather than keeping a second switch for the same answer.
+ *
+ * Only the practice owner or a practice admin may change any of it; anyone
+ * else sees the card read-only, with the line that says why.
  */
 export function PortalOfferingCard() {
   const { data: settings } = usePortalSettings()
   const save = useSavePortalSettings()
   const people = usePeopleTerm()
   const [confirmingOff, setConfirmingOff] = useState(false)
+  const { canEdit, note } = usePracticeAdminAccess()
 
   if (!settings) return null
+  const locked = !canEdit || save.isPending
 
   const modules = Object.entries(settings.modules)
   const onCount = modules.filter(([, on]) => on).length
@@ -67,6 +73,11 @@ export function PortalOfferingCard() {
   return (
     <>
       <SettingsCard flush>
+        {note && (
+          <div className="px-[22px] pt-1.5">
+            <PracticeAdminAccessNote note={note} />
+          </div>
+        )}
         <SettingsRow
           label={`${people.One} portal`}
           description={`Where your ${people.many} sign in between visits.`}
@@ -75,7 +86,7 @@ export function PortalOfferingCard() {
             checked={settings.enabled}
             onChange={change}
             label={`${people.One} portal`}
-            disabled={save.isPending}
+            disabled={locked}
           />
         </SettingsRow>
         {modules.length > 0 && (
@@ -93,7 +104,7 @@ export function PortalOfferingCard() {
                     label={portalModuleLabel(name)}
                     // The last part on stays on: a portal with nothing in it
                     // is the portal switched off, and that has its own switch.
-                    disabled={!settings.enabled || save.isPending || (on && onCount === 1)}
+                    disabled={!settings.enabled || locked || (on && onCount === 1)}
                   />
                 </SettingsRow>
                 {name === "refills" && on && settings.enabled && (
@@ -103,7 +114,7 @@ export function PortalOfferingCard() {
                     testId="refill-turnaround"
                     choices={REFILL_TARGET_CHOICES}
                     days={settings.refill_turnaround_days}
-                    disabled={save.isPending}
+                    disabled={locked}
                     onChange={(days) => save.mutate({ refill_turnaround_days: days })}
                   />
                 )}
@@ -114,7 +125,7 @@ export function PortalOfferingCard() {
                     testId="message-reply-target"
                     choices={REPLY_TARGET_CHOICES}
                     days={settings.message_reply_target_days}
-                    disabled={save.isPending}
+                    disabled={locked}
                     onChange={(days) => save.mutate({ message_reply_target_days: days })}
                   />
                 )}

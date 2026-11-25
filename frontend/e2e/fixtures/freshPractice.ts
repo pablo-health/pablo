@@ -39,6 +39,7 @@ export type FreshPracticeName =
   | "admins"
   | "away"
   | "coverage"
+  | "self-booking"
   | "membership-one"
   | "membership-two"
   | "membership-gone"

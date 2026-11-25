@@ -2,8 +2,10 @@
 
 """A practice's portal welcome, as its clinicians edit it.
 
-* ``GET``/``PUT``/``DELETE /api/portal/welcome`` — CLINICIAN. The practice's
-  own welcome: read it (or the default), save it, or go back to the default.
+* ``GET /api/portal/welcome`` — CLINICIAN. The practice's own welcome, or the
+  default.
+* ``PUT``/``DELETE /api/portal/welcome`` — the practice owner or a practice
+  admin (``require_practice_admin``): save it, or go back to the default.
 
 The response carries the practice's name as the portal will fill it in, so
 the editor's preview can be drawn in the browser without a round trip per
@@ -24,6 +26,7 @@ from ..api_errors import UnprocessableEntityError
 from ..auth.service import require_active_subscription
 from ..models import User  # noqa: TC001 — fastapi resolves the annotation at runtime
 from ..routes._deps import practice_id_or_409
+from ..routes.users import require_practice_admin
 from .practice_routes import ensure_practice_slug
 from .welcome import (
     DEFAULT_WELCOME,
@@ -83,7 +86,12 @@ def get_portal_welcome(
     return _welcome_response(store.get(practice_id), practice_id)
 
 
-@router.put("/api/portal/welcome", response_model=PortalWelcomeResponse)
+@router.put(
+    "/api/portal/welcome",
+    response_model=PortalWelcomeResponse,
+    # Subscription first, so a read-only practice hears that rather than this.
+    dependencies=[Depends(require_active_subscription), Depends(require_practice_admin)],
+)
 def save_portal_welcome(
     body: PortalWelcomeRequest,
     user: Annotated[User, Depends(require_active_subscription)],
@@ -101,7 +109,12 @@ def save_portal_welcome(
     return _welcome_response(store.get(practice_id), practice_id)
 
 
-@router.delete("/api/portal/welcome", response_model=PortalWelcomeResponse)
+@router.delete(
+    "/api/portal/welcome",
+    response_model=PortalWelcomeResponse,
+    # Subscription first, so a read-only practice hears that rather than this.
+    dependencies=[Depends(require_active_subscription), Depends(require_practice_admin)],
+)
 def reset_portal_welcome(
     user: Annotated[User, Depends(require_active_subscription)],
     store: Annotated[PortalWelcomeStore, Depends(get_portal_welcome_store)],

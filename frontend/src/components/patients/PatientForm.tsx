@@ -24,6 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { usePracticeAdminAccess } from "@/components/settings/practiceAdminAccess"
 import { useCreatePatient, useUpdatePatient } from "@/hooks/usePatients"
 import { usePortalSettings } from "@/hooks/usePortalSettings"
 import { useFeature } from "@/lib/featureGates"
@@ -95,6 +96,10 @@ export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormPr
     enabled: portalOn,
   })
   const [portalAnswer, setPortalAnswer] = useState<PortalAnswer | null>(null)
+  // Only someone who may change the portal is asked; anyone else's answer
+  // would be refused. No answer and no note yet means the status is loading.
+  const { canEdit: mayChangePortal, note: portalAccessNote } = usePracticeAdminAccess()
+  const portalAccessLoading = !mayChangePortal && portalAccessNote === null
 
   // Reset form when dialog opens/closes or patient changes
   useEffect(() => {
@@ -178,15 +183,16 @@ export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormPr
       onOpenChange(false)
     }
     // Nothing to offer when the deployment serves no part a practice chooses.
-    const ask =
+    const undecided =
       portalSettings !== undefined &&
       !portalSettings.decided &&
       Object.keys(portalSettings.modules ?? {}).length > 0 &&
       portalAnswer === null
+    const ask = undecided && mayChangePortal
     return (
       <Dialog open={open} onOpenChange={(next) => !next && finish()}>
         <DialogContent className="sm:max-w-[520px]">
-          {portalSettingsLoading ? (
+          {portalSettingsLoading || (undecided && portalAccessLoading) ? (
             // Not yet known whether to ask: showing the next step and then
             // swapping it for the question would move the screen under a click.
             <DialogTitle className="sr-only">Loading</DialogTitle>

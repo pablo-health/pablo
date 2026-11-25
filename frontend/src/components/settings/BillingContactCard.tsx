@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input"
 import { useUpdateBillingProfile } from "@/hooks/useBillingProfile"
 import type { BillingProfileResponse } from "@/types/practiceBilling"
 import { Field, type PracticeDetails, type TextField, textPatch } from "./billingProfileShared"
-import { PracticeAdminOnlyNote, usePracticeAdminAccess } from "./practiceAdminAccess"
+import { PracticeAdminAccessNote, usePracticeAdminAccess } from "./practiceAdminAccess"
 import { useSettingsSaved } from "./SettingsSavedContext"
 
 export const CONTACT_EMAIL_HELP =
@@ -52,7 +52,7 @@ export function BillingContactCard({
 }) {
   const update = useUpdateBillingProfile()
   const { flashSaved } = useSettingsSaved()
-  const { canEdit, readOnly } = usePracticeAdminAccess()
+  const { canEdit, note } = usePracticeAdminAccess()
   const [draft, setDraft] = useState<Record<TextField, string>>(() => ({
     legal_name: "",
     billing_npi: "",
@@ -112,7 +112,7 @@ export function BillingContactCard({
       {/* A disabled fieldset turns off every control inside it at once:
           inputs, the tax ID's Change, the prefill links and Save. */}
       <fieldset disabled={!canEdit} className="m-0 min-w-0 space-y-4 border-0 p-0">
-        {readOnly && <PracticeAdminOnlyNote />}
+        {note && <PracticeAdminAccessNote note={note} />}
         {canEdit && canPrefill && (
           <p className="text-[12.5px] text-muted-foreground">
             <Button

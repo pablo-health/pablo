@@ -46,6 +46,13 @@ vi.mock("@/lib/api/schedulingPolicy", async (importOriginal) => ({
   getSchedulingPolicy: (...a: unknown[]) => mockPolicy(...a),
 }))
 
+let isPracticeAdmin = true
+
+vi.mock("@/components/settings/useSettingsPreferences", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/components/settings/useSettingsPreferences")>()),
+  useSettingsUserStatus: () => ({ data: { is_practice_admin: isPracticeAdmin } }),
+}))
+
 const SESSION = {
   id: "type_session",
   user_id: "user_1",
@@ -82,6 +89,7 @@ function policy(selfBook: boolean) {
 describe("AppointmentTypesCard — booking controls", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    isPracticeAdmin = true
     mockTypes.mockResolvedValue({ data: [SESSION], migrated: false })
   })
 
@@ -126,6 +134,19 @@ describe("AppointmentTypesCard — booking controls", () => {
 
     expect(await screen.findByText("Clients may cancel until")).toBeInTheDocument()
     expect(screen.getByText("Clients may reschedule until")).toBeInTheDocument()
+  })
+
+  it("shows the defaults read-only, with the reason, to a clinician who is not an admin", async () => {
+    isPracticeAdmin = false
+    mockPolicy.mockResolvedValue(policy(true))
+    renderWithProviders(<AppointmentTypesCard />)
+
+    await userEvent.click(await screen.findByRole("button", { name: /Defaults for all types/ }))
+
+    expect(await screen.findByTestId("practice-admin-only")).toBeInTheDocument()
+    expect(screen.getByRole("combobox", { name: "Default notice" })).toBeDisabled()
+    expect(screen.getByRole("combobox", { name: "Cancel cutoff" })).toBeDisabled()
+    expect(screen.getByRole("combobox", { name: "Reschedule cutoff" })).toBeDisabled()
   })
 
   it("names the cutoffs with the clinician's own word", async () => {

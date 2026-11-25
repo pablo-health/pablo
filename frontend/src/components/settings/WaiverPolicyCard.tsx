@@ -24,7 +24,7 @@ import { SettingsCard, SettingsRow, Toggle } from "@/components/settings/ui"
 import { useBillingProfile, useUpdateBillingProfile } from "@/hooks/useBillingProfile"
 import { usePeopleTerm } from "@/hooks/usePeopleTerm"
 import { centsToDollars, dollarsToCents } from "@/lib/money"
-import { PracticeAdminOnlyNote, usePracticeAdminAccess } from "./practiceAdminAccess"
+import { PracticeAdminAccessNote, usePracticeAdminAccess } from "./practiceAdminAccess"
 import { useSettingsSaved } from "./SettingsSavedContext"
 
 export function WaiverPolicyCard() {
@@ -32,7 +32,7 @@ export function WaiverPolicyCard() {
   const update = useUpdateBillingProfile()
   const { flashSaved } = useSettingsSaved()
   const people = usePeopleTerm()
-  const { canEdit, readOnly } = usePracticeAdminAccess()
+  const { canEdit, note } = usePracticeAdminAccess()
 
   const [draft, setDraft] = useState<string | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
@@ -68,9 +68,9 @@ export function WaiverPolicyCard() {
       description={`What a clinician may write off from a ${people.one}'s balance without collecting it, and what stops it from happening by accident.`}
       flush
     >
-      {readOnly && (
+      {note && (
         <div className="px-[22px] pt-1.5">
-          <PracticeAdminOnlyNote />
+          <PracticeAdminAccessNote note={note} />
         </div>
       )}
       <SettingsRow

@@ -16,6 +16,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { SettingsCard, SettingsRow } from "@/components/settings/ui"
 import { AppointmentTypeRow } from "./AppointmentTypeRow"
+import { PracticeAdminAccessNote, usePracticeAdminAccess } from "./practiceAdminAccess"
 import { ApiError } from "@/lib/api/client"
 import {
   useAppointmentTypes,
@@ -98,6 +99,8 @@ export function AppointmentTypesCard({
   const updateType = useUpdateAppointmentType()
   const deleteType = useDeleteAppointmentType()
   const updatePolicy = useUpdateSchedulingPolicy()
+  // The defaults are the practice's scheduling policy: owner or admin only.
+  const { canEdit, note } = usePracticeAdminAccess()
 
   const [openId, setOpenId] = useState<string | null>(null)
   const [defaultsOpen, setDefaultsOpen] = useState(false)
@@ -183,6 +186,11 @@ export function AppointmentTypesCard({
 
         {forScheduling && defaultsOpen && policy && (
           <div className="border-t border-border bg-foreground/[0.025]">
+            {note && (
+              <div className="px-[22px] pt-3">
+                <PracticeAdminAccessNote note={note} />
+              </div>
+            )}
             <SettingsRow
               nested
               label="How much warning before any new booking"
@@ -191,6 +199,7 @@ export function AppointmentTypesCard({
               <Select
                 value={String(policy.min_notice_hours)}
                 onValueChange={(v) => updatePolicy.mutate({ min_notice_hours: Number(v) })}
+                disabled={!canEdit}
               >
                 <SelectTrigger aria-label="Default notice">
                   <SelectValue />
@@ -211,6 +220,7 @@ export function AppointmentTypesCard({
               <Select
                 value={String(policy.cancel_cutoff_hours)}
                 onValueChange={(v) => updatePolicy.mutate({ cancel_cutoff_hours: Number(v) })}
+                disabled={!canEdit}
               >
                 <SelectTrigger aria-label="Cancel cutoff">
                   <SelectValue />
@@ -228,6 +238,7 @@ export function AppointmentTypesCard({
               <Select
                 value={String(policy.reschedule_cutoff_hours)}
                 onValueChange={(v) => updatePolicy.mutate({ reschedule_cutoff_hours: Number(v) })}
+                disabled={!canEdit}
               >
                 <SelectTrigger aria-label="Reschedule cutoff">
                   <SelectValue />
