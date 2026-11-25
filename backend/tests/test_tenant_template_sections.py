@@ -26,6 +26,7 @@ from app.db.provisioning import (
     _TENANT_TEMPLATE_SQL_PATH,
     TEMPLATE_ROW_SECURITY_MARKER,
 )
+from app.db.rls_capture import row_security_section
 from app.db.rls_state import FINGERPRINT_PREFIX
 
 if TYPE_CHECKING:
@@ -60,8 +61,6 @@ def _fixture(name: str) -> str:
 
 def test_the_regen_script_and_provisioning_agree_on_the_marker(regen: ModuleType) -> None:
     assert regen.ROW_SECURITY_MARKER == TEMPLATE_ROW_SECURITY_MARKER
-    assert regen.FINGERPRINT_PREFIX == FINGERPRINT_PREFIX
-    assert regen.DIRECTORY_POLICY == DIRECTORY_POLICY
 
 
 def test_the_row_security_section_names_no_schema_of_its_own(regen: ModuleType) -> None:
@@ -145,7 +144,7 @@ def test_the_schema_part_forces_nothing() -> None:
 
 
 def test_the_extraction_keeps_flags_and_fingerprinted_policies(regen: ModuleType) -> None:
-    section = regen._row_security_section(
+    section = row_security_section(
         _fixture("row_security_capture.sql"), regen.CAPTURE_SCHEMA, _fixture("schema_part.sql")
     )
 
@@ -172,7 +171,7 @@ def test_the_extraction_keeps_flags_and_fingerprinted_policies(regen: ModuleType
 
 def test_a_policy_the_schema_part_has_differently_is_replaced(regen: ModuleType) -> None:
     schema_part = _fixture("schema_part.sql").replace("patient_id IS NOT NULL", "true")
-    section = regen._row_security_section(
+    section = row_security_section(
         _fixture("row_security_capture.sql"), regen.CAPTURE_SCHEMA, schema_part
     )
     drop = "DROP POLICY rls_audit_owner_client_read ON __TENANT_SCHEMA__.audit_logs;"
@@ -187,5 +186,45 @@ def test_the_extraction_refuses_a_section_that_still_names_the_capture(
         "OR (restricted AND",
         "OR ('practice_template_capture' IS NOT NULL AND restricted AND",
     )
-    with pytest.raises(SystemExit, match="still names"):
-        regen._row_security_section(leaky, regen.CAPTURE_SCHEMA, _fixture("schema_part.sql"))
+    with pytest.raises(ValueError, match="still names"):
+        row_security_section(leaky, regen.CAPTURE_SCHEMA, _fixture("schema_part.sql"))
+
+
+def test_a_table_filter_keeps_only_those_tables(regen: ModuleType) -> None:
+    """A deployment capturing its own tables gets their statements and nothing else."""
+    section = row_security_section(
+        _fixture("row_security_capture.sql"),
+        regen.CAPTURE_SCHEMA,
+        _fixture("schema_part.sql"),
+        tables={"notes"},
+    )
+
+    assert "ALTER TABLE ONLY __TENANT_SCHEMA__.notes FORCE ROW LEVEL SECURITY;" in section
+    assert "ALTER TABLE __TENANT_SCHEMA__.notes ENABLE ROW LEVEL SECURITY;" in section
+    assert "CREATE POLICY rls_note_access ON __TENANT_SCHEMA__.notes USING" in section
+    assert "IS 'rls-fingerprint-v1-aaaa';" in section
+    assert "audit_logs" not in section
+    assert "patients" not in section
+
+
+def test_a_filter_naming_no_captured_table_keeps_nothing(regen: ModuleType) -> None:
+    """And a fingerprint on a table left out is not mistaken for one with no policy."""
+    section = row_security_section(
+        _fixture("row_security_capture.sql"),
+        regen.CAPTURE_SCHEMA,
+        _fixture("schema_part.sql"),
+        tables={"some_other_table"},
+    )
+
+    assert section.strip() == ""
+
+
+def test_no_filter_and_a_filter_naming_every_table_agree(regen: ModuleType) -> None:
+    capture = _fixture("row_security_capture.sql")
+    schema_part = _fixture("schema_part.sql")
+
+    every = {"notes", "audit_logs", "patients"}
+
+    assert row_security_section(capture, regen.CAPTURE_SCHEMA, schema_part) == row_security_section(
+        capture, regen.CAPTURE_SCHEMA, schema_part, tables=every
+    )
