@@ -4202,6 +4202,411 @@
    "desc": "`'name'` -> `'nameXX'`",
    "snippet": "'name'",
    "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/db/rls_apply.py",
+   "func": "<module>",
+   "op": "const_str",
+   "desc": "`'rls-applied-v1-'` -> `'rls-applied-v1-XX'`",
+   "snippet": "'rls-applied-v1-'",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "desired_from_sql",
+   "op": "const_str",
+   "desc": "`'SQL with no row-level security marker ('` -> `'SQL with no row-level security marker (XX'`",
+   "snippet": "'SQL with no row-level security marker ('",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "desired_from_sql",
+   "op": "attr_swap",
+   "desc": "`.strip` -> `.lstrip`",
+   "snippet": "TEMPLATE_ROW_SECURITY_MARKER.strip",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "desired_from_sql",
+   "op": "const_str",
+   "desc": "`\"): refusing to read it as 'no row-level security on any of its tables'\"` -> `\"): refusing to read it as 'no row-level security on any of its tables'XX\"`",
+   "snippet": "\"): refusing to read it as 'no row-level security on any of its tables'\"",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "desired_from_sql",
+   "op": "const_str",
+   "desc": "`'row-level security for '` -> `'row-level security for XX'`",
+   "snippet": "'row-level security for '",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "desired_from_sql",
+   "op": "const_str",
+   "desc": "`', which none of the SQL creates'` -> `', which none of the SQL createsXX'`",
+   "snippet": "', which none of the SQL creates'",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "desired_from_sql",
+   "op": "const_str",
+   "desc": "`': a comment on '` -> `': a comment on XX'`",
+   "snippet": "': a comment on '",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "desired_from_sql",
+   "op": "const_str",
+   "desc": "`', with no such policy in the SQL'` -> `', with no such policy in the SQLXX'`",
+   "snippet": "', with no such policy in the SQL'",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/db/rls_apply.py",
+   "func": "<module>",
+   "op": "const_str",
+   "desc": "`''` -> `'XX'`",
+   "snippet": "''",
+   "occurrence": 1
+  },
+  {
+   "class": "B",
+   "file": "app/db/rls_apply.py",
+   "func": "<module>",
+   "op": "const_str",
+   "desc": "`''` -> `'XX'`",
+   "snippet": "''",
+   "occurrence": 2
+  },
+  {
+   "class": "B",
+   "file": "app/db/rls_apply.py",
+   "func": "_row_security_statements",
+   "op": "const_int",
+   "desc": "`0` -> `-1`",
+   "snippet": "0",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "_row_security_statements",
+   "op": "const_str",
+   "desc": "`'a policy with no end: '` -> `'a policy with no end: XX'`",
+   "snippet": "'a policy with no end: '",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "_row_security_statements",
+   "op": "const_int",
+   "desc": "`120` -> `121`",
+   "snippet": "120",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "_row_security_statements",
+   "op": "const_int",
+   "desc": "`120` -> `119`",
+   "snippet": "120",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/db/rls_apply.py",
+   "func": "_row_security_statements",
+   "op": "const_str",
+   "desc": "`'COMMENT'` -> `'COMMENTXX'`",
+   "snippet": "'COMMENT'",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "_row_security_statements",
+   "op": "const_str",
+   "desc": "`'unreadable row-level security statement: '` -> `'unreadable row-level security statement: XX'`",
+   "snippet": "'unreadable row-level security statement: '",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "_row_security_statements",
+   "op": "const_int",
+   "desc": "`120` -> `121`",
+   "snippet": "120",
+   "occurrence": 1
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "_row_security_statements",
+   "op": "const_int",
+   "desc": "`120` -> `119`",
+   "snippet": "120",
+   "occurrence": 1
+  },
+  {
+   "class": "B",
+   "file": "app/db/rls_apply.py",
+   "func": "_is_one_statement",
+   "op": "return_none",
+   "desc": "`return False` -> `return None`",
+   "snippet": "return False",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "_is_one_statement",
+   "op": "const_str",
+   "desc": "`'more than one statement where one policy was expected: '` -> `'more than one statement where one policy was expected: XX'`",
+   "snippet": "'more than one statement where one policy was expected: '",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "_is_one_statement",
+   "op": "const_int",
+   "desc": "`120` -> `121`",
+   "snippet": "120",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "_is_one_statement",
+   "op": "const_int",
+   "desc": "`120` -> `119`",
+   "snippet": "120",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "_table_name",
+   "op": "const_str",
+   "desc": "`'expected a table qualified with '` -> `'expected a table qualified with XX'`",
+   "snippet": "'expected a table qualified with '",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "_table_name",
+   "op": "const_str",
+   "desc": "`': '` -> `': XX'`",
+   "snippet": "': '",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "_table_name",
+   "op": "const_int",
+   "desc": "`120` -> `121`",
+   "snippet": "120",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "_table_name",
+   "op": "const_int",
+   "desc": "`120` -> `119`",
+   "snippet": "120",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/db/rls_apply.py",
+   "func": "applied_fingerprint",
+   "op": "const_str",
+   "desc": "`'\\n--\\n'` -> `'\\n--\\nXX'`",
+   "snippet": "'\\n--\\n'",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/db/rls_apply.py",
+   "func": "_plan_table",
+   "op": "const_str",
+   "desc": "`';'` -> `';XX'`",
+   "snippet": "';'",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "apply_tenant_rls",
+   "op": "const_str",
+   "desc": "`'Row-level security: %d table(s) in the SQL and not in %s, nothing to apply: %s'` -> `'Row-level security: %d table(s) in the SQL and not in %s, nothing to apply: %sXX'`",
+   "snippet": "'Row-level security: %d table(s) in the SQL and not in %s, nothing to apply: %s'",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "apply_tenant_rls",
+   "op": "const_str",
+   "desc": "`', '` -> `', XX'`",
+   "snippet": "', '",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "apply_tenant_rls",
+   "op": "const_str",
+   "desc": "`'Row-level security: %d table(s) in %s that no SQL file creates, left as they are: %s'` -> `'Row-level security: %d table(s) in %s that no SQL file creates, left as they are: %sXX'`",
+   "snippet": "'Row-level security: %d table(s) in %s that no SQL file creates, left as they ar",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "apply_tenant_rls",
+   "op": "const_str",
+   "desc": "`', '` -> `', XX'`",
+   "snippet": "', '",
+   "occurrence": 1
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "apply_tenant_rls",
+   "op": "cond_const",
+   "desc": "condition `plan.statements` -> `True`",
+   "snippet": "if plan.statements:",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "apply_tenant_rls",
+   "op": "delete_stmt",
+   "desc": "delete body statement `logger.info('Row-level security on %s: %d table(s) checked, %d altered`",
+   "snippet": "logger.info('Row-level security on %s: %d table(s) checked, %d altered, %d left ",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "apply_tenant_rls",
+   "op": "const_str",
+   "desc": "`'Row-level security on %s: %d table(s) checked, %d altered, %d left alone'` -> `'Row-level security on %s: %d table(s) checked, %d altered, %d left aloneXX'`",
+   "snippet": "'Row-level security on %s: %d table(s) checked, %d altered, %d left alone'",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/db/rls_apply.py",
+   "func": "_execute",
+   "op": "delete_stmt",
+   "desc": "delete body statement `statements = list(statements)`",
+   "snippet": "statements = list(statements)",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "_execute",
+   "op": "cond_const",
+   "desc": "condition `not statements` -> `False`",
+   "snippet": "if not statements:",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "_execute",
+   "op": "delete_stmt",
+   "desc": "delete if-body statement `return`",
+   "snippet": "return",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/db/rls_apply.py",
+   "func": "_execute",
+   "op": "const_str",
+   "desc": "`\"SELECT pg_catalog.current_setting('search_path')\"` -> `\"SELECT pg_catalog.current_setting('search_path')XX\"`",
+   "snippet": "\"SELECT pg_catalog.current_setting('search_path')\"",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/db/rls_apply.py",
+   "func": "_execute",
+   "op": "cond_const",
+   "desc": "condition `row` -> `True`",
+   "snippet": "row[0] if row else ''",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/db/rls_apply.py",
+   "func": "_execute",
+   "op": "const_int",
+   "desc": "`0` -> `-1`",
+   "snippet": "0",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/db/rls_apply.py",
+   "func": "_execute",
+   "op": "const_str",
+   "desc": "`''` -> `'XX'`",
+   "snippet": "''",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/db/rls_apply.py",
+   "func": "_execute",
+   "op": "const_str",
+   "desc": "`\"SELECT pg_catalog.set_config('search_path', '', true)\"` -> `\"SELECT pg_catalog.set_config('search_path', '', true)XX\"`",
+   "snippet": "\"SELECT pg_catalog.set_config('search_path', '', true)\"",
+   "occurrence": 0
+  },
+  {
+   "class": "B",
+   "file": "app/db/rls_apply.py",
+   "func": "_execute",
+   "op": "const_str",
+   "desc": "`\"SELECT pg_catalog.set_config('search_path', %s, true)\"` -> `\"SELECT pg_catalog.set_config('search_path', %s, true)XX\"`",
+   "snippet": "\"SELECT pg_catalog.set_config('search_path', %s, true)\"",
+   "occurrence": 0
+  },
+  {
+   "class": "C",
+   "file": "app/db/rls_apply.py",
+   "func": "_execute",
+   "op": "delete_stmt",
+   "desc": "delete body statement `cursor.close()`",
+   "snippet": "cursor.close()",
+   "occurrence": 0
   }
  ]
 }

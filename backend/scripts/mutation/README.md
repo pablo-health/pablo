@@ -51,6 +51,9 @@ let through:
 - The default is four workers, not eight, because each has a container to
   itself while its run lasts.
 
+The `rls-apply` preset is 445 mutants and takes about 50 minutes on four
+workers. Most of that is the mutants only the integration tests can catch.
+
 A run that is killed from outside leaves its container behind, since nothing
 reaps them. After stopping a run, check `docker ps` for a stray
 `postgres:16-alpine`.
