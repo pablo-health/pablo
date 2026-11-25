@@ -59,9 +59,10 @@ def test_purge_audit_entry_carries_no_name_or_birth_date() -> None:
 def test_only_the_hard_purge_job_sets_the_purge_setting() -> None:
     """The trust boundary for ``app.allow_patient_purge``: no request path sets it.
 
-    The policies live in ``app.db``; the checkin reset names it so a
-    session-level set cannot ride a pooled connection. Anything else in
-    ``app`` mentioning it is a new way in, and has to be looked at.
+    The policies live in ``app.db.rls_inference.purge``; the checkin reset in
+    ``app.db`` names it so a session-level set cannot ride a pooled
+    connection. Anything else in ``app`` mentioning it is a new way in, and
+    has to be looked at.
     """
     app_dir = Path(hard_purge_cron.__file__).resolve().parents[1]
     mentions = {
@@ -69,10 +70,16 @@ def test_only_the_hard_purge_job_sets_the_purge_setting() -> None:
         for path in app_dir.rglob("*")
         if path.suffix in {".py", ".sql"} and "app.allow_patient_purge" in path.read_text()
     }
-    assert mentions == {"jobs/hard_purge_cron.py", "db/__init__.py", "db/tenant_template.sql"}
+    assert mentions == {
+        "jobs/hard_purge_cron.py",
+        "db/__init__.py",
+        "db/rls_inference/purge.py",
+        "db/tenant_template.sql",
+    }
     setters = [
         line
-        for line in (app_dir / "db" / "__init__.py").read_text().splitlines()
+        for module in ("__init__.py", "rls_inference/purge.py")
+        for line in (app_dir / "db" / module).read_text().splitlines()
         if "allow_patient_purge" in line and ("SET " in line or "set_config" in line)
     ]
     assert setters == []

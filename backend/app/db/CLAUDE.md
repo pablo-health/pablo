@@ -91,9 +91,11 @@ summary that covers the alembic chains too.
    **RLS enforcement** — every per-tenant table that carries a
    `user_id`, `patient_id`, or `id` column is force-RLS'd by
    `enable_rls_on_schema`. A newly-added table MUST have a policy
-   branch in that function or be explicitly listed as not-row-scoped
-   via `register_overlay_not_row_scoped()`, otherwise it silently
-   ships as deny-all.
+   branch in the planner it calls (`rls_inference/table.py`, which takes
+   the registries as arguments and reads no module state) or be
+   explicitly listed as not-row-scoped via
+   `register_overlay_not_row_scoped()`, otherwise it silently ships as
+   deny-all.
 
    The tenant template carries that function's output: its last section
    (after the row-level security marker) is captured by running the real
