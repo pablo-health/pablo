@@ -48,7 +48,8 @@ test.describe("Patient Management", () => {
       await expect(page.getByRole("columnheader", { name: /email/i })).toBeVisible()
       await expect(page.getByRole("columnheader", { name: /phone/i })).toBeVisible()
       await expect(page.getByRole("columnheader", { name: /status/i })).toBeVisible()
-      await expect(page.getByRole("columnheader", { name: /sessions/i })).toBeVisible()
+      await expect(page.getByRole("columnheader", { name: /sessions/i }).first()).toBeVisible()
+      await expect(page.getByRole("columnheader", { name: "Next Session" })).toBeVisible()
     })
 
     test("shows empty state or patients", async ({ signedInPage: page }) => {
@@ -80,6 +81,22 @@ test.describe("Patient Management", () => {
 
       await expect(page.getByText(`${smith.first_name} Smith`)).toBeVisible()
       await expect(page.getByText(`${other.first_name} Jones`)).not.toBeVisible()
+    })
+
+    test("matches part of a first or a last name, in any case", async ({ signedInPage: page, api }) => {
+      const tag = Date.now().toString(36)
+      const byFirst = await givePatient(api, { first_name: `Marigold${tag}`, last_name: "Ames" })
+      const byLast = await givePatient(api, { first_name: "Theo", last_name: `Quillfeather${tag}` })
+      await openPatients(page)
+      const search = page.getByPlaceholder(/search clients/i)
+
+      await search.fill(`rigold${tag}`.toUpperCase())
+      await expect(page.getByText(`${byFirst.first_name} Ames`)).toBeVisible()
+      await expect(page.getByText(`Theo ${byLast.last_name}`)).not.toBeVisible()
+
+      await search.fill(`feather${tag}`)
+      await expect(page.getByText(`Theo ${byLast.last_name}`)).toBeVisible()
+      await expect(page.getByText(`${byFirst.first_name} Ames`)).not.toBeVisible()
     })
 
     test("shows no results message for non-existent name", async ({ signedInPage: page }) => {
@@ -219,6 +236,48 @@ test.describe("Patient Management", () => {
       await expect(page.getByText(`Update-${timestamp} Updated`)).toBeVisible()
       await expect(page.getByText(`updated${timestamp}@example.com`)).toBeVisible()
     })
+  })
+
+  test("Clients in the sidebar opens the client list", async ({ signedInPage: page }) => {
+    await page.goto("/dashboard")
+    await page
+      .getByRole("navigation", { name: "Main navigation" })
+      .getByRole("link", { name: "Clients", exact: true })
+      .click()
+    await expect(page).toHaveURL(/\/dashboard\/patients$/)
+    await expect(page.getByRole("heading", { name: /^clients$/i })).toBeVisible()
+  })
+
+  test("the row's pencil is labelled with the client's name and opens Edit Client", async ({
+    signedInPage: page,
+    api,
+  }) => {
+    const patient = await givePatient(api)
+    await openPatients(page)
+    await page
+      .getByRole("button", { name: `Edit client ${patient.first_name} ${patient.last_name}` })
+      .click()
+    await expect(page.getByRole("heading", { name: "Edit Client" })).toBeVisible()
+    await expect(page.getByLabel(/first name/i)).toHaveValue(patient.first_name)
+  })
+
+  test("a diagnosis typed when adding a client starts the problem list and the chart header", async ({
+    signedInPage: page,
+  }) => {
+    const timestamp = Date.now()
+    await page.getByRole("button", { name: /add client/i }).click()
+    await page.getByLabel(/first name/i).fill(`Dx-${timestamp}`)
+    await page.getByLabel(/last name/i).fill("Client")
+    await page.getByLabel(/diagnosis/i).fill("Adjustment disorder")
+    await page.getByRole("button", { name: /create client/i }).click()
+    await skipNextStep(page)
+
+    await page.getByText(`Dx-${timestamp} Client`).click()
+    await expect(page.getByTestId("chart-diagnoses")).toHaveText("Diagnoses:Adjustment disorder")
+    await page.getByRole("tab", { name: /Problems/ }).click()
+    await expect(
+      page.getByTestId("problem-row").filter({ hasText: "Adjustment disorder" }),
+    ).toBeVisible()
   })
 
   test.describe("Delete Patient Flow", () => {
