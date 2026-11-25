@@ -1497,34 +1497,19 @@ def require_active_subscription(
 def require_baa_acceptance(
     user: User = Depends(require_active_subscription),
 ) -> User:
-    """
-    Verify that the user has accepted the Business Associate Agreement.
+    """Clear ``user`` for PHI routes once the Business Associate Agreement is accepted.
+
+    HIPAA requires it before any PHI route; put this dependency on every one.
     A clinician who does not own the practice is cleared by the practice's
-    acceptance instead (``_practice_agreement_clears``).
-
-    HIPAA REQUIREMENT: Users must accept BAA before accessing Protected Health
-    Information (PHI). This dependency should be used on all routes that access
-    patient data or other PHI.
-
-    For self-hosted installations, this check can be disabled by setting
-    REQUIRE_BAA=false in the environment.
-
-    Args:
-        user: Current authenticated user
-
-    Returns:
-        User object if BAA is accepted
-
-    Raises:
-        HTTPException: 403 Forbidden if BAA not accepted (when REQUIRE_BAA=true)
+    acceptance. ``REQUIRE_BAA=false`` turns the check off for self-hosting.
     """
     settings = get_settings()
     if not settings.require_baa:
         return user
 
-    if not user.baa_accepted_at and _practice_agreement_clears(user):
-        return user
-    if not user.baa_accepted_at:
+    from ..routes.practice_agreement import practice_agreement_clears
+
+    if not user.baa_accepted_at and not practice_agreement_clears(user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
@@ -1544,34 +1529,6 @@ def require_baa_acceptance(
             },
         )
     return user
-
-
-def _practice_agreement_clears(user: User) -> bool:
-    """Whether ``user``, not the practice owner, is cleared by the practice's acceptance.
-
-    The agreement binds the practice, so any version the owner (or an admin)
-    accepted clears everyone else. Raises the waiting-state 403 before then.
-    """
-    from ..people_term_lookup import practice_row_for
-    from ..routes.users import _is_practice_owner
-
-    practice = practice_row_for(user)
-    if practice is None or _is_practice_owner(practice, user):
-        return False
-    if practice.baa_accepted_at is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "error": {
-                    "code": "PRACTICE_AGREEMENT_PENDING",
-                    "message": (
-                        "Your practice has not accepted the Business Associate Agreement yet"
-                    ),
-                    "details": {"baa_accepted": False},
-                }
-            },
-        )
-    return True
 
 
 def _verify_google_oidc_token(token: str, audience: str) -> dict[str, object]:

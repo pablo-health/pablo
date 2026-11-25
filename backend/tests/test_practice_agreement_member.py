@@ -208,6 +208,88 @@ class TestStatusAndNotice:
         assert response.status_code == 400
 
 
+CURRENT = "2026-09-26"
+
+
+@contextmanager
+def _accepting(practice: SimpleNamespace) -> Iterator[None]:
+    app.dependency_overrides[get_baa_version] = lambda: CURRENT
+    try:
+        with _in_practice(practice), patch("app.routes.users._resolve_baa_path") as baa_path:
+            baa_path.return_value.read_text.return_value = "NEW TEXT"
+            yield
+    finally:
+        app.dependency_overrides.pop(get_baa_version, None)
+
+
+def _accept(client: Any, version: str = CURRENT) -> Any:
+    return client.post("/api/users/me/accept-baa", json={"accepted": True, "version": version})
+
+
+def _admin(mock_user: User, practice_admins: InMemoryPracticeAdminRepository) -> User:
+    mock_user.legal_name = "Ada Admin"
+    practice_admins.grant(mock_user.id, granted_by="owner", granted_at=ACCEPTED_AT)
+    return mock_user
+
+
+def test_a_member_cannot_accept_for_a_practice_that_has_not(
+    client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+) -> None:
+    """Their acceptance would stand in for the practice's and skip the waiting state."""
+    mock_user_repo.update(_member(mock_user))
+    practice = _practice(baa_accepted_at=None, baa_version=None)
+    with _accepting(practice):
+        response = _accept(client)
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "PRACTICE_AGREEMENT_PENDING"
+    assert practice.baa_accepted_at is None
+    stored = mock_user_repo.get(mock_user.id)
+    assert stored is not None
+    assert stored.baa_accepted_at is None
+    with _baa_required(), _in_practice(practice), pytest.raises(HTTPException) as refused:
+        require_baa_acceptance(stored)
+    assert _code(refused.value) == "PRACTICE_AGREEMENT_PENDING"
+
+
+def test_a_member_accepting_after_the_practice_stamps_only_their_row(
+    client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+) -> None:
+    mock_user_repo.update(_member(mock_user))
+    practice = _practice()
+    with _accepting(practice):
+        response = _accept(client)
+    assert response.status_code == 200, response.text
+    assert practice.baa_version == "2024-01-01"
+    assert practice.baa_legal_name == "Olivia Owner"
+
+
+@pytest.mark.parametrize(
+    ("practice_version", "accepted_version"),
+    [(CURRENT, CURRENT), ("2024-01-01", "2023-01-01")],
+    ids=["same-version", "older-version"],
+)
+def test_an_admin_does_not_replace_the_practice_record_without_a_new_version(
+    client: Any,
+    mock_user: User,
+    mock_user_repo: InMemoryUserRepository,
+    practice_admins: InMemoryPracticeAdminRepository,
+    practice_version: str,
+    accepted_version: str,
+) -> None:
+    mock_user_repo.update(_admin(mock_user, practice_admins))
+    practice = _practice(baa_version=practice_version)
+    with _accepting(practice):
+        response = _accept(client, accepted_version)
+    assert response.status_code == 200, response.text
+    assert practice.baa_version == practice_version
+    assert practice.baa_legal_name == "Olivia Owner"
+    assert practice.baa_full_text == "OWNER SIGNED TEXT"
+    assert practice.baa_accepted_at == ACCEPTED_AT
+    stored = mock_user_repo.get(mock_user.id)
+    assert stored is not None
+    assert stored.baa_version == accepted_version
+
+
 def test_an_admin_acceptance_of_a_new_version_clears_the_practice(
     client: Any,
     mock_user: User,
@@ -216,19 +298,11 @@ def test_an_admin_acceptance_of_a_new_version_clears_the_practice(
 ) -> None:
     """Only the owner or an admin is asked to accept a new version; the
     practice's snapshot records who accepted it."""
-    mock_user.legal_name = "Ada Admin"
-    mock_user_repo.update(mock_user)
-    practice_admins.grant(mock_user.id, granted_by="owner", granted_at=ACCEPTED_AT)
+    mock_user_repo.update(_admin(mock_user, practice_admins))
     practice = _practice()
-    with (
-        _in_practice(practice),
-        patch("app.routes.users._resolve_baa_path") as baa_path,
-    ):
-        baa_path.return_value.read_text.return_value = "NEW TEXT"
-        response = client.post(
-            "/api/users/me/accept-baa", json={"accepted": True, "version": "2026-09-26"}
-        )
+    with _accepting(practice):
+        response = _accept(client)
     assert response.status_code == 200, response.text
-    assert practice.baa_version == "2026-09-26"
+    assert practice.baa_version == CURRENT
     assert practice.baa_legal_name == "Ada Admin"
     assert practice.baa_full_text == "NEW TEXT"
