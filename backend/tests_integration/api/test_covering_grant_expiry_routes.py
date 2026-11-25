@@ -489,7 +489,8 @@ def _footprint(engine: Engine, schema: str, clients: _Clients) -> dict[str, Any]
     """Everything a write by Blake could have touched on Xavier's chart.
 
     Read as Avery, who holds the primary grant, so a row Blake changed is
-    visible here. Blake's audit rows are read under the purge setting, the
+    visible here. Blake's read markers are read as Blake, their only reader.
+    Blake's audit rows are read under the purge setting, the
     one that sees every actor's rows (``audit_logs`` is FORCE RLS).
     """
     with engine.begin() as conn:
@@ -525,6 +526,15 @@ def _footprint(engine: Engine, schema: str, clients: _Clients) -> dict[str, Any]
             p,
         ).all()
     with engine.begin() as conn:
+        # A read marker is visible only to its owner, so Blake's is read as Blake.
+        _scoped(conn, schema, _BLAKE)
+        blakes_reads = conn.execute(
+            text(
+                "SELECT thread_id::text, last_read_at FROM patient_message_thread_reads "
+                "ORDER BY thread_id"
+            )
+        ).all()
+    with engine.begin() as conn:
         conn.execute(text(f"SET search_path = {schema}, platform, public"))
         conn.execute(text("SET LOCAL app.allow_audit_purge = 'on'"))
         blakes_audit = conn.execute(
@@ -539,6 +549,7 @@ def _footprint(engine: Engine, schema: str, clients: _Clients) -> dict[str, Any]
         "documents": [tuple(r) for r in documents],
         "threads": [tuple(r) for r in threads],
         "messages": [tuple(r) for r in messages],
+        "blakes_reads": [tuple(r) for r in blakes_reads],
         "blakes_audit": [tuple(r) for r in blakes_audit],
     }
 
