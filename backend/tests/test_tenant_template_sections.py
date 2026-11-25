@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from app.db.practice_directory import DIRECTORY_POLICY, DIRECTORY_ROLE, directory_access_sql
 from app.db.provisioning import (
     _TENANT_TEMPLATE_SQL_PATH,
     TEMPLATE_ROW_SECURITY_MARKER,
@@ -60,6 +61,7 @@ def _fixture(name: str) -> str:
 def test_the_regen_script_and_provisioning_agree_on_the_marker(regen: ModuleType) -> None:
     assert regen.ROW_SECURITY_MARKER == TEMPLATE_ROW_SECURITY_MARKER
     assert regen.FINGERPRINT_PREFIX == FINGERPRINT_PREFIX
+    assert regen.DIRECTORY_POLICY == DIRECTORY_POLICY
 
 
 def test_the_row_security_section_names_no_schema_of_its_own(regen: ModuleType) -> None:
@@ -80,7 +82,15 @@ def test_every_policy_in_the_section_is_forced_and_fingerprinted() -> None:
         )
     )
     assert created, "the section carries no policies"
-    assert created <= commented
+    # The practice directory's read policies are the exception: the reconcile
+    # does not manage them, so it wrote no fingerprint to capture.
+    directory = {(name, table) for name, table in created if name == DIRECTORY_POLICY}
+    assert {table for _, table in directory} == {
+        "__TENANT_SCHEMA__.appointments",
+        "__TENANT_SCHEMA__.patient_clinicians",
+        "__TENANT_SCHEMA__.patients",
+    }
+    assert created - directory <= commented
     forced = set(
         re.findall(
             r"^ALTER TABLE ONLY (\S+) FORCE ROW LEVEL SECURITY;$", row_security, re.MULTILINE
@@ -91,6 +101,41 @@ def test_every_policy_in_the_section_is_forced_and_fingerprinted() -> None:
     )
     assert forced == enabled
     assert {table for _, table in created} <= forced
+
+
+def test_the_section_ends_with_the_directory_access_the_code_would_apply(
+    regen: ModuleType,
+) -> None:
+    """The grants, paths and ownership in the file are ``directory_access_sql``'s.
+
+    The capture cannot dump them, so the regen writes them out from the code.
+    Held here without a database: change the columns a directory function
+    reads and this fails until the template is regenerated.
+    """
+    _, row_security = _sections()
+    heading, found, access = row_security.partition(regen.DIRECTORY_ACCESS_HEADING)
+    assert found, "the section has no practice directory access; regenerate it"
+    assert access.lstrip("\n") == directory_access_sql("__TENANT_SCHEMA__")
+    assert "GRANT " not in heading
+    assert "OWNER TO" not in heading
+
+
+def test_the_directory_access_names_every_table_and_function_once() -> None:
+    sql = directory_access_sql("practice_x")
+    for table in ("patients", "patient_clinicians", "appointments"):
+        assert sql.count(f" ON practice_x.{table} TO {DIRECTORY_ROLE};") == 1
+    for function in (
+        "practice_client_directory()",
+        "practice_outside_appointment(text, text, text)",
+    ):
+        assert f"ALTER FUNCTION practice_x.{function} OWNER TO {DIRECTORY_ROLE};" in sql
+        assert (
+            f"ALTER FUNCTION practice_x.{function} "
+            "SET search_path = pg_catalog, practice_x, pg_temp;" in sql
+        )
+    # The role may create in the schema only while it is being made an owner.
+    assert sql.count("GRANT CREATE ON SCHEMA") == sql.count("REVOKE CREATE ON SCHEMA") == 2
+    assert sql.rstrip().endswith(f"REVOKE CREATE ON SCHEMA practice_x FROM {DIRECTORY_ROLE};")
 
 
 def test_the_schema_part_forces_nothing() -> None:
@@ -112,8 +157,12 @@ def test_the_extraction_keeps_flags_and_fingerprinted_policies(regen: ModuleType
         "COMMENT ON POLICY rls_note_access ON __TENANT_SCHEMA__.notes "
         "IS 'rls-fingerprint-v1-aaaa';" in section
     )
-    # Not the reconcile's (no fingerprint): its own pass re-applies it.
-    assert "rls_practice_directory_read" not in section
+    # Not the reconcile's, so no fingerprint; kept all the same, role and all.
+    assert (
+        "CREATE POLICY rls_practice_directory_read ON __TENANT_SCHEMA__.patients "
+        "FOR SELECT TO pablo_practice_directory USING" in section
+    )
+    assert "COMMENT ON POLICY rls_practice_directory_read" not in section
     # Already created, identically, by the schema part: fingerprint only.
     assert "CREATE POLICY rls_audit_owner_client_read" not in section
     assert "DROP POLICY" not in section

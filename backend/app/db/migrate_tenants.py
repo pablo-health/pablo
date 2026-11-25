@@ -58,6 +58,7 @@ from . import (
     enable_rls_on_schema,
 )
 from .platform_models import SCHEMA_READY
+from .practice_directory import apply_practice_directory_access
 from .provisioning import _ALEMBIC_INI_PATH
 
 if TYPE_CHECKING:
@@ -137,7 +138,16 @@ def reconcile_tenant_rls(engine: Engine, schema: str) -> RlsReconcileCounts:
         # Operator job: schema validated by _validate_schema_name(); not web-reachable.
         # nosemgrep
         session.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
-        return enable_rls_on_schema(session, schema, strict=False)
+        counts = enable_rls_on_schema(session, schema, strict=False)
+        # The practice directory's access, re-applied here as it always was on
+        # this pass: the reconcile above does not manage the directory's read
+        # policy, so a practice that lost it would otherwise keep going without
+        # it. Provisioning no longer needs this (the template carries the
+        # access); this call goes when the pass applies the template's policies
+        # directly, which puts that policy back like any other.
+        apply_practice_directory_access(session, schema)
+        session.commit()
+        return counts
 
 
 def list_active_tenant_schemas(engine: Engine) -> list[str]:

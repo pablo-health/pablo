@@ -103,8 +103,18 @@ summary that covers the alembic chains too.
    policies or policy fingerprints differ, so it stays the repair pass for
    existing practices. **So a change to a policy in that function is a
    template change too: regenerate the template in the same commit**, or
-   the `Tenant template matches alembic head` job fails. That isolation
-   contract is verified at **three layers**:
+   the `Tenant template matches alembic head` job fails.
+
+   The same section carries the practice directory's access: its three
+   read policies, captured like the rest, and the grants, pinned search
+   paths and function ownership, written out by
+   `practice_directory.directory_access_sql`. Provisioning runs nothing
+   else for it. So a change to what a directory function reads is a
+   template change too, **and** needs a revision that calls
+   `apply_practice_directory_access`, because that is the only way a
+   practice that already exists gets it.
+
+   That isolation contract is verified at **three layers**:
 
    - **L2 real-time hook** — `.claude/settings.json` PostToolUse hook runs
      `poetry run python .claude/skills/rls-coverage-check/check.py`

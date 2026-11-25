@@ -379,13 +379,17 @@ def create_practice_schema(engine: Engine, schema_name: str) -> None:
     point the rebuild used to run at, so neither writes under row policies
     it never had to satisfy.
 
+    The same section carries the practice directory's access: its three read
+    policies, and the grants, pinned search paths and function ownership
+    ``practice_directory.directory_access_sql`` writes out. It names the
+    directory role, so the role is checked first and a missing one fails with
+    the fix.
+
     ``enable_rls_on_schema`` then still runs over every practice schema,
     fresh or not, as the verify. On a schema the template just built it
     reads the catalog, finds every table already right and changes
-    nothing; it is also what applies the parts a capture cannot carry —
-    the practice directory's function owner, grants and search path — and
-    what covers tables the template does not know: those a deployment
-    registered, and those a post-provision hook created.
+    nothing; it is also what covers tables the template does not know:
+    those a deployment registered, and those a post-provision hook created.
 
     The default template schema gets neither: it is the shape practices
     are cloned from and holds no rows, and ``enable_rls_on_schema`` skips
@@ -553,9 +557,15 @@ def _apply_tenant_template(engine: Engine, schema_name: str) -> None:
 
 def _apply_template_row_security(engine: Engine, schema_name: str) -> None:
     """Apply the row-level security part of the template to a fresh practice schema."""
+    from .practice_directory import DIRECTORY_ROLE, require_directory_role
+
     _, row_security = _read_template()
-    if row_security.strip():
-        apply_template_sql(engine, schema_name, row_security)
+    if not row_security.strip():
+        return
+    if DIRECTORY_ROLE in row_security:
+        with engine.connect() as conn:
+            require_directory_role(conn)
+    apply_template_sql(engine, schema_name, row_security)
 
 
 def apply_template_sql(engine: Engine, schema_name: str, template_sql: str) -> None:

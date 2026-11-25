@@ -45,7 +45,7 @@ pytestmark = pytest.mark.skipif(
 def test_the_directory_policys_name_protects_nothing_on_another_table(
     engine: Engine, practice: str, desired: dict[str, DesiredTable]
 ) -> None:
-    """``leave`` is a table and a policy together, never a name on its own."""
+    """The file puts that policy on three tables; anywhere else it is a stray."""
     _ddl(
         engine,
         f'CREATE POLICY {_DIRECTORY_POLICY} ON "{practice}".therapy_sessions USING (true)',
@@ -76,7 +76,7 @@ def test_an_edit_to_a_policy_the_applier_itself_recorded_is_put_back(
     apply_template_sql(engine, schema, body)
     apply_template_sql(engine, schema, row_security)
     try:
-        assert _apply(engine, schema, desired, leave=()).altered == 0
+        assert _apply(engine, schema, desired).altered == 0
         with engine.connect() as conn:
             table, policy, command = conn.execute(
                 text(
@@ -95,7 +95,7 @@ def test_an_edit_to_a_policy_the_applier_itself_recorded_is_put_back(
         _ddl(engine, f'ALTER POLICY "{policy}" ON "{schema}"."{table}" {clause} (true)')
         assert _policies(engine, schema) != settled, "the damage was not done"
 
-        assert _apply(engine, schema, desired, leave=()).altered == 1
+        assert _apply(engine, schema, desired).altered == 1
         assert _policies(engine, schema) == settled
     finally:
         _drop_schema(engine, schema)

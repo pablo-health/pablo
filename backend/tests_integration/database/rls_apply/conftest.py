@@ -120,7 +120,7 @@ def settled(engine: Engine, desired: dict[str, DesiredTable]) -> Iterator[tuple[
     body, _, row_security = _TEMPLATE.read_text().partition(TEMPLATE_ROW_SECURITY_MARKER)
     apply_template_sql(engine, schema, body)
     apply_template_sql(engine, schema, row_security)
-    _apply(engine, schema, desired, leave=())
+    _apply(engine, schema, desired)
     with OrmSession(engine) as session:
         holds = read_live_rls(session, schema)
     yield schema, holds

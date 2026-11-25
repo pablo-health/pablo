@@ -121,7 +121,12 @@ def provisioned(engine: Engine) -> Iterator[str]:
 
 @pytest.fixture(scope="module")
 def rebuilt(engine: Engine) -> Iterator[tuple[str, Any]]:
-    """A practice built from the schema part alone and given RLS by a full rebuild."""
+    """A practice built from the schema part alone and given RLS by a full rebuild.
+
+    The rebuild is the two things the template's capture runs: the reconcile,
+    then the practice directory's access, which the reconcile does not manage.
+    """
+    from app.db.practice_directory import apply_practice_directory_access  # noqa: PLC0415
     from app.db.provisioning import (  # noqa: PLC0415
         _apply_tenant_template,
         _stamp_alembic_at_head,
@@ -131,6 +136,8 @@ def rebuilt(engine: Engine) -> Iterator[tuple[str, Any]]:
     _apply_tenant_template(engine, schema)
     _stamp_alembic_at_head(engine, schema)
     counts = _reconcile(engine, schema)
+    with engine.begin() as conn:
+        apply_practice_directory_access(conn, schema)
     yield schema, counts
     _drop_schema(engine, schema)
 
@@ -243,6 +250,7 @@ def test_the_verify_runs_a_handful_of_statements(engine: Engine, provisioned: st
 
     ddl = [s for s in executed if s.lstrip().upper().startswith(("ALTER TABLE", "DROP", "CREATE"))]
     assert counts.altered == 0
-    # The practice directory's pass re-asserts its own three policies.
-    assert len([s for s in ddl if "rls_practice_directory_read" not in s]) == 0, ddl
+    # Not one statement of DDL: the template carried the practice directory's
+    # access too, so provisioning's verify has nothing left to re-assert.
+    assert ddl == []
     assert len(executed) < 40, len(executed)
