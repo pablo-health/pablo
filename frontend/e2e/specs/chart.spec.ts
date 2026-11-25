@@ -126,26 +126,44 @@ test.describe("What is in a client's chart", () => {
     )
   })
 
-  test("the Notes tab shows the three most recent notes and links to the rest", async ({
+  test("the Notes tab shows the three most recently finalized notes, newest first", async ({
     signedInPage: page,
     api,
   }) => {
     const patient = await givePatient(api)
+    // Finalized one after another, so the last one seeded is the most recently
+    // finalized. The list is ordered by when a note was finalized, not by the
+    // visit's date: each visit here is booked an hour before the one seeded
+    // ahead of it, so the newest note on the list is the oldest visit.
+    const visits = []
     for (let i = 0; i < 4; i++) {
-      await giveVisitReadyToBill(api, patient.id, {
-        service_code: "90834",
-        diagnosis_codes: ["F41.1"],
-        place_of_service: "11",
-        unit_count: 1,
-      })
+      visits.push(
+        await giveVisitReadyToBill(api, patient.id, {
+          service_code: "90834",
+          diagnosis_codes: ["F41.1"],
+          place_of_service: "11",
+          unit_count: 1,
+        }),
+      )
     }
+    const hrefFor = (visit: (typeof visits)[number]) => `/dashboard/sessions/${visit.sessionId}`
     await page.goto(`/dashboard/patients/${patient.id}`)
 
     await expect(page.getByRole("tab", { name: "Notes 4" })).toBeVisible()
     const notes = page.getByRole("tabpanel")
     const rows = notes.getByRole("listitem")
     await expect(rows).toHaveCount(3)
+    // Which three, and in what order: the last three finalized, newest first.
+    // The first one finalized is left for View all notes.
+    const shown = [visits[3], visits[2], visits[1]].map(hrefFor)
+    for (const [i, href] of shown.entries()) {
+      await expect(rows.nth(i).getByRole("link")).toHaveAttribute("href", href)
+    }
+    await expect(notes.locator(`a[href="${hrefFor(visits[0])}"]`)).toHaveCount(0)
+    // Each row shows the note's type, its date and its status.
     for (const row of await rows.all()) {
+      await expect(row).toContainText("SOAP")
+      await expect(row).toContainText(/[A-Z][a-z]{2} \d{1,2}, \d{4}/)
       await expect(row).toContainText("Finalized")
     }
     await expect(notes.getByRole("link", { name: "View all notes" })).toBeVisible()
