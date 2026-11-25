@@ -238,6 +238,16 @@ test.describe("Patient Management", () => {
     })
   })
 
+  test("Clients in the sidebar opens the client list", async ({ signedInPage: page }) => {
+    await page.goto("/dashboard")
+    await page
+      .getByRole("navigation", { name: "Main navigation" })
+      .getByRole("link", { name: "Clients", exact: true })
+      .click()
+    await expect(page).toHaveURL(/\/dashboard\/patients$/)
+    await expect(page.getByRole("heading", { name: /^clients$/i })).toBeVisible()
+  })
+
   test("the row's pencil is labelled with the client's name and opens Edit Client", async ({
     signedInPage: page,
     api,
