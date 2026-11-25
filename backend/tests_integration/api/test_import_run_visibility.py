@@ -256,7 +256,7 @@ def test_a_clinician_who_is_not_owner_or_admin_cannot_start_an_import(
     assert _runs_and_patients(engine, schema) == (0, 0)
 
 
-@pytest.mark.parametrize("who", [_AVERY, _BLAKE])
+@pytest.mark.parametrize("who", [_AVERY, _BLAKE], ids=["avery", "blake"])
 def test_a_clinician_who_is_not_owner_or_admin_cannot_reach_a_run(
     client: TestClient, acting: dict[str, User], engine: Engine, schema: str, who: str
 ) -> None:
