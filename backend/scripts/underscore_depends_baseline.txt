@@ -53,7 +53,6 @@ app/routes/credentialing.py:search_npi:_user
 app/routes/credentialing.py:sign_payer_authorization:_exempt
 app/routes/ehr_routes.py:get_ehr_route:_user
 app/routes/ehr_routes.py:get_ehr_route_repository:_ctx
-app/routes/ehr_routes.py:update_ehr_route_step:_user
 app/routes/homework.py:get_clinician_homework_service:_ctx
 app/routes/homework.py:list_my_homework:_
 app/routes/homework.py:mark_homework_done:_
